@@ -142,6 +142,8 @@
       console.log("Models loaded:", models.checkpoints);
       if (models.checkpoints.length > 0) {
         connection.connected = true;
+        // Auto-select default checkpoint/VAE on first run
+        generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
       }
     } catch (e) {
       console.error("Initial model refresh failed:", e);

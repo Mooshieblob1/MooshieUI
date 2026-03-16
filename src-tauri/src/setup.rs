@@ -410,6 +410,44 @@ fn step_install_custom_nodes(base: &Path) -> Result<(), String> {
     Ok(())
 }
 
+async fn step_download_default_models(base: &Path, client: &reqwest::Client) -> Result<(), String> {
+    let comfyui = base.join("comfyui");
+    let checkpoints_dir = comfyui.join("models").join("checkpoints");
+    let vae_dir = comfyui.join("models").join("vae");
+    std::fs::create_dir_all(&checkpoints_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&vae_dir).map_err(|e| e.to_string())?;
+
+    // Check if any checkpoint already exists
+    let has_checkpoint = std::fs::read_dir(&checkpoints_dir)
+        .map(|entries| {
+            entries.filter_map(|e| e.ok()).any(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                name.ends_with(".safetensors") || name.ends_with(".ckpt")
+            })
+        })
+        .unwrap_or(false);
+
+    if !has_checkpoint {
+        // Download ΣIH-1.5 checkpoint
+        let checkpoint_url = "https://huggingface.co/Enferlain/juice/resolve/main/noob/%CE%A3%CE%99%CE%97-1.5.safetensors";
+        let checkpoint_dest = checkpoints_dir.join("SIH-1.5.safetensors");
+        if !checkpoint_dest.exists() {
+            download_file(client, checkpoint_url, &checkpoint_dest).await
+                .map_err(|e| format!("Failed to download default checkpoint: {}", e))?;
+        }
+    }
+
+    // Download SDXL VAE
+    let vae_dest = vae_dir.join("sdxl_vae.safetensors");
+    if !vae_dest.exists() {
+        let vae_url = "https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors";
+        download_file(client, vae_url, &vae_dest).await
+            .map_err(|e| format!("Failed to download SDXL VAE: {}", e))?;
+    }
+
+    Ok(())
+}
+
 // ─── Tauri commands ─────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -470,11 +508,20 @@ pub async fn run_setup(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
     step_install_deps(&base).await?;
 
     // 7. Custom nodes
-    emit(&app, "nodes", "Installing MooshieUI custom nodes...", 90);
+    emit(&app, "nodes", "Installing MooshieUI custom nodes...", 85);
     step_install_custom_nodes(&base)?;
 
-    // 8. Persist config
-    emit(&app, "config", "Saving configuration...", 95);
+    // 8. Download default models (checkpoint + VAE)
+    emit(
+        &app,
+        "models",
+        "Downloading default model (ΣIH-1.5) and SDXL VAE... This may take a while.",
+        88,
+    );
+    step_download_default_models(&base, &state.http_client).await?;
+
+    // 9. Persist config
+    emit(&app, "config", "Saving configuration...", 98);
     {
         let mut cfg = state.config.write().await;
         cfg.comfyui_path = base.join("comfyui").to_string_lossy().to_string();

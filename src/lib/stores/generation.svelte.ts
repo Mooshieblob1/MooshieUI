@@ -10,10 +10,10 @@ class GenerationStore {
   checkpoint = $state("");
   vae = $state("");
   loras = $state<LoraEntry[]>([]);
-  samplerName = $state("euler");
-  scheduler = $state("normal");
+  samplerName = $state("euler_cfg_pp");
+  scheduler = $state("sgm_uniform");
   steps = $state(20);
-  cfg = $state(7.0);
+  cfg = $state(1.4);
   seed = $state(-1);
   width = $state(512);
   height = $state(512);
@@ -139,6 +139,35 @@ class GenerationStore {
 
   removeLora(index: number) {
     this.loras = this.loras.filter((_, i) => i !== index);
+  }
+
+  /** Apply defaults if no checkpoint is selected yet (first run). */
+  applyDefaultsIfNeeded(checkpoints: string[], vaes: string[]) {
+    if (this.checkpoint) return;
+
+    // Look for the default SIH checkpoint
+    const defaultCkpt = checkpoints.find((c) => c.includes("SIH-1.5"));
+    if (defaultCkpt) {
+      this.checkpoint = defaultCkpt;
+      this.samplerName = "euler_cfg_pp";
+      this.scheduler = "sgm_uniform";
+      this.cfg = 1.4;
+      this.steps = 20;
+      this.width = 1024;
+      this.height = 1024;
+    } else if (checkpoints.length > 0) {
+      this.checkpoint = checkpoints[0];
+    }
+
+    // Look for SDXL VAE
+    if (!this.vae) {
+      const defaultVae = vaes.find((v) => v.includes("sdxl_vae"));
+      if (defaultVae) {
+        this.vae = defaultVae;
+      }
+    }
+
+    this.saveSettings();
   }
 }
 
