@@ -146,11 +146,11 @@ cd MooshieUI
 # Install frontend dependencies
 npm install
 
-# Install the custom ComfyUI node (tiled diffusion)
-cp comfyui-nodes/nodes_tiled_diffusion.py /path/to/ComfyUI/comfy_extras/
+# Install the custom ComfyUI nodes (required)
+chmod +x comfyui-nodes/install.sh
+./comfyui-nodes/install.sh /path/to/ComfyUI
 
-# Then register it in ComfyUI's nodes.py — add "nodes_tiled_diffusion.py"
-# to the extras_files list in init_builtin_extra_nodes()
+# Restart ComfyUI to load the new nodes
 ```
 
 ### Development
