@@ -1,0 +1,12 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for the app",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "store:default",
+    "shell:default",
+    "dialog:default",
+    "fs:default"
+  ]
+}

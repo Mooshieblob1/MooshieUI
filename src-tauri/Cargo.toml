@@ -1,0 +1,31 @@
+[package]
+name = "comfyui-desktop"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "comfyui_desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-store = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+futures-util = "0.3"
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+rand = "0.9"
+base64 = "0.22"

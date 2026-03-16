@@ -1,0 +1,208 @@
+use reqwest::multipart;
+use serde_json::Value;
+
+use crate::comfyui::types::*;
+use crate::error::AppError;
+use crate::state::AppState;
+
+impl AppState {
+    pub async fn api_get(&self, path: &str) -> Result<Value, AppError> {
+        let url = format!("{}{}", self.base_url().await, path);
+        let resp = self.http_client.get(&url).send().await?;
+        if !resp.status().is_success() {
+            return Err(AppError::ApiError {
+                status: resp.status().as_u16(),
+                message: resp.text().await.unwrap_or_default(),
+            });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn api_post(&self, path: &str, body: &Value) -> Result<Value, AppError> {
+        let url = format!("{}{}", self.base_url().await, path);
+        let resp = self.http_client.post(&url).json(body).send().await?;
+        if !resp.status().is_success() {
+            return Err(AppError::ApiError {
+                status: resp.status().as_u16(),
+                message: resp.text().await.unwrap_or_default(),
+            });
+        }
+        Ok(resp.json().await?)
+    }
+
+    pub async fn get_models_list(&self, category: &str) -> Result<Vec<String>, AppError> {
+        let val = self.api_get(&format!("/models/{}", category)).await?;
+        let models: Vec<String> = serde_json::from_value(val)?;
+        Ok(models)
+    }
+
+    pub async fn get_samplers_and_schedulers(&self) -> Result<SamplerInfo, AppError> {
+        let val = self.api_get("/object_info/KSampler").await?;
+
+        let samplers = val["KSampler"]["input"]["required"]["sampler_name"][0]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let schedulers = val["KSampler"]["input"]["required"]["scheduler"][0]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(SamplerInfo {
+            samplers,
+            schedulers,
+        })
+    }
+
+    pub async fn get_embeddings_list(&self) -> Result<Vec<String>, AppError> {
+        let val = self.api_get("/embeddings").await?;
+        let embeddings: Vec<String> = serde_json::from_value(val)?;
+        Ok(embeddings)
+    }
+
+    pub async fn queue_prompt_request(
+        &self,
+        workflow: Value,
+        client_id: &str,
+    ) -> Result<PromptResponse, AppError> {
+        let body = serde_json::json!({
+            "prompt": workflow,
+            "client_id": client_id,
+        });
+        let val = self.api_post("/prompt", &body).await?;
+        let resp: PromptResponse = serde_json::from_value(val)?;
+        Ok(resp)
+    }
+
+    pub async fn get_history_for(&self, prompt_id: &str) -> Result<Value, AppError> {
+        self.api_get(&format!("/history/{}", prompt_id)).await
+    }
+
+    pub async fn get_queue_info(&self) -> Result<QueueInfo, AppError> {
+        let val = self.api_get("/queue").await?;
+        let info: QueueInfo = serde_json::from_value(val)?;
+        Ok(info)
+    }
+
+    pub async fn interrupt(&self) -> Result<(), AppError> {
+        self.api_post("/interrupt", &serde_json::json!({})).await?;
+        Ok(())
+    }
+
+    pub async fn delete_queue_items(&self, ids: Vec<String>) -> Result<(), AppError> {
+        self.api_post("/queue", &serde_json::json!({ "delete": ids }))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_system_stats_info(&self) -> Result<SystemStats, AppError> {
+        let val = self.api_get("/system_stats").await?;
+        let stats: SystemStats = serde_json::from_value(val)?;
+        Ok(stats)
+    }
+
+    pub async fn upload_image_file(&self, file_path: &str) -> Result<UploadResponse, AppError> {
+        let url = format!("{}/upload/image", self.base_url().await);
+        let file_bytes = tokio::fs::read(file_path).await?;
+        let file_name = std::path::Path::new(file_path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        let part = multipart::Part::bytes(file_bytes)
+            .file_name(file_name)
+            .mime_str("image/png")
+            .unwrap();
+
+        let form = multipart::Form::new()
+            .part("image", part)
+            .text("type", "input")
+            .text("overwrite", "true");
+
+        let resp = self.http_client.post(&url).multipart(form).send().await?;
+        if !resp.status().is_success() {
+            return Err(AppError::ApiError {
+                status: resp.status().as_u16(),
+                message: resp.text().await.unwrap_or_default(),
+            });
+        }
+        let upload_resp: UploadResponse = resp.json().await?;
+        Ok(upload_resp)
+    }
+
+    /// Downloads a file from a URL to the models/<category> directory.
+    pub async fn download_model_file(
+        &self,
+        url: &str,
+        category: &str,
+        filename: &str,
+    ) -> Result<(), AppError> {
+        let config = self.config.read().await;
+        let comfyui_path = if config.comfyui_path.is_empty() {
+            // Fall back: ComfyUI is typically a sibling directory
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+            if let Some(dir) = exe_dir {
+                dir.to_string_lossy().to_string()
+            } else {
+                ".".to_string()
+            }
+        } else {
+            config.comfyui_path.clone()
+        };
+        let models_dir = std::path::Path::new(&comfyui_path)
+            .join("models")
+            .join(category);
+
+        tokio::fs::create_dir_all(&models_dir).await?;
+        let dest = models_dir.join(filename);
+
+        if dest.exists() {
+            return Ok(());
+        }
+
+        let resp = self.http_client.get(url).send().await?;
+        if !resp.status().is_success() {
+            return Err(AppError::ApiError {
+                status: resp.status().as_u16(),
+                message: format!("Failed to download {}", url),
+            });
+        }
+
+        let bytes = resp.bytes().await?;
+        tokio::fs::write(&dest, &bytes).await?;
+        Ok(())
+    }
+
+    pub async fn get_output_image_bytes(
+        &self,
+        filename: &str,
+        subfolder: &str,
+    ) -> Result<Vec<u8>, AppError> {
+        let url = format!(
+            "{}/view?filename={}&subfolder={}&type=output",
+            self.base_url().await,
+            filename,
+            subfolder
+        );
+        let resp = self.http_client.get(&url).send().await?;
+        if !resp.status().is_success() {
+            return Err(AppError::ApiError {
+                status: resp.status().as_u16(),
+                message: "Failed to fetch image".to_string(),
+            });
+        }
+        Ok(resp.bytes().await?.to_vec())
+    }
+}

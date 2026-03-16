@@ -1,0 +1,145 @@
+import { load } from "@tauri-apps/plugin-store";
+import type { LoraEntry } from "../types/index.js";
+
+const STORE_KEY = "generation-settings";
+
+class GenerationStore {
+  mode = $state<"txt2img" | "img2img" | "inpainting">("txt2img");
+  positivePrompt = $state("");
+  negativePrompt = $state("");
+  checkpoint = $state("");
+  vae = $state("");
+  loras = $state<LoraEntry[]>([]);
+  samplerName = $state("euler");
+  scheduler = $state("normal");
+  steps = $state(20);
+  cfg = $state(7.0);
+  seed = $state(-1);
+  width = $state(512);
+  height = $state(512);
+  batchSize = $state(1);
+  denoise = $state(0.7);
+  inputImage = $state<string | null>(null);
+  maskImage = $state<string | null>(null);
+  growMaskBy = $state(6);
+  upscaleEnabled = $state(false);
+  upscaleMethod = $state<"algorithmic" | "model">("algorithmic");
+  upscaleModel = $state<string | null>(null);
+  upscaleScale = $state(2.0);
+  upscaleDenoise = $state(0.4);
+  upscaleSteps = $state(15);
+  upscaleTileSize = $state(512);
+  upscaleTiling = $state(true);
+
+  private _store: Awaited<ReturnType<typeof load>> | null = null;
+
+  async loadSettings() {
+    try {
+      this._store = await load("settings.json", { autoSave: true });
+      const saved = await this._store.get<Record<string, any>>(STORE_KEY);
+      if (saved) {
+        if (saved.checkpoint) this.checkpoint = saved.checkpoint;
+        if (saved.vae !== undefined) this.vae = saved.vae;
+        if (saved.samplerName) this.samplerName = saved.samplerName;
+        if (saved.scheduler) this.scheduler = saved.scheduler;
+        if (saved.steps) this.steps = saved.steps;
+        if (saved.cfg !== undefined) this.cfg = saved.cfg;
+        if (saved.seed !== undefined) this.seed = saved.seed;
+        if (saved.width) this.width = saved.width;
+        if (saved.height) this.height = saved.height;
+        if (saved.batchSize) this.batchSize = saved.batchSize;
+        if (saved.denoise !== undefined) this.denoise = saved.denoise;
+        if (saved.positivePrompt) this.positivePrompt = saved.positivePrompt;
+        if (saved.negativePrompt) this.negativePrompt = saved.negativePrompt;
+        if (saved.mode) this.mode = saved.mode;
+        if (saved.upscaleEnabled !== undefined) this.upscaleEnabled = saved.upscaleEnabled;
+        if (saved.upscaleMethod) this.upscaleMethod = saved.upscaleMethod;
+        if (saved.upscaleModel !== undefined) this.upscaleModel = saved.upscaleModel;
+        if (saved.upscaleScale !== undefined) this.upscaleScale = saved.upscaleScale;
+        if (saved.upscaleDenoise !== undefined) this.upscaleDenoise = saved.upscaleDenoise;
+        if (saved.upscaleSteps !== undefined) this.upscaleSteps = saved.upscaleSteps;
+        if (saved.upscaleTileSize !== undefined) this.upscaleTileSize = saved.upscaleTileSize;
+        if (saved.upscaleTiling !== undefined) this.upscaleTiling = saved.upscaleTiling;
+        console.log("Loaded saved settings, checkpoint:", this.checkpoint);
+      }
+    } catch (e) {
+      console.error("Failed to load settings:", e);
+    }
+  }
+
+  async saveSettings() {
+    if (!this._store) return;
+    try {
+      await this._store.set(STORE_KEY, {
+        mode: this.mode,
+        positivePrompt: this.positivePrompt,
+        negativePrompt: this.negativePrompt,
+        checkpoint: this.checkpoint,
+        vae: this.vae,
+        samplerName: this.samplerName,
+        scheduler: this.scheduler,
+        steps: this.steps,
+        cfg: this.cfg,
+        seed: this.seed,
+        width: this.width,
+        height: this.height,
+        batchSize: this.batchSize,
+        denoise: this.denoise,
+        upscaleEnabled: this.upscaleEnabled,
+        upscaleMethod: this.upscaleMethod,
+        upscaleModel: this.upscaleModel,
+        upscaleScale: this.upscaleScale,
+        upscaleDenoise: this.upscaleDenoise,
+        upscaleSteps: this.upscaleSteps,
+        upscaleTileSize: this.upscaleTileSize,
+        upscaleTiling: this.upscaleTiling,
+      });
+    } catch (e) {
+      console.error("Failed to save settings:", e);
+    }
+  }
+
+  toParams() {
+    return {
+      mode: this.mode,
+      positive_prompt: this.positivePrompt,
+      negative_prompt: this.negativePrompt,
+      checkpoint: this.checkpoint,
+      vae: this.vae || null,
+      loras: this.loras,
+      sampler_name: this.samplerName,
+      scheduler: this.scheduler,
+      steps: this.steps,
+      cfg: this.cfg,
+      seed: this.seed,
+      width: this.width,
+      height: this.height,
+      batch_size: this.batchSize,
+      denoise: this.denoise,
+      input_image: this.inputImage,
+      mask_image: this.maskImage,
+      grow_mask_by: this.growMaskBy,
+      upscale_enabled: this.upscaleEnabled,
+      upscale_method: this.upscaleMethod,
+      upscale_model: this.upscaleModel,
+      upscale_scale: this.upscaleScale,
+      upscale_denoise: this.upscaleDenoise,
+      upscale_steps: this.upscaleSteps,
+      upscale_tile_size: this.upscaleTileSize,
+      upscale_tiling: this.upscaleTiling,
+    };
+  }
+
+  addLora() {
+    this.loras = [
+      ...this.loras,
+      { name: "", strength_model: 1.0, strength_clip: 1.0 },
+    ];
+  }
+
+  removeLora(index: number) {
+    this.loras = this.loras.filter((_, i) => i !== index);
+  }
+}
+
+export const generation = new GenerationStore();
