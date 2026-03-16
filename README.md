@@ -113,6 +113,7 @@ MooshieUI
 │   └── src/
 │       ├── commands/       # Tauri command handlers
 │       ├── comfyui/        # ComfyUI API client, WebSocket, process management
+│       ├── setup.rs        # One-click installer (uv, Python, ComfyUI, PyTorch)
 │       └── templates/      # Workflow builders (txt2img, img2img, inpainting, upscale)
 └── comfyui-nodes/          # Custom ComfyUI nodes (install into comfy_extras/)
     └── nodes_tiled_diffusion.py
@@ -129,14 +130,34 @@ MooshieUI
 
 ## 📦 Installation
 
-### Prerequisites
+### One-Click Setup (Recommended)
 
+MooshieUI handles everything automatically on first launch:
+
+1. **Download** a release from [Releases](https://github.com/Mooshieblob1/MooshieUI/releases) (or build from source)
+2. **Run the app** — the setup wizard will:
+   - Download [uv](https://github.com/astral-sh/uv) (fast Python package manager)
+   - Install Python 3.11 (isolated, won't affect your system)
+   - Download ComfyUI (latest from GitHub)
+   - Create a virtual environment
+   - Auto-detect your GPU (NVIDIA CUDA / AMD ROCm / Apple Metal / CPU)
+   - Install PyTorch with the right acceleration backend
+   - Install all ComfyUI dependencies
+   - Install MooshieUI's custom nodes
+3. **Start generating** — ComfyUI launches automatically
+
+**No Python, no pip, no manual configuration required.** Everything is self-contained in the app's data directory.
+
+> **Disk space:** ~5–10 GB (Python + PyTorch + ComfyUI). Installation takes 5–15 minutes depending on your internet connection.
+
+### Development Setup
+
+If you want to build from source:
+
+**Prerequisites:**
 - [Node.js](https://nodejs.org/) 18+
 - [Rust](https://rustup.rs/) (latest stable)
-- [ComfyUI](https://github.com/comfyanonymous/ComfyUI) installed and running
 - Tauri prerequisites — see [Tauri v2 docs](https://v2.tauri.app/start/prerequisites/)
-
-### Setup
 
 ```bash
 # Clone the repository
@@ -146,16 +167,6 @@ cd MooshieUI
 # Install frontend dependencies
 npm install
 
-# Install the custom ComfyUI nodes (required)
-chmod +x comfyui-nodes/install.sh
-./comfyui-nodes/install.sh /path/to/ComfyUI
-
-# Restart ComfyUI to load the new nodes
-```
-
-### Development
-
-```bash
 # Run in development mode (hot-reload)
 npm run tauri dev
 
@@ -163,16 +174,7 @@ npm run tauri dev
 npm run tauri build
 ```
 
-### Configuration
-
-On first launch, configure the ComfyUI connection in `src-tauri/src/config.rs`:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `server_url` | `http://127.0.0.1:8188` | ComfyUI API URL |
-| `server_port` | `8188` | ComfyUI port |
-| `comfyui_path` | *(empty)* | Path to ComfyUI installation (for auto-launch & model downloads) |
-| `venv_path` | *(empty)* | Python venv path (for auto-launch mode) |
+The app will run the one-click setup wizard on first launch — no manual ComfyUI installation needed.
 
 ---
 

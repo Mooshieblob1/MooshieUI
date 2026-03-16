@@ -11,6 +11,9 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<(), AppError> {
         return Ok(());
     }
 
+    #[cfg(target_os = "windows")]
+    let python_path = format!("{}/Scripts/python.exe", config.venv_path);
+    #[cfg(not(target_os = "windows"))]
     let python_path = format!("{}/bin/python", config.venv_path);
     let main_path = format!("{}/main.py", config.comfyui_path);
 

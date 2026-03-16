@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import { connection } from "./lib/stores/connection.svelte.js";
   import { progress } from "./lib/stores/progress.svelte.js";
@@ -10,6 +12,7 @@
   import { generation } from "./lib/stores/generation.svelte.js";
   import type { OutputImage } from "./lib/types/index.js";
 
+  let setupComplete = $state<boolean | null>(null); // null = loading
   let currentPage = $state<"generate" | "gallery" | "queue" | "settings">(
     "generate"
   );
@@ -55,6 +58,31 @@
   }
 
   onMount(async () => {
+    // Check if first-run setup is needed
+    try {
+      setupComplete = await invoke<boolean>("check_setup");
+    } catch {
+      setupComplete = false;
+    }
+
+    if (!setupComplete) return;
+
+    // Setup already done — initialize the main app
+    await initApp();
+  });
+
+  async function onSetupDone() {
+    setupComplete = true;
+    // Start ComfyUI server then initialize
+    try {
+      await invoke("start_comfyui");
+    } catch (e) {
+      console.error("Failed to start ComfyUI:", e);
+    }
+    await initApp();
+  }
+
+  async function initApp() {
     // Load persisted settings
     await generation.loadSettings();
 
@@ -118,13 +146,19 @@
     } catch (e) {
       console.error("Initial model refresh failed:", e);
     }
-
-    return () => {
-      unlisteners.forEach((fn) => fn());
-    };
-  });
+  }
 </script>
 
+{#if setupComplete === null}
+  <!-- Loading state -->
+  <div class="flex items-center justify-center h-full bg-neutral-950">
+    <div
+      class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"
+    ></div>
+  </div>
+{:else if !setupComplete}
+  <SetupWizard onSetupComplete={onSetupDone} />
+{:else}
 <div class="flex h-full bg-neutral-950 text-neutral-100">
   <!-- Sidebar -->
   <nav
@@ -294,6 +328,7 @@
     {/if}
   </main>
 </div>
+{/if}
 
 <!-- Lightbox overlay -->
 {#if gallery.lightboxOpen && gallery.selectedImage}

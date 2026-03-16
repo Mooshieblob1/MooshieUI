@@ -2,15 +2,16 @@ pub mod commands;
 pub mod comfyui;
 pub mod config;
 pub mod error;
+pub mod setup;
 pub mod state;
 pub mod templates;
 
-use config::AppConfig;
+use config::load_persisted_config;
 use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let config = AppConfig::default();
+    let config = load_persisted_config();
     let app_state = AppState::new(config);
 
     tauri::Builder::default()
@@ -37,6 +38,9 @@ pub fn run() {
             commands::websocket::connect_ws,
             commands::websocket::disconnect_ws,
             commands::workflow::generate,
+            setup::check_setup,
+            setup::detect_gpu,
+            setup::run_setup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,0 +1,489 @@
+use std::path::{Path, PathBuf};
+
+use tauri::{AppHandle, Emitter, Manager};
+
+use crate::config;
+use crate::state::AppState;
+
+#[derive(Clone, serde::Serialize)]
+struct SetupProgress {
+    step: String,
+    message: String,
+    percent: u32,
+}
+
+fn emit(app: &AppHandle, step: &str, msg: &str, pct: u32) {
+    app.emit(
+        "setup:progress",
+        SetupProgress {
+            step: step.into(),
+            message: msg.into(),
+            percent: pct,
+        },
+    )
+    .ok();
+}
+
+fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))
+}
+
+fn uv_bin(base: &Path) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        base.join("bin").join("uv.exe")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        base.join("bin").join("uv")
+    }
+}
+
+fn venv_python(base: &Path) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        base.join("venv").join("Scripts").join("python.exe")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        base.join("venv").join("bin").join("python")
+    }
+}
+
+fn uv_download_url() -> &'static str {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-unknown-linux-gnu.tar.gz"
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        "https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-unknown-linux-gnu.tar.gz"
+    }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-apple-darwin.tar.gz"
+    }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        "https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz"
+    }
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
+    }
+}
+
+async fn download_file(client: &reqwest::Client, url: &str, dest: &Path) -> Result<(), String> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Download failed: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("Download returned status {}", resp.status()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read download: {}", e))?;
+    std::fs::write(dest, &bytes).map_err(|e| format!("Failed to save file: {}", e))?;
+    Ok(())
+}
+
+// ─── Step helpers ───────────────────────────────────────────────────────────
+
+async fn step_download_uv(base: &Path, client: &reqwest::Client) -> Result<(), String> {
+    let uv = uv_bin(base);
+    if uv.exists() {
+        return Ok(());
+    }
+    let bin_dir = base.join("bin");
+    std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
+
+    let url = uv_download_url();
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let archive = base.join("_uv.tar.gz");
+        download_file(client, url, &archive).await?;
+
+        let status = tokio::process::Command::new("tar")
+            .args([
+                "xzf",
+                archive.to_str().unwrap(),
+                "--strip-components=1",
+                "-C",
+                bin_dir.to_str().unwrap(),
+            ])
+            .status()
+            .await
+            .map_err(|e| format!("tar failed: {}", e))?;
+        if !status.success() {
+            return Err("Failed to extract uv archive".into());
+        }
+        // Ensure executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&uv, std::fs::Permissions::from_mode(0o755)).ok();
+        }
+        std::fs::remove_file(&archive).ok();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let archive = base.join("_uv.zip");
+        let temp_dir = base.join("_uv_extract");
+        download_file(client, url, &archive).await?;
+
+        let ps_cmd = format!(
+            "Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
+             Get-ChildItem '{}\\*\\uv.exe' | Move-Item -Destination '{}\\uv.exe' -Force; \
+             Get-ChildItem '{}\\*\\uvx.exe' -ErrorAction SilentlyContinue | Move-Item -Destination '{}\\uvx.exe' -Force",
+            archive.display(),
+            temp_dir.display(),
+            temp_dir.display(),
+            bin_dir.display(),
+            temp_dir.display(),
+            bin_dir.display(),
+        );
+        let status = tokio::process::Command::new("powershell")
+            .args(["-Command", &ps_cmd])
+            .status()
+            .await
+            .map_err(|e| format!("PowerShell failed: {}", e))?;
+        if !status.success() {
+            return Err("Failed to extract uv archive".into());
+        }
+        std::fs::remove_dir_all(&temp_dir).ok();
+        std::fs::remove_file(&archive).ok();
+    }
+
+    Ok(())
+}
+
+async fn step_install_python(base: &Path) -> Result<(), String> {
+    let uv = uv_bin(base);
+    let python_dir = base.join("python");
+    std::fs::create_dir_all(&python_dir).map_err(|e| e.to_string())?;
+
+    let status = tokio::process::Command::new(uv.to_str().unwrap())
+        .env("UV_PYTHON_INSTALL_DIR", &python_dir)
+        .args(["python", "install", "3.11"])
+        .status()
+        .await
+        .map_err(|e| format!("Failed to run uv: {}", e))?;
+    if !status.success() {
+        return Err("Failed to install Python 3.11".into());
+    }
+    Ok(())
+}
+
+async fn step_download_comfyui(base: &Path, client: &reqwest::Client) -> Result<(), String> {
+    let comfyui_dir = base.join("comfyui");
+    if comfyui_dir.join("main.py").exists() {
+        return Ok(());
+    }
+
+    // Try git clone first (most systems have git)
+    if let Ok(status) = tokio::process::Command::new("git")
+        .args([
+            "clone",
+            "--depth=1",
+            "https://github.com/comfyanonymous/ComfyUI.git",
+            comfyui_dir.to_str().unwrap(),
+        ])
+        .status()
+        .await
+    {
+        if status.success() {
+            return Ok(());
+        }
+    }
+
+    // Fallback: download zip
+    let zip_url = "https://github.com/comfyanonymous/ComfyUI/archive/refs/heads/master.zip";
+    let zip_path = base.join("_comfyui.zip");
+    download_file(client, zip_url, &zip_path).await?;
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let status = tokio::process::Command::new("unzip")
+            .args(["-q", zip_path.to_str().unwrap(), "-d", base.to_str().unwrap()])
+            .status()
+            .await
+            .map_err(|e| format!("unzip failed: {}", e))?;
+        if !status.success() {
+            return Err("Failed to extract ComfyUI".into());
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let ps = format!(
+            "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+            zip_path.display(),
+            base.display()
+        );
+        let status = tokio::process::Command::new("powershell")
+            .args(["-Command", &ps])
+            .status()
+            .await
+            .map_err(|e| format!("PowerShell failed: {}", e))?;
+        if !status.success() {
+            return Err("Failed to extract ComfyUI".into());
+        }
+    }
+
+    std::fs::rename(base.join("ComfyUI-master"), &comfyui_dir)
+        .map_err(|e| format!("Failed to rename ComfyUI dir: {}", e))?;
+    std::fs::remove_file(&zip_path).ok();
+    Ok(())
+}
+
+async fn step_create_venv(base: &Path) -> Result<(), String> {
+    let uv = uv_bin(base);
+    let venv_dir = base.join("venv");
+    let python_dir = base.join("python");
+
+    let status = tokio::process::Command::new(uv.to_str().unwrap())
+        .env("UV_PYTHON_INSTALL_DIR", &python_dir)
+        .args(["venv", venv_dir.to_str().unwrap(), "--python", "3.11"])
+        .status()
+        .await
+        .map_err(|e| format!("Failed to create venv: {}", e))?;
+    if !status.success() {
+        return Err("Failed to create virtual environment".into());
+    }
+    Ok(())
+}
+
+async fn detect_gpu_type() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        return "mps".to_string();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Ok(output) = tokio::process::Command::new("nvidia-smi").output().await {
+            if output.status.success() {
+                return "nvidia".to_string();
+            }
+        }
+        if let Ok(output) = tokio::process::Command::new("rocm-smi").output().await {
+            if output.status.success() {
+                return "amd".to_string();
+            }
+        }
+        if Path::new("/opt/rocm").exists() {
+            return "amd".to_string();
+        }
+        "cpu".to_string()
+    }
+}
+
+async fn uv_pip(base: &Path, args: &[&str]) -> Result<(), String> {
+    let uv = uv_bin(base);
+    let python = venv_python(base);
+    let python_dir = base.join("python");
+
+    let mut cmd_args: Vec<&str> = vec!["pip", "install", "--python", python.to_str().unwrap()];
+    cmd_args.extend_from_slice(args);
+
+    let status = tokio::process::Command::new(uv.to_str().unwrap())
+        .env("UV_PYTHON_INSTALL_DIR", &python_dir)
+        .args(&cmd_args)
+        .status()
+        .await
+        .map_err(|e| format!("pip install failed: {}", e))?;
+    if !status.success() {
+        return Err(format!("pip install failed for: {}", args.join(" ")));
+    }
+    Ok(())
+}
+
+async fn step_install_pytorch(base: &Path, gpu: &str) -> Result<(), String> {
+    match gpu {
+        "nvidia" => {
+            uv_pip(
+                base,
+                &[
+                    "torch",
+                    "torchvision",
+                    "torchaudio",
+                    "--index-url",
+                    "https://download.pytorch.org/whl/cu124",
+                ],
+            )
+            .await
+        }
+        "amd" => {
+            uv_pip(
+                base,
+                &[
+                    "torch",
+                    "torchvision",
+                    "torchaudio",
+                    "--index-url",
+                    "https://download.pytorch.org/whl/rocm6.2",
+                ],
+            )
+            .await
+        }
+        "mps" => uv_pip(base, &["torch", "torchvision", "torchaudio"]).await,
+        _ => {
+            uv_pip(
+                base,
+                &[
+                    "torch",
+                    "torchvision",
+                    "torchaudio",
+                    "--index-url",
+                    "https://download.pytorch.org/whl/cpu",
+                ],
+            )
+            .await
+        }
+    }
+}
+
+async fn step_install_deps(base: &Path) -> Result<(), String> {
+    let requirements = base.join("comfyui").join("requirements.txt");
+    let uv = uv_bin(base);
+    let python = venv_python(base);
+    let python_dir = base.join("python");
+
+    let status = tokio::process::Command::new(uv.to_str().unwrap())
+        .env("UV_PYTHON_INSTALL_DIR", &python_dir)
+        .args([
+            "pip",
+            "install",
+            "--python",
+            python.to_str().unwrap(),
+            "-r",
+            requirements.to_str().unwrap(),
+        ])
+        .status()
+        .await
+        .map_err(|e| format!("Failed to install deps: {}", e))?;
+    if !status.success() {
+        return Err("Failed to install ComfyUI dependencies".into());
+    }
+    Ok(())
+}
+
+fn step_install_custom_nodes(base: &Path) -> Result<(), String> {
+    let comfyui = base.join("comfyui");
+    let extras = comfyui.join("comfy_extras");
+    let blueprints = comfyui.join("blueprints");
+    std::fs::create_dir_all(&extras).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&blueprints).map_err(|e| e.to_string())?;
+
+    // Embedded at compile time from comfyui-nodes/ directory
+    let node_py = include_str!("../../comfyui-nodes/nodes_tiled_diffusion.py");
+    let blueprint = include_str!("../../comfyui-nodes/Image Tiled Upscale (img2img).json");
+
+    std::fs::write(extras.join("nodes_tiled_diffusion.py"), node_py)
+        .map_err(|e| format!("Failed to write node: {}", e))?;
+    std::fs::write(
+        blueprints.join("Image Tiled Upscale (img2img).json"),
+        blueprint,
+    )
+    .map_err(|e| format!("Failed to write blueprint: {}", e))?;
+
+    // Register in nodes.py
+    let nodes_py = comfyui.join("nodes.py");
+    let content =
+        std::fs::read_to_string(&nodes_py).map_err(|e| format!("Failed to read nodes.py: {}", e))?;
+    if !content.contains("nodes_tiled_diffusion.py") {
+        let patched = content.replace(
+            "\"nodes_upscale_model.py\",",
+            "\"nodes_upscale_model.py\",\n        \"nodes_tiled_diffusion.py\",",
+        );
+        std::fs::write(&nodes_py, patched)
+            .map_err(|e| format!("Failed to patch nodes.py: {}", e))?;
+    }
+    Ok(())
+}
+
+// ─── Tauri commands ─────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn check_setup(app: AppHandle) -> Result<bool, String> {
+    let dir = data_dir(&app)?;
+    Ok(dir.join(".setup_complete").exists())
+}
+
+#[tauri::command]
+pub async fn detect_gpu() -> Result<String, String> {
+    Ok(detect_gpu_type().await)
+}
+
+#[tauri::command]
+pub async fn run_setup(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let base = data_dir(&app)?;
+    std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
+
+    // 1. Download uv
+    emit(&app, "uv", "Downloading uv package manager...", 5);
+    step_download_uv(&base, &state.http_client).await?;
+
+    // 2. Install Python
+    emit(
+        &app,
+        "python",
+        "Installing Python 3.11 (this may take a minute)...",
+        15,
+    );
+    step_install_python(&base).await?;
+
+    // 3. Download ComfyUI
+    emit(&app, "comfyui", "Downloading ComfyUI...", 30);
+    step_download_comfyui(&base, &state.http_client).await?;
+
+    // 4. Create venv
+    emit(&app, "venv", "Creating virtual environment...", 40);
+    step_create_venv(&base).await?;
+
+    // 5. Detect GPU + install PyTorch
+    let gpu = detect_gpu_type().await;
+    let label = match gpu.as_str() {
+        "nvidia" => "NVIDIA CUDA",
+        "amd" => "AMD ROCm",
+        "mps" => "Apple Metal",
+        _ => "CPU",
+    };
+    emit(
+        &app,
+        "pytorch",
+        &format!("Installing PyTorch ({})... This may take several minutes.", label),
+        50,
+    );
+    step_install_pytorch(&base, &gpu).await?;
+
+    // 6. Install ComfyUI deps
+    emit(&app, "deps", "Installing ComfyUI dependencies...", 75);
+    step_install_deps(&base).await?;
+
+    // 7. Custom nodes
+    emit(&app, "nodes", "Installing MooshieUI custom nodes...", 90);
+    step_install_custom_nodes(&base)?;
+
+    // 8. Persist config
+    emit(&app, "config", "Saving configuration...", 95);
+    {
+        let mut cfg = state.config.write().await;
+        cfg.comfyui_path = base.join("comfyui").to_string_lossy().to_string();
+        cfg.venv_path = base.join("venv").to_string_lossy().to_string();
+        cfg.setup_complete = true;
+        config::save_config(&cfg)?;
+    }
+
+    std::fs::write(base.join(".setup_complete"), "1").map_err(|e| e.to_string())?;
+    emit(&app, "done", "Setup complete! Starting ComfyUI...", 100);
+    Ok(())
+}
