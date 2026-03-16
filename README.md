@@ -1,5 +1,7 @@
 # MooshieUI
 
+> ⚠️ **Work in Progress** — MooshieUI is under active development. Some features are incomplete or may have rough edges. Contributions and feedback are welcome!
+
 A modern, beginner-friendly desktop frontend for [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Built with **Svelte 5** + **Tauri** (Rust), MooshieUI hides ComfyUI's node-graph complexity behind a clean, intuitive interface — no workflow editing required.
 
 ![License](https://img.shields.io/github/license/Mooshieblob1/MooshieUI)
@@ -8,13 +10,15 @@ A modern, beginner-friendly desktop frontend for [ComfyUI](https://github.com/co
 
 ## ✨ Features
 
+> Features marked with ✅ are implemented. Features marked with 🔧 work but need polish.
+
 ### 🎨 Three Generation Modes
 
-| Mode | Description |
-|------|-------------|
-| **Text to Image** | Generate images from scratch using positive & negative prompts |
-| **Image to Image** | Transform existing images with adjustable denoise strength |
-| **Inpainting** | Selectively edit parts of images using masks with grow-mask control |
+| Mode | Status | Description |
+|------|--------|-------------|
+| **Text to Image** | ✅ | Generate images from scratch using positive & negative prompts |
+| **Image to Image** | 🔧 | Transform existing images with adjustable denoise strength *(image upload coming soon)* |
+| **Inpainting** | 🔧 | Selectively edit parts of images using masks *(canvas editor coming soon)* |
 
 Switch between modes with a single click — all settings carry over.
 
@@ -74,6 +78,8 @@ Hover over any generated image to reveal an **Upscale** button — instantly ups
 - **Thumbnail Grid** — All generated images in a responsive grid (3–5 columns)
 - **Lightbox** — Click any image to view full-size with a close button
 - **Session History** — All outputs from the current session are saved
+
+> *Note: Gallery images are session-only for now. Persistent gallery with disk storage is planned.*
 
 ### 📊 Real-Time Progress
 
@@ -202,6 +208,38 @@ Both methods:
 - Automatically detect the model's latent downscale ratio
 - Support ControlNet (proportional cropping/shifting per tile)
 - Handle inpainting conditioning (c_concat)
+
+---
+
+## 🚧 Roadmap
+
+Features planned or in progress:
+
+### Coming Soon
+- [ ] **Image upload** for img2img and inpainting modes (currently placeholder)
+- [ ] **Inpainting canvas** — paint masks directly on images in the UI
+- [ ] **Queue management page** — view, reorder, and cancel queued generations
+- [ ] **Settings page** — configure ComfyUI connection, paths, defaults, and theme
+- [ ] **Gallery upscale button** — upscale any image from the gallery grid or lightbox
+- [ ] **Windows & macOS builds** — cross-platform CI releases
+
+### Planned
+- [ ] **Prompt history & favorites** — recall and reuse previous prompts
+- [ ] **Model manager** — browse, download, and organize models from within the app
+- [ ] **ControlNet support** — depth, canny, pose, and other control methods
+- [ ] **Image metadata** — embed and read generation parameters in PNG metadata
+- [ ] **Drag & drop** — drop images into img2img/inpainting from desktop or gallery
+- [ ] **Batch queue** — queue multiple generations with different settings
+- [ ] **SDXL / Flux / COSMOS optimized presets** — one-click model-specific defaults
+- [ ] **Theme customization** — light mode, accent colors, custom themes
+- [ ] **Auto-update** — check for and apply MooshieUI updates in-app
+- [ ] **Localization** — multi-language support
+
+### Stretch Goals
+- [ ] **Video generation** — AnimateDiff / COSMOS video workflows
+- [ ] **Training UI** — LoRA training from within the app
+- [ ] **Plugin system** — extend MooshieUI with custom panels and features
+- [ ] **Cloud rendering** — option to offload generation to remote GPUs
 
 ---
 
