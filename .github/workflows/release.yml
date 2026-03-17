@@ -40,13 +40,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
             libssl-dev \
             libgtk-3-dev \
-            libsoup-3.0-dev \
-            javascriptcoregtk-4.1
+            libsoup-3.0-dev
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -90,6 +90,7 @@ jobs:
             ### What's included
             - Beginner-friendly AI image generation (txt2img, img2img, inpainting)
             - Built-in upscaling with MultiDiffusion tiled diffusion
+            - Anima Preview 2 support with split model loading
             - Auto GPU detection (NVIDIA CUDA / AMD ROCm / Apple Metal / CPU)
             - Zero manual setup required
           releaseDraft: true

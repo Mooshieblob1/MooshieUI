@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicerlab/files/main/tauri/tauri.conf.json.schema",
-  "productName": "ComfyUI Desktop",
+  "productName": "MooshieUI",
   "version": "0.1.0",
-  "identifier": "com.comfyui.desktop",
+  "identifier": "com.mooshieui.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "ComfyUI Desktop",
+        "title": "MooshieUI",
         "width": 1280,
         "height": 800,
         "minWidth": 900,
@@ -29,6 +29,16 @@
     "targets": "all",
     "icon": [
       "icons/icon.png"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "frameworks": []
+    },
+    "windows": {
+      "allowDowngrades": true
+    },
+    "category": "Graphics",
+    "shortDescription": "Beginner-friendly AI image generation frontend for ComfyUI",
+    "longDescription": "MooshieUI is a modern desktop frontend that hides ComfyUI's node-graph complexity behind a clean, intuitive interface. Features text-to-image, image-to-image, inpainting, built-in upscaling, and one-click setup."
   }
 }

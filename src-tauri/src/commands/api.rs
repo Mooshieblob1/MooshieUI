@@ -174,7 +174,6 @@ pub async fn delete_gallery_image(filename: String) -> Result<(), AppError> {
 
 #[tauri::command]
 pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> {
-    use std::io::Write;
     use std::process::{Command, Stdio};
 
     let path = std::path::Path::new(&file_path);
@@ -182,35 +181,72 @@ pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> 
         return Err(AppError::Other(format!("File not found: {}", file_path)));
     }
 
-    // Copy as file reference (text/uri-list) so apps receive it like a real file copy.
-    // This preserves the original format and metadata.
-    let uri = format!("file://{}\n", path.canonicalize()
-        .map_err(|e| AppError::Other(e.to_string()))?
-        .display());
+    let canonical = path.canonicalize()
+        .map_err(|e| AppError::Other(e.to_string()))?;
 
-    // Try xclip (X11)
-    let result = Command::new("xclip")
-        .args(["-selection", "clipboard", "-t", "text/uri-list"])
-        .stdin(Stdio::piped())
-        .spawn();
+    #[cfg(target_os = "linux")]
+    {
+        use std::io::Write;
+        let uri = format!("file://{}\n", canonical.display());
 
-    let mut child = match result {
-        Ok(child) => child,
-        Err(_) => {
-            // Try wl-copy (Wayland)
-            Command::new("wl-copy")
-                .args(["--type", "text/uri-list"])
-                .stdin(Stdio::piped())
-                .spawn()
-                .map_err(|e| AppError::Other(format!(
-                    "No clipboard tool found (tried xclip, wl-copy): {}", e
-                )))?
+        // Try xclip (X11), fall back to wl-copy (Wayland)
+        let result = Command::new("xclip")
+            .args(["-selection", "clipboard", "-t", "text/uri-list"])
+            .stdin(Stdio::piped())
+            .spawn();
+
+        let mut child = match result {
+            Ok(child) => child,
+            Err(_) => {
+                Command::new("wl-copy")
+                    .args(["--type", "text/uri-list"])
+                    .stdin(Stdio::piped())
+                    .spawn()
+                    .map_err(|e| AppError::Other(format!(
+                        "No clipboard tool found (tried xclip, wl-copy): {}", e
+                    )))?
+            }
+        };
+
+        if let Some(ref mut stdin) = child.stdin {
+            stdin.write_all(uri.as_bytes())?;
         }
-    };
-
-    if let Some(ref mut stdin) = child.stdin {
-        stdin.write_all(uri.as_bytes())?;
+        child.wait().map_err(|e| AppError::Other(format!("Clipboard tool failed: {}", e)))?;
     }
-    child.wait().map_err(|e| AppError::Other(format!("Clipboard tool failed: {}", e)))?;
+
+    #[cfg(target_os = "macos")]
+    {
+        // Use osascript to copy file to clipboard (preserves format + metadata)
+        let script = format!(
+            "set the clipboard to (POSIX file \"{}\")",
+            canonical.display()
+        );
+        let status = Command::new("osascript")
+            .args(["-e", &script])
+            .status()
+            .map_err(|e| AppError::Other(format!("osascript failed: {}", e)))?;
+        if !status.success() {
+            return Err(AppError::Other("Failed to copy file to clipboard via osascript".into()));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // Use PowerShell Set-Clipboard with file list
+        let ps_cmd = format!(
+            "Set-Clipboard -Path '{}'",
+            canonical.display()
+        );
+        let status = Command::new("powershell")
+            .args(["-NoProfile", "-Command", &ps_cmd])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .status()
+            .map_err(|e| AppError::Other(format!("PowerShell failed: {}", e)))?;
+        if !status.success() {
+            return Err(AppError::Other("Failed to copy file to clipboard via PowerShell".into()));
+        }
+    }
+
     Ok(())
 }

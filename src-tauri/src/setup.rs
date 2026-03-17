@@ -279,8 +279,24 @@ async fn detect_gpu_type() -> String {
                 return "amd".to_string();
             }
         }
+        #[cfg(target_os = "linux")]
         if Path::new("/opt/rocm").exists() {
             return "amd".to_string();
+        }
+        // Windows: check for AMD GPU via WMI (rocm-smi won't exist on Windows)
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(output) = tokio::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command",
+                    "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"])
+                .output()
+                .await
+            {
+                let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
+                if text.contains("radeon") || text.contains("amd") {
+                    return "amd".to_string();
+                }
+            }
         }
         "cpu".to_string()
     }
@@ -468,7 +484,7 @@ async fn detect_vram_mb() -> u64 {
         }
     }
 
-    // AMD: sysfs exposes VRAM in bytes
+    // AMD: sysfs exposes VRAM in bytes (Linux only)
     #[cfg(target_os = "linux")]
     {
         if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
@@ -485,6 +501,59 @@ async fn detect_vram_mb() -> u64 {
             }
             if max_vram > 0 {
                 return max_vram;
+            }
+        }
+    }
+
+    // Windows: query GPU VRAM via WMI (covers AMD, Intel, etc.)
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(output) = tokio::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command",
+                "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty AdapterRAM"])
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                if let Some(max) = text.lines()
+                    .filter_map(|l| l.trim().parse::<u64>().ok())
+                    .max()
+                {
+                    let mb = max / (1024 * 1024);
+                    if mb > 0 {
+                        return mb;
+                    }
+                }
+            }
+        }
+    }
+
+    // macOS: use system_profiler for GPU VRAM
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = tokio::process::Command::new("system_profiler")
+            .args(["SPDisplaysDataType"])
+            .output()
+            .await
+        {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                for line in text.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("VRAM") || trimmed.contains("Memory:") {
+                        // Parse values like "VRAM (Total): 8 GB" or "Memory: 16 GB"
+                        for word in trimmed.split_whitespace() {
+                            if let Ok(val) = word.parse::<u64>() {
+                                if trimmed.contains("GB") {
+                                    return val * 1024;
+                                } else if trimmed.contains("MB") {
+                                    return val;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
