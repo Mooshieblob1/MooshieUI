@@ -6,6 +6,7 @@ class ProgressStore {
   currentNode = $state<string | null>(null);
   previewImage = $state<string | null>(null);
   lastOutputImage = $state<string | null>(null);
+  wasUpscaled = $state(false);
 
   get percentage() {
     return this.totalSteps > 0
@@ -30,12 +31,13 @@ class ProgressStore {
     this.previewImage = null;
   }
 
-  startGeneration(promptId: string) {
+  startGeneration(promptId: string, upscaled: boolean = false) {
     this.isGenerating = true;
     this.currentPromptId = promptId;
     this.currentStep = 0;
     this.totalSteps = 0;
     this.previewImage = null;
+    this.wasUpscaled = upscaled;
   }
 }
 

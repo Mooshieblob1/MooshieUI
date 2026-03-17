@@ -85,3 +85,34 @@ export async function downloadModel(
 ): Promise<void> {
   return invoke("download_model", { url, category, filename });
 }
+
+export async function saveImageFile(
+  imageBytes: number[],
+  path: string
+): Promise<void> {
+  return invoke("save_image_file", { imageBytes, path });
+}
+
+export async function saveToGallery(
+  filename: string,
+  subfolder: string,
+  promptId: string
+): Promise<string> {
+  return invoke("save_to_gallery", { filename, subfolder, promptId });
+}
+
+export async function listGalleryImages(): Promise<string[]> {
+  return invoke("list_gallery_images");
+}
+
+export async function loadGalleryImage(filename: string): Promise<number[]> {
+  return invoke("load_gallery_image", { filename });
+}
+
+export async function deleteGalleryImage(filename: string): Promise<void> {
+  return invoke("delete_gallery_image", { filename });
+}
+
+export async function copyImageToClipboard(imageBytes: number[]): Promise<void> {
+  return invoke("copy_image_to_clipboard", { imageBytes });
+}

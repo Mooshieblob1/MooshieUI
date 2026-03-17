@@ -19,6 +19,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             commands::server::start_comfyui,
@@ -35,6 +36,12 @@ pub fn run() {
             commands::api::get_output_image,
             commands::api::get_client_id,
             commands::api::download_model,
+            commands::api::save_image_file,
+            commands::api::save_to_gallery,
+            commands::api::list_gallery_images,
+            commands::api::load_gallery_image,
+            commands::api::delete_gallery_image,
+            commands::api::copy_image_to_clipboard,
             commands::websocket::connect_ws,
             commands::websocket::disconnect_ws,
             commands::workflow::generate,

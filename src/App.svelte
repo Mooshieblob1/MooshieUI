@@ -8,7 +8,7 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { connectWs, getHistory, getOutputImage } from "./lib/utils/api.js";
+  import { getHistory, getOutputImage } from "./lib/utils/api.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import type { OutputImage } from "./lib/types/index.js";
 
@@ -16,6 +16,7 @@
   let currentPage = $state<"generate" | "gallery" | "queue" | "settings">(
     "generate"
   );
+  let startupStatus = $state<string>("");
 
   async function fetchOutputImages(promptId: string) {
     try {
@@ -51,6 +52,8 @@
         gallery.addImages(newImages);
         // Show the first output image in the preview area
         progress.lastOutputImage = newImages[0].url;
+        // Persist to disk gallery
+        gallery.persistImages(newImages);
       }
     } catch (e) {
       console.error("Failed to fetch output images:", e);
@@ -73,12 +76,6 @@
 
   async function onSetupDone() {
     setupComplete = true;
-    // Start ComfyUI server then initialize
-    try {
-      await invoke("start_comfyui");
-    } catch (e) {
-      console.error("Failed to start ComfyUI:", e);
-    }
     await initApp();
   }
 
@@ -86,39 +83,76 @@
     // Load persisted settings
     await generation.loadSettings();
 
-    // Set up event listeners BEFORE connecting so we don't miss events
-    const unlisteners = await Promise.all([
+    // Set up event listeners BEFORE starting so we don't miss events
+    await Promise.all([
       listen("comfyui:connection", (event: any) => {
         console.log("Connection event:", event.payload);
         connection.connected = event.payload.connected;
         if (event.payload.connected) {
-          models.refresh();
+          startupStatus = "";
+          models.refresh().then(() => {
+            generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
+          });
         }
+      }),
+      listen("comfyui:server_ready", async () => {
+        console.log("Server ready event received");
+        startupStatus = "";
+        // Load models now that server is up
+        try {
+          await models.refresh();
+          console.log("Models loaded:", models.checkpoints);
+          if (models.checkpoints.length > 0) {
+            connection.connected = true;
+            generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
+          }
+        } catch (e) {
+          console.error("Model refresh failed after server ready:", e);
+        }
+      }),
+      listen("comfyui:server_error", (event: any) => {
+        console.error("Server error:", event.payload);
+        startupStatus = `Failed to start: ${event.payload?.error || "unknown error"}`;
       }),
       listen("comfyui:progress", (event: any) => {
         const data = event.payload;
+        if (!progress.isGenerating) return;
         progress.currentStep = data.value;
         progress.totalSteps = data.max;
       }),
       listen("comfyui:preview", (event: any) => {
         const data = event.payload;
+        if (!progress.isGenerating) return;
         progress.previewImage = `data:image/${data.format};base64,${data.image}`;
       }),
       listen("comfyui:executing", (event: any) => {
         const data = event.payload;
         console.log("Executing event:", data);
+        // Ignore events not for our current generation
+        if (data.prompt_id && progress.currentPromptId && data.prompt_id !== progress.currentPromptId) {
+          return;
+        }
         if (data.node === null) {
+          // Only handle completion if we're actually generating
+          if (!progress.isGenerating) return;
           const promptId = progress.currentPromptId;
           progress.reset();
           if (promptId) {
             fetchOutputImages(promptId);
           }
         } else {
-          progress.currentNode = data.node;
+          if (progress.isGenerating) {
+            progress.currentNode = data.node;
+          }
         }
       }),
       listen("comfyui:execution_error", (event: any) => {
         console.error("Execution error:", event.payload);
+        // Only reset if this is our prompt
+        const data = event.payload;
+        if (data.prompt_id && progress.currentPromptId && data.prompt_id !== progress.currentPromptId) {
+          return;
+        }
         progress.reset();
       }),
       listen("comfyui:execution_success", (_event: any) => {
@@ -126,28 +160,24 @@
       }),
     ]);
 
-    // Connect WebSocket (this emits comfyui:connection on success)
+    // Start ComfyUI server — returns immediately, background task handles readiness
+    // The backend will auto-connect WebSocket and emit comfyui:server_ready when done
     try {
-      console.log("Connecting WebSocket...");
-      await connectWs();
-      console.log("WebSocket connect_ws returned successfully");
-    } catch (e) {
-      console.error("Failed to connect WebSocket:", e);
-    }
-
-    // Also try loading models directly in case the WS event didn't fire
-    try {
-      console.log("Attempting initial model refresh...");
-      await models.refresh();
-      console.log("Models loaded:", models.checkpoints);
-      if (models.checkpoints.length > 0) {
-        connection.connected = true;
-        // Auto-select default checkpoint/VAE on first run
-        generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
+      console.log("Starting ComfyUI...");
+      const result = await invoke<string>("start_comfyui");
+      console.log("start_comfyui returned:", result);
+      if (result === "spawned") {
+        startupStatus = "Starting ComfyUI...";
+      } else if (result === "already_running") {
+        startupStatus = "Connecting...";
       }
     } catch (e) {
-      console.error("Initial model refresh failed:", e);
+      console.error("Failed to start ComfyUI:", e);
+      startupStatus = `Failed to start: ${e}`;
     }
+
+    // Load persisted gallery images from disk (independent of server status)
+    gallery.loadFromDisk();
   }
 </script>
 
@@ -283,18 +313,31 @@
     <div
       class="w-3 h-3 rounded-full mb-2 transition-colors {connection.connected
         ? 'bg-green-500'
-        : 'bg-red-500'}"
-      title={connection.connected ? "Connected" : "Disconnected"}
+        : startupStatus
+          ? 'bg-amber-500 animate-pulse'
+          : 'bg-red-500'}"
+      title={connection.connected ? "Connected" : startupStatus || "Disconnected"}
     ></div>
   </nav>
 
   <!-- Main content -->
-  <main class="flex-1 overflow-hidden">
+  <main class="flex-1 overflow-hidden flex flex-col">
+    {#if startupStatus && !connection.connected}
+      <div class="flex items-center gap-2 px-4 py-2 bg-amber-900/30 border-b border-amber-800/50 text-amber-200 text-sm">
+        <div class="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
+        {startupStatus}
+      </div>
+    {/if}
+    <div class="flex-1 overflow-hidden">
     {#if currentPage === "generate"}
       <GenerationPage />
     {:else if currentPage === "gallery"}
-      <div class="p-6">
-        {#if gallery.images.length === 0}
+      <div class="p-6 h-full overflow-y-auto">
+        {#if gallery.loading}
+          <div class="flex items-center justify-center h-full text-neutral-500">
+            Loading gallery...
+          </div>
+        {:else if gallery.images.length === 0}
           <div
             class="flex items-center justify-center h-full text-neutral-500"
           >
@@ -303,18 +346,44 @@
         {:else}
           <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {#each gallery.images as image}
-              <button
-                class="aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors"
-                onclick={() => gallery.openLightbox(image)}
-              >
-                {#if image.url}
-                  <img
-                    src={image.url}
-                    alt={image.filename}
-                    class="w-full h-full object-cover"
-                  />
-                {/if}
-              </button>
+              <div class="group relative aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors">
+                <button
+                  class="w-full h-full"
+                  onclick={() => gallery.openLightbox(image)}
+                >
+                  {#if image.url}
+                    <img
+                      src={image.url}
+                      alt={image.filename}
+                      class="w-full h-full object-cover"
+                    />
+                  {/if}
+                </button>
+                <!-- Hover actions -->
+                <div class="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    class="w-7 h-7 flex items-center justify-center rounded bg-neutral-900/80 hover:bg-neutral-700 text-neutral-300 text-xs backdrop-blur-sm"
+                    title="Save As"
+                    onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  </button>
+                  <button
+                    class="w-7 h-7 flex items-center justify-center rounded bg-neutral-900/80 hover:bg-neutral-700 text-neutral-300 text-xs backdrop-blur-sm"
+                    title="Copy"
+                    onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                  <button
+                    class="w-7 h-7 flex items-center justify-center rounded bg-red-900/60 hover:bg-red-800 text-neutral-300 text-xs backdrop-blur-sm"
+                    title="Delete"
+                    onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
+              </div>
             {/each}
           </div>
         {/if}
@@ -328,6 +397,7 @@
         Settings (coming soon)
       </div>
     {/if}
+    </div>
   </main>
 </div>
 {/if}
@@ -338,18 +408,52 @@
     class="fixed inset-0 bg-black/90 z-50 flex items-center justify-center"
     role="dialog"
   >
+    <!-- Close button -->
     <button
-      class="absolute top-4 right-4 text-white text-2xl hover:text-neutral-300"
+      class="absolute top-4 right-4 text-white text-2xl hover:text-neutral-300 z-10"
       onclick={() => gallery.closeLightbox()}
     >
       &times;
     </button>
+
+    <!-- Action buttons -->
+    <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-10">
+      <button
+        class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+        onclick={() => gallery.selectedImage && gallery.saveImageAs(gallery.selectedImage)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Save As
+      </button>
+      <button
+        class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+        onclick={() => gallery.selectedImage && gallery.copyToClipboard(gallery.selectedImage)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        Copy
+      </button>
+      <button
+        class="flex items-center gap-2 px-4 py-2 bg-red-900/60 hover:bg-red-800 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+        onclick={() => gallery.selectedImage && gallery.deleteImage(gallery.selectedImage)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        Delete
+      </button>
+    </div>
+
     {#if gallery.selectedImage.url}
       <img
         src={gallery.selectedImage.url}
         alt={gallery.selectedImage.filename}
-        class="max-w-[90vw] max-h-[90vh] object-contain"
+        class="max-w-[90vw] max-h-[85vh] object-contain"
       />
     {/if}
+  </div>
+{/if}
+
+<!-- Toast notification -->
+{#if gallery.toastMessage}
+  <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] px-4 py-2 bg-neutral-800 text-neutral-100 text-sm rounded-lg shadow-lg border border-neutral-700 animate-fade-in">
+    {gallery.toastMessage}
   </div>
 {/if}

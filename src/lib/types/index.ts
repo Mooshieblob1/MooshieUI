@@ -39,6 +39,7 @@ export interface OutputImage {
   type: string;
   prompt_id: string;
   url?: string;
+  gallery_filename?: string;
 }
 
 export interface SamplerInfo {

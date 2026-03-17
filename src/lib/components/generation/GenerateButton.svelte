@@ -21,7 +21,7 @@
     try {
       const params = generation.toParams();
       const promptId = await generate(params);
-      progress.startGeneration(promptId);
+      progress.startGeneration(promptId, params.upscale_enabled);
       generation.saveSettings();
     } catch (e) {
       console.error("Generation failed:", e);
