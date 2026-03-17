@@ -236,7 +236,7 @@ Features planned or in progress:
 - [x] **5D latent tiled diffusion** — MultiDiffusion/SpotDiffusion compatible with Anima (COSMOS) models
 - [x] **Lightbox zoom & dismiss** — scroll-wheel zoom at cursor, Escape/click-outside to close
 - [x] **Clipboard copy as file** — copies gallery images as file references (preserves format & metadata)
-- [ ] **Windows & macOS builds** — cross-platform CI releases *(CI config exists, untested)*
+- [x] **Windows & macOS builds** — cross-platform CI releases (Windows .msi/.exe, macOS .dmg, Linux .deb/.AppImage)
 
 ### Planned
 - [ ] **Prompt history & favorites** — recall and reuse previous prompts
