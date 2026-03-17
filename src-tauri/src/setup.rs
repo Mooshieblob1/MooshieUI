@@ -143,8 +143,8 @@ async fn step_download_uv(base: &Path, client: &reqwest::Client) -> Result<(), S
 
         let ps_cmd = format!(
             "Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
-             Get-ChildItem '{}\\*\\uv.exe' | Move-Item -Destination '{}\\uv.exe' -Force; \
-             Get-ChildItem '{}\\*\\uvx.exe' -ErrorAction SilentlyContinue | Move-Item -Destination '{}\\uvx.exe' -Force",
+             Get-ChildItem -Path '{}' -Filter 'uv.exe' -Recurse | Select-Object -First 1 | Move-Item -Destination '{}\\uv.exe' -Force; \
+             Get-ChildItem -Path '{}' -Filter 'uvx.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 | Move-Item -Destination '{}\\uvx.exe' -Force",
             archive.display(),
             temp_dir.display(),
             temp_dir.display(),
@@ -153,7 +153,7 @@ async fn step_download_uv(base: &Path, client: &reqwest::Client) -> Result<(), S
             bin_dir.display(),
         );
         let status = tokio::process::Command::new("powershell")
-            .args(["-Command", &ps_cmd])
+            .args(["-NoProfile", "-Command", &ps_cmd])
             .status()
             .await
             .map_err(|e| format!("PowerShell failed: {}", e))?;
@@ -162,6 +162,14 @@ async fn step_download_uv(base: &Path, client: &reqwest::Client) -> Result<(), S
         }
         std::fs::remove_dir_all(&temp_dir).ok();
         std::fs::remove_file(&archive).ok();
+    }
+
+    // Verify uv was actually extracted
+    if !uv.exists() {
+        return Err(format!(
+            "uv binary not found at {} after extraction. The download may have failed or the archive structure changed.",
+            uv.display()
+        ));
     }
 
     Ok(())
