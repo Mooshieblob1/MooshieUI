@@ -17,27 +17,69 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
 }
 
-/* Fix select/option elements in dark mode (webkit renders white bg by default) */
+/* ─── Dark mode (default) ─── */
+html {
+  color-scheme: dark;
+}
+
 select, option {
   background-color: #262626 !important;
   color: #f5f5f5 !important;
   color-scheme: dark;
 }
 
-select {
-  color-scheme: dark;
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #525252; }
+
+/* ─── Light mode ─── */
+html.light {
+  color-scheme: light;
+  --color-neutral-950: #fafafa;
+  --color-neutral-900: #f5f5f5;
+  --color-neutral-800: #e5e5e5;
+  --color-neutral-700: #d4d4d4;
+  --color-neutral-600: #a3a3a3;
+  --color-neutral-500: #737373;
+  --color-neutral-400: #525252;
+  --color-neutral-300: #404040;
+  --color-neutral-200: #262626;
+  --color-neutral-100: #171717;
+  --color-neutral-50: #0a0a0a;
 }
 
-/* Force dark color scheme globally for form elements */
-html {
-  color-scheme: dark;
+html.light select, html.light option {
+  background-color: #e5e5e5 !important;
+  color: #171717 !important;
+  color-scheme: light;
 }
 
-/* Custom scrollbar for dark mode */
-.dark ::-webkit-scrollbar { width: 8px; }
-.dark ::-webkit-scrollbar-track { background: transparent; }
-.dark ::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
-.dark ::-webkit-scrollbar-thumb:hover { background: #525252; }
+html.light ::-webkit-scrollbar-thumb { background: #d4d4d4; }
+html.light ::-webkit-scrollbar-thumb:hover { background: #a3a3a3; }
+
+/* Lightbox backdrop in light mode */
+html.light .lightbox-backdrop {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+/* ─── Font scaling (text only, not layout) ─── */
+:root {
+  --font-scale: 1;
+}
+
+*, *::before, *::after {
+  --_fs: var(--font-scale, 1);
+}
+
+/* Scale all Tailwind text size classes */
+.text-\[10px\] { font-size: calc(10px * var(--_fs)); }
+.text-xs { font-size: calc(0.75rem * var(--_fs)); line-height: calc(1rem * var(--_fs)); }
+.text-sm { font-size: calc(0.875rem * var(--_fs)); line-height: calc(1.25rem * var(--_fs)); }
+.text-base { font-size: calc(1rem * var(--_fs)); line-height: calc(1.5rem * var(--_fs)); }
+.text-lg { font-size: calc(1.125rem * var(--_fs)); line-height: calc(1.75rem * var(--_fs)); }
+.text-xl { font-size: calc(1.25rem * var(--_fs)); line-height: calc(1.75rem * var(--_fs)); }
+.text-2xl { font-size: calc(1.5rem * var(--_fs)); line-height: calc(2rem * var(--_fs)); }
 
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(8px); }

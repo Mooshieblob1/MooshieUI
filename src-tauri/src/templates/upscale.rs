@@ -82,8 +82,11 @@ pub fn append_upscale_chain(
     );
     *next_id += 1;
 
-    // Step 3: Optionally apply Tiled Diffusion, then KSampler
-    let model_for_sampler = if params.upscale_tiling {
+    // Step 3: Apply Tiled Diffusion
+    // For split models (Anima/COSMOS): always use tiled diffusion — required for 5D latents.
+    // For standard models: optional, controlled by user toggle.
+    let use_tiling = params.upscale_tiling || params.use_split_model;
+    let model_for_sampler = if use_tiling {
         let tiled_model_id = next_id.to_string();
         workflow.insert(
             tiled_model_id.clone(),

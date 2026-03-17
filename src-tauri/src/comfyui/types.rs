@@ -85,4 +85,16 @@ pub struct GenerationParams {
     pub upscale_steps: u32,
     pub upscale_tile_size: u32,
     pub upscale_tiling: bool,
+    /// When true, use separate UNETLoader + CLIPLoader + VAELoader instead of CheckpointLoaderSimple
+    #[serde(default)]
+    pub use_split_model: bool,
+    /// Diffusion model filename (in models/diffusion_models/)
+    #[serde(default)]
+    pub diffusion_model: Option<String>,
+    /// CLIP/text encoder filename (in models/text_encoders/)
+    #[serde(default)]
+    pub clip_model: Option<String>,
+    /// CLIP model type for CLIPLoader (e.g. "wan", "sd3", etc.)
+    #[serde(default)]
+    pub clip_type: Option<String>,
 }

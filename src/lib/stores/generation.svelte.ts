@@ -3,6 +3,10 @@ import type { LoraEntry } from "../types/index.js";
 
 const STORE_KEY = "generation-settings";
 
+/** Quality tags auto-applied for Anima models */
+const ANIMA_POSITIVE_QUALITY = "year 2025, newest, masterpiece, best quality, score_9, score_8, safe, highres";
+const ANIMA_NEGATIVE_QUALITY = "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia";
+
 class GenerationStore {
   mode = $state<"txt2img" | "img2img" | "inpainting">("txt2img");
   positivePrompt = $state("");
@@ -28,8 +32,17 @@ class GenerationStore {
   upscaleScale = $state(2.0);
   upscaleDenoise = $state(0.4);
   upscaleSteps = $state(15);
-  upscaleTileSize = $state(512);
+  upscaleTileSize = $state(1024);
   upscaleTiling = $state(true);
+  useSplitModel = $state(false);
+  diffusionModel = $state<string | null>(null);
+  clipModel = $state<string | null>(null);
+  clipType = $state<string | null>(null);
+
+  /** True when the selected model is an Anima variant (split diffusion model). */
+  get isAnima(): boolean {
+    return this.useSplitModel && (this.diffusionModel?.includes("anima") ?? false);
+  }
 
   private _store: Awaited<ReturnType<typeof load>> | null = null;
 
@@ -68,6 +81,10 @@ class GenerationStore {
         if (saved.upscaleSteps !== undefined) this.upscaleSteps = saved.upscaleSteps;
         if (saved.upscaleTileSize !== undefined) this.upscaleTileSize = saved.upscaleTileSize;
         if (saved.upscaleTiling !== undefined) this.upscaleTiling = saved.upscaleTiling;
+        if (saved.useSplitModel !== undefined) this.useSplitModel = saved.useSplitModel;
+        if (saved.diffusionModel !== undefined) this.diffusionModel = saved.diffusionModel;
+        if (saved.clipModel !== undefined) this.clipModel = saved.clipModel;
+        if (saved.clipType !== undefined) this.clipType = saved.clipType;
         console.log("Loaded saved settings, checkpoint:", this.checkpoint);
       }
     } catch (e) {
@@ -102,6 +119,10 @@ class GenerationStore {
         upscaleSteps: this.upscaleSteps,
         upscaleTileSize: this.upscaleTileSize,
         upscaleTiling: this.upscaleTiling,
+        useSplitModel: this.useSplitModel,
+        diffusionModel: this.diffusionModel,
+        clipModel: this.clipModel,
+        clipType: this.clipType,
       });
     } catch (e) {
       console.error("Failed to save settings:", e);
@@ -109,10 +130,18 @@ class GenerationStore {
   }
 
   toParams() {
+    // Auto-apply quality tags for Anima models
+    const positivePrompt = this.isAnima
+      ? `${ANIMA_POSITIVE_QUALITY}, ${this.positivePrompt}`
+      : this.positivePrompt;
+    const negativePrompt = this.isAnima
+      ? `${this.negativePrompt}${this.negativePrompt ? ", " : ""}${ANIMA_NEGATIVE_QUALITY}`
+      : this.negativePrompt;
+
     return {
       mode: this.mode,
-      positive_prompt: this.positivePrompt,
-      negative_prompt: this.negativePrompt,
+      positive_prompt: positivePrompt,
+      negative_prompt: negativePrompt,
       checkpoint: this.checkpoint,
       vae: this.vae || null,
       loras: this.loras
@@ -142,6 +171,10 @@ class GenerationStore {
       upscale_steps: this.upscaleSteps,
       upscale_tile_size: this.upscaleTileSize,
       upscale_tiling: this.upscaleTiling,
+      use_split_model: this.useSplitModel,
+      diffusion_model: this.diffusionModel,
+      clip_model: this.clipModel,
+      clip_type: this.clipType,
     };
   }
 

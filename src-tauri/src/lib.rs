@@ -8,13 +8,14 @@ pub mod templates;
 
 use config::load_persisted_config;
 use state::AppState;
+use tauri::{Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let config = load_persisted_config();
     let app_state = AppState::new(config);
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
@@ -33,6 +34,7 @@ pub fn run() {
             commands::api::interrupt_generation,
             commands::api::delete_queue_item,
             commands::api::upload_image,
+            commands::api::upload_image_bytes,
             commands::api::get_output_image,
             commands::api::get_client_id,
             commands::api::download_model,
@@ -40,15 +42,80 @@ pub fn run() {
             commands::api::save_to_gallery,
             commands::api::list_gallery_images,
             commands::api::load_gallery_image,
+            commands::api::get_gallery_image_path,
             commands::api::delete_gallery_image,
             commands::api::copy_image_to_clipboard,
             commands::websocket::connect_ws,
             commands::websocket::disconnect_ws,
             commands::workflow::generate,
+            commands::config::get_config,
+            commands::config::update_config,
             setup::check_setup,
             setup::detect_gpu,
             setup::run_setup,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let RunEvent::ExitRequested { .. } = event {
+            let state = app_handle.state::<AppState>();
+            let keep_alive = {
+                let config = state.config.blocking_read();
+                config.keep_alive
+            };
+            if !keep_alive {
+                // Kill ComfyUI process on app exit
+                let mut process = state.comfyui_process.blocking_lock();
+                if let Some(ref mut child) = *process {
+                    log::info!("Shutting down ComfyUI process...");
+                    // Use start_kill (non-async) for synchronous shutdown
+                    let _ = child.start_kill();
+                    *process = None;
+                }
+                // Also kill anything on the port as a safety net
+                let port = state.config.blocking_read().server_port;
+                #[cfg(target_os = "linux")]
+                {
+                    let _ = std::process::Command::new("fuser")
+                        .args(["-k", &format!("{}/tcp", port)])
+                        .output();
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    if let Ok(output) = std::process::Command::new("lsof")
+                        .args(["-ti", &format!(":{}", port)])
+                        .output()
+                    {
+                        for pid in String::from_utf8_lossy(&output.stdout).lines() {
+                            if pid.trim().parse::<u32>().is_ok() {
+                                let _ = std::process::Command::new("kill")
+                                    .args(["-9", pid.trim()])
+                                    .output();
+                            }
+                        }
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    if let Ok(output) = std::process::Command::new("cmd")
+                        .args(["/C", &format!("netstat -ano | findstr :{} | findstr LISTENING", port)])
+                        .output()
+                    {
+                        for line in String::from_utf8_lossy(&output.stdout).lines() {
+                            if let Some(pid) = line.split_whitespace().last() {
+                                if pid.parse::<u32>().is_ok() {
+                                    let _ = std::process::Command::new("taskkill")
+                                        .args(["/F", "/PID", pid])
+                                        .output();
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                log::info!("Keeping ComfyUI running (keep_alive=true)");
+            }
+        }
+    });
 }

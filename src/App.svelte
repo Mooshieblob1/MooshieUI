@@ -4,13 +4,66 @@
   import { listen } from "@tauri-apps/api/event";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
+  import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
   import { connection } from "./lib/stores/connection.svelte.js";
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { getHistory, getOutputImage } from "./lib/utils/api.js";
+  import { getHistory, getOutputImage, uploadImageBytes, loadGalleryImage, getConfig } from "./lib/utils/api.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import type { OutputImage } from "./lib/types/index.js";
+
+  // Lightbox zoom state
+  let lbScale = $state(1);
+  let lbOriginX = $state(50);
+  let lbOriginY = $state(50);
+
+  function resetLightboxZoom() {
+    lbScale = 1;
+    lbOriginX = 50;
+    lbOriginY = 50;
+  }
+
+  function focusOnMount(node: HTMLElement) {
+    node.focus();
+  }
+
+  // Reset zoom when lightbox opens
+  $effect(() => {
+    if (gallery.lightboxOpen) resetLightboxZoom();
+  });
+
+  function applyTheme(theme: string) {
+    document.documentElement.classList.toggle("light", theme === "light");
+  }
+
+  function applyFontScale(scale: number) {
+    document.documentElement.style.setProperty("--font-scale", String(scale));
+  }
+
+  async function upscaleImage(image: OutputImage) {
+    try {
+      // Load image bytes from gallery or output
+      let bytes: number[];
+      if (image.gallery_filename) {
+        bytes = await loadGalleryImage(image.gallery_filename);
+      } else {
+        bytes = await getOutputImage(image.filename, image.subfolder);
+      }
+
+      // Upload to ComfyUI input folder
+      const response = await uploadImageBytes(bytes, image.filename);
+      generation.inputImage = response.name;
+      generation.mode = "img2img";
+      generation.upscaleEnabled = true;
+      currentPage = "generate";
+      gallery.closeLightbox();
+      gallery.showToast("Image loaded for upscaling");
+    } catch (e) {
+      console.error("Failed to set up upscale:", e);
+      gallery.showToast("Failed to load image");
+    }
+  }
 
   let setupComplete = $state<boolean | null>(null); // null = loading
   let currentPage = $state<"generate" | "gallery" | "queue" | "settings">(
@@ -80,6 +133,15 @@
   }
 
   async function initApp() {
+    // Apply UI preferences (theme, font scale) immediately
+    try {
+      const cfg = await getConfig();
+      applyTheme(cfg.theme);
+      applyFontScale(cfg.font_scale);
+    } catch {
+      // Config not ready yet, defaults are fine
+    }
+
     // Load persisted settings
     await generation.loadSettings();
 
@@ -117,8 +179,9 @@
       listen("comfyui:progress", (event: any) => {
         const data = event.payload;
         if (!progress.isGenerating) return;
-        progress.currentStep = data.value;
-        progress.totalSteps = data.max;
+        // Use node from progress event if available, fall back to currentNode from executing event
+        const node = data.node ?? progress.currentNode;
+        progress.updateProgress(data.value, data.max, node);
       }),
       listen("comfyui:preview", (event: any) => {
         const data = event.payload;
@@ -362,6 +425,13 @@
                 <!-- Hover actions -->
                 <div class="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
+                    class="w-7 h-7 flex items-center justify-center rounded bg-indigo-900/60 hover:bg-indigo-700 text-neutral-300 text-xs backdrop-blur-sm"
+                    title="Upscale"
+                    onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                  </button>
+                  <button
                     class="w-7 h-7 flex items-center justify-center rounded bg-neutral-900/80 hover:bg-neutral-700 text-neutral-300 text-xs backdrop-blur-sm"
                     title="Save As"
                     onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}
@@ -393,9 +463,7 @@
         Queue management (coming soon)
       </div>
     {:else if currentPage === "settings"}
-      <div class="flex items-center justify-center h-full text-neutral-500">
-        Settings (coming soon)
-      </div>
+      <SettingsPage />
     {/if}
     </div>
   </main>
@@ -405,8 +473,16 @@
 <!-- Lightbox overlay -->
 {#if gallery.lightboxOpen && gallery.selectedImage}
   <div
-    class="fixed inset-0 bg-black/90 z-50 flex items-center justify-center"
+    class="lightbox-backdrop fixed inset-0 bg-black/90 z-50 flex items-center justify-center"
     role="dialog"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) gallery.closeLightbox();
+    }}
+    onkeydown={(e) => {
+      if (e.key === "Escape") gallery.closeLightbox();
+    }}
+    tabindex="-1"
+    use:focusOnMount
   >
     <!-- Close button -->
     <button
@@ -418,6 +494,13 @@
 
     <!-- Action buttons -->
     <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-10">
+      <button
+        class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+        onclick={() => gallery.selectedImage && upscaleImage(gallery.selectedImage)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        Upscale
+      </button>
       <button
         class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
         onclick={() => gallery.selectedImage && gallery.saveImageAs(gallery.selectedImage)}
@@ -446,6 +529,19 @@
         src={gallery.selectedImage.url}
         alt={gallery.selectedImage.filename}
         class="max-w-[90vw] max-h-[85vh] object-contain"
+        style="transform: scale({lbScale}); transform-origin: {lbOriginX}% {lbOriginY}%; transition: {lbScale === 1 ? 'transform 0.2s ease' : 'none'};"
+        onwheel={(e) => {
+          e.preventDefault();
+          const img = e.currentTarget as HTMLImageElement;
+          const rect = img.getBoundingClientRect();
+          const pctX = ((e.clientX - rect.left) / rect.width) * 100;
+          const pctY = ((e.clientY - rect.top) / rect.height) * 100;
+          lbOriginX = pctX;
+          lbOriginY = pctY;
+          const delta = e.deltaY > 0 ? -0.15 : 0.15;
+          lbScale = Math.min(10, Math.max(0.5, lbScale + delta * lbScale));
+        }}
+        ondblclick={resetLightboxZoom}
       />
     {/if}
   </div>

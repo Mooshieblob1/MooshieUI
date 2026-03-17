@@ -1,9 +1,29 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
+  import InfoTip from "../ui/InfoTip.svelte";
+
+  interface Props {
+    suggestedAspect?: { w: number; h: number } | null;
+  }
+  let { suggestedAspect = null }: Props = $props();
 
   let aspectW = $state(1);
   let aspectH = $state(1);
   let sideLength = $state(1024);
+
+  // When an input image is loaded, adopt its aspect ratio
+  let lastAppliedKey = "";
+  $effect(() => {
+    if (suggestedAspect) {
+      const key = `${suggestedAspect.w}:${suggestedAspect.h}`;
+      if (key !== lastAppliedKey) {
+        lastAppliedKey = key;
+        aspectW = suggestedAspect.w;
+        aspectH = suggestedAspect.h;
+        recalc();
+      }
+    }
+  });
 
   const presets = [
     { label: "1:1", w: 1, h: 1 },
@@ -100,7 +120,7 @@
 
   <!-- Side Length -->
   <div>
-    <label class="block text-xs text-neutral-400 mb-1.5">Resolution (equivalent square side)</label>
+    <label class="block text-xs text-neutral-400 mb-1.5">Resolution<InfoTip text="The total pixel area of your image, expressed as an equivalent square side length. 1024 = ~1 megapixel. Higher resolution = more detail but slower generation and more VRAM usage." /></label>
     <input
       type="number"
       bind:value={sideLength}

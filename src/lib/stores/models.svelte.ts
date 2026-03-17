@@ -8,13 +8,15 @@ class ModelsStore {
   schedulers = $state<string[]>([]);
   embeddings = $state<string[]>([]);
   upscaleModels = $state<string[]>([]);
+  diffusionModels = $state<string[]>([]);
+  textEncoders = $state<string[]>([]);
   loading = $state(false);
 
   async refresh() {
     this.loading = true;
     try {
       console.log("ModelsStore: fetching models...");
-      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels] =
+      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, textEncoders] =
         await Promise.all([
           getModels("checkpoints"),
           getModels("vae"),
@@ -22,6 +24,8 @@ class ModelsStore {
           getSamplers(),
           getEmbeddings(),
           getModels("upscale_models"),
+          getModels("diffusion_models").catch(() => [] as string[]),
+          getModels("text_encoders").catch(() => [] as string[]),
         ]);
 
       console.log("ModelsStore: got checkpoints:", checkpoints);
@@ -34,6 +38,8 @@ class ModelsStore {
       this.schedulers = samplerInfo.schedulers;
       this.embeddings = embeddings;
       this.upscaleModels = upscaleModels;
+      this.diffusionModels = diffusionModels;
+      this.textEncoders = textEncoders;
     } catch (e) {
       console.error("Failed to refresh models:", e);
     } finally {

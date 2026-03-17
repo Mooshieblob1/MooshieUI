@@ -47,7 +47,7 @@ Switch between modes with a single click — all settings carry over.
 Built-in upscaling with **MultiDiffusion** tiled diffusion — the same approach used by SwarmUI. No slow tile-by-tile processing; all tiles are denoised simultaneously each step for seamless, high-quality results.
 
 #### Upscale Methods
-- **Model-based (ESRGAN)** — Uses dedicated upscale models. Scale is determined by the model (2x, 4x, etc.)
+- **Model-based** — Uses dedicated upscale models (e.g., Omni-SR). Scale is determined by the model (2x, 4x, etc.)
 - **Algorithmic (Lanczos)** — Fast pixel-space upscaling with adjustable 1–4x scale
 
 #### Recommended Models (Auto-Download)
@@ -76,16 +76,16 @@ Hover over any generated image to reveal an **Upscale** button — instantly ups
 ### 🖼️ Gallery
 
 - **Thumbnail Grid** — All generated images in a responsive grid (3–5 columns)
-- **Lightbox** — Click any image to view full-size with a close button
+- **Lightbox** — Click any image to view full-size; scroll-wheel zoom at cursor, Escape or click-outside to close, double-click to reset zoom
 - **Session History** — All outputs from the current session are saved
 
 > *Note: Gallery images are session-only for now. Persistent gallery with disk storage is planned.*
 
 ### 📊 Real-Time Progress
 
-- **Live Preview** — See the image as it's being generated (streamed via WebSocket)
-- **Step Counter** — "Step 12 / 20" with percentage
-- **Progress Bar** — Smooth animated bar
+- **Live Preview** — See the image as it's being generated (latent previews streamed via WebSocket)
+- **Phase Labels** — "Generating...", "Upscaling...", or "Preparing..." with step counter
+- **Progress Bar** — Smooth animated bar (indigo for generation, emerald for upscale pass)
 - **Cancel Button** — Interrupt any generation in progress
 
 ### 💾 Settings Persistence
@@ -222,11 +222,20 @@ Both methods:
 Features planned or in progress:
 
 ### Coming Soon
-- [ ] **Image upload** for img2img and inpainting modes (currently placeholder)
+- [x] **Image upload** for img2img and inpainting modes
 - [ ] **Inpainting canvas** — paint masks directly on images in the UI
 - [ ] **Queue management page** — view, reorder, and cancel queued generations
-- [ ] **Settings page** — configure ComfyUI connection, paths, defaults, and theme
-- [ ] **Gallery upscale button** — upscale any image from the gallery grid or lightbox
+- [x] **Settings page** — configure ComfyUI connection, paths, defaults, and extra args
+- [x] **Gallery upscale button** — upscale any image from the gallery grid or lightbox
+- [x] **Anima Preview 2 support** — auto-download split model (diffusion + CLIP + VAE), quality prompt injection, optimized defaults
+- [x] **CFG++ auto-detect** — soft-sets CFG to 1.4 when selecting CFG++ samplers
+- [x] **Info tooltips** — hover (?) icons explain technical settings in plain English
+- [x] **Collapsible settings sections** — with search bar to filter settings
+- [x] **Live generation preview** — latent previews streamed via WebSocket during KSampler
+- [x] **Phase-aware progress** — shows "Generating..." / "Upscaling..." / "Preparing..." with step counters
+- [x] **5D latent tiled diffusion** — MultiDiffusion/SpotDiffusion compatible with Anima (COSMOS) models
+- [x] **Lightbox zoom & dismiss** — scroll-wheel zoom at cursor, Escape/click-outside to close
+- [x] **Clipboard copy as file** — copies gallery images as file references (preserves format & metadata)
 - [ ] **Windows & macOS builds** — cross-platform CI releases *(CI config exists, untested)*
 
 ### Planned

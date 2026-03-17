@@ -32,6 +32,10 @@ export interface GenerationParams {
   upscale_steps: number;
   upscale_tile_size: number;
   upscale_tiling: boolean;
+  use_split_model: boolean;
+  diffusion_model: string | null;
+  clip_model: string | null;
+  clip_type: string | null;
 }
 
 export interface OutputImage {
@@ -63,6 +67,27 @@ export interface SystemStats {
     vram_total: number;
     vram_free: number;
   }[];
+}
+
+export interface AppConfig {
+  server_mode: "autolaunch" | "remote";
+  server_url: string;
+  server_port: number;
+  comfyui_path: string;
+  venv_path: string;
+  extra_args: string[];
+  default_checkpoint: string | null;
+  default_sampler: string;
+  default_scheduler: string;
+  default_steps: number;
+  default_cfg: number;
+  default_width: number;
+  default_height: number;
+  vram_mode: string;
+  keep_alive: boolean;
+  theme: string;
+  font_scale: number;
+  setup_complete: boolean;
 }
 
 export interface QueueInfo {

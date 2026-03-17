@@ -2,6 +2,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import { downloadModel } from "../../utils/api.js";
+  import InfoTip from "../ui/InfoTip.svelte";
 
   interface RecommendedModel {
     label: string;
@@ -77,7 +78,7 @@
 <div class="space-y-3">
   <!-- Enable toggle -->
   <div class="flex items-center justify-between">
-    <label class="text-xs text-neutral-400">Upscale</label>
+    <label class="text-xs text-neutral-400">Upscale<InfoTip text="Increases the resolution of your generated image. 'Model' uses an AI upscaler for sharp detail, 'Algorithmic' uses traditional scaling. Adds a second pass after initial generation." /></label>
     <button
       class="relative w-10 h-5 rounded-full transition-colors {generation.upscaleEnabled
         ? 'bg-indigo-600'
@@ -95,36 +96,35 @@
   </div>
 
   {#if generation.upscaleEnabled}
-    <!-- Method + Scale (scale only for algorithmic) -->
-    <div class="grid grid-cols-2 gap-3">
-      <div>
-        <label class="block text-xs text-neutral-400 mb-1">Method</label>
-        <select
-          bind:value={generation.upscaleMethod}
-          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
-        >
-          <option value="model">Model (ESRGAN)</option>
-          <option value="algorithmic">Algorithmic</option>
-        </select>
-      </div>
-
-      {#if generation.upscaleMethod === "algorithmic"}
-        <div>
-          <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-            Scale
-            <span class="text-neutral-300">{generation.upscaleScale}x</span>
-          </label>
-          <input
-            type="range"
-            bind:value={generation.upscaleScale}
-            min="1"
-            max="4"
-            step="0.5"
-            class="w-full accent-indigo-500"
-          />
-        </div>
-      {/if}
+    <!-- Method -->
+    <div>
+      <label class="block text-xs text-neutral-400 mb-1">Method</label>
+      <select
+        bind:value={generation.upscaleMethod}
+        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+      >
+        <option value="model">Model (Upscaler)</option>
+        <option value="algorithmic">Algorithmic</option>
+      </select>
     </div>
+
+    {#if generation.upscaleMethod === "algorithmic"}
+      <!-- Scale -->
+      <div>
+        <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+          Scale
+          <span class="text-neutral-300">{generation.upscaleScale}x</span>
+        </label>
+        <input
+          type="range"
+          bind:value={generation.upscaleScale}
+          min="1"
+          max="4"
+          step="0.5"
+          class="w-full accent-indigo-500"
+        />
+      </div>
+    {/if}
 
     <!-- Upscale Model (only for model method) -->
     {#if generation.upscaleMethod === "model"}
@@ -154,7 +154,7 @@
       <!-- Denoise -->
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-          Denoise
+          Denoise<InfoTip text="How much the AI re-draws during upscaling. Lower (0.2-0.4) preserves the original closely, higher adds more detail but may change the image." />
           <span class="text-neutral-300">{generation.upscaleDenoise.toFixed(2)}</span>
         </label>
         <input
@@ -185,20 +185,34 @@
     </div>
 
     <!-- Tiling toggle -->
-    <div class="flex items-center gap-2">
-      <input
-        type="checkbox"
-        id="upscale-tiling"
-        bind:checked={generation.upscaleTiling}
-        class="w-4 h-4 accent-indigo-500 rounded"
-      />
-      <label for="upscale-tiling" class="text-xs text-neutral-400">
-        Tiled diffusion (recommended for large images)
-      </label>
-    </div>
+    {#if generation.isAnima}
+      <div class="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={true}
+          disabled
+          class="w-4 h-4 accent-indigo-500 rounded opacity-50"
+        />
+        <label class="text-xs text-neutral-400">
+          Tiled diffusion (always on for Anima)<InfoTip text="Tiled diffusion is required for Anima to handle its 5D latent format. The image is split into overlapping tiles, each refined independently, then blended back together seamlessly." />
+        </label>
+      </div>
+    {:else}
+      <div class="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id="upscale-tiling"
+          bind:checked={generation.upscaleTiling}
+          class="w-4 h-4 accent-indigo-500 rounded"
+        />
+        <label for="upscale-tiling" class="text-xs text-neutral-400">
+          Tiled diffusion<InfoTip text="Processes the upscaled image in smaller overlapping tiles instead of all at once. Uses much less VRAM — essential for large images that would otherwise crash." />
+        </label>
+      </div>
+    {/if}
 
-    <!-- Tile Size (only when tiling enabled) -->
-    {#if generation.upscaleTiling}
+    <!-- Tile Size (shown when tiling enabled or forced for Anima) -->
+    {#if generation.upscaleTiling || generation.isAnima}
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         Tile Size

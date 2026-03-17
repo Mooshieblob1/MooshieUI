@@ -448,6 +448,63 @@ async fn step_download_default_models(base: &Path, client: &reqwest::Client) -> 
     Ok(())
 }
 
+/// Detect total GPU VRAM in megabytes. Returns 0 if detection fails.
+async fn detect_vram_mb() -> u64 {
+    // NVIDIA: nvidia-smi reports MiB
+    if let Ok(output) = tokio::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+        .output()
+        .await
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            // May have multiple GPUs; take the max
+            if let Some(max) = text.lines()
+                .filter_map(|l| l.trim().parse::<u64>().ok())
+                .max()
+            {
+                return max;
+            }
+        }
+    }
+
+    // AMD: sysfs exposes VRAM in bytes
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
+            let mut max_vram: u64 = 0;
+            for entry in entries.flatten() {
+                let path = entry.path().join("device/mem_info_vram_total");
+                if path.exists() {
+                    if let Ok(val) = std::fs::read_to_string(&path) {
+                        if let Ok(bytes) = val.trim().parse::<u64>() {
+                            max_vram = max_vram.max(bytes / (1024 * 1024));
+                        }
+                    }
+                }
+            }
+            if max_vram > 0 {
+                return max_vram;
+            }
+        }
+    }
+
+    0
+}
+
+/// Choose the best VRAM mode based on detected VRAM.
+fn recommended_vram_mode(vram_mb: u64) -> &'static str {
+    if vram_mb >= 8000 {
+        "high" // 8 GB+ — keep everything in VRAM
+    } else if vram_mb >= 4000 {
+        "normal" // 4-8 GB — load fully for sampling, offload between gens
+    } else if vram_mb > 0 {
+        "low" // < 4 GB
+    } else {
+        "normal" // unknown — safe default
+    }
+}
+
 // ─── Tauri commands ─────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -520,12 +577,16 @@ pub async fn run_setup(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
     );
     step_download_default_models(&base, &state.http_client).await?;
 
-    // 9. Persist config
-    emit(&app, "config", "Saving configuration...", 98);
+    // 9. Detect VRAM and persist config
+    emit(&app, "config", "Detecting VRAM and saving configuration...", 98);
+    let vram_mb = detect_vram_mb().await;
+    let vram_mode = recommended_vram_mode(vram_mb);
+    log::info!("Detected {}MB VRAM, setting vram_mode={}", vram_mb, vram_mode);
     {
         let mut cfg = state.config.write().await;
         cfg.comfyui_path = base.join("comfyui").to_string_lossy().to_string();
         cfg.venv_path = base.join("venv").to_string_lossy().to_string();
+        cfg.vram_mode = vram_mode.to_string();
         cfg.setup_complete = true;
         config::save_config(&cfg)?;
     }

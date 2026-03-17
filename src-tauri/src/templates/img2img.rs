@@ -1,67 +1,18 @@
 use serde_json::json;
 
-use super::WorkflowResult;
+use super::{WorkflowResult, load_model_nodes};
 use crate::comfyui::types::GenerationParams;
 
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let mut workflow = serde_json::Map::new();
-    let mut next_id: u32 = 1;
+    let next_id: u32 = 1;
 
-    // 1: Checkpoint loader
-    let checkpoint_id = next_id.to_string();
-    workflow.insert(
-        checkpoint_id.clone(),
-        json!({
-            "class_type": "CheckpointLoaderSimple",
-            "inputs": {
-                "ckpt_name": params.checkpoint
-            }
-        }),
-    );
-    next_id += 1;
-
-    let mut model_source = (checkpoint_id.clone(), 0);
-    let mut clip_source = (checkpoint_id.clone(), 1);
-    let mut vae_source: (String, u32) = (checkpoint_id.clone(), 2);
-
-    // LoRA chain
-    for lora in &params.loras {
-        let lora_id = next_id.to_string();
-        workflow.insert(
-            lora_id.clone(),
-            json!({
-                "class_type": "LoraLoader",
-                "inputs": {
-                    "model": [model_source.0, model_source.1],
-                    "clip": [clip_source.0, clip_source.1],
-                    "lora_name": lora.name,
-                    "strength_model": lora.strength_model,
-                    "strength_clip": lora.strength_clip
-                }
-            }),
-        );
-        model_source = (lora_id.clone(), 0);
-        clip_source = (lora_id, 1);
-        next_id += 1;
-    }
-
-    // Optional separate VAE
-    if let Some(ref vae_name) = params.vae {
-        if !vae_name.is_empty() {
-            let vae_id = next_id.to_string();
-            workflow.insert(
-                vae_id.clone(),
-                json!({
-                    "class_type": "VAELoader",
-                    "inputs": {
-                        "vae_name": vae_name
-                    }
-                }),
-            );
-            vae_source = (vae_id, 0);
-            next_id += 1;
-        }
-    }
+    // Load model (checkpoint or split UNETLoader + CLIPLoader + VAELoader)
+    let ml = load_model_nodes(&mut workflow, next_id, params);
+    let mut next_id = ml.next_id;
+    let model_source = ml.model_source;
+    let clip_source = ml.clip_source;
+    let vae_source = ml.vae_source;
 
     // Positive CLIP encode
     let pos_id = next_id.to_string();
@@ -104,14 +55,31 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     );
     next_id += 1;
 
-    // VAE Encode the input image
+    // Resize input image to target dimensions (avoids VRAM issues with large images)
+    let resize_id = next_id.to_string();
+    workflow.insert(
+        resize_id.clone(),
+        json!({
+            "class_type": "ImageScale",
+            "inputs": {
+                "image": [load_img_id, 0],
+                "width": params.width,
+                "height": params.height,
+                "upscale_method": "lanczos",
+                "crop": "disabled"
+            }
+        }),
+    );
+    next_id += 1;
+
+    // VAE Encode the resized image
     let encode_id = next_id.to_string();
     workflow.insert(
         encode_id.clone(),
         json!({
             "class_type": "VAEEncode",
             "inputs": {
-                "pixels": [load_img_id, 0],
+                "pixels": [resize_id, 0],
                 "vae": [vae_source.0.clone(), vae_source.1]
             }
         }),

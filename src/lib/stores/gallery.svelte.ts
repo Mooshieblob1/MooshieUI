@@ -7,11 +7,14 @@ import {
   saveImageFile,
   getOutputImage,
   copyImageToClipboard,
+  getGalleryImagePath,
 } from "../utils/api.js";
 import { save } from "@tauri-apps/plugin-dialog";
 
 class GalleryStore {
   images = $state<OutputImage[]>([]);
+  /** Images generated during this app session (not loaded from disk). */
+  sessionImages = $state<OutputImage[]>([]);
   selectedImage = $state<OutputImage | null>(null);
   lightboxOpen = $state(false);
   loading = $state(false);
@@ -20,6 +23,7 @@ class GalleryStore {
 
   addImages(newImages: OutputImage[]) {
     this.images = [...newImages, ...this.images];
+    this.sessionImages = [...newImages, ...this.sessionImages];
   }
 
   openLightbox(image: OutputImage) {
@@ -152,20 +156,16 @@ class GalleryStore {
     }
   }
 
-  /** Copy image to clipboard via xclip. */
+  /** Copy a gallery image file to clipboard (as file reference). */
   async copyToClipboard(image: OutputImage) {
     try {
-      let bytes: number[];
       if (image.gallery_filename) {
-        bytes = await loadGalleryImage(image.gallery_filename);
-      } else if (image.url) {
-        const response = await fetch(image.url);
-        const blob = await response.blob();
-        bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+        const path = await getGalleryImagePath(image.gallery_filename);
+        await copyImageToClipboard(path);
       } else {
+        this.showToast("Image not saved to gallery yet");
         return;
       }
-      await copyImageToClipboard(bytes);
       this.showToast("Copied to clipboard");
     } catch (e) {
       console.error("Failed to copy to clipboard:", e);
@@ -173,18 +173,11 @@ class GalleryStore {
     }
   }
 
-  /** Copy a blob URL image to clipboard. */
+  /** Copy a gallery image file to clipboard by filename. */
   async copyBlobToClipboard(blobUrl: string) {
-    try {
-      const response = await fetch(blobUrl);
-      const blob = await response.blob();
-      const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
-      await copyImageToClipboard(bytes);
-      this.showToast("Copied to clipboard");
-    } catch (e) {
-      console.error("Failed to copy to clipboard:", e);
-      this.showToast("Failed to copy");
-    }
+    // For preview images that aren't in the gallery yet, we can't copy as file
+    // This is a fallback that shouldn't normally be reached
+    this.showToast("Save to gallery first to copy");
   }
 
   /** Delete an image from the gallery. */
@@ -197,6 +190,7 @@ class GalleryStore {
         URL.revokeObjectURL(image.url);
       }
       this.images = this.images.filter((i) => i !== image);
+      this.sessionImages = this.sessionImages.filter((i) => i !== image);
       if (this.selectedImage === image) {
         this.closeLightbox();
       }

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AppConfig,
   GenerationParams,
   OutputImage,
   QueueInfo,
@@ -45,6 +46,13 @@ export async function uploadImage(imagePath: string): Promise<{
   type: string;
 }> {
   return invoke("upload_image", { imagePath });
+}
+
+export async function uploadImageBytes(
+  imageBytes: number[],
+  filename: string
+): Promise<{ name: string; subfolder: string; type: string }> {
+  return invoke("upload_image_bytes", { imageBytes, filename });
 }
 
 export async function getOutputImage(
@@ -113,6 +121,18 @@ export async function deleteGalleryImage(filename: string): Promise<void> {
   return invoke("delete_gallery_image", { filename });
 }
 
-export async function copyImageToClipboard(imageBytes: number[]): Promise<void> {
-  return invoke("copy_image_to_clipboard", { imageBytes });
+export async function copyImageToClipboard(filePath: string): Promise<void> {
+  return invoke("copy_image_to_clipboard", { filePath });
+}
+
+export async function getGalleryImagePath(filename: string): Promise<string> {
+  return invoke("get_gallery_image_path", { filename });
+}
+
+export async function getConfig(): Promise<AppConfig> {
+  return invoke("get_config");
+}
+
+export async function updateConfig(config: AppConfig): Promise<void> {
+  return invoke("update_config", { config });
 }

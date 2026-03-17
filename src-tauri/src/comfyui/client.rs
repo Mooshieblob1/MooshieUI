@@ -140,6 +140,34 @@ impl AppState {
         Ok(upload_resp)
     }
 
+    pub async fn upload_image_from_bytes(
+        &self,
+        bytes: Vec<u8>,
+        filename: String,
+    ) -> Result<UploadResponse, AppError> {
+        let url = format!("{}/upload/image", self.base_url().await);
+
+        let part = multipart::Part::bytes(bytes)
+            .file_name(filename)
+            .mime_str("image/png")
+            .unwrap();
+
+        let form = multipart::Form::new()
+            .part("image", part)
+            .text("type", "input")
+            .text("overwrite", "true");
+
+        let resp = self.http_client.post(&url).multipart(form).send().await?;
+        if !resp.status().is_success() {
+            return Err(AppError::ApiError {
+                status: resp.status().as_u16(),
+                message: resp.text().await.unwrap_or_default(),
+            });
+        }
+        let upload_resp: UploadResponse = resp.json().await?;
+        Ok(upload_resp)
+    }
+
     /// Downloads a file from a URL to the models/<category> directory.
     pub async fn download_model_file(
         &self,

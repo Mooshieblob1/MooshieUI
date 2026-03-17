@@ -16,8 +16,32 @@ pub struct AppConfig {
     pub default_cfg: f64,
     pub default_width: u32,
     pub default_height: u32,
+    /// VRAM management mode: "auto", "high", "normal", "low", "none"
+    #[serde(default = "default_vram_mode")]
+    pub vram_mode: String,
+    /// Keep ComfyUI running after the app closes (default: false)
+    #[serde(default)]
+    pub keep_alive: bool,
+    /// UI theme: "dark", "light"
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    /// UI font scale multiplier (1.0 = default)
+    #[serde(default = "default_font_scale")]
+    pub font_scale: f64,
     #[serde(default)]
     pub setup_complete: bool,
+}
+
+fn default_vram_mode() -> String {
+    "normal".to_string()
+}
+
+fn default_theme() -> String {
+    "dark".to_string()
+}
+
+fn default_font_scale() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -41,8 +65,12 @@ impl Default for AppConfig {
             default_scheduler: "sgm_uniform".to_string(),
             default_steps: 20,
             default_cfg: 1.4,
-            default_width: 512,
-            default_height: 512,
+            default_width: 1024,
+            default_height: 1024,
+            vram_mode: "normal".to_string(),
+            keep_alive: false,
+            theme: "dark".to_string(),
+            font_scale: 1.0,
             setup_complete: false,
         }
     }

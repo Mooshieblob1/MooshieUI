@@ -178,12 +178,16 @@ def _multidiffusion_step(apply_model: Callable, args: dict,
 
     At each denoising step, splits the latent into overlapping tiles, denoises
     each independently, then blends them together using cosine-feathered masks.
+
+    Supports both 4D (B,C,H,W) and 5D (B,C,T,H,W) latents (e.g. Anima/COSMOS).
     """
     input_x = args["input"]
     timestep = args["timestep"]
     c = args["c"]
 
-    B, C, H, W = input_x.shape
+    # Support both 4D (B,C,H,W) and 5D (B,C,T,H,W) latents
+    is_5d = input_x.ndim == 5
+    H, W = input_x.shape[-2], input_x.shape[-1]
 
     if H <= tile_h and W <= tile_w:
         return apply_model(input_x, timestep, **c)
@@ -191,17 +195,26 @@ def _multidiffusion_step(apply_model: Callable, args: dict,
     tiles = _get_tile_positions(H, W, tile_h, tile_w, overlap_h, overlap_w)
 
     result = torch.zeros_like(input_x)
-    weight = torch.zeros(1, 1, H, W, device=input_x.device, dtype=input_x.dtype)
+    # Weight shape must broadcast over all leading dims
+    weight_shape = [1] * (input_x.ndim - 2) + [H, W]
+    weight = torch.zeros(weight_shape, device=input_x.device, dtype=input_x.dtype)
 
     for (ty, tx, th, tw) in tiles:
-        tile_input = input_x[:, :, ty:ty + th, tx:tx + tw]
+        tile_input = input_x[..., ty:ty + th, tx:tx + tw]
         tile_c = _crop_cond_spatial(c, ty, tx, th, tw, H, W)
         tile_out = apply_model(tile_input, timestep, **tile_c)
 
         mask = _create_blend_mask(th, tw, overlap_h, overlap_w,
                                   input_x.device, input_x.dtype)
-        result[:, :, ty:ty + th, tx:tx + tw] += tile_out * mask
-        weight[:, :, ty:ty + th, tx:tx + tw] += mask
+        if is_5d:
+            # Expand mask from [1,1,h,w] to [1,1,1,h,w] for 5D tensors
+            mask = mask.unsqueeze(2)
+        result[..., ty:ty + th, tx:tx + tw] += tile_out * mask
+        weight[..., ty:ty + th, tx:tx + tw] += mask.squeeze()
+
+    # Expand weight to broadcast with result
+    while weight.ndim < result.ndim:
+        weight = weight.unsqueeze(0)
 
     return result / weight.clamp(min=1e-8)
 
@@ -213,12 +226,16 @@ def _spotdiffusion_step(apply_model: Callable, args: dict,
 
     Eliminates seams by randomly offsetting the tile grid at each denoising
     step. Faster than MultiDiffusion since no overlap is needed.
+
+    Supports both 4D (B,C,H,W) and 5D (B,C,T,H,W) latents (e.g. Anima/COSMOS).
     """
     input_x = args["input"]
     timestep = args["timestep"]
     c = args["c"]
 
-    B, C, H, W = input_x.shape
+    # Support both 4D and 5D latents — spatial dims are always the last two
+    H, W = input_x.shape[-2], input_x.shape[-1]
+    spatial_dims = (-2, -1)
 
     if H <= tile_h and W <= tile_w:
         return apply_model(input_x, timestep, **c)
@@ -228,14 +245,14 @@ def _spotdiffusion_step(apply_model: Callable, args: dict,
     shift_h = rng.randint(0, max(0, tile_h - 1)) if H > tile_h else 0
     shift_w = rng.randint(0, max(0, tile_w - 1)) if W > tile_w else 0
 
-    # Circular shift input
-    shifted = torch.roll(input_x, shifts=(shift_h, shift_w), dims=(2, 3))
+    # Circular shift input over spatial dims
+    shifted = torch.roll(input_x, shifts=(shift_h, shift_w), dims=spatial_dims)
 
     # Also shift spatial conditioning
     shifted_c = {}
     for key, val in c.items():
         if key == 'c_concat' and isinstance(val, torch.Tensor) and val.ndim >= 4:
-            shifted_c[key] = torch.roll(val, shifts=(shift_h, shift_w), dims=(2, 3))
+            shifted_c[key] = torch.roll(val, shifts=(shift_h, shift_w), dims=(-2, -1))
         elif key == 'control' and val is not None:
             shifted_c[key] = _shift_control(val, shift_h, shift_w, H, W)
         else:
@@ -245,13 +262,13 @@ def _spotdiffusion_step(apply_model: Callable, args: dict,
     result = torch.zeros_like(shifted)
 
     for (ty, tx, th, tw) in tiles:
-        tile_input = shifted[:, :, ty:ty + th, tx:tx + tw]
+        tile_input = shifted[..., ty:ty + th, tx:tx + tw]
         tile_c = _crop_cond_spatial(shifted_c, ty, tx, th, tw, H, W)
         tile_out = apply_model(tile_input, timestep, **tile_c)
-        result[:, :, ty:ty + th, tx:tx + tw] = tile_out
+        result[..., ty:ty + th, tx:tx + tw] = tile_out
 
     # Shift back
-    return torch.roll(result, shifts=(-shift_h, -shift_w), dims=(2, 3))
+    return torch.roll(result, shifts=(-shift_h, -shift_w), dims=spatial_dims)
 
 
 def _shift_control(control, shift_h: int, shift_w: int,

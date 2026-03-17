@@ -58,6 +58,15 @@ pub async fn upload_image(
 }
 
 #[tauri::command]
+pub async fn upload_image_bytes(
+    state: State<'_, AppState>,
+    image_bytes: Vec<u8>,
+    filename: String,
+) -> Result<UploadResponse, AppError> {
+    state.upload_image_from_bytes(image_bytes, filename).await
+}
+
+#[tauri::command]
 pub async fn get_output_image(
     state: State<'_, AppState>,
     filename: String,
@@ -140,6 +149,18 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
 }
 
 #[tauri::command]
+pub async fn get_gallery_image_path(filename: String) -> Result<String, AppError> {
+    let dir = crate::config::app_data_dir()
+        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
+        .join("gallery");
+    let path = dir.join(&filename);
+    if !path.exists() {
+        return Err(AppError::Other(format!("Gallery image not found: {}", filename)));
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 pub async fn delete_gallery_image(filename: String) -> Result<(), AppError> {
     let dir = crate::config::app_data_dir()
         .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
@@ -152,42 +173,43 @@ pub async fn delete_gallery_image(filename: String) -> Result<(), AppError> {
 }
 
 #[tauri::command]
-pub async fn copy_image_to_clipboard(image_bytes: Vec<u8>) -> Result<(), AppError> {
+pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
-    // Try xclip first, then xsel, then wl-copy (Wayland)
+    let path = std::path::Path::new(&file_path);
+    if !path.exists() {
+        return Err(AppError::Other(format!("File not found: {}", file_path)));
+    }
+
+    // Copy as file reference (text/uri-list) so apps receive it like a real file copy.
+    // This preserves the original format and metadata.
+    let uri = format!("file://{}\n", path.canonicalize()
+        .map_err(|e| AppError::Other(e.to_string()))?
+        .display());
+
+    // Try xclip (X11)
     let result = Command::new("xclip")
-        .args(["-selection", "clipboard", "-t", "image/png"])
+        .args(["-selection", "clipboard", "-t", "text/uri-list"])
         .stdin(Stdio::piped())
         .spawn();
 
     let mut child = match result {
         Ok(child) => child,
         Err(_) => {
-            // Try xsel
-            let result = Command::new("xsel")
-                .args(["--clipboard", "--input"])
+            // Try wl-copy (Wayland)
+            Command::new("wl-copy")
+                .args(["--type", "text/uri-list"])
                 .stdin(Stdio::piped())
-                .spawn();
-            match result {
-                Ok(child) => child,
-                Err(_) => {
-                    // Try wl-copy (Wayland)
-                    Command::new("wl-copy")
-                        .args(["--type", "image/png"])
-                        .stdin(Stdio::piped())
-                        .spawn()
-                        .map_err(|e| AppError::Other(format!(
-                            "No clipboard tool found (tried xclip, xsel, wl-copy): {}", e
-                        )))?
-                }
-            }
+                .spawn()
+                .map_err(|e| AppError::Other(format!(
+                    "No clipboard tool found (tried xclip, wl-copy): {}", e
+                )))?
         }
     };
 
     if let Some(ref mut stdin) = child.stdin {
-        stdin.write_all(&image_bytes)?;
+        stdin.write_all(uri.as_bytes())?;
     }
     child.wait().map_err(|e| AppError::Other(format!("Clipboard tool failed: {}", e)))?;
     Ok(())
