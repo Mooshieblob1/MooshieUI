@@ -2,6 +2,7 @@ export interface LoraEntry {
   name: string;
   strength_model: number;
   strength_clip: number;
+  enabled: boolean;
 }
 
 export interface GenerationParams {

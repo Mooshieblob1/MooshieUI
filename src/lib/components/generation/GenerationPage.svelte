@@ -14,11 +14,54 @@
     { id: "img2img" as const, label: "Image to Image" },
     { id: "inpainting" as const, label: "Inpainting" },
   ];
+
+  // Panel widths (px)
+  let leftWidth = $state(360);
+  let rightWidth = $state(300);
+
+  const LEFT_MIN = 280;
+  const LEFT_MAX = 520;
+  const RIGHT_MIN = 250;
+  const RIGHT_MAX = 450;
+
+  let dragging = $state<"left" | "right" | null>(null);
+  let dragStartX = 0;
+  let dragStartWidth = 0;
+
+  function onDividerDown(side: "left" | "right", e: MouseEvent) {
+    dragging = side;
+    dragStartX = e.clientX;
+    dragStartWidth = side === "left" ? leftWidth : rightWidth;
+    e.preventDefault();
+  }
+
+  function onPointerMove(e: MouseEvent) {
+    if (!dragging) return;
+    const delta = e.clientX - dragStartX;
+    if (dragging === "left") {
+      leftWidth = Math.min(LEFT_MAX, Math.max(LEFT_MIN, dragStartWidth + delta));
+    } else {
+      rightWidth = Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, dragStartWidth - delta));
+    }
+  }
+
+  function onPointerUp() {
+    dragging = null;
+  }
 </script>
 
-<div class="flex h-full">
-  <!-- Left panel: controls -->
-  <div class="w-[380px] min-w-[340px] border-r border-neutral-800 overflow-y-auto p-4 space-y-4">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="flex h-full select-none"
+  onmousemove={onPointerMove}
+  onmouseup={onPointerUp}
+  onmouseleave={onPointerUp}
+>
+  <!-- Left panel: Image Settings -->
+  <div
+    class="overflow-y-auto p-4 flex flex-col gap-4 shrink-0"
+    style="width: {leftWidth}px"
+  >
     <!-- Mode tabs -->
     <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
       {#each modes as mode}
@@ -37,19 +80,7 @@
     <PromptInputs />
 
     <div class="border-t border-neutral-800 pt-4">
-      <ModelSelector />
-    </div>
-
-    <div class="border-t border-neutral-800 pt-4">
-      <SamplerSettings />
-    </div>
-
-    <div class="border-t border-neutral-800 pt-4">
       <DimensionControls />
-    </div>
-
-    <div class="border-t border-neutral-800 pt-4">
-      <UpscaleSettings />
     </div>
 
     {#if generation.mode !== "txt2img"}
@@ -60,14 +91,44 @@
       </div>
     {/if}
 
-    <div class="pt-2">
+    <div class="mt-auto pt-4">
       <GenerateButton />
     </div>
   </div>
 
-  <!-- Right panel: preview & output -->
-  <div class="flex-1 p-6 flex flex-col gap-4 overflow-y-auto">
+  <!-- Left divider -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="w-1 shrink-0 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'left' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
+    onmousedown={(e) => onDividerDown("left", e)}
+  ></div>
+
+  <!-- Center panel: Preview & Output -->
+  <div class="flex-1 min-w-0 p-6 flex flex-col gap-4 overflow-y-auto">
     <ProgressBar />
     <PreviewImage />
+  </div>
+
+  <!-- Right divider -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="w-1 shrink-0 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'right' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
+    onmousedown={(e) => onDividerDown("right", e)}
+  ></div>
+
+  <!-- Right panel: Model & Sampler Settings -->
+  <div
+    class="overflow-y-auto p-4 space-y-4 shrink-0"
+    style="width: {rightWidth}px"
+  >
+    <ModelSelector />
+
+    <div class="border-t border-neutral-800 pt-4">
+      <SamplerSettings />
+    </div>
+
+    <div class="border-t border-neutral-800 pt-4">
+      <UpscaleSettings />
+    </div>
   </div>
 </div>

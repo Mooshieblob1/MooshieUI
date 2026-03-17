@@ -24,10 +24,10 @@ Switch between modes with a single click — all settings carry over.
 
 ### 🔧 Full Generation Controls
 
-- **Positive & Negative Prompts** — Multi-line text areas with auto-resize
+- **Positive & Negative Prompts** — Multi-line text areas, manually resizable height
 - **Checkpoint Selector** — Searchable dropdown, auto-populated from ComfyUI
 - **VAE Selector** — Optional override (defaults to checkpoint's built-in VAE)
-- **LoRA Support** — Add unlimited LoRAs with independent model/CLIP strength sliders (0–2)
+- **LoRA Support** — Add unlimited LoRAs with independent model/CLIP strength sliders (0–2), per-LoRA enable/disable toggle, searchable dropdown, and active count badge
 - **Sampler & Scheduler** — All ComfyUI samplers and schedulers available
 - **Steps** — 1 to 150 (slider)
 - **CFG Scale** — 0 to 30 with 0.1 precision (number input + slider)
@@ -94,6 +94,12 @@ All settings are automatically saved to disk and restored on next launch:
 - Generation mode, prompts, model selections
 - Sampler, scheduler, steps, CFG, seed, dimensions
 - All upscale settings (enabled, method, model, tiling, etc.)
+
+### 🖥️ Flexible Layout
+
+- **Three-panel layout** — Image settings (left), preview (center), model & sampler settings (right)
+- **Resizable panels** — Drag dividers between panels to adjust widths
+- **Resizable prompts** — Drag prompt text areas to adjust height
 
 ### 🔌 Connection Management
 
@@ -221,7 +227,7 @@ Features planned or in progress:
 - [ ] **Queue management page** — view, reorder, and cancel queued generations
 - [ ] **Settings page** — configure ComfyUI connection, paths, defaults, and theme
 - [ ] **Gallery upscale button** — upscale any image from the gallery grid or lightbox
-- [ ] **Windows & macOS builds** — cross-platform CI releases
+- [ ] **Windows & macOS builds** — cross-platform CI releases *(CI config exists, untested)*
 
 ### Planned
 - [ ] **Prompt history & favorites** — recall and reuse previous prompts

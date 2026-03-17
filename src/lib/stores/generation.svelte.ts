@@ -52,6 +52,14 @@ class GenerationStore {
         if (saved.positivePrompt) this.positivePrompt = saved.positivePrompt;
         if (saved.negativePrompt) this.negativePrompt = saved.negativePrompt;
         if (saved.mode) this.mode = saved.mode;
+        if (Array.isArray(saved.loras)) {
+          this.loras = saved.loras.map((l: any) => ({
+            name: l.name || "",
+            strength_model: l.strength_model ?? 1.0,
+            strength_clip: l.strength_clip ?? 1.0,
+            enabled: l.enabled ?? true,
+          }));
+        }
         if (saved.upscaleEnabled !== undefined) this.upscaleEnabled = saved.upscaleEnabled;
         if (saved.upscaleMethod) this.upscaleMethod = saved.upscaleMethod;
         if (saved.upscaleModel !== undefined) this.upscaleModel = saved.upscaleModel;
@@ -76,6 +84,7 @@ class GenerationStore {
         negativePrompt: this.negativePrompt,
         checkpoint: this.checkpoint,
         vae: this.vae,
+        loras: this.loras,
         samplerName: this.samplerName,
         scheduler: this.scheduler,
         steps: this.steps,
@@ -106,7 +115,13 @@ class GenerationStore {
       negative_prompt: this.negativePrompt,
       checkpoint: this.checkpoint,
       vae: this.vae || null,
-      loras: this.loras,
+      loras: this.loras
+        .filter((l) => l.enabled && l.name)
+        .map(({ name, strength_model, strength_clip }) => ({
+          name,
+          strength_model,
+          strength_clip,
+        })),
       sampler_name: this.samplerName,
       scheduler: this.scheduler,
       steps: this.steps,
@@ -133,12 +148,18 @@ class GenerationStore {
   addLora() {
     this.loras = [
       ...this.loras,
-      { name: "", strength_model: 1.0, strength_clip: 1.0 },
+      { name: "", strength_model: 1.0, strength_clip: 1.0, enabled: true },
     ];
   }
 
   removeLora(index: number) {
     this.loras = this.loras.filter((_, i) => i !== index);
+  }
+
+  toggleLora(index: number) {
+    this.loras = this.loras.map((l, i) =>
+      i === index ? { ...l, enabled: !l.enabled } : l
+    );
   }
 
   /** Apply defaults if no checkpoint is selected yet (first run). */
