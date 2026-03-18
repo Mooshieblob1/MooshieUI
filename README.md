@@ -4,7 +4,7 @@
 
 A modern, beginner-friendly desktop frontend for [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Built with **Svelte 5** + **Tauri** (Rust), MooshieUI hides ComfyUI's node-graph complexity behind a clean, intuitive interface — no workflow editing required.
 
-![License](https://img.shields.io/github/license/Mooshieblob1/MooshieUI)
+![License](https://img.shields.io/github/license/Mooshieblob1/MooshieUI?v=2)
 
 ---
 
