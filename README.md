@@ -294,7 +294,7 @@ Features planned or in progress:
 
 ## 📄 License
 
-This project is open source. See [LICENSE](LICENSE) for details.
+This project is licensed under the [MIT License](LICENSE).
 
 ---
 
