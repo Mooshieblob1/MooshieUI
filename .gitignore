@@ -25,6 +25,12 @@ venv/
 *.swo
 *~
 
+# Claude Code local settings
+.claude/settings.local.json
+
+# Local dev scripts
+*.cmd
+
 # OS
 .DS_Store
 Thumbs.db

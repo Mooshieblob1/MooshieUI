@@ -17,15 +17,15 @@ A modern, beginner-friendly desktop frontend for [ComfyUI](https://github.com/co
 | Mode | Status | Description |
 |------|--------|-------------|
 | **Text to Image** | ✅ | Generate images from scratch using positive & negative prompts |
-| **Image to Image** | 🔧 | Transform existing images with adjustable denoise strength *(image upload coming soon)* |
-| **Inpainting** | 🔧 | Selectively edit parts of images using masks *(canvas editor coming soon)* |
+| **Image to Image** | ✅ | Transform existing images with adjustable denoise strength |
+| **Inpainting** | 🔧 | Selectively edit parts of images using masks *(canvas editor in progress)* |
 
 Switch between modes with a single click — all settings carry over.
 
 ### 🔧 Full Generation Controls
 
 - **Positive & Negative Prompts** — Multi-line text areas, manually resizable height
-- **Checkpoint Selector** — Searchable dropdown, auto-populated from ComfyUI
+- **Checkpoint Selector** — Searchable dropdown, auto-populated from ComfyUI, with recommended models (auto-download on selection with progress bars and file size display)
 - **VAE Selector** — Optional override (defaults to checkpoint's built-in VAE)
 - **LoRA Support** — Add unlimited LoRAs with independent model/CLIP strength sliders (0–2), per-LoRA enable/disable toggle, searchable dropdown, and active count badge
 - **Sampler & Scheduler** — All ComfyUI samplers and schedulers available
@@ -75,11 +75,11 @@ Hover over any generated image to reveal an **Upscale** button — instantly ups
 
 ### 🖼️ Gallery
 
-- **Thumbnail Grid** — All generated images in a responsive grid (3–5 columns)
+- **Persistent Gallery** — All generated images are saved to disk and available across sessions
+- **Thumbnail Grid** — Responsive grid with sorting by date
 - **Lightbox** — Click any image to view full-size; scroll-wheel zoom at cursor, Escape or click-outside to close, double-click to reset zoom
-- **Session History** — All outputs from the current session are saved
-
-> *Note: Gallery images are session-only for now. Persistent gallery with disk storage is planned.*
+- **Image Management** — Rename, delete, copy to clipboard, and upscale from the gallery
+- **Generation Mode Labels** — Each image shows whether it was created via txt2img, img2img, or inpainting
 
 ### 📊 Real-Time Progress
 
@@ -104,9 +104,16 @@ All settings are automatically saved to disk and restored on next launch:
 ### 🔌 Connection Management
 
 - **Auto-connect** to ComfyUI on startup
-- **Status indicator** — Green/red dot shows connection state
+- **Status indicator** — Green/red dot shows connection state with version number
 - **WebSocket streaming** — Real-time progress, previews, and completion events
 - Works with both local and remote ComfyUI instances
+- **Silent background process** — ComfyUI runs without any visible terminal windows (Windows)
+
+### 🧬 Smart Model Detection
+
+- **Hash-based identification** — Models are recognized by SHA256 hash (CivitAI AutoV2 format), not just filename — renamed files are still detected
+- **CivitAI integration** — Look up any model's metadata (name, version, preview images) via CivitAI's hash database
+- **Recommended models** — SIH-1.5 (~7.5 GB) and Anima Preview 2 (~13 GB) auto-download on selection with real-time progress bars and file size display
 
 ---
 
@@ -117,13 +124,18 @@ MooshieUI
 ├── src/                    # Svelte 5 frontend (UI)
 │   ├── App.svelte          # Main app shell, gallery, WebSocket listeners
 │   ├── lib/
-│   │   ├── components/     # UI components (generation, progress)
+│   │   ├── components/     # UI components
+│   │   │   ├── generation/ # Model selector, prompts, dimensions, upscale
+│   │   │   ├── canvas/     # Inpainting canvas editor (WIP)
+│   │   │   ├── progress/   # Live preview and progress display
+│   │   │   ├── setup/      # Setup wizard with streaming installer
+│   │   │   └── ui/         # Shared UI components (tooltips, etc.)
 │   │   ├── stores/         # Svelte 5 rune-based state ($state, $derived)
 │   │   ├── types/          # TypeScript interfaces
-│   │   └── utils/          # Tauri API bridge
+│   │   └── utils/          # Tauri API bridge (models, gallery, hashing, CivitAI)
 ├── src-tauri/              # Rust/Tauri backend
 │   └── src/
-│       ├── commands/       # Tauri command handlers
+│       ├── commands/       # Tauri command handlers (API, config, server, WebSocket)
 │       ├── comfyui/        # ComfyUI API client, WebSocket, process management
 │       ├── setup.rs        # One-click installer (uv, Python, ComfyUI, PyTorch)
 │       └── templates/      # Workflow builders (txt2img, img2img, inpainting, upscale)
@@ -157,6 +169,8 @@ MooshieUI handles everything automatically on first launch:
    - Install all ComfyUI dependencies
    - Install MooshieUI's custom nodes
 3. **Start generating** — ComfyUI launches automatically
+
+The installer shows real-time terminal output streamed as a matrix-style backdrop behind the setup UI, with per-step progress bars and a checklist so you always know what's happening. No separate terminal windows are opened.
 
 **No Python, no pip, no manual configuration required.** Everything is self-contained in the app's data directory.
 
@@ -228,6 +242,7 @@ Features planned or in progress:
 - [x] **Settings page** — configure ComfyUI connection, paths, defaults, and extra args
 - [x] **Gallery upscale button** — upscale any image from the gallery grid or lightbox
 - [x] **Anima Preview 2 support** — auto-download split model (diffusion + CLIP + VAE), quality prompt injection, optimized defaults
+- [x] **SIH-1.5 support** — auto-download checkpoint + VAE on selection, with file size display
 - [x] **CFG++ auto-detect** — soft-sets CFG to 1.4 when selecting CFG++ samplers
 - [x] **Info tooltips** — hover (?) icons explain technical settings in plain English
 - [x] **Collapsible settings sections** — with search bar to filter settings
@@ -237,6 +252,11 @@ Features planned or in progress:
 - [x] **Lightbox zoom & dismiss** — scroll-wheel zoom at cursor, Escape/click-outside to close
 - [x] **Clipboard copy as file** — copies gallery images as file references (preserves format & metadata)
 - [x] **Windows & macOS builds** — cross-platform CI releases (Windows .msi/.exe, macOS .dmg, Linux .deb/.AppImage)
+- [x] **Hash-based model detection** — SHA256/AutoV2 hash identification with CivitAI API integration, models recognized even if renamed
+- [x] **Installer UX overhaul** — streamed terminal backdrop, per-step progress bars, download progress with bytes/total, no separate terminal windows
+- [x] **Persistent gallery** — images saved to disk across sessions with rename, delete, and management
+- [x] **Version display** — app version shown in sidebar below connection status
+- [x] **Download progress** — real-time progress bars with file size for all model downloads (checkpoints, VAEs, upscale models)
 
 ### Planned
 - [ ] **Prompt history & favorites** — recall and reuse previous prompts
@@ -265,8 +285,9 @@ Features planned or in progress:
 | Frontend | Svelte 5, TypeScript, Tailwind CSS 4 |
 | Desktop | Tauri v2 (Rust) |
 | State | Svelte 5 runes (`$state`, `$derived`) |
-| Persistence | `@tauri-apps/plugin-store` |
+| Persistence | `@tauri-apps/plugin-store`, localStorage |
 | Backend API | ComfyUI REST + WebSocket |
+| Model API | CivitAI REST API (hash-based model lookup) |
 | Styling | Tailwind CSS with neutral/indigo theme |
 
 ---
@@ -282,6 +303,7 @@ This project is open source. See [LICENSE](LICENSE) for details.
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI) — The powerful node-based backend
 - [Tauri](https://tauri.app/) — Lightweight desktop app framework
 - [Svelte](https://svelte.dev/) — Reactive UI framework
+- [CivitAI](https://civitai.com/) — Model hash database and API
 - [OmniSR](https://huggingface.co/Acly/Omni-SR) — Recommended upscale models by Acly
 - MultiDiffusion paper — Tiled diffusion algorithm
 - SpotDiffusion paper — Fast tiled diffusion variant
