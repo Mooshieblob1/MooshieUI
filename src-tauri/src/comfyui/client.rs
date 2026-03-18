@@ -168,16 +168,19 @@ impl AppState {
         Ok(upload_resp)
     }
 
-    /// Downloads a file from a URL to the models/<category> directory.
+    /// Downloads a file from a URL to the models/<category> directory,
+    /// emitting `download:progress` events with byte-level progress.
     pub async fn download_model_file(
         &self,
+        app: &tauri::AppHandle,
         url: &str,
         category: &str,
         filename: &str,
     ) -> Result<(), AppError> {
+        use tauri::Emitter;
+
         let config = self.config.read().await;
         let comfyui_path = if config.comfyui_path.is_empty() {
-            // Fall back: ComfyUI is typically a sibling directory
             let exe_dir = std::env::current_exe()
                 .ok()
                 .and_then(|p| p.parent().map(|p| p.to_path_buf()));
@@ -208,8 +211,54 @@ impl AppState {
             });
         }
 
-        let bytes = resp.bytes().await?;
-        tokio::fs::write(&dest, &bytes).await?;
+        let total = resp.content_length().unwrap_or(0);
+        let mut downloaded: u64 = 0;
+        let mut file = std::fs::File::create(&dest)?;
+        let mut last_emit: u64 = 0;
+
+        app.emit(
+            "download:progress",
+            crate::setup::DownloadProgress {
+                filename: filename.to_string(),
+                downloaded: 0,
+                total,
+                done: false,
+            },
+        )
+        .ok();
+
+        let mut resp = resp;
+        while let Some(chunk) = resp.chunk().await? {
+            use std::io::Write;
+            file.write_all(&chunk)?;
+            downloaded += chunk.len() as u64;
+
+            if downloaded - last_emit > 256 * 1024 || downloaded == total {
+                last_emit = downloaded;
+                app.emit(
+                    "download:progress",
+                    crate::setup::DownloadProgress {
+                        filename: filename.to_string(),
+                        downloaded,
+                        total,
+                        done: false,
+                    },
+                )
+                .ok();
+            }
+        }
+
+        app.emit(
+            "download:progress",
+            crate::setup::DownloadProgress {
+                filename: filename.to_string(),
+                downloaded,
+                total,
+                done: true,
+            },
+        )
+        .ok();
+
         Ok(())
     }
 

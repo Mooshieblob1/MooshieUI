@@ -5,13 +5,19 @@ export interface LoraEntry {
   enabled: boolean;
 }
 
+export interface LoraPayloadEntry {
+  name: string;
+  strength_model: number;
+  strength_clip: number;
+}
+
 export interface GenerationParams {
   mode: "txt2img" | "img2img" | "inpainting";
   positive_prompt: string;
   negative_prompt: string;
   checkpoint: string;
   vae: string | null;
-  loras: LoraEntry[];
+  loras: LoraPayloadEntry[];
   sampler_name: string;
   scheduler: string;
   steps: number;
@@ -21,6 +27,7 @@ export interface GenerationParams {
   height: number;
   batch_size: number;
   denoise: number;
+  differential_diffusion: boolean;
   input_image: string | null;
   mask_image: string | null;
   grow_mask_by: number | null;
@@ -43,8 +50,17 @@ export interface OutputImage {
   subfolder: string;
   type: string;
   prompt_id: string;
+  generation_mode?: "txt2img" | "img2img" | "inpainting";
   url?: string;
   gallery_filename?: string;
+  file_size_bytes?: number;
+  generated_at_ms?: number;
+}
+
+export interface GalleryImageEntry {
+  filename: string;
+  size_bytes: number;
+  modified_ms: number;
 }
 
 export interface SamplerInfo {

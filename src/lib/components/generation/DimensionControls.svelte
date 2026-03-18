@@ -10,6 +10,8 @@
   let aspectW = $state(1);
   let aspectH = $state(1);
   let sideLength = $state(1024);
+  let aspectWInput = $state("1");
+  let aspectHInput = $state("1");
 
   // When an input image is loaded, adopt its aspect ratio
   let lastAppliedKey = "";
@@ -20,7 +22,8 @@
         lastAppliedKey = key;
         aspectW = suggestedAspect.w;
         aspectH = suggestedAspect.h;
-        recalc();
+        aspectWInput = String(suggestedAspect.w);
+        aspectHInput = String(suggestedAspect.h);
       }
     }
   });
@@ -37,8 +40,8 @@
   ];
 
   function recalc() {
-    const aw = Math.max(1, aspectW);
-    const ah = Math.max(1, aspectH);
+    const aw = Math.max(0.01, aspectW);
+    const ah = Math.max(0.01, aspectH);
     const side = Math.max(64, sideLength);
     // Target area = side², distributed across the aspect ratio
     const area = side * side;
@@ -51,6 +54,8 @@
   function applyPreset(w: number, h: number) {
     aspectW = w;
     aspectH = h;
+    aspectWInput = String(w);
+    aspectHInput = String(h);
     recalc();
   }
 
@@ -58,7 +63,28 @@
     const tmp = aspectW;
     aspectW = aspectH;
     aspectH = tmp;
+    aspectWInput = String(aspectW);
+    aspectHInput = String(aspectH);
     recalc();
+  }
+
+  function onAspectInput(kind: "w" | "h", value: string) {
+    if (kind === "w") {
+      aspectWInput = value;
+      const parsed = Number.parseFloat(value);
+      if (!Number.isNaN(parsed) && Number.isFinite(parsed) && parsed > 0) {
+        aspectW = parsed;
+        recalc();
+      }
+      return;
+    }
+
+    aspectHInput = value;
+    const parsed = Number.parseFloat(value);
+    if (!Number.isNaN(parsed) && Number.isFinite(parsed) && parsed > 0) {
+      aspectH = parsed;
+      recalc();
+    }
   }
 
   const activePreset = $derived(
@@ -69,7 +95,7 @@
 <div class="space-y-3">
   <!-- Aspect Ratio -->
   <div>
-    <label class="block text-xs text-neutral-400 mb-1.5">Aspect Ratio</label>
+    <p class="text-xs text-neutral-400 mb-1.5">Aspect Ratio</p>
     <div class="flex items-center gap-1 flex-wrap mb-2">
       {#each presets as preset}
         <button
@@ -86,11 +112,10 @@
       <div class="flex-1">
         <span class="block text-[10px] text-neutral-500 mb-0.5">W</span>
         <input
-          type="number"
-          bind:value={aspectW}
-          oninput={recalc}
-          min="1"
-          max="100"
+          type="text"
+          inputmode="decimal"
+          value={aspectWInput}
+          oninput={(e) => onAspectInput("w", (e.target as HTMLInputElement).value)}
           class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-sm text-neutral-100 text-center focus:outline-none focus:border-indigo-500 transition-colors"
         />
       </div>
@@ -98,11 +123,10 @@
       <div class="flex-1">
         <span class="block text-[10px] text-neutral-500 mb-0.5">H</span>
         <input
-          type="number"
-          bind:value={aspectH}
-          oninput={recalc}
-          min="1"
-          max="100"
+          type="text"
+          inputmode="decimal"
+          value={aspectHInput}
+          oninput={(e) => onAspectInput("h", (e.target as HTMLInputElement).value)}
           class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-sm text-neutral-100 text-center focus:outline-none focus:border-indigo-500 transition-colors"
         />
       </div>

@@ -74,6 +74,8 @@ pub struct GenerationParams {
     pub height: u32,
     pub batch_size: u32,
     pub denoise: f64,
+    #[serde(default)]
+    pub differential_diffusion: bool,
     pub input_image: Option<String>,
     pub mask_image: Option<String>,
     pub grow_mask_by: Option<u32>,

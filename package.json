@@ -1,7 +1,7 @@
 {
   "name": "comfyui-desktop",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,11 +15,14 @@
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-fs": "^2",
     "@tauri-apps/plugin-shell": "^2",
-    "@tauri-apps/plugin-store": "^2"
+    "@tauri-apps/plugin-store": "^2",
+    "konva": "^10.2.3",
+    "svelte-konva": "^1.0.1"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5",
     "@tailwindcss/vite": "^4",
+    "@tauri-apps/cli": "^2.10.1",
     "@tsconfig/svelte": "^5.0.8",
     "svelte": "^5",
     "svelte-check": "^4",

@@ -2,6 +2,8 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import { downloadModel } from "../../utils/api.js";
+  import { listen } from "@tauri-apps/api/event";
+  import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
 
   interface RecommendedModel {
@@ -25,6 +27,36 @@
 
   let downloading = $state<string | null>(null);
   let downloadError = $state<string | null>(null);
+
+  // Download progress tracking
+  let dlBytes = $state(0);
+  let dlTotal = $state(0);
+
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  const dlPercent = $derived(dlTotal > 0 ? Math.round((dlBytes / dlTotal) * 100) : 0);
+
+  onMount(async () => {
+    await listen("download:progress", (event: any) => {
+      const data = event.payload as {
+        filename: string;
+        downloaded: number;
+        total: number;
+        done: boolean;
+      };
+      if (data.done) {
+        dlBytes = 0;
+        dlTotal = 0;
+      } else {
+        dlBytes = data.downloaded;
+        dlTotal = data.total;
+      }
+    });
+  });
 
   // All options: installed models + recommended that aren't installed yet
   function getModelOptions() {
@@ -142,7 +174,26 @@
           {/each}
         </select>
         {#if downloading}
-          <p class="text-xs text-indigo-400 mt-1 animate-pulse">Downloading {downloading}...</p>
+          <div class="mt-2 bg-neutral-800/80 rounded-lg px-3 py-2">
+            <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+              <span class="truncate mr-2">Downloading {downloading}...</span>
+              {#if dlTotal > 0}
+                <span class="shrink-0 tabular-nums">{formatBytes(dlBytes)} / {formatBytes(dlTotal)} ({dlPercent}%)</span>
+              {/if}
+            </div>
+            {#if dlTotal > 0}
+              <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+                <div
+                  class="bg-indigo-400 h-full rounded-full transition-all duration-300 ease-out"
+                  style="width: {dlPercent}%"
+                ></div>
+              </div>
+            {:else}
+              <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+                <div class="bg-indigo-400 h-full rounded-full w-1/3 animate-pulse"></div>
+              </div>
+            {/if}
+          </div>
         {/if}
         {#if downloadError}
           <p class="text-xs text-red-400 mt-1">{downloadError}</p>

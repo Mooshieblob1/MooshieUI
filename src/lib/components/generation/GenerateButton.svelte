@@ -1,8 +1,14 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
+  import { canvas } from "../../stores/canvas.svelte.js";
   import { generate, interruptGeneration } from "../../utils/api.js";
 
+  interface Props {
+    canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
+  }
+
+  let { canvasEditorRef }: Props = $props();
   let errorMsg = $state<string | null>(null);
 
   async function handleGenerate() {
@@ -19,9 +25,31 @@
     }
 
     try {
+      // If canvas mode is active, export canvas content before generating
+      if (canvas.isCanvasMode) {
+        if (!canvasEditorRef) {
+          throw new Error("Canvas editor is not ready yet. Please try again.");
+        }
+        await canvas.syncToGeneration(
+          () => canvasEditorRef.getRasterComposite(),
+          () => canvasEditorRef.getMaskCanvas()
+        );
+      }
+
+      if (generation.mode === "inpainting") {
+        if (!generation.inputImage) {
+          errorMsg = "Inpainting needs an input image. Upload one or use a staged image.";
+          return;
+        }
+        if (!generation.maskImage) {
+          errorMsg = "Inpainting needs a mask. Paint a mask in Canvas Editor or upload one.";
+          return;
+        }
+      }
+
       const params = generation.toParams();
       const promptId = await generate(params);
-      progress.startGeneration(promptId, params.upscale_enabled);
+      progress.startGeneration(promptId, params.upscale_enabled, params.mode);
       generation.saveSettings();
     } catch (e) {
       console.error("Generation failed:", e);

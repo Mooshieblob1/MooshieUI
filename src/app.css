@@ -3,8 +3,39 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --accent: oklch(0.65 0.2 270);
-  --accent-hover: oklch(0.55 0.2 270);
+  --accent: #ffcc00;
+  --accent-hover: #e6b800;
+
+  /* Remap existing indigo/purple utility usage to the logo palette. */
+  --color-indigo-50: #fffdf0;
+  --color-indigo-100: #fff8d1;
+  --color-indigo-200: #ffef9e;
+  --color-indigo-300: #ffe680;
+  --color-indigo-400: #ffd54d;
+  --color-indigo-500: #ffcc00;
+  --color-indigo-600: #cc9900;
+  --color-indigo-700: #a37a00;
+  --color-indigo-800: #7a5c00;
+  --color-indigo-900: #5c4600;
+  --color-indigo-950: #3d2f00;
+
+  --color-purple-50: #fffdf0;
+  --color-purple-100: #fff8d1;
+  --color-purple-200: #ffef9e;
+  --color-purple-300: #ffe680;
+  --color-purple-400: #ffd54d;
+  --color-purple-500: #ffcc00;
+  --color-purple-600: #cc9900;
+  --color-purple-700: #a37a00;
+  --color-purple-800: #7a5c00;
+  --color-purple-900: #5c4600;
+  --color-purple-950: #3d2f00;
+}
+
+/* Improve contrast on yellow highlight surfaces that currently use text-white. */
+[class*="bg-indigo-"][class*="text-white"],
+[class*="bg-purple-"][class*="text-white"] {
+  color: #111111 !important;
 }
 
 html, body, #app {

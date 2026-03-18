@@ -240,7 +240,7 @@ Features planned or in progress:
 
 ### Planned
 - [ ] **Prompt history & favorites** — recall and reuse previous prompts
-- [ ] **Model manager** — browse, download, and organize models from within the app
+- [ ] **Model Hub** — browse CivitAI models with image previews and metadata (ratings, tags, sample images) directly in the app; download with one click to the correct ComfyUI folder; also accept HuggingFace URLs as an alternative download source; hash-based model recognition so renamed files are still identified
 - [ ] **ControlNet support** — depth, canny, pose, and other control methods
 - [ ] **Image metadata** — embed and read generation parameters in PNG metadata
 - [ ] **Drag & drop** — drop images into img2img/inpainting from desktop or gallery

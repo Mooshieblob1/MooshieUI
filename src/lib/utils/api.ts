@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppConfig,
+  GalleryImageEntry,
   GenerationParams,
   OutputImage,
   QueueInfo,
@@ -94,6 +95,26 @@ export async function downloadModel(
   return invoke("download_model", { url, category, filename });
 }
 
+export async function findModelByHash(
+  category: string,
+  hash: string
+): Promise<string | null> {
+  return invoke("find_model_by_hash", { category, hash });
+}
+
+export async function hashModelFile(
+  category: string,
+  filename: string
+): Promise<{ sha256: string; autov2: string }> {
+  return invoke("hash_model_file", { category, filename });
+}
+
+export async function civitaiLookupHash(
+  hash: string
+): Promise<Record<string, unknown>> {
+  return invoke("civitai_lookup_hash", { hash });
+}
+
 export async function saveImageFile(
   imageBytes: number[],
   path: string
@@ -104,13 +125,18 @@ export async function saveImageFile(
 export async function saveToGallery(
   filename: string,
   subfolder: string,
-  promptId: string
+  promptId: string,
+  mode?: "txt2img" | "img2img" | "inpainting"
 ): Promise<string> {
-  return invoke("save_to_gallery", { filename, subfolder, promptId });
+  return invoke("save_to_gallery", { filename, subfolder, promptId, mode });
 }
 
 export async function listGalleryImages(): Promise<string[]> {
   return invoke("list_gallery_images");
+}
+
+export async function listGalleryImageEntries(): Promise<GalleryImageEntry[]> {
+  return invoke("list_gallery_image_entries");
 }
 
 export async function loadGalleryImage(filename: string): Promise<number[]> {
@@ -119,6 +145,10 @@ export async function loadGalleryImage(filename: string): Promise<number[]> {
 
 export async function deleteGalleryImage(filename: string): Promise<void> {
   return invoke("delete_gallery_image", { filename });
+}
+
+export async function renameGalleryImage(oldFilename: string, newFilename: string): Promise<string> {
+  return invoke("rename_gallery_image", { oldFilename, newFilename });
 }
 
 export async function copyImageToClipboard(filePath: string): Promise<void> {

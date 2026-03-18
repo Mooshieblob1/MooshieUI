@@ -26,6 +26,7 @@ class GenerationStore {
   inputImage = $state<string | null>(null);
   maskImage = $state<string | null>(null);
   growMaskBy = $state(6);
+  differentialDiffusion = $state(false);
   upscaleEnabled = $state(false);
   upscaleMethod = $state<"algorithmic" | "model">("algorithmic");
   upscaleModel = $state<string | null>(null);
@@ -62,6 +63,7 @@ class GenerationStore {
         if (saved.height) this.height = saved.height;
         if (saved.batchSize) this.batchSize = saved.batchSize;
         if (saved.denoise !== undefined) this.denoise = saved.denoise;
+        if (saved.differentialDiffusion !== undefined) this.differentialDiffusion = saved.differentialDiffusion;
         if (saved.positivePrompt) this.positivePrompt = saved.positivePrompt;
         if (saved.negativePrompt) this.negativePrompt = saved.negativePrompt;
         if (saved.mode) this.mode = saved.mode;
@@ -111,6 +113,7 @@ class GenerationStore {
         height: this.height,
         batchSize: this.batchSize,
         denoise: this.denoise,
+        differentialDiffusion: this.differentialDiffusion,
         upscaleEnabled: this.upscaleEnabled,
         upscaleMethod: this.upscaleMethod,
         upscaleModel: this.upscaleModel,
@@ -160,6 +163,7 @@ class GenerationStore {
       height: this.height,
       batch_size: this.batchSize,
       denoise: this.denoise,
+      differential_diffusion: this.differentialDiffusion,
       input_image: this.inputImage,
       mask_image: this.maskImage,
       grow_mask_by: this.growMaskBy,

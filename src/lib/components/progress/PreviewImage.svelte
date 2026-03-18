@@ -13,11 +13,15 @@
     params.mode = "img2img";
     try {
       const promptId = await generate(params);
-      progress.startGeneration(promptId, true);
+      progress.startGeneration(promptId, true, "img2img");
     } catch (e) {
       console.error("Upscale failed:", e);
     }
   }
+
+  $effect(() => {
+    progress.setActiveMode(generation.mode);
+  });
 
   function handleSave() {
     if (progress.lastOutputImage) {

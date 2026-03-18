@@ -1,11 +1,21 @@
 class ProgressStore {
   isGenerating = $state(false);
   currentPromptId = $state<string | null>(null);
+  currentMode = $state<"txt2img" | "img2img" | "inpainting">("txt2img");
   currentStep = $state(0);
   totalSteps = $state(0);
   currentNode = $state<string | null>(null);
   previewImage = $state<string | null>(null);
   lastOutputImage = $state<string | null>(null);
+  modeLastOutput = $state<{
+    txt2img: string | null;
+    img2img: string | null;
+    inpainting: string | null;
+  }>({
+    txt2img: null,
+    img2img: null,
+    inpainting: null,
+  });
   wasUpscaled = $state(false);
 
   /** Which sampling pass we're on: 0 = not started, 1 = initial, 2 = upscale */
@@ -21,6 +31,18 @@ class ProgressStore {
 
   get displayImage() {
     return this.previewImage ?? this.lastOutputImage;
+  }
+
+  setActiveMode(mode: "txt2img" | "img2img" | "inpainting") {
+    this.lastOutputImage = this.modeLastOutput[mode];
+  }
+
+  setLastOutputForMode(mode: "txt2img" | "img2img" | "inpainting", image: string | null) {
+    this.modeLastOutput = {
+      ...this.modeLastOutput,
+      [mode]: image,
+    };
+    this.lastOutputImage = image;
   }
 
   /** Plain English label for the current phase */
@@ -52,14 +74,23 @@ class ProgressStore {
     this._lastProgressNode = null;
     // Keep last preview as the output image
     if (this.previewImage) {
+      this.modeLastOutput = {
+        ...this.modeLastOutput,
+        [this.currentMode]: this.previewImage,
+      };
       this.lastOutputImage = this.previewImage;
     }
     this.previewImage = null;
   }
 
-  startGeneration(promptId: string, upscaled: boolean = false) {
+  startGeneration(
+    promptId: string,
+    upscaled: boolean = false,
+    mode: "txt2img" | "img2img" | "inpainting" = "txt2img"
+  ) {
     this.isGenerating = true;
     this.currentPromptId = promptId;
+    this.currentMode = mode;
     this.currentStep = 0;
     this.totalSteps = 0;
     this.previewImage = null;

@@ -1,16 +1,33 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
-  import { downloadModel } from "../../utils/api.js";
+  import { downloadModel, findModelByHash, hashModelFile } from "../../utils/api.js";
+  import { listen } from "@tauri-apps/api/event";
+  import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
+
+  interface ModelFile {
+    filename: string;
+    url: string;
+    category: string;
+    /** AutoV2 hash (first 10 chars of full SHA256, uppercase) — CivitAI-compatible */
+    hash?: string;
+    clipType?: string;
+  }
 
   interface RecommendedModel {
     label: string;
-    /** If true, uses split model loading (UNETLoader + CLIPLoader + VAELoader) */
+    /** Total download size (human-readable) shown in the dropdown */
+    size: string;
+    /** Regular checkpoint model (single file) */
+    checkpoint?: ModelFile;
+    /** VAE to download alongside the checkpoint */
+    vaeModel?: ModelFile;
+    /** Split model loading (UNETLoader + CLIPLoader + VAELoader) */
     splitModel?: {
-      diffusionModel: { filename: string; url: string; category: string };
-      clipModel: { filename: string; url: string; category: string; clipType: string };
-      vaeModel: { filename: string; url: string; category: string };
+      diffusionModel: ModelFile;
+      clipModel: ModelFile & { clipType: string };
+      vaeModel: ModelFile;
     };
     /** Auto-apply these settings when selected */
     autoSettings?: {
@@ -25,7 +42,28 @@
 
   const recommendedModels: RecommendedModel[] = [
     {
+      label: "SIH-1.5",
+      size: "~7.5 GB",
+      checkpoint: {
+        filename: "SIH-1.5.safetensors",
+        url: "https://huggingface.co/Enferlain/juice/resolve/main/noob/%CE%A3%CE%99%CE%97-1.5.safetensors",
+        category: "checkpoints",
+      },
+      vaeModel: {
+        filename: "sdxl_vae.safetensors",
+        url: "https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors",
+        category: "vae",
+      },
+      autoSettings: {
+        steps: 20,
+        cfg: 1.4,
+        samplerName: "euler_cfg_pp",
+        scheduler: "sgm_uniform",
+      },
+    },
+    {
       label: "Anima Preview 2",
+      size: "~13 GB",
       splitModel: {
         diffusionModel: {
           filename: "anima-preview2.safetensors",
@@ -61,6 +99,132 @@
   let downloading = $state<string | null>(null);
   let downloadProgress = $state("");
 
+  // Download progress tracking
+  let dlFilename = $state("");
+  let dlBytes = $state(0);
+  let dlTotal = $state(0);
+
+  // Hash-based model detection: maps "category::hash" -> resolved filename on disk
+  let hashResolved = $state<Record<string, string>>({});
+
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  const dlPercent = $derived(dlTotal > 0 ? Math.round((dlBytes / dlTotal) * 100) : 0);
+
+  /** Load cached model hashes from localStorage */
+  function loadCachedHashes(): Record<string, string> {
+    try {
+      return JSON.parse(localStorage.getItem("modelHashes") || "{}");
+    } catch { return {}; }
+  }
+
+  /** Save a hash mapping to localStorage */
+  function cacheHash(category: string, filename: string, hash: string) {
+    const cached = loadCachedHashes();
+    cached[`${category}::${hash}`] = filename;
+    localStorage.setItem("modelHashes", JSON.stringify(cached));
+  }
+
+  /** Resolve recommended models by hash on mount */
+  async function resolveModelHashes() {
+    const allFiles: ModelFile[] = [];
+    for (const rec of recommendedModels) {
+      if (rec.checkpoint?.hash) allFiles.push(rec.checkpoint);
+      if (rec.vaeModel?.hash) allFiles.push(rec.vaeModel);
+      if (rec.splitModel) {
+        if (rec.splitModel.diffusionModel.hash) allFiles.push(rec.splitModel.diffusionModel);
+        if (rec.splitModel.clipModel.hash) allFiles.push(rec.splitModel.clipModel);
+        if (rec.splitModel.vaeModel.hash) allFiles.push(rec.splitModel.vaeModel);
+      }
+    }
+
+    // Also check locally cached hashes (from previous downloads)
+    const cached = loadCachedHashes();
+    const resolved: Record<string, string> = {};
+
+    const lookups = allFiles.map(async (f) => {
+      if (!f.hash) return;
+      const key = `${f.category}::${f.hash}`;
+
+      // First check cached mapping
+      if (cached[key]) {
+        resolved[key] = cached[key];
+        return;
+      }
+
+      // Otherwise scan the directory by hash
+      try {
+        const found = await findModelByHash(f.category, f.hash);
+        if (found) {
+          resolved[key] = found;
+          cacheHash(f.category, found, f.hash);
+        }
+      } catch (e) {
+        console.warn(`Hash lookup failed for ${f.filename}:`, e);
+      }
+    });
+
+    await Promise.all(lookups);
+    hashResolved = resolved;
+  }
+
+  /** Check if a model file is installed (by hash first, then filename fallback) */
+  function isModelFileInstalled(f: ModelFile, modelList: string[]): boolean {
+    if (f.hash) {
+      const key = `${f.category}::${f.hash}`;
+      if (hashResolved[key]) return true;
+    }
+    return modelList.includes(f.filename);
+  }
+
+  /** Get the actual filename on disk for a model file (may differ from expected if renamed) */
+  function resolvedFilename(f: ModelFile): string {
+    if (f.hash) {
+      const key = `${f.category}::${f.hash}`;
+      if (hashResolved[key]) return hashResolved[key];
+    }
+    return f.filename;
+  }
+
+  /** After downloading a model file, compute its hash and cache it */
+  async function cacheHashAfterDownload(f: ModelFile) {
+    try {
+      const result = await hashModelFile(f.category, f.filename);
+      // Cache the AutoV2 hash (CivitAI-compatible, first 10 chars of SHA256)
+      cacheHash(f.category, f.filename, result.autov2);
+      hashResolved = { ...hashResolved, [`${f.category}::${result.autov2}`]: f.filename };
+    } catch (e) {
+      console.warn(`Failed to hash ${f.filename} after download:`, e);
+    }
+  }
+
+  onMount(async () => {
+    await listen("download:progress", (event: any) => {
+      const data = event.payload as {
+        filename: string;
+        downloaded: number;
+        total: number;
+        done: boolean;
+      };
+      if (data.done) {
+        dlFilename = "";
+        dlBytes = 0;
+        dlTotal = 0;
+      } else {
+        dlFilename = data.filename;
+        dlBytes = data.downloaded;
+        dlTotal = data.total;
+      }
+    });
+
+    // Resolve model hashes in background
+    resolveModelHashes();
+  });
+
   const activeLoraCount = $derived(
     generation.loras.filter((l) => l.enabled && l.name).length
   );
@@ -86,20 +250,25 @@
     return parts[parts.length - 1];
   }
 
-  /** Check if a recommended split model's diffusion file is already installed */
-  function isSplitModelInstalled(rec: RecommendedModel): boolean {
-    if (!rec.splitModel) return false;
-    return models.diffusionModels.includes(rec.splitModel.diffusionModel.filename);
+  /** Check if a recommended model is already installed (hash-first, filename fallback) */
+  function isRecommendedInstalled(rec: RecommendedModel): boolean {
+    if (rec.splitModel) {
+      return isModelFileInstalled(rec.splitModel.diffusionModel, models.diffusionModels);
+    }
+    if (rec.checkpoint) {
+      return isModelFileInstalled(rec.checkpoint, models.checkpoints);
+    }
+    return false;
   }
 
   /** Combine installed checkpoints + recommended models into a single filtered list */
   const filteredItems = $derived(() => {
     const q = checkpointSearch.toLowerCase();
-    const items: { type: "checkpoint" | "recommended"; label: string; value: string; rec?: RecommendedModel; installed: boolean }[] = [];
+    const items: { type: "checkpoint" | "recommended"; label: string; value: string; rec?: RecommendedModel; installed: boolean; size?: string }[] = [];
 
     // Add recommended models first
     for (const rec of recommendedModels) {
-      const installed = rec.splitModel ? isSplitModelInstalled(rec) : false;
+      const installed = isRecommendedInstalled(rec);
       if (!q || rec.label.toLowerCase().includes(q)) {
         items.push({
           type: "recommended",
@@ -107,12 +276,27 @@
           value: rec.label,
           rec,
           installed,
+          size: rec.size,
         });
       }
     }
 
-    // Add regular checkpoints
+    // Add regular checkpoints (skip ones that match a recommended model by filename or hash)
+    const recommendedFilenames = new Set(
+      recommendedModels
+        .filter((r) => r.checkpoint)
+        .flatMap((r) => {
+          const names = [r.checkpoint!.filename];
+          // Also exclude the hash-resolved filename if it differs
+          if (r.checkpoint!.hash) {
+            const resolved = hashResolved[`${r.checkpoint!.category}::${r.checkpoint!.hash}`];
+            if (resolved) names.push(resolved);
+          }
+          return names;
+        })
+    );
     for (const ckpt of models.checkpoints) {
+      if (recommendedFilenames.has(ckpt)) continue;
       if (!q || ckpt.toLowerCase().includes(q)) {
         items.push({
           type: "checkpoint",
@@ -141,39 +325,60 @@
     showCheckpointDropdown = false;
     checkpointSearch = "";
 
-    if (rec.splitModel) {
-      const sm = rec.splitModel;
-      const installed = isSplitModelInstalled(rec);
+    const installed = isRecommendedInstalled(rec);
 
-      if (!installed) {
-        // Download all three files
-        downloading = rec.label;
-        try {
+    if (!installed) {
+      downloading = rec.label;
+      try {
+        if (rec.splitModel) {
+          const sm = rec.splitModel;
           downloadProgress = "Downloading diffusion model...";
           await downloadModel(sm.diffusionModel.url, sm.diffusionModel.category, sm.diffusionModel.filename);
+          await cacheHashAfterDownload(sm.diffusionModel);
           downloadProgress = "Downloading text encoder...";
           await downloadModel(sm.clipModel.url, sm.clipModel.category, sm.clipModel.filename);
+          await cacheHashAfterDownload(sm.clipModel);
           downloadProgress = "Downloading VAE...";
           await downloadModel(sm.vaeModel.url, sm.vaeModel.category, sm.vaeModel.filename);
-          await models.refresh();
-        } catch (e) {
-          console.error("Failed to download model:", e);
-          downloadProgress = `Download failed: ${e}`;
-          setTimeout(() => { downloading = null; downloadProgress = ""; }, 3000);
-          return;
-        } finally {
-          downloading = null;
-          downloadProgress = "";
+          await cacheHashAfterDownload(sm.vaeModel);
+        } else if (rec.checkpoint) {
+          downloadProgress = "Downloading checkpoint...";
+          await downloadModel(rec.checkpoint.url, rec.checkpoint.category, rec.checkpoint.filename);
+          await cacheHashAfterDownload(rec.checkpoint);
+          if (rec.vaeModel) {
+            downloadProgress = "Downloading VAE...";
+            await downloadModel(rec.vaeModel.url, rec.vaeModel.category, rec.vaeModel.filename);
+            await cacheHashAfterDownload(rec.vaeModel);
+          }
         }
+        await models.refresh();
+      } catch (e) {
+        console.error("Failed to download model:", e);
+        downloadProgress = `Download failed: ${e}`;
+        setTimeout(() => { downloading = null; downloadProgress = ""; }, 3000);
+        return;
+      } finally {
+        downloading = null;
+        downloadProgress = "";
       }
+    }
 
-      // Configure split model loading
+    // Use resolved filenames (handles renamed files detected by hash)
+    if (rec.splitModel) {
+      const sm = rec.splitModel;
       generation.useSplitModel = true;
-      generation.diffusionModel = sm.diffusionModel.filename;
-      generation.clipModel = sm.clipModel.filename;
+      generation.diffusionModel = resolvedFilename(sm.diffusionModel);
+      generation.clipModel = resolvedFilename(sm.clipModel);
       generation.clipType = sm.clipModel.clipType;
-      generation.vae = sm.vaeModel.filename;
-      generation.checkpoint = rec.label; // Display name
+      generation.vae = resolvedFilename(sm.vaeModel);
+      generation.checkpoint = rec.label;
+    } else if (rec.checkpoint) {
+      generation.useSplitModel = false;
+      generation.diffusionModel = null;
+      generation.clipModel = null;
+      generation.clipType = null;
+      generation.checkpoint = resolvedFilename(rec.checkpoint);
+      generation.vae = rec.vaeModel ? resolvedFilename(rec.vaeModel) : "";
     }
 
     // Apply auto-settings
@@ -188,11 +393,26 @@
   }
 
   /** Display name for the current model */
-  const displayCheckpoint = $derived(
-    generation.useSplitModel && generation.diffusionModel
-      ? recommendedModels.find((r) => r.splitModel?.diffusionModel.filename === generation.diffusionModel)?.label ?? generation.diffusionModel
-      : generation.checkpoint || "Select checkpoint..."
-  );
+  const displayCheckpoint = $derived(() => {
+    if (generation.useSplitModel && generation.diffusionModel) {
+      const match = recommendedModels.find((r) => {
+        if (!r.splitModel) return false;
+        const expected = r.splitModel.diffusionModel.filename;
+        const resolved = resolvedFilename(r.splitModel.diffusionModel);
+        return generation.diffusionModel === expected || generation.diffusionModel === resolved;
+      });
+      return match?.label ?? generation.diffusionModel;
+    }
+    // Check if current checkpoint matches a recommended model (by filename or hash-resolved name)
+    const recMatch = recommendedModels.find((r) => {
+      if (!r.checkpoint) return false;
+      const expected = r.checkpoint.filename;
+      const resolved = resolvedFilename(r.checkpoint);
+      return generation.checkpoint === expected || generation.checkpoint === resolved;
+    });
+    if (recMatch) return recMatch.label;
+    return generation.checkpoint || "Select checkpoint...";
+  });
 </script>
 
 <div class="space-y-3">
@@ -204,13 +424,29 @@
       onclick={() => (showCheckpointDropdown = !showCheckpointDropdown)}
       disabled={downloading !== null}
     >
-      <span class="truncate">{displayCheckpoint}</span>
-      {#if generation.isAnima}
-        <span class="shrink-0 text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">Quality prompts applied</span>
-      {/if}
+      <span class="truncate">{displayCheckpoint()}</span>
     </button>
     {#if downloading}
-      <p class="text-xs text-indigo-400 mt-1 animate-pulse">{downloadProgress || `Downloading ${downloading}...`}</p>
+      <div class="mt-2 bg-neutral-800/80 rounded-lg px-3 py-2">
+        <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+          <span class="truncate mr-2">{downloadProgress || `Downloading ${downloading}...`}</span>
+          {#if dlTotal > 0}
+            <span class="shrink-0 tabular-nums">{formatBytes(dlBytes)} / {formatBytes(dlTotal)} ({dlPercent}%)</span>
+          {/if}
+        </div>
+        {#if dlTotal > 0}
+          <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+            <div
+              class="bg-indigo-400 h-full rounded-full transition-all duration-300 ease-out"
+              style="width: {dlPercent}%"
+            ></div>
+          </div>
+        {:else}
+          <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+            <div class="bg-indigo-400 h-full rounded-full w-1/3 animate-pulse"></div>
+          </div>
+        {/if}
+      </div>
     {/if}
     {#if showCheckpointDropdown}
       <div
@@ -226,12 +462,17 @@
           {#each filteredItems() as item}
             {#if item.type === "recommended"}
               <button
-                class="w-full text-left px-3 py-1.5 text-sm hover:bg-neutral-700 truncate {item.installed ? 'text-indigo-300' : 'text-indigo-400'}"
+                class="w-full text-left px-3 py-1.5 hover:bg-neutral-700 flex items-center justify-between gap-2 {item.installed ? 'text-indigo-300' : 'text-indigo-400'}"
                 onclick={() => item.rec && selectRecommended(item.rec)}
               >
-                {item.label}
-                {#if !item.installed}
-                  <span class="text-[10px] text-neutral-500 ml-1">(auto-download)</span>
+                <span class="text-sm truncate">
+                  {item.label}
+                  {#if !item.installed}
+                    <span class="text-[10px] text-neutral-500 ml-1">(auto-download)</span>
+                  {/if}
+                </span>
+                {#if item.size}
+                  <span class="text-[10px] text-neutral-500 shrink-0">{item.size}</span>
                 {/if}
               </button>
             {:else}

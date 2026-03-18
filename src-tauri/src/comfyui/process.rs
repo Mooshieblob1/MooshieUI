@@ -66,8 +66,16 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         cmd.arg(arg);
     }
 
-    cmd.stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
+    // Hide the console window on Windows so ComfyUI doesn't pop up a terminal
+    #[cfg(target_os = "windows")]
+    {
+        #[allow(unused_imports)]
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .kill_on_drop(!config.keep_alive);
 
     let child = cmd
@@ -167,20 +175,23 @@ async fn kill_process_on_port(port: u16) {
     }
     #[cfg(target_os = "windows")]
     {
+        #[allow(unused_imports)]
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
         // Find PID with netstat, then taskkill
-        if let Ok(output) = tokio::process::Command::new("cmd")
-            .args(["/C", &format!("netstat -ano | findstr :{} | findstr LISTENING", port)])
-            .output()
-            .await
-        {
+        let mut cmd = tokio::process::Command::new("cmd");
+        cmd.args(["/C", &format!("netstat -ano | findstr :{} | findstr LISTENING", port)]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        if let Ok(output) = cmd.output().await {
             let text = String::from_utf8_lossy(&output.stdout);
             for line in text.lines() {
                 if let Some(pid) = line.split_whitespace().last() {
                     if let Ok(_pid) = pid.parse::<u32>() {
-                        let _ = tokio::process::Command::new("taskkill")
-                            .args(["/F", "/PID", pid])
-                            .output()
-                            .await;
+                        let mut kill_cmd = tokio::process::Command::new("taskkill");
+                        kill_cmd.args(["/F", "/PID", pid]);
+                        kill_cmd.creation_flags(CREATE_NO_WINDOW);
+                        let _ = kill_cmd.output().await;
                     }
                 }
             }

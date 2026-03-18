@@ -1,9 +1,10 @@
 import type { OutputImage } from "../types/index.js";
 import {
-  listGalleryImages,
+  listGalleryImageEntries,
   loadGalleryImage,
   saveToGallery,
   deleteGalleryImage,
+  renameGalleryImage,
   saveImageFile,
   getOutputImage,
   copyImageToClipboard,
@@ -52,7 +53,8 @@ class GalleryStore {
         const galleryFilename = await saveToGallery(
           img.filename,
           img.subfolder,
-          img.prompt_id
+          img.prompt_id,
+          img.generation_mode
         );
         img.gallery_filename = galleryFilename;
       } catch (e) {
@@ -65,9 +67,10 @@ class GalleryStore {
   async loadFromDisk() {
     this.loading = true;
     try {
-      const filenames = await listGalleryImages();
+      const entries = await listGalleryImageEntries();
       const loaded: OutputImage[] = [];
-      for (const filename of filenames) {
+      for (const entry of entries) {
+        const filename = entry.filename;
         try {
           const bytes = await loadGalleryImage(filename);
           const ext = filename.split(".").pop()?.toLowerCase() ?? "png";
@@ -80,21 +83,34 @@ class GalleryStore {
           const blob = new Blob([new Uint8Array(bytes)], { type: mimeType });
           const url = URL.createObjectURL(blob);
 
-          const underscoreIdx = filename.indexOf("_");
-          const promptId =
-            underscoreIdx > 0 ? filename.substring(0, underscoreIdx) : "";
-          const origFilename =
-            underscoreIdx > 0
-              ? filename.substring(underscoreIdx + 1)
-              : filename;
+          // New format: {promptId}__{mode}__{origFilename}; legacy: {promptId}_{origFilename}
+          let promptId = "";
+          let origFilename = filename;
+          let generationMode: "txt2img" | "img2img" | "inpainting" | undefined;
+          const modernParts = filename.split("__");
+          if (modernParts.length >= 3) {
+            promptId = modernParts[0] ?? "";
+            const mode = modernParts[1] ?? "";
+            if (mode === "txt2img" || mode === "img2img" || mode === "inpainting") {
+              generationMode = mode;
+            }
+            origFilename = modernParts.slice(2).join("__");
+          } else {
+            const underscoreIdx = filename.indexOf("_");
+            promptId = underscoreIdx > 0 ? filename.substring(0, underscoreIdx) : "";
+            origFilename = underscoreIdx > 0 ? filename.substring(underscoreIdx + 1) : filename;
+          }
 
           loaded.push({
             filename: origFilename,
             subfolder: "",
             type: "output",
             prompt_id: promptId,
+            generation_mode: generationMode,
             url,
             gallery_filename: filename,
+            file_size_bytes: entry.size_bytes,
+            generated_at_ms: entry.modified_ms,
           });
         } catch (e) {
           console.error(`Failed to load gallery image ${filename}:`, e);
@@ -162,6 +178,9 @@ class GalleryStore {
       if (image.gallery_filename) {
         const path = await getGalleryImagePath(image.gallery_filename);
         await copyImageToClipboard(path);
+      } else if (image.url) {
+        await this.copyBlobToClipboard(image.url);
+        return;
       } else {
         this.showToast("Image not saved to gallery yet");
         return;
@@ -175,9 +194,26 @@ class GalleryStore {
 
   /** Copy a gallery image file to clipboard by filename. */
   async copyBlobToClipboard(blobUrl: string) {
-    // For preview images that aren't in the gallery yet, we can't copy as file
-    // This is a fallback that shouldn't normally be reached
-    this.showToast("Save to gallery first to copy");
+    try {
+      const response = await fetch(blobUrl);
+      const blob = await response.blob();
+
+      if (!navigator.clipboard || typeof ClipboardItem === "undefined") {
+        this.showToast("Clipboard API unavailable in this environment");
+        return;
+      }
+
+      const type = blob.type || "image/png";
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          [type]: blob,
+        }),
+      ]);
+      this.showToast("Copied to clipboard");
+    } catch (e) {
+      console.error("Failed to copy blob to clipboard:", e);
+      this.showToast("Failed to copy");
+    }
   }
 
   /** Delete an image from the gallery. */
@@ -196,6 +232,59 @@ class GalleryStore {
       }
     } catch (e) {
       console.error("Failed to delete image:", e);
+    }
+  }
+
+  private inferModeFromFilename(
+    image: OutputImage,
+  ): "txt2img" | "img2img" | "inpainting" {
+    const n = `${image.filename} ${image.gallery_filename ?? ""}`.toLowerCase();
+    if (n.includes("inpaint") || n.includes("mask")) return "inpainting";
+    if (n.includes("img2img") || n.includes("upscale")) return "img2img";
+    return "txt2img";
+  }
+
+  /** Re-scan legacy gallery metadata and migrate old filenames to include mode metadata. */
+  async rescanMetadata() {
+    try {
+      let migrated = 0;
+      for (const image of this.images) {
+        const current = image.gallery_filename;
+        if (!current) continue;
+        if (current.includes("__")) continue;
+
+        const mode = image.generation_mode ?? this.inferModeFromFilename(image);
+        const promptId = image.prompt_id || "unknown";
+        const newFilename = `${promptId}__${mode}__${image.filename}`;
+
+        try {
+          const renamed = await renameGalleryImage(current, newFilename);
+          image.gallery_filename = renamed;
+          image.generation_mode = mode;
+          migrated += 1;
+        } catch (e) {
+          // Keep scanning remaining files even if one rename fails.
+          console.error(`Failed to migrate gallery filename ${current}:`, e);
+        }
+      }
+
+      if (migrated > 0) {
+        for (const image of this.images) {
+          if (image.url) URL.revokeObjectURL(image.url);
+        }
+        this.images = [];
+        this.sessionImages = [];
+        await this.loadFromDisk();
+      }
+
+      this.showToast(
+        migrated > 0
+          ? `Re-scanned metadata: migrated ${migrated} image${migrated === 1 ? "" : "s"}`
+          : "Re-scan complete: no legacy metadata to migrate",
+      );
+    } catch (e) {
+      console.error("Failed to re-scan gallery metadata:", e);
+      this.showToast("Re-scan failed");
     }
   }
 }

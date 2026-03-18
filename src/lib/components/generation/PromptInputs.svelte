@@ -3,6 +3,14 @@
 </script>
 
 <div class="space-y-3">
+  {#if generation.isAnima}
+    <div class="flex justify-end">
+      <span class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">
+        Quality prompts applied
+      </span>
+    </div>
+  {/if}
+
   <div>
     <label class="block text-xs text-neutral-400 mb-1">Positive Prompt</label>
     {#if generation.isAnima}

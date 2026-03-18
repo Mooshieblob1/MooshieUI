@@ -80,27 +80,71 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
             "class_type": "LoadImageMask",
             "inputs": {
                 "image": params.mask_image.as_deref().unwrap_or(""),
-                "channel": "alpha"
+                "channel": "red"
             }
         }),
     );
     next_id += 1;
 
-    // VAE Encode for Inpaint
+    // Encode source image to latent space.
     let encode_id = next_id.to_string();
     workflow.insert(
         encode_id.clone(),
         json!({
-            "class_type": "VAEEncodeForInpaint",
+            "class_type": "VAEEncode",
             "inputs": {
                 "pixels": [resize_id, 0],
-                "vae": [vae_source.0.clone(), vae_source.1],
-                "mask": [load_mask_id, 0],
-                "grow_mask_by": params.grow_mask_by.unwrap_or(6)
+                "vae": [vae_source.0.clone(), vae_source.1]
             }
         }),
     );
     next_id += 1;
+
+    // Apply noise mask so only masked areas get denoised/re-sampled.
+    let masked_latent_id = next_id.to_string();
+    workflow.insert(
+        masked_latent_id.clone(),
+        json!({
+            "class_type": "SetLatentNoiseMask",
+            "inputs": {
+                "samples": [encode_id, 0],
+                "mask": [load_mask_id, 0]
+            }
+        }),
+    );
+    next_id += 1;
+
+    let sampler_name_lc = params.sampler_name.to_lowercase();
+    let is_cfgpp_sampler = sampler_name_lc.contains("cfg_pp");
+    let checkpoint_lc = params.checkpoint.to_lowercase();
+    let diffusion_lc = params
+        .diffusion_model
+        .as_ref()
+        .map(|m| m.to_lowercase())
+        .unwrap_or_default();
+    let is_vpred_or_anima = checkpoint_lc.contains("vpred")
+        || checkpoint_lc.contains("anima")
+        || diffusion_lc.contains("vpred")
+        || diffusion_lc.contains("anima");
+
+    let use_differential_diffusion =
+        params.differential_diffusion || (is_vpred_or_anima && !is_cfgpp_sampler);
+
+    let mut sampler_model_source = model_source.clone();
+    if use_differential_diffusion {
+        let differential_id = next_id.to_string();
+        workflow.insert(
+            differential_id.clone(),
+            json!({
+                "class_type": "DifferentialDiffusion",
+                "inputs": {
+                    "model": [model_source.0.clone(), model_source.1]
+                }
+            }),
+        );
+        sampler_model_source = (differential_id, 0);
+        next_id += 1;
+    }
 
     // KSampler
     let sampler_id = next_id.to_string();
@@ -109,10 +153,10 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
         json!({
             "class_type": "KSampler",
             "inputs": {
-                "model": [model_source.0.clone(), model_source.1],
+                "model": [sampler_model_source.0.clone(), sampler_model_source.1],
                 "positive": [pos_id.clone(), 0],
                 "negative": [neg_id.clone(), 0],
-                "latent_image": [encode_id, 0],
+                "latent_image": [masked_latent_id, 0],
                 "seed": seed,
                 "steps": params.steps,
                 "cfg": params.cfg,

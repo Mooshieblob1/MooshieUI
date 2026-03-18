@@ -41,10 +41,15 @@ pub fn run() {
             commands::api::save_image_file,
             commands::api::save_to_gallery,
             commands::api::list_gallery_images,
+            commands::api::list_gallery_image_entries,
             commands::api::load_gallery_image,
             commands::api::get_gallery_image_path,
             commands::api::delete_gallery_image,
+            commands::api::rename_gallery_image,
             commands::api::copy_image_to_clipboard,
+            commands::api::find_model_by_hash,
+            commands::api::hash_model_file,
+            commands::api::civitai_lookup_hash,
             commands::websocket::connect_ws,
             commands::websocket::disconnect_ws,
             commands::workflow::generate,
@@ -98,8 +103,13 @@ pub fn run() {
                 }
                 #[cfg(target_os = "windows")]
                 {
+                    #[allow(unused_imports)]
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
                     if let Ok(output) = std::process::Command::new("cmd")
                         .args(["/C", &format!("netstat -ano | findstr :{} | findstr LISTENING", port)])
+                        .creation_flags(CREATE_NO_WINDOW)
                         .output()
                     {
                         for line in String::from_utf8_lossy(&output.stdout).lines() {
@@ -107,6 +117,7 @@ pub fn run() {
                                 if pid.parse::<u32>().is_ok() {
                                     let _ = std::process::Command::new("taskkill")
                                         .args(["/F", "/PID", pid])
+                                        .creation_flags(CREATE_NO_WINDOW)
                                         .output();
                                 }
                             }

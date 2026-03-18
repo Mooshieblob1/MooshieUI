@@ -1,6 +1,6 @@
 [package]
 name = "comfyui-desktop"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 
 [lib]
@@ -30,4 +30,5 @@ env_logger = "0.11"
 rand = "0.9"
 base64 = "0.22"
 dirs = "5"
+sha2 = "0.10"
 tauri-plugin-clipboard-manager = "2"
