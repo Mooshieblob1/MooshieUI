@@ -29,6 +29,8 @@
   let maskPreviewUrl = $state<string | null>(null);
   let uploading = $state(false);
   let imageAspect = $state<{ w: number; h: number } | null>(null);
+  let dragOver = $state(false);
+  let maskDragOver = $state(false);
   let promptsSectionOpen = $state(true);
   let dimensionsSectionOpen = $state(true);
   let imageSectionOpen = $state(true);
@@ -172,6 +174,56 @@
       generation.maskImage = response.name;
     } catch (e) {
       console.error("Failed to upload mask:", e);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  async function handleImageDrop(e: DragEvent) {
+    e.preventDefault();
+    dragOver = false;
+    const file = e.dataTransfer?.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+
+    uploading = true;
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(buffer));
+      const normalized = await normalizeImageBytes(bytes, file.name || "dropped_image.png");
+
+      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+      imagePreviewUrl = normalized.previewUrl;
+      applyImageGeometry(normalized.width, normalized.height);
+      canvas.setReferenceImage(imagePreviewUrl);
+
+      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      generation.inputImage = response.name;
+    } catch (e) {
+      console.error("Failed to handle dropped image:", e);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  async function handleMaskDrop(e: DragEvent) {
+    e.preventDefault();
+    maskDragOver = false;
+    const file = e.dataTransfer?.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+
+    uploading = true;
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(buffer));
+      const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+      if (maskPreviewUrl) URL.revokeObjectURL(maskPreviewUrl);
+      maskPreviewUrl = URL.createObjectURL(blob);
+      canvas.setPersistedMaskPreview(maskPreviewUrl);
+
+      const response = await uploadImageBytes(bytes, file.name || "dropped_mask.png");
+      generation.maskImage = response.name;
+    } catch (e) {
+      console.error("Failed to handle dropped mask:", e);
     } finally {
       uploading = false;
     }
@@ -426,19 +478,29 @@
               </button>
             </div>
           {:else}
-            <button
-              class="w-full bg-neutral-800 border border-dashed border-neutral-600 rounded-lg p-4 text-sm text-neutral-400 hover:border-indigo-500 hover:text-indigo-400 transition-colors flex items-center justify-center gap-2"
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="w-full bg-neutral-800 border border-dashed rounded-lg p-4 text-sm transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer {dragOver
+                ? 'border-indigo-400 bg-indigo-500/10 text-indigo-300'
+                : 'border-neutral-600 text-neutral-400 hover:border-indigo-500 hover:text-indigo-400'}"
               onclick={browseImage}
-              disabled={uploading}
+              ondragover={(e) => { e.preventDefault(); dragOver = true; }}
+              ondragleave={() => { dragOver = false; }}
+              ondrop={handleImageDrop}
+              role="button"
+              tabindex="0"
             >
               {#if uploading}
                 <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
                 Uploading...
+              {:else if dragOver}
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Drop image here
               {:else}
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                Browse Image
+                Browse or drop image
               {/if}
-            </button>
+            </div>
           {/if}
         </div>
 
@@ -500,19 +562,29 @@
                 </button>
               </div>
             {:else}
-              <button
-                class="w-full bg-neutral-800 border border-dashed border-neutral-600 rounded-lg p-4 text-sm text-neutral-400 hover:border-indigo-500 hover:text-indigo-400 transition-colors flex items-center justify-center gap-2"
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="w-full bg-neutral-800 border border-dashed rounded-lg p-4 text-sm transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer {maskDragOver
+                  ? 'border-indigo-400 bg-indigo-500/10 text-indigo-300'
+                  : 'border-neutral-600 text-neutral-400 hover:border-indigo-500 hover:text-indigo-400'}"
                 onclick={browseMask}
-                disabled={uploading}
+                ondragover={(e) => { e.preventDefault(); maskDragOver = true; }}
+                ondragleave={() => { maskDragOver = false; }}
+                ondrop={handleMaskDrop}
+                role="button"
+                tabindex="0"
               >
                 {#if uploading}
                   <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
                   Uploading...
+                {:else if maskDragOver}
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  Drop mask here
                 {:else}
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                  Browse Mask
+                  Browse or drop mask
                 {/if}
-              </button>
+              </div>
             {/if}
           </div>
 

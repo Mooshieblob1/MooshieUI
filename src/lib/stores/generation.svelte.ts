@@ -2,6 +2,66 @@ import { load } from "@tauri-apps/plugin-store";
 import type { LoraEntry } from "../types/index.js";
 
 const STORE_KEY = "generation-settings";
+const PROMPT_HISTORY_KEY = "mooshieui.promptHistory.v1";
+const MAX_PROMPT_HISTORY = 100;
+
+type StylePresetId = "none" | "anime" | "cinematic" | "photoreal" | "digital_art" | "line_art";
+
+interface StylePreset {
+  id: StylePresetId;
+  label: string;
+  positive: string;
+  negative: string;
+}
+
+interface PromptHistoryEntry {
+  id: string;
+  positivePrompt: string;
+  negativePrompt: string;
+  mode: "txt2img" | "img2img" | "inpainting";
+  stylePreset: StylePresetId;
+  createdAt: number;
+  favorite: boolean;
+}
+
+const STYLE_PRESETS: StylePreset[] = [
+  {
+    id: "none",
+    label: "None",
+    positive: "",
+    negative: "",
+  },
+  {
+    id: "anime",
+    label: "Anime",
+    positive: "anime style, vibrant colors, clean linework, detailed illustration",
+    negative: "photo, realistic skin texture, grainy"
+  },
+  {
+    id: "cinematic",
+    label: "Cinematic",
+    positive: "cinematic lighting, dramatic composition, film still, volumetric light",
+    negative: "flat lighting, low contrast"
+  },
+  {
+    id: "photoreal",
+    label: "Photoreal",
+    positive: "photorealistic, ultra-detailed, natural lighting, high dynamic range",
+    negative: "cartoon, anime, painting, cgi"
+  },
+  {
+    id: "digital_art",
+    label: "Digital Art",
+    positive: "digital painting, concept art, painterly details, high detail",
+    negative: "low detail, flat colors"
+  },
+  {
+    id: "line_art",
+    label: "Line Art",
+    positive: "line art, clean outlines, monochrome illustration",
+    negative: "heavy shading, photorealistic texture, noisy background"
+  },
+];
 
 /** Quality tags auto-applied for Anima models */
 const ANIMA_POSITIVE_QUALITY = "year 2025, newest, masterpiece, best quality, score_9, score_8, safe, highres";
@@ -39,6 +99,9 @@ class GenerationStore {
   diffusionModel = $state<string | null>(null);
   clipModel = $state<string | null>(null);
   clipType = $state<string | null>(null);
+  stylePreset = $state<StylePresetId>("none");
+  stylePresetsEnabled = $state(false);
+  promptHistory = $state<PromptHistoryEntry[]>([]);
 
   /** True when the selected model is an Anima variant (split diffusion model). */
   get isAnima(): boolean {
@@ -46,6 +109,153 @@ class GenerationStore {
   }
 
   private _store: Awaited<ReturnType<typeof load>> | null = null;
+
+  constructor() {
+    this.loadPromptHistory();
+  }
+
+  get stylePresetOptions(): StylePreset[] {
+    return STYLE_PRESETS;
+  }
+
+  private splitTags(text: string): string[] {
+    return text
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => !!part);
+  }
+
+  private mergeTagPrompts(base: string, extra: string): string {
+    if (!extra) return base;
+    const existing = this.splitTags(base);
+    const seen = new Set(existing.map((tag) => tag.toLowerCase()));
+    const merged = [...existing];
+
+    for (const tag of this.splitTags(extra)) {
+      const normalized = tag.toLowerCase();
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        merged.push(tag);
+      }
+    }
+
+    return merged.join(", ");
+  }
+
+  private loadPromptHistory() {
+    try {
+      const raw = localStorage.getItem(PROMPT_HISTORY_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as PromptHistoryEntry[];
+      if (!Array.isArray(parsed)) return;
+      this.promptHistory = parsed
+        .filter((entry) => !!entry?.id)
+        .slice(0, MAX_PROMPT_HISTORY);
+    } catch (e) {
+      console.error("Failed to load prompt history:", e);
+    }
+  }
+
+  private savePromptHistory() {
+    try {
+      localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(this.promptHistory.slice(0, MAX_PROMPT_HISTORY)));
+    } catch (e) {
+      console.error("Failed to save prompt history:", e);
+    }
+  }
+
+  saveCurrentPromptToHistory() {
+    const positivePrompt = this.positivePrompt.trim();
+    const negativePrompt = this.negativePrompt.trim();
+    if (!positivePrompt && !negativePrompt) return;
+
+    const existing = this.promptHistory.find(
+      (entry) =>
+        entry.positivePrompt === positivePrompt &&
+        entry.negativePrompt === negativePrompt &&
+        entry.mode === this.mode &&
+        entry.stylePreset === this.stylePreset
+    );
+
+    const nextEntry: PromptHistoryEntry = {
+      id: existing?.id ?? crypto.randomUUID(),
+      positivePrompt,
+      negativePrompt,
+      mode: this.mode,
+      stylePreset: this.stylePreset,
+      createdAt: Date.now(),
+      favorite: existing?.favorite ?? false,
+    };
+
+    this.promptHistory = [
+      nextEntry,
+      ...this.promptHistory.filter((entry) => entry.id !== nextEntry.id),
+    ].slice(0, MAX_PROMPT_HISTORY);
+
+    this.savePromptHistory();
+  }
+
+  togglePromptFavorite(id: string) {
+    this.promptHistory = this.promptHistory.map((entry) =>
+      entry.id === id ? { ...entry, favorite: !entry.favorite } : entry
+    );
+    this.savePromptHistory();
+  }
+
+  removePromptHistoryEntry(id: string) {
+    this.promptHistory = this.promptHistory.filter((entry) => entry.id !== id);
+    this.savePromptHistory();
+  }
+
+  applyPromptHistoryEntry(id: string) {
+    const entry = this.promptHistory.find((item) => item.id === id);
+    if (!entry) return;
+
+    this.positivePrompt = entry.positivePrompt;
+    this.negativePrompt = entry.negativePrompt;
+    this.mode = entry.mode;
+    this.stylePreset = entry.stylePreset;
+
+    this.promptHistory = [
+      { ...entry, createdAt: Date.now() },
+      ...this.promptHistory.filter((item) => item.id !== entry.id),
+    ];
+    this.savePromptHistory();
+  }
+
+  applyModelSpecificPreset(modelName?: string | null) {
+    const name = (modelName ?? this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
+    if (!name) return;
+
+    if (name.includes("anima") || name.includes("qwen") || name.includes("wan")) {
+      this.steps = 30;
+      this.cfg = 4.0;
+      this.samplerName = "er_sde";
+      this.scheduler = "beta";
+      this.width = 1024;
+      this.height = 1024;
+      return;
+    }
+
+    if (name.includes("sdxl") || name.includes("flux") || name.includes("sih") || name.includes("xl")) {
+      this.steps = 20;
+      this.cfg = 1.4;
+      this.samplerName = "euler_cfg_pp";
+      this.scheduler = "sgm_uniform";
+      this.width = 1024;
+      this.height = 1024;
+      return;
+    }
+
+    if (name.includes("1.5") || name.includes("sd15") || name.includes("sd_15")) {
+      this.steps = 28;
+      this.cfg = 7.0;
+      this.samplerName = "dpmpp_2m";
+      this.scheduler = "karras";
+      this.width = 512;
+      this.height = 512;
+    }
+  }
 
   async loadSettings() {
     try {
@@ -87,6 +297,8 @@ class GenerationStore {
         if (saved.diffusionModel !== undefined) this.diffusionModel = saved.diffusionModel;
         if (saved.clipModel !== undefined) this.clipModel = saved.clipModel;
         if (saved.clipType !== undefined) this.clipType = saved.clipType;
+        if (saved.stylePreset !== undefined) this.stylePreset = saved.stylePreset;
+        if (saved.stylePresetsEnabled !== undefined) this.stylePresetsEnabled = !!saved.stylePresetsEnabled;
         console.log("Loaded saved settings, checkpoint:", this.checkpoint);
       }
     } catch (e) {
@@ -126,6 +338,8 @@ class GenerationStore {
         diffusionModel: this.diffusionModel,
         clipModel: this.clipModel,
         clipType: this.clipType,
+        stylePreset: this.stylePreset,
+        stylePresetsEnabled: this.stylePresetsEnabled,
       });
     } catch (e) {
       console.error("Failed to save settings:", e);
@@ -133,13 +347,20 @@ class GenerationStore {
   }
 
   toParams() {
+    const style = this.stylePresetsEnabled
+      ? (STYLE_PRESETS.find((preset) => preset.id === this.stylePreset) ?? STYLE_PRESETS[0])
+      : STYLE_PRESETS[0];
+
+    let positivePrompt = this.mergeTagPrompts(this.positivePrompt, style.positive);
+    let negativePrompt = this.mergeTagPrompts(this.negativePrompt, style.negative);
+
     // Auto-apply quality tags for Anima models
-    const positivePrompt = this.isAnima
-      ? `${ANIMA_POSITIVE_QUALITY}, ${this.positivePrompt}`
-      : this.positivePrompt;
-    const negativePrompt = this.isAnima
-      ? `${this.negativePrompt}${this.negativePrompt ? ", " : ""}${ANIMA_NEGATIVE_QUALITY}`
-      : this.negativePrompt;
+    positivePrompt = this.isAnima
+      ? this.mergeTagPrompts(positivePrompt, ANIMA_POSITIVE_QUALITY)
+      : positivePrompt;
+    negativePrompt = this.isAnima
+      ? this.mergeTagPrompts(negativePrompt, ANIMA_NEGATIVE_QUALITY)
+      : negativePrompt;
 
     return {
       mode: this.mode,

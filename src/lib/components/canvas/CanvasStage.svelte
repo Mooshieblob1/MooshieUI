@@ -500,7 +500,7 @@
   async function autoCommitMaskIfNeeded() {
     if (!isInpaintMaskMode()) return;
     try {
-      await canvas.syncMaskToGeneration(getMaskCanvas());
+      await canvas.syncMaskToGeneration(getMaskCanvas(), false);
     } catch (error) {
       console.error("Failed to auto-sync inpaint mask:", error);
     }

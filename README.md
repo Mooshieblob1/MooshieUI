@@ -244,7 +244,7 @@ Features planned or in progress:
 ### Coming Soon
 - [x] **Image upload** for img2img and inpainting modes
 - [x] **Inpainting canvas** — paint masks directly on images in the UI
-- [ ] **Queue management page** — view, reorder, and cancel queued generations
+- [x] **Queue management page** — view and cancel queued generations
 - [x] **Settings page** — configure ComfyUI connection, paths, defaults, and extra args
 - [x] **Gallery upscale button** — upscale any image from the gallery grid or lightbox
 - [x] **Anima Preview 2 support** — auto-download split model (diffusion + CLIP + VAE), quality prompt injection, optimized defaults
@@ -261,19 +261,22 @@ Features planned or in progress:
 - [x] **Hash-based model detection** — SHA256/AutoV2 hash identification with CivitAI API integration, models recognized even if renamed
 - [x] **Installer UX overhaul** — streamed terminal backdrop, per-step progress bars, download progress with bytes/total, no separate terminal windows
 - [x] **Persistent gallery** — images saved to disk across sessions with rename, delete, and management
+- [x] **Gallery boards** — organize images into named boards/folders
 - [x] **Version display** — app version shown in sidebar below connection status
 - [x] **Download progress** — real-time progress bars with file size for all model downloads (checkpoints, VAEs, upscale models)
+- [x] **Drag & drop** — drop images and masks directly into img2img/inpainting inputs
+- [x] **Image metadata (PNG/A1111-style)** — embed generation params into PNG text chunks, read them in lightbox, and reapply settings
+- [x] **Prompt history & favorites** — auto-saves generated prompts with quick reload and starring
+- [x] **Style presets (Fooocus-style)** — one-click style modifiers for beginner-friendly prompting
+- [x] **Shared model directory** — point to an external/shared models folder from settings
+- [x] **Model-specific presets** — auto-applies defaults based on detected model architecture
 
 ### Planned
-- [ ] **Prompt history & favorites** — recall and reuse previous prompts
 - [ ] **Model Hub** — browse CivitAI models with image previews and metadata (ratings, tags, sample images) directly in the app; download with one click to the correct ComfyUI folder; also accept HuggingFace URLs as an alternative download source; hash-based model recognition so renamed files are still identified
 - [ ] **ControlNet support** — depth, canny, pose, and other control methods
-- [ ] **Image metadata** — embed and read generation parameters in PNG metadata
-- [ ] **Drag & drop** — drop images into img2img/inpainting from desktop or gallery
 - [ ] **Batch queue** — queue multiple generations with different settings
-- [ ] **SDXL / Flux / COSMOS optimized presets** — one-click model-specific defaults
 - [ ] **Theme customization** — light mode, accent colors, custom themes
-- [ ] **Auto-update** — check for and apply MooshieUI updates in-app
+- [x] **Auto-update** — check for and apply MooshieUI updates in-app
 - [ ] **Localization** — multi-language support
 
 ### Stretch Goals

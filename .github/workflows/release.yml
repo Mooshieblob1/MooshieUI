@@ -89,12 +89,16 @@ jobs:
             | **macOS (Intel)** | `.dmg` (x64) |
             | **Linux** | `.deb` or `.AppImage` |
 
-            ### What's included
-            - Beginner-friendly AI image generation (txt2img, img2img, inpainting)
-            - Built-in upscaling with MultiDiffusion tiled diffusion
-            - Anima Preview 2 support with split model loading
-            - Auto GPU detection (NVIDIA CUDA / AMD ROCm / Apple Metal / CPU)
-            - Zero manual setup required
+            ### What's New in v0.2.3
+
+            - **Tier 1 feature batch completed:** drag & drop image/mask inputs, PNG metadata embed + read + apply, prompt history/favorites, model-aware defaults, and queue management page.
+            - **Style presets are now optional:** added a settings toggle so Fooocus-style presets are disabled by default and can be enabled when desired.
+            - **Gallery Boards/Organization:** assign images to named boards, filter/group by board, and manage boards directly in gallery/lightbox flows.
+            - **Shared model directory support:** point MooshieUI to an external/shared models folder (via extra model paths config) to avoid duplicate downloads.
+            - **Expanded parameter help coverage:** tooltip/help content filled out across remaining generation controls.
+            - **PNG/A1111 metadata interoperability:** generation parameters are embedded in PNG text chunks and can be reloaded back into generation settings.
+            - **Queue page enabled:** running/pending queue visibility with interrupt and remove actions.
+            - **Linux inpainting responsiveness fix:** removed per-stroke mask uploads in canvas auto-commit path to eliminate brush lag regressions.
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}

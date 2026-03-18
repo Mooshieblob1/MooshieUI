@@ -48,7 +48,7 @@
   <!-- Steps -->
   <div>
     <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-      Steps
+      Steps<InfoTip text="How many denoising iterations to run. More steps = finer detail but slower. 20-30 is a good balance for most samplers. Some (like 'euler') converge fast and don't benefit much beyond 25." />
       <span class="text-neutral-300">{generation.steps}</span>
     </label>
     <input
@@ -112,7 +112,7 @@
   <!-- Batch Size -->
   <div>
     <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-      Batch Size
+      Batch Size<InfoTip text="How many images to generate at once. Higher values use more VRAM but let you compare results quickly. Each image uses the same prompt but a different seed." />
       <span class="text-neutral-300">{generation.batchSize}</span>
     </label>
     <input

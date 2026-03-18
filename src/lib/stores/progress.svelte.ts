@@ -1,3 +1,5 @@
+import type { GenerationParams } from "../types/index.js";
+
 class ProgressStore {
   isGenerating = $state(false);
   currentPromptId = $state<string | null>(null);
@@ -17,6 +19,7 @@ class ProgressStore {
     inpainting: null,
   });
   wasUpscaled = $state(false);
+  lastParams = $state<GenerationParams | null>(null);
 
   /** Which sampling pass we're on: 0 = not started, 1 = initial, 2 = upscale */
   samplingPass = $state(0);
@@ -86,7 +89,8 @@ class ProgressStore {
   startGeneration(
     promptId: string,
     upscaled: boolean = false,
-    mode: "txt2img" | "img2img" | "inpainting" = "txt2img"
+    mode: "txt2img" | "img2img" | "inpainting" = "txt2img",
+    params: GenerationParams | null = null
   ) {
     this.isGenerating = true;
     this.currentPromptId = promptId;
@@ -95,6 +99,7 @@ class ProgressStore {
     this.totalSteps = 0;
     this.previewImage = null;
     this.wasUpscaled = upscaled;
+    this.lastParams = params;
     this.samplingPass = 0;
     this._lastProgressNode = null;
   }

@@ -317,6 +317,7 @@
     generation.clipModel = null;
     generation.clipType = null;
     generation.checkpoint = name;
+    generation.applyModelSpecificPreset(name);
     checkpointSearch = "";
     showCheckpointDropdown = false;
   }
@@ -389,6 +390,8 @@
       if (rec.autoSettings.scheduler !== undefined) generation.scheduler = rec.autoSettings.scheduler;
       if (rec.autoSettings.upscaleSteps !== undefined) generation.upscaleSteps = rec.autoSettings.upscaleSteps;
       if (rec.autoSettings.upscaleDenoise !== undefined) generation.upscaleDenoise = rec.autoSettings.upscaleDenoise;
+    } else {
+      generation.applyModelSpecificPreset(generation.useSplitModel ? generation.diffusionModel : generation.checkpoint);
     }
   }
 

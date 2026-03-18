@@ -5,15 +5,16 @@
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
+  import QueuePage from "./lib/components/queue/QueuePage.svelte";
   import { connection } from "./lib/stores/connection.svelte.js";
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { getHistory, getOutputImage, uploadImageBytes, loadGalleryImage, getConfig } from "./lib/utils/api.js";
+  import { getHistory, getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata } from "./lib/utils/api.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
-  import type { OutputImage } from "./lib/types/index.js";
+  import type { GenerationParams, OutputImage } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
 
   declare const __APP_VERSION__: string;
@@ -221,10 +222,14 @@
   let galleryImagesPerRow = $state(5);
   let gallerySortBy = $state<"date" | "name" | "size">("date");
   let gallerySortDir = $state<"asc" | "desc">("desc");
-  let galleryGroupBy = $state<"none" | "date" | "month" | "mode" | "prompt">("none");
+  let galleryGroupBy = $state<"none" | "date" | "month" | "mode" | "prompt" | "board">("none");
+  let galleryBoardFilter = $state<string>("all");
+  let newBoardName = $state("");
   let galleryView = $state<"huge" | "large" | "small" | "details">("large");
   let sortedGalleryImages = $state<OutputImage[]>([]);
   let groupedGalleryImages = $state<Array<{ label: string; images: OutputImage[] }>>([]);
+  let lightboxMetadata = $state<Record<string, string> | null>(null);
+  let loadingLightboxMetadata = $state(false);
   const GALLERY_PREFS_KEY = "mooshieui.gallery.prefs.v1";
 
   function getImageTimestamp(image: OutputImage): number {
@@ -264,6 +269,113 @@
     return "Unknown Mode";
   }
 
+  function boardLabel(image: OutputImage): string {
+    return gallery.getBoard(image);
+  }
+
+  function assignBoard(image: OutputImage, board: string) {
+    gallery.setBoard(image, board);
+  }
+
+  function addBoard() {
+    const name = newBoardName.trim();
+    if (!name) return;
+    gallery.addBoard(name);
+    galleryBoardFilter = name;
+    newBoardName = "";
+  }
+
+  function parseSize(size?: string): { width: number; height: number } | null {
+    if (!size) return null;
+    const match = size.match(/^(\d+)x(\d+)$/i);
+    if (!match) return null;
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+    return { width, height };
+  }
+
+  function buildPngMetadata(params: GenerationParams): Record<string, string> {
+    const metadata: Record<string, string> = {
+      positive_prompt: params.positive_prompt,
+      negative_prompt: params.negative_prompt,
+      steps: String(params.steps),
+      sampler: params.sampler_name,
+      scheduler: params.scheduler,
+      cfg: String(params.cfg),
+      seed: String(params.seed),
+      size: `${params.width}x${params.height}`,
+      model: params.use_split_model ? (params.diffusion_model ?? "") : params.checkpoint,
+      vae: params.vae ?? "",
+      denoise: String(params.denoise),
+      mode: params.mode,
+    };
+
+    if (params.loras.length > 0) {
+      metadata.loras = params.loras
+        .map((l) => `${l.name}:${l.strength_model.toFixed(2)}:${l.strength_clip.toFixed(2)}`)
+        .join(", ");
+    }
+
+    if (params.upscale_enabled) {
+      metadata.upscale_model = params.upscale_model ?? "";
+      metadata.upscale_scale = String(params.upscale_scale);
+      metadata.upscale_denoise = String(params.upscale_denoise);
+    }
+
+    return metadata;
+  }
+
+  async function applyMetadataToGeneration(image: OutputImage) {
+    if (!image.gallery_filename) {
+      gallery.showToast("Metadata is only available for saved gallery images");
+      return;
+    }
+
+    try {
+      const metadata = await readImageMetadata(image.gallery_filename);
+      if (!metadata) {
+        gallery.showToast("No PNG metadata found");
+        return;
+      }
+
+      image.metadata = metadata;
+      lightboxMetadata = metadata;
+
+      if (metadata.positive_prompt !== undefined) generation.positivePrompt = metadata.positive_prompt;
+      if (metadata.negative_prompt !== undefined) generation.negativePrompt = metadata.negative_prompt;
+      if (metadata.steps !== undefined) generation.steps = Number(metadata.steps) || generation.steps;
+      if (metadata.sampler !== undefined) generation.samplerName = metadata.sampler;
+      if (metadata.scheduler !== undefined) generation.scheduler = metadata.scheduler;
+      if (metadata.cfg !== undefined) generation.cfg = Number(metadata.cfg) || generation.cfg;
+      if (metadata.seed !== undefined) generation.seed = Number(metadata.seed) || generation.seed;
+      if (metadata.denoise !== undefined) generation.denoise = Number(metadata.denoise) || generation.denoise;
+
+      const size = parseSize(metadata.size);
+      if (size) {
+        generation.width = size.width;
+        generation.height = size.height;
+      }
+
+      if (metadata.mode === "txt2img" || metadata.mode === "img2img" || metadata.mode === "inpainting") {
+        generation.mode = metadata.mode;
+      }
+
+      if (metadata.model && models.checkpoints.includes(metadata.model)) {
+        generation.checkpoint = metadata.model;
+      }
+
+      if (metadata.vae !== undefined) {
+        generation.vae = metadata.vae;
+      }
+
+      gallery.showToast("Applied generation settings from PNG metadata");
+    } catch (e) {
+      console.error("Failed to apply metadata:", e);
+      gallery.showToast("Failed to read metadata");
+    }
+  }
+
   function loadGalleryPrefs() {
     try {
       const raw = localStorage.getItem(GALLERY_PREFS_KEY);
@@ -272,7 +384,8 @@
         imagesPerRow?: number;
         sortBy?: "date" | "name" | "size";
         sortDir?: "asc" | "desc";
-        groupBy?: "none" | "date" | "month" | "mode" | "prompt";
+        groupBy?: "none" | "date" | "month" | "mode" | "prompt" | "board";
+        boardFilter?: string;
         view?: "huge" | "large" | "small" | "details";
       };
       if (typeof parsed.imagesPerRow === "number") {
@@ -281,6 +394,7 @@
       if (parsed.sortBy) gallerySortBy = parsed.sortBy;
       if (parsed.sortDir) gallerySortDir = parsed.sortDir;
       if (parsed.groupBy) galleryGroupBy = parsed.groupBy;
+      if (parsed.boardFilter) galleryBoardFilter = parsed.boardFilter;
       if (parsed.view) galleryView = parsed.view;
     } catch (e) {
       console.error("Failed to load gallery preferences:", e);
@@ -311,6 +425,7 @@
     void gallerySortBy;
     void gallerySortDir;
     void galleryGroupBy;
+    void galleryBoardFilter;
 
     const sorted = [...gallery.images].sort((a, b) => {
       if (gallerySortBy === "name") {
@@ -325,11 +440,15 @@
       return gallerySortDir === "asc" ? cmp : -cmp;
     });
 
-    sortedGalleryImages = sorted;
+    const filteredByBoard = galleryBoardFilter === "all"
+      ? sorted
+      : sorted.filter((image) => gallery.getBoard(image) === galleryBoardFilter);
+
+    sortedGalleryImages = filteredByBoard;
 
     if (galleryGroupBy !== "none") {
       const grouped = new Map<string, OutputImage[]>();
-      for (const image of sorted) {
+      for (const image of filteredByBoard) {
         const key =
           galleryGroupBy === "date"
             ? formatDateGroup(image.generated_at_ms)
@@ -337,7 +456,9 @@
               ? formatMonthGroup(image.generated_at_ms)
               : galleryGroupBy === "mode"
                 ? modeLabel(image.generation_mode)
-                : (image.prompt_id || "No Prompt ID");
+                : galleryGroupBy === "board"
+                  ? gallery.getBoard(image)
+                  : (image.prompt_id || "No Prompt ID");
         const bucket = grouped.get(key) ?? [];
         bucket.push(image);
         grouped.set(key, bucket);
@@ -347,7 +468,7 @@
         images,
       }));
     } else {
-      groupedGalleryImages = [{ label: "All Images", images: sorted }];
+      groupedGalleryImages = [{ label: "All Images", images: filteredByBoard }];
     }
   });
 
@@ -356,6 +477,7 @@
     void gallerySortBy;
     void gallerySortDir;
     void galleryGroupBy;
+    void galleryBoardFilter;
     void galleryView;
 
     try {
@@ -366,6 +488,7 @@
           sortBy: gallerySortBy,
           sortDir: gallerySortDir,
           groupBy: galleryGroupBy,
+          boardFilter: galleryBoardFilter,
           view: galleryView,
         }),
       );
@@ -415,7 +538,11 @@
           newImages[0]?.url ?? null,
         );
         // Persist to disk gallery
-        gallery.persistImages(newImages);
+        const metadata = progress.lastParams ? buildPngMetadata(progress.lastParams) : undefined;
+        for (const image of newImages) {
+          image.metadata = metadata ?? null;
+        }
+        gallery.persistImages(newImages, metadata);
       }
     } catch (e) {
       console.error("Failed to fetch output images:", e);
@@ -553,6 +680,44 @@
     // Load persisted gallery images from disk (independent of server status)
     gallery.loadFromDisk();
   }
+
+  $effect(() => {
+    void gallery.lightboxOpen;
+    void gallery.selectedImage;
+
+    if (!gallery.lightboxOpen || !gallery.selectedImage?.gallery_filename) {
+      lightboxMetadata = null;
+      loadingLightboxMetadata = false;
+      return;
+    }
+
+    const target = gallery.selectedImage;
+    const galleryFilename = target.gallery_filename;
+    if (!galleryFilename) {
+      loadingLightboxMetadata = false;
+      lightboxMetadata = null;
+      return;
+    }
+    loadingLightboxMetadata = true;
+    readImageMetadata(galleryFilename)
+      .then((metadata) => {
+        if (gallery.selectedImage === target) {
+          target.metadata = metadata;
+          lightboxMetadata = metadata;
+        }
+      })
+      .catch((e) => {
+        console.error("Failed to load lightbox metadata:", e);
+        if (gallery.selectedImage === target) {
+          lightboxMetadata = null;
+        }
+      })
+      .finally(() => {
+        if (gallery.selectedImage === target) {
+          loadingLightboxMetadata = false;
+        }
+      });
+  });
 </script>
 
 {#if setupComplete === null}
@@ -752,7 +917,39 @@
                     <option value="month">Month Generated</option>
                     <option value="mode">Generation Mode</option>
                     <option value="prompt">Prompt ID</option>
+                    <option value="board">Board</option>
                   </select>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 items-end">
+                <div>
+                  <div class="text-xs text-neutral-400 mb-1">Board Filter</div>
+                  <select bind:value={galleryBoardFilter} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
+                    <option value="all">All Boards</option>
+                    <option value="Unsorted">Unsorted</option>
+                    {#each gallery.boards as board}
+                      <option value={board}>{board}</option>
+                    {/each}
+                  </select>
+                </div>
+                <div class="lg:col-span-3">
+                  <div class="text-xs text-neutral-400 mb-1">Create Board</div>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="text"
+                      bind:value={newBoardName}
+                      class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-100 placeholder-neutral-500"
+                      placeholder="e.g. Portraits"
+                    />
+                    <button
+                      class="px-3 py-2 text-xs rounded border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
+                      onclick={addBoard}
+                      disabled={!newBoardName.trim()}
+                    >
+                      Add
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -781,7 +978,7 @@
               <section class="space-y-2">
                 {#if galleryGroupBy === "date"}
                   <h3 class="text-sm text-neutral-300 font-medium">{group.label}</h3>
-                {:else if galleryGroupBy === "month" || galleryGroupBy === "mode" || galleryGroupBy === "prompt"}
+                {:else if galleryGroupBy === "month" || galleryGroupBy === "mode" || galleryGroupBy === "prompt" || galleryGroupBy === "board"}
                   <h3 class="text-sm text-neutral-300 font-medium">{group.label}</h3>
                 {/if}
 
@@ -805,6 +1002,17 @@
                         <div class="text-xs text-neutral-400">{formatDate(image.generated_at_ms)}</div>
                         <div class="text-xs text-neutral-400">{formatBytes(image.file_size_bytes)}</div>
                         <div class="flex flex-wrap gap-1">
+                          <select
+                            class="px-2 py-1 text-[11px] rounded bg-neutral-800 border border-neutral-700 text-neutral-200"
+                            value={boardLabel(image)}
+                            onchange={(e) => assignBoard(image, (e.target as HTMLSelectElement).value)}
+                            title="Assign board"
+                          >
+                            <option value="Unsorted">Unsorted</option>
+                            {#each gallery.boards as board}
+                              <option value={board}>{board}</option>
+                            {/each}
+                          </select>
                           <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => img2imgImage(image)}>I2I</button>
                           <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => inpaintImage(image)}>Inpaint</button>
                           <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => upscaleImage(image)}>Upscale</button>
@@ -835,6 +1043,9 @@
                           {/if}
                         </button>
                         <div class="absolute inset-0 bg-black/55 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
+                        <div class="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200 pointer-events-none">
+                          {boardLabel(image)}
+                        </div>
                         <div class="absolute inset-0 p-3 flex flex-wrap items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                           <button class="h-9 px-3 flex items-center justify-center rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold backdrop-blur-sm shadow-lg pointer-events-auto" title="Image to Image" onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
                           <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold backdrop-blur-sm shadow-lg pointer-events-auto" title="Inpaint" onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}>
@@ -868,9 +1079,7 @@
         {/if}
       </div>
     {:else if currentPage === "queue"}
-      <div class="flex items-center justify-center h-full text-neutral-500">
-        Queue management (coming soon)
-      </div>
+      <QueuePage />
     {:else if currentPage === "settings"}
       <SettingsPage />
     {/if}
@@ -940,6 +1149,13 @@
         Copy
       </button>
       <button
+        class="flex items-center gap-2 px-4 py-2 bg-emerald-700/80 hover:bg-emerald-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+        onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Apply Metadata
+      </button>
+      <button
         class="flex items-center gap-2 px-4 py-2 bg-red-900/60 hover:bg-red-800 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
         onclick={() => gallery.selectedImage && gallery.deleteImage(gallery.selectedImage)}
       >
@@ -947,6 +1163,42 @@
         Delete
       </button>
     </div>
+    {/if}
+
+    {#if gallery.selectedImage}
+      <div class="absolute top-4 left-4 max-w-[360px] rounded-lg border border-neutral-700 bg-neutral-900/85 backdrop-blur-sm p-3 text-xs text-neutral-200">
+        <div class="flex items-center justify-between gap-2 mb-2">
+          <span class="font-medium">PNG Metadata</span>
+          {#if loadingLightboxMetadata}
+            <span class="text-[10px] text-neutral-400">Loading...</span>
+          {/if}
+        </div>
+        <div class="mb-2">
+          <label class="block text-[10px] text-neutral-500 mb-1">Board</label>
+          <select
+            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-200"
+            value={boardLabel(gallery.selectedImage)}
+            onchange={(e) => assignBoard(gallery.selectedImage!, (e.target as HTMLSelectElement).value)}
+          >
+            <option value="Unsorted">Unsorted</option>
+            {#each gallery.boards as board}
+              <option value={board}>{board}</option>
+            {/each}
+          </select>
+        </div>
+        {#if lightboxMetadata}
+          <div class="space-y-1 max-h-40 overflow-y-auto pr-1">
+            {#each Object.entries(lightboxMetadata) as [key, value]}
+              <div class="grid grid-cols-[90px_1fr] gap-2">
+                <span class="text-neutral-500 truncate">{key}</span>
+                <span class="text-neutral-200 break-words">{value}</span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <span class="text-neutral-500">No embedded metadata found.</span>
+        {/if}
+      </div>
     {/if}
 
     {#if gallery.selectedImage?.url || gallery.lightboxUrl}

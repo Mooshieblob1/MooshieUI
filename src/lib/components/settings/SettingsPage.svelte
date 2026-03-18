@@ -3,6 +3,7 @@
   import { getConfig, updateConfig, stopComfyui, startComfyui } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
+  import { generation } from "../../stores/generation.svelte.js";
   import { onMount } from "svelte";
 
   let config = $state<AppConfig | null>(null);
@@ -28,9 +29,9 @@
 
   const sections = [
     { key: "connection", label: "Connection", keywords: "server mode url port remote autolaunch" },
-    { key: "appearance", label: "Appearance", keywords: "theme dark light font scale size" },
+    { key: "appearance", label: "Appearance", keywords: "theme dark light font scale size style presets fooocus" },
     { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close" },
-    { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args" },
+    { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
     { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
   ];
 
@@ -48,6 +49,7 @@
   let originalMode = "";
   let originalVramMode = "";
   let originalExtraArgs = "";
+  let originalModelPaths = "";
 
   onMount(async () => {
     try {
@@ -67,6 +69,7 @@
     originalMode = config.server_mode;
     originalVramMode = config.vram_mode;
     originalExtraArgs = config.extra_args.join(" ");
+    originalModelPaths = config.extra_model_paths ?? "";
   }
 
   function checkRestartNeeded() {
@@ -76,7 +79,8 @@
       config.server_port !== originalPort ||
       config.server_mode !== originalMode ||
       config.vram_mode !== originalVramMode ||
-      config.extra_args.join(" ") !== originalExtraArgs;
+      config.extra_args.join(" ") !== originalExtraArgs ||
+      (config.extra_model_paths ?? "") !== originalModelPaths;
   }
 
   /** Auto-save for sliders, dropdowns, checkboxes — fires immediately on change. */
@@ -293,6 +297,22 @@
               />
             </div>
           </div>
+
+          <div class="flex items-start gap-3">
+            <input
+              type="checkbox"
+              id="enable-style-presets"
+              bind:checked={generation.stylePresetsEnabled}
+              onchange={() => {
+                generation.saveSettings();
+              }}
+              class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
+            />
+            <div>
+              <label for="enable-style-presets" class="text-sm text-neutral-200">Enable Style Presets</label>
+              <p class="text-[10px] text-neutral-500 mt-0.5">Show Fooocus-style presets in the prompt panel. Off by default.</p>
+            </div>
+          </div>
           </div>
           {/if}
         </section>
@@ -375,6 +395,24 @@
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
               placeholder="/path/to/venv"
             />
+          </div>
+
+          <div>
+            <label class="block text-xs text-neutral-400 mb-1">Shared Model Directory<span class="text-amber-400">*</span></label>
+            <input
+              type="text"
+              value={config.extra_model_paths ?? ""}
+              oninput={(e) => {
+                if (config) {
+                  const val = (e.target as HTMLInputElement).value;
+                  config.extra_model_paths = val || null;
+                  checkRestartNeeded();
+                }
+              }}
+              class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              placeholder="/path/to/shared/models (e.g. from another ComfyUI or Forge install)"
+            />
+            <p class="text-[10px] text-neutral-500 mt-0.5">Point to an existing models folder to share checkpoints, LoRAs, VAEs, etc. without duplicating files.</p>
           </div>
 
           <div>

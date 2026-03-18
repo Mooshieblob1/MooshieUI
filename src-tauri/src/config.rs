@@ -26,6 +26,8 @@ pub struct AppConfig {
     /// UI font scale multiplier (1.0 = default)
     pub font_scale: f64,
     pub setup_complete: bool,
+    /// Optional shared model directory (e.g. from another ComfyUI/Forge install)
+    pub extra_model_paths: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -58,6 +60,7 @@ impl Default for AppConfig {
             theme: "dark".to_string(),
             font_scale: 1.0,
             setup_complete: false,
+            extra_model_paths: None,
         }
     }
 }

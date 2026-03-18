@@ -126,9 +126,22 @@ export async function saveToGallery(
   filename: string,
   subfolder: string,
   promptId: string,
-  mode?: "txt2img" | "img2img" | "inpainting"
+  mode?: "txt2img" | "img2img" | "inpainting",
+  metadata?: Record<string, string>
 ): Promise<string> {
-  return invoke("save_to_gallery", { filename, subfolder, promptId, mode });
+  return invoke("save_to_gallery", { filename, subfolder, promptId, mode, metadata });
+}
+
+export async function readImageMetadata(
+  filename: string
+): Promise<Record<string, string> | null> {
+  return invoke("read_image_metadata", { filename });
+}
+
+export async function readImageMetadataBytes(
+  imageBytes: number[]
+): Promise<Record<string, string> | null> {
+  return invoke("read_image_metadata_bytes", { imageBytes });
 }
 
 export async function listGalleryImages(): Promise<string[]> {

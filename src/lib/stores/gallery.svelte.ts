@@ -12,6 +12,9 @@ import {
 } from "../utils/api.js";
 import { save } from "@tauri-apps/plugin-dialog";
 
+const GALLERY_BOARDS_KEY = "mooshieui.gallery.boards.v1";
+const GALLERY_BOARD_NAMES_KEY = "mooshieui.gallery.boardNames.v1";
+
 class GalleryStore {
   images = $state<OutputImage[]>([]);
   /** Images generated during this app session (not loaded from disk). */
@@ -22,7 +25,91 @@ class GalleryStore {
   lightboxOpen = $state(false);
   loading = $state(false);
   toastMessage = $state<string | null>(null);
+  boardAssignments = $state<Record<string, string>>({});
+  customBoards = $state<string[]>([]);
   private _toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor() {
+    this.loadBoardAssignments();
+    this.loadCustomBoards();
+  }
+
+  private loadBoardAssignments() {
+    try {
+      const raw = localStorage.getItem(GALLERY_BOARDS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      if (!parsed || typeof parsed !== "object") return;
+      this.boardAssignments = parsed;
+    } catch (e) {
+      console.error("Failed to load gallery boards:", e);
+    }
+  }
+
+  private saveBoardAssignments() {
+    try {
+      localStorage.setItem(GALLERY_BOARDS_KEY, JSON.stringify(this.boardAssignments));
+    } catch (e) {
+      console.error("Failed to save gallery boards:", e);
+    }
+  }
+
+  private loadCustomBoards() {
+    try {
+      const raw = localStorage.getItem(GALLERY_BOARD_NAMES_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as string[];
+      if (!Array.isArray(parsed)) return;
+      this.customBoards = parsed.filter((name) => !!name && name !== "Unsorted");
+    } catch (e) {
+      console.error("Failed to load custom boards:", e);
+    }
+  }
+
+  private saveCustomBoards() {
+    try {
+      localStorage.setItem(GALLERY_BOARD_NAMES_KEY, JSON.stringify(this.customBoards));
+    } catch (e) {
+      console.error("Failed to save custom boards:", e);
+    }
+  }
+
+  get boards(): string[] {
+    const unique = new Set<string>();
+    for (const board of this.customBoards) {
+      if (board && board !== "Unsorted") unique.add(board);
+    }
+    for (const board of Object.values(this.boardAssignments)) {
+      if (board && board !== "Unsorted") unique.add(board);
+    }
+    return [...unique].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }
+
+  addBoard(name: string) {
+    const normalized = name.trim();
+    if (!normalized || normalized === "Unsorted") return;
+    if (this.customBoards.includes(normalized)) return;
+    this.customBoards = [...this.customBoards, normalized].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    );
+    this.saveCustomBoards();
+  }
+
+  getBoard(image: OutputImage): string {
+    const key = image.gallery_filename ?? `${image.prompt_id}::${image.filename}`;
+    return this.boardAssignments[key] || "Unsorted";
+  }
+
+  setBoard(image: OutputImage, board: string) {
+    const key = image.gallery_filename ?? `${image.prompt_id}::${image.filename}`;
+    const value = board.trim() || "Unsorted";
+    if (value !== "Unsorted") this.addBoard(value);
+    this.boardAssignments = {
+      ...this.boardAssignments,
+      [key]: value,
+    };
+    this.saveBoardAssignments();
+  }
 
   addImages(newImages: OutputImage[]) {
     this.images = [...newImages, ...this.images];
@@ -58,14 +145,15 @@ class GalleryStore {
   }
 
   /** Save generated images to the persistent gallery on disk. */
-  async persistImages(images: OutputImage[]) {
+  async persistImages(images: OutputImage[], metadata?: Record<string, string>) {
     for (const img of images) {
       try {
         const galleryFilename = await saveToGallery(
           img.filename,
           img.subfolder,
           img.prompt_id,
-          img.generation_mode
+          img.generation_mode,
+          metadata
         );
         img.gallery_filename = galleryFilename;
       } catch (e) {
@@ -232,6 +320,10 @@ class GalleryStore {
     try {
       if (image.gallery_filename) {
         await deleteGalleryImage(image.gallery_filename);
+        const nextAssignments = { ...this.boardAssignments };
+        delete nextAssignments[image.gallery_filename];
+        this.boardAssignments = nextAssignments;
+        this.saveBoardAssignments();
       }
       if (image.url) {
         URL.revokeObjectURL(image.url);

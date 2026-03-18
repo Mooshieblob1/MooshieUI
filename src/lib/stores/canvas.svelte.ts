@@ -483,7 +483,7 @@ class CanvasStore {
     return uploadImageBytes(bytes, filename);
   }
 
-  async syncMaskToGeneration(maskCanvas: HTMLCanvasElement | null): Promise<boolean> {
+  async syncMaskToGeneration(maskCanvas: HTMLCanvasElement | null, uploadToComfy: boolean = true): Promise<boolean> {
     if (!maskCanvas) {
       generation.maskImage = null;
       this.persistedMaskPreviewUrl = null;
@@ -528,11 +528,13 @@ class CanvasStore {
     }
     exportCtx.putImageData(imgData, 0, 0);
 
-    // Persist a preview source for mask visualization across remounts.
-    this.persistedMaskPreviewUrl = exportCanvas.toDataURL("image/png");
+    // Persist/update uploaded mask preview only when we actually sync to ComfyUI.
+    if (uploadToComfy) {
+      this.persistedMaskPreviewUrl = exportCanvas.toDataURL("image/png");
+      const result = await this.exportLayerAsImage(exportCanvas, "canvas_mask.png");
+      generation.maskImage = result.name;
+    }
 
-    const result = await this.exportLayerAsImage(exportCanvas, "canvas_mask.png");
-    generation.maskImage = result.name;
     return true;
   }
 
@@ -600,7 +602,7 @@ class CanvasStore {
     }
 
     // Export mask
-    hasMask = await this.syncMaskToGeneration(maskCanvas);
+    hasMask = await this.syncMaskToGeneration(maskCanvas, true);
 
     // Keep the user-selected mode when using canvas flow for image editing modes.
     if (generation.mode === "inpainting") {

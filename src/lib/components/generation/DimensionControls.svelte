@@ -95,7 +95,7 @@
 <div class="space-y-3">
   <!-- Aspect Ratio -->
   <div>
-    <p class="text-xs text-neutral-400 mb-1.5">Aspect Ratio</p>
+    <p class="text-xs text-neutral-400 mb-1.5">Aspect Ratio<InfoTip text="The shape of your image. 1:1 is square, 16:9 is widescreen, 9:16 is portrait. Pick the ratio first, then adjust resolution to control the total pixel count." /></p>
     <div class="flex items-center gap-1 flex-wrap mb-2">
       {#each presets as preset}
         <button

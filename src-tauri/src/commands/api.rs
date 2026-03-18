@@ -145,6 +145,7 @@ pub async fn save_to_gallery(
     subfolder: String,
     prompt_id: String,
     mode: Option<String>,
+    metadata: Option<std::collections::HashMap<String, String>>,
 ) -> Result<String, AppError> {
     let bytes = state.get_output_image_bytes(&filename, &subfolder).await?;
     let dir = crate::config::app_data_dir()
@@ -161,8 +162,45 @@ pub async fn save_to_gallery(
 
     let gallery_filename = format!("{}__{}__{}", prompt_id, normalized_mode, filename);
     let path = dir.join(&gallery_filename);
-    std::fs::write(&path, &bytes)?;
+
+    // If metadata provided and file is PNG, embed it
+    let final_bytes = if let Some(ref meta) = metadata {
+        if filename.to_ascii_lowercase().ends_with(".png") {
+            match crate::metadata::embed_png_metadata(&bytes, meta) {
+                Ok(embedded) => embedded,
+                Err(e) => {
+                    log::warn!("Failed to embed metadata: {}, saving without", e);
+                    bytes
+                }
+            }
+        } else {
+            bytes
+        }
+    } else {
+        bytes
+    };
+
+    std::fs::write(&path, &final_bytes)?;
     Ok(gallery_filename)
+}
+
+#[tauri::command]
+pub async fn read_image_metadata(
+    filename: String,
+) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    let dir = crate::config::app_data_dir()
+        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
+        .join("gallery");
+    let path = dir.join(&filename);
+    let bytes = std::fs::read(&path)?;
+    crate::metadata::read_png_metadata(&bytes).map_err(|e| AppError::Other(e))
+}
+
+#[tauri::command]
+pub async fn read_image_metadata_bytes(
+    image_bytes: Vec<u8>,
+) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    crate::metadata::read_png_metadata(&image_bytes).map_err(|e| AppError::Other(e))
 }
 
 #[tauri::command]

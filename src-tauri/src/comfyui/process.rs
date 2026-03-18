@@ -62,6 +62,23 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         _ => {}
     }
 
+    // Shared model directory support
+    if let Some(ref model_dir) = config.extra_model_paths {
+        if !model_dir.is_empty() {
+            let yaml_path = std::env::temp_dir().join("mooshieui_extra_model_paths.yaml");
+            let yaml_content = format!(
+                "mooshieui:\n  base_path: {dir}\n  checkpoints: checkpoints\n  vae: vae\n  loras: loras\n  upscale_models: upscale_models\n  embeddings: embeddings\n  clip: clip\n  unet: unet\n  diffusion_models: diffusion_models\n  text_encoders: text_encoders\n",
+                dir = model_dir
+            );
+            if let Err(e) = std::fs::write(&yaml_path, &yaml_content) {
+                log::warn!("Failed to write extra_model_paths.yaml: {}", e);
+            } else {
+                cmd.arg("--extra-model-paths-config").arg(&yaml_path);
+                log::info!("Using extra model paths from: {}", model_dir);
+            }
+        }
+    }
+
     for arg in &config.extra_args {
         cmd.arg(arg);
     }

@@ -2,6 +2,7 @@ pub mod commands;
 pub mod comfyui;
 pub mod config;
 pub mod error;
+pub mod metadata;
 pub mod setup;
 pub mod state;
 pub mod templates;
@@ -52,6 +53,8 @@ pub fn run() {
             commands::api::find_model_by_hash,
             commands::api::hash_model_file,
             commands::api::civitai_lookup_hash,
+            commands::api::read_image_metadata,
+            commands::api::read_image_metadata_bytes,
             commands::websocket::connect_ws,
             commands::websocket::disconnect_ws,
             commands::workflow::generate,

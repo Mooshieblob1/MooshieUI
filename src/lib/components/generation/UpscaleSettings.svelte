@@ -130,7 +130,7 @@
   {#if generation.upscaleEnabled}
     <!-- Method -->
     <div>
-      <label class="block text-xs text-neutral-400 mb-1">Method</label>
+      <label class="block text-xs text-neutral-400 mb-1">Method<InfoTip text="'Model' uses an AI upscaler trained to add realistic detail when enlarging. 'Algorithmic' uses traditional Lanczos scaling — faster but won't add new detail." /></label>
       <select
         bind:value={generation.upscaleMethod}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
@@ -144,7 +144,7 @@
       <!-- Scale -->
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-          Scale
+          Scale<InfoTip text="How much to enlarge the image. 2x doubles the resolution in each dimension (4x the pixels). Higher scales take longer and use more VRAM." />
           <span class="text-neutral-300">{generation.upscaleScale}x</span>
         </label>
         <input
@@ -161,7 +161,7 @@
     <!-- Upscale Model (only for model method) -->
     {#if generation.upscaleMethod === "model"}
       <div>
-        <label class="block text-xs text-neutral-400 mb-1">Upscale Model</label>
+        <label class="block text-xs text-neutral-400 mb-1">Upscale Model<InfoTip text="The AI model used to upscale your image. Omni 2x doubles resolution, Omni 4x quadruples it. Recommended models will be downloaded automatically on first use." /></label>
         <select
           value={generation.upscaleModel ?? ""}
           onchange={(e) => handleModelSelect((e.target as HTMLSelectElement).value)}
@@ -221,7 +221,7 @@
       <!-- Steps -->
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-          Steps
+          Steps<InfoTip text="Denoising steps during the upscale pass. More steps = finer detail but slower. 10-20 is usually enough for upscaling." />
           <span class="text-neutral-300">{generation.upscaleSteps}</span>
         </label>
         <input
@@ -266,7 +266,7 @@
     {#if generation.upscaleTiling || generation.isAnima}
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-        Tile Size
+        Tile Size<InfoTip text="The size of each tile when using tiled diffusion. Larger tiles = better coherence but more VRAM. 1024px is a good default. Reduce to 512-768 if you run out of memory." />
         <span class="text-neutral-300">{generation.upscaleTileSize}px</span>
       </label>
       <input

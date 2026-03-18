@@ -55,6 +55,7 @@ export interface OutputImage {
   gallery_filename?: string;
   file_size_bytes?: number;
   generated_at_ms?: number;
+  metadata?: Record<string, string> | null;
 }
 
 export interface GalleryImageEntry {
@@ -104,9 +105,19 @@ export interface AppConfig {
   theme: string;
   font_scale: number;
   setup_complete: boolean;
+  extra_model_paths: string | null;
 }
 
 export interface QueueInfo {
   queue_running: unknown[];
   queue_pending: unknown[];
+}
+
+export interface QueueDisplayItem {
+  id: string;
+  promptId: string;
+  number?: number;
+  mode?: string;
+  summary: string;
+  raw: unknown;
 }
