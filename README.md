@@ -6,6 +6,8 @@ A modern, beginner-friendly desktop frontend for [ComfyUI](https://github.com/co
 
 ![License](https://img.shields.io/github/license/Mooshieblob1/MooshieUI?v=2)
 
+![alt text](src/img/SVwm4RS.png)
+
 ---
 
 ## ✨ Features
