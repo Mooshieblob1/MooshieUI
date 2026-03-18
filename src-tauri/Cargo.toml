@@ -2,6 +2,7 @@
 name = "comfyui-desktop"
 version = "0.2.2"
 edition = "2021"
+license = "MIT"
 
 [lib]
 name = "comfyui_desktop_lib"
