@@ -340,7 +340,7 @@ async fn step_install_pytorch(base: &Path, gpu: &str) -> Result<(), String> {
                     "torchvision",
                     "torchaudio",
                     "--index-url",
-                    "https://download.pytorch.org/whl/cu124",
+                    "https://download.pytorch.org/whl/cu128",
                 ],
             )
             .await
