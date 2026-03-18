@@ -23,10 +23,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
-          - platform: macos-latest
-            target: aarch64-apple-darwin
-          - platform: macos-latest
-            target: x86_64-apple-darwin
 
     runs-on: ${{ matrix.platform }}
 
@@ -85,8 +81,6 @@ jobs:
             | Platform | File |
             |----------|------|
             | **Windows** | `.msi` or `.exe` |
-            | **macOS (Apple Silicon)** | `.dmg` (aarch64) |
-            | **macOS (Intel)** | `.dmg` (x64) |
             | **Linux** | `.deb` or `.AppImage` |
 
             ### What's New in v0.2.3

@@ -160,20 +160,20 @@ MooshieUI
 
 ## 📦 Installation
 
-### One-Click Setup (Recommended)
+### One-Click Setup (Windows/Linux Releases)
 
 MooshieUI handles everything automatically on first launch:
 
-1. **Download** a release from [Releases](https://github.com/Mooshieblob1/MooshieUI/releases) (or build from source)
+1. **Download** a release from [Releases](https://github.com/Mooshieblob1/MooshieUI/releases) (Windows/Linux artifacts)
 2. **Run the app** — the setup wizard will:
-   - Download [uv](https://github.com/astral-sh/uv) (fast Python package manager)
-   - Install Python 3.11 (isolated, won't affect your system)
-   - Download ComfyUI (latest from GitHub)
-   - Create a virtual environment
-   - Auto-detect your GPU (NVIDIA CUDA / AMD ROCm / Apple Metal / CPU)
-   - Install PyTorch with the right acceleration backend
-   - Install all ComfyUI dependencies
-   - Install MooshieUI's custom nodes
+  - Download [uv](https://github.com/astral-sh/uv) (fast Python package manager)
+  - Install Python 3.11 (isolated, won't affect your system)
+  - Download ComfyUI (latest from GitHub)
+  - Create a virtual environment
+  - Auto-detect your GPU (NVIDIA CUDA / AMD ROCm / CPU)
+  - Install PyTorch with the right acceleration backend
+  - Install all ComfyUI dependencies
+  - Install MooshieUI's custom nodes
 3. **Start generating** — ComfyUI launches automatically
 
 The installer shows real-time terminal output streamed as a matrix-style backdrop behind the setup UI, with per-step progress bars and a checklist so you always know what's happening. No separate terminal windows are opened.
@@ -182,7 +182,34 @@ The installer shows real-time terminal output streamed as a matrix-style backdro
 
 > **Disk space:** ~5–10 GB (Python + PyTorch + ComfyUI). Installation takes 5–15 minutes depending on your internet connection.
 
-### Development Setup
+### macOS (Manual Build From Source)
+
+macOS prebuilt release artifacts are currently disabled. On macOS, use a source build:
+
+**Prerequisites:**
+- [Node.js](https://nodejs.org/) 18+
+- [Rust](https://rustup.rs/) (latest stable)
+- Xcode Command Line Tools (`xcode-select --install`)
+- Tauri prerequisites — see [Tauri v2 docs](https://v2.tauri.app/start/prerequisites/)
+
+```bash
+# Clone the repository
+git clone https://github.com/Mooshieblob1/MooshieUI.git
+cd MooshieUI
+
+# Install dependencies
+npm install
+
+# Development mode
+npm run tauri dev
+
+# Production build
+npm run tauri build
+```
+
+After first launch, the setup wizard still installs ComfyUI/Python/PyTorch automatically.
+
+### Development Setup (All Platforms)
 
 If you want to build from source:
 
@@ -257,7 +284,7 @@ Features planned or in progress:
 - [x] **5D latent tiled diffusion** — MultiDiffusion/SpotDiffusion compatible with Anima (COSMOS) models
 - [x] **Lightbox zoom & dismiss** — scroll-wheel zoom at cursor, Escape/click-outside to close
 - [x] **Clipboard copy as file** — copies gallery images as file references (preserves format & metadata)
-- [x] **Windows & macOS builds** — cross-platform CI releases (Windows .msi/.exe, macOS .dmg, Linux .deb/.AppImage)
+- [x] **Windows & Linux builds** — cross-platform CI releases (Windows .msi/.exe, Linux .deb/.AppImage)
 - [x] **Hash-based model detection** — SHA256/AutoV2 hash identification with CivitAI API integration, models recognized even if renamed
 - [x] **Installer UX overhaul** — streamed terminal backdrop, per-step progress bars, download progress with bytes/total, no separate terminal windows
 - [x] **Persistent gallery** — images saved to disk across sessions with rename, delete, and management
