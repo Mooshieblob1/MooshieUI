@@ -9,6 +9,8 @@
     "dialog:default",
     "fs:default",
     "clipboard-manager:default",
-    "clipboard-manager:allow-write-image"
+    "clipboard-manager:allow-write-image",
+    "updater:default",
+    "process:default"
   ]
 }

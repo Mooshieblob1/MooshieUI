@@ -59,7 +59,16 @@
   }
 
   const canGenerate = $derived(!!generation.checkpoint);
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      handleGenerate();
+    }
+  }
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <button
   onclick={handleGenerate}

@@ -38,11 +38,18 @@
 
 <div class="relative w-full aspect-square bg-neutral-900 rounded-xl border border-neutral-800 flex items-center justify-center overflow-hidden group">
   {#if progress.displayImage}
-    <img
-      src={progress.displayImage}
-      alt="Preview"
-      class="w-full h-full object-contain"
-    />
+    <button
+      class="w-full h-full cursor-pointer"
+      onclick={() => {
+        if (progress.displayImage) gallery.openLightboxUrl(progress.displayImage);
+      }}
+    >
+      <img
+        src={progress.displayImage}
+        alt="Preview"
+        class="w-full h-full object-contain"
+      />
+    </button>
     {#if !progress.isGenerating && progress.lastOutputImage}
       <div class="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
         {#if !progress.wasUpscaled}

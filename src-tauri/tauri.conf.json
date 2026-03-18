@@ -40,7 +40,19 @@
       "allowDowngrades": true
     },
     "category": "Graphics and Design",
+    "createUpdaterArtifacts": "v1Compatible",
     "shortDescription": "Beginner-friendly AI image generation frontend for ComfyUI",
     "longDescription": "MooshieUI is a modern desktop frontend that hides ComfyUI's node-graph complexity behind a clean, intuitive interface. Features text-to-image, image-to-image, inpainting, built-in upscaling, and one-click setup."
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Mooshieblob1/MooshieUI/releases/latest/download/latest.json"
+      ],
+      "pubkey": "REPLACE_WITH_PUBLIC_KEY",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

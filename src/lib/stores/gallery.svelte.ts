@@ -17,6 +17,8 @@ class GalleryStore {
   /** Images generated during this app session (not loaded from disk). */
   sessionImages = $state<OutputImage[]>([]);
   selectedImage = $state<OutputImage | null>(null);
+  /** When set, the lightbox shows this URL instead of selectedImage. */
+  lightboxUrl = $state<string | null>(null);
   lightboxOpen = $state(false);
   loading = $state(false);
   toastMessage = $state<string | null>(null);
@@ -29,12 +31,21 @@ class GalleryStore {
 
   openLightbox(image: OutputImage) {
     this.selectedImage = image;
+    this.lightboxUrl = null;
+    this.lightboxOpen = true;
+  }
+
+  /** Open lightbox with a raw image URL (e.g. preview blob). */
+  openLightboxUrl(url: string) {
+    this.selectedImage = null;
+    this.lightboxUrl = url;
     this.lightboxOpen = true;
   }
 
   closeLightbox() {
     this.lightboxOpen = false;
     this.selectedImage = null;
+    this.lightboxUrl = null;
   }
 
   showToast(message: string) {

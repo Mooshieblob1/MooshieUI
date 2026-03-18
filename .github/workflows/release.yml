@@ -71,6 +71,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: MooshieUI ${{ github.event.inputs.tag || github.ref_name }}
@@ -93,6 +95,6 @@ jobs:
             - Anima Preview 2 support with split model loading
             - Auto GPU detection (NVIDIA CUDA / AMD ROCm / Apple Metal / CPU)
             - Zero manual setup required
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}

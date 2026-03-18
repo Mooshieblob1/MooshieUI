@@ -76,15 +76,51 @@ impl Default for AppConfig {
     }
 }
 
-const APP_IDENTIFIER: &str = "com.comfyui.desktop";
+const APP_IDENTIFIER: &str = "com.mooshieui.desktop";
+const OLD_APP_IDENTIFIER: &str = "com.comfyui.desktop";
 
 /// Get the app data directory path (platform-appropriate).
 pub fn app_data_dir() -> Option<PathBuf> {
     dirs::data_dir().map(|d| d.join(APP_IDENTIFIER))
 }
 
+/// Migrate data from the old `com.comfyui.desktop` directory to the new one.
+/// Copies config.json if the new directory doesn't have one yet.
+fn migrate_from_old_data_dir() {
+    let data_dir = match dirs::data_dir() {
+        Some(d) => d,
+        None => return,
+    };
+    let old_dir = data_dir.join(OLD_APP_IDENTIFIER);
+    let new_dir = data_dir.join(APP_IDENTIFIER);
+
+    // Only migrate if old dir exists and new config doesn't
+    if !old_dir.exists() {
+        return;
+    }
+    let new_config = new_dir.join("config.json");
+    if new_config.exists() {
+        return;
+    }
+
+    let old_config = old_dir.join("config.json");
+    if old_config.exists() {
+        if let Err(e) = std::fs::create_dir_all(&new_dir) {
+            eprintln!("Migration: failed to create new data dir: {}", e);
+            return;
+        }
+        if let Err(e) = std::fs::copy(&old_config, &new_config) {
+            eprintln!("Migration: failed to copy config.json: {}", e);
+        } else {
+            println!("Migrated config from {} to {}", old_dir.display(), new_dir.display());
+        }
+    }
+}
+
 /// Load persisted config from disk, falling back to defaults.
 pub fn load_persisted_config() -> AppConfig {
+    migrate_from_old_data_dir();
+
     if let Some(dir) = app_data_dir() {
         let config_path = dir.join("config.json");
         if let Ok(json) = std::fs::read_to_string(config_path) {

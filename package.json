@@ -17,6 +17,8 @@
     "@tauri-apps/plugin-fs": "^2",
     "@tauri-apps/plugin-shell": "^2",
     "@tauri-apps/plugin-store": "^2",
+    "@tauri-apps/plugin-updater": "^2",
+    "@tauri-apps/plugin-process": "^2",
     "konva": "^10.2.3",
     "svelte-konva": "^1.0.1"
   },

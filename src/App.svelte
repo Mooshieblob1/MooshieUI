@@ -13,6 +13,7 @@
   import { generation } from "./lib/stores/generation.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
   import type { OutputImage } from "./lib/types/index.js";
+  import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
 
   declare const __APP_VERSION__: string;
   const appVersion = __APP_VERSION__ ?? "dev";
@@ -696,6 +697,7 @@
 
   <!-- Main content -->
   <main class="flex-1 overflow-hidden flex flex-col">
+    <UpdateNotification />
     {#if startupStatus && !connection.connected}
       <div class="flex items-center gap-2 px-4 py-2 bg-amber-900/30 border-b border-amber-800/50 text-amber-200 text-sm">
         <div class="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
@@ -877,7 +879,7 @@
 {/if}
 
 <!-- Lightbox overlay -->
-{#if gallery.lightboxOpen && gallery.selectedImage}
+{#if gallery.lightboxOpen && (gallery.selectedImage || gallery.lightboxUrl)}
   <div
     class="lightbox-backdrop fixed inset-0 bg-black/90 z-50 flex items-center justify-center"
     role="dialog"
@@ -898,7 +900,8 @@
       &times;
     </button>
 
-    <!-- Action buttons -->
+    <!-- Action buttons (only for gallery images, not preview URLs) -->
+    {#if gallery.selectedImage}
     <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-10">
       <button
         class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
@@ -943,11 +946,12 @@
         Delete
       </button>
     </div>
+    {/if}
 
-    {#if gallery.selectedImage.url}
+    {#if gallery.selectedImage?.url || gallery.lightboxUrl}
       <img
-        src={gallery.selectedImage.url}
-        alt={gallery.selectedImage.filename}
+        src={gallery.selectedImage?.url ?? gallery.lightboxUrl ?? ''}
+        alt={gallery.selectedImage?.filename ?? 'Preview'}
         class="max-w-[90vw] max-h-[85vh] object-contain"
         style="transform: scale({lbScale}); transform-origin: {lbOriginX}% {lbOriginY}%; transition: {lbScale === 1 ? 'transform 0.2s ease' : 'none'};"
         onwheel={(e) => {
