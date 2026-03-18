@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     pub server_mode: ServerMode,
     pub server_url: String,
@@ -17,37 +18,22 @@ pub struct AppConfig {
     pub default_width: u32,
     pub default_height: u32,
     /// VRAM management mode: "auto", "high", "normal", "low", "none"
-    #[serde(default = "default_vram_mode")]
     pub vram_mode: String,
     /// Keep ComfyUI running after the app closes (default: false)
-    #[serde(default)]
     pub keep_alive: bool,
     /// UI theme: "dark", "light"
-    #[serde(default = "default_theme")]
     pub theme: String,
     /// UI font scale multiplier (1.0 = default)
-    #[serde(default = "default_font_scale")]
     pub font_scale: f64,
-    #[serde(default)]
     pub setup_complete: bool,
-}
-
-fn default_vram_mode() -> String {
-    "normal".to_string()
-}
-
-fn default_theme() -> String {
-    "dark".to_string()
-}
-
-fn default_font_scale() -> f64 {
-    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ServerMode {
+    #[serde(alias = "AutoLaunch")]
     AutoLaunch,
+    #[serde(alias = "Remote")]
     Remote,
 }
 
@@ -123,12 +109,20 @@ pub fn load_persisted_config() -> AppConfig {
 
     if let Some(dir) = app_data_dir() {
         let config_path = dir.join("config.json");
-        if let Ok(json) = std::fs::read_to_string(config_path) {
-            if let Ok(config) = serde_json::from_str(&json) {
-                return config;
+        if let Ok(json) = std::fs::read_to_string(&config_path) {
+            match serde_json::from_str::<AppConfig>(&json) {
+                Ok(config) => {
+                    eprintln!("Loaded config from {}: comfyui_path={}, venv_path={}",
+                        config_path.display(), config.comfyui_path, config.venv_path);
+                    return config;
+                }
+                Err(e) => {
+                    eprintln!("Failed to parse {}: {}", config_path.display(), e);
+                }
             }
         }
     }
+    eprintln!("Using default config (no persisted config found)");
     AppConfig::default()
 }
 

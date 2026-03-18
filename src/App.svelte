@@ -11,6 +11,7 @@
   import { models } from "./lib/stores/models.svelte.js";
   import { getHistory, getOutputImage, uploadImageBytes, loadGalleryImage, getConfig } from "./lib/utils/api.js";
   import { generation } from "./lib/stores/generation.svelte.js";
+  import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
   import type { OutputImage } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
@@ -453,7 +454,7 @@
     }
 
     // Load persisted settings
-    await generation.loadSettings();
+    await Promise.all([generation.loadSettings(), autocomplete.loadSettings()]);
 
     // Set up event listeners BEFORE starting so we don't miss events
     await Promise.all([

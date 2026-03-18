@@ -2,6 +2,7 @@
   import type { AppConfig } from "../../types/index.js";
   import { getConfig, updateConfig, stopComfyui, startComfyui } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
+  import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { onMount } from "svelte";
 
   let config = $state<AppConfig | null>(null);
@@ -13,12 +14,16 @@
   let restarting = $state(false);
   let search = $state("");
 
+  let tagUrlInput = $state("");
+  let tagFileLoading = $state(false);
+
   // Section collapse state (all expanded by default)
   let collapsed: Record<string, boolean> = $state({
     connection: false,
     appearance: false,
     performance: false,
     paths: false,
+    autocomplete: false,
   });
 
   const sections = [
@@ -26,6 +31,7 @@
     { key: "appearance", label: "Appearance", keywords: "theme dark light font scale size" },
     { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close" },
     { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args" },
+    { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
   ];
 
   function sectionVisible(key: string): boolean {
@@ -388,6 +394,132 @@
             />
             <p class="text-[10px] text-neutral-500 mt-0.5">Additional arguments passed to ComfyUI on launch</p>
           </div>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
+        <!-- Autocomplete -->
+        {#if sectionVisible("autocomplete")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.autocomplete = !collapsed.autocomplete)}
+          >
+            Autocomplete
+            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.autocomplete ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.autocomplete}
+          <div class="px-5 pb-5 space-y-4">
+            <!-- Current source -->
+            <div>
+              <label class="block text-xs text-neutral-400 mb-1">Tag Source</label>
+              <div class="flex items-center gap-2 text-sm text-neutral-300">
+                {#if autocomplete.sourceMode === "builtin"}
+                  <span class="inline-block w-2 h-2 rounded-full bg-indigo-400"></span>
+                  Built-in Danbooru ({autocomplete.tags.length.toLocaleString()} tags)
+                {:else if autocomplete.sourceMode === "url"}
+                  <span class="inline-block w-2 h-2 rounded-full bg-green-400"></span>
+                  URL: <span class="text-neutral-400 truncate max-w-xs">{autocomplete.sourceUrl}</span>
+                  ({autocomplete.tags.length.toLocaleString()} tags)
+                {:else if autocomplete.sourceMode === "file"}
+                  <span class="inline-block w-2 h-2 rounded-full bg-green-400"></span>
+                  File: {autocomplete.sourceFileName}
+                  ({autocomplete.tags.length.toLocaleString()} tags)
+                {/if}
+              </div>
+            </div>
+
+            <!-- Load from URL -->
+            <div>
+              <label class="block text-xs text-neutral-400 mb-1">Load from URL</label>
+              <div class="flex gap-2">
+                <input
+                  type="text"
+                  bind:value={tagUrlInput}
+                  placeholder="https://example.com/tags.json or .csv"
+                  class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                />
+                <button
+                  class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm transition-colors disabled:opacity-50"
+                  disabled={!tagUrlInput.trim() || autocomplete.loading}
+                  onclick={() => autocomplete.loadFromUrl(tagUrlInput.trim())}
+                >
+                  {autocomplete.loading ? "Loading..." : "Fetch"}
+                </button>
+              </div>
+              <p class="text-[10px] text-neutral-500 mt-0.5">JSON array or CSV (name,category,count,aliases...)</p>
+            </div>
+
+            <!-- Upload file -->
+            <div>
+              <label class="block text-xs text-neutral-400 mb-1">Upload File</label>
+              <label
+                class="inline-flex items-center gap-2 px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-sm text-neutral-300 hover:border-indigo-500 transition-colors cursor-pointer"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                {tagFileLoading ? "Reading..." : "Choose .json or .csv"}
+                <input
+                  type="file"
+                  accept=".json,.csv,.txt"
+                  class="hidden"
+                  onchange={async (e) => {
+                    const input = e.target as HTMLInputElement;
+                    const file = input.files?.[0];
+                    if (!file) return;
+                    tagFileLoading = true;
+                    try {
+                      const text = await file.text();
+                      await autocomplete.loadFromFile(text, file.name);
+                    } finally {
+                      tagFileLoading = false;
+                      input.value = "";
+                    }
+                  }}
+                />
+              </label>
+            </div>
+
+            <!-- Reset to built-in -->
+            {#if autocomplete.sourceMode !== "builtin"}
+            <button
+              class="text-xs text-neutral-400 hover:text-neutral-200 underline transition-colors"
+              onclick={() => autocomplete.resetToBuiltin()}
+            >
+              Reset to built-in Danbooru tags
+            </button>
+            {/if}
+
+            <!-- Error -->
+            {#if autocomplete.error}
+              <div class="px-3 py-2 bg-red-900/30 border border-red-800/50 rounded-lg text-red-200 text-xs">
+                {autocomplete.error}
+              </div>
+            {/if}
+
+            <!-- Max results -->
+            <div>
+              <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+                Max Suggestions
+                <span class="text-neutral-300">{autocomplete.maxResults}</span>
+              </label>
+              <input
+                type="range"
+                value={autocomplete.maxResults}
+                oninput={(e) => { autocomplete.setMaxResults(parseInt((e.target as HTMLInputElement).value)); }}
+                min="3"
+                max="30"
+                step="1"
+                class="w-full accent-indigo-500"
+              />
+              <p class="text-[10px] text-neutral-500 mt-0.5">Number of autocomplete results shown in the dropdown</p>
+            </div>
+
+            <!-- Undo/redo hint -->
+            <div class="px-3 py-2 bg-neutral-800/50 border border-neutral-700/50 rounded-lg text-[10px] text-neutral-500">
+              Tip: Use <kbd class="px-1 py-0.5 bg-neutral-700 rounded text-neutral-300">Ctrl+Z</kbd> / <kbd class="px-1 py-0.5 bg-neutral-700 rounded text-neutral-300">Ctrl+Y</kbd> in the prompt box to undo/redo autocompleted tags.
+            </div>
           </div>
           {/if}
         </section>

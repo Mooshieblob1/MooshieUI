@@ -74,8 +74,16 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 
+    // Log ComfyUI output to a temp file for debugging
+    let log_path = std::env::temp_dir().join("comfyui-desktop-stderr.log");
+    let log_file = std::fs::File::create(&log_path).ok();
+    log::info!("ComfyUI log: {}", log_path.display());
+
     cmd.stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(match log_file {
+            Some(f) => std::process::Stdio::from(f),
+            None => std::process::Stdio::null(),
+        })
         .kill_on_drop(!config.keep_alive);
 
     let child = cmd

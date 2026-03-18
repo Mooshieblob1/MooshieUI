@@ -1,13 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import tagsData from "../../assets/danbooru-tags.json";
-
-  interface TagEntry {
-    n: string; // name
-    c: number; // category (0=general, 1=artist, 3=copyright, 4=character, 5=meta)
-    p: number; // post count
-    a?: string[]; // aliases
-  }
+  import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
 
   interface Props {
     value: string;
@@ -18,14 +10,16 @@
 
   let { value = $bindable(), placeholder = "", rows = 4, minHeight = "min-h-25" }: Props = $props();
 
-  const tags: TagEntry[] = tagsData as TagEntry[];
-
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
   let suggestions = $state<TagEntry[]>([]);
   let selectedIndex = $state(0);
   let showSuggestions = $state(false);
   let dropdownTop = $state(0);
   let dropdownLeft = $state(0);
+
+  // Undo/redo stacks for autocomplete insertions
+  let undoStack = $state<string[]>([]);
+  let redoStack = $state<string[]>([]);
 
   const CATEGORY_COLORS: Record<number, string> = {
     0: "text-indigo-300",   // general
@@ -72,6 +66,9 @@
       return;
     }
 
+    const tags = autocomplete.tags;
+    const maxResults = autocomplete.maxResults;
+
     // Collect all matches, then sort by post count
     const prefixMatches: TagEntry[] = [];
     const containsMatches: TagEntry[] = [];
@@ -87,13 +84,13 @@
       }
     }
 
-    // Sort each group by post count (highest first), then take top 10
+    // Sort each group by post count (highest first), then take top N
     const byCount = (a: TagEntry, b: TagEntry) => b.p - a.p;
     prefixMatches.sort(byCount);
     containsMatches.sort(byCount);
     aliasMatches.sort(byCount);
 
-    suggestions = [...prefixMatches, ...containsMatches, ...aliasMatches].slice(0, 10);
+    suggestions = [...prefixMatches, ...containsMatches, ...aliasMatches].slice(0, maxResults);
     selectedIndex = 0;
     showSuggestions = suggestions.length > 0;
 
@@ -113,6 +110,10 @@
   function acceptSuggestion(tag: TagEntry) {
     const result = getCurrentTagFragment();
     if (!result || !textareaEl) return;
+
+    // Push current value to undo stack before modifying
+    undoStack = [...undoStack, value];
+    redoStack = [];
 
     const before = value.substring(0, result.start);
     const after = value.substring(result.end);
@@ -135,7 +136,39 @@
     });
   }
 
+  function undo() {
+    if (undoStack.length === 0) return;
+    redoStack = [...redoStack, value];
+    const prev = undoStack[undoStack.length - 1];
+    undoStack = undoStack.slice(0, -1);
+    value = prev;
+  }
+
+  function redo() {
+    if (redoStack.length === 0) return;
+    undoStack = [...undoStack, value];
+    const next = redoStack[redoStack.length - 1];
+    redoStack = redoStack.slice(0, -1);
+    value = next;
+  }
+
   function handleKeydown(e: KeyboardEvent) {
+    // Undo/redo for autocomplete: Ctrl+Z / Ctrl+Y
+    if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+      if (undoStack.length > 0) {
+        e.preventDefault();
+        undo();
+        return;
+      }
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+      if (redoStack.length > 0) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+    }
+
     // Tag weight adjustment: Ctrl+Up/Down on selected text
     if ((e.ctrlKey || e.metaKey) && (e.key === "ArrowUp" || e.key === "ArrowDown") && textareaEl) {
       const start = textareaEl.selectionStart;
@@ -209,6 +242,8 @@
   }
 
   function handleInput() {
+    // Clear redo stack on manual edits (standard undo behavior)
+    redoStack = [];
     // Small delay to let the value update
     requestAnimationFrame(updateSuggestions);
   }

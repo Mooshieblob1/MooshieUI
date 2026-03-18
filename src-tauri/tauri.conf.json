@@ -49,7 +49,7 @@
       "endpoints": [
         "https://github.com/Mooshieblob1/MooshieUI/releases/latest/download/latest.json"
       ],
-      "pubkey": "REPLACE_WITH_PUBLIC_KEY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk2QjY5NzZFRjhDODhFMkYKUldRdmpzajRicGUybGx6Y0V5OWpuZFZSMUZnTnVBdDlwWkZxVURyRGx2d0JZQlI4cVN6OGN2cFcK",
       "windows": {
         "installMode": "passive"
       }
