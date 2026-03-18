@@ -18,7 +18,7 @@ A modern, beginner-friendly desktop frontend for [ComfyUI](https://github.com/co
 |------|--------|-------------|
 | **Text to Image** | ✅ | Generate images from scratch using positive & negative prompts |
 | **Image to Image** | ✅ | Transform existing images with adjustable denoise strength |
-| **Inpainting** | 🔧 | Selectively edit parts of images using masks *(canvas editor in progress)* |
+| **Inpainting** | ✅ | Selectively edit parts of images using a built-in canvas editor with mask painting |
 
 Switch between modes with a single click — all settings carry over.
 
@@ -237,7 +237,7 @@ Features planned or in progress:
 
 ### Coming Soon
 - [x] **Image upload** for img2img and inpainting modes
-- [ ] **Inpainting canvas** — paint masks directly on images in the UI
+- [x] **Inpainting canvas** — paint masks directly on images in the UI
 - [ ] **Queue management page** — view, reorder, and cancel queued generations
 - [x] **Settings page** — configure ComfyUI connection, paths, defaults, and extra args
 - [x] **Gallery upscale button** — upscale any image from the gallery grid or lightbox
