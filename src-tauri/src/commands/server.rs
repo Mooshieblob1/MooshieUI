@@ -44,10 +44,14 @@ pub async fn start_comfyui(
                         let _ = app.emit("comfyui:server_ready", ());
                     }
                     Err(e) => {
-                        log::error!("ComfyUI failed to become ready: {}", e);
+                        let err_str = e.to_string();
+                        log::error!("ComfyUI failed to become ready: {}", err_str);
                         let _ = app.emit(
                             "comfyui:server_error",
-                            serde_json::json!({"error": e.to_string()}),
+                            serde_json::json!({
+                                "error": err_str,
+                                "crashed": err_str.contains("exited with"),
+                            }),
                         );
                     }
                 }

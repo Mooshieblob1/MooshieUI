@@ -65,6 +65,7 @@ pub fn run() {
             setup::check_setup,
             setup::detect_gpu,
             setup::run_setup,
+            setup::reinstall_pytorch,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

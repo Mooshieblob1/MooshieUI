@@ -499,6 +499,87 @@ async fn uv_pip(app: &AppHandle, base: &Path, args: &[&str]) -> Result<(), Strin
     .map_err(|_| format!("pip install failed for: {}", args.join(" ")))
 }
 
+/// Detect the AMD GPU architecture string (e.g. "gfx1100", "gfx1201") by reading
+/// sysfs on Linux. Returns None if detection fails or the GPU is not AMD.
+#[cfg(target_os = "linux")]
+async fn detect_amd_gpu_arch() -> Option<String> {
+    // Try rocm-smi first (most reliable if ROCm is installed)
+    let mut cmd = tokio::process::Command::new("rocm-smi");
+    cmd.args(["--showproductname"]);
+    hide_window(&mut cmd);
+    if let Ok(output) = cmd.output().await {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
+            // Look for gfx architecture identifiers in output
+            for word in text.split_whitespace() {
+                if word.starts_with("gfx") {
+                    return Some(word.to_string());
+                }
+            }
+        }
+    }
+
+    // Fallback: read the GPU firmware version from sysfs to determine architecture
+    if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
+        for entry in entries.flatten() {
+            let vendor_path = entry.path().join("device/vendor");
+
+            // Verify this is an AMD GPU (vendor 0x1002)
+            if let Ok(vendor) = std::fs::read_to_string(&vendor_path) {
+                if !vendor.trim().contains("0x1002") {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+
+            // Try to read the device ID to infer architecture
+            let device_path = entry.path().join("device/device");
+            if let Ok(device_id) = std::fs::read_to_string(&device_path) {
+                let device_id = device_id.trim().to_lowercase();
+                // RX 9070 XT / RDNA 4 device IDs start with 0x15xx
+                // Map known device ID prefixes to GPU architectures
+                if device_id.starts_with("0x15") {
+                    return Some("gfx1201".to_string());
+                }
+            }
+
+            // Also try reading the GPU ID from ip_discovery or amdgpu debugfs
+            let ip_path = entry.path().join("device/ip_discovery/die/0/GC/0/major");
+            if let Ok(major) = std::fs::read_to_string(&ip_path) {
+                let major = major.trim();
+                if major == "12" {
+                    return Some("gfx1200".to_string()); // RDNA 4 family
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Check if the AMD GPU requires nightly ROCm builds (gfx120X = RDNA 4).
+/// Returns the appropriate PyTorch index URL for AMD GPUs.
+#[cfg(target_os = "linux")]
+async fn amd_pytorch_index_url() -> &'static str {
+    if let Some(arch) = detect_amd_gpu_arch().await {
+        if arch.starts_with("gfx120") {
+            log::info!(
+                "Detected AMD {} (RDNA 4) — using ROCm nightly index for gfx120X",
+                arch
+            );
+            return "https://rocm.nightlies.amd.com/v2/gfx120X-all/";
+        }
+        log::info!("Detected AMD {} — using stable ROCm 6.2 index", arch);
+    }
+    "https://download.pytorch.org/whl/rocm6.2"
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn amd_pytorch_index_url() -> &'static str {
+    "https://download.pytorch.org/whl/rocm6.2"
+}
+
 async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result<(), String> {
     match gpu {
         "nvidia" => {
@@ -516,6 +597,8 @@ async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result
             .await
         }
         "amd" => {
+            let index_url = amd_pytorch_index_url().await;
+            emit_log(app, &format!("Using PyTorch index: {}", index_url));
             uv_pip(
                 app,
                 base,
@@ -524,7 +607,7 @@ async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result
                     "torchvision",
                     "torchaudio",
                     "--index-url",
-                    "https://download.pytorch.org/whl/rocm6.2",
+                    index_url,
                 ],
             )
             .await
@@ -726,6 +809,43 @@ pub async fn check_setup(app: AppHandle) -> Result<bool, String> {
 #[tauri::command]
 pub async fn detect_gpu() -> Result<String, String> {
     Ok(detect_gpu_type().await)
+}
+
+#[tauri::command]
+pub async fn reinstall_pytorch(
+    app: AppHandle,
+    _state: tauri::State<'_, AppState>,
+    index_url: Option<String>,
+) -> Result<(), String> {
+    let base = data_dir(&app)?;
+    let gpu = detect_gpu_type().await;
+
+    let url = match index_url {
+        Some(ref url) => url.as_str(),
+        None => match gpu.as_str() {
+            "nvidia" => "https://download.pytorch.org/whl/cu128",
+            "amd" => amd_pytorch_index_url().await,
+            "mps" => "",
+            _ => "https://download.pytorch.org/whl/cpu",
+        },
+    };
+
+    emit(&app, "pytorch", "Reinstalling PyTorch...", 50);
+
+    let mut args = vec![
+        "torch",
+        "torchvision",
+        "torchaudio",
+        "--force-reinstall",
+    ];
+    if !url.is_empty() {
+        args.push("--index-url");
+        args.push(url);
+    }
+
+    uv_pip(&app, &base, &args).await?;
+    emit(&app, "done", "PyTorch reinstalled successfully.", 100);
+    Ok(())
 }
 
 #[tauri::command]

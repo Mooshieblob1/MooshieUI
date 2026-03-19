@@ -41,6 +41,20 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     let python_path = format!("{}/bin/python", config.venv_path);
     let main_path = format!("{}/main.py", config.comfyui_path);
 
+    // Validate paths before attempting to spawn
+    if config.venv_path.is_empty() || !std::path::Path::new(&python_path).exists() {
+        return Err(AppError::ProcessSpawnFailed(format!(
+            "Python not found at '{}'. Run setup first or check your venv_path config.",
+            python_path
+        )));
+    }
+    if config.comfyui_path.is_empty() || !std::path::Path::new(&main_path).exists() {
+        return Err(AppError::ProcessSpawnFailed(format!(
+            "ComfyUI main.py not found at '{}'. Run setup first or check your comfyui_path config.",
+            main_path
+        )));
+    }
+
     log::info!("Spawning ComfyUI: {} {}", python_path, main_path);
 
     let mut cmd = tokio::process::Command::new(&python_path);
@@ -92,6 +106,25 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         cmd.arg(arg);
     }
 
+    // When running inside an AppImage, the bundled LD_LIBRARY_PATH and LD_PRELOAD
+    // can interfere with Python/PyTorch. Clear them for the child process so it
+    // uses the system's native libraries (CUDA, ROCm, etc.).
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var("APPIMAGE").is_ok() {
+            cmd.env_remove("LD_LIBRARY_PATH");
+            cmd.env_remove("LD_PRELOAD");
+            // Preserve the real PATH but remove AppImage-internal paths
+            if let Ok(path) = std::env::var("PATH") {
+                let filtered: Vec<&str> = path
+                    .split(':')
+                    .filter(|p| !p.contains("/tmp/.mount_"))
+                    .collect();
+                cmd.env("PATH", filtered.join(":"));
+            }
+        }
+    }
+
     // Hide the console window on Windows so ComfyUI doesn't pop up a terminal
     #[cfg(target_os = "windows")]
     {
@@ -123,21 +156,72 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
 
 /// Poll until the ComfyUI HTTP server responds on `/system_stats`.
 /// Returns `Ok(())` once ready, or an error after the timeout.
+/// Also checks if the child process has exited early (crash), and if so,
+/// reads the stderr log for diagnostic information.
 pub async fn wait_for_ready(state: &AppState, timeout_secs: u64) -> Result<(), AppError> {
     let url = format!("{}/system_stats", state.base_url().await);
     let iterations = timeout_secs * 2; // 500ms per iteration
 
-    for _ in 0..iterations {
+    for i in 0..iterations {
         tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Check if the server is responding
         if state.http_client.get(&url).send().await.is_ok() {
             return Ok(());
         }
+
+        // Every 2 seconds, check if the child process has already exited (crashed)
+        if i % 4 == 3 {
+            let mut process = state.comfyui_process.lock().await;
+            if let Some(ref mut child) = *process {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        *process = None;
+                        let log_excerpt = read_comfyui_log_tail(30);
+                        let msg = if let Some(log) = log_excerpt {
+                            format!(
+                                "ComfyUI process exited with {} — last log output:\n{}",
+                                status, log
+                            )
+                        } else {
+                            format!("ComfyUI process exited with {}", status)
+                        };
+                        return Err(AppError::ProcessSpawnFailed(msg));
+                    }
+                    Ok(None) => {} // Still running, keep waiting
+                    Err(e) => {
+                        log::warn!("Failed to check ComfyUI process status: {}", e);
+                    }
+                }
+            }
+        }
     }
 
-    Err(AppError::ConnectionFailed(format!(
-        "ComfyUI did not start within {} seconds",
-        timeout_secs
-    )))
+    // Timeout — read logs for diagnostics
+    let log_excerpt = read_comfyui_log_tail(30);
+    let msg = if let Some(log) = log_excerpt {
+        format!(
+            "ComfyUI did not start within {} seconds — last log output:\n{}",
+            timeout_secs, log
+        )
+    } else {
+        format!("ComfyUI did not start within {} seconds", timeout_secs)
+    };
+    Err(AppError::ConnectionFailed(msg))
+}
+
+/// Read the last N lines from the ComfyUI stderr log file for diagnostics.
+fn read_comfyui_log_tail(lines: usize) -> Option<String> {
+    let log_path = std::env::temp_dir().join("comfyui-desktop-stderr.log");
+    let content = std::fs::read_to_string(&log_path).ok()?;
+    let all_lines: Vec<&str> = content.lines().collect();
+    let start = all_lines.len().saturating_sub(lines);
+    let tail: Vec<&str> = all_lines[start..].to_vec();
+    if tail.is_empty() {
+        None
+    } else {
+        Some(tail.join("\n"))
+    }
 }
 
 pub async fn stop_comfyui_process(state: &AppState) -> Result<(), AppError> {
