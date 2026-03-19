@@ -37,6 +37,7 @@
   let dimensionsSide = $state('left');
   let dimensionsIndex = $state(1);
   let draggingDimensions = $state(false);
+  let dimensionsPanelRef = $state<HTMLElement | null>(null);
 
   function clampDimensionsPlacement() {
     let maxLeft = generation.mode === 'txt2img' ? 2 : 3;
@@ -50,13 +51,15 @@
     clampDimensionsPlacement();
   });
 
-  function onDimensionsDragStart(e) {
+    function onDimensionsDragStart(e: DragEvent) {
     draggingDimensions = true;
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
-      // Required for Firefox
       e.dataTransfer.setData('text/plain', 'dimensions');
-      // Set drag image to a transparent pixel if needed, but let's just let it use the element itself!
+      if (dimensionsPanelRef) {
+        // Set the drag image to the parent container so we drag the whole card visually
+        e.dataTransfer.setDragImage(dimensionsPanelRef, 20, 20);
+      }
     }
   }
 
@@ -400,13 +403,18 @@
 
 {#snippet dimensionsPanel()}
   <div 
+    bind:this={dimensionsPanelRef}
     class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingDimensions ? 'opacity-50' : 'opacity-100'}"
-    draggable="true"
-    ondragstart={onDimensionsDragStart}
-    ondragend={onDimensionsDragEnd}
   >
     <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-      <div class="flex items-center px-3 cursor-grab active:cursor-grabbing text-neutral-600 hover:text-neutral-400" title="Drag to move">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div 
+        draggable="true"
+        ondragstart={onDimensionsDragStart}
+        ondragend={onDimensionsDragEnd}
+        class="flex items-center px-3 cursor-grab active:cursor-grabbing text-neutral-600 hover:text-neutral-400"
+        title="Drag to move"
+      >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>
       </div>
       <button

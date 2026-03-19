@@ -66,7 +66,9 @@
 
   function updateSuggestions() {
     const result = getCurrentTagFragment();
-    if (!result || result.fragment.length < 1) {
+    const pos = textareaEl?.selectionStart ?? 0;
+    
+    if (!result || result.fragment.length < 1 || pos < result.trimmedEnd) {
       showSuggestions = false;
       suggestions = [];
       return;
