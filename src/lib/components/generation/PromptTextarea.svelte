@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
 
   interface Props {
@@ -16,6 +17,7 @@
   let showSuggestions = $state(false);
   let dropdownTop = $state(0);
   let dropdownLeft = $state(0);
+  let suggestionTimer: number | null = null;
 
   // Undo/redo stacks for autocomplete insertions
   let undoStack = $state<string[]>([]);
@@ -35,7 +37,13 @@
     return String(count);
   }
 
-  function getCurrentTagFragment(): { fragment: string; start: number; end: number } | null {
+  function getCurrentTagFragment(): {
+    fragment: string;
+    start: number;
+    end: number;
+    trimmedStart: number;
+    trimmedEnd: number;
+  } | null {
     if (!textareaEl) return null;
     const pos = textareaEl.selectionStart;
     const text = value;
@@ -46,8 +54,14 @@
     let end = text.indexOf(",", pos);
     if (end === -1) end = text.length;
 
-    const fragment = text.substring(start, end).trim();
-    return { fragment, start, end };
+    const token = text.substring(start, end);
+    const leadingWhitespace = token.match(/^\s*/)?.[0].length ?? 0;
+    const trailingWhitespace = token.match(/\s*$/)?.[0].length ?? 0;
+    const trimmedStart = start + leadingWhitespace;
+    const trimmedEnd = Math.max(trimmedStart, end - trailingWhitespace);
+    const fragment = text.substring(trimmedStart, trimmedEnd);
+
+    return { fragment, start, end, trimmedStart, trimmedEnd };
   }
 
   function updateSuggestions() {
@@ -58,39 +72,14 @@
       return;
     }
 
-    const query = result.fragment.toLowerCase().replace(/\s+/g, "_");
-
     // Skip if the fragment looks like a weight expression
     if (/^\(.*:\d/.test(result.fragment)) {
       showSuggestions = false;
+      suggestions = [];
       return;
     }
 
-    const tags = autocomplete.tags;
-    const maxResults = autocomplete.maxResults;
-
-    // Collect all matches, then sort by post count
-    const prefixMatches: TagEntry[] = [];
-    const containsMatches: TagEntry[] = [];
-    const aliasMatches: TagEntry[] = [];
-
-    for (const tag of tags) {
-      if (tag.n.startsWith(query)) {
-        prefixMatches.push(tag);
-      } else if (tag.n.includes(query)) {
-        containsMatches.push(tag);
-      } else if (tag.a?.some((a) => a.startsWith(query) || a.includes(query))) {
-        aliasMatches.push(tag);
-      }
-    }
-
-    // Sort each group by post count (highest first), then take top N
-    const byCount = (a: TagEntry, b: TagEntry) => b.p - a.p;
-    prefixMatches.sort(byCount);
-    containsMatches.sort(byCount);
-    aliasMatches.sort(byCount);
-
-    suggestions = [...prefixMatches, ...containsMatches, ...aliasMatches].slice(0, maxResults);
+    suggestions = autocomplete.search(result.fragment);
     selectedIndex = 0;
     showSuggestions = suggestions.length > 0;
 
@@ -116,20 +105,19 @@
     redoStack = [];
 
     const before = value.substring(0, result.start);
+    const leadingWhitespace = value.substring(result.start, result.trimmedStart);
+    const trailingWhitespace = value.substring(result.trimmedEnd, result.end);
     const after = value.substring(result.end);
-
-    // Add the tag with proper spacing
-    const needsLeadingSpace = before.length > 0 && !before.endsWith(" ") && !before.endsWith(",");
-    const prefix = needsLeadingSpace ? " " : "";
     const tagText = tag.n.replace(/_/g, " ");
-    const suffix = after.startsWith(",") ? "" : ", ";
+    const needsCommaSuffix = !/^\s*,/.test(after);
+    const suffix = needsCommaSuffix ? ", " : "";
 
-    value = before + prefix + tagText + suffix + after.replace(/^,\s*/, "");
+    value = before + leadingWhitespace + tagText + trailingWhitespace + suffix + after;
 
     showSuggestions = false;
 
     // Set cursor position after the inserted tag
-    const cursorPos = (before + prefix + tagText + suffix).length;
+    const cursorPos = (before + leadingWhitespace + tagText + trailingWhitespace + suffix).length;
     requestAnimationFrame(() => {
       textareaEl?.focus();
       textareaEl?.setSelectionRange(cursorPos, cursorPos);
@@ -244,8 +232,15 @@
   function handleInput() {
     // Clear redo stack on manual edits (standard undo behavior)
     redoStack = [];
-    // Small delay to let the value update
-    requestAnimationFrame(updateSuggestions);
+
+    if (suggestionTimer !== null) {
+      window.clearTimeout(suggestionTimer);
+    }
+
+    suggestionTimer = window.setTimeout(() => {
+      updateSuggestions();
+      suggestionTimer = null;
+    }, 20);
   }
 
   function handleClick() {
@@ -253,11 +248,22 @@
   }
 
   function handleBlur() {
+    if (suggestionTimer !== null) {
+      window.clearTimeout(suggestionTimer);
+      suggestionTimer = null;
+    }
+
     // Delay to allow click on suggestion to fire first
     setTimeout(() => {
       showSuggestions = false;
     }, 200);
   }
+
+  onDestroy(() => {
+    if (suggestionTimer !== null) {
+      window.clearTimeout(suggestionTimer);
+    }
+  });
 </script>
 
 <div class="relative">

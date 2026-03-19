@@ -9,6 +9,7 @@
       return b.createdAt - a.createdAt;
     }).slice(0, 12)
   );
+  let historySectionOpen = $state(true);
 
   function historyLabel(ts: number): string {
     return new Date(ts).toLocaleString(undefined, {
@@ -69,43 +70,52 @@
   {#if sortedPromptHistory.length > 0}
     <div class="rounded-lg border border-neutral-800 bg-neutral-900/50 p-2.5 space-y-2">
       <div class="flex items-center justify-between">
-        <label class="text-xs text-neutral-400">Prompt History & Favorites<InfoTip text="Recent prompts are auto-saved when you generate. Click to reload, star favorites to pin them to the top." /></label>
+        <button
+          class="w-full text-left flex items-center justify-between text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
+          onclick={() => (historySectionOpen = !historySectionOpen)}
+          title={historySectionOpen ? "Collapse Prompt History & Favorites" : "Expand Prompt History & Favorites"}
+        >
+          <span>Prompt History & Favorites<InfoTip text="Recent prompts are auto-saved when you generate. Click to reload, star favorites to pin them to the top." /></span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {historySectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
       </div>
-      <div class="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-        {#each sortedPromptHistory as entry}
-          <div class="rounded border border-neutral-800 bg-neutral-900/80 p-2">
-            <button
-              class="w-full text-left"
-              onclick={() => generation.applyPromptHistoryEntry(entry.id)}
-              title="Load prompt"
-            >
-              <p class="text-[11px] text-neutral-200 max-h-8 overflow-hidden">{entry.positivePrompt || "(empty positive prompt)"}</p>
-              {#if entry.negativePrompt}
-                <p class="text-[10px] text-neutral-500 mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis">Negative: {entry.negativePrompt}</p>
-              {/if}
-            </button>
-            <div class="mt-1.5 flex items-center justify-between gap-2">
-              <span class="text-[10px] text-neutral-500">{historyLabel(entry.createdAt)}</span>
-              <div class="flex items-center gap-1">
-                <button
-                  class="px-1.5 py-0.5 text-[10px] rounded border transition-colors {entry.favorite ? 'border-amber-500 text-amber-300 bg-amber-500/10' : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-300'}"
-                  onclick={() => generation.togglePromptFavorite(entry.id)}
-                  title={entry.favorite ? "Unfavorite" : "Favorite"}
-                >
-                  ★
-                </button>
-                <button
-                  class="px-1.5 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300 transition-colors"
-                  onclick={() => generation.removePromptHistoryEntry(entry.id)}
-                  title="Remove"
-                >
-                  Remove
-                </button>
+      {#if historySectionOpen}
+        <div class="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+          {#each sortedPromptHistory as entry}
+            <div class="rounded border border-neutral-800 bg-neutral-900/80 p-2">
+              <button
+                class="w-full text-left"
+                onclick={() => generation.applyPromptHistoryEntry(entry.id)}
+                title="Load prompt"
+              >
+                <p class="text-[11px] text-neutral-200 max-h-8 overflow-hidden">{entry.positivePrompt || "(empty positive prompt)"}</p>
+                {#if entry.negativePrompt}
+                  <p class="text-[10px] text-neutral-500 mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis">Negative: {entry.negativePrompt}</p>
+                {/if}
+              </button>
+              <div class="mt-1.5 flex items-center justify-between gap-2">
+                <span class="text-[10px] text-neutral-500">{historyLabel(entry.createdAt)}</span>
+                <div class="flex items-center gap-1">
+                  <button
+                    class="px-1.5 py-0.5 text-[10px] rounded border transition-colors {entry.favorite ? 'border-amber-500 text-amber-300 bg-amber-500/10' : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-300'}"
+                    onclick={() => generation.togglePromptFavorite(entry.id)}
+                    title={entry.favorite ? "Unfavorite" : "Favorite"}
+                  >
+                    ★
+                  </button>
+                  <button
+                    class="px-1.5 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300 transition-colors"
+                    onclick={() => generation.removePromptHistoryEntry(entry.id)}
+                    title="Remove"
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        {/each}
-      </div>
+          {/each}
+        </div>
+      {/if}
     </div>
   {/if}
 </div>

@@ -32,6 +32,55 @@
   let dragOver = $state(false);
   let maskDragOver = $state(false);
   let promptsSectionOpen = $state(true);
+  
+  // Dimensions Drag Drop State
+  let dimensionsSide = $state('left');
+  let dimensionsIndex = $state(1);
+  let draggingDimensions = $state(false);
+
+  function clampDimensionsPlacement() {
+    let maxLeft = generation.mode === 'txt2img' ? 2 : 3;
+    let maxRight = 1;
+    if (dimensionsSide === 'left' && dimensionsIndex > maxLeft) dimensionsIndex = maxLeft;
+    if (dimensionsSide === 'right' && dimensionsIndex > maxRight) dimensionsIndex = maxRight;
+  }
+  
+  $effect(() => {
+    generation.mode; // reactive tracking
+    clampDimensionsPlacement();
+  });
+
+  function onDimensionsDragStart(e) {
+    draggingDimensions = true;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      // Required for Firefox
+      e.dataTransfer.setData('text/plain', 'dimensions');
+      // Set drag image to a transparent pixel if needed, but let's just let it use the element itself!
+    }
+  }
+
+  function onDimensionsDragEnd(e) {
+    draggingDimensions = false;
+  }
+
+  function onDimensionsDropTargetOver(e) {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  }
+
+  function onDimensionsDrop(e, side, index) {
+    e.preventDefault();
+    draggingDimensions = false;
+    dimensionsSide = side;
+    dimensionsIndex = index;
+    clampDimensionsPlacement();
+  }
+
+  function isDimensionsAt(side, index) {
+    return dimensionsSide === side && dimensionsIndex === index;
+  }
+
   let dimensionsSectionOpen = $state(true);
   let imageSectionOpen = $state(true);
   let layersSectionOpen = $state(true);
@@ -349,6 +398,44 @@
   });
 </script>
 
+{#snippet dimensionsPanel()}
+  <div 
+    class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingDimensions ? 'opacity-50' : 'opacity-100'}"
+    draggable="true"
+    ondragstart={onDimensionsDragStart}
+    ondragend={onDimensionsDragEnd}
+  >
+    <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+      <div class="flex items-center px-3 cursor-grab active:cursor-grabbing text-neutral-600 hover:text-neutral-400" title="Drag to move">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+      </div>
+      <button
+        class="flex-1 flex items-center justify-between py-2 pr-3 text-xs text-neutral-300 hover:text-neutral-100 focus:outline-none"
+        onclick={() => (dimensionsSectionOpen = !dimensionsSectionOpen)}
+        title={dimensionsSectionOpen ? "Collapse Dimensions" : "Expand Dimensions"}
+      >
+        <span class="font-medium">Dimensions</span>
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {dimensionsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    </div>
+    {#if dimensionsSectionOpen}
+      <div class="px-3 pb-3 pt-1 cursor-default">
+        <DimensionControls suggestedAspect={imageAspect} />
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet dropZone(side, index)}
+  {#if draggingDimensions && !isDimensionsAt(side, index)}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="h-2 my-1 rounded border border-dashed border-indigo-500/50 bg-indigo-500/10 transition-colors"
+      ondragover={onDimensionsDropTargetOver}
+      ondrop={(e) => onDimensionsDrop(e, side, index)}
+    ></div>
+  {/if}
+{/snippet}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="flex h-full select-none"
@@ -361,6 +448,10 @@
     class="overflow-y-auto px-4 pt-4 flex flex-col gap-4 shrink-0"
     style="width: {leftWidth}px"
   >
+    {@render dropZone("left", 0)}
+    {#if isDimensionsAt("left", 0)}
+      {@render dimensionsPanel()}
+    {/if}
     <!-- Mode tabs -->
     <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
       {#each modes as mode}
@@ -418,21 +509,12 @@
       {/if}
     </div>
 
-    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40">
-      <button
-        class="w-full px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-        onclick={() => (dimensionsSectionOpen = !dimensionsSectionOpen)}
-        title={dimensionsSectionOpen ? "Collapse Dimensions" : "Expand Dimensions"}
-      >
-        <span class="font-medium">Dimensions</span>
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {dimensionsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      {#if dimensionsSectionOpen}
-        <div class="px-3 pb-3 pt-1">
-          <DimensionControls suggestedAspect={imageAspect} />
-        </div>
-      {/if}
-    </div>
+    {@render dropZone("left", 1)}
+    {#if isDimensionsAt("left", 1)}
+      {@render dimensionsPanel()}
+    {/if}
+
+    
 
     {#if generation.mode !== "txt2img"}
       <div class="rounded-lg border border-neutral-800 bg-neutral-900/40">
@@ -609,6 +691,11 @@
       </div>
     {/if}
 
+    {@render dropZone("left", 3)}
+    {#if isDimensionsAt("left", 3)}
+      {@render dimensionsPanel()}
+    {/if}
+
     <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950/95 backdrop-blur-sm rounded-t-lg px-3 pt-3 pb-4">
       <h3 class="text-xs text-neutral-400 mb-2 font-medium">Generate</h3>
       <GenerateButton canvasEditorRef={canvasEditorRef} />
@@ -650,6 +737,8 @@
     class="overflow-y-auto p-4 space-y-4 shrink-0"
     style="width: {rightWidth}px"
   >
+    {@render dropZone("right", 0)}
+    {#if isDimensionsAt("right", 0)}{@render dimensionsPanel()}{/if}
     {#if generation.mode === "inpainting"}
       <div class="rounded-lg border border-neutral-800 bg-neutral-900/40">
         <button
@@ -892,5 +981,7 @@
         {/if}
       </div>
     {/if}
+    {@render dropZone("right", 1)}
+    {#if isDimensionsAt("right", 1)}{@render dimensionsPanel()}{/if}
   </div>
 </div>

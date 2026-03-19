@@ -8,6 +8,12 @@ export interface TagEntry {
   a?: string[]; // aliases
 }
 
+interface SearchEntry {
+  tag: TagEntry;
+  nameLower: string;
+  aliasesLower: string[];
+}
+
 const STORE_KEY = "autocomplete-settings";
 
 class AutocompleteStore {
@@ -28,6 +34,66 @@ class AutocompleteStore {
 
   private _store: Awaited<ReturnType<typeof load>> | null = null;
   private _customTags: TagEntry[] | null = null;
+  private _searchEntries: SearchEntry[] = [];
+
+  constructor() {
+    this.rebuildSearchIndex(this.tags);
+  }
+
+  private normalizeQuery(text: string): string {
+    return text.toLowerCase().trim().replace(/\s+/g, "_");
+  }
+
+  private rebuildSearchIndex(tags: TagEntry[]) {
+    this._searchEntries = tags.map((tag) => ({
+      tag,
+      nameLower: tag.n.toLowerCase(),
+      aliasesLower: tag.a?.map((alias) => alias.toLowerCase()) ?? [],
+    }));
+  }
+
+  private setTags(tags: TagEntry[]) {
+    this.tags = tags;
+    this.rebuildSearchIndex(tags);
+  }
+
+  private insertTopByCount(list: TagEntry[], tag: TagEntry, limit: number) {
+    if (limit <= 0) return;
+    if (list.length === limit && list[list.length - 1].p >= tag.p) return;
+
+    let insertAt = list.length;
+    while (insertAt > 0 && list[insertAt - 1].p < tag.p) {
+      insertAt -= 1;
+    }
+
+    list.splice(insertAt, 0, tag);
+    if (list.length > limit) {
+      list.pop();
+    }
+  }
+
+  search(queryText: string, limit = this.maxResults): TagEntry[] {
+    const normalizedQuery = this.normalizeQuery(queryText);
+    if (!normalizedQuery) return [];
+
+    const safeLimit = Math.max(1, Math.min(50, limit));
+    const prefixMatches: TagEntry[] = [];
+    const containsMatches: TagEntry[] = [];
+    const aliasMatches: TagEntry[] = [];
+
+    for (const entry of this._searchEntries) {
+      if (entry.nameLower.startsWith(normalizedQuery)) {
+        this.insertTopByCount(prefixMatches, entry.tag, safeLimit);
+      } else if (entry.nameLower.includes(normalizedQuery)) {
+        this.insertTopByCount(containsMatches, entry.tag, safeLimit);
+      } else if (entry.aliasesLower.some((alias) => alias.startsWith(normalizedQuery) || alias.includes(normalizedQuery))) {
+        this.insertTopByCount(aliasMatches, entry.tag, safeLimit);
+      }
+    }
+
+    const combined = [...prefixMatches, ...containsMatches, ...aliasMatches];
+    return combined.slice(0, safeLimit);
+  }
 
   async loadSettings() {
     try {
@@ -41,7 +107,7 @@ class AutocompleteStore {
         if (saved.customTags) {
           this._customTags = saved.customTags;
           if (this.sourceMode !== "builtin" && this._customTags) {
-            this.tags = this._customTags;
+            this.setTags(this._customTags);
           }
         }
       }
@@ -117,7 +183,7 @@ class AutocompleteStore {
       const tags = this.parseTagData(text);
       if (tags.length === 0) throw new Error("No tags found in file");
       this._customTags = tags;
-      this.tags = tags;
+      this.setTags(tags);
       this.sourceMode = "url";
       this.sourceUrl = url;
       this.sourceFileName = "";
@@ -137,7 +203,7 @@ class AutocompleteStore {
       const tags = this.parseTagData(text);
       if (tags.length === 0) throw new Error("No tags found in file");
       this._customTags = tags;
-      this.tags = tags;
+      this.setTags(tags);
       this.sourceMode = "file";
       this.sourceFileName = fileName;
       this.sourceUrl = "";
@@ -152,7 +218,7 @@ class AutocompleteStore {
   /** Reset to built-in danbooru tags */
   async resetToBuiltin() {
     this._customTags = null;
-    this.tags = builtinTags as TagEntry[];
+    this.setTags(builtinTags as TagEntry[]);
     this.sourceMode = "builtin";
     this.sourceUrl = "";
     this.sourceFileName = "";
