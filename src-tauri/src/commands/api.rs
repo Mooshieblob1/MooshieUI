@@ -59,6 +59,7 @@ pub struct CivitaiSearchParams {
     pub period: Option<String>,
     pub nsfw: Option<bool>,
     pub page: Option<u32>,
+    pub cursor: Option<String>,
     pub limit: Option<u32>,
     #[serde(rename = "apiKey")]
     pub api_key: Option<String>,
@@ -531,9 +532,18 @@ pub async fn civitai_search_models(
         ("sort".to_string(), params.sort.unwrap_or_else(|| "Most Downloaded".to_string())),
         ("period".to_string(), params.period.unwrap_or_else(|| "AllTime".to_string())),
         ("nsfw".to_string(), params.nsfw.unwrap_or(false).to_string()),
-        ("page".to_string(), params.page.unwrap_or(1).to_string()),
         ("limit".to_string(), params.limit.unwrap_or(20).to_string()),
     ];
+
+    let has_query = params.query.as_ref().filter(|v| !v.trim().is_empty()).is_some();
+
+    if !has_query {
+        query.push(("page".to_string(), params.page.unwrap_or(1).to_string()));
+    }
+
+    if let Some(cursor) = params.cursor.filter(|v| !v.trim().is_empty()) {
+        query.push(("cursor".to_string(), cursor));
+    }
 
     if let Some(q) = params.query.filter(|v| !v.trim().is_empty()) {
         query.push(("query".to_string(), q));
@@ -599,41 +609,70 @@ pub async fn civitai_list_architectures(
         architectures.insert(arch.to_string());
     }
 
-    // Only fetch 1 page to get any very new/trending architectures the API might list,
-    // thereby completing entirely under a second without timeout.
-    let mut req = state
-        .http_client
-        .get("https://civitai.com/api/v1/models")
-        .header("Accept", "application/json")
-        .header("User-Agent", "MooshieUI/0.2.4")
-        .query(&[("limit", "100")]);
+    let mut cursor: Option<String> = None;
 
-    req = req.timeout(std::time::Duration::from_secs(3));
+    for _ in 0..8 {
+        let mut req = state
+            .http_client
+            .get("https://civitai.com/api/v1/models")
+            .header("Accept", "application/json")
+            .header("User-Agent", "MooshieUI/0.2.4")
+            .query(&[("limit", "100")]);
 
-    if let Some(key) = api_key.as_ref().filter(|v| !v.trim().is_empty()) {
-        req = req.bearer_auth(key);
-    }
+        if let Some(ref c) = cursor {
+            req = req.query(&[("cursor", c)]);
+        }
 
-    if let Ok(resp) = req.send().await {
-        if resp.status().is_success() {
-            if let Ok(body) = resp.text().await {
-                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&body) {
-                    if let Some(items) = data.get("items").and_then(|v| v.as_array()) {
-                        for item in items {
-                            if let Some(versions) = item.get("modelVersions").and_then(|v| v.as_array()) {
-                                for version in versions {
-                                    if let Some(base_model) = version.get("baseModel").and_then(|v| v.as_str()) {
-                                        let normalized = base_model.trim();
-                                        if !normalized.is_empty() {
-                                            architectures.insert(normalized.to_string());
-                                        }
-                                    }
-                                }
+        req = req.timeout(std::time::Duration::from_secs(3));
+
+        if let Some(key) = api_key.as_ref().filter(|v| !v.trim().is_empty()) {
+            req = req.bearer_auth(key);
+        }
+
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(_) => break,
+        };
+
+        if !resp.status().is_success() {
+            break;
+        }
+
+        let body = match resp.text().await {
+            Ok(b) => b,
+            Err(_) => break,
+        };
+
+        let data = match serde_json::from_str::<serde_json::Value>(&body) {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+
+        if let Some(items) = data.get("items").and_then(|v| v.as_array()) {
+            for item in items {
+                if let Some(versions) = item.get("modelVersions").and_then(|v| v.as_array()) {
+                    for version in versions {
+                        if let Some(base_model) = version.get("baseModel").and_then(|v| v.as_str()) {
+                            let normalized = base_model.trim();
+                            if !normalized.is_empty() {
+                                architectures.insert(normalized.to_string());
                             }
                         }
                     }
                 }
             }
+        }
+
+        cursor = data
+            .get("metadata")
+            .and_then(|m| m.get("nextCursor"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_string());
+
+        if cursor.is_none() {
+            break;
         }
     }
 

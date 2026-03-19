@@ -84,10 +84,12 @@ export interface CivitaiModel {
 export interface CivitaiSearchResponse {
   items: CivitaiModel[];
   metadata: {
-    currentPage: number;
-    pageSize: number;
-    totalItems: number;
-    totalPages: number;
+    currentPage?: number;
+    pageSize?: number;
+    totalItems?: number;
+    totalPages?: number;
+    nextCursor?: string;
+    nextPage?: string;
   };
 }
 
@@ -101,6 +103,7 @@ export interface CivitaiSearchParams {
   period?: CivitaiPeriod;
   nsfw?: boolean;
   page?: number;
+  cursor?: string;
   limit?: number;
   apiKey?: string;
 }
@@ -288,6 +291,7 @@ export async function searchCivitaiModels(params: CivitaiSearchParams): Promise<
       period: params.period,
       nsfw: params.nsfw,
       page: params.page,
+      cursor: params.cursor,
       limit: params.limit,
       apiKey: params.apiKey,
     },
@@ -295,10 +299,12 @@ export async function searchCivitaiModels(params: CivitaiSearchParams): Promise<
   return {
     items: data.items ?? [],
     metadata: {
-      currentPage: data.metadata?.currentPage ?? 1,
-      pageSize: data.metadata?.pageSize ?? 20,
-      totalItems: data.metadata?.totalItems ?? 0,
-      totalPages: data.metadata?.totalPages ?? 1,
+      currentPage: data.metadata?.currentPage,
+      pageSize: data.metadata?.pageSize,
+      totalItems: data.metadata?.totalItems,
+      totalPages: data.metadata?.totalPages,
+      nextCursor: data.metadata?.nextCursor,
+      nextPage: data.metadata?.nextPage,
     },
   };
 }

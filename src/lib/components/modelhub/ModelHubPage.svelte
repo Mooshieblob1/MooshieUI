@@ -113,6 +113,7 @@
   let period = $state<CivitaiPeriod>("AllTime");
   let includeNsfw = $state(false);
   let page = $state(1);
+  let nextCursor = $state<string | null>(null);
   let hasMore = $state(true);
 
   let apiKey = $state("");
@@ -309,9 +310,16 @@
     } else {
       loading = true;
       error = null;
+      page = 1;
+      nextCursor = null;
     }
 
-    page = nextPage;
+    // If we are appending and have a cursor, continue with cursor-based pagination.
+    const cursorParam = append ? nextCursor : null;
+
+    if (!append && !cursorParam) {
+      page = nextPage;
+    }
 
     try {
       const response = await searchCivitaiModels({
@@ -323,7 +331,8 @@
         sort,
         period,
         nsfw: includeNsfw,
-        page: nextPage,
+        page: cursorParam ? undefined : (append ? nextPage : page),
+        cursor: cursorParam ?? undefined,
         limit: 100,
         apiKey: apiKey.trim() || undefined,
       });
@@ -336,9 +345,17 @@
         items = response.items;
       }
 
+      if (response.metadata.currentPage) {
+        page = response.metadata.currentPage;
+      }
+      nextCursor = response.metadata.nextCursor ?? null;
       totalPages = Math.max(1, response.metadata.totalPages || 1);
       totalItems = response.metadata.totalItems || response.items.length;
-      hasMore = page < totalPages && response.items.length > 0;
+      if (nextCursor) {
+        hasMore = response.items.length > 0;
+      } else {
+        hasMore = page < totalPages && response.items.length > 0;
+      }
 
       // Fast path: populate architectures from loaded model data immediately.
       const inferredArchitectures = collectArchitecturesFromModels(response.items);
@@ -380,7 +397,8 @@
 
   async function loadNextPage() {
     if (loading || loadingMore || !hasMore || source !== "civitai") return;
-    await fetchModels(page + 1, true);
+    const next = nextCursor ? page : page + 1;
+    await fetchModels(next, true);
   }
 
   async function fetchArchitectures() {
