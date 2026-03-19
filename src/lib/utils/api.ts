@@ -9,6 +9,102 @@ import type {
   SystemStats,
 } from "../types/index.js";
 
+export type CivitaiModelType =
+  | "Checkpoint"
+  | "TextualInversion"
+  | "Hypernetwork"
+  | "AestheticGradient"
+  | "LORA"
+  | "LoCon"
+  | "DoRA"
+  | "Controlnet"
+  | "Upscaler"
+  | "MotionModule"
+  | "VAE"
+  | "Workflows"
+  | "Other";
+
+export type CivitaiSort = "Highest Rated" | "Most Downloaded" | "Newest";
+export type CivitaiPeriod = "AllTime" | "Year" | "Month" | "Week" | "Day";
+export type CivitaiFileFormat =
+  | "SafeTensor"
+  | "PickleTensor"
+  | "GGUF"
+  | "Diffusers"
+  | "Core ML"
+  | "ONNX"
+  | "Other";
+export type CivitaiModelStatus =
+  | "Draft"
+  | "Training"
+  | "Published"
+  | "Scheduled"
+  | "Unpublished"
+  | "UnpublishedViolation"
+  | "GatherInterest"
+  | "Deleted";
+
+export interface CivitaiModelFile {
+  name: string;
+  id: number;
+  sizeKB: number;
+  type: string;
+  format?: string;
+  downloadUrl: string;
+}
+
+export interface CivitaiModelImage {
+  url: string;
+  nsfw?: string | boolean | number;
+  width?: number;
+  height?: number;
+}
+
+export interface CivitaiModelVersion {
+  id: number;
+  name: string;
+  baseModel?: string;
+  files: CivitaiModelFile[];
+  images: CivitaiModelImage[];
+}
+
+export interface CivitaiModel {
+  id: number;
+  name: string;
+  type: CivitaiModelType | string;
+  creator?: { username?: string };
+  stats?: {
+    downloadCount?: number;
+    ratingCount?: number;
+    rating?: number;
+  };
+  modelVersions: CivitaiModelVersion[];
+}
+
+export interface CivitaiSearchResponse {
+  items: CivitaiModel[];
+  metadata: {
+    currentPage: number;
+    pageSize: number;
+    totalItems: number;
+    totalPages: number;
+  };
+}
+
+export interface CivitaiSearchParams {
+  query?: string;
+  type?: CivitaiModelType;
+  baseModel?: string;
+  fileFormat?: CivitaiFileFormat;
+  status?: CivitaiModelStatus;
+  sort?: CivitaiSort;
+  period?: CivitaiPeriod;
+  nsfw?: boolean;
+  page?: number;
+  limit?: number;
+  apiKey?: string;
+}
+
 export async function getModels(category: string): Promise<string[]> {
   return invoke("get_models", { category });
 }
@@ -178,4 +274,38 @@ export async function getConfig(): Promise<AppConfig> {
 
 export async function updateConfig(config: AppConfig): Promise<void> {
   return invoke("update_config", { config });
+}
+
+export async function searchCivitaiModels(params: CivitaiSearchParams): Promise<CivitaiSearchResponse> {
+  const data = (await invoke("civitai_search_models", {
+    params: {
+      query: params.query,
+      type: params.type,
+      baseModel: params.baseModel,
+      fileFormat: params.fileFormat,
+      status: params.status,
+      sort: params.sort,
+      period: params.period,
+      nsfw: params.nsfw,
+      page: params.page,
+      limit: params.limit,
+      apiKey: params.apiKey,
+    },
+  })) as CivitaiSearchResponse;
+  return {
+    items: data.items ?? [],
+    metadata: {
+      currentPage: data.metadata?.currentPage ?? 1,
+      pageSize: data.metadata?.pageSize ?? 20,
+      totalItems: data.metadata?.totalItems ?? 0,
+      totalPages: data.metadata?.totalPages ?? 1,
+    },
+  };
+}
+
+export async function listCivitaiArchitectures(apiKey?: string): Promise<string[]> {
+  const result = (await invoke("civitai_list_architectures", {
+    apiKey,
+  })) as string[];
+  return Array.isArray(result) ? result : [];
 }

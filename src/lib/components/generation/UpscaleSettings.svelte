@@ -112,6 +112,7 @@
   <div class="flex items-center justify-between">
     <label class="text-xs text-neutral-400">Upscale<InfoTip text="Increases the resolution of your generated image. 'Model' uses an AI upscaler for sharp detail, 'Algorithmic' uses traditional scaling. Adds a second pass after initial generation." /></label>
     <button
+      title="Toggle Upscale"
       class="relative w-10 h-5 rounded-full transition-colors {generation.upscaleEnabled
         ? 'bg-indigo-600'
         : 'bg-neutral-700'}"

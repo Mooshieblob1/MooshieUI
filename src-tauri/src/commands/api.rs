@@ -1,8 +1,9 @@
 use serde_json::Value;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 use sha2::{Sha256, Digest};
 use std::io::Read;
+use std::collections::BTreeSet;
 
 use crate::comfyui::types::*;
 use crate::error::AppError;
@@ -42,6 +43,25 @@ pub struct GalleryImageEntry {
     pub filename: String,
     pub size_bytes: u64,
     pub modified_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CivitaiSearchParams {
+    pub query: Option<String>,
+    #[serde(rename = "type")]
+    pub model_type: Option<String>,
+    #[serde(rename = "baseModel")]
+    pub base_model: Option<String>,
+    #[serde(rename = "fileFormat")]
+    pub file_format: Option<String>,
+    pub status: Option<String>,
+    pub sort: Option<String>,
+    pub period: Option<String>,
+    pub nsfw: Option<bool>,
+    pub page: Option<u32>,
+    pub limit: Option<u32>,
+    #[serde(rename = "apiKey")]
+    pub api_key: Option<String>,
 }
 
 #[tauri::command]
@@ -322,7 +342,9 @@ pub async fn rename_gallery_image(old_filename: String, new_filename: String) ->
 
 #[tauri::command]
 pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> {
-    use std::process::{Command, Stdio};
+    use std::process::Command;
+    #[cfg(target_os = "linux")]
+    use std::process::Stdio;
 
     let path = std::path::Path::new(&file_path);
     if !path.exists() {
@@ -498,4 +520,122 @@ pub async fn civitai_lookup_hash(hash: String) -> Result<Value, AppError> {
     let data: Value = resp.json().await
         .map_err(|e| AppError::Other(format!("Failed to parse CivitAI response: {}", e)))?;
     Ok(data)
+}
+
+#[tauri::command]
+pub async fn civitai_search_models(
+    state: State<'_, AppState>,
+    params: CivitaiSearchParams,
+) -> Result<Value, AppError> {
+    let mut query = vec![
+        ("sort".to_string(), params.sort.unwrap_or_else(|| "Most Downloaded".to_string())),
+        ("period".to_string(), params.period.unwrap_or_else(|| "AllTime".to_string())),
+        ("nsfw".to_string(), params.nsfw.unwrap_or(false).to_string()),
+        ("page".to_string(), params.page.unwrap_or(1).to_string()),
+        ("limit".to_string(), params.limit.unwrap_or(20).to_string()),
+    ];
+
+    if let Some(q) = params.query.filter(|v| !v.trim().is_empty()) {
+        query.push(("query".to_string(), q));
+    }
+    if let Some(t) = params.model_type.filter(|v| !v.trim().is_empty()) {
+        query.push(("types".to_string(), t));
+    }
+    if let Some(base_model) = params.base_model.filter(|v| !v.trim().is_empty()) {
+        query.push(("baseModels[]".to_string(), base_model));
+    }
+    if let Some(file_format) = params.file_format.filter(|v| !v.trim().is_empty()) {
+        query.push(("fileFormats[]".to_string(), file_format));
+    }
+    if let Some(status) = params.status.filter(|v| !v.trim().is_empty()) {
+        query.push(("status".to_string(), status));
+    }
+
+    let mut req = state
+        .http_client
+        .get("https://civitai.com/api/v1/models")
+        .header("Accept", "application/json")
+        .header("User-Agent", "MooshieUI/0.2.3")
+        .query(&query);
+
+    if let Some(key) = params.api_key.filter(|v| !v.trim().is_empty()) {
+        req = req.bearer_auth(key);
+    }
+
+    let resp = req.send().await?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+
+    if !status.is_success() {
+        return Err(AppError::ApiError {
+            status: status.as_u16(),
+            message: if body.is_empty() {
+                status.to_string()
+            } else {
+                body
+            },
+        });
+    }
+
+    let data: Value = serde_json::from_str(&body)?;
+    Ok(data)
+}
+
+#[tauri::command]
+pub async fn civitai_list_architectures(
+    state: State<'_, AppState>,
+    api_key: Option<String>,
+) -> Result<Vec<String>, AppError> {
+    let mut architectures = BTreeSet::<String>::new();
+    
+    // Add common architectures first to guarantee they're present
+    let common = vec![
+        "SD 1.4", "SD 1.5", "SD 1.5 LCM", "SD 2.0", "SD 2.0 768", "SD 2.1", "SD 2.1 768", "SD 2.1 Unclip",
+        "SD 3", "SD 3.5 Large", "SD 3.5 Medium", "SDXL 0.9", "SDXL 1.0", "SDXL 1.0 LCM", "SDXL Distilled",
+        "SDXL Turbo", "SDXL Lightning", "Pony", "Flux.1 S", "Flux.1 D", "AuraFlow", "Hunyuan 1", "Lumina", 
+        "Kolors", "PixArt-a", "Stable Cascade", "Illusion", "MoDi", "Other"
+    ];
+    for &arch in &common {
+        architectures.insert(arch.to_string());
+    }
+
+    // Only fetch 1 page to get any very new/trending architectures the API might list,
+    // thereby completing entirely under a second without timeout.
+    let mut req = state
+        .http_client
+        .get("https://civitai.com/api/v1/models")
+        .header("Accept", "application/json")
+        .header("User-Agent", "MooshieUI/0.2.4")
+        .query(&[("limit", "100")]);
+
+    req = req.timeout(std::time::Duration::from_secs(3));
+
+    if let Some(key) = api_key.as_ref().filter(|v| !v.trim().is_empty()) {
+        req = req.bearer_auth(key);
+    }
+
+    if let Ok(resp) = req.send().await {
+        if resp.status().is_success() {
+            if let Ok(body) = resp.text().await {
+                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&body) {
+                    if let Some(items) = data.get("items").and_then(|v| v.as_array()) {
+                        for item in items {
+                            if let Some(versions) = item.get("modelVersions").and_then(|v| v.as_array()) {
+                                for version in versions {
+                                    if let Some(base_model) = version.get("baseModel").and_then(|v| v.as_str()) {
+                                        let normalized = base_model.trim();
+                                        if !normalized.is_empty() {
+                                            architectures.insert(normalized.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(architectures.into_iter().collect())
 }

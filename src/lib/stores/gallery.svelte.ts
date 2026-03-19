@@ -24,7 +24,7 @@ class GalleryStore {
   lightboxUrl = $state<string | null>(null);
   lightboxOpen = $state(false);
   loading = $state(false);
-  toastMessage = $state<string | null>(null);
+  toast = $state<{ message: string; type: "success" | "error" | "info" } | null>(null);
   boardAssignments = $state<Record<string, string>>({});
   customBoards = $state<string[]>([]);
   private _toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -135,11 +135,11 @@ class GalleryStore {
     this.lightboxUrl = null;
   }
 
-  showToast(message: string) {
-    this.toastMessage = message;
+  showToast(message: string, type: "success" | "error" | "info" = "info") {
+    this.toast = { message, type };
     if (this._toastTimer) clearTimeout(this._toastTimer);
     this._toastTimer = setTimeout(() => {
-      this.toastMessage = null;
+      this.toast = null;
       this._toastTimer = null;
     }, 2000);
   }
@@ -186,6 +186,7 @@ class GalleryStore {
           let promptId = "";
           let origFilename = filename;
           let generationMode: "txt2img" | "img2img" | "inpainting" | undefined;
+          let isUpscaled = false;
           const modernParts = filename.split("__");
           if (modernParts.length >= 3) {
             promptId = modernParts[0] ?? "";
@@ -194,10 +195,16 @@ class GalleryStore {
               generationMode = mode;
             }
             origFilename = modernParts.slice(2).join("__");
+            if (generationMode === "img2img") {
+              const lowered = origFilename.toLowerCase();
+              isUpscaled = lowered.includes("upscale") || lowered.includes("upscaled");
+            }
           } else {
             const underscoreIdx = filename.indexOf("_");
             promptId = underscoreIdx > 0 ? filename.substring(0, underscoreIdx) : "";
             origFilename = underscoreIdx > 0 ? filename.substring(underscoreIdx + 1) : filename;
+            const lowered = origFilename.toLowerCase();
+            isUpscaled = lowered.includes("upscale") || lowered.includes("upscaled");
           }
 
           loaded.push({
@@ -206,6 +213,7 @@ class GalleryStore {
             type: "output",
             prompt_id: promptId,
             generation_mode: generationMode,
+            is_upscaled: isUpscaled,
             url,
             gallery_filename: filename,
             file_size_bytes: entry.size_bytes,
@@ -243,7 +251,7 @@ class GalleryStore {
         bytes = await getOutputImage(image.filename, image.subfolder);
       }
       await saveImageFile(bytes, path);
-      this.showToast("Image saved");
+      this.showToast("Image saved", "success");
     } catch (e) {
       console.error("Failed to save image:", e);
     }
@@ -265,7 +273,7 @@ class GalleryStore {
       const arrayBuf = await blob.arrayBuffer();
       const bytes = Array.from(new Uint8Array(arrayBuf));
       await saveImageFile(bytes, path);
-      this.showToast("Image saved");
+      this.showToast("Image saved", "success");
     } catch (e) {
       console.error("Failed to save image:", e);
     }
@@ -281,13 +289,13 @@ class GalleryStore {
         await this.copyBlobToClipboard(image.url);
         return;
       } else {
-        this.showToast("Image not saved to gallery yet");
+        this.showToast("Image not saved to gallery yet", "info");
         return;
       }
-      this.showToast("Copied to clipboard");
+      this.showToast("Copied to clipboard", "success");
     } catch (e) {
       console.error("Failed to copy to clipboard:", e);
-      this.showToast("Failed to copy");
+      this.showToast("Failed to copy", "error");
     }
   }
 
@@ -298,7 +306,7 @@ class GalleryStore {
       const blob = await response.blob();
 
       if (!navigator.clipboard || typeof ClipboardItem === "undefined") {
-        this.showToast("Clipboard API unavailable in this environment");
+        this.showToast("Clipboard API unavailable in this environment", "error");
         return;
       }
 
@@ -308,10 +316,10 @@ class GalleryStore {
           [type]: blob,
         }),
       ]);
-      this.showToast("Copied to clipboard");
+      this.showToast("Copied to clipboard", "success");
     } catch (e) {
       console.error("Failed to copy blob to clipboard:", e);
-      this.showToast("Failed to copy");
+      this.showToast("Failed to copy", "error");
     }
   }
 
@@ -384,10 +392,11 @@ class GalleryStore {
         migrated > 0
           ? `Re-scanned metadata: migrated ${migrated} image${migrated === 1 ? "" : "s"}`
           : "Re-scan complete: no legacy metadata to migrate",
+        migrated > 0 ? "success" : "info"
       );
     } catch (e) {
       console.error("Failed to re-scan gallery metadata:", e);
-      this.showToast("Re-scan failed");
+      this.showToast("Re-scan failed", "error");
     }
   }
 }

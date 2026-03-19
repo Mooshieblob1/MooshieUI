@@ -18,6 +18,22 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import type { OutputImage } from "../../types/index.js";
 
+  const DIMENSIONS_LAYOUT_KEY = "mooshieui.generation.dimensions.layout.v1";
+  const SECTION_LAYOUT_KEY = "mooshieui.generation.sections.layout.v1";
+
+  type SectionId =
+    | "dimensions"
+    | "prompts"
+    | "history"
+    | "sessionHistory"
+    | "imageInputs"
+    | "inpaintLayers"
+    | "generationSettings"
+    | "modelSampler"
+    | "upscaleHistory";
+
+  type SectionSide = "left" | "right";
+
   const modes = [
     { id: "txt2img" as const, label: "Text to Image" },
     { id: "img2img" as const, label: "Image to Image" },
@@ -32,61 +48,200 @@
   let dragOver = $state(false);
   let maskDragOver = $state(false);
   let promptsSectionOpen = $state(true);
-  
-  // Dimensions Drag Drop State
-  let dimensionsSide = $state('left');
-  let dimensionsIndex = $state(1);
-  let draggingDimensions = $state(false);
-  let dimensionsPanelRef = $state<HTMLElement | null>(null);
+  let historySectionOpen = $state(true);
 
-  function clampDimensionsPlacement() {
-    let maxLeft = generation.mode === 'txt2img' ? 2 : 3;
-    let maxRight = 1;
-    if (dimensionsSide === 'left' && dimensionsIndex > maxLeft) dimensionsIndex = maxLeft;
-    if (dimensionsSide === 'right' && dimensionsIndex > maxRight) dimensionsIndex = maxRight;
+  const sortedPromptHistory = $derived(
+    [...generation.promptHistory]
+      .sort((a, b) => {
+        if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
+        return b.createdAt - a.createdAt;
+      })
+      .slice(0, 12)
+  );
+
+  function historyLabel(ts: number): string {
+    return new Date(ts).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   }
-  
-  $effect(() => {
-    generation.mode; // reactive tracking
-    clampDimensionsPlacement();
+
+  let sectionSides = $state<Record<SectionId, SectionSide>>({
+    dimensions: "left",
+    prompts: "left",
+    history: "left",
+    sessionHistory: "right",
+    imageInputs: "left",
+    inpaintLayers: "right",
+    generationSettings: "right",
+    modelSampler: "right",
+    upscaleHistory: "right",
   });
 
-    function onDimensionsDragStart(e: DragEvent) {
-    draggingDimensions = true;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', 'dimensions');
-      if (dimensionsPanelRef) {
-        // Set the drag image to the parent container so we drag the whole card visually
-        e.dataTransfer.setDragImage(dimensionsPanelRef, 20, 20);
+  let draggingSection = $state<SectionId | null>(null);
+  let pendingDrop = $state<{ side: SectionSide; index: number } | null>(null);
+  let dragMouseX = $state(0);
+  let dragMouseY = $state(0);
+
+  const SECTION_ORDER: SectionId[] = [
+    "dimensions",
+    "prompts",
+    "history",
+    "sessionHistory",
+    "imageInputs",
+    "inpaintLayers",
+    "generationSettings",
+    "modelSampler",
+    "upscaleHistory",
+  ];
+
+  let sectionOrder = $state<SectionId[]>([...SECTION_ORDER]);
+
+  function normalizeSectionOrder(order: unknown): SectionId[] {
+    if (!Array.isArray(order)) return [...SECTION_ORDER];
+    const allowed = new Set<SectionId>(SECTION_ORDER);
+    const seen = new Set<SectionId>();
+    const out: SectionId[] = [];
+    for (const item of order) {
+      if (typeof item !== "string") continue;
+      const id = item as SectionId;
+      if (!allowed.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+    for (const id of SECTION_ORDER) {
+      if (!seen.has(id)) out.push(id);
+    }
+    return out;
+  }
+
+  function loadSectionPlacement() {
+    try {
+      const raw = localStorage.getItem(SECTION_LAYOUT_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as
+          | { sides?: Partial<Record<SectionId, SectionSide>>; order?: SectionId[] }
+          | Partial<Record<SectionId, SectionSide>>;
+
+        const rawSides =
+          parsed && typeof parsed === "object" && "sides" in parsed
+            ? (parsed.sides ?? {})
+            : (parsed as Partial<Record<SectionId, SectionSide>>);
+
+        sectionSides = {
+          ...sectionSides,
+          ...Object.fromEntries(
+            Object.entries(rawSides).filter(([, side]) => side === "left" || side === "right")
+          ) as Partial<Record<SectionId, SectionSide>>,
+        };
+
+        if (parsed && typeof parsed === "object" && "order" in parsed) {
+          sectionOrder = normalizeSectionOrder(parsed.order);
+        }
+        return;
       }
+
+      const legacy = localStorage.getItem(DIMENSIONS_LAYOUT_KEY);
+      if (!legacy) return;
+      const parsedLegacy = JSON.parse(legacy) as { side?: SectionSide };
+      if (parsedLegacy.side === "left" || parsedLegacy.side === "right") {
+        sectionSides = { ...sectionSides, dimensions: parsedLegacy.side };
+      }
+    } catch (e) {
+      console.error("Failed to load section layout:", e);
     }
   }
 
-  function onDimensionsDragEnd(e) {
-    draggingDimensions = false;
+  function saveSectionPlacement() {
+    try {
+      localStorage.setItem(
+        SECTION_LAYOUT_KEY,
+        JSON.stringify({ sides: sectionSides, order: sectionOrder })
+      );
+    } catch (e) {
+      console.error("Failed to save section layout:", e);
+    }
   }
 
-  function onDimensionsDropTargetOver(e) {
+  if (typeof window !== "undefined") {
+    loadSectionPlacement();
+  }
+
+  $effect(() => {
+    void sectionSides;
+    void sectionOrder;
+    saveSectionPlacement();
+  });
+
+  function startSectionDrag(section: SectionId, e: MouseEvent) {
     e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    e.stopPropagation();
+    draggingSection = section;
+    dragMouseX = e.clientX;
+    dragMouseY = e.clientY;
+    const side = sectionSides[section];
+    const sideSections = sectionsForSide(side);
+    const idx = sideSections.indexOf(section);
+    pendingDrop = { side, index: idx >= 0 ? idx : sideSections.length };
   }
 
-  function onDimensionsDrop(e, side, index) {
-    e.preventDefault();
-    draggingDimensions = false;
-    dimensionsSide = side;
-    dimensionsIndex = index;
-    clampDimensionsPlacement();
+  function onSectionDropZoneEnter(side: SectionSide, index: number) {
+    if (!draggingSection) return;
+    pendingDrop = { side, index };
   }
 
-  function isDimensionsAt(side, index) {
-    return dimensionsSide === side && dimensionsIndex === index;
+  function onSectionDropZoneLeave(side: SectionSide, index: number) {
+    if (!draggingSection || !pendingDrop) return;
+    if (pendingDrop.side === side && pendingDrop.index === index) pendingDrop = null;
   }
+
+  function isPendingDrop(side: SectionSide, index: number): boolean {
+    return !!pendingDrop && pendingDrop.side === side && pendingDrop.index === index;
+  }
+
+  function sectionLabel(section: SectionId): string {
+    if (section === "dimensions") return "Dimensions";
+    if (section === "prompts") return "Prompts";
+    if (section === "history") return "Prompt History & Favorites";
+    if (section === "sessionHistory") return "Session History";
+    if (section === "imageInputs") return "Image Inputs";
+    if (section === "inpaintLayers") return "Inpainting & Layers";
+    if (section === "generationSettings") return "Generation Settings";
+    if (section === "modelSampler") return "Model & Sampler";
+    return "Upscale & History";
+  }
+
+  function canShowHistorySection() {
+    return sortedPromptHistory.length > 0;
+  }
+
+  function sectionVisible(section: SectionId): boolean {
+    if (section === "history") return canShowHistorySection();
+    if (section === "sessionHistory") return gallery.sessionImages.length > 0;
+    if (section === "imageInputs") return generation.mode !== "txt2img";
+    if (section === "inpaintLayers") return generation.mode === "inpainting";
+    if (section === "generationSettings") return generation.mode === "inpainting";
+    if (section === "modelSampler") return generation.mode !== "inpainting";
+    if (section === "upscaleHistory") return generation.mode !== "inpainting";
+    return true;
+  }
+
+  function sectionsForSide(side: SectionSide): SectionId[] {
+    return sectionOrder.filter((id) => sectionVisible(id) && sectionSides[id] === side);
+  }
+
+  const leftSections = $derived(sectionsForSide("left"));
+  const rightSections = $derived(sectionsForSide("right"));
+  const leftHasSections = $derived(leftSections.length > 0);
+  const rightHasSections = $derived(rightSections.length > 0);
+  const controlsSide = $derived(leftHasSections ? "left" : "right");
 
   let dimensionsSectionOpen = $state(true);
   let imageSectionOpen = $state(true);
   let layersSectionOpen = $state(true);
+  let sessionSectionOpen = $state(true);
   let controlsSectionOpen = $state(true);
   let modelSectionOpen = $state(true);
   let postSectionOpen = $state(true);
@@ -197,7 +352,6 @@
       applyImageGeometry(normalized.width, normalized.height);
       canvas.setReferenceImage(imagePreviewUrl);
 
-      // Upload normalized bytes to ComfyUI
       const response = await uploadImageBytes(normalized.bytes, normalized.filename);
       generation.inputImage = response.name;
     } catch (e) {
@@ -311,10 +465,10 @@
       generation.inputImage = response.name;
       generation.mode = "img2img";
       generation.upscaleEnabled = true;
-      gallery.showToast("Image loaded for upscaling");
+      gallery.showToast("Image loaded for upscaling", "success");
     } catch (e) {
       console.error("Failed to set up upscale:", e);
-      gallery.showToast("Failed to load image");
+      gallery.showToast("Failed to load image", "error");
     }
   }
 
@@ -343,14 +497,13 @@
         canvas.initCanvas(generation.width, generation.height);
       }
 
-      gallery.showToast("Image loaded for inpainting");
+      gallery.showToast("Image loaded for inpainting", "success");
     } catch (e) {
       console.error("Failed to set up inpainting:", e);
-      gallery.showToast("Failed to load image");
+      gallery.showToast("Failed to load image", "error");
     }
   }
 
-  // Panel widths (px)
   const LEFT_DEFAULT = 405;
   const RIGHT_DEFAULT = 338;
   let leftWidth = $state(LEFT_DEFAULT);
@@ -373,6 +526,12 @@
   }
 
   function onPointerMove(e: MouseEvent) {
+    if (draggingSection) {
+      dragMouseX = e.clientX;
+      dragMouseY = e.clientY;
+      return;
+    }
+
     if (!dragging) return;
     const delta = e.clientX - dragStartX;
     if (dragging === "left") {
@@ -383,6 +542,37 @@
   }
 
   function onPointerUp() {
+    if (draggingSection && pendingDrop) {
+      const targetSide = pendingDrop.side;
+      const targetIndex = Math.max(0, pendingDrop.index);
+
+      sectionSides = {
+        ...sectionSides,
+        [draggingSection]: targetSide,
+      };
+
+      const remaining = sectionOrder.filter((id) => id !== draggingSection);
+      const sideSections = remaining.filter((id) => sectionSides[id] === targetSide);
+
+      let insertAt = remaining.length;
+      if (sideSections.length > 0) {
+        if (targetIndex <= 0) {
+          insertAt = remaining.indexOf(sideSections[0]);
+        } else if (targetIndex >= sideSections.length) {
+          insertAt = remaining.indexOf(sideSections[sideSections.length - 1]) + 1;
+        } else {
+          insertAt = remaining.indexOf(sideSections[targetIndex]);
+        }
+      }
+
+      const next = [...remaining];
+      next.splice(Math.max(0, insertAt), 0, draggingSection);
+      sectionOrder = normalizeSectionOrder(next);
+    }
+    draggingSection = null;
+    pendingDrop = null;
+    dragMouseX = 0;
+    dragMouseY = 0;
     dragging = null;
   }
 
@@ -401,595 +591,719 @@
   });
 </script>
 
-{#snippet dimensionsPanel()}
-  <div 
-    bind:this={dimensionsPanelRef}
-    class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingDimensions ? 'opacity-50' : 'opacity-100'}"
-  >
-    <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div 
-        draggable="true"
-        ondragstart={onDimensionsDragStart}
-        ondragend={onDimensionsDragEnd}
-        class="flex items-center px-3 cursor-grab active:cursor-grabbing text-neutral-600 hover:text-neutral-400"
-        title="Drag to move"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>
-      </div>
-      <button
-        class="flex-1 flex items-center justify-between py-2 pr-3 text-xs text-neutral-300 hover:text-neutral-100 focus:outline-none"
-        onclick={() => (dimensionsSectionOpen = !dimensionsSectionOpen)}
-        title={dimensionsSectionOpen ? "Collapse Dimensions" : "Expand Dimensions"}
-      >
-        <span class="font-medium">Dimensions</span>
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {dimensionsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-    </div>
-    {#if dimensionsSectionOpen}
-      <div class="px-3 pb-3 pt-1 cursor-default">
-        <DimensionControls suggestedAspect={imageAspect} />
-      </div>
-    {/if}
-  </div>
-{/snippet}
-
-{#snippet dropZone(side, index)}
-  {#if draggingDimensions && !isDimensionsAt(side, index)}
+  {#snippet dragHandle(section: SectionId)}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
-      class="h-2 my-1 rounded border border-dashed border-indigo-500/50 bg-indigo-500/10 transition-colors"
-      ondragover={onDimensionsDropTargetOver}
-      ondrop={(e) => onDimensionsDrop(e, side, index)}
-    ></div>
-  {/if}
-{/snippet}
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
-  class="flex h-full select-none"
-  onmousemove={onPointerMove}
-  onmouseup={onPointerUp}
-  onmouseleave={onPointerUp}
->
-  <!-- Left panel: Image Settings -->
-  <div
-    class="overflow-y-auto px-4 pt-4 flex flex-col gap-4 shrink-0"
-    style="width: {leftWidth}px"
-  >
-    {@render dropZone("left", 0)}
-    {#if isDimensionsAt("left", 0)}
-      {@render dimensionsPanel()}
-    {/if}
-    <!-- Mode tabs -->
-    <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
-      {#each modes as mode}
-        <button
-          onclick={() => {
-            generation.mode = mode.id;
-            if (mode.id !== "inpainting") canvas.isCanvasMode = false;
-          }}
-          class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode ===
-          mode.id
-            ? 'bg-neutral-700 text-white'
-            : 'text-neutral-400 hover:text-neutral-200'}"
-        >
-          {mode.label}
-        </button>
-      {/each}
+      onmousedown={(e) => startSectionDrag(section, e)}
+      class="flex items-center px-3 cursor-grab active:cursor-grabbing text-neutral-600 hover:text-neutral-400"
+      title="Drag to move section"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>
     </div>
+  {/snippet}
 
-    <!-- Canvas Editor toggle -->
-    {#if generation.mode === "inpainting"}
-      <button
-        onclick={() => {
-          canvas.isCanvasMode = !canvas.isCanvasMode;
-          if (canvas.isCanvasMode && canvas.layers.length === 0) {
-            canvas.initCanvas(generation.width, generation.height);
-          }
-        }}
-        class="flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs transition-colors {canvas.isCanvasMode
-          ? 'bg-indigo-600/20 border border-indigo-500/50 text-indigo-300'
-          : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600'}"
+  {#snippet sectionDropZone(side: SectionSide, index: number)}
+    {#if draggingSection}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="h-8 rounded border-2 border-dashed transition-colors flex items-center justify-center text-[10px] font-medium tracking-wide uppercase {isPendingDrop(side, index)
+          ? 'border-indigo-300 bg-indigo-500/25 text-indigo-100'
+          : 'border-indigo-500/55 bg-indigo-500/12 hover:border-indigo-400 hover:bg-indigo-500/18 text-indigo-200/80'}"
+        onmouseenter={() => onSectionDropZoneEnter(side, index)}
+        onmouseleave={() => onSectionDropZoneLeave(side, index)}
       >
-        <span class="flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-          Canvas Editor
-        </span>
-        <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
-          {canvas.isCanvasMode ? 'ON' : 'OFF'}
-        </span>
-      </button>
+        Drop Here
+      </div>
     {/if}
+  {/snippet}
 
-    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40">
-      <button
-        class="w-full px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-        onclick={() => (promptsSectionOpen = !promptsSectionOpen)}
-        title={promptsSectionOpen ? "Collapse Prompts" : "Expand Prompts"}
-      >
-        <span class="font-medium">Prompts</span>
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {promptsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      {#if promptsSectionOpen}
+  {#snippet sessionHistoryGrid()}
+    {#if gallery.sessionImages.length > 0}
+      <div class="border-t border-neutral-800 pt-4">
+        <h3 class="text-xs text-neutral-400 mb-2">Session History</h3>
+        <div class="grid grid-cols-2 gap-2">
+          {#each gallery.sessionImages as image}
+            <div class="group relative aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors">
+              <button
+                class="w-full h-full"
+                onclick={() => gallery.openLightbox(image)}
+              >
+                {#if image.url}
+                  <img
+                    src={image.url}
+                    alt={image.filename}
+                    class="w-full h-full object-cover"
+                  />
+                {/if}
+              </button>
+              <div class="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-2">
+                <div class="grid grid-cols-3 gap-1.5">
+                  {#if !image.is_upscaled}
+                    <button
+                      class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/70 hover:bg-indigo-700 text-neutral-300 text-xs backdrop-blur-sm"
+                      title="Upscale"
+                      onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                    </button>
+                  {/if}
+                  <button
+                    class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/70 hover:bg-indigo-700 text-neutral-300 text-xs backdrop-blur-sm"
+                    title="Inpaint"
+                    onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                  </button>
+                  <button
+                    class="w-8 h-8 flex items-center justify-center rounded bg-neutral-900/85 hover:bg-neutral-700 text-neutral-300 text-xs backdrop-blur-sm"
+                    title="Save As"
+                    onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  </button>
+                  <button
+                    class="w-8 h-8 flex items-center justify-center rounded bg-neutral-900/85 hover:bg-neutral-700 text-neutral-300 text-xs backdrop-blur-sm"
+                    title="Copy"
+                    onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                  <button
+                    class="w-8 h-8 flex items-center justify-center rounded bg-red-900/70 hover:bg-red-800 text-neutral-300 text-xs backdrop-blur-sm"
+                    title="Delete"
+                    onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+  {/snippet}
+
+  {#snippet sessionHistorySection()}
+    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'sessionHistory' ? 'opacity-60' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("sessionHistory")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (sessionSectionOpen = !sessionSectionOpen)}
+          title={sessionSectionOpen ? "Collapse Session History" : "Expand Session History"}
+        >
+          <span class="font-medium">Session History</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {sessionSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if sessionSectionOpen}
         <div class="px-3 pb-3 pt-1">
-          <PromptInputs />
+          {@render sessionHistoryGrid()}
         </div>
       {/if}
     </div>
+  {/snippet}
 
-    {@render dropZone("left", 1)}
-    {#if isDimensionsAt("left", 1)}
-      {@render dimensionsPanel()}
-    {/if}
-
-    
-
-    {#if generation.mode !== "txt2img"}
-      <div class="rounded-lg border border-neutral-800 bg-neutral-900/40">
+  {#snippet dimensionsSection()}
+    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'dimensions' ? 'opacity-60' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("dimensions")}
         <button
-          class="w-full px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          class="flex-1 flex items-center justify-between py-2 pr-3 text-xs text-neutral-300 hover:text-neutral-100 focus:outline-none"
+          onclick={() => (dimensionsSectionOpen = !dimensionsSectionOpen)}
+          title={dimensionsSectionOpen ? "Collapse Dimensions" : "Expand Dimensions"}
+        >
+          <span class="font-medium">Dimensions</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {dimensionsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if dimensionsSectionOpen}
+        <div class="px-3 pb-3 pt-1 cursor-default">
+          <DimensionControls suggestedAspect={imageAspect} />
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
+  {#snippet promptsSection()}
+    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'prompts' ? 'opacity-60' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("prompts")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (promptsSectionOpen = !promptsSectionOpen)}
+          title={promptsSectionOpen ? "Collapse Prompts" : "Expand Prompts"}
+        >
+          <span class="font-medium">Prompts</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {promptsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if promptsSectionOpen}
+        <div class="px-3 pb-3 pt-1">
+          <PromptInputs showHistory={false} />
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
+  {#snippet historySection()}
+    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'history' ? 'opacity-60' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("history")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (historySectionOpen = !historySectionOpen)}
+          title={historySectionOpen ? "Collapse History & Favorites" : "Expand History & Favorites"}
+        >
+          <span class="font-medium">Prompt History & Favorites</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {historySectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if historySectionOpen}
+        <div class="px-3 pb-3 pt-1">
+          <div class="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+            {#each sortedPromptHistory as entry}
+              <div class="rounded border border-neutral-800 bg-neutral-900/80 p-2">
+                <button
+                  class="w-full text-left"
+                  onclick={() => generation.applyPromptHistoryEntry(entry.id)}
+                  title="Load prompt"
+                >
+                  <p class="text-[11px] text-neutral-200 max-h-8 overflow-hidden">{entry.positivePrompt || "(empty positive prompt)"}</p>
+                  {#if entry.negativePrompt}
+                    <p class="text-[10px] text-neutral-500 mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis">Negative: {entry.negativePrompt}</p>
+                  {/if}
+                </button>
+                <div class="mt-1.5 flex items-center justify-between gap-2">
+                  <span class="text-[10px] text-neutral-500">{historyLabel(entry.createdAt)}</span>
+                  <div class="flex items-center gap-1">
+                    <button
+                      class="px-1.5 py-0.5 text-[10px] rounded border transition-colors {entry.favorite ? 'border-amber-500 text-amber-300 bg-amber-500/10' : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-300'}"
+                      onclick={() => generation.togglePromptFavorite(entry.id)}
+                      title={entry.favorite ? "Unfavorite" : "Favorite"}
+                    >
+                      ★
+                    </button>
+                    <button
+                      class="px-1.5 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300 transition-colors"
+                      onclick={() => generation.removePromptHistoryEntry(entry.id)}
+                      title="Remove"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
+  {#snippet imageInputsSection()}
+    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'imageInputs' ? 'opacity-60' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("imageInputs")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (imageSectionOpen = !imageSectionOpen)}
           title={imageSectionOpen ? "Collapse Image Inputs" : "Expand Image Inputs"}
         >
           <span class="font-medium">Image Inputs</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {imageSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
-        {#if imageSectionOpen}
-          <div class="px-3 pb-3 pt-1 space-y-3">
-        {#if canvas.currentStagingImage}
-          <div class="rounded-md border border-amber-700/50 bg-amber-900/20 p-2 flex items-center justify-between gap-2">
-            <span class="text-[11px] text-amber-300">Staged image active. Input image controls are disabled.</span>
-            <button
-              class="px-2 py-1 text-[11px] rounded border border-amber-600/60 text-amber-200 hover:border-amber-400 hover:text-amber-100 transition-colors"
-              onclick={() => canvas.dismissCurrentStaging()}
-              title="Remove staged image"
-            >
-              Remove Staged
-            </button>
-          </div>
-        {/if}
-
-        <!-- Input Image -->
-        <div class="{canvas.currentStagingImage ? 'opacity-50 pointer-events-none' : ''}">
-          <p class="text-xs text-neutral-400 mb-1">Input Image</p>
-          {#if imagePreviewUrl}
-            <div class="relative group">
-              <img
-                src={imagePreviewUrl}
-                alt="Input"
-                class="w-full rounded-lg border border-neutral-700 object-contain max-h-40"
-              />
+      </div>
+      {#if imageSectionOpen}
+        <div class="px-3 pb-3 pt-1 space-y-3">
+          {#if canvas.currentStagingImage}
+            <div class="rounded-md border border-amber-700/50 bg-amber-900/20 p-2 flex items-center justify-between gap-2">
+              <span class="text-[11px] text-amber-300">Staged image active. Input image controls are disabled.</span>
               <button
-                class="absolute top-1 right-1 w-6 h-6 flex items-center justify-center rounded bg-neutral-900/80 hover:bg-red-800 text-neutral-300 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                onclick={clearImage}
-                title="Remove"
+                class="px-2 py-1 text-[11px] rounded border border-amber-600/60 text-amber-200 hover:border-amber-400 hover:text-amber-100 transition-colors"
+                onclick={() => canvas.dismissCurrentStaging()}
+                title="Remove staged image"
               >
-                &times;
+                Remove Staged
               </button>
-            </div>
-          {:else}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              class="w-full bg-neutral-800 border border-dashed rounded-lg p-4 text-sm transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer {dragOver
-                ? 'border-indigo-400 bg-indigo-500/10 text-indigo-300'
-                : 'border-neutral-600 text-neutral-400 hover:border-indigo-500 hover:text-indigo-400'}"
-              onclick={browseImage}
-              ondragover={(e) => { e.preventDefault(); dragOver = true; }}
-              ondragleave={() => { dragOver = false; }}
-              ondrop={handleImageDrop}
-              role="button"
-              tabindex="0"
-            >
-              {#if uploading}
-                <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
-                Uploading...
-              {:else if dragOver}
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                Drop image here
-              {:else}
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                Browse or drop image
-              {/if}
             </div>
           {/if}
-        </div>
 
-        <!-- Denoise Strength -->
-        <div>
-          <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-            Denoise Strength<InfoTip text="How much the AI changes the input image. 0 = no change, 1 = completely new image ignoring the input. Lower values (0.3-0.5) keep the original composition, higher values (0.6-0.8) allow more creative freedom." />
-            <span class="text-neutral-300">{generation.denoise.toFixed(2)}</span>
-          </label>
-          <input
-            type="range"
-            bind:value={generation.denoise}
-            min="0"
-            max="1"
-            step="0.01"
-            class="w-full accent-indigo-500"
-          />
-        </div>
-
-        {#if generation.mode === "inpainting"}
-          <div class="rounded-md border border-neutral-800 bg-neutral-900/70 p-2.5">
-            <label class="flex items-center justify-between gap-3 text-xs text-neutral-300">
-              <span class="leading-tight">Differential Diffusion<InfoTip text="Recommended for v-pred / Anima style models during inpainting unless you are using a CFG++ sampler. Helps preserve source structure while editing masked regions." /></span>
-              <input
-                type="checkbox"
-                bind:checked={generation.differentialDiffusion}
-                class="accent-indigo-500 w-4 h-4 shrink-0"
-              />
-            </label>
-          </div>
-        {/if}
-
-        {#if generation.mode === "inpainting"}
-          <!-- Mask Image -->
-          <div>
-            <div class="flex items-center justify-between mb-1">
-              <p class="text-xs text-neutral-400">Mask Image</p>
-              <button
-                class="px-2 py-1 text-[10px] rounded border border-neutral-700 text-neutral-300 hover:border-red-500 hover:text-red-300 transition-colors"
-                onclick={clearMask}
-                title="Remove current mask"
-              >
-                Remove Mask
-              </button>
-            </div>
-            {#if maskPreviewUrl}
+          <div class="{canvas.currentStagingImage ? 'opacity-50 pointer-events-none' : ''}">
+            <p class="text-xs text-neutral-400 mb-1">Input Image</p>
+            {#if imagePreviewUrl}
               <div class="relative group">
                 <img
-                  src={maskPreviewUrl}
-                  alt="Mask"
+                  src={imagePreviewUrl}
+                  alt="Input"
                   class="w-full rounded-lg border border-neutral-700 object-contain max-h-40"
                 />
                 <button
                   class="absolute top-1 right-1 w-6 h-6 flex items-center justify-center rounded bg-neutral-900/80 hover:bg-red-800 text-neutral-300 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                  onclick={clearMask}
+                  onclick={clearImage}
                   title="Remove"
                 >
                   &times;
                 </button>
               </div>
             {:else}
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div
-                class="w-full bg-neutral-800 border border-dashed rounded-lg p-4 text-sm transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer {maskDragOver
+              <button
+                type="button"
+                class="w-full bg-neutral-800 border border-dashed rounded-lg p-4 text-sm transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer {dragOver
                   ? 'border-indigo-400 bg-indigo-500/10 text-indigo-300'
                   : 'border-neutral-600 text-neutral-400 hover:border-indigo-500 hover:text-indigo-400'}"
-                onclick={browseMask}
-                ondragover={(e) => { e.preventDefault(); maskDragOver = true; }}
-                ondragleave={() => { maskDragOver = false; }}
-                ondrop={handleMaskDrop}
-                role="button"
-                tabindex="0"
+                onclick={browseImage}
+                ondragover={(e) => { e.preventDefault(); dragOver = true; }}
+                ondragleave={() => { dragOver = false; }}
+                ondrop={handleImageDrop}
               >
                 {#if uploading}
                   <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
                   Uploading...
-                {:else if maskDragOver}
+                {:else if dragOver}
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                  Drop mask here
+                  Drop image here
                 {:else}
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                  Browse or drop mask
+                  Browse or drop image
                 {/if}
-              </div>
+              </button>
             {/if}
           </div>
 
-          <!-- Grow Mask By -->
           <div>
-            <div class="flex items-center justify-between text-xs mb-0.5">
-              <span class="text-neutral-400">Grow Mask By<InfoTip text="Expands the masked area by this many pixels. Helps blend the inpainted region into the surrounding image for seamless results." /></span>
-              <span class="text-neutral-300 tabular-nums">{generation.growMaskBy}px</span>
-            </div>
+            <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+              Denoise Strength<InfoTip text="How much the AI changes the input image. 0 = no change, 1 = completely new image ignoring the input. Lower values (0.3-0.5) keep the original composition, higher values (0.6-0.8) allow more creative freedom." />
+              <span class="text-neutral-300">{generation.denoise.toFixed(2)}</span>
+            </label>
             <input
               type="range"
-              bind:value={generation.growMaskBy}
+              bind:value={generation.denoise}
               min="0"
-              max="64"
-              step="1"
+              max="1"
+              step="0.01"
               class="w-full accent-indigo-500"
             />
           </div>
-        {/if}
-          </div>
-        {/if}
-      </div>
-    {/if}
 
-    {@render dropZone("left", 3)}
-    {#if isDimensionsAt("left", 3)}
-      {@render dimensionsPanel()}
-    {/if}
+          {#if generation.mode === "inpainting"}
+            <div class="rounded-md border border-neutral-800 bg-neutral-900/70 p-2.5">
+              <label class="flex items-center justify-between gap-3 text-xs text-neutral-300">
+                <span class="leading-tight">Differential Diffusion<InfoTip text="Recommended for v-pred / Anima style models during inpainting unless you are using a CFG++ sampler. Helps preserve source structure while editing masked regions." /></span>
+                <input
+                  type="checkbox"
+                  bind:checked={generation.differentialDiffusion}
+                  class="accent-indigo-500 w-4 h-4 shrink-0"
+                />
+              </label>
+            </div>
+          {/if}
 
-    <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950/95 backdrop-blur-sm rounded-t-lg px-3 pt-3 pb-4">
-      <h3 class="text-xs text-neutral-400 mb-2 font-medium">Generate</h3>
-      <GenerateButton canvasEditorRef={canvasEditorRef} />
+          {#if generation.mode === "inpainting"}
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <p class="text-xs text-neutral-400">Mask Image</p>
+                <button
+                  class="px-2 py-1 text-[10px] rounded border border-neutral-700 text-neutral-300 hover:border-red-500 hover:text-red-300 transition-colors"
+                  onclick={clearMask}
+                  title="Remove current mask"
+                >
+                  Remove Mask
+                </button>
+              </div>
+              {#if maskPreviewUrl}
+                <div class="relative group">
+                  <img
+                    src={maskPreviewUrl}
+                    alt="Mask"
+                    class="w-full rounded-lg border border-neutral-700 object-contain max-h-40"
+                  />
+                  <button
+                    class="absolute top-1 right-1 w-6 h-6 flex items-center justify-center rounded bg-neutral-900/80 hover:bg-red-800 text-neutral-300 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                    onclick={clearMask}
+                    title="Remove"
+                  >
+                    &times;
+                  </button>
+                </div>
+              {:else}
+                <button
+                  type="button"
+                  class="w-full bg-neutral-800 border border-dashed rounded-lg p-4 text-sm transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer {maskDragOver
+                    ? 'border-indigo-400 bg-indigo-500/10 text-indigo-300'
+                    : 'border-neutral-600 text-neutral-400 hover:border-indigo-500 hover:text-indigo-400'}"
+                  onclick={browseMask}
+                  ondragover={(e) => { e.preventDefault(); maskDragOver = true; }}
+                  ondragleave={() => { maskDragOver = false; }}
+                  ondrop={handleMaskDrop}
+                >
+                  {#if uploading}
+                    <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                    Uploading...
+                  {:else if maskDragOver}
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Drop mask here
+                  {:else}
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Browse or drop mask
+                  {/if}
+                </button>
+              {/if}
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between text-xs mb-0.5">
+                <span class="text-neutral-400">Grow Mask By<InfoTip text="Expands the masked area by this many pixels. Helps blend the inpainted region into the surrounding image for seamless results." /></span>
+                <span class="text-neutral-300 tabular-nums">{generation.growMaskBy}px</span>
+              </div>
+              <input
+                type="range"
+                bind:value={generation.growMaskBy}
+                min="0"
+                max="64"
+                step="1"
+                class="w-full accent-indigo-500"
+              />
+            </div>
+          {/if}
+        </div>
+      {/if}
     </div>
-  </div>
+  {/snippet}
 
-  <!-- Left divider -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="w-1 mx-1 shrink-0 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'left' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
-    onmousedown={(e) => onDividerDown("left", e)}
-    ondblclick={resetLeftWidth}
-    title="Drag to resize, double-click to reset"
-  ></div>
-
-  <!-- Center panel: Preview & Output / Canvas Editor -->
-  {#if canvas.isCanvasMode}
-    <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
-      <CanvasEditor bind:this={canvasEditorRef} />
-    </div>
-  {:else}
-    <div class="flex-1 min-w-0 p-6 flex flex-col gap-4 overflow-y-auto">
-      <ProgressBar />
-      <PreviewImage />
-    </div>
-  {/if}
-
-  <!-- Right divider -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="w-1 mx-1 shrink-0 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'right' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
-    onmousedown={(e) => onDividerDown("right", e)}
-    ondblclick={resetRightWidth}
-    title="Drag to resize, double-click to reset"
-  ></div>
-
-  <!-- Right panel: Model & Sampler Settings -->
-  <div
-    class="overflow-y-auto p-4 space-y-4 shrink-0"
-    style="width: {rightWidth}px"
-  >
-    {@render dropZone("right", 0)}
-    {#if isDimensionsAt("right", 0)}{@render dimensionsPanel()}{/if}
-    {#if generation.mode === "inpainting"}
-      <div class="rounded-lg border border-neutral-800 bg-neutral-900/40">
+  {#snippet inpaintLayersSection()}
+    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'inpaintLayers' ? 'opacity-60' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("inpaintLayers")}
         <button
-          class="w-full px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (layersSectionOpen = !layersSectionOpen)}
           title={layersSectionOpen ? "Collapse Inpainting & Layers" : "Expand Inpainting & Layers"}
         >
           <span class="font-medium">Inpainting & Layers</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {layersSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
-        {#if layersSectionOpen}
-          <div class="px-3 pb-3 pt-1 space-y-2">
-            <div class="grid grid-cols-2 gap-1">
+      </div>
+      {#if layersSectionOpen}
+        <div class="px-3 pb-3 pt-1 space-y-2">
+          <div class="grid grid-cols-2 gap-1">
+            <button
+              onclick={() => canvas.setInpaintDrawMode("mask")}
+              class="px-2 py-1 text-[10px] rounded border transition-colors {canvas.inpaintDrawMode === 'mask'
+                ? 'border-indigo-500 text-indigo-300 bg-indigo-500/10'
+                : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}"
+              title="Inpaint Mask Mode"
+            >
+              Inpaint Mask
+            </button>
+            <button
+              onclick={() => canvas.setInpaintDrawMode("regular")}
+              class="px-2 py-1 text-[10px] rounded border transition-colors {canvas.inpaintDrawMode === 'regular'
+                ? 'border-indigo-500 text-indigo-300 bg-indigo-500/10'
+                : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}"
+              title="Regular Inpaint Mode"
+            >
+              Regular Inpaint
+            </button>
+          </div>
+
+          {#if canvas.isCanvasMode}
+            <LayerPanel />
+          {:else}
+            <div class="space-y-2">
+              <p class="text-[11px] text-neutral-500">Canvas editor is off. Enable it to manage layers.</p>
               <button
-                onclick={() => canvas.setInpaintDrawMode("mask")}
-                class="px-2 py-1 text-[10px] rounded border transition-colors {canvas.inpaintDrawMode === 'mask'
-                  ? 'border-indigo-500 text-indigo-300 bg-indigo-500/10'
-                  : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}"
-                title="Inpaint Mask Mode"
+                onclick={() => {
+                  canvas.isCanvasMode = true;
+                  if (canvas.layers.length === 0) {
+                    canvas.initCanvas(generation.width, generation.height);
+                  }
+                }}
+                class="w-full px-2 py-1.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
+                title="Enable canvas editor"
               >
-                Inpaint Mask
-              </button>
-              <button
-                onclick={() => canvas.setInpaintDrawMode("regular")}
-                class="px-2 py-1 text-[10px] rounded border transition-colors {canvas.inpaintDrawMode === 'regular'
-                  ? 'border-indigo-500 text-indigo-300 bg-indigo-500/10'
-                  : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}"
-                title="Regular Inpaint Mode"
-              >
-                Regular Inpaint
+                Enable Canvas Editor
               </button>
             </div>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/snippet}
 
-            {#if canvas.isCanvasMode}
-              <LayerPanel />
-            {:else}
-              <div class="space-y-2">
-                <p class="text-[11px] text-neutral-500">Canvas editor is off. Enable it to manage layers.</p>
-                <button
-                  onclick={() => {
-                    canvas.isCanvasMode = true;
-                    if (canvas.layers.length === 0) {
-                      canvas.initCanvas(generation.width, generation.height);
-                    }
-                  }}
-                  class="w-full px-2 py-1.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
-                  title="Enable canvas editor"
-                >
-                  Enable Canvas Editor
-                </button>
-              </div>
-            {/if}
-          </div>
-        {/if}
-      </div>
-
-      <div class="rounded-lg border border-neutral-800 bg-neutral-900/40">
+  {#snippet generationSettingsSection()}
+    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'generationSettings' ? 'opacity-60' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("generationSettings")}
         <button
-          class="w-full px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (controlsSectionOpen = !controlsSectionOpen)}
           title={controlsSectionOpen ? "Collapse Generation Settings" : "Expand Generation Settings"}
         >
           <span class="font-medium">Generation Settings</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {controlsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
-        {#if controlsSectionOpen}
-          <div class="px-3 pb-3 pt-1 space-y-4">
-            <ModelSelector />
-
-            <div class="border-t border-neutral-800 pt-4">
-              <SamplerSettings />
-            </div>
-
-            <div class="border-t border-neutral-800 pt-4">
-              <UpscaleSettings />
-            </div>
-
-            {#if gallery.sessionImages.length > 0}
-              <div class="border-t border-neutral-800 pt-4">
-                <h3 class="text-xs text-neutral-400 mb-2">Session History</h3>
-                <div class="grid grid-cols-2 gap-2">
-                  {#each gallery.sessionImages as image}
-                    <div class="group relative aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors">
-                      <button
-                        class="w-full h-full"
-                        onclick={() => gallery.openLightbox(image)}
-                      >
-                        {#if image.url}
-                          <img
-                            src={image.url}
-                            alt={image.filename}
-                            class="w-full h-full object-cover"
-                          />
-                        {/if}
-                      </button>
-                      <div class="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-2">
-                        <div class="grid grid-cols-3 gap-1.5">
-                        <button
-                          class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/70 hover:bg-indigo-700 text-neutral-300 text-xs backdrop-blur-sm"
-                          title="Upscale"
-                          onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-                        </button>
-                        <button
-                          class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/70 hover:bg-indigo-700 text-neutral-300 text-xs backdrop-blur-sm"
-                          title="Inpaint"
-                          onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                        </button>
-                        <button
-                          class="w-8 h-8 flex items-center justify-center rounded bg-neutral-900/85 hover:bg-neutral-700 text-neutral-300 text-xs backdrop-blur-sm"
-                          title="Save As"
-                          onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        </button>
-                        <button
-                          class="w-8 h-8 flex items-center justify-center rounded bg-neutral-900/85 hover:bg-neutral-700 text-neutral-300 text-xs backdrop-blur-sm"
-                          title="Copy"
-                          onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                        </button>
-                        <button
-                          class="w-8 h-8 flex items-center justify-center rounded bg-red-900/70 hover:bg-red-800 text-neutral-300 text-xs backdrop-blur-sm"
-                          title="Delete"
-                          onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                        </button>
-                        </div>
-                      </div>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-          </div>
-        {/if}
       </div>
-    {:else}
-      <div class="rounded-lg border border-neutral-800 bg-neutral-900/40">
+      {#if controlsSectionOpen}
+        <div class="px-3 pb-3 pt-1 space-y-4">
+          <ModelSelector />
+
+          <div class="border-t border-neutral-800 pt-4">
+            <SamplerSettings />
+          </div>
+
+          <div class="border-t border-neutral-800 pt-4">
+            <UpscaleSettings />
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
+  {#snippet modelSamplerSection()}
+    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'modelSampler' ? 'opacity-60' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("modelSampler")}
         <button
-          class="w-full px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (modelSectionOpen = !modelSectionOpen)}
           title={modelSectionOpen ? "Collapse Model & Sampler" : "Expand Model & Sampler"}
         >
           <span class="font-medium">Model & Sampler</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {modelSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
-        {#if modelSectionOpen}
-          <div class="px-3 pb-3 pt-1 space-y-4">
-            <ModelSelector />
-
-            <div class="border-t border-neutral-800 pt-4">
-              <SamplerSettings />
-            </div>
-          </div>
-        {/if}
       </div>
+      {#if modelSectionOpen}
+        <div class="px-3 pb-3 pt-1 space-y-4">
+          <ModelSelector />
 
-      <div class="rounded-lg border border-neutral-800 bg-neutral-900/40">
+          <div class="border-t border-neutral-800 pt-4">
+            <SamplerSettings />
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
+  {#snippet upscaleHistorySection()}
+    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'upscaleHistory' ? 'opacity-60' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("upscaleHistory")}
         <button
-          class="w-full px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (postSectionOpen = !postSectionOpen)}
           title={postSectionOpen ? "Collapse Upscale & History" : "Expand Upscale & History"}
         >
           <span class="font-medium">Upscale & History</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {postSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
-        {#if postSectionOpen}
-          <div class="px-3 pb-3 pt-1 space-y-4">
-            <UpscaleSettings />
+      </div>
+      {#if postSectionOpen}
+        <div class="px-3 pb-3 pt-1 space-y-4">
+          <UpscaleSettings />
+        </div>
+      {/if}
+    </div>
+  {/snippet}
 
-            {#if gallery.sessionImages.length > 0}
-              <div class="border-t border-neutral-800 pt-4">
-                <h3 class="text-xs text-neutral-400 mb-2">Session History</h3>
-                <div class="grid grid-cols-2 gap-2">
-                  {#each gallery.sessionImages as image}
-                    <div class="group relative aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors">
-                      <button
-                        class="w-full h-full"
-                        onclick={() => gallery.openLightbox(image)}
-                      >
-                        {#if image.url}
-                          <img
-                            src={image.url}
-                            alt={image.filename}
-                            class="w-full h-full object-cover"
-                          />
-                        {/if}
-                      </button>
-                      <div class="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-2">
-                        <div class="grid grid-cols-3 gap-1.5">
-                        <button
-                          class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/70 hover:bg-indigo-700 text-neutral-300 text-xs backdrop-blur-sm"
-                          title="Upscale"
-                          onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-                        </button>
-                        <button
-                          class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/70 hover:bg-indigo-700 text-neutral-300 text-xs backdrop-blur-sm"
-                          title="Inpaint"
-                          onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                        </button>
-                        <button
-                          class="w-8 h-8 flex items-center justify-center rounded bg-neutral-900/85 hover:bg-neutral-700 text-neutral-300 text-xs backdrop-blur-sm"
-                          title="Save As"
-                          onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        </button>
-                        <button
-                          class="w-8 h-8 flex items-center justify-center rounded bg-neutral-900/85 hover:bg-neutral-700 text-neutral-300 text-xs backdrop-blur-sm"
-                          title="Copy"
-                          onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                        </button>
-                        <button
-                          class="w-8 h-8 flex items-center justify-center rounded bg-red-900/70 hover:bg-red-800 text-neutral-300 text-xs backdrop-blur-sm"
-                          title="Delete"
-                          onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                        </button>
-                        </div>
-                      </div>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/if}
+  {#snippet renderSection(section: SectionId)}
+    {#if section === "dimensions"}
+      {@render dimensionsSection()}
+    {:else if section === "prompts"}
+      {@render promptsSection()}
+    {:else if section === "history"}
+      {@render historySection()}
+    {:else if section === "sessionHistory"}
+      {@render sessionHistorySection()}
+    {:else if section === "imageInputs"}
+      {@render imageInputsSection()}
+    {:else if section === "inpaintLayers"}
+      {@render inpaintLayersSection()}
+    {:else if section === "generationSettings"}
+      {@render generationSettingsSection()}
+    {:else if section === "modelSampler"}
+      {@render modelSamplerSection()}
+    {:else if section === "upscaleHistory"}
+      {@render upscaleHistorySection()}
+    {/if}
+  {/snippet}
+
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="flex h-full select-none {draggingSection ? 'cursor-grabbing' : ''}"
+    onmousemove={onPointerMove}
+    onmouseup={onPointerUp}
+    onmouseleave={onPointerUp}
+  >
+    {#if leftHasSections || controlsSide === "left"}
+      <div
+        class="overflow-y-auto px-4 pt-4 flex flex-col gap-4 shrink-0 border-r {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'}"
+        style="width: {leftWidth}px"
+        onmousemove={() => {
+          if (!draggingSection) return;
+          pendingDrop = { side: "left", index: leftSections.length };
+        }}
+      >
+        {#if controlsSide === "left"}
+          <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
+            {#each modes as mode}
+              <button
+                onclick={() => {
+                  generation.mode = mode.id;
+                  if (mode.id !== "inpainting") canvas.isCanvasMode = false;
+                }}
+                class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode === mode.id
+                  ? 'bg-neutral-700 text-white'
+                  : 'text-neutral-400 hover:text-neutral-200'}"
+              >
+                {mode.label}
+              </button>
+            {/each}
+          </div>
+
+          {#if generation.mode === "inpainting"}
+            <button
+              onclick={() => {
+                canvas.isCanvasMode = !canvas.isCanvasMode;
+                if (canvas.isCanvasMode && canvas.layers.length === 0) {
+                  canvas.initCanvas(generation.width, generation.height);
+                }
+              }}
+              class="flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs transition-colors {canvas.isCanvasMode
+                ? 'bg-indigo-600/20 border border-indigo-500/50 text-indigo-300'
+                : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600'}"
+            >
+              <span class="flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                Canvas Editor
+              </span>
+              <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
+                {canvas.isCanvasMode ? 'ON' : 'OFF'}
+              </span>
+            </button>
+          {/if}
+        {/if}
+
+        {@render sectionDropZone("left", 0)}
+        {#each leftSections as section, i}
+          {@render renderSection(section)}
+          {@render sectionDropZone("left", i + 1)}
+        {/each}
+
+        {#if controlsSide === "left"}
+          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950/95 backdrop-blur-sm rounded-t-lg px-3 pt-3 pb-4">
+            <h3 class="text-xs text-neutral-400 mb-2 font-medium">Generate</h3>
+            <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
         {/if}
       </div>
     {/if}
-    {@render dropZone("right", 1)}
-    {#if isDimensionsAt("right", 1)}{@render dimensionsPanel()}{/if}
+
+    {#if leftHasSections || controlsSide === "left"}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="w-1 mx-1 shrink-0 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'left' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
+        onmousedown={(e) => onDividerDown("left", e)}
+        ondblclick={resetLeftWidth}
+        title="Drag to resize, double-click to reset"
+      ></div>
+    {/if}
+
+    {#if canvas.isCanvasMode}
+      <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <CanvasEditor bind:this={canvasEditorRef} />
+      </div>
+    {:else}
+      <div class="flex-1 min-w-0 p-6 flex flex-col gap-4 overflow-y-auto">
+        <ProgressBar />
+        <PreviewImage />
+      </div>
+    {/if}
+
+    {#if rightHasSections || controlsSide === "right"}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="w-1 mx-1 shrink-0 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'right' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
+        onmousedown={(e) => onDividerDown("right", e)}
+        ondblclick={resetRightWidth}
+        title="Drag to resize, double-click to reset"
+      ></div>
+    {/if}
+
+    {#if rightHasSections || controlsSide === "right"}
+      <div
+        class="overflow-y-auto p-4 space-y-4 shrink-0 border-l {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'}"
+        style="width: {rightWidth}px"
+        onmousemove={() => {
+          if (!draggingSection) return;
+          pendingDrop = { side: "right", index: rightSections.length };
+        }}
+      >
+        {#if controlsSide === "right"}
+          <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
+            {#each modes as mode}
+              <button
+                onclick={() => {
+                  generation.mode = mode.id;
+                  if (mode.id !== "inpainting") canvas.isCanvasMode = false;
+                }}
+                class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode === mode.id
+                  ? 'bg-neutral-700 text-white'
+                  : 'text-neutral-400 hover:text-neutral-200'}"
+              >
+                {mode.label}
+              </button>
+            {/each}
+          </div>
+
+          {#if generation.mode === "inpainting"}
+            <button
+              onclick={() => {
+                canvas.isCanvasMode = !canvas.isCanvasMode;
+                if (canvas.isCanvasMode && canvas.layers.length === 0) {
+                  canvas.initCanvas(generation.width, generation.height);
+                }
+              }}
+              class="flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs transition-colors {canvas.isCanvasMode
+                ? 'bg-indigo-600/20 border border-indigo-500/50 text-indigo-300'
+                : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600'}"
+            >
+              <span class="flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                Canvas Editor
+              </span>
+              <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
+                {canvas.isCanvasMode ? 'ON' : 'OFF'}
+              </span>
+            </button>
+          {/if}
+        {/if}
+
+        {@render sectionDropZone("right", 0)}
+        {#each rightSections as section, i}
+          {@render renderSection(section)}
+          {@render sectionDropZone("right", i + 1)}
+        {/each}
+
+        {#if controlsSide === "right"}
+          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950/95 backdrop-blur-sm rounded-t-lg px-3 pt-3 pb-4">
+            <h3 class="text-xs text-neutral-400 mb-2 font-medium">Generate</h3>
+            <GenerateButton canvasEditorRef={canvasEditorRef} />
+          </div>
+        {/if}
+      </div>
+    {/if}
   </div>
-</div>
+
+  {#if draggingSection}
+    <div
+      class="fixed z-[70] pointer-events-none"
+      style="left: {dragMouseX + 16}px; top: {dragMouseY + 16}px;"
+    >
+      <div class="rounded-lg border border-indigo-400/70 bg-neutral-900/95 shadow-2xl shadow-indigo-900/40 px-3 py-2 min-w-56">
+        <div class="text-[10px] text-indigo-300 uppercase tracking-wide">Dragging Section</div>
+        <div class="text-xs text-neutral-100 mt-0.5">{sectionLabel(draggingSection)}</div>
+      </div>
+    </div>
+  {/if}

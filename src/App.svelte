@@ -5,7 +5,7 @@
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
-  import QueuePage from "./lib/components/queue/QueuePage.svelte";
+  import ModelHubPage from "./lib/components/modelhub/ModelHubPage.svelte";
   import { connection } from "./lib/stores/connection.svelte.js";
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
@@ -14,23 +14,81 @@
   import { generation } from "./lib/stores/generation.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
+  import { accessibility } from "./lib/stores/accessibility.svelte.js";
   import type { GenerationParams, OutputImage } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
 
   declare const __APP_VERSION__: string;
   const appVersion = __APP_VERSION__ ?? "dev";
+  
+  const visionSimClass = $derived(
+    accessibility.visionSimulatorMode === "none"
+      ? ""
+      : `sim-${accessibility.visionSimulatorMode}`
+  );
 
   const MAX_INPUT_PIXELS = 1024 * 1024;
 
   // Lightbox zoom state
   let lbScale = $state(1);
-  let lbOriginX = $state(50);
-  let lbOriginY = $state(50);
+  let lbOffsetX = $state(0);
+  let lbOffsetY = $state(0);
+  let lbPanning = $state(false);
+  let lbPanStartX = $state(0);
+  let lbPanStartY = $state(0);
+  let lbPanStartOffsetX = $state(0);
+  let lbPanStartOffsetY = $state(0);
 
   function resetLightboxZoom() {
     lbScale = 1;
-    lbOriginX = 50;
-    lbOriginY = 50;
+    lbOffsetX = 0;
+    lbOffsetY = 0;
+    lbPanning = false;
+  }
+
+  function startLightboxPan(e: MouseEvent) {
+    if (e.button !== 0) return;
+    if (lbScale <= 1) return;
+    lbPanning = true;
+    lbPanStartX = e.clientX;
+    lbPanStartY = e.clientY;
+    lbPanStartOffsetX = lbOffsetX;
+    lbPanStartOffsetY = lbOffsetY;
+    e.preventDefault();
+  }
+
+  function updateLightboxPan(e: MouseEvent) {
+    if (!lbPanning) return;
+    lbOffsetX = lbPanStartOffsetX + (e.clientX - lbPanStartX);
+    lbOffsetY = lbPanStartOffsetY + (e.clientY - lbPanStartY);
+    e.preventDefault();
+  }
+
+  function stopLightboxPan() {
+    lbPanning = false;
+  }
+
+  function zoomLightboxAtCursor(e: WheelEvent) {
+    e.preventDefault();
+    const img = e.currentTarget as HTMLImageElement;
+    const rect = img.getBoundingClientRect();
+    const px = e.clientX - (rect.left + rect.width / 2);
+    const py = e.clientY - (rect.top + rect.height / 2);
+    const nextScale = Math.min(10, Math.max(0.5, lbScale * (e.deltaY > 0 ? 0.9 : 1.1)));
+
+    if (nextScale === lbScale) return;
+
+    const worldX = (px - lbOffsetX) / lbScale;
+    const worldY = (py - lbOffsetY) / lbScale;
+
+    lbOffsetX = px - worldX * nextScale;
+    lbOffsetY = py - worldY * nextScale;
+    lbScale = nextScale;
+
+    if (lbScale <= 1) {
+      lbOffsetX = 0;
+      lbOffsetY = 0;
+    }
   }
 
   function focusOnMount(node: HTMLElement) {
@@ -136,10 +194,10 @@
       generation.upscaleEnabled = true;
       currentPage = "generate";
       gallery.closeLightbox();
-      gallery.showToast("Image loaded for upscaling");
+      gallery.showToast("Image loaded for upscaling", "success");
     } catch (e) {
       console.error("Failed to set up upscale:", e);
-      gallery.showToast("Failed to load image");
+      gallery.showToast("Failed to load image", "error");
     }
   }
 
@@ -194,10 +252,11 @@
         mode === "inpainting"
           ? "Image loaded for inpainting"
           : "Image loaded for image-to-image",
+        "success"
       );
     } catch (e) {
       console.error(`Failed to set up ${mode}:`, e);
-      gallery.showToast("Failed to load image");
+      gallery.showToast("Failed to load image", "error");
     }
   }
 
@@ -214,7 +273,7 @@
   }
 
   let setupComplete = $state<boolean | null>(null); // null = loading
-  let currentPage = $state<"generate" | "gallery" | "queue" | "settings">(
+  let currentPage = $state<"generate" | "gallery" | "modelhub" | "settings">(
     "generate"
   );
   let startupStatus = $state<string>("");
@@ -328,14 +387,14 @@
 
   async function applyMetadataToGeneration(image: OutputImage) {
     if (!image.gallery_filename) {
-      gallery.showToast("Metadata is only available for saved gallery images");
+      gallery.showToast("Metadata is only available for saved gallery images", "info");
       return;
     }
 
     try {
       const metadata = await readImageMetadata(image.gallery_filename);
       if (!metadata) {
-        gallery.showToast("No PNG metadata found");
+        gallery.showToast("No PNG metadata found", "info");
         return;
       }
 
@@ -369,10 +428,10 @@
         generation.vae = metadata.vae;
       }
 
-      gallery.showToast("Applied generation settings from PNG metadata");
+      gallery.showToast("Applied generation settings from PNG metadata", "success");
     } catch (e) {
       console.error("Failed to apply metadata:", e);
-      gallery.showToast("Failed to read metadata");
+      gallery.showToast("Failed to read metadata", "error");
     }
   }
 
@@ -523,6 +582,7 @@
               type: img.type || "output",
               prompt_id: promptId,
               generation_mode: progress.currentMode,
+              is_upscaled: progress.wasUpscaled,
               url,
               file_size_bytes: bytes.length,
               generated_at_ms: Date.now(),
@@ -550,6 +610,11 @@
   }
 
   onMount(async () => {
+    // Apply dyslexic font if enabled
+    if (localStorage.getItem("mooshieui.dyslexicFont") === "true") {
+      document.documentElement.classList.add("dyslexic-font");
+    }
+
     loadGalleryPrefs();
 
     // Check if first-run setup is needed
@@ -730,7 +795,22 @@
 {:else if !setupComplete}
   <SetupWizard onSetupComplete={onSetupDone} />
 {:else}
-<div class="flex h-full bg-neutral-950 text-neutral-100">
+<div class="flex h-full bg-neutral-950 text-neutral-100 {visionSimClass}">
+  <!-- SVG filters for color vision simulation -->
+  <svg style="display: none">
+    <defs>
+      <filter id="protanopia">
+        <feColorMatrix in="SourceGraphic" type="matrix" values="0.567 0.433 0 0 0 0.558 0.442 0 0 0 0 0.242 0.758 0 0 0 0 0 1 0" />
+      </filter>
+      <filter id="deuteranopia">
+        <feColorMatrix in="SourceGraphic" type="matrix" values="0.625 0.375 0 0 0 0.7 0.3 0 0 0 0 0.3 0.7 0 0 0 0 0 1 0" />
+      </filter>
+      <filter id="tritanopia">
+        <feColorMatrix in="SourceGraphic" type="matrix" values="0.95 0.05 0 0 0 0 0.433 0.567 0 0 0 0.475 0.525 0 0 0 0 0 1 0" />
+      </filter>
+    </defs>
+  </svg>
+
   <!-- Sidebar -->
   <nav
     class="flex flex-col w-20 bg-neutral-900 border-r border-neutral-800 items-stretch px-2 py-4 gap-2"
@@ -789,11 +869,11 @@
     </button>
     <button
       class="w-10 h-10 rounded-lg flex items-center justify-center transition-colors {currentPage ===
-      'queue'
+      'modelhub'
         ? 'bg-indigo-600 text-white'
         : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
-      onclick={() => (currentPage = "queue")}
-      title="Queue"
+      onclick={() => (currentPage = "modelhub")}
+      title="Model Hub"
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -804,22 +884,7 @@
         stroke-width="2"
         stroke-linecap="round"
         stroke-linejoin="round"
-        ><line x1="8" y1="6" x2="21" y2="6" /><line
-          x1="8"
-          y1="12"
-          x2="21"
-          y2="12"
-        /><line x1="8" y1="18" x2="21" y2="18" /><line
-          x1="3"
-          y1="6"
-          x2="3.01"
-          y2="6"
-        /><line x1="3" y1="12" x2="3.01" y2="12" /><line
-          x1="3"
-          y1="18"
-          x2="3.01"
-          y2="18"
-        /></svg
+        ><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg
       >
     </button>
 
@@ -1015,7 +1080,9 @@
                           </select>
                           <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => img2imgImage(image)}>I2I</button>
                           <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => inpaintImage(image)}>Inpaint</button>
-                          <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => upscaleImage(image)}>Upscale</button>
+                          {#if !image.is_upscaled}
+                            <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => upscaleImage(image)}>Upscale</button>
+                          {/if}
                           <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.saveImageAs(image)}>Save</button>
                           <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.copyToClipboard(image)}>Copy</button>
                           <button class="px-2 py-1 text-[11px] rounded bg-red-900/80 hover:bg-red-800 text-neutral-100" onclick={() => gallery.deleteImage(image)}>Delete</button>
@@ -1052,10 +1119,12 @@
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
                             Inpaint
                           </button>
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold backdrop-blur-sm shadow-lg pointer-events-auto" title="Upscale" onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}>
-                            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-                            Upscale
-                          </button>
+                          {#if !image.is_upscaled}
+                            <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold backdrop-blur-sm shadow-lg pointer-events-auto" title="Upscale" onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}>
+                              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                              Upscale
+                            </button>
+                          {/if}
                           <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-neutral-900/90 hover:bg-neutral-700 text-neutral-100 text-xs font-semibold backdrop-blur-sm shadow-lg pointer-events-auto" title="Save As" onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                             Save
@@ -1078,8 +1147,8 @@
           </div>
         {/if}
       </div>
-    {:else if currentPage === "queue"}
-      <QueuePage />
+    {:else if currentPage === "modelhub"}
+      <ModelHubPage />
     {:else if currentPage === "settings"}
       <SettingsPage />
     {/if}
@@ -1091,7 +1160,7 @@
 <!-- Lightbox overlay -->
 {#if gallery.lightboxOpen && (gallery.selectedImage || gallery.lightboxUrl)}
   <div
-    class="lightbox-backdrop fixed inset-0 bg-black/90 z-50 flex items-center justify-center"
+    class="lightbox-backdrop fixed inset-0 bg-black/90 z-50 flex items-center justify-center {visionSimClass}"
     role="dialog"
     onclick={(e) => {
       if (e.target === e.currentTarget) gallery.closeLightbox();
@@ -1127,13 +1196,15 @@
         <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
         Inpaint
       </button>
-      <button
-        class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
-        onclick={() => gallery.selectedImage && upscaleImage(gallery.selectedImage)}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-        Upscale
-      </button>
+      {#if gallery.selectedImage && !gallery.selectedImage.is_upscaled}
+        <button
+          class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          onclick={() => gallery.selectedImage && upscaleImage(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          Upscale
+        </button>
+      {/if}
       <button
         class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
         onclick={() => gallery.selectedImage && gallery.saveImageAs(gallery.selectedImage)}
@@ -1202,22 +1273,18 @@
     {/if}
 
     {#if gallery.selectedImage?.url || gallery.lightboxUrl}
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <img
         src={gallery.selectedImage?.url ?? gallery.lightboxUrl ?? ''}
         alt={gallery.selectedImage?.filename ?? 'Preview'}
-        class="max-w-[90vw] max-h-[85vh] object-contain"
-        style="transform: scale({lbScale}); transform-origin: {lbOriginX}% {lbOriginY}%; transition: {lbScale === 1 ? 'transform 0.2s ease' : 'none'};"
-        onwheel={(e) => {
-          e.preventDefault();
-          const img = e.currentTarget as HTMLImageElement;
-          const rect = img.getBoundingClientRect();
-          const pctX = ((e.clientX - rect.left) / rect.width) * 100;
-          const pctY = ((e.clientY - rect.top) / rect.height) * 100;
-          lbOriginX = pctX;
-          lbOriginY = pctY;
-          const delta = e.deltaY > 0 ? -0.15 : 0.15;
-          lbScale = Math.min(10, Math.max(0.5, lbScale + delta * lbScale));
-        }}
+        class="max-w-[90vw] max-h-[85vh] object-contain select-none {lbScale > 1 ? (lbPanning ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}"
+        draggable="false"
+        style="transform: translate({lbOffsetX}px, {lbOffsetY}px) scale({lbScale}); transform-origin: center center; transition: {lbPanning ? 'none' : 'transform 0.12s ease'};"
+        onwheel={zoomLightboxAtCursor}
+        onmousedown={startLightboxPan}
+        onmousemove={updateLightboxPan}
+        onmouseup={stopLightboxPan}
+        onmouseleave={stopLightboxPan}
         ondblclick={resetLightboxZoom}
       />
     {/if}
@@ -1225,8 +1292,21 @@
 {/if}
 
 <!-- Toast notification -->
-{#if gallery.toastMessage}
-  <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-60 px-4 py-2 bg-neutral-800 text-neutral-100 text-sm rounded-lg shadow-lg border border-neutral-700 animate-fade-in">
-    {gallery.toastMessage}
+{#if gallery.toast}
+  {@const type = gallery.toast.type}
+  <div
+    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-60 px-4 py-2 text-sm rounded-lg shadow-lg border animate-fade-in flex items-center gap-2
+    {type === 'success' ? 'bg-green-800/90 border-green-700 text-green-100' : 
+     type === 'error' ? 'bg-red-800/90 border-red-700 text-red-100' :
+     'bg-neutral-800 text-neutral-100 border-neutral-700'}"
+  >
+    {#if type === 'success'}
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    {:else if type === 'error'}
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+    {:else}
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+    {/if}
+    {gallery.toast.message}
   </div>
 {/if}

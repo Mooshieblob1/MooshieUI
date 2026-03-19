@@ -4,6 +4,7 @@
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { accessibility } from "../../stores/accessibility.svelte.js";
   import { onMount } from "svelte";
 
   let config = $state<AppConfig | null>(null);
@@ -17,6 +18,12 @@
 
   let tagUrlInput = $state("");
   let tagFileLoading = $state(false);
+  let dyslexicFont = $state(localStorage.getItem("mooshieui.dyslexicFont") === "true");
+
+  $effect(() => {
+    document.documentElement.classList.toggle("dyslexic-font", dyslexicFont);
+    localStorage.setItem("mooshieui.dyslexicFont", String(dyslexicFont));
+  });
 
   // Section collapse state (all expanded by default)
   let collapsed: Record<string, boolean> = $state({
@@ -298,6 +305,21 @@
             </div>
           </div>
 
+          <div>
+            <label class="block text-xs text-neutral-400 mb-1">Color Vision Simulator</label>
+            <select
+              bind:value={accessibility.visionSimulatorMode}
+              onchange={() => accessibility.saveSettings()}
+              class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+            >
+              <option value="none">None</option>
+              <option value="protanopia">Protanopia</option>
+              <option value="deuteranopia">Deuteranopia</option>
+              <option value="tritanopia">Tritanopia</option>
+            </select>
+            <p class="text-[10px] text-neutral-500 mt-0.5">Applies a global filter to simulate color vision deficiencies.</p>
+          </div>
+
           <div class="flex items-start gap-3">
             <input
               type="checkbox"
@@ -311,6 +333,19 @@
             <div>
               <label for="enable-style-presets" class="text-sm text-neutral-200">Enable Style Presets</label>
               <p class="text-[10px] text-neutral-500 mt-0.5">Show Fooocus-style presets in the prompt panel. Off by default.</p>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <input
+              type="checkbox"
+              id="dyslexic-font"
+              bind:checked={dyslexicFont}
+              class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
+            />
+            <div>
+              <label for="dyslexic-font" class="text-sm text-neutral-200">Dyslexic-Friendly Font</label>
+              <p class="text-[10px] text-neutral-500 mt-0.5">Use OpenDyslexic font throughout the interface for improved readability.</p>
             </div>
           </div>
           </div>
@@ -398,21 +433,57 @@
           </div>
 
           <div>
-            <label class="block text-xs text-neutral-400 mb-1">Shared Model Directory<span class="text-amber-400">*</span></label>
-            <input
-              type="text"
-              value={config.extra_model_paths ?? ""}
-              oninput={(e) => {
-                if (config) {
-                  const val = (e.target as HTMLInputElement).value;
-                  config.extra_model_paths = val || null;
-                  checkRestartNeeded();
-                }
-              }}
-              class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
-              placeholder="/path/to/shared/models (e.g. from another ComfyUI or Forge install)"
-            />
-            <p class="text-[10px] text-neutral-500 mt-0.5">Point to an existing models folder to share checkpoints, LoRAs, VAEs, etc. without duplicating files.</p>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-xs text-neutral-400">Shared Model Directories<span class="text-amber-400">*</span></label>
+              <button
+                class="px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
+                onclick={() => {
+                  if (config) {
+                    const current = config.extra_model_paths ?? "";
+                    config.extra_model_paths = current ? current + "\n" : "";
+                    checkRestartNeeded();
+                  }
+                }}
+                title="Add another model directory"
+              >
+                + Add Directory
+              </button>
+            </div>
+            {#each (config.extra_model_paths ?? "").split("\n") as dirPath, i}
+              <div class="flex gap-1.5 mb-1.5">
+                <input
+                  type="text"
+                  value={dirPath}
+                  oninput={(e) => {
+                    if (config) {
+                      const paths = (config.extra_model_paths ?? "").split("\n");
+                      paths[i] = (e.target as HTMLInputElement).value;
+                      config.extra_model_paths = paths.join("\n") || null;
+                      checkRestartNeeded();
+                    }
+                  }}
+                  class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                  placeholder="/path/to/shared/models (e.g. from another ComfyUI or Forge install)"
+                />
+                {#if (config.extra_model_paths ?? "").split("\n").length > 1}
+                  <button
+                    class="px-2 py-2 rounded-lg border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300 transition-colors text-xs"
+                    onclick={() => {
+                      if (config) {
+                        const paths = (config.extra_model_paths ?? "").split("\n");
+                        paths.splice(i, 1);
+                        config.extra_model_paths = paths.join("\n") || null;
+                        checkRestartNeeded();
+                      }
+                    }}
+                    title="Remove this directory"
+                  >
+                    &times;
+                  </button>
+                {/if}
+              </div>
+            {/each}
+            <p class="text-[10px] text-neutral-500 mt-0.5">Point to existing model folders to share checkpoints, LoRAs, VAEs, etc. without duplicating files.</p>
           </div>
 
           <div>

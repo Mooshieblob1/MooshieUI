@@ -3,6 +3,12 @@
   import PromptTextarea from "./PromptTextarea.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
 
+  interface Props {
+    showHistory?: boolean;
+  }
+
+  let { showHistory = true }: Props = $props();
+
   const sortedPromptHistory = $derived(
     [...generation.promptHistory].sort((a, b) => {
       if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
@@ -67,7 +73,7 @@
     />
   </div>
 
-  {#if sortedPromptHistory.length > 0}
+  {#if showHistory && sortedPromptHistory.length > 0}
     <div class="rounded-lg border border-neutral-800 bg-neutral-900/50 p-2.5 space-y-2">
       <div class="flex items-center justify-between">
         <button

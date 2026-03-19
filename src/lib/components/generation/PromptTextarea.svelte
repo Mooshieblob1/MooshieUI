@@ -81,7 +81,10 @@
       return;
     }
 
-    suggestions = autocomplete.search(result.fragment);
+    const raw = autocomplete.search(result.fragment);
+    // Filter out exact matches — don't suggest a tag that's already fully typed
+    const normalizedFragment = result.fragment.replace(/_/g, " ").toLowerCase();
+    suggestions = raw.filter(tag => tag.n.replace(/_/g, " ").toLowerCase() !== normalizedFragment);
     selectedIndex = 0;
     showSuggestions = suggestions.length > 0;
 
@@ -182,9 +185,14 @@
         selectedIndex = (selectedIndex - 1 + suggestions.length) % suggestions.length;
         return;
       }
-      if (e.key === "Tab" || (e.key === "Enter" && !e.ctrlKey && !e.metaKey)) {
+      if (e.key === "Tab" || (e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.shiftKey)) {
         e.preventDefault();
         acceptSuggestion(suggestions[selectedIndex]);
+        return;
+      }
+      if (e.key === "Enter" && e.shiftKey) {
+        // Let Shift+Enter insert a newline (default textarea behavior)
+        showSuggestions = false;
         return;
       }
       if (e.key === "Escape") {

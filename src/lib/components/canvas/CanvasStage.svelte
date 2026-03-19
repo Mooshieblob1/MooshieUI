@@ -4,9 +4,16 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { canvas, type ToolType } from "../../stores/canvas.svelte.js";
   import { canvasHistory } from "../../stores/canvasHistory.svelte.js";
+  import ColorTooltip from "../ui/ColorTooltip.svelte";
 
   let containerEl: HTMLDivElement | undefined = $state();
   let stage: Konva.Stage | null = null;
+
+  // Tooltip state
+  let tooltipVisible = $state(false);
+  let tooltipColor = $state("#000000");
+  let tooltipPos = $state({ x: 0, y: 0 });
+  let tooltipRaf: number | null = null;
 
   // Konva layers keyed by canvas layer ID
   let konvaLayers = new Map<string, Konva.Layer>();
@@ -56,6 +63,9 @@
   });
 
   onDestroy(() => {
+    if (tooltipRaf !== null) {
+      cancelAnimationFrame(tooltipRaf);
+    }
     canvas.isPointerOverStage = false;
     if (viewportRaf !== null) {
       cancelAnimationFrame(viewportRaf);
@@ -73,6 +83,34 @@
       viewportRaf = null;
       applyViewport();
     });
+  }
+
+  function updateTooltip(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
+    tooltipRaf = null;
+    if (!stage || isDrawing || isPanning || isDrawingRect || isMovingLayer) {
+      tooltipVisible = false;
+      return;
+    }
+    
+    const pointerPos = stage.getPointerPosition();
+    if (!pointerPos) {
+      tooltipVisible = false;
+      return;
+    }
+    
+    // Sample color from all layers
+    const compositeCanvas = stage.toCanvas({ pixelRatio: 1 });
+    const ctx = compositeCanvas.getContext("2d")!;
+    const pixel = ctx.getImageData(Math.round(pointerPos.x), Math.round(pointerPos.y), 1, 1).data;
+
+    if (pixel[3] > 0) {
+      const hex = `#${pixel[0].toString(16).padStart(2, "0")}${pixel[1].toString(16).padStart(2, "0")}${pixel[2].toString(16).padStart(2, "0")}`;
+      tooltipColor = hex;
+      tooltipPos = { x: pointerPos.x + 15, y: pointerPos.y + 15 };
+      tooltipVisible = true;
+    } else {
+      tooltipVisible = false;
+    }
   }
 
   function initStage() {
@@ -715,6 +753,10 @@
       }
       getActiveKonvaLayer()?.batchDraw();
     }
+
+    if (tooltipRaf === null) {
+      tooltipRaf = requestAnimationFrame(() => updateTooltip(e));
+    }
   }
 
   function handlePointerUp(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
@@ -722,6 +764,10 @@
       isPanning = false;
       lastPointerPos = null;
       return;
+    }
+    
+    if (tooltipVisible) {
+      tooltipVisible = false;
     }
 
     let shouldAutoCommitMask = false;
@@ -731,7 +777,7 @@
       currentLine = null;
       shouldAutoCommitMask = true;
     }
-
+    
     if (isDrawingRect && rectStartPos) {
       isDrawingRect = false;
       const pos = getCanvasPos(e);
@@ -790,6 +836,7 @@
   }
 
   function handlePointerLeave() {
+    tooltipVisible = false;
     canvas.isPointerOverStage = false;
     canvas.cursorPos = null;
     if (brushCursor) {
@@ -1029,4 +1076,10 @@
 <div
   class="w-full h-full relative overflow-hidden bg-neutral-950 {getCursorClass()}"
   bind:this={containerEl}
-></div>
+>
+  {#if tooltipVisible}
+    <div class="fixed" style="left: {tooltipPos.x}px; top: {tooltipPos.y}px; z-index: 100; pointer-events: none;">
+      <ColorTooltip color={tooltipColor} />
+    </div>
+  {/if}
+</div>

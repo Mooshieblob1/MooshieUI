@@ -48,6 +48,30 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
 }
 
+/* ─── Dyslexic-friendly font ─── */
+@font-face {
+  font-family: 'OpenDyslexic';
+  src: url('https://cdn.jsdelivr.net/npm/open-dyslexic@1.0.3/woff/OpenDyslexic-Regular.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'OpenDyslexic';
+  src: url('https://cdn.jsdelivr.net/npm/open-dyslexic@1.0.3/woff/OpenDyslexic-Bold.woff') format('woff');
+  font-weight: bold;
+  font-style: normal;
+  font-display: swap;
+}
+
+html.dyslexic-font body,
+html.dyslexic-font input,
+html.dyslexic-font textarea,
+html.dyslexic-font select,
+html.dyslexic-font button {
+  font-family: 'OpenDyslexic', system-ui, -apple-system, sans-serif !important;
+}
+
 /* ─── Dark mode (default) ─── */
 html {
   color-scheme: dark;
@@ -89,6 +113,97 @@ html.light select, html.light option {
 html.light ::-webkit-scrollbar-thumb { background: #d4d4d4; }
 html.light ::-webkit-scrollbar-thumb:hover { background: #a3a3a3; }
 
+html.light .accent-indigo-500 {
+  accent-color: #ffcf1f;
+}
+
+/* Light-mode slider rails: keep unfilled area light and readable. */
+html.light input[type="range"] {
+  accent-color: #ffcf1f;
+}
+
+/* Brighten yellow action buttons in light mode. */
+html.light .bg-indigo-600,
+html.light .bg-purple-600 {
+  background-color: #ffcf1f !important;
+}
+
+html.light .bg-indigo-500,
+html.light .bg-purple-500 {
+  background-color: #ffd84d !important;
+}
+
+html.light .bg-indigo-700,
+html.light .bg-purple-700 {
+  background-color: #f4bf00 !important;
+}
+
+html.light .hover\:bg-indigo-500:hover,
+html.light .hover\:bg-purple-500:hover {
+  background-color: #ffe066 !important;
+}
+
+html.light .hover\:bg-indigo-600:hover,
+html.light .hover\:bg-purple-600:hover {
+  background-color: #ffd84d !important;
+}
+
+html.light .text-neutral-500 {
+  color: #525252;
+}
+
+/* Improve readability of warm/cool accent text in light mode. */
+html.light .text-amber-100,
+html.light .text-amber-200,
+html.light .text-amber-300,
+html.light .text-amber-400,
+html.light .text-yellow-100,
+html.light .text-yellow-200,
+html.light .text-yellow-300,
+html.light .text-yellow-400 {
+  color: #92400e !important;
+}
+
+/* Catch opacity utility variants like text-amber-400/80 used in helper copy. */
+html.light [class*="text-amber-"] {
+  color: #92400e !important;
+}
+
+html.light .text-green-300,
+html.light .text-green-400,
+html.light .text-green-500,
+html.light .text-emerald-300,
+html.light .text-emerald-400,
+html.light .text-emerald-500,
+html.light .text-lime-300,
+html.light .text-lime-400 {
+  color: #166534 !important;
+}
+
+html.light .text-red-200,
+html.light .text-red-300,
+html.light .text-red-400,
+html.light [class*="text-red-"] {
+  color: #991b1b !important;
+}
+
+/* Indigo text maps to yellow in this theme; darken it for light mode readability. */
+html.light .text-indigo-300,
+html.light .text-indigo-400,
+html.light .text-indigo-500,
+html.light [class*="text-indigo-"] {
+  color: #7a5c00 !important;
+}
+
+/* Preserve legibility for the "Quality prompts applied" style chip in light mode. */
+html.light [class*="bg-emerald-600/20"] {
+  background-color: rgba(5, 150, 105, 0.14) !important;
+}
+
+html.light [class*="border-emerald-600/30"] {
+  border-color: rgba(5, 150, 105, 0.45) !important;
+}
+
 /* Lightbox backdrop in light mode */
 html.light .lightbox-backdrop {
   background: rgba(255, 255, 255, 0.9);
@@ -119,3 +234,8 @@ html.light .lightbox-backdrop {
 .animate-fade-in {
   animation: fade-in 0.2s ease-out;
 }
+
+/* Vision deficiency simulators */
+.sim-protanopia { filter: url(#protanopia); }
+.sim-deuteranopia { filter: url(#deuteranopia); }
+.sim-tritanopia { filter: url(#tritanopia); }
