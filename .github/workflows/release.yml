@@ -83,16 +83,15 @@ jobs:
             | **Windows** | `.msi` or `.exe` |
             | **Linux** | `.deb` or `.AppImage` |
 
-            ### What's New in v0.2.3
+            ### What's New in v0.2.4
 
-            - **Tier 1 feature batch completed:** drag & drop image/mask inputs, PNG metadata embed + read + apply, prompt history/favorites, model-aware defaults, and queue management page.
-            - **Style presets are now optional:** added a settings toggle so Fooocus-style presets are disabled by default and can be enabled when desired.
-            - **Gallery Boards/Organization:** assign images to named boards, filter/group by board, and manage boards directly in gallery/lightbox flows.
-            - **Shared model directory support:** point MooshieUI to an external/shared models folder (via extra model paths config) to avoid duplicate downloads.
-            - **Expanded parameter help coverage:** tooltip/help content filled out across remaining generation controls.
-            - **PNG/A1111 metadata interoperability:** generation parameters are embedded in PNG text chunks and can be reloaded back into generation settings.
-            - **Queue page enabled:** running/pending queue visibility with interrupt and remove actions.
-            - **Linux inpainting responsiveness fix:** removed per-stroke mask uploads in canvas auto-commit path to eliminate brush lag regressions.
+            - **Model Hub** — browse and download CivitAI models with image previews, ratings, and tags directly in the app. NSFW content filtering with blurred badges. Guided API key setup for gated models. Expanded base model filters including NoobAI, Pony, Illustrious, SD 3.5, Flux, and more. Also accepts direct HuggingFace download URLs.
+            - **SwarmUI metadata format** — image metadata is now embedded as SwarmUI-compatible JSON (`sui_image_params`), readable by SwarmUI and other tools. Lightbox metadata panel is now a resizable side panel. Still reads legacy A1111 metadata from older images.
+            - **ModelSpec support** — reads Stability AI ModelSpec metadata from `.safetensors` headers and displays model title, author, architecture, resolution, trigger phrases (click to add to prompt), tags, and usage hints in the model selector.
+            - **Native clipboard** — image copy now uses native OS clipboard tools (Wayland `wl-copy` / X11 `xclip`) with automatic session detection, fixing clipboard issues on Linux.
+            - **Gallery scroll performance** — eliminated scrolling lag in large galleries using requestAnimationFrame throttling and CSS containment.
+            - **Metadata fixes** — seed no longer shows -1 (resolved seed is now returned from generation); denoise is no longer incorrectly included in txt2img metadata.
+            - **Preview image actions** — Save and Copy buttons on the preview image now use the saved gallery file instead of the preview blob.
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
