@@ -1,0 +1,3 @@
+[env]
+GDK_BACKEND = { value = "x11", force = true }
+WEBKIT_DISABLE_DMABUF_RENDERER = { value = "1", force = true }

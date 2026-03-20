@@ -291,6 +291,18 @@ export async function readModelSpec(
   return invoke("read_modelspec", { category, filename });
 }
 
+export async function checkNodeAvailable(nodeClass: string): Promise<boolean> {
+  return invoke("check_node_available", { nodeClass });
+}
+
+export async function isCustomNodeInstalled(nodeName: string): Promise<boolean> {
+  return invoke("is_custom_node_installed", { nodeName });
+}
+
+export async function installCustomNode(gitUrl: string, nodeName: string): Promise<void> {
+  return invoke("install_custom_node", { gitUrl, nodeName });
+}
+
 export async function getConfig(): Promise<AppConfig> {
   return invoke("get_config");
 }

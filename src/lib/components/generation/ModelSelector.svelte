@@ -132,13 +132,21 @@
       const spec = await readModelSpec(category, filename);
       if (spec && Object.keys(spec).length > 0) {
         modelSpec = spec;
+        // Update generation store with authoritative architecture from modelspec
+        if (spec.architecture) {
+          generation.modelspecArchitecture = spec.architecture;
+        } else {
+          generation.modelspecArchitecture = null;
+        }
       } else {
         modelSpec = null;
         modelSpecUnavailable = true;
+        generation.modelspecArchitecture = null;
       }
     } catch {
       modelSpec = null;
       modelSpecUnavailable = true;
+      generation.modelspecArchitecture = null;
     } finally {
       modelSpecLoading = false;
     }

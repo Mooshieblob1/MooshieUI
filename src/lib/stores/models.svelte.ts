@@ -10,13 +10,14 @@ class ModelsStore {
   upscaleModels = $state<string[]>([]);
   diffusionModels = $state<string[]>([]);
   textEncoders = $state<string[]>([]);
+  controlnetModels = $state<string[]>([]);
   loading = $state(false);
 
   async refresh() {
     this.loading = true;
     try {
       console.log("ModelsStore: fetching models...");
-      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, textEncoders] =
+      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, textEncoders, controlnetModels] =
         await Promise.all([
           getModels("checkpoints"),
           getModels("vae"),
@@ -26,6 +27,7 @@ class ModelsStore {
           getModels("upscale_models"),
           getModels("diffusion_models").catch(() => [] as string[]),
           getModels("text_encoders").catch(() => [] as string[]),
+          getModels("controlnet").catch(() => [] as string[]),
         ]);
 
       console.log("ModelsStore: got checkpoints:", checkpoints);
@@ -40,6 +42,7 @@ class ModelsStore {
       this.upscaleModels = upscaleModels;
       this.diffusionModels = diffusionModels;
       this.textEncoders = textEncoders;
+      this.controlnetModels = controlnetModels;
     } catch (e) {
       console.error("Failed to refresh models:", e);
     } finally {

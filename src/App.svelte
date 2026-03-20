@@ -17,6 +17,8 @@
   import { accessibility } from "./lib/stores/accessibility.svelte.js";
   import type { GenerationParams, OutputImage } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
+  import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
+  import { downloads } from "./lib/stores/downloads.svelte.js";
 
   declare const __APP_VERSION__: string;
   const appVersion = __APP_VERSION__ ?? "dev";
@@ -669,6 +671,7 @@
     }
 
     loadGalleryPrefs();
+    downloads.init();
 
     // Check if first-run setup is needed
     try {
@@ -982,6 +985,7 @@
   <!-- Main content -->
   <main class="flex-1 overflow-hidden flex flex-col">
     <UpdateNotification />
+    <DownloadBanner />
     {#if startupStatus && !connection.connected}
       <div class="flex items-center gap-2 px-4 py-2 bg-amber-900/30 border-b border-amber-800/50 text-amber-200 text-sm">
         <div class="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>

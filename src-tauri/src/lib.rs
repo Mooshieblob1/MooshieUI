@@ -58,6 +58,9 @@ pub fn run() {
             commands::api::read_modelspec,
             commands::api::read_image_metadata,
             commands::api::read_image_metadata_bytes,
+            commands::api::check_node_available,
+            commands::api::is_custom_node_installed,
+            commands::api::install_custom_node,
             commands::websocket::connect_ws,
             commands::websocket::disconnect_ws,
             commands::workflow::generate,
@@ -66,6 +69,11 @@ pub fn run() {
             setup::check_setup,
             setup::detect_gpu,
             setup::run_setup,
+            setup::set_install_path,
+            setup::get_install_path,
+            setup::detect_model_directories,
+            setup::move_installation,
+            setup::reinstall_pytorch,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

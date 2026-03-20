@@ -77,6 +77,9 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     }
 
     // Shared model directory support (newline-separated for multiple directories)
+    // Generates a YAML config for ComfyUI's --extra-model-paths-config flag.
+    // Each category lists multiple subdirectory names to support ComfyUI, A1111,
+    // Forge, and flat directory structures.
     if let Some(ref model_dirs_str) = config.extra_model_paths {
         let dirs: Vec<&str> = model_dirs_str
             .lines()
@@ -87,10 +90,59 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             let yaml_path = std::env::temp_dir().join("mooshieui_extra_model_paths.yaml");
             let mut yaml_content = String::new();
             for (i, dir) in dirs.iter().enumerate() {
-                yaml_content.push_str(&format!(
-                    "mooshieui_{idx}:\n  base_path: {dir}\n  checkpoints: checkpoints\n  vae: vae\n  loras: loras\n  upscale_models: upscale_models\n  embeddings: embeddings\n  clip: clip\n  unet: unet\n  diffusion_models: diffusion_models\n  text_encoders: text_encoders\n",
+                // Escape YAML values: quote paths that contain spaces, colons,
+                // backslashes, or other special characters.
+                let quoted_dir = format!("\"{}\"", dir.replace('\\', "\\\\").replace('"', "\\\""));
+                yaml_content.push_str(&format!(concat!(
+                    "mooshieui_{idx}:\n",
+                    "  base_path: {dir}\n",
+                    "  checkpoints: |\n",
+                    "    .\n",
+                    "    checkpoints\n",
+                    "    models/Stable-diffusion\n",
+                    "    Stable-diffusion\n",
+                    "  vae: |\n",
+                    "    .\n",
+                    "    vae\n",
+                    "    models/VAE\n",
+                    "    VAE\n",
+                    "  loras: |\n",
+                    "    .\n",
+                    "    loras\n",
+                    "    models/Lora\n",
+                    "    models/LyCORIS\n",
+                    "    Lora\n",
+                    "    LyCORIS\n",
+                    "  upscale_models: |\n",
+                    "    .\n",
+                    "    upscale_models\n",
+                    "    models/ESRGAN\n",
+                    "    models/RealESRGAN\n",
+                    "    ESRGAN\n",
+                    "  embeddings: |\n",
+                    "    .\n",
+                    "    embeddings\n",
+                    "    models/TextualInversion\n",
+                    "  controlnet: |\n",
+                    "    .\n",
+                    "    controlnet\n",
+                    "    models/ControlNet\n",
+                    "    ControlNet\n",
+                    "  clip: |\n",
+                    "    .\n",
+                    "    clip\n",
+                    "  unet: |\n",
+                    "    .\n",
+                    "    unet\n",
+                    "  diffusion_models: |\n",
+                    "    .\n",
+                    "    diffusion_models\n",
+                    "  text_encoders: |\n",
+                    "    .\n",
+                    "    text_encoders\n",
+                ),
                     idx = i + 1,
-                    dir = dir
+                    dir = quoted_dir
                 ));
             }
             if let Err(e) = std::fs::write(&yaml_path, &yaml_content) {

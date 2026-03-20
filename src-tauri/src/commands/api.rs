@@ -481,7 +481,21 @@ pub async fn check_node_available(
     }
 }
 
+/// Check if a custom node package is installed on disk (directory exists in custom_nodes/).
+#[tauri::command]
+pub async fn is_custom_node_installed(
+    state: State<'_, AppState>,
+    node_name: String,
+) -> Result<bool, AppError> {
+    let config = state.config.read().await;
+    let target_dir = std::path::Path::new(&config.comfyui_path)
+        .join("custom_nodes")
+        .join(&node_name);
+    Ok(target_dir.exists())
+}
+
 /// Install a custom node from a git repository into ComfyUI's custom_nodes directory.
+/// Emits `install:progress` events with { node_name, step, message, done } for live progress.
 #[tauri::command]
 pub async fn install_custom_node(
     app: AppHandle,
@@ -493,41 +507,122 @@ pub async fn install_custom_node(
     let custom_nodes_dir = std::path::Path::new(&config.comfyui_path).join("custom_nodes");
     let target_dir = custom_nodes_dir.join(&node_name);
 
+    let emit_progress = |step: &str, message: &str, done: bool| {
+        let _ = app.emit(
+            "install:progress",
+            serde_json::json!({
+                "node_name": node_name,
+                "step": step,
+                "message": message,
+                "done": done,
+            }),
+        );
+    };
+
     if target_dir.exists() {
-        return Ok(()); // Already cloned
+        emit_progress("done", "Already installed", true);
+        return Ok(());
     }
 
-    // git clone
-    let clone_status = tokio::process::Command::new("git")
-        .args(["clone", &git_url, &target_dir.to_string_lossy().as_ref()])
-        .output()
+    // git clone — stream stderr for progress (git writes progress to stderr)
+    emit_progress("clone", &format!("Cloning {}...", node_name), false);
+
+    let mut child = tokio::process::Command::new("git")
+        .args(["clone", "--progress", &git_url, &target_dir.to_string_lossy().as_ref()])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::Other(format!("git clone failed to start: {}", e)))?;
+
+    // Read stderr in background for progress lines
+    if let Some(stderr) = child.stderr.take() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        let app_clone = app.clone();
+        let node_name_clone = node_name.clone();
+        tokio::spawn(async move {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let trimmed = line.trim().to_string();
+                if !trimmed.is_empty() {
+                    let _ = app_clone.emit(
+                        "install:progress",
+                        serde_json::json!({
+                            "node_name": node_name_clone,
+                            "step": "clone",
+                            "message": trimmed,
+                            "done": false,
+                        }),
+                    );
+                }
+            }
+        });
+    }
+
+    let status = child
+        .wait()
         .await
         .map_err(|e| AppError::Other(format!("git clone failed: {}", e)))?;
 
-    if !clone_status.status.success() {
-        let stderr = String::from_utf8_lossy(&clone_status.stderr);
-        return Err(AppError::Other(format!("git clone failed: {}", stderr)));
+    if !status.success() {
+        emit_progress("error", "git clone failed", true);
+        return Err(AppError::Other("git clone failed".to_string()));
     }
 
     // pip install -r requirements.txt if it exists
     let req_file = target_dir.join("requirements.txt");
     if req_file.exists() {
+        emit_progress("pip", "Installing Python dependencies...", false);
+
         #[cfg(target_os = "windows")]
         let pip_path = format!("{}/Scripts/pip.exe", config.venv_path);
         #[cfg(not(target_os = "windows"))]
         let pip_path = format!("{}/bin/pip", config.venv_path);
 
-        let pip_status = tokio::process::Command::new(&pip_path)
+        let mut pip_child = tokio::process::Command::new(&pip_path)
             .args(["install", "-r", &req_file.to_string_lossy()])
-            .output()
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| AppError::Other(format!("pip install failed to start: {}", e)))?;
+
+        // Stream pip stdout for progress
+        if let Some(stdout) = pip_child.stdout.take() {
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            let app_clone = app.clone();
+            let node_name_clone = node_name.clone();
+            tokio::spawn(async move {
+                let reader = BufReader::new(stdout);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let trimmed = line.trim().to_string();
+                    if !trimmed.is_empty() {
+                        let _ = app_clone.emit(
+                            "install:progress",
+                            serde_json::json!({
+                                "node_name": node_name_clone,
+                                "step": "pip",
+                                "message": trimmed,
+                                "done": false,
+                            }),
+                        );
+                    }
+                }
+            });
+        }
+
+        let pip_status = pip_child
+            .wait()
             .await
             .map_err(|e| AppError::Other(format!("pip install failed: {}", e)))?;
 
-        if !pip_status.status.success() {
-            let stderr = String::from_utf8_lossy(&pip_status.stderr);
-            log::warn!("pip install requirements failed: {}", stderr);
+        if !pip_status.success() {
+            emit_progress("error", "pip install failed (some features may not work)", false);
+            log::warn!("pip install requirements failed for {}", node_name);
         }
     }
+
+    emit_progress("done", &format!("{} installed successfully", node_name), true);
 
     // Emit event so frontend knows to restart ComfyUI
     let _ = app.emit("custom_node:installed", &node_name);
@@ -618,7 +713,7 @@ pub async fn civitai_lookup_hash(hash: String) -> Result<Value, AppError> {
     let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
     let resp = reqwest::Client::new()
         .get(&url)
-        .header("User-Agent", "MooshieUI/0.2.4")
+        .header("User-Agent", "MooshieUI/0.2.6")
         .send()
         .await
         .map_err(|e| AppError::Other(format!("CivitAI request failed: {}", e)))?;
@@ -667,17 +762,15 @@ pub async fn civitai_search_models(
         parts.push(format!("query={}", encode_val(&q)));
     }
     if let Some(t) = params.model_type.filter(|v| !v.trim().is_empty()) {
-        parts.push(format!("types={}", encode_val(&t)));
+        parts.push(format!("types[]={}", encode_val(&t)));
     }
     if let Some(base_model) = params.base_model.filter(|v| !v.trim().is_empty()) {
-        parts.push(format!("baseModels={}", encode_val(&base_model)));
+        parts.push(format!("baseModels[]={}", encode_val(&base_model)));
     }
     if let Some(file_format) = params.file_format.filter(|v| !v.trim().is_empty()) {
-        parts.push(format!("fileFormats={}", encode_val(&file_format)));
+        parts.push(format!("fileFormats[]={}", encode_val(&file_format)));
     }
-    if let Some(status) = params.status.filter(|v| !v.trim().is_empty()) {
-        parts.push(format!("status={}", encode_val(&status)));
-    }
+    // Note: CivitAI public API does not support a "status" query parameter.
 
     let url = format!("https://civitai.com/api/v1/models?{}", parts.join("&"));
     log::debug!("CivitAI search URL: {}", url);
@@ -686,7 +779,7 @@ pub async fn civitai_search_models(
         .http_client
         .get(&url)
         .header("Accept", "application/json")
-        .header("User-Agent", "MooshieUI/0.2.4");
+        .header("User-Agent", "MooshieUI/0.2.6");
 
     if let Some(key) = params.api_key.filter(|v| !v.trim().is_empty()) {
         req = req.bearer_auth(key);
@@ -751,7 +844,7 @@ pub async fn civitai_list_architectures(
             .http_client
             .get("https://civitai.com/api/v1/models")
             .header("Accept", "application/json")
-            .header("User-Agent", "MooshieUI/0.2.4")
+            .header("User-Agent", "MooshieUI/0.2.6")
             .query(&[("limit", "100")]);
 
         if let Some(ref c) = cursor {

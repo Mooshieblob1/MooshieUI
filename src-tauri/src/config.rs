@@ -68,9 +68,56 @@ impl Default for AppConfig {
 const APP_IDENTIFIER: &str = "com.mooshieui.desktop";
 const OLD_APP_IDENTIFIER: &str = "com.comfyui.desktop";
 
-/// Get the app data directory path (platform-appropriate).
-pub fn app_data_dir() -> Option<PathBuf> {
+/// The platform-default app data directory (always the same location).
+/// Used to store the bootstrap pointer file that redirects to the real data dir.
+fn platform_default_data_dir() -> Option<PathBuf> {
     dirs::data_dir().map(|d| d.join(APP_IDENTIFIER))
+}
+
+/// Read the custom data directory from the bootstrap pointer file.
+/// The pointer lives at `{platform_default}/data_dir.txt` and contains
+/// a single line with the absolute path to the real data directory.
+fn load_custom_data_dir() -> Option<PathBuf> {
+    let pointer = platform_default_data_dir()?.join("data_dir.txt");
+    let content = std::fs::read_to_string(&pointer).ok()?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let p = PathBuf::from(trimmed);
+    if p.as_os_str().is_empty() {
+        return None;
+    }
+    Some(p)
+}
+
+/// Save a custom data directory to the bootstrap pointer file.
+pub fn save_custom_data_dir(path: &str) -> Result<(), String> {
+    let default_dir = platform_default_data_dir()
+        .ok_or("Failed to determine platform data directory")?;
+    std::fs::create_dir_all(&default_dir)
+        .map_err(|e| format!("Failed to create data dir: {}", e))?;
+    std::fs::write(default_dir.join("data_dir.txt"), path.trim())
+        .map_err(|e| format!("Failed to write data_dir.txt: {}", e))?;
+    Ok(())
+}
+
+/// Get the app data directory path.
+/// Priority: MOOSHIEUI_DATA_DIR env var > bootstrap pointer file > platform default.
+pub fn app_data_dir() -> Option<PathBuf> {
+    // 1. Environment variable override (highest priority)
+    if let Ok(custom) = std::env::var("MOOSHIEUI_DATA_DIR") {
+        let p = PathBuf::from(custom.trim());
+        if !p.as_os_str().is_empty() {
+            return Some(p);
+        }
+    }
+    // 2. Bootstrap pointer file (user chose install location)
+    if let Some(custom) = load_custom_data_dir() {
+        return Some(custom);
+    }
+    // 3. Platform default
+    platform_default_data_dir()
 }
 
 /// Migrate data from the old `com.comfyui.desktop` directory to the new one.

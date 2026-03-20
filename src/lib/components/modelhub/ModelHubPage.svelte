@@ -11,7 +11,6 @@
     type CivitaiPeriod,
     type CivitaiSort,
     type CivitaiFileFormat,
-    type CivitaiModelStatus,
   } from "../../utils/api.js";
   import { models } from "../../stores/models.svelte.js";
 
@@ -59,17 +58,8 @@
     { value: "Other", label: "Other" },
   ];
 
-  const statusOptions: Array<{ value: CivitaiModelStatus | ""; label: string }> = [
-    { value: "", label: "All Statuses" },
-    { value: "Published", label: "Published" },
-    { value: "Draft", label: "Draft" },
-    { value: "Training", label: "Training" },
-    { value: "Scheduled", label: "Scheduled" },
-    { value: "Unpublished", label: "Unpublished" },
-    { value: "UnpublishedViolation", label: "Unpublished Violation" },
-    { value: "GatherInterest", label: "Gather Interest" },
-    { value: "Deleted", label: "Deleted" },
-  ];
+  // Note: CivitAI public API does not support a "status" query parameter.
+  // The filter was removed because it had no effect on search results.
 
   const categoryOptions = [
     { value: "checkpoints", label: "Checkpoint" },
@@ -108,7 +98,6 @@
   let selectedType = $state<CivitaiModelType | "">("");
   let selectedArchitecture = $state("");
   let selectedFileFormat = $state<CivitaiFileFormat | "">("");
-  let selectedStatus = $state<CivitaiModelStatus | "">("");
   let sort = $state<CivitaiSort>("Most Downloaded");
   let period = $state<CivitaiPeriod>("AllTime");
   let includeNsfw = $state(false);
@@ -151,7 +140,6 @@
     void selectedType;
     void selectedArchitecture;
     void selectedFileFormat;
-    void selectedStatus;
     void sort;
     void period;
     void includeNsfw;
@@ -240,6 +228,28 @@
     ro.observe(gridContainerRef);
     ro.observe(scrollHost);
     return () => ro.disconnect();
+  });
+
+  // Reactively set up IntersectionObserver for infinite scroll whenever the sentinel element changes
+  $effect(() => {
+    const sentinel = loadMoreSentinel;
+    const root = scrollHost;
+    if (!sentinel || !root) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          void loadNextPage();
+        }
+      },
+      {
+        root,
+        rootMargin: "400px 0px",
+        threshold: 0,
+      },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
   });
 
   function formatCount(value: number | undefined): string {
@@ -424,7 +434,6 @@
         type: selectedType || undefined,
         baseModel: selectedArchitecture || undefined,
         fileFormat: selectedFileFormat || undefined,
-        status: selectedStatus || undefined,
         sort,
         period,
         nsfw: includeNsfw,
@@ -696,7 +705,6 @@
 
   onMount(() => {
     let unlisten: (() => void) | null = null;
-    let observer: IntersectionObserver | null = null;
 
     loadApiKey();
     loadCivitaiColumns();
@@ -732,28 +740,10 @@
 
       await runSearch();
       initialSearchDone = true;
-
-      if (scrollHost && loadMoreSentinel) {
-        observer = new IntersectionObserver(
-          (entries) => {
-            const hit = entries.some((entry) => entry.isIntersecting);
-            if (hit) {
-              void loadNextPage();
-            }
-          },
-          {
-            root: scrollHost,
-            rootMargin: "400px 0px",
-            threshold: 0,
-          },
-        );
-        observer.observe(loadMoreSentinel);
-      }
     })();
 
     return () => {
       if (unlisten) unlisten();
-      if (observer) observer.disconnect();
     };
   });
 </script>
@@ -846,7 +836,7 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-7 gap-3 items-end">
+        <div class="grid grid-cols-1 lg:grid-cols-6 gap-3 items-end">
           <div>
             <div class="text-xs text-neutral-400 mb-1">Sort</div>
             <select id="civitai-sort" name="civitaiSort" bind:value={sort} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100">
@@ -892,14 +882,6 @@
             <div class="text-xs text-neutral-400 mb-1">File Format</div>
             <select id="civitai-file-format" name="civitaiFileFormat" bind:value={selectedFileFormat} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100">
               {#each fileFormatOptions as option}
-                <option value={option.value}>{option.label}</option>
-              {/each}
-            </select>
-          </div>
-          <div>
-            <div class="text-xs text-neutral-400 mb-1">Model Status</div>
-            <select id="civitai-status" name="civitaiStatus" bind:value={selectedStatus} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100">
-              {#each statusOptions as option}
                 <option value={option.value}>{option.label}</option>
               {/each}
             </select>

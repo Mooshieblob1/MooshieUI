@@ -101,5 +101,6 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
         positive_source: (pos_id, 0),
         negative_source: (neg_id, 0),
         vae_source,
+        sampler_id,
     }
 }

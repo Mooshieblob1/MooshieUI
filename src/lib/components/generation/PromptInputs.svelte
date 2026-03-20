@@ -42,7 +42,7 @@
     </div>
   {/if}
 
-  {#if generation.isAnima}
+  {#if generation.isAnima || generation.isIllustrious}
     <div class="flex justify-end">
       <span class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">
         Quality prompts applied

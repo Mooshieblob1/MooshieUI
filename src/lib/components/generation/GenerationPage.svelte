@@ -6,6 +6,7 @@
   import DimensionControls from "./DimensionControls.svelte";
   import GenerateButton from "./GenerateButton.svelte";
   import UpscaleSettings from "./UpscaleSettings.svelte";
+  import ControlNetSettings from "./ControlNetSettings.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import ProgressBar from "../progress/ProgressBar.svelte";
   import PreviewImage from "../progress/PreviewImage.svelte";
@@ -30,6 +31,7 @@
     | "inpaintLayers"
     | "generationSettings"
     | "modelSampler"
+    | "controlnet"
     | "upscaleHistory";
 
   type SectionSide = "left" | "right";
@@ -77,6 +79,7 @@
     inpaintLayers: "right",
     generationSettings: "right",
     modelSampler: "right",
+    controlnet: "right",
     upscaleHistory: "right",
   });
 
@@ -102,6 +105,7 @@
     "inpaintLayers",
     "generationSettings",
     "modelSampler",
+    "controlnet",
     "upscaleHistory",
   ];
 
@@ -255,6 +259,7 @@
   let sessionSectionOpen = $state(true);
   let controlsSectionOpen = $state(true);
   let modelSectionOpen = $state(true);
+  let controlnetSectionOpen = $state(true);
   let postSectionOpen = $state(true);
 
   const MAX_INPUT_PIXELS = 1024 * 1024;
@@ -441,6 +446,63 @@
       generation.maskImage = response.name;
     } catch (e) {
       console.error("Failed to handle dropped mask:", e);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  async function handleImagePaste() {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const ext = imageType.split("/")[1] || "png";
+          const file = new File([blob], `pasted_image.${ext}`, { type: imageType });
+          uploading = true;
+          const buffer = await file.arrayBuffer();
+          const bytes = Array.from(new Uint8Array(buffer));
+          const normalized = await normalizeImageBytes(bytes, file.name);
+
+          if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+          imagePreviewUrl = normalized.previewUrl;
+          applyImageGeometry(normalized.width, normalized.height);
+          canvas.setReferenceImage(imagePreviewUrl);
+
+          const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+          generation.inputImage = response.name;
+          return;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to paste image:", e);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  async function handleMaskPaste() {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          uploading = true;
+          if (maskPreviewUrl) URL.revokeObjectURL(maskPreviewUrl);
+          maskPreviewUrl = URL.createObjectURL(blob);
+          canvas.setPersistedMaskPreview(maskPreviewUrl);
+
+          const buffer = await blob.arrayBuffer();
+          const bytes = Array.from(new Uint8Array(buffer));
+          const response = await uploadImageBytes(bytes, "pasted_mask.png");
+          generation.maskImage = response.name;
+          return;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to paste mask:", e);
     } finally {
       uploading = false;
     }
@@ -924,6 +986,14 @@
                   Browse or drop image
                 {/if}
               </button>
+              <button
+                type="button"
+                class="w-full text-xs text-neutral-500 hover:text-neutral-300 transition-colors flex items-center justify-center gap-1 mt-1"
+                onclick={handleImagePaste}
+              >
+                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                Paste from clipboard
+              </button>
             {/if}
           </div>
 
@@ -1003,6 +1073,14 @@
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                     Browse or drop mask
                   {/if}
+                </button>
+                <button
+                  type="button"
+                  class="w-full text-xs text-neutral-500 hover:text-neutral-300 transition-colors flex items-center justify-center gap-1 mt-1"
+                  onclick={handleMaskPaste}
+                >
+                  <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                  Paste from clipboard
                 </button>
               {/if}
             </div>
@@ -1141,6 +1219,27 @@
     </div>
   {/snippet}
 
+  {#snippet controlnetSection()}
+    <div bind:this={sectionRefs['controlnet']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'controlnet' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("controlnet")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (controlnetSectionOpen = !controlnetSectionOpen)}
+          title={controlnetSectionOpen ? "Collapse ControlNet" : "Expand ControlNet"}
+        >
+          <span class="font-medium">ControlNet</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {controlnetSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if controlnetSectionOpen}
+        <div class="px-3 pb-3 pt-1 space-y-4">
+          <ControlNetSettings />
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
   {#snippet upscaleHistorySection()}
     <div bind:this={sectionRefs['upscaleHistory']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
@@ -1179,6 +1278,8 @@
       {@render generationSettingsSection()}
     {:else if section === "modelSampler"}
       {@render modelSamplerSection()}
+    {:else if section === "controlnet"}
+      {@render controlnetSection()}
     {:else if section === "upscaleHistory"}
       {@render upscaleHistorySection()}
     {/if}

@@ -7,6 +7,9 @@
   import { accessibility } from "../../stores/accessibility.svelte.js";
   import { check } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
+  import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
+  import { open } from "@tauri-apps/plugin-dialog";
   import { onMount } from "svelte";
 
   declare const __APP_VERSION__: string;
@@ -23,6 +26,102 @@
 
   let tagUrlInput = $state("");
   let tagFileLoading = $state(false);
+
+  // Model directory auto-detection
+  interface DetectedModelDir {
+    path: string;
+    tool: string;
+    has_checkpoints: boolean;
+    has_loras: boolean;
+    has_vae: boolean;
+  }
+  let detectedModelDirs = $state<DetectedModelDir[]>([]);
+  let scanningModelDirs = $state(false);
+
+  async function scanForModelDirs() {
+    scanningModelDirs = true;
+    try {
+      const dirs = await invoke<DetectedModelDir[]>("detect_model_directories");
+      // Filter out directories already in config
+      const existing = new Set(
+        (config?.extra_model_paths ?? "").split("\n").map((p: string) => p.trim()).filter(Boolean)
+      );
+      detectedModelDirs = dirs.filter((d) => !existing.has(d.path));
+    } catch {
+      detectedModelDirs = [];
+    } finally {
+      scanningModelDirs = false;
+    }
+  }
+
+  // Move installation
+  let currentInstallPath = $state("");
+  let moveTargetPath = $state("");
+  let moving = $state(false);
+  let moveProgress = $state("");
+  let moveError = $state<string | null>(null);
+  let moveSuccess = $state(false);
+
+  async function loadInstallPath() {
+    try {
+      currentInstallPath = await invoke<string>("get_install_path");
+    } catch {
+      currentInstallPath = "";
+    }
+  }
+
+  async function browseMoveTarget() {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Choose New Install Location",
+    });
+    if (selected && typeof selected === "string") {
+      moveTargetPath = selected;
+    }
+  }
+
+  async function moveInstallation() {
+    if (!moveTargetPath.trim()) return;
+    moving = true;
+    moveError = null;
+    moveSuccess = false;
+    moveProgress = "Starting move...";
+
+    const unlisten = await listen("setup:progress", (event: any) => {
+      const data = event.payload as { message: string };
+      moveProgress = data.message;
+    });
+
+    try {
+      await invoke("move_installation", { newPath: moveTargetPath.trim() });
+      moveSuccess = true;
+      moveProgress = "";
+      currentInstallPath = moveTargetPath.trim();
+      moveTargetPath = "";
+      // Reload config since paths changed
+      await loadConfig();
+    } catch (e: any) {
+      moveError = typeof e === "string" ? e : e.message || "Unknown error";
+      moveProgress = "";
+    } finally {
+      moving = false;
+      unlisten();
+    }
+  }
+
+  function addDetectedModelDir(path: string) {
+    if (!config) return;
+    const current = config.extra_model_paths ?? "";
+    const paths = current.split("\n").filter((p: string) => p.trim());
+    if (!paths.includes(path)) {
+      paths.push(path);
+      config.extra_model_paths = paths.join("\n");
+      checkRestartNeeded();
+    }
+    // Remove from detected list
+    detectedModelDirs = detectedModelDirs.filter((d) => d.path !== path);
+  }
 
   // Update check state
   type UpdateCheckState = "idle" | "checking" | "available" | "downloading" | "ready" | "up-to-date" | "error";
@@ -80,14 +179,35 @@
     localStorage.setItem("mooshieui.dyslexicFont", String(dyslexicFont));
   });
 
-  // Section collapse state (all expanded by default)
-  let collapsed: Record<string, boolean> = $state({
-    connection: false,
-    appearance: false,
-    performance: false,
-    paths: false,
-    autocomplete: false,
-    about: false,
+  // Section collapse state (persisted across tab switches)
+  const COLLAPSED_KEY = "mooshieui.settings.collapsed.v1";
+  let collapsed: Record<string, boolean> = $state(loadCollapsedState());
+
+  function loadCollapsedState(): Record<string, boolean> {
+    const defaults: Record<string, boolean> = {
+      connection: false,
+      appearance: false,
+      performance: false,
+      paths: false,
+      autocomplete: false,
+      about: false,
+    };
+    try {
+      const raw = localStorage.getItem(COLLAPSED_KEY);
+      if (!raw) return defaults;
+      const saved = JSON.parse(raw);
+      return { ...defaults, ...saved };
+    } catch {
+      return defaults;
+    }
+  }
+
+  $effect(() => {
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed));
+    } catch {
+      // Ignore persistence failures.
+    }
   });
 
   const sections = [
@@ -115,15 +235,20 @@
   let originalExtraArgs = "";
   let originalModelPaths = "";
 
+  async function loadConfig() {
+    config = await getConfig();
+    snapshotRestartFields();
+  }
+
   onMount(async () => {
     try {
-      config = await getConfig();
-      snapshotRestartFields();
+      await loadConfig();
     } catch (e) {
       error = `Failed to load config: ${e}`;
     } finally {
       loading = false;
     }
+    loadInstallPath();
   });
 
   function snapshotRestartFields() {
@@ -469,6 +594,58 @@
 
           {#if !collapsed.paths}
           <div class="px-5 pb-5 space-y-4">
+
+          <!-- Move Installation -->
+          <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2">
+            <div class="flex items-center justify-between">
+              <p class="text-xs text-neutral-400">Data Location</p>
+            </div>
+            {#if currentInstallPath}
+              <p class="text-xs text-neutral-500 font-mono truncate" title={currentInstallPath}>{currentInstallPath}</p>
+            {/if}
+
+            {#if moveSuccess}
+              <div class="rounded border border-green-800/50 bg-green-900/20 px-2 py-1.5 text-[11px] text-green-300">
+                Installation moved successfully. Restart the app for all changes to take effect.
+              </div>
+            {/if}
+
+            {#if !moving}
+              <div class="flex gap-1.5">
+                <input
+                  type="text"
+                  bind:value={moveTargetPath}
+                  class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-neutral-100 placeholder-neutral-500"
+                  placeholder="New location..."
+                />
+                <button
+                  onclick={browseMoveTarget}
+                  class="px-2 py-1.5 rounded-lg border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors text-xs"
+                >
+                  Browse
+                </button>
+              </div>
+              {#if moveTargetPath.trim()}
+                <button
+                  onclick={moveInstallation}
+                  class="w-full px-3 py-2 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white transition-colors"
+                >
+                  Move Installation to New Location
+                </button>
+                <p class="text-[10px] text-amber-400/70">This will stop ComfyUI, copy all data (~5-10 GB), and delete the old location. May take several minutes.</p>
+              {/if}
+            {:else}
+              <div class="flex items-center gap-2 text-xs text-neutral-400">
+                <div class="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0"></div>
+                <span>{moveProgress}</span>
+              </div>
+            {/if}
+
+            {#if moveError}
+              <div class="rounded border border-red-800/50 bg-red-900/20 px-2 py-1.5 text-[11px] text-red-300">{moveError}</div>
+            {/if}
+          </div>
+
           <div>
             <label class="block text-xs text-neutral-400 mb-1">ComfyUI Installation</label>
             <input
@@ -492,19 +669,28 @@
           <div>
             <div class="flex items-center justify-between mb-1">
               <label class="block text-xs text-neutral-400">Shared Model Directories<span class="text-amber-400">*</span></label>
-              <button
-                class="px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
-                onclick={() => {
-                  if (config) {
-                    const current = config.extra_model_paths ?? "";
-                    config.extra_model_paths = current ? current + "\n" : "";
-                    checkRestartNeeded();
-                  }
-                }}
-                title="Add another model directory"
-              >
-                + Add Directory
-              </button>
+              <div class="flex gap-1.5">
+                <button
+                  class="px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
+                  onclick={scanForModelDirs}
+                  disabled={scanningModelDirs}
+                >
+                  {scanningModelDirs ? "Scanning..." : "Auto-Detect"}
+                </button>
+                <button
+                  class="px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
+                  onclick={() => {
+                    if (config) {
+                      const current = config.extra_model_paths ?? "";
+                      config.extra_model_paths = current ? current + "\n" : "";
+                      checkRestartNeeded();
+                    }
+                  }}
+                  title="Add another model directory"
+                >
+                  + Add Directory
+                </button>
+              </div>
             </div>
             {#each (config.extra_model_paths ?? "").split("\n") as dirPath, i}
               <div class="flex gap-1.5 mb-1.5">
@@ -540,7 +726,30 @@
                 {/if}
               </div>
             {/each}
-            <p class="text-[10px] text-neutral-500 mt-0.5">Point to existing model folders to share checkpoints, LoRAs, VAEs, etc. without duplicating files.</p>
+            <p class="text-[10px] text-neutral-500 mt-0.5">Point to a root models folder (e.g. from ComfyUI, A1111, or Forge). Subdirectories like checkpoints/, loras/, vae/ are detected automatically. You can also point directly to a folder containing model files.</p>
+
+            {#if detectedModelDirs.length > 0}
+              <div class="mt-2 space-y-1">
+                <p class="text-[10px] text-neutral-500">Found model directories from other tools:</p>
+                {#each detectedModelDirs as dir}
+                  <div class="flex items-center gap-1.5">
+                    <button
+                      class="flex-1 text-left px-2 py-1.5 rounded border border-neutral-700/50 bg-neutral-800/50 hover:border-indigo-500/50 transition-colors"
+                      onclick={() => addDetectedModelDir(dir.path)}
+                      title="Click to add"
+                    >
+                      <p class="text-[11px] text-neutral-300 truncate">{dir.path}</p>
+                      <p class="text-[10px] text-neutral-500">
+                        {dir.tool}
+                        {#if dir.has_checkpoints} · checkpoints{/if}
+                        {#if dir.has_loras} · LoRAs{/if}
+                        {#if dir.has_vae} · VAEs{/if}
+                      </p>
+                    </button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </div>
 
           <div>
@@ -788,6 +997,10 @@
                   Try again
                 </button>
               {/if}
+            </div>
+
+            <div class="rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2">
+              <p class="text-[11px] text-neutral-500">To install on a different drive, set the <span class="font-mono text-neutral-400">MOOSHIEUI_DATA_DIR</span> environment variable to your preferred path before launching.</p>
             </div>
           </div>
           {/if}

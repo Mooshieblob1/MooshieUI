@@ -68,6 +68,10 @@ const STYLE_PRESETS: StylePreset[] = [
 const ANIMA_POSITIVE_QUALITY = "year 2025, newest, masterpiece, best quality, score_9, score_8, safe, highres";
 const ANIMA_NEGATIVE_QUALITY = "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia";
 
+/** Quality tags auto-applied for Illustrious/NoobAI family models (SIH, NoobAI vpred, etc.) */
+const ILLUSTRIOUS_POSITIVE_QUALITY = "best quality, masterpiece, absurdres, newest, very aesthetic, year 2024";
+const ILLUSTRIOUS_NEGATIVE_QUALITY = "worst quality, bad quality, low quality, lowres, artistic error, bad anatomy, extra fingers, text, signature, watermark, long body, bad hands, cropped, username";
+
 class GenerationStore {
   mode = $state<"txt2img" | "img2img" | "inpainting">("txt2img");
   positivePrompt = $state("");
@@ -113,16 +117,39 @@ class GenerationStore {
   controlnetEndPercent = $state(1.0);
   promptHistory = $state<PromptHistoryEntry[]>([]);
 
+  /** Architecture detected from modelspec metadata, or null if not yet read. */
+  modelspecArchitecture = $state<string | null>(null);
+
   /** True when the selected model is an Anima variant (split diffusion model). */
   get isAnima(): boolean {
     return this.useSplitModel && (this.diffusionModel?.includes("anima") ?? false);
   }
 
-  /** Detect the base model architecture from the checkpoint/diffusion model name. */
-  get detectedArchitecture(): "sdxl" | "sd15" | "unknown" {
+  /** True when the selected model is an Illustrious/NoobAI family variant. */
+  get isIllustrious(): boolean {
+    return this.detectedArchitecture === "illustrious";
+  }
+
+  /** Detect the base model architecture from modelspec (authoritative) or filename (fallback).
+   *  Returns "illustrious" for NoobAI/Illustrious/vpred SDXL variants (need different ControlNets),
+   *  "sdxl" for standard SDXL eps, "sd15" for SD1.5, or "unknown". */
+  get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "unknown" {
     const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
+
+    // 1. Use modelspec architecture if available (definitive)
+    if (this.modelspecArchitecture) {
+      const arch = this.modelspecArchitecture.toLowerCase();
+      // Check for Illustrious/NoobAI family first (they report as SDXL arch but need special ControlNets)
+      if (name.includes("illustrious") || name.includes("noobai") || name.includes("noob") || name.includes("sih")) return "illustrious";
+      if (arch.includes("xl") || arch.includes("sdxl") || arch.includes("pony")) return "sdxl";
+      if (arch.includes("sd-1") || arch.includes("sd1") || arch.includes("v1-")) return "sd15";
+    }
+
+    // 2. Fall back to filename heuristics
     if (!name) return "unknown";
-    if (name.includes("sdxl") || name.includes("xl") || name.includes("sih") || name.includes("flux") || name.includes("pony")) return "sdxl";
+    // Illustrious/NoobAI/vpred SDXL variants — need dedicated ControlNets
+    if (name.includes("illustrious") || name.includes("noobai") || name.includes("noob") || name.includes("sih")) return "illustrious";
+    if (name.includes("sdxl") || name.includes("xl") || name.includes("flux") || name.includes("pony")) return "sdxl";
     if (name.includes("1.5") || name.includes("sd15") || name.includes("sd_15")) return "sd15";
     return "unknown";
   }
@@ -401,6 +428,12 @@ class GenerationStore {
     negativePrompt = this.isAnima
       ? this.mergeTagPrompts(negativePrompt, ANIMA_NEGATIVE_QUALITY)
       : negativePrompt;
+
+    // Auto-apply quality tags for Illustrious/NoobAI family (positive before, negative after)
+    if (this.isIllustrious) {
+      positivePrompt = this.mergeTagPrompts(ILLUSTRIOUS_POSITIVE_QUALITY, positivePrompt);
+      negativePrompt = this.mergeTagPrompts(negativePrompt, ILLUSTRIOUS_NEGATIVE_QUALITY);
+    }
 
     return {
       mode: this.mode,

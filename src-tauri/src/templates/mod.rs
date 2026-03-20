@@ -16,6 +16,8 @@ pub struct WorkflowResult {
     pub positive_source: (String, u32),
     pub negative_source: (String, u32),
     pub vae_source: (String, u32),
+    /// The KSampler node ID — needed to rewire positive/negative after ControlNet injection.
+    pub sampler_id: String,
 }
 
 /// Outputs from the model loading stage (checkpoint or split model).
@@ -159,6 +161,14 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
     if let Some(ref cn) = params.controlnet {
         if cn.enabled && cn.controlnet_model.is_some() && cn.image.is_some() {
             controlnet::inject_controlnet(&mut result, cn);
+
+            // Rewire the primary KSampler to use ControlNet-conditioned positive/negative
+            if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+                if let Some(inputs) = sampler_node.get_mut("inputs") {
+                    inputs["positive"] = json!([result.positive_source.0, result.positive_source.1]);
+                    inputs["negative"] = json!([result.negative_source.0, result.negative_source.1]);
+                }
+            }
         }
     }
 

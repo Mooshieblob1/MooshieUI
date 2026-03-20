@@ -39,6 +39,14 @@ fn emit_log(app: &AppHandle, line: &str) {
 }
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    // Prefer MOOSHIEUI_DATA_DIR env var for custom install locations,
+    // fall back to Tauri's platform-specific app data directory.
+    if let Ok(custom) = std::env::var("MOOSHIEUI_DATA_DIR") {
+        let p = PathBuf::from(custom.trim());
+        if !p.as_os_str().is_empty() {
+            return Ok(p);
+        }
+    }
     app.path()
         .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))
@@ -416,7 +424,7 @@ async fn step_create_venv(app: &AppHandle, base: &Path) -> Result<(), String> {
     run_logged(
         app,
         uv.to_str().unwrap(),
-        &["venv", venv_dir.to_str().unwrap(), "--python", "3.11"],
+        &["venv", venv_dir.to_str().unwrap(), "--python", "3.11", "--allow-existing"],
         &[("UV_PYTHON_INSTALL_DIR", &python_dir_str)],
     )
     .await
@@ -457,7 +465,28 @@ async fn detect_gpu_type() -> String {
         if Path::new("/opt/rocm").exists() {
             return "amd".to_string();
         }
-        // Windows: check for AMD GPU via WMI (rocm-smi won't exist on Windows)
+        // Linux: check for Intel Arc discrete GPU via sysfs
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
+                for entry in entries.flatten() {
+                    let vendor_path = entry.path().join("device/vendor");
+                    if let Ok(vendor) = std::fs::read_to_string(&vendor_path) {
+                        // Intel PCI vendor ID is 0x8086
+                        if vendor.trim() == "0x8086" {
+                            // Check if it's a discrete GPU (class 0x0300 = VGA controller)
+                            let class_path = entry.path().join("device/class");
+                            if let Ok(class) = std::fs::read_to_string(&class_path) {
+                                if class.trim().starts_with("0x0300") {
+                                    return "intel".to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Windows: check for discrete AMD/Intel GPUs via WMI (rocm-smi won't exist on Windows)
         #[cfg(target_os = "windows")]
         {
             let mut cmd = tokio::process::Command::new("powershell");
@@ -469,8 +498,15 @@ async fn detect_gpu_type() -> String {
             hide_window(&mut cmd);
             if let Ok(output) = cmd.output().await {
                 let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
-                if text.contains("radeon") || text.contains("amd") {
+                // Only match discrete AMD GPUs (RX series) — not integrated Radeon on Ryzen APUs.
+                // Integrated GPUs report as "AMD Radeon Graphics" or "AMD Radeon Vega X Graphics"
+                // and don't support ROCm. Discrete GPUs have "RX" in the name (RX 7900, RX 6800, etc.)
+                if text.contains("radeon rx") || text.contains("radeon pro w") {
                     return "amd".to_string();
+                }
+                // Intel Arc discrete GPUs (A770, A750, B580, etc.)
+                if text.contains("intel arc") || text.contains("arc a") || text.contains("arc b") {
+                    return "intel".to_string();
                 }
             }
         }
@@ -608,6 +644,20 @@ async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result
                     "torchaudio",
                     "--index-url",
                     index_url,
+                ],
+            )
+            .await
+        }
+        "intel" => {
+            uv_pip(
+                app,
+                base,
+                &[
+                    "torch",
+                    "torchvision",
+                    "torchaudio",
+                    "--index-url",
+                    "https://download.pytorch.org/whl/xpu",
                 ],
             )
             .await
@@ -803,12 +853,304 @@ fn recommended_vram_mode(vram_mb: u64) -> &'static str {
 #[tauri::command]
 pub async fn check_setup(app: AppHandle) -> Result<bool, String> {
     let dir = data_dir(&app)?;
-    Ok(dir.join(".setup_complete").exists())
+
+    // Fast path: setup marker exists
+    if dir.join(".setup_complete").exists() {
+        return Ok(true);
+    }
+
+    // Fallback: if the persisted config points to a valid ComfyUI installation,
+    // treat setup as complete. This handles the case where the data directory
+    // was moved or the marker file was lost.
+    let cfg = config::load_persisted_config();
+    let comfy_main = Path::new(&cfg.comfyui_path).join("main.py");
+    if comfy_main.exists() {
+        // Recreate the marker file so future checks are fast
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join(".setup_complete"), "");
+        log::info!("Recovered setup state: ComfyUI found at {}", cfg.comfyui_path);
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 #[tauri::command]
 pub async fn detect_gpu() -> Result<String, String> {
     Ok(detect_gpu_type().await)
+}
+
+/// Save a custom install location. Called before `run_setup` so the setup
+/// installs into the chosen directory instead of the platform default.
+#[tauri::command]
+pub async fn set_install_path(path: String) -> Result<(), String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Install path cannot be empty".to_string());
+    }
+    config::save_custom_data_dir(trimmed)?;
+    Ok(())
+}
+
+/// Return the current resolved data directory path so the frontend can show it.
+#[tauri::command]
+pub async fn get_install_path(app: AppHandle) -> Result<String, String> {
+    let dir = data_dir(&app)?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// Scan common locations for existing AI tool model directories.
+/// Returns a list of detected paths with metadata about which tool they belong to.
+#[tauri::command]
+pub async fn detect_model_directories() -> Result<Vec<DetectedModelDir>, String> {
+    Ok(scan_model_directories())
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct DetectedModelDir {
+    pub path: String,
+    pub tool: String,
+    pub has_checkpoints: bool,
+    pub has_loras: bool,
+    pub has_vae: bool,
+}
+
+fn scan_model_directories() -> Vec<DetectedModelDir> {
+    let mut results = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // Collect candidate directories based on platform
+    let mut candidates: Vec<(PathBuf, &str)> = Vec::new();
+
+    if let Some(home) = dirs::home_dir() {
+        // ComfyUI common locations
+        for name in &["ComfyUI", "comfyui"] {
+            candidates.push((home.join(name).join("models"), "ComfyUI"));
+            candidates.push((home.join("Desktop").join(name).join("models"), "ComfyUI"));
+            candidates.push((home.join("Documents").join(name).join("models"), "ComfyUI"));
+        }
+
+        // A1111 / Forge
+        for name in &[
+            "stable-diffusion-webui",
+            "stable-diffusion-webui-forge",
+            "sd-webui-forge",
+        ] {
+            candidates.push((home.join(name).join("models"), "A1111/Forge"));
+            candidates.push((home.join("Desktop").join(name).join("models"), "A1111/Forge"));
+        }
+
+        // SwarmUI
+        candidates.push((home.join("SwarmUI").join("Models"), "SwarmUI"));
+        candidates.push((home.join("StableSwarmUI").join("Models"), "SwarmUI"));
+
+        // StabilityMatrix
+        candidates.push((home.join("StabilityMatrix").join("Models"), "StabilityMatrix"));
+        candidates.push((home.join(".stabilitymatrix").join("Models"), "StabilityMatrix"));
+        candidates.push((
+            home.join("AppData").join("Roaming").join("StabilityMatrix").join("Models"),
+            "StabilityMatrix",
+        ));
+    }
+
+    // Windows: check common drive roots
+    #[cfg(target_os = "windows")]
+    {
+        for drive in &["C:", "D:", "E:", "F:", "G:"] {
+            let root = PathBuf::from(drive).join("\\");
+            for name in &["ComfyUI", "comfyui"] {
+                candidates.push((root.join(name).join("models"), "ComfyUI"));
+            }
+            for name in &[
+                "stable-diffusion-webui",
+                "stable-diffusion-webui-forge",
+            ] {
+                candidates.push((root.join(name).join("models"), "A1111/Forge"));
+            }
+            candidates.push((root.join("SwarmUI").join("Models"), "SwarmUI"));
+            candidates.push((root.join("StabilityMatrix").join("Models"), "StabilityMatrix"));
+        }
+    }
+
+    // Linux: check /opt and common locations
+    #[cfg(target_os = "linux")]
+    {
+        let opt = PathBuf::from("/opt");
+        candidates.push((opt.join("ComfyUI").join("models"), "ComfyUI"));
+        candidates.push((opt.join("stable-diffusion-webui").join("models"), "A1111/Forge"));
+    }
+
+    for (path, tool) in candidates {
+        if !path.exists() || !path.is_dir() {
+            continue;
+        }
+
+        // Canonicalize to avoid duplicates
+        let canonical = match path.canonicalize() {
+            Ok(p) => p.to_string_lossy().to_string(),
+            Err(_) => path.to_string_lossy().to_string(),
+        };
+        if !seen.insert(canonical.clone()) {
+            continue;
+        }
+
+        // Check what model types exist in this directory
+        let has_checkpoints = path.join("checkpoints").is_dir()
+            || path.join("Stable-diffusion").is_dir()
+            || path.join("StableDiffusion").is_dir();
+        let has_loras = path.join("loras").is_dir()
+            || path.join("Lora").is_dir()
+            || path.join("LyCORIS").is_dir();
+        let has_vae = path.join("vae").is_dir() || path.join("VAE").is_dir();
+
+        // Only include if it has at least one recognizable model directory
+        if has_checkpoints || has_loras || has_vae {
+            results.push(DetectedModelDir {
+                path: path.to_string_lossy().to_string(),
+                tool: tool.to_string(),
+                has_checkpoints,
+                has_loras,
+                has_vae,
+            });
+        }
+    }
+
+    results
+}
+
+/// Move the entire MooshieUI installation to a new directory.
+/// Copies all data, updates the bootstrap pointer, and rewrites config paths.
+#[tauri::command]
+pub async fn move_installation(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    new_path: String,
+) -> Result<(), String> {
+    let new_path = new_path.trim().to_string();
+    if new_path.is_empty() {
+        return Err("New path cannot be empty".to_string());
+    }
+
+    let current = data_dir(&app)?;
+    let dest = PathBuf::from(&new_path);
+
+    if current == dest {
+        return Err("New path is the same as the current location".to_string());
+    }
+
+    // Verify current installation exists
+    if !current.exists() {
+        return Err(format!("Current data directory does not exist: {}", current.display()));
+    }
+
+    // Create destination parent if needed
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create destination parent: {}", e))?;
+    }
+
+    // Check destination doesn't already have stuff (unless empty)
+    if dest.exists() && dest.is_dir() {
+        let is_empty = dest.read_dir()
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(false);
+        if !is_empty {
+            return Err(format!(
+                "Destination already exists and is not empty: {}. Choose an empty folder or a new path.",
+                dest.display()
+            ));
+        }
+    }
+
+    emit(&app, "move", "Stopping ComfyUI...", 5);
+
+    // Stop ComfyUI if running
+    if let Err(e) = crate::comfyui::process::stop_comfyui_process(&state).await {
+        log::warn!("Could not stop ComfyUI before move: {}", e);
+    }
+
+    emit(&app, "move", "Copying files to new location... This may take a few minutes.", 15);
+
+    // Copy the entire directory tree
+    copy_dir_recursive(&current, &dest)
+        .map_err(|e| format!("Failed to copy data: {}", e))?;
+
+    emit(&app, "move", "Updating configuration...", 85);
+
+    // Update config paths to point to new location
+    {
+        let mut cfg = state.config.write().await;
+        // Replace the old base path with the new one in comfyui_path and venv_path
+        let current_str = current.to_string_lossy().to_string();
+        let dest_str = dest.to_string_lossy().to_string();
+
+        if cfg.comfyui_path.starts_with(&current_str) {
+            cfg.comfyui_path = cfg.comfyui_path.replacen(&current_str, &dest_str, 1);
+        } else {
+            // Default layout
+            cfg.comfyui_path = dest.join("comfyui").to_string_lossy().to_string();
+        }
+
+        if cfg.venv_path.starts_with(&current_str) {
+            cfg.venv_path = cfg.venv_path.replacen(&current_str, &dest_str, 1);
+        } else {
+            cfg.venv_path = dest.join("venv").to_string_lossy().to_string();
+        }
+
+        // Save config to new location
+        let config_json = serde_json::to_string_pretty(&*cfg).map_err(|e| e.to_string())?;
+        std::fs::write(dest.join("config.json"), config_json)
+            .map_err(|e| format!("Failed to write config to new location: {}", e))?;
+    }
+
+    // Update bootstrap pointer
+    config::save_custom_data_dir(&new_path)?;
+
+    // Copy .setup_complete marker
+    if current.join(".setup_complete").exists() && !dest.join(".setup_complete").exists() {
+        let _ = std::fs::write(dest.join(".setup_complete"), "1");
+    }
+
+    emit(&app, "move", "Cleaning up old location...", 90);
+
+    // Remove old directory
+    if let Err(e) = std::fs::remove_dir_all(&current) {
+        log::warn!("Could not remove old data directory {}: {}. You may want to delete it manually.", current.display(), e);
+    }
+
+    emit(&app, "done", &format!("Installation moved to {}", dest.display()), 100);
+    Ok(())
+}
+
+/// Recursively copy a directory and all its contents.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else if file_type.is_symlink() {
+            // Preserve symlinks
+            let target = std::fs::read_link(&src_path)?;
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&target, &dst_path)?;
+            #[cfg(windows)]
+            {
+                if target.is_dir() {
+                    std::os::windows::fs::symlink_dir(&target, &dst_path)?;
+                } else {
+                    std::os::windows::fs::symlink_file(&target, &dst_path)?;
+                }
+            }
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -825,6 +1167,7 @@ pub async fn reinstall_pytorch(
         None => match gpu.as_str() {
             "nvidia" => "https://download.pytorch.org/whl/cu128",
             "amd" => amd_pytorch_index_url().await,
+            "intel" => "https://download.pytorch.org/whl/xpu",
             "mps" => "",
             _ => "https://download.pytorch.org/whl/cpu",
         },
@@ -849,7 +1192,15 @@ pub async fn reinstall_pytorch(
 }
 
 #[tauri::command]
-pub async fn run_setup(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+pub async fn run_setup(app: AppHandle, state: tauri::State<'_, AppState>, gpu_type: Option<String>, install_path: Option<String>) -> Result<(), String> {
+    // If user chose a custom install path, save it as the bootstrap pointer
+    // before anything else so all subsequent path resolution uses it.
+    if let Some(ref path) = install_path {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            config::save_custom_data_dir(trimmed)?;
+        }
+    }
     let base = data_dir(&app)?;
     std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
 
@@ -874,11 +1225,15 @@ pub async fn run_setup(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
     emit(&app, "venv", "Creating virtual environment...", 40);
     step_create_venv(&app, &base).await?;
 
-    // 5. Detect GPU + install PyTorch
-    let gpu = detect_gpu_type().await;
+    // 5. Use user-selected GPU type, or auto-detect if not provided
+    let gpu = match gpu_type {
+        Some(ref g) if !g.is_empty() => g.clone(),
+        _ => detect_gpu_type().await,
+    };
     let label = match gpu.as_str() {
         "nvidia" => "NVIDIA CUDA",
         "amd" => "AMD ROCm",
+        "intel" => "Intel XPU",
         "mps" => "Apple Metal",
         _ => "CPU",
     };
