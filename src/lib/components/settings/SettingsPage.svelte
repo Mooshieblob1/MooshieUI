@@ -202,12 +202,13 @@
     }
   }
 
+  let settingsCollapseSaveTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
-    try {
-      localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed));
-    } catch {
-      // Ignore persistence failures.
-    }
+    const val = JSON.stringify(collapsed);
+    if (settingsCollapseSaveTimer) clearTimeout(settingsCollapseSaveTimer);
+    settingsCollapseSaveTimer = setTimeout(() => {
+      try { localStorage.setItem(COLLAPSED_KEY, val); } catch {}
+    }, 300);
   });
 
   const sections = [
@@ -414,6 +415,23 @@
               <option value="remote">Remote (connect to existing server)</option>
             </select>
           </div>
+
+          {#if config.server_mode === "autolaunch"}
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm text-neutral-200">Auto-start ComfyUI on launch</p>
+              <p class="text-xs text-neutral-500">When disabled, you can start ComfyUI manually from the banner</p>
+            </div>
+            <button
+              class="w-10 h-5 rounded-full transition-colors cursor-pointer {config.auto_start !== false ? 'bg-indigo-600' : 'bg-neutral-700'}"
+              onclick={() => { config.auto_start = config.auto_start === false; autoSave(); }}
+              role="switch"
+              aria-checked={config.auto_start !== false}
+            >
+              <div class="w-4 h-4 rounded-full bg-white shadow transition-transform {config.auto_start !== false ? 'translate-x-5' : 'translate-x-0.5'}"></div>
+            </button>
+          </div>
+          {/if}
 
           <div class="grid grid-cols-3 gap-3">
             <div class="col-span-2">
@@ -919,6 +937,37 @@
                 <p class="text-xs text-neutral-500">Version {appVersion}</p>
               </div>
             </div>
+
+            <!-- What's New -->
+            <details class="rounded-lg border border-neutral-800 bg-neutral-950 overflow-hidden">
+              <summary class="px-3 py-2 text-xs font-medium text-neutral-300 hover:text-neutral-100 cursor-pointer select-none transition-colors">
+                What's New in v{appVersion}
+              </summary>
+              <div class="px-3 pb-3 pt-1 text-xs text-neutral-400 space-y-2">
+                <p class="text-neutral-300 font-medium">v0.2.7</p>
+                <ul class="list-disc list-inside space-y-0.5">
+                  <li>Model and Sampler are now separate, independently collapsible and draggable sections</li>
+                  <li>Section collapse states persist across tab switches and page reloads</li>
+                  <li>Optional manual ComfyUI startup — toggle "Auto-start" off in Connection settings</li>
+                  <li>Image panning with left click and middle mouse at any zoom level</li>
+                  <li>Performance: fixed event listener leak, debounced storage writes, removed backdrop-blur scroll jank</li>
+                </ul>
+                <p class="text-neutral-300 font-medium mt-3">v0.2.6</p>
+                <ul class="list-disc list-inside space-y-0.5">
+                  <li>Choose custom install location during setup (no longer forced to AppData)</li>
+                  <li>Move existing installation to a new drive/folder from Settings</li>
+                  <li>Auto-detect model directories from ComfyUI, A1111/Forge, SwarmUI, StabilityMatrix</li>
+                  <li>Fixed Model Hub search filters (file format, base model) returning errors</li>
+                  <li>Fixed infinite scroll not loading past 30 results</li>
+                  <li>Removed non-functional Status filter from Model Hub</li>
+                  <li>Settings sections now remember collapsed/expanded state</li>
+                  <li>App no longer re-triggers setup when AppData is moved</li>
+                  <li>ControlNet settings UI</li>
+                  <li>Mask editor for inpainting</li>
+                  <li>Download manager banner</li>
+                </ul>
+              </div>
+            </details>
 
             <div class="space-y-2">
               {#if updateState === "idle"}

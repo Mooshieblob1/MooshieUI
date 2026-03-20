@@ -49,8 +49,7 @@
   }
 
   function startLightboxPan(e: MouseEvent) {
-    if (e.button !== 0) return;
-    if (lbScale <= 1) return;
+    if (e.button !== 0 && e.button !== 1) return;
     lbPanning = true;
     lbPanStartX = e.clientX;
     lbPanStartY = e.clientY;
@@ -691,12 +690,15 @@
     await initApp();
   }
 
+  let autoStartEnabled = true; // will be read from config
+
   async function initApp() {
     // Apply UI preferences (theme, font scale) immediately
     try {
       const cfg = await getConfig();
       applyTheme(cfg.theme);
       applyFontScale(cfg.font_scale);
+      autoStartEnabled = cfg.auto_start !== false;
     } catch {
       // Config not ready yet, defaults are fine
     }
@@ -784,18 +786,22 @@
 
     // Start ComfyUI server — returns immediately, background task handles readiness
     // The backend will auto-connect WebSocket and emit comfyui:server_ready when done
-    try {
-      console.log("Starting ComfyUI...");
-      const result = await invoke<string>("start_comfyui");
-      console.log("start_comfyui returned:", result);
-      if (result === "spawned") {
-        startupStatus = "Starting ComfyUI...";
-      } else if (result === "already_running") {
-        startupStatus = "Connecting...";
+    if (autoStartEnabled) {
+      try {
+        console.log("Starting ComfyUI...");
+        const result = await invoke<string>("start_comfyui");
+        console.log("start_comfyui returned:", result);
+        if (result === "spawned") {
+          startupStatus = "Starting ComfyUI...";
+        } else if (result === "already_running") {
+          startupStatus = "Connecting...";
+        }
+      } catch (e) {
+        console.error("Failed to start ComfyUI:", e);
+        startupStatus = `Failed to start: ${e}`;
       }
-    } catch (e) {
-      console.error("Failed to start ComfyUI:", e);
-      startupStatus = `Failed to start: ${e}`;
+    } else {
+      startupStatus = "ComfyUI not started (auto-start disabled)";
     }
 
     // Load persisted gallery images from disk (independent of server status)
@@ -988,8 +994,28 @@
     <DownloadBanner />
     {#if startupStatus && !connection.connected}
       <div class="flex items-center gap-2 px-4 py-2 bg-amber-900/30 border-b border-amber-800/50 text-amber-200 text-sm">
-        <div class="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
-        {startupStatus}
+        {#if !autoStartEnabled && !startupStatus.startsWith("Starting") && !startupStatus.startsWith("Connecting")}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          {startupStatus}
+          <button
+            class="ml-2 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs transition-colors cursor-pointer"
+            onclick={async () => {
+              try {
+                startupStatus = "Starting ComfyUI...";
+                const result = await invoke<string>("start_comfyui");
+                if (result === "spawned") startupStatus = "Starting ComfyUI...";
+                else if (result === "already_running") startupStatus = "Connecting...";
+              } catch (e) {
+                startupStatus = `Failed to start: ${e}`;
+              }
+            }}
+          >
+            Start ComfyUI
+          </button>
+        {:else}
+          <div class="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
+          {startupStatus}
+        {/if}
       </div>
     {/if}
     <div class="flex-1 overflow-hidden">
@@ -1171,26 +1197,26 @@
                           {boardLabel(image)}
                         </div>
                         <div class="absolute inset-0 p-3 flex flex-wrap items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                          <button class="h-9 px-3 flex items-center justify-center rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold backdrop-blur-sm shadow-lg pointer-events-auto" title="Image to Image" onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold backdrop-blur-sm shadow-lg pointer-events-auto" title="Inpaint" onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}>
+                          <button class="h-9 px-3 flex items-center justify-center rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold shadow-lg pointer-events-auto" title="Image to Image" onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
+                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold shadow-lg pointer-events-auto" title="Inpaint" onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
                             Inpaint
                           </button>
                           {#if !image.is_upscaled}
-                            <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold backdrop-blur-sm shadow-lg pointer-events-auto" title="Upscale" onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}>
+                            <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold shadow-lg pointer-events-auto" title="Upscale" onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}>
                               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
                               Upscale
                             </button>
                           {/if}
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-neutral-900/90 hover:bg-neutral-700 text-neutral-100 text-xs font-semibold backdrop-blur-sm shadow-lg pointer-events-auto" title="Save As" onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>
+                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-neutral-900/90 hover:bg-neutral-700 text-neutral-100 text-xs font-semibold shadow-lg pointer-events-auto" title="Save As" onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                             Save
                           </button>
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-neutral-900/90 hover:bg-neutral-700 text-neutral-100 text-xs font-semibold backdrop-blur-sm shadow-lg pointer-events-auto" title="Copy" onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}>
+                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-neutral-900/90 hover:bg-neutral-700 text-neutral-100 text-xs font-semibold shadow-lg pointer-events-auto" title="Copy" onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                             Copy
                           </button>
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-red-900/85 hover:bg-red-800 text-neutral-100 text-xs font-semibold backdrop-blur-sm shadow-lg pointer-events-auto" title="Delete" onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}>
+                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-red-900/85 hover:bg-red-800 text-neutral-100 text-xs font-semibold shadow-lg pointer-events-auto" title="Delete" onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                             Delete
                           </button>
@@ -1328,14 +1354,14 @@
       {#if gallery.selectedImage}
       <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-10">
         <button
-          class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm transition-colors"
           onclick={() => gallery.selectedImage && img2imgImage(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
           Image to Image
         </button>
         <button
-          class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm transition-colors"
           onclick={() => gallery.selectedImage && inpaintImage(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
@@ -1343,7 +1369,7 @@
         </button>
         {#if gallery.selectedImage && !gallery.selectedImage.is_upscaled}
           <button
-            class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+            class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm transition-colors"
             onclick={() => gallery.selectedImage && upscaleImage(gallery.selectedImage)}
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
@@ -1351,28 +1377,28 @@
           </button>
         {/if}
         <button
-          class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm transition-colors"
           onclick={() => gallery.selectedImage && gallery.saveImageAs(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Save As
         </button>
         <button
-          class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm transition-colors"
           onclick={() => gallery.selectedImage && gallery.copyToClipboard(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           Copy
         </button>
         <button
-          class="flex items-center gap-2 px-4 py-2 bg-emerald-700/80 hover:bg-emerald-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          class="flex items-center gap-2 px-4 py-2 bg-emerald-700/80 hover:bg-emerald-600 text-neutral-100 rounded-lg text-sm transition-colors"
           onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Apply Metadata
         </button>
         <button
-          class="flex items-center gap-2 px-4 py-2 bg-red-900/60 hover:bg-red-800 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          class="flex items-center gap-2 px-4 py-2 bg-red-900/60 hover:bg-red-800 text-neutral-100 rounded-lg text-sm transition-colors"
           onclick={() => gallery.selectedImage && gallery.deleteImage(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -1386,14 +1412,15 @@
         <img
           src={gallery.selectedImage?.url ?? gallery.lightboxUrl ?? ''}
           alt={gallery.selectedImage?.filename ?? 'Preview'}
-          class="max-w-full max-h-[85vh] object-contain select-none {lbScale > 1 ? (lbPanning ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}"
+          class="max-w-full max-h-[85vh] object-contain select-none {lbPanning ? 'cursor-grabbing' : 'cursor-grab'}"
           draggable="false"
           style="transform: translate({lbOffsetX}px, {lbOffsetY}px) scale({lbScale}); transform-origin: center center; transition: {lbPanning ? 'none' : 'transform 0.12s ease'};"
           onwheel={zoomLightboxAtCursor}
-          onmousedown={startLightboxPan}
+          onmousedown={(e) => { if (e.button === 1) e.preventDefault(); startLightboxPan(e); }}
           onmousemove={updateLightboxPan}
           onmouseup={stopLightboxPan}
           onmouseleave={stopLightboxPan}
+          onauxclick={(e) => e.preventDefault()}
           ondblclick={resetLightboxZoom}
         />
       {/if}

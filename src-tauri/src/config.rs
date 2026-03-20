@@ -21,6 +21,8 @@ pub struct AppConfig {
     pub vram_mode: String,
     /// Keep ComfyUI running after the app closes (default: false)
     pub keep_alive: bool,
+    /// Automatically start ComfyUI when the app launches (default: true)
+    pub auto_start: bool,
     /// UI theme: "dark", "light"
     pub theme: String,
     /// UI font scale multiplier (1.0 = default)
@@ -57,6 +59,7 @@ impl Default for AppConfig {
             default_height: 1024,
             vram_mode: "normal".to_string(),
             keep_alive: false,
+            auto_start: true,
             theme: "dark".to_string(),
             font_scale: 1.0,
             setup_complete: false,

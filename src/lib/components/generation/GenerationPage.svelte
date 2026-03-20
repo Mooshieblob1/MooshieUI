@@ -30,7 +30,8 @@
     | "imageInputs"
     | "inpaintLayers"
     | "generationSettings"
-    | "modelSampler"
+    | "model"
+    | "sampler"
     | "controlnet"
     | "upscaleHistory";
 
@@ -78,7 +79,8 @@
     imageInputs: "left",
     inpaintLayers: "right",
     generationSettings: "right",
-    modelSampler: "right",
+    model: "right",
+    sampler: "right",
     controlnet: "right",
     upscaleHistory: "right",
   });
@@ -104,7 +106,8 @@
     "imageInputs",
     "inpaintLayers",
     "generationSettings",
-    "modelSampler",
+    "model",
+    "sampler",
     "controlnet",
     "upscaleHistory",
   ];
@@ -118,6 +121,16 @@
     const out: SectionId[] = [];
     for (const item of order) {
       if (typeof item !== "string") continue;
+      // Migrate legacy "modelSampler" → "model" + "sampler"
+      if (item === "modelSampler") {
+        for (const replacement of ["model", "sampler"] as SectionId[]) {
+          if (!seen.has(replacement)) {
+            seen.add(replacement);
+            out.push(replacement);
+          }
+        }
+        continue;
+      }
       const id = item as SectionId;
       if (!allowed.has(id) || seen.has(id)) continue;
       seen.add(id);
@@ -142,10 +155,18 @@
             ? (parsed.sides ?? {})
             : (parsed as Partial<Record<SectionId, SectionSide>>);
 
+        // Migrate legacy "modelSampler" side to both "model" and "sampler"
+        const entries = Object.entries(rawSides).filter(([, side]) => side === "left" || side === "right");
+        const legacyModelSampler = entries.find(([key]) => key === "modelSampler");
+        if (legacyModelSampler) {
+          const side = legacyModelSampler[1] as SectionSide;
+          entries.push(["model", side], ["sampler", side]);
+        }
+
         sectionSides = {
           ...sectionSides,
           ...Object.fromEntries(
-            Object.entries(rawSides).filter(([, side]) => side === "left" || side === "right")
+            entries.filter(([key]) => key !== "modelSampler")
           ) as Partial<Record<SectionId, SectionSide>>,
         };
 
@@ -181,10 +202,12 @@
     loadSectionPlacement();
   }
 
+  let layoutSaveTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
     void sectionSides;
     void sectionOrder;
-    saveSectionPlacement();
+    if (layoutSaveTimer) clearTimeout(layoutSaveTimer);
+    layoutSaveTimer = setTimeout(() => saveSectionPlacement(), 300);
   });
 
   function startSectionDrag(section: SectionId, e: MouseEvent) {
@@ -220,7 +243,8 @@
     if (section === "imageInputs") return "Image Inputs";
     if (section === "inpaintLayers") return "Inpainting & Layers";
     if (section === "generationSettings") return "Generation Settings";
-    if (section === "modelSampler") return "Model & Sampler";
+    if (section === "model") return "Model";
+    if (section === "sampler") return "Sampler";
     return "Upscale";
   }
 
@@ -234,7 +258,8 @@
     if (section === "imageInputs") return generation.mode !== "txt2img";
     if (section === "inpaintLayers") return generation.mode === "inpainting";
     if (section === "generationSettings") return generation.mode === "inpainting";
-    if (section === "modelSampler") return generation.mode !== "inpainting";
+    if (section === "model") return generation.mode !== "inpainting";
+    if (section === "sampler") return generation.mode !== "inpainting";
     if (section === "upscaleHistory") return generation.mode !== "inpainting";
     return true;
   }
@@ -253,14 +278,46 @@
   const leftRenderSections = $derived(leftSections.filter((id) => id !== draggingSection));
   const rightRenderSections = $derived(rightSections.filter((id) => id !== draggingSection));
 
-  let dimensionsSectionOpen = $state(true);
-  let imageSectionOpen = $state(true);
-  let layersSectionOpen = $state(true);
-  let sessionSectionOpen = $state(true);
-  let controlsSectionOpen = $state(true);
-  let modelSectionOpen = $state(true);
-  let controlnetSectionOpen = $state(true);
-  let postSectionOpen = $state(true);
+  const COLLAPSE_KEY = "mooshieui.generation.sections.collapsed.v1";
+
+  function loadCollapseState(): Record<string, boolean> {
+    try {
+      const raw = localStorage.getItem(COLLAPSE_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return {};
+  }
+
+  const savedCollapse = typeof window !== "undefined" ? loadCollapseState() : {};
+
+  let dimensionsSectionOpen = $state(savedCollapse.dimensions !== false);
+  let imageSectionOpen = $state(savedCollapse.imageInputs !== false);
+  let layersSectionOpen = $state(savedCollapse.inpaintLayers !== false);
+  let sessionSectionOpen = $state(savedCollapse.sessionHistory !== false);
+  let controlsSectionOpen = $state(savedCollapse.generationSettings !== false);
+  let modelSectionOpen = $state(savedCollapse.model !== false);
+  let samplerSectionOpen = $state(savedCollapse.sampler !== false);
+  let controlnetSectionOpen = $state(savedCollapse.controlnet !== false);
+  let postSectionOpen = $state(savedCollapse.upscaleHistory !== false);
+
+  let collapseSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const state: Record<string, boolean> = {
+      dimensions: dimensionsSectionOpen,
+      imageInputs: imageSectionOpen,
+      inpaintLayers: layersSectionOpen,
+      sessionHistory: sessionSectionOpen,
+      generationSettings: controlsSectionOpen,
+      model: modelSectionOpen,
+      sampler: samplerSectionOpen,
+      controlnet: controlnetSectionOpen,
+      upscaleHistory: postSectionOpen,
+    };
+    if (collapseSaveTimer) clearTimeout(collapseSaveTimer);
+    collapseSaveTimer = setTimeout(() => {
+      try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(state)); } catch {}
+    }, 300);
+  });
 
   const MAX_INPUT_PIXELS = 1024 * 1024;
 
@@ -1194,26 +1251,43 @@
     </div>
   {/snippet}
 
-  {#snippet modelSamplerSection()}
-    <div bind:this={sectionRefs['modelSampler']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'modelSampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+  {#snippet modelSection()}
+    <div bind:this={sectionRefs['model']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'model' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("modelSampler")}
+        {@render dragHandle("model")}
         <button
           class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (modelSectionOpen = !modelSectionOpen)}
-          title={modelSectionOpen ? "Collapse Model & Sampler" : "Expand Model & Sampler"}
+          title={modelSectionOpen ? "Collapse Model" : "Expand Model"}
         >
-          <span class="font-medium">Model & Sampler</span>
+          <span class="font-medium">Model</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {modelSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
       {#if modelSectionOpen}
         <div class="px-3 pb-3 pt-1 space-y-4">
           <ModelSelector />
+        </div>
+      {/if}
+    </div>
+  {/snippet}
 
-          <div class="border-t border-neutral-800 pt-4">
-            <SamplerSettings />
-          </div>
+  {#snippet samplerSection()}
+    <div bind:this={sectionRefs['sampler']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'sampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("sampler")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (samplerSectionOpen = !samplerSectionOpen)}
+          title={samplerSectionOpen ? "Collapse Sampler" : "Expand Sampler"}
+        >
+          <span class="font-medium">Sampler</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {samplerSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if samplerSectionOpen}
+        <div class="px-3 pb-3 pt-1 space-y-4">
+          <SamplerSettings />
         </div>
       {/if}
     </div>
@@ -1276,8 +1350,10 @@
       {@render inpaintLayersSection()}
     {:else if section === "generationSettings"}
       {@render generationSettingsSection()}
-    {:else if section === "modelSampler"}
-      {@render modelSamplerSection()}
+    {:else if section === "model"}
+      {@render modelSection()}
+    {:else if section === "sampler"}
+      {@render samplerSection()}
     {:else if section === "controlnet"}
       {@render controlnetSection()}
     {:else if section === "upscaleHistory"}
@@ -1345,7 +1421,7 @@
         {/each}
 
         {#if controlsSide === "left"}
-          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950/95 backdrop-blur-sm rounded-t-lg px-3 pt-3 pb-4">
+          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-4">
             <h3 class="text-xs text-neutral-400 mb-2 font-medium">Generate</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
@@ -1437,7 +1513,7 @@
         {/each}
 
         {#if controlsSide === "right"}
-          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950/95 backdrop-blur-sm rounded-t-lg px-3 pt-3 pb-4">
+          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-4">
             <h3 class="text-xs text-neutral-400 mb-2 font-medium">Generate</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>

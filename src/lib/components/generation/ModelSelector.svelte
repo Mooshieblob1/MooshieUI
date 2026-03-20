@@ -4,7 +4,7 @@
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { downloadModel, findModelByHash, hashModelFile, readModelSpec, type ModelSpec } from "../../utils/api.js";
   import { listen } from "@tauri-apps/api/event";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
 
   interface ModelFile {
@@ -270,8 +270,10 @@
     }
   }
 
+  let unlistenDownload: (() => void) | null = null;
+
   onMount(async () => {
-    await listen("download:progress", (event: any) => {
+    unlistenDownload = await listen("download:progress", (event: any) => {
       const data = event.payload as {
         filename: string;
         downloaded: number;
@@ -291,6 +293,10 @@
 
     // Resolve model hashes in background
     resolveModelHashes();
+  });
+
+  onDestroy(() => {
+    unlistenDownload?.();
   });
 
   const activeLoraCount = $derived(
@@ -329,6 +335,22 @@
     return false;
   }
 
+  /** Set of filenames belonging to recommended models — rebuilt only when hash resolution changes */
+  const recommendedFilenames = $derived(() => {
+    return new Set(
+      recommendedModels
+        .filter((r) => r.checkpoint)
+        .flatMap((r) => {
+          const names = [r.checkpoint!.filename];
+          if (r.checkpoint!.hash) {
+            const resolved = hashResolved[`${r.checkpoint!.category}::${r.checkpoint!.hash}`];
+            if (resolved) names.push(resolved);
+          }
+          return names;
+        })
+    );
+  });
+
   /** Combine installed checkpoints + recommended models into a single filtered list */
   const filteredItems = $derived(() => {
     const q = checkpointSearch.toLowerCase();
@@ -350,21 +372,9 @@
     }
 
     // Add regular checkpoints (skip ones that match a recommended model by filename or hash)
-    const recommendedFilenames = new Set(
-      recommendedModels
-        .filter((r) => r.checkpoint)
-        .flatMap((r) => {
-          const names = [r.checkpoint!.filename];
-          // Also exclude the hash-resolved filename if it differs
-          if (r.checkpoint!.hash) {
-            const resolved = hashResolved[`${r.checkpoint!.category}::${r.checkpoint!.hash}`];
-            if (resolved) names.push(resolved);
-          }
-          return names;
-        })
-    );
+    const excluded = recommendedFilenames();
     for (const ckpt of models.checkpoints) {
-      if (recommendedFilenames.has(ckpt)) continue;
+      if (excluded.has(ckpt)) continue;
       if (!q || ckpt.toLowerCase().includes(q)) {
         items.push({
           type: "checkpoint",
