@@ -266,9 +266,7 @@ Both methods:
 
 ## 🚧 Roadmap
 
-Features planned or in progress:
-
-### Coming Soon
+### Done
 - [x] **Image upload** for img2img and inpainting modes
 - [x] **Inpainting canvas** — paint masks directly on images in the UI
 - [x] **Queue management page** — view and cancel queued generations
@@ -282,7 +280,7 @@ Features planned or in progress:
 - [x] **Live generation preview** — latent previews streamed via WebSocket during KSampler
 - [x] **Phase-aware progress** — shows "Generating..." / "Upscaling..." / "Preparing..." with step counters
 - [x] **5D latent tiled diffusion** — MultiDiffusion/SpotDiffusion compatible with Anima (COSMOS) models
-- [x] **Lightbox zoom & dismiss** — scroll-wheel zoom at cursor, Escape/click-outside to close
+- [x] **Lightbox zoom & dismiss** — scroll-wheel zoom at cursor, Escape/click-outside to close, pan with left or middle mouse
 - [x] **Clipboard copy as file** — copies gallery images as file references (preserves format & metadata)
 - [x] **Windows & Linux builds** — cross-platform CI releases (Windows .msi/.exe, Linux .deb/.AppImage)
 - [x] **Hash-based model detection** — SHA256/AutoV2 hash identification with CivitAI API integration, models recognized even if renamed
@@ -297,19 +295,20 @@ Features planned or in progress:
 - [x] **Style presets (Fooocus-style)** — one-click style modifiers for beginner-friendly prompting
 - [x] **Shared model directory** — point to an external/shared models folder from settings
 - [x] **Model-specific presets** — auto-applies defaults based on detected model architecture
-
 - [x] **Model Hub** — browse CivitAI models with image previews and metadata directly in the app; download with one click; HuggingFace direct URL support; NSFW content filtering with blurred badges; API key setup with guided instructions; expanded base model filters (NoobAI, Pony, Illustrious, SD 3.5, Flux, etc.)
 - [x] **ModelSpec support** — reads Stability AI ModelSpec metadata from safetensors headers; displays model title, author, architecture, resolution, trigger phrases (click to add to prompt), tags, and usage hints in the model selector
 - [x] **Native clipboard** — copies images via native OS clipboard (Wayland `wl-copy` and X11 `xclip` with automatic detection)
-
-### Planned
-- [ ] **ControlNet support** — depth, canny, pose, and other control methods
-- [ ] **Batch queue** — queue multiple generations with different settings
-- [ ] **Theme customization** — light mode, accent colors, custom themes
 - [x] **Auto-update** — check for and apply MooshieUI updates in-app
-- [ ] **Localization** — multi-language support
+- [x] **ControlNet support** — depth, canny, pose, and other control methods with preset-based and custom modes, image upload/paste/drag-drop, preprocessor installation, strength/start/end controls
+- [x] **Dark & light mode** — toggle between dark and light themes in settings
+- [x] **Draggable two-column layout** — drag sections between left/right columns and reorder them; layout persists across sessions
+- [x] **Manual ComfyUI start** — optional toggle to start ComfyUI manually instead of on app launch
+- [x] **Movable installation** — relocate the ComfyUI data directory to another drive from settings
 
-### Stretch Goals
+### To Do
+- [ ] **Batch queue** — queue multiple generations with different settings
+- [ ] **Theme customization** — custom accent colors and themes
+- [ ] **Localization** — multi-language support
 - [ ] **Video generation** — AnimateDiff / COSMOS video workflows
 - [ ] **Training UI** — LoRA training from within the app
 - [ ] **Plugin system** — extend MooshieUI with custom panels and features
