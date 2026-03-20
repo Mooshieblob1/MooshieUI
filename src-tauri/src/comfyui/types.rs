@@ -99,4 +99,30 @@ pub struct GenerationParams {
     /// CLIP model type for CLIPLoader (e.g. "wan", "sd3", etc.)
     #[serde(default)]
     pub clip_type: Option<String>,
+    /// Optional ControlNet parameters
+    #[serde(default)]
+    pub controlnet: Option<ControlNetParam>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlNetParam {
+    #[serde(default)]
+    pub enabled: bool,
+    pub controlnet_model: Option<String>,
+    pub image: Option<String>,
+    pub preprocessor: Option<String>,
+    #[serde(default = "default_strength")]
+    pub strength: f64,
+    #[serde(default)]
+    pub start_percent: f64,
+    #[serde(default = "default_end_percent")]
+    pub end_percent: f64,
+}
+
+fn default_strength() -> f64 {
+    1.0
+}
+
+fn default_end_percent() -> f64 {
+    1.0
 }

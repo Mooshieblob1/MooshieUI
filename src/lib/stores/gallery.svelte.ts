@@ -299,23 +299,18 @@ class GalleryStore {
     }
   }
 
-  /** Copy a gallery image file to clipboard by filename. */
+  /** Copy a blob URL image to clipboard via native Tauri clipboard. */
   async copyBlobToClipboard(blobUrl: string) {
     try {
       const response = await fetch(blobUrl);
       const blob = await response.blob();
+      const arrayBuf = await blob.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(arrayBuf));
 
-      if (!navigator.clipboard || typeof ClipboardItem === "undefined") {
-        this.showToast("Clipboard API unavailable in this environment", "error");
-        return;
-      }
-
-      const type = blob.type || "image/png";
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          [type]: blob,
-        }),
-      ]);
+      // Write to a temp file, then use native clipboard
+      const tmpPath = `/tmp/mooshieui_clipboard_${Date.now()}.png`;
+      await saveImageFile(bytes, tmpPath);
+      await copyImageToClipboard(tmpPath);
       this.showToast("Copied to clipboard", "success");
     } catch (e) {
       console.error("Failed to copy blob to clipboard:", e);

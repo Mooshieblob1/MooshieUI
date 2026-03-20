@@ -1,5 +1,6 @@
 import { load } from "@tauri-apps/plugin-store";
 import builtinTags from "../assets/danbooru-tags.json";
+import animaTags from "../assets/anima-tags.json";
 
 export interface TagEntry {
   n: string; // name
@@ -35,13 +36,14 @@ class AutocompleteStore {
   private _store: Awaited<ReturnType<typeof load>> | null = null;
   private _customTags: TagEntry[] | null = null;
   private _searchEntries: SearchEntry[] = [];
+  private _isAnima = false;
 
   constructor() {
     this.rebuildSearchIndex(this.tags);
   }
 
   private normalizeQuery(text: string): string {
-    return text.toLowerCase().trim().replace(/\s+/g, "_");
+    return text.toLowerCase().trim().replace(/\s+/g, "_").replace(/\\/g, "");
   }
 
   private rebuildSearchIndex(tags: TagEntry[]) {
@@ -109,6 +111,10 @@ class AutocompleteStore {
           if (this.sourceMode !== "builtin" && this._customTags) {
             this.setTags(this._customTags);
           }
+        }
+        // Apply model-aware builtin tags after settings load
+        if (this.sourceMode === "builtin" && this._isAnima) {
+          this.setTags(animaTags as TagEntry[]);
         }
       }
     } catch (e) {
@@ -215,15 +221,24 @@ class AutocompleteStore {
     }
   }
 
-  /** Reset to built-in danbooru tags */
+  /** Reset to built-in tags (model-aware: Anima gets its own tag list) */
   async resetToBuiltin() {
     this._customTags = null;
-    this.setTags(builtinTags as TagEntry[]);
+    this.setTags(this._isAnima ? (animaTags as TagEntry[]) : (builtinTags as TagEntry[]));
     this.sourceMode = "builtin";
     this.sourceUrl = "";
     this.sourceFileName = "";
     this.error = null;
     await this.saveSettings();
+  }
+
+  /** Notify autocomplete that the active model changed. Swaps builtin tags for Anima when appropriate. */
+  notifyModelChanged(isAnima: boolean) {
+    if (this._isAnima === isAnima) return;
+    this._isAnima = isAnima;
+    if (this.sourceMode === "builtin") {
+      this.setTags(isAnima ? (animaTags as TagEntry[]) : (builtinTags as TagEntry[]));
+    }
   }
 
   /** Update max results and persist */

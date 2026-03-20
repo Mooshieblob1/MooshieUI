@@ -292,14 +292,17 @@ Features planned or in progress:
 - [x] **Version display** — app version shown in sidebar below connection status
 - [x] **Download progress** — real-time progress bars with file size for all model downloads (checkpoints, VAEs, upscale models)
 - [x] **Drag & drop** — drop images and masks directly into img2img/inpainting inputs
-- [x] **Image metadata (PNG/A1111-style)** — embed generation params into PNG text chunks, read them in lightbox, and reapply settings
+- [x] **Image metadata (SwarmUI-compatible)** — embed generation params as SwarmUI JSON into PNG text chunks, read them in lightbox with resizable side panel, backward-compatible with A1111 format
 - [x] **Prompt history & favorites** — auto-saves generated prompts with quick reload and starring
 - [x] **Style presets (Fooocus-style)** — one-click style modifiers for beginner-friendly prompting
 - [x] **Shared model directory** — point to an external/shared models folder from settings
 - [x] **Model-specific presets** — auto-applies defaults based on detected model architecture
 
+- [x] **Model Hub** — browse CivitAI models with image previews and metadata directly in the app; download with one click; HuggingFace direct URL support; NSFW content filtering with blurred badges; API key setup with guided instructions; expanded base model filters (NoobAI, Pony, Illustrious, SD 3.5, Flux, etc.)
+- [x] **ModelSpec support** — reads Stability AI ModelSpec metadata from safetensors headers; displays model title, author, architecture, resolution, trigger phrases (click to add to prompt), tags, and usage hints in the model selector
+- [x] **Native clipboard** — copies images via native OS clipboard (Wayland `wl-copy` and X11 `xclip` with automatic detection)
+
 ### Planned
-- [ ] **Model Hub** — browse CivitAI models with image previews and metadata (ratings, tags, sample images) directly in the app; download with one click to the correct ComfyUI folder; also accept HuggingFace URLs as an alternative download source; hash-based model recognition so renamed files are still identified
 - [ ] **ControlNet support** — depth, canny, pose, and other control methods
 - [ ] **Batch queue** — queue multiple generations with different settings
 - [ ] **Theme customization** — light mode, accent colors, custom themes

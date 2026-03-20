@@ -1,6 +1,6 @@
 use serde_json::Value;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use sha2::{Sha256, Digest};
 use std::io::Read;
 use std::collections::BTreeSet;
@@ -358,31 +358,78 @@ pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> 
     #[cfg(target_os = "linux")]
     {
         use std::io::Write;
-        let uri = format!("file://{}\n", canonical.display());
+        let image_bytes = std::fs::read(&canonical)
+            .map_err(|e| AppError::Other(format!("Failed to read image file: {}", e)))?;
 
-        // Try xclip (X11), fall back to wl-copy (Wayland)
-        let result = Command::new("xclip")
-            .args(["-selection", "clipboard", "-t", "text/uri-list"])
-            .stdin(Stdio::piped())
-            .spawn();
+        let mime_type = match canonical
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("jpg") | Some("jpeg") => "image/jpeg",
+            Some("webp") => "image/webp",
+            _ => "image/png",
+        };
 
-        let mut child = match result {
-            Ok(child) => child,
-            Err(_) => {
-                Command::new("wl-copy")
-                    .args(["--type", "text/uri-list"])
-                    .stdin(Stdio::piped())
-                    .spawn()
-                    .map_err(|e| AppError::Other(format!(
-                        "No clipboard tool found (tried xclip, wl-copy): {}", e
-                    )))?
+        let run_clipboard_command = |program: &str, args: &[&str]| -> Result<(), String> {
+            let mut child = Command::new(program)
+                .args(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| format!("{} spawn failed: {}", program, e))?;
+
+            if let Some(ref mut stdin) = child.stdin {
+                stdin
+                    .write_all(&image_bytes)
+                    .map_err(|e| format!("{} stdin write failed: {}", program, e))?;
+            }
+
+            let output = child
+                .wait_with_output()
+                .map_err(|e| format!("{} wait failed: {}", program, e))?;
+
+            if output.status.success() {
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(format!("{} exited with {}: {}", program, output.status, stderr.trim()))
             }
         };
 
-        if let Some(ref mut stdin) = child.stdin {
-            stdin.write_all(uri.as_bytes())?;
+        // Detect Wayland vs X11 and try the appropriate tool first.
+        let on_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+            || std::env::var("XDG_SESSION_TYPE")
+                .map(|v| v == "wayland")
+                .unwrap_or(false);
+
+        let (primary, primary_args, fallback, fallback_args): (&str, &[&str], &str, &[&str]) =
+            if on_wayland {
+                (
+                    "wl-copy",
+                    &["--type", mime_type] as &[&str],
+                    "xclip",
+                    &["-selection", "clipboard", "-t", mime_type, "-i"] as &[&str],
+                )
+            } else {
+                (
+                    "xclip",
+                    &["-selection", "clipboard", "-t", mime_type, "-i"] as &[&str],
+                    "wl-copy",
+                    &["--type", mime_type] as &[&str],
+                )
+            };
+
+        if let Err(primary_err) = run_clipboard_command(primary, primary_args) {
+            run_clipboard_command(fallback, fallback_args).map_err(|fallback_err| {
+                AppError::Other(format!(
+                    "Clipboard copy failed ({} and {}). {}: {} | {}: {}",
+                    primary, fallback, primary, primary_err, fallback, fallback_err
+                ))
+            })?;
         }
-        child.wait().map_err(|e| AppError::Other(format!("Clipboard tool failed: {}", e)))?;
     }
 
     #[cfg(target_os = "macos")]
@@ -419,6 +466,71 @@ pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> 
         }
     }
 
+    Ok(())
+}
+
+/// Check if a ComfyUI node class is available (used to detect custom node packages).
+#[tauri::command]
+pub async fn check_node_available(
+    state: State<'_, AppState>,
+    node_class: String,
+) -> Result<bool, AppError> {
+    match state.api_get(&format!("/object_info/{}", node_class)).await {
+        Ok(val) => Ok(val.get(&node_class).is_some()),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Install a custom node from a git repository into ComfyUI's custom_nodes directory.
+#[tauri::command]
+pub async fn install_custom_node(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    git_url: String,
+    node_name: String,
+) -> Result<(), AppError> {
+    let config = state.config.read().await;
+    let custom_nodes_dir = std::path::Path::new(&config.comfyui_path).join("custom_nodes");
+    let target_dir = custom_nodes_dir.join(&node_name);
+
+    if target_dir.exists() {
+        return Ok(()); // Already cloned
+    }
+
+    // git clone
+    let clone_status = tokio::process::Command::new("git")
+        .args(["clone", &git_url, &target_dir.to_string_lossy().as_ref()])
+        .output()
+        .await
+        .map_err(|e| AppError::Other(format!("git clone failed: {}", e)))?;
+
+    if !clone_status.status.success() {
+        let stderr = String::from_utf8_lossy(&clone_status.stderr);
+        return Err(AppError::Other(format!("git clone failed: {}", stderr)));
+    }
+
+    // pip install -r requirements.txt if it exists
+    let req_file = target_dir.join("requirements.txt");
+    if req_file.exists() {
+        #[cfg(target_os = "windows")]
+        let pip_path = format!("{}/Scripts/pip.exe", config.venv_path);
+        #[cfg(not(target_os = "windows"))]
+        let pip_path = format!("{}/bin/pip", config.venv_path);
+
+        let pip_status = tokio::process::Command::new(&pip_path)
+            .args(["install", "-r", &req_file.to_string_lossy()])
+            .output()
+            .await
+            .map_err(|e| AppError::Other(format!("pip install failed: {}", e)))?;
+
+        if !pip_status.status.success() {
+            let stderr = String::from_utf8_lossy(&pip_status.stderr);
+            log::warn!("pip install requirements failed: {}", stderr);
+        }
+    }
+
+    // Emit event so frontend knows to restart ComfyUI
+    let _ = app.emit("custom_node:installed", &node_name);
     Ok(())
 }
 
@@ -506,7 +618,7 @@ pub async fn civitai_lookup_hash(hash: String) -> Result<Value, AppError> {
     let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
     let resp = reqwest::Client::new()
         .get(&url)
-        .header("User-Agent", "MooshieUI/0.2.2")
+        .header("User-Agent", "MooshieUI/0.2.4")
         .send()
         .await
         .map_err(|e| AppError::Other(format!("CivitAI request failed: {}", e)))?;
@@ -528,45 +640,53 @@ pub async fn civitai_search_models(
     state: State<'_, AppState>,
     params: CivitaiSearchParams,
 ) -> Result<Value, AppError> {
-    let mut query = vec![
-        ("sort".to_string(), params.sort.unwrap_or_else(|| "Most Downloaded".to_string())),
-        ("period".to_string(), params.period.unwrap_or_else(|| "AllTime".to_string())),
-        ("nsfw".to_string(), params.nsfw.unwrap_or(false).to_string()),
-        ("limit".to_string(), params.limit.unwrap_or(20).to_string()),
+    // Build query string manually because reqwest percent-encodes brackets in
+    // parameter names (baseModels[] → baseModels%5B%5D) which CivitAI ignores.
+    let encode_val = |v: &str| -> String {
+        url::form_urlencoded::byte_serialize(v.as_bytes()).collect()
+    };
+
+    let mut parts: Vec<String> = vec![
+        format!("sort={}", encode_val(&params.sort.unwrap_or_else(|| "Most Downloaded".to_string()))),
+        format!("period={}", encode_val(&params.period.unwrap_or_else(|| "AllTime".to_string()))),
+        format!("nsfw={}", params.nsfw.unwrap_or(false)),
+        format!("limit={}", params.limit.unwrap_or(20)),
     ];
 
     let has_query = params.query.as_ref().filter(|v| !v.trim().is_empty()).is_some();
 
     if !has_query {
-        query.push(("page".to_string(), params.page.unwrap_or(1).to_string()));
+        parts.push(format!("page={}", params.page.unwrap_or(1)));
     }
 
     if let Some(cursor) = params.cursor.filter(|v| !v.trim().is_empty()) {
-        query.push(("cursor".to_string(), cursor));
+        parts.push(format!("cursor={}", encode_val(&cursor)));
     }
 
     if let Some(q) = params.query.filter(|v| !v.trim().is_empty()) {
-        query.push(("query".to_string(), q));
+        parts.push(format!("query={}", encode_val(&q)));
     }
     if let Some(t) = params.model_type.filter(|v| !v.trim().is_empty()) {
-        query.push(("types".to_string(), t));
+        parts.push(format!("types={}", encode_val(&t)));
     }
     if let Some(base_model) = params.base_model.filter(|v| !v.trim().is_empty()) {
-        query.push(("baseModels[]".to_string(), base_model));
+        parts.push(format!("baseModels={}", encode_val(&base_model)));
     }
     if let Some(file_format) = params.file_format.filter(|v| !v.trim().is_empty()) {
-        query.push(("fileFormats[]".to_string(), file_format));
+        parts.push(format!("fileFormats={}", encode_val(&file_format)));
     }
     if let Some(status) = params.status.filter(|v| !v.trim().is_empty()) {
-        query.push(("status".to_string(), status));
+        parts.push(format!("status={}", encode_val(&status)));
     }
+
+    let url = format!("https://civitai.com/api/v1/models?{}", parts.join("&"));
+    log::debug!("CivitAI search URL: {}", url);
 
     let mut req = state
         .http_client
-        .get("https://civitai.com/api/v1/models")
+        .get(&url)
         .header("Accept", "application/json")
-        .header("User-Agent", "MooshieUI/0.2.3")
-        .query(&query);
+        .header("User-Agent", "MooshieUI/0.2.4");
 
     if let Some(key) = params.api_key.filter(|v| !v.trim().is_empty()) {
         req = req.bearer_auth(key);
@@ -600,10 +720,25 @@ pub async fn civitai_list_architectures(
     
     // Add common architectures first to guarantee they're present
     let common = vec![
-        "SD 1.4", "SD 1.5", "SD 1.5 LCM", "SD 2.0", "SD 2.0 768", "SD 2.1", "SD 2.1 768", "SD 2.1 Unclip",
-        "SD 3", "SD 3.5 Large", "SD 3.5 Medium", "SDXL 0.9", "SDXL 1.0", "SDXL 1.0 LCM", "SDXL Distilled",
-        "SDXL Turbo", "SDXL Lightning", "Pony", "Flux.1 S", "Flux.1 D", "AuraFlow", "Hunyuan 1", "Lumina", 
-        "Kolors", "PixArt-a", "Stable Cascade", "Illusion", "MoDi", "Other"
+        // Stable Diffusion 1.x
+        "SD 1.4", "SD 1.5", "SD 1.5 LCM", "SD 1.5 Hyper",
+        // Stable Diffusion 2.x
+        "SD 2.0", "SD 2.0 768", "SD 2.1", "SD 2.1 768", "SD 2.1 Unclip",
+        // Stable Diffusion 3.x
+        "SD 3", "SD 3.5", "SD 3.5 Large", "SD 3.5 Large Turbo", "SD 3.5 Medium",
+        // SDXL
+        "SDXL 0.9", "SDXL 1.0", "SDXL 1.0 LCM", "SDXL Distilled", "SDXL Turbo", "SDXL Lightning", "SDXL Hyper",
+        // Anime / Illustrious / NoobAI / Pony
+        "Illustrious", "NoobAI", "Pony",
+        // Flux
+        "Flux.1 S", "Flux.1 D", "Flux.1 S Turbo",
+        // Other popular architectures
+        "AuraFlow", "Hunyuan 1", "HunyuanDiT", "Hunyuan Video",
+        "Lumina", "Kolors", "PixArt-a", "PixArt-E",
+        "Stable Cascade", "SVD", "SVD XT",
+        "PlaygroundV2.5", "CogVideoX",
+        // Misc
+        "Illusion", "MoDi", "ODOR", "Other",
     ];
     for &arch in &common {
         architectures.insert(arch.to_string());
@@ -677,4 +812,77 @@ pub async fn civitai_list_architectures(
     }
 
     Ok(architectures.into_iter().collect())
+}
+
+/// Read the ModelSpec metadata from a safetensors file header.
+/// Returns a map of modelspec fields (without the "modelspec." prefix) if present,
+/// or null if the file has no ModelSpec metadata.
+#[tauri::command]
+pub async fn read_modelspec(
+    state: State<'_, AppState>,
+    category: String,
+    filename: String,
+) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    let config = state.config.read().await;
+    if config.comfyui_path.is_empty() {
+        return Err(AppError::Other("ComfyUI path not configured".into()));
+    }
+    let path = std::path::Path::new(&config.comfyui_path)
+        .join("models")
+        .join(&category)
+        .join(&filename);
+
+    if !path.exists() {
+        return Err(AppError::Other(format!("File not found: {}", filename)));
+    }
+
+    // Only process .safetensors files
+    if !filename.ends_with(".safetensors") {
+        return Ok(None);
+    }
+
+    read_safetensors_modelspec(&path)
+}
+
+/// Parse the safetensors JSON header and extract modelspec.* fields.
+fn read_safetensors_modelspec(
+    path: &std::path::Path,
+) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    let mut file = std::fs::File::open(path)?;
+
+    // First 8 bytes: little-endian u64 header size
+    let mut size_buf = [0u8; 8];
+    file.read_exact(&mut size_buf)?;
+    let header_size = u64::from_le_bytes(size_buf) as usize;
+
+    // Sanity check: headers shouldn't be larger than 100 MB
+    if header_size > 100 * 1024 * 1024 {
+        return Err(AppError::Other("Safetensors header too large".into()));
+    }
+
+    // Read the JSON header
+    let mut header_buf = vec![0u8; header_size];
+    file.read_exact(&mut header_buf)?;
+
+    let header: Value = serde_json::from_slice(&header_buf)?;
+
+    let metadata = match header.get("__metadata__") {
+        Some(Value::Object(m)) => m,
+        _ => return Ok(None),
+    };
+
+    let mut result = std::collections::HashMap::new();
+    for (key, value) in metadata {
+        if let Some(field) = key.strip_prefix("modelspec.") {
+            if let Some(s) = value.as_str() {
+                result.insert(field.to_string(), s.to_string());
+            }
+        }
+    }
+
+    if result.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(result))
+    }
 }

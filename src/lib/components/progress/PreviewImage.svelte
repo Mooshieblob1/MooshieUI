@@ -3,18 +3,18 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { generate } from "../../utils/api.js";
-  import type { GenerationParams } from "../../types/index.js";
 
   async function upscaleImage() {
     generation.upscaleEnabled = true;
     if (progress.lastOutputImage) {
       generation.inputImage = progress.lastOutputImage;
     }
-    const params = generation.toParams() as GenerationParams;
+    const params = generation.toParams();
     params.mode = "img2img";
     try {
-      const promptId = await generate(params);
-      progress.startGeneration(promptId, true, "img2img");
+      const result = await generate(params);
+      params.seed = result.seed;
+      progress.startGeneration(result.prompt_id, true, "img2img", params);
     } catch (e) {
       console.error("Upscale failed:", e);
     }
@@ -24,39 +24,44 @@
     progress.setActiveMode(generation.mode);
   });
 
-  function handleSave() {
-    if (progress.lastOutputImage) {
-      gallery.saveBlobAs(progress.lastOutputImage, "output.png");
+  function getSavedImageForUrl(url: string | null) {
+    if (!url || url.startsWith("data:image/")) return null;
+    return gallery.sessionImages.find((image) => image.url === url) ?? null;
+  }
+
+  function getActiveSavedImage() {
+    return getSavedImageForUrl(progress.lastOutputImage);
+  }
+
+  function openPreviewLightbox() {
+    const url = progress.displayImage;
+    if (!url) return;
+
+    const savedImage = getSavedImageForUrl(url);
+    if (savedImage) {
+      gallery.openLightbox(savedImage);
+      return;
     }
+
+    gallery.openLightboxUrl(url);
+  }
+
+  function handleSave() {
+    const savedImage = getActiveSavedImage();
+    if (!savedImage) {
+      gallery.showToast("Saved image not available yet", "info");
+      return;
+    }
+    void gallery.saveImageAs(savedImage);
   }
 
   function handleCopy() {
-    if (progress.lastOutputImage) {
-      gallery.copyBlobToClipboard(progress.lastOutputImage);
+    const savedImage = getActiveSavedImage();
+    if (!savedImage) {
+      gallery.showToast("Saved image not available yet", "info");
+      return;
     }
-  }
-
-  function inpaintImage() {
-    if (!progress.lastOutputImage) return;
-    generation.mode = "inpainting";
-    generation.inputImage = progress.lastOutputImage;
-    generation.maskImage = null;
-  }
-
-  async function handleDelete() {
-    if (!progress.lastOutputImage) return;
-    const currentUrl = progress.lastOutputImage;
-    const image = gallery.sessionImages.find((i) => i.url === currentUrl)
-      ?? gallery.images.find((i) => i.url === currentUrl);
-
-    if (image) {
-      await gallery.deleteImage(image);
-    }
-
-    if (progress.lastOutputImage === currentUrl) {
-      progress.setLastOutputForMode(progress.currentMode, null);
-      progress.previewImage = null;
-    }
+    void gallery.copyToClipboard(savedImage);
   }
 </script>
 
@@ -64,9 +69,7 @@
   {#if progress.displayImage}
     <button
       class="w-full h-full cursor-pointer"
-      onclick={() => {
-        if (progress.displayImage) gallery.openLightboxUrl(progress.displayImage);
-      }}
+      onclick={openPreviewLightbox}
     >
       <img
         src={progress.displayImage}
@@ -88,14 +91,6 @@
           </button>
         {/if}
         <button
-          onclick={inpaintImage}
-          class="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg shadow-lg transition-colors"
-          title="Use as inpaint input"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-          Inpaint
-        </button>
-        <button
           onclick={handleSave}
           class="flex items-center gap-1.5 bg-neutral-700 hover:bg-neutral-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg shadow-lg transition-colors"
           title="Save As"
@@ -110,14 +105,6 @@
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           Copy
-        </button>
-        <button
-          onclick={handleDelete}
-          class="flex items-center gap-1.5 bg-red-700 hover:bg-red-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg shadow-lg transition-colors"
-          title="Delete image"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-          Delete
         </button>
       </div>
     {/if}

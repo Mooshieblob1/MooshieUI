@@ -84,6 +84,14 @@
   let pendingDrop = $state<{ side: SectionSide; index: number } | null>(null);
   let dragMouseX = $state(0);
   let dragMouseY = $state(0);
+  let dragOffsetX = $state(0);
+  let dragOffsetY = $state(0);
+  let dragWidth = $state(0);
+  let dragHeight = $state(0);
+  let dragCloneHtml = $state("");
+  let sectionRefs: Record<string, HTMLElement | null> = {};
+  let leftColumnRef = $state<HTMLElement | null>(null);
+  let rightColumnRef = $state<HTMLElement | null>(null);
 
   const SECTION_ORDER: SectionId[] = [
     "dimensions",
@@ -178,6 +186,15 @@
   function startSectionDrag(section: SectionId, e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
+    const el = sectionRefs[section];
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      dragOffsetX = e.clientX - rect.left;
+      dragOffsetY = e.clientY - rect.top;
+      dragWidth = rect.width;
+      dragHeight = rect.height;
+      dragCloneHtml = el.outerHTML;
+    }
     draggingSection = section;
     dragMouseX = e.clientX;
     dragMouseY = e.clientY;
@@ -185,16 +202,6 @@
     const sideSections = sectionsForSide(side);
     const idx = sideSections.indexOf(section);
     pendingDrop = { side, index: idx >= 0 ? idx : sideSections.length };
-  }
-
-  function onSectionDropZoneEnter(side: SectionSide, index: number) {
-    if (!draggingSection) return;
-    pendingDrop = { side, index };
-  }
-
-  function onSectionDropZoneLeave(side: SectionSide, index: number) {
-    if (!draggingSection || !pendingDrop) return;
-    if (pendingDrop.side === side && pendingDrop.index === index) pendingDrop = null;
   }
 
   function isPendingDrop(side: SectionSide, index: number): boolean {
@@ -210,7 +217,7 @@
     if (section === "inpaintLayers") return "Inpainting & Layers";
     if (section === "generationSettings") return "Generation Settings";
     if (section === "modelSampler") return "Model & Sampler";
-    return "Upscale & History";
+    return "Upscale";
   }
 
   function canShowHistorySection() {
@@ -219,7 +226,7 @@
 
   function sectionVisible(section: SectionId): boolean {
     if (section === "history") return canShowHistorySection();
-    if (section === "sessionHistory") return gallery.sessionImages.length > 0;
+    if (section === "sessionHistory") return true;
     if (section === "imageInputs") return generation.mode !== "txt2img";
     if (section === "inpaintLayers") return generation.mode === "inpainting";
     if (section === "generationSettings") return generation.mode === "inpainting";
@@ -237,6 +244,10 @@
   const leftHasSections = $derived(leftSections.length > 0);
   const rightHasSections = $derived(rightSections.length > 0);
   const controlsSide = $derived(leftHasSections ? "left" : "right");
+
+  // Sections for rendering — excludes the dragged section so drop zone indices match computeDropTarget
+  const leftRenderSections = $derived(leftSections.filter((id) => id !== draggingSection));
+  const rightRenderSections = $derived(rightSections.filter((id) => id !== draggingSection));
 
   let dimensionsSectionOpen = $state(true);
   let imageSectionOpen = $state(true);
@@ -525,10 +536,55 @@
     e.preventDefault();
   }
 
+  function computeDropTarget(mx: number, my: number): { side: SectionSide; index: number } | null {
+    // Determine which column the cursor is over
+    let side: SectionSide | null = null;
+    if (leftColumnRef) {
+      const r = leftColumnRef.getBoundingClientRect();
+      if (mx >= r.left && mx <= r.right) side = "left";
+    }
+    if (!side && rightColumnRef) {
+      const r = rightColumnRef.getBoundingClientRect();
+      if (mx >= r.left && mx <= r.right) side = "right";
+    }
+    if (!side) {
+      // Fallback: pick the closer column
+      const lc = leftColumnRef?.getBoundingClientRect();
+      const rc = rightColumnRef?.getBoundingClientRect();
+      if (lc && rc) {
+        const lDist = Math.abs(mx - (lc.left + lc.width / 2));
+        const rDist = Math.abs(mx - (rc.left + rc.width / 2));
+        side = lDist < rDist ? "left" : "right";
+      } else {
+        side = lc ? "left" : "right";
+      }
+    }
+
+    // Use only non-dragged sections for midpoint calculation
+    const allSections = side === "left" ? leftSections : rightSections;
+    const sections = allSections.filter((id) => id !== draggingSection);
+
+    // Find insertion index based on cursor Y vs section midpoints
+    let index = sections.length;
+    for (let i = 0; i < sections.length; i++) {
+      const el = sectionRefs[sections[i]];
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      if (my < midY) {
+        index = i;
+        break;
+      }
+    }
+
+    return { side, index };
+  }
+
   function onPointerMove(e: MouseEvent) {
     if (draggingSection) {
       dragMouseX = e.clientX;
       dragMouseY = e.clientY;
+      pendingDrop = computeDropTarget(e.clientX, e.clientY);
       return;
     }
 
@@ -573,6 +629,7 @@
     pendingDrop = null;
     dragMouseX = 0;
     dragMouseY = 0;
+    dragCloneHtml = "";
     dragging = null;
   }
 
@@ -604,23 +661,21 @@
 
   {#snippet sectionDropZone(side: SectionSide, index: number)}
     {#if draggingSection}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div
-        class="h-8 rounded border-2 border-dashed transition-colors flex items-center justify-center text-[10px] font-medium tracking-wide uppercase {isPendingDrop(side, index)
-          ? 'border-indigo-300 bg-indigo-500/25 text-indigo-100'
-          : 'border-indigo-500/55 bg-indigo-500/12 hover:border-indigo-400 hover:bg-indigo-500/18 text-indigo-200/80'}"
-        onmouseenter={() => onSectionDropZoneEnter(side, index)}
-        onmouseleave={() => onSectionDropZoneLeave(side, index)}
-      >
-        Drop Here
+      <div class="relative">
+        <div
+          class="h-0.5 rounded-full transition-all duration-150 mx-2 {isPendingDrop(side, index)
+            ? 'bg-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.5)] scale-y-[3]'
+            : 'bg-transparent'}"
+        ></div>
       </div>
     {/if}
   {/snippet}
 
   {#snippet sessionHistoryGrid()}
-    {#if gallery.sessionImages.length > 0}
-      <div class="border-t border-neutral-800 pt-4">
-        <h3 class="text-xs text-neutral-400 mb-2">Session History</h3>
+    {#if gallery.sessionImages.length === 0}
+      <p class="text-xs text-neutral-500 italic">No images generated this session.</p>
+    {:else}
+      <div>
         <div class="grid grid-cols-2 gap-2">
           {#each gallery.sessionImages as image}
             <div class="group relative aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors">
@@ -685,7 +740,7 @@
   {/snippet}
 
   {#snippet sessionHistorySection()}
-    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'sessionHistory' ? 'opacity-60' : 'opacity-100'}">
+    <div bind:this={sectionRefs['sessionHistory']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'sessionHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("sessionHistory")}
         <button
@@ -706,7 +761,7 @@
   {/snippet}
 
   {#snippet dimensionsSection()}
-    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'dimensions' ? 'opacity-60' : 'opacity-100'}">
+    <div bind:this={sectionRefs['dimensions']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'dimensions' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("dimensions")}
         <button
@@ -727,7 +782,7 @@
   {/snippet}
 
   {#snippet promptsSection()}
-    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'prompts' ? 'opacity-60' : 'opacity-100'}">
+    <div bind:this={sectionRefs['prompts']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'prompts' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("prompts")}
         <button
@@ -748,7 +803,7 @@
   {/snippet}
 
   {#snippet historySection()}
-    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'history' ? 'opacity-60' : 'opacity-100'}">
+    <div bind:this={sectionRefs['history']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'history' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("history")}
         <button
@@ -803,7 +858,7 @@
   {/snippet}
 
   {#snippet imageInputsSection()}
-    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'imageInputs' ? 'opacity-60' : 'opacity-100'}">
+    <div bind:this={sectionRefs['imageInputs']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'imageInputs' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("imageInputs")}
         <button
@@ -973,7 +1028,7 @@
   {/snippet}
 
   {#snippet inpaintLayersSection()}
-    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'inpaintLayers' ? 'opacity-60' : 'opacity-100'}">
+    <div bind:this={sectionRefs['inpaintLayers']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'inpaintLayers' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("inpaintLayers")}
         <button
@@ -1033,7 +1088,7 @@
   {/snippet}
 
   {#snippet generationSettingsSection()}
-    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'generationSettings' ? 'opacity-60' : 'opacity-100'}">
+    <div bind:this={sectionRefs['generationSettings']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'generationSettings' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("generationSettings")}
         <button
@@ -1062,7 +1117,7 @@
   {/snippet}
 
   {#snippet modelSamplerSection()}
-    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'modelSampler' ? 'opacity-60' : 'opacity-100'}">
+    <div bind:this={sectionRefs['modelSampler']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'modelSampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("modelSampler")}
         <button
@@ -1087,15 +1142,15 @@
   {/snippet}
 
   {#snippet upscaleHistorySection()}
-    <div class="rounded-lg border border-neutral-800 bg-neutral-900/40 {draggingSection === 'upscaleHistory' ? 'opacity-60' : 'opacity-100'}">
+    <div bind:this={sectionRefs['upscaleHistory']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("upscaleHistory")}
         <button
           class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (postSectionOpen = !postSectionOpen)}
-          title={postSectionOpen ? "Collapse Upscale & History" : "Expand Upscale & History"}
+          title={postSectionOpen ? "Collapse Upscale" : "Expand Upscale"}
         >
-          <span class="font-medium">Upscale & History</span>
+          <span class="font-medium">Upscale</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {postSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
@@ -1138,12 +1193,9 @@
   >
     {#if leftHasSections || controlsSide === "left"}
       <div
+        bind:this={leftColumnRef}
         class="overflow-y-auto px-4 pt-4 flex flex-col gap-4 shrink-0 border-r {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'}"
         style="width: {leftWidth}px"
-        onmousemove={() => {
-          if (!draggingSection) return;
-          pendingDrop = { side: "left", index: leftSections.length };
-        }}
       >
         {#if controlsSide === "left"}
           <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
@@ -1186,7 +1238,7 @@
         {/if}
 
         {@render sectionDropZone("left", 0)}
-        {#each leftSections as section, i}
+        {#each leftRenderSections as section, i}
           {@render renderSection(section)}
           {@render sectionDropZone("left", i + 1)}
         {/each}
@@ -1233,12 +1285,9 @@
 
     {#if rightHasSections || controlsSide === "right"}
       <div
+        bind:this={rightColumnRef}
         class="overflow-y-auto p-4 space-y-4 shrink-0 border-l {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'}"
         style="width: {rightWidth}px"
-        onmousemove={() => {
-          if (!draggingSection) return;
-          pendingDrop = { side: "right", index: rightSections.length };
-        }}
       >
         {#if controlsSide === "right"}
           <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
@@ -1281,7 +1330,7 @@
         {/if}
 
         {@render sectionDropZone("right", 0)}
-        {#each rightSections as section, i}
+        {#each rightRenderSections as section, i}
           {@render renderSection(section)}
           {@render sectionDropZone("right", i + 1)}
         {/each}
@@ -1296,14 +1345,16 @@
     {/if}
   </div>
 
-  {#if draggingSection}
+  {#if draggingSection && dragCloneHtml}
     <div
       class="fixed z-[70] pointer-events-none"
-      style="left: {dragMouseX + 16}px; top: {dragMouseY + 16}px;"
+      style="left: {dragMouseX - dragOffsetX}px; top: {dragMouseY - dragOffsetY}px; width: {dragWidth}px;"
     >
-      <div class="rounded-lg border border-indigo-400/70 bg-neutral-900/95 shadow-2xl shadow-indigo-900/40 px-3 py-2 min-w-56">
-        <div class="text-[10px] text-indigo-300 uppercase tracking-wide">Dragging Section</div>
-        <div class="text-xs text-neutral-100 mt-0.5">{sectionLabel(draggingSection)}</div>
+      <div
+        class="rounded-lg border border-indigo-400/60 shadow-2xl shadow-indigo-900/30 scale-[1.02] opacity-90"
+        style="filter: brightness(1.1);"
+      >
+        {@html dragCloneHtml}
       </div>
     </div>
   {/if}

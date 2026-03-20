@@ -100,6 +100,49 @@
     if (gallery.lightboxOpen) resetLightboxZoom();
   });
 
+  function startMetadataResize(e: MouseEvent) {
+    e.preventDefault();
+    metadataResizing = true;
+    const startX = e.clientX;
+    const startWidth = metadataPanelWidth;
+    function onMove(ev: MouseEvent) {
+      const delta = ev.clientX - startX;
+      metadataPanelWidth = Math.min(METADATA_MAX_WIDTH, Math.max(METADATA_MIN_WIDTH, startWidth + delta));
+    }
+    function onUp() {
+      metadataResizing = false;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  /** Pretty-print a metadata key for display */
+  function metadataLabel(key: string): string {
+    const labels: Record<string, string> = {
+      positive_prompt: "Prompt",
+      negative_prompt: "Negative Prompt",
+      model: "Model",
+      vae: "VAE",
+      seed: "Seed",
+      steps: "Steps",
+      cfg: "CFG Scale",
+      sampler: "Sampler",
+      scheduler: "Scheduler",
+      denoise: "Denoise",
+      mode: "Mode",
+      size: "Size",
+      loras: "LoRAs",
+      upscale_model: "Upscale Model",
+      upscale_scale: "Upscale Scale",
+      upscale_denoise: "Upscale Denoise",
+      date: "Date",
+      generation_time: "Gen Time",
+    };
+    return labels[key] ?? key;
+  }
+
   function applyTheme(theme: string) {
     document.documentElement.classList.toggle("light", theme === "light");
   }
@@ -289,6 +332,11 @@
   let groupedGalleryImages = $state<Array<{ label: string; images: OutputImage[] }>>([]);
   let lightboxMetadata = $state<Record<string, string> | null>(null);
   let loadingLightboxMetadata = $state(false);
+  let metadataPanelWidth = $state(340);
+  let metadataResizing = $state(false);
+  let metadataPanelCollapsed = $state(false);
+  const METADATA_MIN_WIDTH = 260;
+  const METADATA_MAX_WIDTH = 600;
   const GALLERY_PREFS_KEY = "mooshieui.gallery.prefs.v1";
 
   function getImageTimestamp(image: OutputImage): number {
@@ -366,9 +414,14 @@
       size: `${params.width}x${params.height}`,
       model: params.use_split_model ? (params.diffusion_model ?? "") : params.checkpoint,
       vae: params.vae ?? "",
-      denoise: String(params.denoise),
       mode: params.mode,
+      date: new Date().toISOString().split("T")[0] ?? "",
     };
+
+    // Only include denoise for img2img/inpainting (txt2img is always 1.0)
+    if (params.mode !== "txt2img") {
+      metadata.denoise = String(params.denoise);
+    }
 
     if (params.loras.length > 0) {
       metadata.loras = params.loras
@@ -1160,134 +1213,187 @@
 <!-- Lightbox overlay -->
 {#if gallery.lightboxOpen && (gallery.selectedImage || gallery.lightboxUrl)}
   <div
-    class="lightbox-backdrop fixed inset-0 bg-black/90 z-50 flex items-center justify-center {visionSimClass}"
+    class="lightbox-backdrop fixed inset-0 bg-black/90 z-50 flex {visionSimClass}"
     role="dialog"
-    onclick={(e) => {
-      if (e.target === e.currentTarget) gallery.closeLightbox();
-    }}
     onkeydown={(e) => {
       if (e.key === "Escape") gallery.closeLightbox();
     }}
     tabindex="-1"
     use:focusOnMount
   >
-    <!-- Close button -->
-    <button
-      class="absolute top-4 right-4 text-white text-2xl hover:text-neutral-300 z-10"
-      onclick={() => gallery.closeLightbox()}
-    >
-      &times;
-    </button>
-
-    <!-- Action buttons (only for gallery images, not preview URLs) -->
+    <!-- Metadata side panel -->
     {#if gallery.selectedImage}
-    <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-10">
-      <button
-        class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
-        onclick={() => gallery.selectedImage && img2imgImage(gallery.selectedImage)}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        Image to Image
-      </button>
-      <button
-        class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
-        onclick={() => gallery.selectedImage && inpaintImage(gallery.selectedImage)}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-        Inpaint
-      </button>
-      {#if gallery.selectedImage && !gallery.selectedImage.is_upscaled}
-        <button
-          class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
-          onclick={() => gallery.selectedImage && upscaleImage(gallery.selectedImage)}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-          Upscale
-        </button>
-      {/if}
-      <button
-        class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
-        onclick={() => gallery.selectedImage && gallery.saveImageAs(gallery.selectedImage)}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Save As
-      </button>
-      <button
-        class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
-        onclick={() => gallery.selectedImage && gallery.copyToClipboard(gallery.selectedImage)}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        Copy
-      </button>
-      <button
-        class="flex items-center gap-2 px-4 py-2 bg-emerald-700/80 hover:bg-emerald-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
-        onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage)}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Apply Metadata
-      </button>
-      <button
-        class="flex items-center gap-2 px-4 py-2 bg-red-900/60 hover:bg-red-800 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
-        onclick={() => gallery.selectedImage && gallery.deleteImage(gallery.selectedImage)}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-        Delete
-      </button>
-    </div>
-    {/if}
-
-    {#if gallery.selectedImage}
-      <div class="absolute top-4 left-4 max-w-[360px] rounded-lg border border-neutral-700 bg-neutral-900/85 backdrop-blur-sm p-3 text-xs text-neutral-200">
-        <div class="flex items-center justify-between gap-2 mb-2">
-          <span class="font-medium">PNG Metadata</span>
-          {#if loadingLightboxMetadata}
-            <span class="text-[10px] text-neutral-400">Loading...</span>
-          {/if}
-        </div>
-        <div class="mb-2">
-          <label class="block text-[10px] text-neutral-500 mb-1">Board</label>
-          <select
-            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-200"
-            value={boardLabel(gallery.selectedImage)}
-            onchange={(e) => assignBoard(gallery.selectedImage!, (e.target as HTMLSelectElement).value)}
-          >
-            <option value="Unsorted">Unsorted</option>
-            {#each gallery.boards as board}
-              <option value={board}>{board}</option>
-            {/each}
-          </select>
-        </div>
-        {#if lightboxMetadata}
-          <div class="space-y-1 max-h-40 overflow-y-auto pr-1">
-            {#each Object.entries(lightboxMetadata) as [key, value]}
-              <div class="grid grid-cols-[90px_1fr] gap-2">
-                <span class="text-neutral-500 truncate">{key}</span>
-                <span class="text-neutral-200 break-words">{value}</span>
+      <div class="h-full flex shrink-0" style="width: {metadataPanelCollapsed ? 36 : metadataPanelWidth}px;">
+        {#if !metadataPanelCollapsed}
+          <div class="flex-1 h-full overflow-y-auto bg-neutral-900/95 p-4 text-xs text-neutral-200 select-text" style="min-width: 0;">
+            <div class="flex items-center justify-between gap-2 mb-3">
+              <span class="font-semibold text-sm text-neutral-100">Image Info</span>
+              <div class="flex items-center gap-1">
+                {#if loadingLightboxMetadata}
+                  <span class="text-[10px] text-neutral-400">Loading...</span>
+                {/if}
+                <button
+                  class="p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors"
+                  onclick={() => (metadataPanelCollapsed = true)}
+                  title="Collapse panel"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
               </div>
-            {/each}
+            </div>
+
+            <!-- Board selector -->
+            <div class="mb-3">
+              <label class="block text-[10px] text-neutral-500 mb-1 uppercase tracking-wider">Board</label>
+              <select
+                class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-200"
+                value={boardLabel(gallery.selectedImage)}
+                onchange={(e) => assignBoard(gallery.selectedImage!, (e.target as HTMLSelectElement).value)}
+              >
+                <option value="Unsorted">Unsorted</option>
+                {#each gallery.boards as board}
+                  <option value={board}>{board}</option>
+                {/each}
+              </select>
+            </div>
+
+            {#if lightboxMetadata}
+              {@const promptKeys = ["positive_prompt", "negative_prompt"]}
+              {@const settingKeys = Object.keys(lightboxMetadata).filter((k) => !promptKeys.includes(k))}
+
+              <!-- Prompts -->
+              {#each promptKeys as key}
+                {#if lightboxMetadata[key]}
+                  <div class="mb-3">
+                    <label class="block text-[10px] text-neutral-500 mb-1 uppercase tracking-wider">{metadataLabel(key)}</label>
+                    <p class="text-neutral-200 whitespace-pre-wrap wrap-break-word leading-relaxed">{lightboxMetadata[key]}</p>
+                  </div>
+                {/if}
+              {/each}
+
+              <!-- Settings grid -->
+              {#if settingKeys.length > 0}
+                <div class="border-t border-neutral-700/50 pt-2 mt-2 space-y-1.5">
+                  {#each settingKeys as key}
+                    <div class="flex justify-between gap-2">
+                      <span class="text-neutral-500 shrink-0">{metadataLabel(key)}</span>
+                      <span class="text-neutral-200 text-right break-all">{lightboxMetadata[key]}</span>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            {:else if !loadingLightboxMetadata}
+              <span class="text-neutral-500">No embedded metadata found.</span>
+            {/if}
           </div>
+          <!-- Resize handle -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="w-1.5 cursor-col-resize hover:bg-indigo-500/40 active:bg-indigo-500/60 transition-colors shrink-0"
+            onmousedown={startMetadataResize}
+          ></div>
         {:else}
-          <span class="text-neutral-500">No embedded metadata found.</span>
+          <!-- Collapsed: just a narrow strip with expand button -->
+          <div class="w-9 h-full bg-neutral-900/95 border-r border-neutral-700 flex flex-col items-center pt-4 shrink-0">
+            <button
+              class="p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors"
+              onclick={() => (metadataPanelCollapsed = false)}
+              title="Show metadata panel"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
         {/if}
       </div>
     {/if}
 
-    {#if gallery.selectedImage?.url || gallery.lightboxUrl}
-      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-      <img
-        src={gallery.selectedImage?.url ?? gallery.lightboxUrl ?? ''}
-        alt={gallery.selectedImage?.filename ?? 'Preview'}
-        class="max-w-[90vw] max-h-[85vh] object-contain select-none {lbScale > 1 ? (lbPanning ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}"
-        draggable="false"
-        style="transform: translate({lbOffsetX}px, {lbOffsetY}px) scale({lbScale}); transform-origin: center center; transition: {lbPanning ? 'none' : 'transform 0.12s ease'};"
-        onwheel={zoomLightboxAtCursor}
-        onmousedown={startLightboxPan}
-        onmousemove={updateLightboxPan}
-        onmouseup={stopLightboxPan}
-        onmouseleave={stopLightboxPan}
-        ondblclick={resetLightboxZoom}
-      />
-    {/if}
+    <!-- Image area -->
+    <div
+      class="flex-1 h-full flex items-center justify-center relative"
+      onclick={(e) => { if (e.target === e.currentTarget) gallery.closeLightbox(); }}
+    >
+      <!-- Close button -->
+      <button
+        class="absolute top-4 right-4 text-white text-2xl hover:text-neutral-300 z-10"
+        onclick={() => gallery.closeLightbox()}
+      >
+        &times;
+      </button>
+
+      <!-- Action buttons (only for gallery images, not preview URLs) -->
+      {#if gallery.selectedImage}
+      <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-10">
+        <button
+          class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          onclick={() => gallery.selectedImage && img2imgImage(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          Image to Image
+        </button>
+        <button
+          class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          onclick={() => gallery.selectedImage && inpaintImage(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+          Inpaint
+        </button>
+        {#if gallery.selectedImage && !gallery.selectedImage.is_upscaled}
+          <button
+            class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+            onclick={() => gallery.selectedImage && upscaleImage(gallery.selectedImage)}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+            Upscale
+          </button>
+        {/if}
+        <button
+          class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          onclick={() => gallery.selectedImage && gallery.saveImageAs(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Save As
+        </button>
+        <button
+          class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          onclick={() => gallery.selectedImage && gallery.copyToClipboard(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Copy
+        </button>
+        <button
+          class="flex items-center gap-2 px-4 py-2 bg-emerald-700/80 hover:bg-emerald-600 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Apply Metadata
+        </button>
+        <button
+          class="flex items-center gap-2 px-4 py-2 bg-red-900/60 hover:bg-red-800 text-neutral-100 rounded-lg text-sm backdrop-blur-sm transition-colors"
+          onclick={() => gallery.selectedImage && gallery.deleteImage(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          Delete
+        </button>
+      </div>
+      {/if}
+
+      {#if gallery.selectedImage?.url || gallery.lightboxUrl}
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <img
+          src={gallery.selectedImage?.url ?? gallery.lightboxUrl ?? ''}
+          alt={gallery.selectedImage?.filename ?? 'Preview'}
+          class="max-w-full max-h-[85vh] object-contain select-none {lbScale > 1 ? (lbPanning ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}"
+          draggable="false"
+          style="transform: translate({lbOffsetX}px, {lbOffsetY}px) scale({lbScale}); transform-origin: center center; transition: {lbPanning ? 'none' : 'transform 0.12s ease'};"
+          onwheel={zoomLightboxAtCursor}
+          onmousedown={startLightboxPan}
+          onmousemove={updateLightboxPan}
+          onmouseup={stopLightboxPan}
+          onmouseleave={stopLightboxPan}
+          ondblclick={resetLightboxZoom}
+        />
+      {/if}
+    </div>
   </div>
 {/if}
 

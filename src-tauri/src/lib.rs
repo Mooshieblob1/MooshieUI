@@ -55,6 +55,7 @@ pub fn run() {
             commands::api::civitai_lookup_hash,
             commands::api::civitai_search_models,
             commands::api::civitai_list_architectures,
+            commands::api::read_modelspec,
             commands::api::read_image_metadata,
             commands::api::read_image_metadata_bytes,
             commands::websocket::connect_ws,
@@ -65,7 +66,6 @@ pub fn run() {
             setup::check_setup,
             setup::detect_gpu,
             setup::run_setup,
-            setup::reinstall_pytorch,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -1,5 +1,6 @@
 import { load } from "@tauri-apps/plugin-store";
 import type { LoraEntry } from "../types/index.js";
+import { autocomplete } from "./autocomplete.svelte.js";
 
 const STORE_KEY = "generation-settings";
 const PROMPT_HISTORY_KEY = "mooshieui.promptHistory.v1";
@@ -101,11 +102,29 @@ class GenerationStore {
   clipType = $state<string | null>(null);
   stylePreset = $state<StylePresetId>("none");
   stylePresetsEnabled = $state(false);
+  controlnetEnabled = $state(false);
+  controlnetMode = $state<"preset" | "custom">("preset");
+  controlnetPreset = $state<string | null>(null);
+  controlnetModel = $state<string | null>(null);
+  controlnetPreprocessor = $state<string | null>(null);
+  controlnetImage = $state<string | null>(null);
+  controlnetStrength = $state(1.0);
+  controlnetStartPercent = $state(0.0);
+  controlnetEndPercent = $state(1.0);
   promptHistory = $state<PromptHistoryEntry[]>([]);
 
   /** True when the selected model is an Anima variant (split diffusion model). */
   get isAnima(): boolean {
     return this.useSplitModel && (this.diffusionModel?.includes("anima") ?? false);
+  }
+
+  /** Detect the base model architecture from the checkpoint/diffusion model name. */
+  get detectedArchitecture(): "sdxl" | "sd15" | "unknown" {
+    const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
+    if (!name) return "unknown";
+    if (name.includes("sdxl") || name.includes("xl") || name.includes("sih") || name.includes("flux") || name.includes("pony")) return "sdxl";
+    if (name.includes("1.5") || name.includes("sd15") || name.includes("sd_15")) return "sd15";
+    return "unknown";
   }
 
   private _store: Awaited<ReturnType<typeof load>> | null = null;
@@ -227,7 +246,10 @@ class GenerationStore {
     const name = (modelName ?? this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
     if (!name) return;
 
-    if (name.includes("anima") || name.includes("qwen") || name.includes("wan")) {
+    const isAnima = name.includes("anima") || name.includes("qwen") || name.includes("wan");
+    autocomplete.notifyModelChanged(isAnima);
+
+    if (isAnima) {
       this.steps = 30;
       this.cfg = 4.0;
       this.samplerName = "er_sde";
@@ -299,7 +321,17 @@ class GenerationStore {
         if (saved.clipType !== undefined) this.clipType = saved.clipType;
         if (saved.stylePreset !== undefined) this.stylePreset = saved.stylePreset;
         if (saved.stylePresetsEnabled !== undefined) this.stylePresetsEnabled = !!saved.stylePresetsEnabled;
+        if (saved.controlnetEnabled !== undefined) this.controlnetEnabled = saved.controlnetEnabled;
+        if (saved.controlnetMode) this.controlnetMode = saved.controlnetMode;
+        if (saved.controlnetPreset !== undefined) this.controlnetPreset = saved.controlnetPreset;
+        if (saved.controlnetModel !== undefined) this.controlnetModel = saved.controlnetModel;
+        if (saved.controlnetPreprocessor !== undefined) this.controlnetPreprocessor = saved.controlnetPreprocessor;
+        if (saved.controlnetStrength !== undefined) this.controlnetStrength = saved.controlnetStrength;
+        if (saved.controlnetStartPercent !== undefined) this.controlnetStartPercent = saved.controlnetStartPercent;
+        if (saved.controlnetEndPercent !== undefined) this.controlnetEndPercent = saved.controlnetEndPercent;
         console.log("Loaded saved settings, checkpoint:", this.checkpoint);
+        // Sync autocomplete tag list with restored model
+        autocomplete.notifyModelChanged(this.isAnima);
       }
     } catch (e) {
       console.error("Failed to load settings:", e);
@@ -340,6 +372,14 @@ class GenerationStore {
         clipType: this.clipType,
         stylePreset: this.stylePreset,
         stylePresetsEnabled: this.stylePresetsEnabled,
+        controlnetEnabled: this.controlnetEnabled,
+        controlnetMode: this.controlnetMode,
+        controlnetPreset: this.controlnetPreset,
+        controlnetModel: this.controlnetModel,
+        controlnetPreprocessor: this.controlnetPreprocessor,
+        controlnetStrength: this.controlnetStrength,
+        controlnetStartPercent: this.controlnetStartPercent,
+        controlnetEndPercent: this.controlnetEndPercent,
       });
     } catch (e) {
       console.error("Failed to save settings:", e);
@@ -400,6 +440,19 @@ class GenerationStore {
       diffusion_model: this.diffusionModel,
       clip_model: this.clipModel,
       clip_type: this.clipType,
+      controlnet: this.controlnetEnabled
+        ? {
+            enabled: true,
+            preset: this.controlnetMode === "preset" ? this.controlnetPreset : null,
+            controlnet_model: this.controlnetModel,
+            preprocessor:
+              this.controlnetMode === "preset" ? this.controlnetPreprocessor : null,
+            image: this.controlnetImage,
+            strength: this.controlnetStrength,
+            start_percent: this.controlnetStartPercent,
+            end_percent: this.controlnetEndPercent,
+          }
+        : null,
     };
   }
 

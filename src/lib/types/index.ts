@@ -11,6 +11,17 @@ export interface LoraPayloadEntry {
   strength_clip: number;
 }
 
+export interface ControlNetPayload {
+  enabled: boolean;
+  preset: string | null;
+  controlnet_model: string | null;
+  preprocessor: string | null;
+  image: string | null;
+  strength: number;
+  start_percent: number;
+  end_percent: number;
+}
+
 export interface GenerationParams {
   mode: "txt2img" | "img2img" | "inpainting";
   positive_prompt: string;
@@ -43,6 +54,7 @@ export interface GenerationParams {
   diffusion_model: string | null;
   clip_model: string | null;
   clip_type: string | null;
+  controlnet: ControlNetPayload | null;
 }
 
 export interface OutputImage {

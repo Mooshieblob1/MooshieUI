@@ -49,8 +49,9 @@
 
       const params = generation.toParams();
       generation.saveCurrentPromptToHistory();
-      const promptId = await generate(params);
-      progress.startGeneration(promptId, params.upscale_enabled, params.mode, params);
+      const result = await generate(params);
+      params.seed = result.seed;
+      progress.startGeneration(result.prompt_id, params.upscale_enabled, params.mode, params);
       generation.saveSettings();
     } catch (e) {
       console.error("Generation failed:", e);

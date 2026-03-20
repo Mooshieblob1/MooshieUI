@@ -1,3 +1,4 @@
+pub mod controlnet;
 pub mod img2img;
 pub mod inpainting;
 pub mod txt2img;
@@ -12,8 +13,8 @@ pub struct WorkflowResult {
     pub next_id: u32,
     pub image_output: (String, u32),
     pub model_source: (String, u32),
-    pub positive_id: String,
-    pub negative_id: String,
+    pub positive_source: (String, u32),
+    pub negative_source: (String, u32),
     pub vae_source: (String, u32),
 }
 
@@ -153,6 +154,13 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
         "inpainting" => inpainting::build(params, seed),
         _ => txt2img::build(params, seed),
     };
+
+    // Inject ControlNet if enabled
+    if let Some(ref cn) = params.controlnet {
+        if cn.enabled && cn.controlnet_model.is_some() && cn.image.is_some() {
+            controlnet::inject_controlnet(&mut result, cn);
+        }
+    }
 
     let final_image = if params.upscale_enabled {
         upscale::append_upscale_chain(&mut result, params, seed)

@@ -12,6 +12,38 @@
   let sideLength = $state(1024);
   let aspectWInput = $state("1");
   let aspectHInput = $state("1");
+  let initialized = false;
+
+  /** Try to match persisted width/height back to a preset or simplified ratio. */
+  function inferAspectFromDimensions(w: number, h: number) {
+    // Check presets first (exact match on resulting dimensions)
+    for (const p of presets) {
+      const area = sideLength * sideLength;
+      const pw = Math.round(Math.sqrt(area * (p.w / p.h)) / 8) * 8;
+      const ph = Math.round(Math.sqrt(area * (p.h / p.w)) / 8) * 8;
+      if (pw === w && ph === h) {
+        return { w: p.w, h: p.h };
+      }
+    }
+    // Fallback: reduce to simplest ratio via GCD
+    const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+    const d = gcd(w, h);
+    return { w: w / d, h: h / d };
+  }
+
+  // Sync aspect ratio UI from persisted resolution on first load
+  $effect(() => {
+    const w = generation.width;
+    const h = generation.height;
+    if (!initialized && w && h) {
+      initialized = true;
+      const inferred = inferAspectFromDimensions(w, h);
+      aspectW = inferred.w;
+      aspectH = inferred.h;
+      aspectWInput = String(inferred.w);
+      aspectHInput = String(inferred.h);
+    }
+  });
 
   // When an input image is loaded, adopt its aspect ratio
   let lastAppliedKey = "";

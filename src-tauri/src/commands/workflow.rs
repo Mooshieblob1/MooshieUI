@@ -5,11 +5,18 @@ use crate::error::AppError;
 use crate::state::AppState;
 use crate::templates;
 
+/// Response from the generate command, includes the resolved seed.
+#[derive(serde::Serialize)]
+pub struct GenerateResponse {
+    pub prompt_id: String,
+    pub seed: i64,
+}
+
 #[tauri::command]
 pub async fn generate(
     state: State<'_, AppState>,
     params: GenerationParams,
-) -> Result<String, AppError> {
+) -> Result<GenerateResponse, AppError> {
     let seed = if params.seed < 0 {
         (rand::random::<u64>() >> 1) as i64
     } else {
@@ -20,5 +27,8 @@ pub async fn generate(
     let response = state
         .queue_prompt_request(workflow, &state.client_id)
         .await?;
-    Ok(response.prompt_id)
+    Ok(GenerateResponse {
+        prompt_id: response.prompt_id,
+        seed,
+    })
 }

@@ -115,8 +115,8 @@ pub fn append_upscale_chain(
             "class_type": "KSampler",
             "inputs": {
                 "model": [model_for_sampler.0, model_for_sampler.1],
-                "positive": [result.positive_id.clone(), 0],
-                "negative": [result.negative_id.clone(), 0],
+                "positive": [result.positive_source.0.clone(), result.positive_source.1],
+                "negative": [result.negative_source.0.clone(), result.negative_source.1],
                 "latent_image": [tiled_encode_id, 0],
                 "seed": seed + 1,
                 "steps": params.upscale_steps,

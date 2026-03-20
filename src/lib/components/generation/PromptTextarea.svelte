@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
+  import { generation } from "../../stores/generation.svelte.js";
 
   interface Props {
     value: string;
@@ -10,6 +11,16 @@
   }
 
   let { value = $bindable(), placeholder = "", rows = 4, minHeight = "min-h-25" }: Props = $props();
+
+  /** Format a tag name for insertion into the prompt. Escapes parentheses for models that take raw tags. */
+  function formatTagForPrompt(name: string): string {
+    return name.replace(/_/g, " ").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  }
+
+  /** Format a tag name for display in the dropdown (always clean, no escapes). */
+  function formatTagForDisplay(name: string): string {
+    return name.replace(/_/g, " ");
+  }
 
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
   let suggestions = $state<TagEntry[]>([]);
@@ -83,7 +94,7 @@
 
     const raw = autocomplete.search(result.fragment);
     // Filter out exact matches — don't suggest a tag that's already fully typed
-    const normalizedFragment = result.fragment.replace(/_/g, " ").toLowerCase();
+    const normalizedFragment = result.fragment.replace(/_/g, " ").replace(/\\/g, "").toLowerCase();
     suggestions = raw.filter(tag => tag.n.replace(/_/g, " ").toLowerCase() !== normalizedFragment);
     selectedIndex = 0;
     showSuggestions = suggestions.length > 0;
@@ -113,7 +124,7 @@
     const leadingWhitespace = value.substring(result.start, result.trimmedStart);
     const trailingWhitespace = value.substring(result.trimmedEnd, result.end);
     const after = value.substring(result.end);
-    const tagText = tag.n.replace(/_/g, " ");
+    const tagText = formatTagForPrompt(tag.n);
     const needsCommaSuffix = !/^\s*,/.test(after);
     const suffix = needsCommaSuffix ? ", " : "";
 
@@ -302,7 +313,7 @@
           onmouseenter={() => { selectedIndex = i; }}
         >
           <span class={CATEGORY_COLORS[tag.c] ?? "text-neutral-300"}>
-            {tag.n.replace(/_/g, " ")}
+            {formatTagForDisplay(tag.n)}
           </span>
           <span class="text-xs text-neutral-500 shrink-0">{formatCount(tag.p)}</span>
         </button>
