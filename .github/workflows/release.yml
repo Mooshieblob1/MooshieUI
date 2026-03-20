@@ -153,16 +153,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          # Build release body
-          cat > /tmp/release-body.md << 'EOF'
-          **One-click installer** — just download and run. The app will automatically install ComfyUI, Python, PyTorch, and everything else you need on first launch.
-
-          ### Downloads
-          | Platform | File |
-          |----------|------|
-          | **Windows** | `.msi` or `.exe` |
-          | **Linux** | `.deb` or `.AppImage` |
-          EOF
+          # Build release body — use printf to avoid YAML parsing issues with pipes
+          printf '%s\n' \
+            '**One-click installer** — just download and run. The app will automatically install ComfyUI, Python, PyTorch, and everything else you need on first launch.' \
+            '' \
+            '### Downloads' \
+            '| Platform | File |' \
+            '|----------|------|' \
+            '| **Windows** | `.msi` or `.exe` |' \
+            '| **Linux** | `.deb` or `.AppImage` |' \
+            > /tmp/release-body.md
 
           gh release create "${TAG}" \
             --repo "${{ github.repository }}" \

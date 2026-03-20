@@ -5,7 +5,12 @@
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { accessibility } from "../../stores/accessibility.svelte.js";
+  import { check } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
   import { onMount } from "svelte";
+
+  declare const __APP_VERSION__: string;
+  const appVersion = __APP_VERSION__ ?? "dev";
 
   let config = $state<AppConfig | null>(null);
   let loading = $state(true);
@@ -18,6 +23,56 @@
 
   let tagUrlInput = $state("");
   let tagFileLoading = $state(false);
+
+  // Update check state
+  type UpdateCheckState = "idle" | "checking" | "available" | "downloading" | "ready" | "up-to-date" | "error";
+  let updateState = $state<UpdateCheckState>("idle");
+  let updateVersion = $state("");
+  let updateError = $state("");
+  let updateDownloaded = $state(0);
+  let updateTotal = $state(0);
+  let updateObj: Awaited<ReturnType<typeof check>> | null = null;
+
+  const updatePercent = $derived(updateTotal > 0 ? Math.round((updateDownloaded / updateTotal) * 100) : 0);
+
+  async function checkForUpdates() {
+    updateState = "checking";
+    updateError = "";
+    try {
+      const update = await check();
+      if (update) {
+        updateObj = update;
+        updateVersion = update.version;
+        updateState = "available";
+      } else {
+        updateState = "up-to-date";
+      }
+    } catch (e) {
+      updateState = "error";
+      updateError = String(e);
+    }
+  }
+
+  async function downloadAndInstallUpdate() {
+    if (!updateObj) return;
+    updateState = "downloading";
+    try {
+      await updateObj.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          updateTotal = event.data.contentLength ?? 0;
+          updateDownloaded = 0;
+        } else if (event.event === "Progress") {
+          updateDownloaded += event.data.chunkLength;
+        } else if (event.event === "Finished") {
+          updateState = "ready";
+        }
+      });
+      updateState = "ready";
+    } catch (e) {
+      updateState = "error";
+      updateError = String(e);
+    }
+  }
   let dyslexicFont = $state(localStorage.getItem("mooshieui.dyslexicFont") === "true");
 
   $effect(() => {
@@ -32,6 +87,7 @@
     performance: false,
     paths: false,
     autocomplete: false,
+    about: false,
   });
 
   const sections = [
@@ -40,6 +96,7 @@
     { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close" },
     { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
     { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
+    { key: "about", label: "About", keywords: "version update check updates about" },
   ];
 
   function sectionVisible(key: string): boolean {
@@ -628,6 +685,109 @@
             <!-- Undo/redo hint -->
             <div class="px-3 py-2 bg-neutral-800/50 border border-neutral-700/50 rounded-lg text-[10px] text-neutral-500">
               Tip: Use <kbd class="px-1 py-0.5 bg-neutral-700 rounded text-neutral-300">Ctrl+Z</kbd> / <kbd class="px-1 py-0.5 bg-neutral-700 rounded text-neutral-300">Ctrl+Y</kbd> in the prompt box to undo/redo autocompleted tags.
+            </div>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
+        <!-- About & Updates -->
+        {#if sectionVisible("about")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.about = !collapsed.about)}
+          >
+            About
+            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.about ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.about}
+          <div class="px-5 pb-5 space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm text-neutral-200">MooshieUI</p>
+                <p class="text-xs text-neutral-500">Version {appVersion}</p>
+              </div>
+            </div>
+
+            <div class="space-y-2">
+              {#if updateState === "idle"}
+                <button
+                  onclick={checkForUpdates}
+                  class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
+                >
+                  Check for Updates
+                </button>
+
+              {:else if updateState === "checking"}
+                <div class="flex items-center gap-2 text-sm text-neutral-400">
+                  <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                  Checking for updates...
+                </div>
+
+              {:else if updateState === "up-to-date"}
+                <div class="flex items-center gap-2 text-sm text-emerald-400">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                  You're on the latest version
+                </div>
+                <button
+                  onclick={checkForUpdates}
+                  class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
+                >
+                  Check again
+                </button>
+
+              {:else if updateState === "available"}
+                <div class="px-3 py-2 bg-indigo-900/30 border border-indigo-800/50 rounded-lg">
+                  <p class="text-sm text-indigo-200 mb-2">Version <strong>{updateVersion}</strong> is available</p>
+                  <button
+                    onclick={downloadAndInstallUpdate}
+                    class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
+                  >
+                    Download & Install
+                  </button>
+                </div>
+
+              {:else if updateState === "downloading"}
+                <div class="px-3 py-2 bg-indigo-900/30 border border-indigo-800/50 rounded-lg space-y-2">
+                  <div class="flex items-center justify-between text-xs text-neutral-400">
+                    <span>Downloading v{updateVersion}...</span>
+                    {#if updateTotal > 0}
+                      <span class="tabular-nums">{updatePercent}%</span>
+                    {/if}
+                  </div>
+                  <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      class="bg-indigo-500 h-full rounded-full transition-all duration-300"
+                      style="width: {updateTotal > 0 ? updatePercent : 33}%"
+                      class:animate-pulse={updateTotal === 0}
+                    ></div>
+                  </div>
+                </div>
+
+              {:else if updateState === "ready"}
+                <div class="px-3 py-2 bg-emerald-900/30 border border-emerald-800/50 rounded-lg">
+                  <p class="text-sm text-emerald-200 mb-2">Update downloaded. Restart to apply v{updateVersion}.</p>
+                  <button
+                    onclick={() => relaunch()}
+                    class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
+                  >
+                    Restart Now
+                  </button>
+                </div>
+
+              {:else if updateState === "error"}
+                <div class="px-3 py-2 bg-red-900/30 border border-red-800/50 rounded-lg">
+                  <p class="text-xs text-red-200">{updateError}</p>
+                </div>
+                <button
+                  onclick={checkForUpdates}
+                  class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
+                >
+                  Try again
+                </button>
+              {/if}
             </div>
           </div>
           {/if}

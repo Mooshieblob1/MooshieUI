@@ -114,6 +114,10 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         if std::env::var("APPIMAGE").is_ok() {
             cmd.env_remove("LD_LIBRARY_PATH");
             cmd.env_remove("LD_PRELOAD");
+            cmd.env_remove("PYTHONHOME");
+            cmd.env_remove("PYTHONPATH");
+            cmd.env_remove("PYTHONDONTWRITEBYTECODE");
+            cmd.env_remove("GDK_BACKEND");
             // Preserve the real PATH but remove AppImage-internal paths
             if let Ok(path) = std::env::var("PATH") {
                 let filtered: Vec<&str> = path
