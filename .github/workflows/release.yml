@@ -64,15 +64,10 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          includeRelease: false
-          includeUpdaterJson: false
-          args: --target ${{ matrix.target }}
+        run: npx tauri build --target ${{ matrix.target }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -158,17 +153,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          VERSION="${TAG#v}"
-
           # Build release body
-          cat > /tmp/release-body.md << EOF
+          cat > /tmp/release-body.md << 'EOF'
           **One-click installer** — just download and run. The app will automatically install ComfyUI, Python, PyTorch, and everything else you need on first launch.
 
           ### Downloads
           | Platform | File |
           |----------|------|
-          | **Windows** | \`.msi\` or \`.exe\` |
-          | **Linux** | \`.deb\` or \`.AppImage\` |
+          | **Windows** | `.msi` or `.exe` |
+          | **Linux** | `.deb` or `.AppImage` |
           EOF
 
           gh release create "${TAG}" \
