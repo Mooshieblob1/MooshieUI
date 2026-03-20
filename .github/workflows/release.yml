@@ -70,28 +70,109 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: MooshieUI ${{ github.event.inputs.tag || github.ref_name }}
-          releaseBody: |
-            ## MooshieUI ${{ github.event.inputs.tag || github.ref_name }}
-
-            **One-click installer** — just download and run. The app will automatically install ComfyUI, Python, PyTorch, and everything else you need on first launch.
-
-            ### Downloads
-            | Platform | File |
-            |----------|------|
-            | **Windows** | `.msi` or `.exe` |
-            | **Linux** | `.deb` or `.AppImage` |
-
-            ### What's New in v0.2.4
-
-            - **Model Hub** — browse and download CivitAI models with image previews, ratings, and tags directly in the app. NSFW content filtering with blurred badges. Guided API key setup for gated models. Expanded base model filters including NoobAI, Pony, Illustrious, SD 3.5, Flux, and more. Also accepts direct HuggingFace download URLs.
-            - **SwarmUI metadata format** — image metadata is now embedded as SwarmUI-compatible JSON (`sui_image_params`), readable by SwarmUI and other tools. Lightbox metadata panel is now a resizable side panel. Still reads legacy A1111 metadata from older images.
-            - **ModelSpec support** — reads Stability AI ModelSpec metadata from `.safetensors` headers and displays model title, author, architecture, resolution, trigger phrases (click to add to prompt), tags, and usage hints in the model selector.
-            - **Native clipboard** — image copy now uses native OS clipboard tools (Wayland `wl-copy` / X11 `xclip`) with automatic session detection, fixing clipboard issues on Linux.
-            - **Gallery scroll performance** — eliminated scrolling lag in large galleries using requestAnimationFrame throttling and CSS containment.
-            - **Metadata fixes** — seed no longer shows -1 (resolved seed is now returned from generation); denoise is no longer incorrectly included in txt2img metadata.
-            - **Preview image actions** — Save and Copy buttons on the preview image now use the saved gallery file instead of the preview blob.
-          releaseDraft: false
-          prerelease: false
+          includeRelease: false
+          includeUpdaterJson: false
           args: --target ${{ matrix.target }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.target }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.rpm
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage.tar.gz.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi.zip
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi.zip.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.nsis.zip
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.nsis.zip.sig
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Collect release files
+        run: |
+          mkdir -p release-files
+          find artifacts -type f \( \
+            -name "*.deb" -o -name "*.rpm" \
+            -o -name "*.AppImage" -o -name "*.AppImage.tar.gz" -o -name "*.AppImage.tar.gz.sig" \
+            -o -name "*.msi" -o -name "*.msi.zip" -o -name "*.msi.zip.sig" \
+            -o -name "*.exe" -o -name "*.nsis.zip" -o -name "*.nsis.zip.sig" \
+          \) -exec cp {} release-files/ \;
+          echo "=== Release files ==="
+          ls -lh release-files/
+
+      - name: Generate updater manifest (latest.json)
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          REPO_URL: https://github.com/${{ github.repository }}/releases/download
+        run: |
+          VERSION="${TAG#v}"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # Read updater signatures
+          APPIMAGE_SIG=""
+          NSIS_SIG=""
+          [ -f "release-files/MooshieUI_${VERSION}_amd64.AppImage.tar.gz.sig" ] && \
+            APPIMAGE_SIG=$(cat "release-files/MooshieUI_${VERSION}_amd64.AppImage.tar.gz.sig")
+          [ -f "release-files/MooshieUI_${VERSION}_x64-setup.nsis.zip.sig" ] && \
+            NSIS_SIG=$(cat "release-files/MooshieUI_${VERSION}_x64-setup.nsis.zip.sig")
+
+          # Build latest.json with jq for proper escaping
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "MooshieUI ${TAG}" \
+            --arg pub_date "$PUB_DATE" \
+            --arg linux_sig "$APPIMAGE_SIG" \
+            --arg linux_url "${REPO_URL}/${TAG}/MooshieUI_${VERSION}_amd64.AppImage.tar.gz" \
+            --arg win_sig "$NSIS_SIG" \
+            --arg win_url "${REPO_URL}/${TAG}/MooshieUI_${VERSION}_x64-setup.nsis.zip" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "linux-x86_64": { signature: $linux_sig, url: $linux_url },
+                "windows-x86_64": { signature: $win_sig, url: $win_url }
+              }
+            }' > release-files/latest.json
+
+          echo "=== latest.json ==="
+          cat release-files/latest.json
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+
+          # Build release body
+          cat > /tmp/release-body.md << EOF
+          **One-click installer** — just download and run. The app will automatically install ComfyUI, Python, PyTorch, and everything else you need on first launch.
+
+          ### Downloads
+          | Platform | File |
+          |----------|------|
+          | **Windows** | \`.msi\` or \`.exe\` |
+          | **Linux** | \`.deb\` or \`.AppImage\` |
+          EOF
+
+          gh release create "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --title "MooshieUI ${TAG}" \
+            --notes-file /tmp/release-body.md \
+            release-files/*
