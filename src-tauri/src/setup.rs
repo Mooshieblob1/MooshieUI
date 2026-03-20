@@ -39,13 +39,10 @@ fn emit_log(app: &AppHandle, line: &str) {
 }
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    // Prefer MOOSHIEUI_DATA_DIR env var for custom install locations,
-    // fall back to Tauri's platform-specific app data directory.
-    if let Ok(custom) = std::env::var("MOOSHIEUI_DATA_DIR") {
-        let p = PathBuf::from(custom.trim());
-        if !p.as_os_str().is_empty() {
-            return Ok(p);
-        }
+    // Use the same 3-tier resolution as config::app_data_dir():
+    // env var > bootstrap pointer > platform default
+    if let Some(dir) = config::app_data_dir() {
+        return Ok(dir);
     }
     app.path()
         .app_data_dir()
@@ -1134,16 +1131,28 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
         if file_type.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else if file_type.is_symlink() {
-            // Preserve symlinks
+            // Try to preserve symlinks; fall back to copying content on Windows
+            // where symlink creation requires admin privileges (error 1314)
             let target = std::fs::read_link(&src_path)?;
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(&target, &dst_path)?;
-            #[cfg(windows)]
-            {
-                if target.is_dir() {
-                    std::os::windows::fs::symlink_dir(&target, &dst_path)?;
+            let symlink_created = {
+                #[cfg(unix)]
+                { std::os::unix::fs::symlink(&target, &dst_path).is_ok() }
+                #[cfg(windows)]
+                {
+                    if target.is_dir() {
+                        std::os::windows::fs::symlink_dir(&target, &dst_path).is_ok()
+                    } else {
+                        std::os::windows::fs::symlink_file(&target, &dst_path).is_ok()
+                    }
+                }
+            };
+            if !symlink_created {
+                // Symlink failed — copy the actual content instead
+                let real_path = std::fs::canonicalize(&src_path)?;
+                if real_path.is_dir() {
+                    copy_dir_recursive(&real_path, &dst_path)?;
                 } else {
-                    std::os::windows::fs::symlink_file(&target, &dst_path)?;
+                    std::fs::copy(&real_path, &dst_path)?;
                 }
             }
         } else {

@@ -713,7 +713,7 @@ pub async fn civitai_lookup_hash(hash: String) -> Result<Value, AppError> {
     let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
     let resp = reqwest::Client::new()
         .get(&url)
-        .header("User-Agent", "MooshieUI/0.2.7")
+        .header("User-Agent", "MooshieUI/0.2.8")
         .send()
         .await
         .map_err(|e| AppError::Other(format!("CivitAI request failed: {}", e)))?;
@@ -779,7 +779,7 @@ pub async fn civitai_search_models(
         .http_client
         .get(&url)
         .header("Accept", "application/json")
-        .header("User-Agent", "MooshieUI/0.2.7");
+        .header("User-Agent", "MooshieUI/0.2.8");
 
     if let Some(key) = params.api_key.filter(|v| !v.trim().is_empty()) {
         req = req.bearer_auth(key);
@@ -844,7 +844,7 @@ pub async fn civitai_list_architectures(
             .http_client
             .get("https://civitai.com/api/v1/models")
             .header("Accept", "application/json")
-            .header("User-Agent", "MooshieUI/0.2.7")
+            .header("User-Agent", "MooshieUI/0.2.8")
             .query(&[("limit", "100")]);
 
         if let Some(ref c) = cursor {
