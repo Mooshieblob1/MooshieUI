@@ -3,8 +3,7 @@
 
 use std::path::Path;
 
-const MOOSHIE_NODES_INIT: &str =
-    include_str!("../../../../ComfyUI/custom_nodes/mooshie-nodes/__init__.py");
+const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
 
 /// Ensure the mooshie-nodes custom node pack exists in ComfyUI's custom_nodes directory.
 /// Always overwrites to keep in sync with the app version.
