@@ -314,7 +314,7 @@ Both methods:
 - [ ] **Training UI** — LoRA training from within the app
 - [ ] **Plugin system** — extend MooshieUI with custom panels and features
 - [ ] **Cloud rendering** — option to offload generation to remote GPUs
-- [ ] **PWA Support — allowing users to host their own instances of MooshieUI to present as a webapp
+- [ ] **PWA Support** — allowing users to host their own instances of MooshieUI to present as a webapp
 
 ---
 
