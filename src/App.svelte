@@ -19,6 +19,7 @@
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
   import { downloads } from "./lib/stores/downloads.svelte.js";
+  import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
 
   declare const __APP_VERSION__: string;
   const appVersion = __APP_VERSION__ ?? "dev";
@@ -558,6 +559,8 @@
     if (view === "small") return Math.min(10, galleryImagesPerRow + 2);
     return galleryImagesPerRow;
   }
+
+  const thumbSize = $derived(viewColumns(galleryView) <= 3 ? 480 : 384);
 
   $effect(() => {
     void gallery.images;
@@ -1168,9 +1171,7 @@
                     {#each group.images as image}
                       <div class="grid grid-cols-[72px_1fr_150px_120px_320px] gap-2 px-3 py-2 items-center border-b border-neutral-900/80 last:border-b-0">
                         <button class="w-14 h-14 rounded border border-neutral-800 overflow-hidden" onclick={() => gallery.openLightbox(image)}>
-                          {#if image.url}
-                            <img src={image.url} alt={image.filename} class="w-full h-full object-cover" />
-                          {/if}
+                          <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} class="w-full h-full object-cover" />
                         </button>
                         <div class="text-sm text-neutral-200 truncate" title={image.filename}>{image.filename}</div>
                         <div class="text-xs text-neutral-400">{formatDate(image.generated_at_ms)}</div>
@@ -1210,13 +1211,11 @@
                           class="w-full h-full"
                           onclick={() => gallery.openLightbox(image)}
                         >
-                          {#if image.url}
-                            <img
-                              src={image.url}
-                              alt={image.filename}
-                              class="w-full h-full object-cover"
-                            />
-                          {/if}
+                          <img
+                            use:lazyThumbnail={{ image, size: thumbSize }}
+                            alt={image.filename}
+                            class="w-full h-full object-cover"
+                          />
                         </button>
                         <div class="absolute inset-0 bg-black/55 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
                         <div class="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200 pointer-events-none">
@@ -1433,11 +1432,11 @@
       </div>
       {/if}
 
-      {#if gallery.selectedImage?.url || gallery.lightboxUrl}
+      {#if gallery.lightboxUrl}
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <img
           bind:this={lbImgEl}
-          src={gallery.selectedImage?.url ?? gallery.lightboxUrl ?? ''}
+          src={gallery.lightboxUrl}
           alt={gallery.selectedImage?.filename ?? 'Preview'}
           class="max-w-full max-h-[85vh] object-contain select-none {lbPanning ? 'cursor-grabbing' : 'cursor-grab'}"
           draggable="false"
@@ -1450,6 +1449,10 @@
           onauxclick={(e) => e.preventDefault()}
           ondblclick={resetLightboxZoom}
         />
+      {:else if gallery.lightboxLoading}
+        <div class="flex items-center justify-center">
+          <div class="w-8 h-8 border-2 border-neutral-500 border-t-indigo-400 rounded-full animate-spin"></div>
+        </div>
       {/if}
     </div>
   </div>

@@ -65,6 +65,7 @@ export interface OutputImage {
   generation_mode?: "txt2img" | "img2img" | "inpainting";
   is_upscaled?: boolean;
   url?: string;
+  thumbnailUrl?: string;
   gallery_filename?: string;
   file_size_bytes?: number;
   generated_at_ms?: number;

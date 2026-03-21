@@ -75,7 +75,7 @@
 <button
   onclick={handleGenerate}
   disabled={!canGenerate && !progress.isGenerating}
-  class="w-full py-3 rounded-xl font-semibold text-sm transition-all {progress.isGenerating
+  class="w-full py-3 rounded-xl font-semibold text-sm transition-colors {progress.isGenerating
     ? 'bg-red-700 hover:bg-red-600 text-white'
     : canGenerate
       ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20'

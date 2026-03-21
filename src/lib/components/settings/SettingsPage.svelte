@@ -1023,7 +1023,7 @@
                   </div>
                   <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
                     <div
-                      class="bg-indigo-500 h-full rounded-full transition-all duration-300"
+                      class="bg-indigo-500 h-full rounded-full transition-[width] duration-300"
                       style="width: {updateTotal > 0 ? updatePercent : 33}%"
                       class:animate-pulse={updateTotal === 0}
                     ></div>

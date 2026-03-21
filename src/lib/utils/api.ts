@@ -251,6 +251,7 @@ export async function loadGalleryImage(filename: string): Promise<number[]> {
   return invoke("load_gallery_image", { filename });
 }
 
+
 export async function deleteGalleryImage(filename: string): Promise<void> {
   return invoke("delete_gallery_image", { filename });
 }

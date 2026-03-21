@@ -49,7 +49,7 @@
           <div class="flex-1 max-w-48 bg-neutral-700 rounded-full h-1.5 overflow-hidden">
             {#if dl.total > 0}
               <div
-                class="bg-indigo-500 h-full rounded-full transition-all duration-300 ease-out"
+                class="bg-indigo-500 h-full rounded-full transition-[width] duration-300 ease-out"
                 style="width: {percent}%"
               ></div>
             {:else}

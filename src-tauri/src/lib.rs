@@ -13,6 +13,15 @@ use tauri::{Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Fix WebKitGTK scroll jank and rendering glitches on NVIDIA + Wayland.
+    // The DMA-BUF renderer is broken with NVIDIA proprietary drivers.
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+
     let config = load_persisted_config();
     let app_state = AppState::new(config);
 
@@ -25,6 +34,82 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
+        .setup(|app| {
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+                if let Some(main_window) = app.get_webview_window("main") {
+                    let _ = main_window.with_webview(|webview| {
+                        use webkit2gtk::WebViewExt;
+                        if let Some(settings) = webview.inner().settings() {
+                            use webkit2gtk::SettingsExt;
+                            settings.set_enable_smooth_scrolling(true);
+                            settings.set_enable_page_cache(true);
+                            settings.set_hardware_acceleration_policy(
+                                webkit2gtk::HardwareAccelerationPolicy::Always,
+                            );
+                            settings.set_enable_developer_extras(true);
+                        }
+                    });
+                }
+            }
+            Ok(())
+        })
+        .register_asynchronous_uri_scheme_protocol("thumbnail", |ctx, request, responder| {
+            let _app_handle = ctx.app_handle().clone();
+            std::thread::spawn(move || {
+                let uri = request.uri().to_string();
+                // URL format: thumbnail://localhost/{filename}?size={max_size}
+                let path = uri
+                    .strip_prefix("thumbnail://localhost/")
+                    .or_else(|| uri.strip_prefix("thumbnail:///"))
+                    .unwrap_or("");
+                let (filename_encoded, query) = path.split_once('?').unwrap_or((path, ""));
+                let filename = percent_encoding::percent_decode_str(filename_encoded)
+                    .decode_utf8()
+                    .map(|s| s.into_owned())
+                    .unwrap_or_else(|_| filename_encoded.to_string());
+                let max_size: u32 = query
+                    .strip_prefix("size=")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(256);
+
+                let gallery_dir = match config::app_data_dir() {
+                    Some(d) => d.join("gallery"),
+                    None => {
+                        responder.respond(
+                            tauri::http::Response::builder()
+                                .status(500)
+                                .body(b"No app data dir".to_vec())
+                                .unwrap(),
+                        );
+                        return;
+                    }
+                };
+
+                match commands::api::generate_thumbnail(&gallery_dir, &filename, max_size) {
+                    Ok(data) => {
+                        responder.respond(
+                            tauri::http::Response::builder()
+                                .status(200)
+                                .header("Content-Type", "image/webp")
+                                .header("Cache-Control", "max-age=31536000, immutable")
+                                .body(data)
+                                .unwrap(),
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!("Thumbnail generation failed for {}: {}", filename, e);
+                        responder.respond(
+                            tauri::http::Response::builder()
+                                .status(404)
+                                .body(format!("Thumbnail error: {}", e).into_bytes())
+                                .unwrap(),
+                        );
+                    }
+                }
+            });
+        })
         .invoke_handler(tauri::generate_handler![
             commands::server::start_comfyui,
             commands::server::stop_comfyui,

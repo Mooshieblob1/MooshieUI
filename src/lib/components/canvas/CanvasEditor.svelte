@@ -49,7 +49,7 @@
     <CanvasStage bind:this={stageRef} />
 
     {#if generation.mode === "inpainting" && progress.isGenerating}
-      <div class="absolute inset-0 z-20 bg-black/50 backdrop-blur-[1px] flex items-center justify-center p-4">
+      <div class="absolute inset-0 z-20 bg-black/70 flex items-center justify-center p-4">
         <div class="w-full max-w-xl rounded-xl border border-neutral-700 bg-neutral-950/95 shadow-2xl overflow-hidden">
           <div class="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
             <div class="text-sm font-medium text-neutral-100">Inpainting Preview</div>
@@ -75,7 +75,7 @@
             <div class="mt-3">
               <div class="h-2 rounded-full bg-neutral-800 overflow-hidden">
                 <div
-                  class="h-full bg-indigo-500 transition-all duration-200"
+                  class="h-full bg-indigo-500 transition-[width] duration-200"
                   style="width: {Math.max(2, progress.percentage)}%"
                 ></div>
               </div>

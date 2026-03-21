@@ -17,7 +17,7 @@
     </div>
     <div class="w-full h-2 bg-neutral-800 rounded-full overflow-hidden">
       <div
-        class="h-full rounded-full transition-all duration-200 {progress.wasUpscaled && progress.samplingPass >= 2 ? 'bg-emerald-500' : 'bg-indigo-500'}"
+        class="h-full rounded-full transition-[width] duration-200 {progress.wasUpscaled && progress.samplingPass >= 2 ? 'bg-emerald-500' : 'bg-indigo-500'}"
         style="width: {progress.percentage}%"
       ></div>
     </div>

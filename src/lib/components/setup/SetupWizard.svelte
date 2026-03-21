@@ -274,7 +274,7 @@
       </p>
     </div>
 
-    <div class="bg-neutral-900/95 backdrop-blur-sm rounded-xl border border-neutral-800 p-6">
+    <div class="bg-neutral-900 rounded-xl border border-neutral-800 p-6">
       {#if phase === "detecting"}
         <div class="text-center py-8">
           <div
@@ -464,7 +464,7 @@
           </div>
           <div class="w-full bg-neutral-800 rounded-full h-2.5 overflow-hidden">
             <div
-              class="bg-indigo-500 h-full rounded-full transition-all duration-500 ease-out"
+              class="bg-indigo-500 h-full rounded-full transition-[width] duration-500 ease-out"
               style="width: {progressPercent}%"
             ></div>
           </div>
@@ -479,7 +479,7 @@
             </div>
             <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
               <div
-                class="bg-indigo-400 h-full rounded-full transition-all duration-300 ease-out"
+                class="bg-indigo-400 h-full rounded-full transition-[width] duration-300 ease-out"
                 style="width: {downloadPercent}%"
               ></div>
             </div>

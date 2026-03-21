@@ -88,6 +88,12 @@ select, option {
 ::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #525252; }
 
+/* ─── Scroll performance: contain repaints to scrollable regions ─── */
+.overflow-y-auto, .overflow-auto {
+  contain: content;
+  will-change: scroll-position;
+}
+
 /* ─── Light mode ─── */
 html.light {
   color-scheme: light;

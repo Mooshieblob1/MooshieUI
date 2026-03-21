@@ -18,6 +18,7 @@
   import { readFile } from "@tauri-apps/plugin-fs";
   import { uploadImage, uploadImageBytes, loadGalleryImage, getOutputImage } from "../../utils/api.js";
   import { gallery } from "../../stores/gallery.svelte.js";
+  import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage } from "../../types/index.js";
 
   const DIMENSIONS_LAYOUT_KEY = "mooshieui.generation.dimensions.layout.v1";
@@ -808,7 +809,7 @@
     {#if draggingSection}
       <div class="relative">
         <div
-          class="h-0.5 rounded-full transition-all duration-150 mx-2 {isPendingDrop(side, index)
+          class="h-0.5 rounded-full transition-[background-color,transform] duration-150 mx-2 {isPendingDrop(side, index)
             ? 'bg-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.5)] scale-y-[3]'
             : 'bg-transparent'}"
         ></div>
@@ -828,14 +829,11 @@
                 class="w-full h-full"
                 onclick={() => gallery.openLightbox(image)}
               >
-                {#if image.url}
                   <img
-                    src={image.url}
+                    use:lazyThumbnail={{ image }}
                     alt={image.filename}
                     class="w-full h-full object-cover"
-                    loading="lazy"
                   />
-                {/if}
               </button>
               <div
                 class="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center p-2 pointer-events-none"
@@ -844,7 +842,7 @@
                 <div class="grid grid-cols-3 gap-1.5 pointer-events-auto">
                   {#if !image.is_upscaled}
                     <button
-                      class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/70 hover:bg-indigo-700 text-neutral-300 text-xs backdrop-blur-sm"
+                      class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/90 hover:bg-indigo-700 text-neutral-300 text-xs"
                       title="Upscale"
                       onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}
                     >
@@ -852,28 +850,28 @@
                     </button>
                   {/if}
                   <button
-                    class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/70 hover:bg-indigo-700 text-neutral-300 text-xs backdrop-blur-sm"
+                    class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/90 hover:bg-indigo-700 text-neutral-300 text-xs"
                     title="Inpaint"
                     onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
                   </button>
                   <button
-                    class="w-8 h-8 flex items-center justify-center rounded bg-neutral-900/85 hover:bg-neutral-700 text-neutral-300 text-xs backdrop-blur-sm"
+                    class="w-8 h-8 flex items-center justify-center rounded bg-neutral-900/95 hover:bg-neutral-700 text-neutral-300 text-xs"
                     title="Save As"
                     onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                   </button>
                   <button
-                    class="w-8 h-8 flex items-center justify-center rounded bg-neutral-900/85 hover:bg-neutral-700 text-neutral-300 text-xs backdrop-blur-sm"
+                    class="w-8 h-8 flex items-center justify-center rounded bg-neutral-900/95 hover:bg-neutral-700 text-neutral-300 text-xs"
                     title="Copy"
                     onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                   </button>
                   <button
-                    class="w-8 h-8 flex items-center justify-center rounded bg-red-900/70 hover:bg-red-800 text-neutral-300 text-xs backdrop-blur-sm"
+                    class="w-8 h-8 flex items-center justify-center rounded bg-red-900/90 hover:bg-red-800 text-neutral-300 text-xs"
                     title="Delete"
                     onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}
                   >
@@ -909,7 +907,7 @@
   {/snippet}
 
   {#snippet sessionHistorySection()}
-    <div bind:this={sectionRefs['sessionHistory']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'sessionHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['sessionHistory']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'sessionHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("sessionHistory")}
         <button
@@ -930,7 +928,7 @@
   {/snippet}
 
   {#snippet dimensionsSection()}
-    <div bind:this={sectionRefs['dimensions']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'dimensions' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['dimensions']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'dimensions' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("dimensions")}
         <button
@@ -951,7 +949,7 @@
   {/snippet}
 
   {#snippet promptsSection()}
-    <div bind:this={sectionRefs['prompts']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'prompts' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['prompts']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'prompts' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("prompts")}
         <button
@@ -972,7 +970,7 @@
   {/snippet}
 
   {#snippet historySection()}
-    <div bind:this={sectionRefs['history']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'history' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['history']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'history' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("history")}
         <button
@@ -1027,7 +1025,7 @@
   {/snippet}
 
   {#snippet imageInputsSection()}
-    <div bind:this={sectionRefs['imageInputs']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'imageInputs' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['imageInputs']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'imageInputs' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("imageInputs")}
         <button
@@ -1213,7 +1211,7 @@
   {/snippet}
 
   {#snippet inpaintLayersSection()}
-    <div bind:this={sectionRefs['inpaintLayers']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'inpaintLayers' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['inpaintLayers']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'inpaintLayers' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("inpaintLayers")}
         <button
@@ -1273,7 +1271,7 @@
   {/snippet}
 
   {#snippet generationSettingsSection()}
-    <div bind:this={sectionRefs['generationSettings']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'generationSettings' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['generationSettings']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'generationSettings' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("generationSettings")}
         <button
@@ -1302,7 +1300,7 @@
   {/snippet}
 
   {#snippet modelSection()}
-    <div bind:this={sectionRefs['model']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'model' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['model']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'model' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("model")}
         <button
@@ -1323,7 +1321,7 @@
   {/snippet}
 
   {#snippet samplerSection()}
-    <div bind:this={sectionRefs['sampler']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'sampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['sampler']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'sampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("sampler")}
         <button
@@ -1344,7 +1342,7 @@
   {/snippet}
 
   {#snippet controlnetSection()}
-    <div bind:this={sectionRefs['controlnet']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'controlnet' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['controlnet']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'controlnet' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("controlnet")}
         <button
@@ -1365,7 +1363,7 @@
   {/snippet}
 
   {#snippet facefixSection()}
-    <div bind:this={sectionRefs['facefix']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['facefix']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("facefix")}
         <button
@@ -1386,7 +1384,7 @@
   {/snippet}
 
   {#snippet upscaleHistorySection()}
-    <div bind:this={sectionRefs['upscaleHistory']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['upscaleHistory']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("upscaleHistory")}
         <button

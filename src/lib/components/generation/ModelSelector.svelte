@@ -520,7 +520,7 @@
         {#if dlTotal > 0}
           <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
             <div
-              class="bg-indigo-400 h-full rounded-full transition-all duration-300 ease-out"
+              class="bg-indigo-400 h-full rounded-full transition-[width] duration-300 ease-out"
               style="width: {dlPercent}%"
             ></div>
           </div>

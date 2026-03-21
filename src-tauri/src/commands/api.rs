@@ -297,6 +297,24 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
     Ok(bytes)
 }
 
+/// Generate a WebP thumbnail for a gallery image. Used by the `thumbnail://` protocol.
+pub fn generate_thumbnail(gallery_dir: &std::path::Path, filename: &str, max_size: u32) -> Result<Vec<u8>, String> {
+    let path = gallery_dir.join(filename);
+    let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;
+
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| format!("Decode failed: {}", e))?;
+
+    let thumb = img.thumbnail(max_size, max_size);
+
+    let mut buf = std::io::Cursor::new(Vec::new());
+    thumb
+        .write_to(&mut buf, image::ImageFormat::WebP)
+        .map_err(|e| format!("Encode failed: {}", e))?;
+
+    Ok(buf.into_inner())
+}
+
 #[tauri::command]
 pub async fn get_gallery_image_path(filename: String) -> Result<String, AppError> {
     let dir = crate::config::app_data_dir()

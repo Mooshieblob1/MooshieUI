@@ -23,6 +23,7 @@ class GalleryStore {
   /** When set, the lightbox shows this URL instead of selectedImage. */
   lightboxUrl = $state<string | null>(null);
   lightboxOpen = $state(false);
+  lightboxLoading = $state(false);
   loading = $state(false);
   toast = $state<{ message: string; type: "success" | "error" | "info" } | null>(null);
   boardAssignments = $state<Record<string, string>>({});
@@ -116,10 +117,26 @@ class GalleryStore {
     this.sessionImages = [...newImages, ...this.sessionImages];
   }
 
-  openLightbox(image: OutputImage) {
+  async openLightbox(image: OutputImage) {
     this.selectedImage = image;
-    this.lightboxUrl = null;
     this.lightboxOpen = true;
+    if (image.url) {
+      // Session images already have a full-res blob URL
+      this.lightboxUrl = image.url;
+      this.lightboxLoading = false;
+    } else if (image.gallery_filename) {
+      // Persisted images — load full-res from disk
+      this.lightboxUrl = null;
+      this.lightboxLoading = true;
+      try {
+        const fullUrl = await this.loadFullImage(image.gallery_filename);
+        this.lightboxUrl = fullUrl;
+      } catch (e) {
+        console.error("Failed to load full image:", e);
+      } finally {
+        this.lightboxLoading = false;
+      }
+    }
   }
 
   /** Open lightbox with a raw image URL (e.g. preview blob). */
@@ -162,7 +179,7 @@ class GalleryStore {
     }
   }
 
-  /** Load previously saved gallery images from disk on startup. */
+  /** Load previously saved gallery images from disk on startup (metadata only — no image bytes). */
   async loadFromDisk() {
     this.loading = true;
     try {
@@ -171,17 +188,6 @@ class GalleryStore {
       for (const entry of entries) {
         const filename = entry.filename;
         try {
-          const bytes = await loadGalleryImage(filename);
-          const ext = filename.split(".").pop()?.toLowerCase() ?? "png";
-          const mimeType =
-            ext === "jpg" || ext === "jpeg"
-              ? "image/jpeg"
-              : ext === "webp"
-                ? "image/webp"
-                : "image/png";
-          const blob = new Blob([new Uint8Array(bytes)], { type: mimeType });
-          const url = URL.createObjectURL(blob);
-
           // New format: {promptId}__{mode}__{origFilename}; legacy: {promptId}_{origFilename}
           let promptId = "";
           let origFilename = filename;
@@ -214,13 +220,14 @@ class GalleryStore {
             prompt_id: promptId,
             generation_mode: generationMode,
             is_upscaled: isUpscaled,
-            url,
+            url: undefined,
+            thumbnailUrl: `thumbnail://localhost/${encodeURIComponent(filename)}`,
             gallery_filename: filename,
             file_size_bytes: entry.size_bytes,
             generated_at_ms: entry.modified_ms,
           });
         } catch (e) {
-          console.error(`Failed to load gallery image ${filename}:`, e);
+          console.error(`Failed to parse gallery entry ${filename}:`, e);
         }
       }
       if (loaded.length > 0) {
@@ -231,6 +238,20 @@ class GalleryStore {
     } finally {
       this.loading = false;
     }
+  }
+
+  /** Load full-resolution image data on demand. Returns the blob URL. */
+  async loadFullImage(galleryFilename: string): Promise<string> {
+    const bytes = await loadGalleryImage(galleryFilename);
+    const ext = galleryFilename.split(".").pop()?.toLowerCase() ?? "png";
+    const mimeType =
+      ext === "jpg" || ext === "jpeg"
+        ? "image/jpeg"
+        : ext === "webp"
+          ? "image/webp"
+          : "image/png";
+    const blob = new Blob([new Uint8Array(bytes)], { type: mimeType });
+    return URL.createObjectURL(blob);
   }
 
   /** Save an image to a user-chosen location via native file dialog. */

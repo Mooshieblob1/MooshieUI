@@ -314,7 +314,7 @@
             {/if}
             <div class="w-full bg-amber-900/50 rounded-full h-1.5 overflow-hidden">
               <div
-                class="bg-amber-400 h-full rounded-full transition-all duration-500"
+                class="bg-amber-400 h-full rounded-full transition-[width] duration-500"
                 style="width: {installStep === 'clone' ? '25' : installStep === 'pip' ? '55' : installStep === 'restart' ? '80' : installStep === 'verify' ? '95' : '10'}%"
               ></div>
             </div>
@@ -402,7 +402,7 @@
               class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden"
             >
               <div
-                class="bg-indigo-400 h-full rounded-full transition-all duration-300 ease-out"
+                class="bg-indigo-400 h-full rounded-full transition-[width] duration-300 ease-out"
                 style="width: {dlPercent}%"
               ></div>
             </div>

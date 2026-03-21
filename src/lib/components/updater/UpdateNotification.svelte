@@ -95,7 +95,7 @@
       <span class="flex-1">Downloading v{version}... {formatBytes(downloadProgress)}{totalSize > 0 ? ` / ${formatBytes(totalSize)}` : ''}</span>
       <div class="w-32 h-2 bg-neutral-700 rounded-full overflow-hidden">
         <div
-          class="h-full bg-indigo-500 transition-all duration-300"
+          class="h-full bg-indigo-500 transition-[width] duration-300"
           style="width: {progressPercent}%"
         ></div>
       </div>
