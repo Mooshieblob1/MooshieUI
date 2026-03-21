@@ -48,7 +48,7 @@
   <!-- Steps -->
   <div>
     <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-      Steps<InfoTip text="How many denoising iterations to run. More steps = finer detail but slower. 20-30 is a good balance for most samplers. Some (like 'euler') converge fast and don't benefit much beyond 25." />
+      <span>Steps<InfoTip text="How many denoising iterations to run. More steps = finer detail but slower. 20-30 is a good balance for most samplers. Some (like 'euler') converge fast and don't benefit much beyond 25." /></span>
       <span class="text-neutral-300">{generation.steps}</span>
     </label>
     <input
@@ -85,7 +85,7 @@
   <!-- Seed -->
   <div>
     <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-      Seed<InfoTip text="A number that determines the 'randomness' of your image. Same seed + same settings = same image. Use 'Random' for variety, or set a specific seed to reproduce or iterate on a result." />
+      <span>Seed<InfoTip text="A number that determines the 'randomness' of your image. Same seed + same settings = same image. Use 'Random' for variety, or set a specific seed to reproduce or iterate on a result." /></span>
       <button
         class="text-xs px-2 py-0.5 rounded {randomSeed
           ? 'bg-indigo-600 text-white'
@@ -112,7 +112,7 @@
   <!-- Batch Size -->
   <div>
     <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-      Batch Size<InfoTip text="How many images to generate at once. Higher values use more VRAM but let you compare results quickly. Each image uses the same prompt but a different seed." />
+      <span>Batch Size<InfoTip text="How many images to generate at once. Higher values use more VRAM but let you compare results quickly. Each image uses the same prompt but a different seed." /></span>
       <span class="text-neutral-300">{generation.batchSize}</span>
     </label>
     <input

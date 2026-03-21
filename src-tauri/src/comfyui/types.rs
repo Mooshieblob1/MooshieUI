@@ -102,6 +102,19 @@ pub struct GenerationParams {
     /// Optional ControlNet parameters
     #[serde(default)]
     pub controlnet: Option<ControlNetParam>,
+    /// Face fix (FaceDetailer) — detect faces with YOLOv8 and re-denoise them
+    #[serde(default)]
+    pub facefix_enabled: bool,
+    #[serde(default)]
+    pub facefix_detector: Option<String>,
+    #[serde(default = "default_facefix_denoise")]
+    pub facefix_denoise: f64,
+    #[serde(default = "default_facefix_steps")]
+    pub facefix_steps: u32,
+    #[serde(default = "default_facefix_guide_size")]
+    pub facefix_guide_size: u32,
+    #[serde(default = "default_facefix_max_faces")]
+    pub facefix_max_faces: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,4 +138,20 @@ fn default_strength() -> f64 {
 
 fn default_end_percent() -> f64 {
     1.0
+}
+
+fn default_facefix_denoise() -> f64 {
+    0.4
+}
+
+fn default_facefix_steps() -> u32 {
+    20
+}
+
+fn default_facefix_guide_size() -> u32 {
+    512
+}
+
+fn default_facefix_max_faces() -> u32 {
+    8
 }

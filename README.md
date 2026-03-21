@@ -299,11 +299,12 @@ Both methods:
 - [x] **ModelSpec support** — reads Stability AI ModelSpec metadata from safetensors headers; displays model title, author, architecture, resolution, trigger phrases (click to add to prompt), tags, and usage hints in the model selector
 - [x] **Native clipboard** — copies images via native OS clipboard (Wayland `wl-copy` and X11 `xclip` with automatic detection)
 - [x] **Auto-update** — check for and apply MooshieUI updates in-app
-- [x] **ControlNet support** — depth, canny, pose, and other control methods with preset-based and custom modes, image upload/paste/drag-drop, preprocessor installation, strength/start/end controls
+- [x] **ControlNet support** — depth, canny, pose, and other control methods with preset-based and custom modes, image upload/paste/drag-drop, preprocessor installation, strength/start/end controls (SD 1.5, SDXL, Illustrious/NoobAI — not available for Anima/COSMOS models)
 - [x] **Dark & light mode** — toggle between dark and light themes in settings
 - [x] **Draggable two-column layout** — drag sections between left/right columns and reorder them; layout persists across sessions
 - [x] **Manual ComfyUI start** — optional toggle to start ComfyUI manually instead of on app launch
 - [x] **Movable installation** — relocate the ComfyUI data directory to another drive from settings
+- [x] **Face Fix (FaceDetailer)** — built-in lightweight face detection and re-denoising using YOLOv8, bundled as a custom node (no Impact Pack dependency); configurable denoise, steps, guide size, and detector model with auto-download
 
 ### To Do
 - [ ] **Batch queue** — queue multiple generations with different settings
@@ -313,6 +314,31 @@ Both methods:
 - [ ] **Training UI** — LoRA training from within the app
 - [ ] **Plugin system** — extend MooshieUI with custom panels and features
 - [ ] **Cloud rendering** — option to offload generation to remote GPUs
+
+---
+
+## 📋 Changelog
+
+### v0.2.9
+
+**Face Fix (FaceDetailer)**
+- Added built-in face detection and re-denoising — detects faces with YOLOv8, crops each to a configurable guide size, re-denoises, and composites back seamlessly with feathered blending
+- Lightweight custom `MooshieFaceDetailer` node bundled with the app — replaces the heavyweight Impact Pack dependency entirely
+- Node auto-deploys to ComfyUI's `custom_nodes/` on every startup via Rust `include_str!` embedding — no manual installation or restarts needed
+- Configurable settings: denoise strength, steps, guide size, and detector model selector
+- Auto-download YOLOv8 face detection models (yolov8m recommended, yolov8n lightweight) with progress bars
+- Compatible with video VAEs (WanVAE/Anima) — handles 5D tensor output gracefully
+
+**UI Improvements**
+- Mode selector (Text to Image / Image to Image / Inpainting) now stays pinned at the top of the panel when scrolling
+- Session history paginated to 4 images per page with prev/next controls — auto-jumps to first page on new generations
+- Session history images are now clickable to open in the lightbox — action buttons moved to bottom of thumbnail overlay
+- Removed horizontal scrollbar from the left panel
+- ControlNet section auto-hidden for Anima/COSMOS models (not supported)
+
+### v0.2.8
+
+- Fix installation move breaking setup and path resolution
 
 ---
 

@@ -144,7 +144,7 @@
       <!-- Scale -->
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-          Scale<InfoTip text="How much to enlarge the image. 2x doubles the resolution in each dimension (4x the pixels). Higher scales take longer and use more VRAM." />
+          <span>Scale<InfoTip text="How much to enlarge the image. 2x doubles the resolution in each dimension (4x the pixels). Higher scales take longer and use more VRAM." /></span>
           <span class="text-neutral-300">{generation.upscaleScale}x</span>
         </label>
         <input
@@ -205,7 +205,7 @@
       <!-- Denoise -->
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-          Denoise<InfoTip text="How much the AI re-draws during upscaling. Lower (0.2-0.4) preserves the original closely, higher adds more detail but may change the image." />
+          <span>Denoise<InfoTip text="How much the AI re-draws during upscaling. Lower (0.2-0.4) preserves the original closely, higher adds more detail but may change the image." /></span>
           <span class="text-neutral-300">{generation.upscaleDenoise.toFixed(2)}</span>
         </label>
         <input
@@ -221,7 +221,7 @@
       <!-- Steps -->
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-          Steps<InfoTip text="Denoising steps during the upscale pass. More steps = finer detail but slower. 10-20 is usually enough for upscaling." />
+          <span>Steps<InfoTip text="Denoising steps during the upscale pass. More steps = finer detail but slower. 10-20 is usually enough for upscaling." /></span>
           <span class="text-neutral-300">{generation.upscaleSteps}</span>
         </label>
         <input
@@ -266,7 +266,7 @@
     {#if generation.upscaleTiling || generation.isAnima}
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-        Tile Size<InfoTip text="The size of each tile when using tiled diffusion. Larger tiles = better coherence but more VRAM. 1024px is a good default. Reduce to 512-768 if you run out of memory." />
+        <span>Tile Size<InfoTip text="The size of each tile when using tiled diffusion. Larger tiles = better coherence but more VRAM. 1024px is a good default. Reduce to 512-768 if you run out of memory." /></span>
         <span class="text-neutral-300">{generation.upscaleTileSize}px</span>
       </label>
       <input

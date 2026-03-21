@@ -944,7 +944,7 @@
                 What's New in v{appVersion}
               </summary>
               <div class="px-3 pb-3 pt-1 text-xs text-neutral-400 space-y-2">
-                <p class="text-neutral-300 font-medium">v0.2.8</p>
+                <p class="text-neutral-300 font-medium">v0.2.9</p>
                 <ul class="list-disc list-inside space-y-0.5">
                   <li>Fixed: moving installation no longer re-triggers setup wizard</li>
                   <li>Fixed: app data resolves correctly after moving to a new location</li>

@@ -31,21 +31,31 @@
 
   const MAX_INPUT_PIXELS = 1024 * 1024;
 
-  // Lightbox zoom state
-  let lbScale = $state(1);
-  let lbOffsetX = $state(0);
-  let lbOffsetY = $state(0);
+  // Lightbox zoom state — only scale needs reactivity (used in template conditionals)
+  let lbScale = 1;
+  let lbOffsetX = 0;
+  let lbOffsetY = 0;
   let lbPanning = $state(false);
-  let lbPanStartX = $state(0);
-  let lbPanStartY = $state(0);
-  let lbPanStartOffsetX = $state(0);
-  let lbPanStartOffsetY = $state(0);
+  // Pan tracking — plain variables, no reactivity needed
+  let lbPanStartX = 0;
+  let lbPanStartY = 0;
+  let lbPanStartOffsetX = 0;
+  let lbPanStartOffsetY = 0;
+  let lbImgEl: HTMLImageElement | null = null;
+  let lbRafId = 0;
+
+  function applyLightboxTransform(smooth = false) {
+    if (!lbImgEl) return;
+    lbImgEl.style.transition = smooth ? 'transform 0.12s ease' : 'none';
+    lbImgEl.style.transform = `translate(${lbOffsetX}px, ${lbOffsetY}px) scale(${lbScale})`;
+  }
 
   function resetLightboxZoom() {
     lbScale = 1;
     lbOffsetX = 0;
     lbOffsetY = 0;
     lbPanning = false;
+    applyLightboxTransform(true);
   }
 
   function startLightboxPan(e: MouseEvent) {
@@ -55,18 +65,30 @@
     lbPanStartY = e.clientY;
     lbPanStartOffsetX = lbOffsetX;
     lbPanStartOffsetY = lbOffsetY;
+    if (lbImgEl) lbImgEl.style.transition = 'none';
     e.preventDefault();
   }
 
   function updateLightboxPan(e: MouseEvent) {
     if (!lbPanning) return;
+    e.preventDefault();
     lbOffsetX = lbPanStartOffsetX + (e.clientX - lbPanStartX);
     lbOffsetY = lbPanStartOffsetY + (e.clientY - lbPanStartY);
-    e.preventDefault();
+    if (!lbRafId) {
+      lbRafId = requestAnimationFrame(() => {
+        lbRafId = 0;
+        applyLightboxTransform();
+      });
+    }
   }
 
   function stopLightboxPan() {
     lbPanning = false;
+    if (lbRafId) {
+      cancelAnimationFrame(lbRafId);
+      lbRafId = 0;
+    }
+    applyLightboxTransform();
   }
 
   function zoomLightboxAtCursor(e: WheelEvent) {
@@ -90,15 +112,19 @@
       lbOffsetX = 0;
       lbOffsetY = 0;
     }
+    applyLightboxTransform();
   }
 
   function focusOnMount(node: HTMLElement) {
     node.focus();
   }
 
-  // Reset zoom when lightbox opens
+  // Reset zoom when lightbox opens (only on transition to open)
+  let lbWasOpen = false;
   $effect(() => {
-    if (gallery.lightboxOpen) resetLightboxZoom();
+    const isOpen = gallery.lightboxOpen;
+    if (isOpen && !lbWasOpen) resetLightboxZoom();
+    lbWasOpen = isOpen;
   });
 
   function startMetadataResize(e: MouseEvent) {
@@ -1410,11 +1436,12 @@
       {#if gallery.selectedImage?.url || gallery.lightboxUrl}
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <img
+          bind:this={lbImgEl}
           src={gallery.selectedImage?.url ?? gallery.lightboxUrl ?? ''}
           alt={gallery.selectedImage?.filename ?? 'Preview'}
           class="max-w-full max-h-[85vh] object-contain select-none {lbPanning ? 'cursor-grabbing' : 'cursor-grab'}"
           draggable="false"
-          style="transform: translate({lbOffsetX}px, {lbOffsetY}px) scale({lbScale}); transform-origin: center center; transition: {lbPanning ? 'none' : 'transform 0.12s ease'};"
+          style="transform-origin: center center; will-change: transform;"
           onwheel={zoomLightboxAtCursor}
           onmousedown={(e) => { if (e.button === 1) e.preventDefault(); startLightboxPan(e); }}
           onmousemove={updateLightboxPan}

@@ -55,6 +55,9 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         )));
     }
 
+    // Deploy bundled custom nodes before starting ComfyUI
+    super::nodes::ensure_mooshie_nodes(&config.comfyui_path);
+
     log::info!("Spawning ComfyUI: {} {}", python_path, main_path);
 
     let mut cmd = tokio::process::Command::new(&python_path);

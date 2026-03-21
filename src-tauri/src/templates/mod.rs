@@ -1,4 +1,5 @@
 pub mod controlnet;
+pub mod facefix;
 pub mod img2img;
 pub mod inpainting;
 pub mod txt2img;
@@ -13,6 +14,7 @@ pub struct WorkflowResult {
     pub next_id: u32,
     pub image_output: (String, u32),
     pub model_source: (String, u32),
+    pub clip_source: (String, u32),
     pub positive_source: (String, u32),
     pub negative_source: (String, u32),
     pub vae_source: (String, u32),
@@ -176,6 +178,13 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
         upscale::append_upscale_chain(&mut result, params, seed)
     } else {
         result.image_output.clone()
+    };
+
+    // Apply face fix (FaceDetailer) after upscale if enabled
+    let final_image = if params.facefix_enabled {
+        facefix::append_facefix_chain(&mut result, params, final_image, seed)
+    } else {
+        final_image
     };
 
     let save_id = result.next_id.to_string();

@@ -115,6 +115,12 @@ class GenerationStore {
   controlnetStrength = $state(1.0);
   controlnetStartPercent = $state(0.0);
   controlnetEndPercent = $state(1.0);
+  facefixEnabled = $state(false);
+  facefixDetector = $state<string | null>(null);
+  facefixDenoise = $state(0.4);
+  facefixSteps = $state(20);
+  facefixGuideSize = $state(512);
+  facefixMaxFaces = $state(8);
   promptHistory = $state<PromptHistoryEntry[]>([]);
 
   /** Architecture detected from modelspec metadata, or null if not yet read. */
@@ -356,6 +362,12 @@ class GenerationStore {
         if (saved.controlnetStrength !== undefined) this.controlnetStrength = saved.controlnetStrength;
         if (saved.controlnetStartPercent !== undefined) this.controlnetStartPercent = saved.controlnetStartPercent;
         if (saved.controlnetEndPercent !== undefined) this.controlnetEndPercent = saved.controlnetEndPercent;
+        if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
+        if (saved.facefixDetector !== undefined) this.facefixDetector = saved.facefixDetector;
+        if (saved.facefixDenoise !== undefined) this.facefixDenoise = saved.facefixDenoise;
+        if (saved.facefixSteps !== undefined) this.facefixSteps = saved.facefixSteps;
+        if (saved.facefixGuideSize !== undefined) this.facefixGuideSize = saved.facefixGuideSize;
+        if (saved.facefixMaxFaces !== undefined) this.facefixMaxFaces = saved.facefixMaxFaces;
         console.log("Loaded saved settings, checkpoint:", this.checkpoint);
         // Sync autocomplete tag list with restored model
         autocomplete.notifyModelChanged(this.isAnima);
@@ -407,6 +419,12 @@ class GenerationStore {
         controlnetStrength: this.controlnetStrength,
         controlnetStartPercent: this.controlnetStartPercent,
         controlnetEndPercent: this.controlnetEndPercent,
+        facefixEnabled: this.facefixEnabled,
+        facefixDetector: this.facefixDetector,
+        facefixDenoise: this.facefixDenoise,
+        facefixSteps: this.facefixSteps,
+        facefixGuideSize: this.facefixGuideSize,
+        facefixMaxFaces: this.facefixMaxFaces,
       });
     } catch (e) {
       console.error("Failed to save settings:", e);
@@ -486,6 +504,12 @@ class GenerationStore {
             end_percent: this.controlnetEndPercent,
           }
         : null,
+      facefix_enabled: this.facefixEnabled,
+      facefix_detector: this.facefixDetector,
+      facefix_denoise: this.facefixDenoise,
+      facefix_steps: this.facefixSteps,
+      facefix_guide_size: this.facefixGuideSize,
+      facefix_max_faces: this.facefixMaxFaces,
     };
   }
 

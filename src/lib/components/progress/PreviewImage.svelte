@@ -78,7 +78,12 @@
       />
     </button>
     {#if !progress.isGenerating && progress.lastOutputImage}
-      <div class="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
+        onmousedown={(e) => e.stopPropagation()}
+        onclick={(e) => e.stopPropagation()}
+      >
         {#if !progress.wasUpscaled}
           <button
             onclick={upscaleImage}

@@ -6,6 +6,7 @@
   import DimensionControls from "./DimensionControls.svelte";
   import GenerateButton from "./GenerateButton.svelte";
   import UpscaleSettings from "./UpscaleSettings.svelte";
+  import FaceFixSettings from "./FaceFixSettings.svelte";
   import ControlNetSettings from "./ControlNetSettings.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import ProgressBar from "../progress/ProgressBar.svelte";
@@ -33,6 +34,7 @@
     | "model"
     | "sampler"
     | "controlnet"
+    | "facefix"
     | "upscaleHistory";
 
   type SectionSide = "left" | "right";
@@ -82,6 +84,7 @@
     model: "right",
     sampler: "right",
     controlnet: "right",
+    facefix: "right",
     upscaleHistory: "right",
   });
 
@@ -109,6 +112,7 @@
     "model",
     "sampler",
     "controlnet",
+    "facefix",
     "upscaleHistory",
   ];
 
@@ -245,6 +249,7 @@
     if (section === "generationSettings") return "Generation Settings";
     if (section === "model") return "Model";
     if (section === "sampler") return "Sampler";
+    if (section === "facefix") return "Face Fix";
     return "Upscale";
   }
 
@@ -261,6 +266,8 @@
     if (section === "model") return generation.mode !== "inpainting";
     if (section === "sampler") return generation.mode !== "inpainting";
     if (section === "upscaleHistory") return generation.mode !== "inpainting";
+    if (section === "controlnet") return !generation.isAnima;
+    if (section === "facefix") return generation.mode !== "inpainting";
     return true;
   }
 
@@ -294,10 +301,27 @@
   let imageSectionOpen = $state(savedCollapse.imageInputs !== false);
   let layersSectionOpen = $state(savedCollapse.inpaintLayers !== false);
   let sessionSectionOpen = $state(savedCollapse.sessionHistory !== false);
+  let sessionPage = $state(0);
+  let prevSessionCount = $state(gallery.sessionImages.length);
+  const SESSION_PAGE_SIZE = 4;
+  const sessionTotalPages = $derived(Math.max(1, Math.ceil(gallery.sessionImages.length / SESSION_PAGE_SIZE)));
+  const sessionPageImages = $derived(gallery.sessionImages.slice(sessionPage * SESSION_PAGE_SIZE, (sessionPage + 1) * SESSION_PAGE_SIZE));
+  $effect(() => {
+    const count = gallery.sessionImages.length;
+    if (count > prevSessionCount) {
+      // New images added — jump to first page
+      sessionPage = 0;
+    } else if (sessionPage >= sessionTotalPages) {
+      // Images deleted — clamp page
+      sessionPage = Math.max(0, sessionTotalPages - 1);
+    }
+    prevSessionCount = count;
+  });
   let controlsSectionOpen = $state(savedCollapse.generationSettings !== false);
   let modelSectionOpen = $state(savedCollapse.model !== false);
   let samplerSectionOpen = $state(savedCollapse.sampler !== false);
   let controlnetSectionOpen = $state(savedCollapse.controlnet !== false);
+  let facefixSectionOpen = $state(savedCollapse.facefix !== false);
   let postSectionOpen = $state(savedCollapse.upscaleHistory !== false);
 
   let collapseSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -311,6 +335,7 @@
       model: modelSectionOpen,
       sampler: samplerSectionOpen,
       controlnet: controlnetSectionOpen,
+      facefix: facefixSectionOpen,
       upscaleHistory: postSectionOpen,
     };
     if (collapseSaveTimer) clearTimeout(collapseSaveTimer);
@@ -727,7 +752,8 @@
       };
 
       const remaining = sectionOrder.filter((id) => id !== draggingSection);
-      const sideSections = remaining.filter((id) => sectionSides[id] === targetSide);
+      // Use only visible sections to match computeDropTarget's index calculation
+      const sideSections = remaining.filter((id) => sectionSides[id] === targetSide && sectionVisible(id));
 
       let insertAt = remaining.length;
       if (sideSections.length > 0) {
@@ -796,7 +822,7 @@
     {:else}
       <div>
         <div class="grid grid-cols-2 gap-2">
-          {#each gallery.sessionImages as image}
+          {#each sessionPageImages as image}
             <div class="group relative aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors">
               <button
                 class="w-full h-full"
@@ -807,11 +833,15 @@
                     src={image.url}
                     alt={image.filename}
                     class="w-full h-full object-cover"
+                    loading="lazy"
                   />
                 {/if}
               </button>
-              <div class="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center p-2">
-                <div class="grid grid-cols-3 gap-1.5">
+              <div
+                class="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center p-2 pointer-events-none"
+                onclick={() => gallery.openLightbox(image)}
+              >
+                <div class="grid grid-cols-3 gap-1.5 pointer-events-auto">
                   {#if !image.is_upscaled}
                     <button
                       class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/70 hover:bg-indigo-700 text-neutral-300 text-xs backdrop-blur-sm"
@@ -854,6 +884,26 @@
             </div>
           {/each}
         </div>
+
+        {#if sessionTotalPages > 1}
+          <div class="flex items-center justify-between mt-2">
+            <button
+              onclick={() => { sessionPage = Math.max(0, sessionPage - 1); }}
+              disabled={sessionPage === 0}
+              class="px-2 py-1 text-[11px] rounded bg-neutral-800 text-neutral-300 hover:bg-neutral-700 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <span class="text-[11px] text-neutral-500 tabular-nums">{sessionPage + 1} / {sessionTotalPages}</span>
+            <button
+              onclick={() => { sessionPage = Math.min(sessionTotalPages - 1, sessionPage + 1); }}
+              disabled={sessionPage >= sessionTotalPages - 1}
+              class="px-2 py-1 text-[11px] rounded bg-neutral-800 text-neutral-300 hover:bg-neutral-700 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+        {/if}
       </div>
     {/if}
   {/snippet}
@@ -1056,7 +1106,7 @@
 
           <div>
             <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-              Denoise Strength<InfoTip text="How much the AI changes the input image. 0 = no change, 1 = completely new image ignoring the input. Lower values (0.3-0.5) keep the original composition, higher values (0.6-0.8) allow more creative freedom." />
+              <span>Denoise Strength<InfoTip text="How much the AI changes the input image. 0 = no change, 1 = completely new image ignoring the input. Lower values (0.3-0.5) keep the original composition, higher values (0.6-0.8) allow more creative freedom." /></span>
               <span class="text-neutral-300">{generation.denoise.toFixed(2)}</span>
             </label>
             <input
@@ -1314,6 +1364,27 @@
     </div>
   {/snippet}
 
+  {#snippet facefixSection()}
+    <div bind:this={sectionRefs['facefix']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("facefix")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (facefixSectionOpen = !facefixSectionOpen)}
+          title={facefixSectionOpen ? "Collapse Face Fix" : "Expand Face Fix"}
+        >
+          <span class="font-medium">Face Fix</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {facefixSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if facefixSectionOpen}
+        <div class="px-3 pb-3 pt-1 space-y-4">
+          <FaceFixSettings />
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
   {#snippet upscaleHistorySection()}
     <div bind:this={sectionRefs['upscaleHistory']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-all duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
@@ -1356,6 +1427,8 @@
       {@render samplerSection()}
     {:else if section === "controlnet"}
       {@render controlnetSection()}
+    {:else if section === "facefix"}
+      {@render facefixSection()}
     {:else if section === "upscaleHistory"}
       {@render upscaleHistorySection()}
     {/if}
@@ -1368,50 +1441,52 @@
     onmouseup={onPointerUp}
     onmouseleave={onPointerUp}
   >
-    {#if leftHasSections || controlsSide === "left"}
+    {#if leftHasSections || controlsSide === "left" || draggingSection}
       <div
         bind:this={leftColumnRef}
-        class="overflow-y-auto px-4 pt-4 flex flex-col gap-4 shrink-0 border-r {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'}"
+        class="overflow-y-auto overflow-x-hidden px-4 pt-4 flex flex-col gap-4 shrink-0 border-r {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'}"
         style="width: {leftWidth}px"
       >
         {#if controlsSide === "left"}
-          <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
-            {#each modes as mode}
+          <div class="sticky top-0 z-10 bg-neutral-950 -mx-4 px-4 -mt-4 pt-4 pb-4">
+            <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
+              {#each modes as mode}
+                <button
+                  onclick={() => {
+                    generation.mode = mode.id;
+                    if (mode.id !== "inpainting") canvas.isCanvasMode = false;
+                  }}
+                  class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode === mode.id
+                    ? 'bg-neutral-700 text-white'
+                    : 'text-neutral-400 hover:text-neutral-200'}"
+                >
+                  {mode.label}
+                </button>
+              {/each}
+            </div>
+
+            {#if generation.mode === "inpainting"}
               <button
                 onclick={() => {
-                  generation.mode = mode.id;
-                  if (mode.id !== "inpainting") canvas.isCanvasMode = false;
+                  canvas.isCanvasMode = !canvas.isCanvasMode;
+                  if (canvas.isCanvasMode && canvas.layers.length === 0) {
+                    canvas.initCanvas(generation.width, generation.height);
+                  }
                 }}
-                class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode === mode.id
-                  ? 'bg-neutral-700 text-white'
-                  : 'text-neutral-400 hover:text-neutral-200'}"
+                class="flex items-center justify-between w-full px-3 py-2 mt-2 rounded-lg text-xs transition-colors {canvas.isCanvasMode
+                  ? 'bg-indigo-600/20 border border-indigo-500/50 text-indigo-300'
+                  : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600'}"
               >
-                {mode.label}
+                <span class="flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                  Canvas Editor
+                </span>
+                <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
+                  {canvas.isCanvasMode ? 'ON' : 'OFF'}
+                </span>
               </button>
-            {/each}
+            {/if}
           </div>
-
-          {#if generation.mode === "inpainting"}
-            <button
-              onclick={() => {
-                canvas.isCanvasMode = !canvas.isCanvasMode;
-                if (canvas.isCanvasMode && canvas.layers.length === 0) {
-                  canvas.initCanvas(generation.width, generation.height);
-                }
-              }}
-              class="flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs transition-colors {canvas.isCanvasMode
-                ? 'bg-indigo-600/20 border border-indigo-500/50 text-indigo-300'
-                : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600'}"
-            >
-              <span class="flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                Canvas Editor
-              </span>
-              <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
-                {canvas.isCanvasMode ? 'ON' : 'OFF'}
-              </span>
-            </button>
-          {/if}
         {/if}
 
         {@render sectionDropZone("left", 0)}
@@ -1429,7 +1504,7 @@
       </div>
     {/if}
 
-    {#if leftHasSections || controlsSide === "left"}
+    {#if leftHasSections || controlsSide === "left" || draggingSection}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="w-1 mx-1 shrink-0 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'left' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
@@ -1450,7 +1525,7 @@
       </div>
     {/if}
 
-    {#if rightHasSections || controlsSide === "right"}
+    {#if rightHasSections || controlsSide === "right" || draggingSection}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="w-1 mx-1 shrink-0 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'right' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
@@ -1460,50 +1535,52 @@
       ></div>
     {/if}
 
-    {#if rightHasSections || controlsSide === "right"}
+    {#if rightHasSections || controlsSide === "right" || draggingSection}
       <div
         bind:this={rightColumnRef}
         class="overflow-y-auto p-4 space-y-4 shrink-0 border-l {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'}"
         style="width: {rightWidth}px"
       >
         {#if controlsSide === "right"}
-          <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
-            {#each modes as mode}
+          <div class="sticky top-0 z-10 bg-neutral-950 -mx-4 px-4 -mt-4 pt-4 pb-4">
+            <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
+              {#each modes as mode}
+                <button
+                  onclick={() => {
+                    generation.mode = mode.id;
+                    if (mode.id !== "inpainting") canvas.isCanvasMode = false;
+                  }}
+                  class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode === mode.id
+                    ? 'bg-neutral-700 text-white'
+                    : 'text-neutral-400 hover:text-neutral-200'}"
+                >
+                  {mode.label}
+                </button>
+              {/each}
+            </div>
+
+            {#if generation.mode === "inpainting"}
               <button
                 onclick={() => {
-                  generation.mode = mode.id;
-                  if (mode.id !== "inpainting") canvas.isCanvasMode = false;
+                  canvas.isCanvasMode = !canvas.isCanvasMode;
+                  if (canvas.isCanvasMode && canvas.layers.length === 0) {
+                    canvas.initCanvas(generation.width, generation.height);
+                  }
                 }}
-                class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode === mode.id
-                  ? 'bg-neutral-700 text-white'
-                  : 'text-neutral-400 hover:text-neutral-200'}"
+                class="flex items-center justify-between w-full px-3 py-2 mt-2 rounded-lg text-xs transition-colors {canvas.isCanvasMode
+                  ? 'bg-indigo-600/20 border border-indigo-500/50 text-indigo-300'
+                  : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600'}"
               >
-                {mode.label}
+                <span class="flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                  Canvas Editor
+                </span>
+                <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
+                  {canvas.isCanvasMode ? 'ON' : 'OFF'}
+                </span>
               </button>
-            {/each}
+            {/if}
           </div>
-
-          {#if generation.mode === "inpainting"}
-            <button
-              onclick={() => {
-                canvas.isCanvasMode = !canvas.isCanvasMode;
-                if (canvas.isCanvasMode && canvas.layers.length === 0) {
-                  canvas.initCanvas(generation.width, generation.height);
-                }
-              }}
-              class="flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs transition-colors {canvas.isCanvasMode
-                ? 'bg-indigo-600/20 border border-indigo-500/50 text-indigo-300'
-                : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600'}"
-            >
-              <span class="flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                Canvas Editor
-              </span>
-              <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
-                {canvas.isCanvasMode ? 'ON' : 'OFF'}
-              </span>
-            </button>
-          {/if}
         {/if}
 
         {@render sectionDropZone("right", 0)}

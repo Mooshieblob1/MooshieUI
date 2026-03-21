@@ -559,9 +559,9 @@
       <label
         class="flex items-center justify-between text-xs text-neutral-400 mb-1"
       >
-        Strength<InfoTip
+        <span>Strength<InfoTip
           text="How strongly the ControlNet guides the generation. Higher values follow the control image more closely but may reduce creativity."
-        />
+        /></span>
         <span class="text-neutral-300"
           >{generation.controlnetStrength.toFixed(2)}</span
         >
@@ -581,9 +581,9 @@
         <label
           class="flex items-center justify-between text-xs text-neutral-400 mb-1"
         >
-          Start %<InfoTip
+          <span>Start %<InfoTip
             text="When ControlNet starts influencing the generation (0% = from the very beginning). Delaying the start can add more variation."
-          />
+          /></span>
           <span class="text-neutral-300"
             >{(generation.controlnetStartPercent * 100).toFixed(0)}%</span
           >
@@ -601,9 +601,9 @@
         <label
           class="flex items-center justify-between text-xs text-neutral-400 mb-1"
         >
-          End %<InfoTip
+          <span>End %<InfoTip
             text="When ControlNet stops influencing the generation (100% = until the very end). Ending early lets the model refine details freely."
-          />
+          /></span>
           <span class="text-neutral-300"
             >{(generation.controlnetEndPercent * 100).toFixed(0)}%</span
           >

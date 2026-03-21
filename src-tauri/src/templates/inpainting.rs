@@ -187,6 +187,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
         next_id,
         image_output: (decode_id, 0),
         model_source,
+        clip_source,
         positive_source: (pos_id, 0),
         negative_source: (neg_id, 0),
         vae_source,
