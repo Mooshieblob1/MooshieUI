@@ -946,6 +946,12 @@
               <div class="px-3 pb-3 pt-1 text-xs text-neutral-400 space-y-2">
                 <p class="text-neutral-300 font-medium">v0.2.9</p>
                 <ul class="list-disc list-inside space-y-0.5">
+                  <li>Face Fix (FaceDetailer) support for automatic face correction</li>
+                  <li>Session history with pagination for browsing past generations</li>
+                  <li>Sticky mode selector — workflow tab stays visible while scrolling</li>
+                </ul>
+                <p class="text-neutral-300 font-medium mt-3">v0.2.8</p>
+                <ul class="list-disc list-inside space-y-0.5">
                   <li>Fixed: moving installation no longer re-triggers setup wizard</li>
                   <li>Fixed: app data resolves correctly after moving to a new location</li>
                   <li>Fixed: symlink copy errors on Windows no longer block installation moves</li>

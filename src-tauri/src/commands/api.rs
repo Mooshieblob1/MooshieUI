@@ -289,6 +289,9 @@ pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppE
 
 #[tauri::command]
 pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(AppError::Other("Invalid filename".into()));
+    }
     let dir = crate::config::app_data_dir()
         .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
         .join("gallery");
@@ -299,6 +302,10 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
 
 /// Generate a WebP thumbnail for a gallery image. Used by the `thumbnail://` protocol.
 pub fn generate_thumbnail(gallery_dir: &std::path::Path, filename: &str, max_size: u32) -> Result<Vec<u8>, String> {
+    // Reject path traversal attempts — filename must be a plain basename.
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err("Invalid filename".to_string());
+    }
     let path = gallery_dir.join(filename);
     let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;
 
