@@ -11,23 +11,29 @@
   const TIP_DISPLAY_TIME = 6500; // 6.5 seconds per tip
   const TIP_UPDATE_INTERVAL = 50; // Update progress bar every 50ms
 
-  const tips = [
+  const baseTips = [
     // Prompt tips
     { category: "Prompts", text: "Clear, specific prompts work better than long ones. Models understand context without repetition." },
     { category: "Prompts", text: "Try reusing prompts from successful images metadata. Consistency beats reinvention." },
     { category: "Prompts", text: "When results disappoint, refine your prompt first before adjusting parameters." },
-    
+
     // Parameter tips
     { category: "Parameters", text: "Most models work best with CFG 7-10. Higher doesn't mean better - it can degrade quality." },
     { category: "Parameters", text: "The sampler matters: DDIM is fast, Euler is stable, DPM++ is flexible. Experiment by model." },
     { category: "Parameters", text: "Seed lets you iterate. Try small CFG or step changes with the same seed for refinement." },
     { category: "Parameters", text: "Hover over any setting for explanations. No need to memorize what each does." },
-    
+
     // Workflow tips
     { category: "Workflow", text: "Generate at lower resolution first, then upscale. Saves time and lets you refine results." },
     { category: "Workflow", text: "Your generation settings are saved. They'll be here next time you return." },
     { category: "Workflow", text: "If confused, start simple: one good prompt + default settings beats complexity." },
   ];
+
+  let tips = $derived(
+    generation.autoQualityTags
+      ? baseTips
+      : [...baseTips, { category: "Quality", text: "Getting blurry or low-quality results? Try re-enabling auto quality tags in Settings > Performance." }]
+  );
 
   function startAutoPlay() {
     progressPercent = 0;

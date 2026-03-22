@@ -123,6 +123,7 @@ class GenerationStore {
   facefixMaxFaces = $state(8);
   outputBitDepth = $state<"8bit" | "16bit">("8bit");
   metadataMode = $state<"text_chunk" | "stealth" | "both">("both");
+  autoQualityTags = $state(true);
   promptHistory = $state<PromptHistoryEntry[]>([]);
 
   /** Architecture detected from modelspec metadata, or null if not yet read. */
@@ -381,6 +382,7 @@ class GenerationStore {
         if (saved.facefixMaxFaces !== undefined) this.facefixMaxFaces = saved.facefixMaxFaces;
         if (saved.outputBitDepth) this.outputBitDepth = saved.outputBitDepth;
         if (saved.metadataMode) this.metadataMode = saved.metadataMode;
+        if (saved.autoQualityTags !== undefined) this.autoQualityTags = saved.autoQualityTags;
         // Migrate: old default was "text_chunk", new default is "both" (stealth + text)
         if (!localStorage.getItem("mooshieui.metadataMode.v2")) {
           this.metadataMode = "both";
@@ -445,6 +447,7 @@ class GenerationStore {
         facefixMaxFaces: this.facefixMaxFaces,
         outputBitDepth: this.outputBitDepth,
         metadataMode: this.metadataMode,
+        autoQualityTags: this.autoQualityTags,
       });
     } catch (e) {
       console.error("Failed to save settings:", e);
@@ -459,18 +462,19 @@ class GenerationStore {
     let positivePrompt = this.mergeTagPrompts(this.positivePrompt, style.positive);
     let negativePrompt = this.mergeTagPrompts(this.negativePrompt, style.negative);
 
-    // Auto-apply quality tags for Anima models (positive before, negative after)
-    positivePrompt = this.isAnima
-      ? this.mergeTagPrompts(ANIMA_POSITIVE_QUALITY, positivePrompt)
-      : positivePrompt;
-    negativePrompt = this.isAnima
-      ? this.mergeTagPrompts(negativePrompt, ANIMA_NEGATIVE_QUALITY)
-      : negativePrompt;
+    // Auto-apply quality tags for supported model families
+    if (this.autoQualityTags) {
+      // Anima models (positive before, negative after)
+      if (this.isAnima) {
+        positivePrompt = this.mergeTagPrompts(ANIMA_POSITIVE_QUALITY, positivePrompt);
+        negativePrompt = this.mergeTagPrompts(negativePrompt, ANIMA_NEGATIVE_QUALITY);
+      }
 
-    // Auto-apply quality tags for Illustrious/NoobAI family (positive before, negative after)
-    if (this.isIllustrious) {
-      positivePrompt = this.mergeTagPrompts(ILLUSTRIOUS_POSITIVE_QUALITY, positivePrompt);
-      negativePrompt = this.mergeTagPrompts(negativePrompt, ILLUSTRIOUS_NEGATIVE_QUALITY);
+      // Illustrious/NoobAI family (positive before, negative after)
+      if (this.isIllustrious) {
+        positivePrompt = this.mergeTagPrompts(ILLUSTRIOUS_POSITIVE_QUALITY, positivePrompt);
+        negativePrompt = this.mergeTagPrompts(negativePrompt, ILLUSTRIOUS_NEGATIVE_QUALITY);
+      }
     }
 
     return {

@@ -26,6 +26,7 @@
 
   let tagUrlInput = $state("");
   let tagFileLoading = $state(false);
+  let showQualityTagsWarning = $state(false);
 
   // Model directory auto-detection
   interface DetectedModelDir {
@@ -214,7 +215,7 @@
   const sections = [
     { key: "connection", label: "Connection", keywords: "server mode url port remote autolaunch" },
     { key: "appearance", label: "Appearance", keywords: "theme dark light font scale size style presets fooocus" },
-    { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close" },
+    { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close quality tags auto" },
     { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
     { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "about", label: "About", keywords: "version update check updates about" },
@@ -594,6 +595,30 @@
               <p class="text-[10px] text-amber-400/80 mt-0.5">Not recommended — ComfyUI will continue using VRAM even when the app is closed.</p>
             </div>
           </div>
+
+          <div class="flex items-start gap-3">
+            <input
+              type="checkbox"
+              id="auto-quality-tags"
+              checked={generation.autoQualityTags}
+              onchange={(e) => {
+                const target = e.target as HTMLInputElement;
+                if (!target.checked) {
+                  // Revert — let the popup decide
+                  target.checked = true;
+                  showQualityTagsWarning = true;
+                } else {
+                  generation.autoQualityTags = true;
+                  generation.saveSettings();
+                }
+              }}
+              class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
+            />
+            <div>
+              <label for="auto-quality-tags" class="text-sm text-neutral-200">Auto-apply quality tags</label>
+              <p class="text-[10px] text-neutral-500 mt-0.5">Automatically prepends recommended quality tags for supported models (Anima, Illustrious/NoobAI).</p>
+            </div>
+          </div>
           </div>
           {/if}
         </section>
@@ -944,7 +969,13 @@
                 What's New in v{appVersion}
               </summary>
               <div class="px-3 pb-3 pt-1 text-xs text-neutral-400 space-y-2">
-                <p class="text-neutral-300 font-medium">v0.3.5</p>
+                <p class="text-neutral-300 font-medium">v0.3.6</p>
+                <ul class="list-disc list-inside space-y-0.5">
+                  <li>Option to disable auto quality tags (Settings > Performance)</li>
+                  <li>Confirmation popup warns about quality impact before disabling</li>
+                  <li>Preview tip reminds users to re-enable if results are poor</li>
+                </ul>
+                <p class="text-neutral-300 font-medium mt-3">v0.3.5</p>
                 <ul class="list-disc list-inside space-y-0.5">
                   <li>Fixed LoRAs, upscale models, and other files bleeding into checkpoint list</li>
                   <li>Server-side filtering excludes models by directory prefix (Lora\, upscale_models\, etc.)</li>
@@ -1092,3 +1123,31 @@
     </div>
   </div>
 </div>
+
+{#if showQualityTagsWarning}
+<div class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" role="dialog">
+  <div class="bg-neutral-900 border border-neutral-700 rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+    <h3 class="text-sm font-semibold text-neutral-100 mb-3">Disable auto quality tags?</h3>
+    <p class="text-xs text-neutral-400 mb-2">Quality tags like <span class="text-neutral-300">masterpiece, best quality, score_9</span> are critical for anime models (Anima, Illustrious, NoobAI). Without them, outputs will be significantly lower quality.</p>
+    <p class="text-xs text-neutral-400 mb-4">Only disable this if you know what you're doing and want full manual control over your prompts.</p>
+    <div class="flex gap-3 justify-end">
+      <button
+        onclick={() => { showQualityTagsWarning = false; }}
+        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors cursor-pointer"
+      >
+        Keep enabled
+      </button>
+      <button
+        onclick={() => {
+          generation.autoQualityTags = false;
+          generation.saveSettings();
+          showQualityTagsWarning = false;
+        }}
+        class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
+      >
+        Disable anyway
+      </button>
+    </div>
+  </div>
+</div>
+{/if}

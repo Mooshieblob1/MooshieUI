@@ -57,7 +57,7 @@
     {/if}
     <PromptTextarea
       bind:value={generation.positivePrompt}
-      placeholder={generation.isAnima ? "1girl, long hair, @artist_name, ..." : "A beautiful landscape, masterpiece, best quality..."}
+      placeholder={generation.isAnima ? "1girl, long hair, @artist_name, ..." : "A beautiful landscape, golden hour lighting, ..."}
       rows={4}
       minHeight="min-h-25"
     />
@@ -67,7 +67,7 @@
     <label class="block text-xs text-neutral-400 mb-1">Negative Prompt<InfoTip text="Describe what you don't want in the image. Common negatives include 'lowres', 'bad anatomy', 'blurry', 'worst quality'. Helps steer the AI away from common artifacts." /></label>
     <PromptTextarea
       bind:value={generation.negativePrompt}
-      placeholder="lowres, bad anatomy, worst quality..."
+      placeholder="blurry, cropped, extra fingers, ..."
       rows={3}
       minHeight="min-h-18"
     />

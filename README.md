@@ -325,6 +325,14 @@ Both methods:
 
 ## 📋 Changelog
 
+### v0.3.6
+
+**Quality Tag Controls**
+- Added option to disable automatic quality tag injection (Settings > Performance)
+- Confirmation popup warns users about quality impact before disabling
+- Removed quality tags from prompt placeholder text (tags are auto-applied, no need to suggest them)
+- Added preview tip for users with auto quality tags disabled suggesting to re-enable if results are poor
+
 ### v0.3.5
 
 **Model Category Filtering**
