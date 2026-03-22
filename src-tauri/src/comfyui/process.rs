@@ -21,6 +21,19 @@ pub enum StartResult {
 pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppError> {
     let config = state.config.read().await;
 
+    // Deploy bundled custom nodes whenever we have a valid ComfyUI path,
+    // regardless of server mode — the user may have started ComfyUI externally
+    // but still needs our nodes installed.
+    if !config.comfyui_path.is_empty() {
+        let main_exists = std::path::Path::new(&config.comfyui_path)
+            .join("main.py")
+            .exists();
+        if main_exists {
+            super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
+                .map_err(AppError::ProcessSpawnFailed)?;
+        }
+    }
+
     if config.server_mode != ServerMode::AutoLaunch {
         return Ok(StartResult::Skipped);
     }
@@ -54,10 +67,6 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             main_path
         )));
     }
-
-    // Deploy bundled custom nodes before starting ComfyUI
-    super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
-        .map_err(AppError::ProcessSpawnFailed)?;
 
     log::info!("Spawning ComfyUI: {} {}", python_path, main_path);
 
