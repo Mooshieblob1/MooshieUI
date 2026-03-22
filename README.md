@@ -305,9 +305,14 @@ Both methods:
 - [x] **Manual ComfyUI start** — optional toggle to start ComfyUI manually instead of on app launch
 - [x] **Movable installation** — relocate the ComfyUI data directory to another drive from settings
 - [x] **Face Fix (FaceDetailer)** — built-in lightweight face detection and re-denoising using YOLOv8, bundled as a custom node (no Impact Pack dependency); configurable denoise, steps, guide size, and detector model with auto-download
+- [x] **Batch queue** — queue multiple generations with different settings
+- [x] **Streaming final outputs** — final PNGs stream over WebSocket via `MooshieSaveImage` (no output fetch disk round-trip)
+- [x] **16-bit output mode** — selectable 8-bit/16-bit PNG output in generation settings
+- [x] **Metadata modes** — `Text Chunk`, `Stealth Alpha`, and `Both` with 16-bit compatibility upgrade to `Both`
+- [x] **Metadata reuse actions** — lightbox actions for `Reuse Settings`, `Remix`, and `Reuse Seed`
+- [x] **Preview tips carousel** — idle preview area shows rotating, auto-cycling tips with manual navigation
 
 ### To Do
-- [ ] **Batch queue** — queue multiple generations with different settings
 - [ ] **Theme customization** — custom accent colors and themes
 - [ ] **Localization** — multi-language support
 - [ ] **Video generation** — AnimateDiff / COSMOS video workflows
