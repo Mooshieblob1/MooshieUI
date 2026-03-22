@@ -325,6 +325,13 @@ Both methods:
 
 ## 📋 Changelog
 
+### v0.3.1
+
+**Updater Hotfix**
+- Fixed updater 404 issue caused by release tag/version filename mismatches in `latest.json`
+- Release pipeline now generates updater URLs/signature references from actual built artifact names
+- Bumped app versioning to `0.3.1` across frontend, Tauri config, and Rust crate for consistent release metadata
+
 ### v0.3.0
 
 **Streaming Output Pipeline + 16-bit Support**

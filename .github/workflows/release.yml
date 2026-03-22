@@ -118,13 +118,19 @@ jobs:
           VERSION="${TAG#v}"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-          # Read updater signatures
+          # Discover updater artifact names from actual files to avoid tag/version mismatch issues.
+          LINUX_ARCHIVE=$(find release-files -maxdepth 1 -type f -name "*.AppImage.tar.gz" -printf "%f\n" | head -n1)
+          WINDOWS_ARCHIVE=$(find release-files -maxdepth 1 -type f -name "*x64-setup.nsis.zip" -printf "%f\n" | head -n1)
+
+          if [ -z "$LINUX_ARCHIVE" ] || [ -z "$WINDOWS_ARCHIVE" ]; then
+            echo "Missing updater artifacts: linux='$LINUX_ARCHIVE' windows='$WINDOWS_ARCHIVE'"
+            exit 1
+          fi
+
           APPIMAGE_SIG=""
           NSIS_SIG=""
-          [ -f "release-files/MooshieUI_${VERSION}_amd64.AppImage.tar.gz.sig" ] && \
-            APPIMAGE_SIG=$(cat "release-files/MooshieUI_${VERSION}_amd64.AppImage.tar.gz.sig")
-          [ -f "release-files/MooshieUI_${VERSION}_x64-setup.nsis.zip.sig" ] && \
-            NSIS_SIG=$(cat "release-files/MooshieUI_${VERSION}_x64-setup.nsis.zip.sig")
+          [ -f "release-files/${LINUX_ARCHIVE}.sig" ] && APPIMAGE_SIG=$(cat "release-files/${LINUX_ARCHIVE}.sig")
+          [ -f "release-files/${WINDOWS_ARCHIVE}.sig" ] && NSIS_SIG=$(cat "release-files/${WINDOWS_ARCHIVE}.sig")
 
           # Build latest.json with jq for proper escaping
           jq -n \
@@ -132,9 +138,9 @@ jobs:
             --arg notes "MooshieUI ${TAG}" \
             --arg pub_date "$PUB_DATE" \
             --arg linux_sig "$APPIMAGE_SIG" \
-            --arg linux_url "${REPO_URL}/${TAG}/MooshieUI_${VERSION}_amd64.AppImage.tar.gz" \
+            --arg linux_url "${REPO_URL}/${TAG}/${LINUX_ARCHIVE}" \
             --arg win_sig "$NSIS_SIG" \
-            --arg win_url "${REPO_URL}/${TAG}/MooshieUI_${VERSION}_x64-setup.nsis.zip" \
+            --arg win_url "${REPO_URL}/${TAG}/${WINDOWS_ARCHIVE}" \
             '{
               version: $version,
               notes: $notes,
