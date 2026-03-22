@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(grep -n \"get_history\\\\|getHistory\" /home/blob/Repos/DesktopWebUI/comfyui-desktop/src-tauri/src/commands/*.rs)",
+      "Bash(npx svelte-check:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh api:*)",
+      "Bash(cargo test:*)",
+      "Bash(python3:*)",
+      "Read(//tmp/**)",
+      "Bash(gh run:*)",
+      "Bash(git tag:*)",
+      "Bash(gh release:*)",
+      "Bash(cargo generate-lockfile:*)",
+      "Bash(git status:*)"
+    ]
+  }
+}
