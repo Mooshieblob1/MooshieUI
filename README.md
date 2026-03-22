@@ -320,6 +320,41 @@ Both methods:
 
 ## 📋 Changelog
 
+### v0.3.0
+
+**Streaming Output Pipeline + 16-bit Support**
+- Added `MooshieSaveImage` output node to stream final PNG bytes over WebSocket instead of relying on ComfyUI disk output round-trips
+- Added optional 16-bit PNG output mode (`8-bit` / `16-bit`) exposed in generation settings and passed through workflow params
+- Added Rust-side `save_to_gallery_bytes` command so streamed images can be persisted directly from in-memory bytes
+- Added WebSocket binary event handling for Mooshie output payloads, including prompt association and 16-bit timing diagnostics
+
+**Metadata Embedding + Compatibility**
+- Added metadata mode options: `Text Chunk`, `Stealth Alpha`, and `Both`
+- Implemented SwarmUI-compatible stealth alpha embedding/reading with gzip payload support and 8-bit/16-bit handling
+- Added automatic compatibility policy for 16-bit PNGs: if `Stealth Alpha` is selected, effective save mode upgrades to `Both`
+- Added UI feedback for the upgrade so users can see effective metadata behavior while 16-bit is active
+
+**Queueing + Gallery Workflow**
+- Reworked generation progress state to support queued prompts and active-prompt tracking
+- Updated generate/cancel controls to support queueing, cancel current, and cancel-all behavior
+- Switched output finalization path to use streamed images and persist metadata-rich gallery entries from memory
+- Added lightbox metadata actions: `Reuse Settings`, `Remix` (random seed), and `Reuse Seed`
+
+**Sampler + Model UX Improvements**
+- Added model-aware recommendation cards for Anima and SIH in sampler settings
+- Updated Anima defaults to practical baseline values: 30 steps, CFG 4, sampler `er_sde`, scheduler `sgm_uniform`
+- Face-fix and upscale steps now track model recommendations (1/3 of primary steps in recommendation paths)
+- Added sampler-aware recommended ranges for steps/CFG with one-click fix actions
+
+**Preview + Readability Improvements**
+- Replaced idle preview placeholder with a rotating tips carousel (manual arrows + scroll wheel + auto-cycle)
+- Added progress indicator for tip auto-cycle and tuned dwell time for readability
+- Added light/dark support in preview idle UI styling
+
+**Other UI/Behavior Updates**
+- Simplified `InfoTip` to native title/aria tooltip behavior
+- Improved dimension-control synchronization to reflect persisted/updated generation dimensions
+
 ### v0.2.9
 
 **Face Fix (FaceDetailer)**

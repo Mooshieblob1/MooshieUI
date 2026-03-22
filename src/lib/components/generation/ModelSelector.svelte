@@ -89,6 +89,7 @@
         samplerName: "er_sde",
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
+        facefixSteps: 10,
       },
     },
   ];
@@ -468,6 +469,7 @@
       if (rec.autoSettings.scheduler !== undefined) generation.scheduler = rec.autoSettings.scheduler;
       if (rec.autoSettings.upscaleSteps !== undefined) generation.upscaleSteps = rec.autoSettings.upscaleSteps;
       if (rec.autoSettings.upscaleDenoise !== undefined) generation.upscaleDenoise = rec.autoSettings.upscaleDenoise;
+      if (rec.autoSettings.facefixSteps !== undefined) generation.facefixSteps = rec.autoSettings.facefixSteps;
       // Still notify autocomplete about model change (applyModelSpecificPreset won't run)
       autocomplete.notifyModelChanged(generation.isAnima);
     } else {

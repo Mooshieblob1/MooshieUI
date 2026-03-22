@@ -121,6 +121,8 @@ class GenerationStore {
   facefixSteps = $state(20);
   facefixGuideSize = $state(512);
   facefixMaxFaces = $state(8);
+  outputBitDepth = $state<"8bit" | "16bit">("8bit");
+  metadataMode = $state<"text_chunk" | "stealth" | "both">("both");
   promptHistory = $state<PromptHistoryEntry[]>([]);
 
   /** Architecture detected from modelspec metadata, or null if not yet read. */
@@ -286,9 +288,12 @@ class GenerationStore {
       this.steps = 30;
       this.cfg = 4.0;
       this.samplerName = "er_sde";
-      this.scheduler = "beta";
+      this.scheduler = "sgm_uniform";
       this.width = 1024;
       this.height = 1024;
+      // Face fix and upscale steps are 1/3 of main image steps
+      this.facefixSteps = Math.ceil(30 / 3);
+      this.upscaleSteps = Math.ceil(30 / 3);
       return;
     }
 
@@ -299,6 +304,9 @@ class GenerationStore {
       this.scheduler = "sgm_uniform";
       this.width = 1024;
       this.height = 1024;
+      // Face fix and upscale steps are 1/3 of main image steps
+      this.facefixSteps = Math.ceil(20 / 3);
+      this.upscaleSteps = Math.ceil(20 / 3);
       return;
     }
 
@@ -309,6 +317,9 @@ class GenerationStore {
       this.scheduler = "karras";
       this.width = 512;
       this.height = 512;
+      // Face fix and upscale steps are 1/3 of main image steps
+      this.facefixSteps = Math.ceil(28 / 3);
+      this.upscaleSteps = Math.ceil(28 / 3);
     }
   }
 
@@ -368,6 +379,13 @@ class GenerationStore {
         if (saved.facefixSteps !== undefined) this.facefixSteps = saved.facefixSteps;
         if (saved.facefixGuideSize !== undefined) this.facefixGuideSize = saved.facefixGuideSize;
         if (saved.facefixMaxFaces !== undefined) this.facefixMaxFaces = saved.facefixMaxFaces;
+        if (saved.outputBitDepth) this.outputBitDepth = saved.outputBitDepth;
+        if (saved.metadataMode) this.metadataMode = saved.metadataMode;
+        // Migrate: old default was "text_chunk", new default is "both" (stealth + text)
+        if (!localStorage.getItem("mooshieui.metadataMode.v2")) {
+          this.metadataMode = "both";
+          localStorage.setItem("mooshieui.metadataMode.v2", "1");
+        }
         console.log("Loaded saved settings, checkpoint:", this.checkpoint);
         // Sync autocomplete tag list with restored model
         autocomplete.notifyModelChanged(this.isAnima);
@@ -425,6 +443,8 @@ class GenerationStore {
         facefixSteps: this.facefixSteps,
         facefixGuideSize: this.facefixGuideSize,
         facefixMaxFaces: this.facefixMaxFaces,
+        outputBitDepth: this.outputBitDepth,
+        metadataMode: this.metadataMode,
       });
     } catch (e) {
       console.error("Failed to save settings:", e);
@@ -510,6 +530,7 @@ class GenerationStore {
       facefix_steps: this.facefixSteps,
       facefix_guide_size: this.facefixGuideSize,
       facefix_max_faces: this.facefixMaxFaces,
+      output_bit_depth: this.outputBitDepth,
     };
   }
 

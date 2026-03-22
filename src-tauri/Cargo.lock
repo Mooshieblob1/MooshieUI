@@ -430,6 +430,7 @@ dependencies = [
  "base64 0.22.1",
  "dirs 5.0.1",
  "env_logger",
+ "flate2",
  "futures-util",
  "image",
  "log",

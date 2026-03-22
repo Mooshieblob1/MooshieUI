@@ -55,6 +55,7 @@ export interface GenerationParams {
   clip_model: string | null;
   clip_type: string | null;
   controlnet: ControlNetPayload | null;
+  output_bit_depth: string;
 }
 
 export interface OutputImage {

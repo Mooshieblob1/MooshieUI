@@ -10,7 +10,7 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { getHistory, getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata } from "./lib/utils/api.js";
+  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata } from "./lib/utils/api.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
@@ -31,6 +31,10 @@
   );
 
   const MAX_INPUT_PIXELS = 1024 * 1024;
+  let lastProgressEventAt = 0;
+
+  /** Images received via WebSocket during generation, keyed by prompt_id. */
+  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string }>>();
 
   // Lightbox zoom state — only scale needs reactivity (used in template conditionals)
   let lbScale = 1;
@@ -457,6 +461,10 @@
         .join(", ");
     }
 
+    if (params.output_bit_depth !== "8bit") {
+      metadata.bit_depth = params.output_bit_depth;
+    }
+
     if (params.upscale_enabled) {
       metadata.upscale_model = params.upscale_model ?? "";
       metadata.upscale_scale = String(params.upscale_scale);
@@ -466,7 +474,9 @@
     return metadata;
   }
 
-  async function applyMetadataToGeneration(image: OutputImage) {
+  type MetadataApplyMode = "settings" | "seed" | "remix";
+
+  async function applyMetadataToGeneration(image: OutputImage, mode: MetadataApplyMode = "settings") {
     if (!image.gallery_filename) {
       gallery.showToast("Metadata is only available for saved gallery images", "info");
       return;
@@ -482,13 +492,22 @@
       image.metadata = metadata;
       lightboxMetadata = metadata;
 
+      if (mode === "seed") {
+        if (metadata.seed !== undefined) {
+          generation.seed = Number(metadata.seed) || generation.seed;
+          gallery.showToast("Applied seed from PNG metadata", "success");
+        } else {
+          gallery.showToast("No seed found in PNG metadata", "info");
+        }
+        return;
+      }
+
       if (metadata.positive_prompt !== undefined) generation.positivePrompt = metadata.positive_prompt;
       if (metadata.negative_prompt !== undefined) generation.negativePrompt = metadata.negative_prompt;
       if (metadata.steps !== undefined) generation.steps = Number(metadata.steps) || generation.steps;
       if (metadata.sampler !== undefined) generation.samplerName = metadata.sampler;
       if (metadata.scheduler !== undefined) generation.scheduler = metadata.scheduler;
       if (metadata.cfg !== undefined) generation.cfg = Number(metadata.cfg) || generation.cfg;
-      if (metadata.seed !== undefined) generation.seed = Number(metadata.seed) || generation.seed;
       if (metadata.denoise !== undefined) generation.denoise = Number(metadata.denoise) || generation.denoise;
 
       const size = parseSize(metadata.size);
@@ -509,6 +528,13 @@
         generation.vae = metadata.vae;
       }
 
+      if (mode === "remix") {
+        generation.seed = -1;
+        gallery.showToast("Loaded settings for remix (random seed)", "success");
+        return;
+      }
+
+      if (metadata.seed !== undefined) generation.seed = Number(metadata.seed) || generation.seed;
       gallery.showToast("Applied generation settings from PNG metadata", "success");
     } catch (e) {
       console.error("Failed to apply metadata:", e);
@@ -639,57 +665,41 @@
     }
   });
 
-  async function fetchOutputImages(promptId: string) {
-    try {
-      const history = (await getHistory(promptId)) as Record<string, any>;
-      const promptData = history[promptId];
-      if (!promptData?.outputs) return;
+  /**
+   * Finalize images received via WebSocket during generation.
+   * MooshieSaveImage sends PNG bytes directly over WS — no disk round-trip.
+   */
+  function finalizeOutputImages(
+    promptId: string,
+    mode: "txt2img" | "img2img" | "inpainting",
+    wasUpscaled: boolean,
+    params: GenerationParams | null,
+    images: Array<{ blob: Blob; url: string }>,
+  ) {
+    if (images.length === 0) return;
 
-      const newImages: OutputImage[] = [];
-      for (const [nodeId, output] of Object.entries(
-        promptData.outputs as Record<string, any>
-      )) {
-        if (output.images) {
-          for (const img of output.images) {
-            const bytes = await getOutputImage(
-              img.filename,
-              img.subfolder || ""
-            );
-            const blob = new Blob([new Uint8Array(bytes)], {
-              type: "image/png",
-            });
-            const url = URL.createObjectURL(blob);
-            newImages.push({
-              filename: img.filename,
-              subfolder: img.subfolder || "",
-              type: img.type || "output",
-              prompt_id: promptId,
-              generation_mode: progress.currentMode,
-              is_upscaled: progress.wasUpscaled,
-              url,
-              file_size_bytes: bytes.length,
-              generated_at_ms: Date.now(),
-            });
-          }
-        }
-      }
-      if (newImages.length > 0) {
-        gallery.addImages(newImages);
-        // Show the first output image in the preview area
-        progress.setLastOutputForMode(
-          progress.currentMode,
-          newImages[0]?.url ?? null,
-        );
-        // Persist to disk gallery
-        const metadata = progress.lastParams ? buildPngMetadata(progress.lastParams) : undefined;
-        for (const image of newImages) {
-          image.metadata = metadata ?? null;
-        }
-        gallery.persistImages(newImages, metadata);
-      }
-    } catch (e) {
-      console.error("Failed to fetch output images:", e);
+    const newImages: OutputImage[] = images.map((img, i) => ({
+      filename: `${promptId}_${i}.png`,
+      subfolder: "",
+      type: "output",
+      prompt_id: promptId,
+      generation_mode: mode,
+      is_upscaled: wasUpscaled,
+      url: img.url,
+      file_size_bytes: img.blob.size,
+      generated_at_ms: Date.now(),
+    }));
+
+    gallery.addImages(newImages);
+    progress.setLastOutputForMode(mode, newImages[0]?.url ?? null);
+
+    const metadata = params ? buildPngMetadata(params) : undefined;
+    for (const image of newImages) {
+      image.metadata = metadata ?? null;
     }
+    // Pass blobs so persistImages can use the bytes-based API (no ComfyUI disk round-trip)
+    const blobs = images.map((img) => img.blob);
+    gallery.persistImages(newImages, metadata, blobs, generation.metadataMode);
   }
 
   onMount(async () => {
@@ -769,7 +779,12 @@
       listen("comfyui:progress", (event: any) => {
         const data = event.payload;
         if (!progress.isGenerating) return;
-        // Use node from progress event if available, fall back to currentNode from executing event
+        lastProgressEventAt = Date.now();
+        // Filter by prompt_id if available
+        if (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId) return;
+        if (data.prompt_id && !progress.activePromptId) {
+          progress.setActivePrompt(data.prompt_id);
+        }
         const node = data.node ?? progress.currentNode;
         progress.updateProgress(data.value, data.max, node);
       }),
@@ -778,35 +793,76 @@
         if (!progress.isGenerating) return;
         progress.previewImage = `data:image/${data.format};base64,${data.image}`;
       }),
+      listen("comfyui:output_image", (event: any) => {
+        // MooshieSaveImage sends final PNG bytes over WS — collect per prompt
+        const data = event.payload;
+        if (!progress.isGenerating) return;
+
+        if (data.bit_depth === 16) {
+          const now = Date.now();
+          const sinceProgressMs = lastProgressEventAt > 0 ? now - lastProgressEventAt : null;
+          const encodeMs = typeof data.encode_ms === "number" ? data.encode_ms : null;
+          const imageBytes = typeof data.image_bytes === "number" ? data.image_bytes : null;
+
+          if ((sinceProgressMs !== null && sinceProgressMs > 1500) || (encodeMs !== null && encodeMs > 250)) {
+            console.warn("[16-bit diagnostics] output_image timing", {
+              promptId: data.prompt_id ?? progress.activePromptId,
+              sinceProgressMs,
+              encodeMs,
+              imageBytes,
+              phaseLabel: progress.phaseLabel,
+              currentStep: progress.currentStep,
+              totalSteps: progress.totalSteps,
+            });
+          }
+        }
+
+        const raw = atob(data.image);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        const blob = new Blob([bytes], { type: "image/png" });
+        const url = URL.createObjectURL(blob);
+        const pid = data.prompt_id ?? progress.activePromptId;
+        if (!pid) return;
+        const arr = pendingOutputImages.get(pid) ?? [];
+        arr.push({ blob, url });
+        pendingOutputImages.set(pid, arr);
+      }),
       listen("comfyui:executing", (event: any) => {
         const data = event.payload;
         console.log("Executing event:", data);
-        // Ignore events not for our current generation
-        if (data.prompt_id && progress.currentPromptId && data.prompt_id !== progress.currentPromptId) {
+        // Ignore prompts not in our queue
+        if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) {
           return;
         }
         if (data.node === null) {
-          // Only handle completion if we're actually generating
           if (!progress.isGenerating) return;
-          const promptId = progress.currentPromptId;
-          progress.reset();
-          if (promptId) {
-            fetchOutputImages(promptId);
+          const promptId = data.prompt_id;
+          if (!promptId) return;
+          const item = progress.completePrompt(promptId);
+          if (item) {
+            const images = pendingOutputImages.get(promptId) ?? [];
+            pendingOutputImages.delete(promptId);
+            finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images);
           }
         } else {
-          if (progress.isGenerating) {
-            progress.currentNode = data.node;
+          if (data.prompt_id) {
+            progress.setActivePrompt(data.prompt_id);
           }
+          progress.currentNode = data.node;
         }
       }),
       listen("comfyui:execution_error", (event: any) => {
         console.error("Execution error:", event.payload);
-        // Only reset if this is our prompt
         const data = event.payload;
-        if (data.prompt_id && progress.currentPromptId && data.prompt_id !== progress.currentPromptId) {
-          return;
+        if (data.prompt_id) {
+          pendingOutputImages.delete(data.prompt_id);
+          progress.removePrompt(data.prompt_id);
+        } else {
+          // No prompt_id — clear everything
+          pendingOutputImages.clear();
+          progress.cancelAll();
         }
-        progress.reset();
       }),
       listen("comfyui:execution_success", (_event: any) => {
         // Success handled via executing node=null
@@ -1417,10 +1473,24 @@
         </button>
         <button
           class="flex items-center gap-2 px-4 py-2 bg-emerald-700/80 hover:bg-emerald-600 text-neutral-100 rounded-lg text-sm transition-colors"
-          onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage)}
+          onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage, "settings")}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Apply Metadata
+          Reuse Settings
+        </button>
+        <button
+          class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm transition-colors"
+          onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage, "remix")}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.13-3.36L23 10M1 14l5.37 4.36A9 9 0 0020.49 15"/></svg>
+          Remix
+        </button>
+        <button
+          class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm transition-colors"
+          onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage, "seed")}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M5 7h7"/><path d="M5 12h7"/><path d="M5 17h7"/></svg>
+          Reuse Seed
         </button>
         <button
           class="flex items-center gap-2 px-4 py-2 bg-red-900/60 hover:bg-red-800 text-neutral-100 rounded-lg text-sm transition-colors"

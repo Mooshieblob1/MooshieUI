@@ -115,6 +115,13 @@ pub struct GenerationParams {
     pub facefix_guide_size: u32,
     #[serde(default = "default_facefix_max_faces")]
     pub facefix_max_faces: u32,
+    /// Output image bit depth — "8bit" (default) or "16bit"
+    #[serde(default = "default_output_bit_depth")]
+    pub output_bit_depth: String,
+}
+
+fn default_output_bit_depth() -> String {
+    "8bit".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

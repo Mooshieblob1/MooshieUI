@@ -222,9 +222,21 @@ export async function saveToGallery(
   subfolder: string,
   promptId: string,
   mode?: "txt2img" | "img2img" | "inpainting",
-  metadata?: Record<string, string>
+  metadata?: Record<string, string>,
+  metadataMode?: string,
 ): Promise<string> {
-  return invoke("save_to_gallery", { filename, subfolder, promptId, mode, metadata });
+  return invoke("save_to_gallery", { filename, subfolder, promptId, mode, metadata, metadataMode });
+}
+
+export async function saveToGalleryBytes(
+  imageBytes: number[],
+  filename: string,
+  promptId: string,
+  mode?: "txt2img" | "img2img" | "inpainting",
+  metadata?: Record<string, string>,
+  metadataMode?: string,
+): Promise<string> {
+  return invoke("save_to_gallery_bytes", { imageBytes, filename, promptId, mode, metadata, metadataMode });
 }
 
 export async function readImageMetadata(

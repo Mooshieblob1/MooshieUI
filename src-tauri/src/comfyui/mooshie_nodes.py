@@ -1,8 +1,11 @@
 """
-MooshieUI custom nodes — lightweight face detection + re-denoising.
+MooshieUI custom nodes — lightweight face detection + in-memory image output.
 Replaces the heavyweight Impact Pack dependency with a focused implementation.
 """
 
+import io
+import json
+import struct
 import torch
 import numpy as np
 
@@ -216,10 +219,125 @@ class MooshieFaceDetailer:
         return mask
 
 
+class MooshieSaveImage:
+    """Output node that keeps images in RAM and sends them over WebSocket.
+
+    Inspired by SwarmUI's approach — avoids the disk round-trip that ComfyUI's
+    built-in SaveImage performs (write → re-read → HTTP serve → delete).
+    Benefits: no drive I/O, lower latency, no data-leak from temp files on disk.
+    """
+
+    MOOSHIE_EVENT_TYPE = 100  # custom binary WS event type
+    # Format sub-types packed into the first 4 bytes after the event type header.
+    # The Rust WebSocket handler reads this to tell the frontend what it received.
+    FMT_PNG_8 = 1   # 8-bit PNG  (uint8,  standard)
+    FMT_PNG_16 = 2  # 16-bit PNG (uint16, higher precision for post-processing)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+            },
+            "optional": {
+                "bit_depth": (["8bit", "16bit"], {"default": "8bit"}),
+            },
+        }
+
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+    FUNCTION = "save_images"
+    CATEGORY = "mooshie"
+    DESCRIPTION = (
+        "Sends images directly over WebSocket instead of writing to disk. "
+        "Supports 8-bit (standard) and 16-bit (high-precision) PNG output."
+    )
+
+    def save_images(self, images, bit_depth="8bit"):
+        from PIL import Image
+        from server import PromptServer
+
+        server = PromptServer.instance
+
+        for i in range(images.shape[0]):
+            if bit_depth == "16bit":
+                fmt_tag = self.FMT_PNG_16
+                png_bytes = self._encode_16bit(images[i])
+            else:
+                fmt_tag = self.FMT_PNG_8
+                img_np = (255.0 * images[i].cpu().numpy()).clip(0, 255).astype(np.uint8)
+                img = Image.fromarray(img_np)
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                png_bytes = buf.getvalue()
+
+            # Payload: format_tag (4 bytes BE) + image data
+            payload = struct.pack(">I", fmt_tag) + png_bytes
+            server.send_sync(self.MOOSHIE_EVENT_TYPE, payload)
+
+        return {"ui": {"images": []}}
+
+    @staticmethod
+    def _encode_16bit(image_tensor):
+        """Encode a float32 image tensor as a 16-bit RGB PNG.
+
+        Uses OpenCV when available (fast, correct colour order).
+        Falls back to a pure-Python PNG writer (zlib + struct) otherwise.
+        """
+        arr = (65535.0 * image_tensor.cpu().numpy()).clip(0, 65535).astype(np.uint16)
+
+        try:
+            import cv2
+            # OpenCV expects BGR; our tensor is RGB
+            bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+            ok, encoded = cv2.imencode(".png", bgr)
+            if ok and encoded is not None:
+                return encoded.tobytes()
+        except ImportError:
+            pass
+
+        # Pure-Python fallback: write a valid 16-bit RGB PNG using zlib.
+        # PIL cannot write 16-bit RGB, so we build the PNG manually.
+        import zlib
+
+        h, w, _ = arr.shape
+        # Convert to big-endian (PNG stores 16-bit values as BE)
+        arr_be = arr.astype(">u2")
+
+        # Build raw image data: each row = filter_byte(0) + 6 bytes per pixel
+        raw_rows = []
+        for y in range(h):
+            raw_rows.append(b"\x00")  # filter: none
+            raw_rows.append(arr_be[y].tobytes())
+        raw_data = b"".join(raw_rows)
+        compressed = zlib.compress(raw_data)
+
+        def _png_chunk(chunk_type, data):
+            chunk = chunk_type + data
+            crc = zlib.crc32(chunk) & 0xFFFFFFFF
+            return struct.pack(">I", len(data)) + chunk + struct.pack(">I", crc)
+
+        buf = io.BytesIO()
+        buf.write(b"\x89PNG\r\n\x1a\n")  # PNG signature
+        # IHDR: width, height, bit_depth=16, color_type=2 (RGB)
+        ihdr_data = struct.pack(">IIBBBBB", w, h, 16, 2, 0, 0, 0)
+        buf.write(_png_chunk(b"IHDR", ihdr_data))
+        buf.write(_png_chunk(b"IDAT", compressed))
+        buf.write(_png_chunk(b"IEND", b""))
+        return buf.getvalue()
+
+    @classmethod
+    def IS_CHANGED(cls, images, bit_depth="8bit"):
+        # Always re-execute — output nodes should never be cached.
+        return float("nan")
+
+
 NODE_CLASS_MAPPINGS = {
     "MooshieFaceDetailer": MooshieFaceDetailer,
+    "MooshieSaveImage": MooshieSaveImage,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MooshieFaceDetailer": "Mooshie Face Detailer",
+    "MooshieSaveImage": "Mooshie Save Image",
 }

@@ -128,6 +128,7 @@ pub fn run() {
             commands::api::download_model,
             commands::api::save_image_file,
             commands::api::save_to_gallery,
+            commands::api::save_to_gallery_bytes,
             commands::api::list_gallery_images,
             commands::api::list_gallery_image_entries,
             commands::api::load_gallery_image,

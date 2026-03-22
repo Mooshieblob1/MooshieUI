@@ -12,7 +12,7 @@
   let sideLength = $state(1024);
   let aspectWInput = $state("1");
   let aspectHInput = $state("1");
-  let initialized = false;
+  let lastSyncedDimensions = "";
 
   /** Try to match persisted width/height back to a preset or simplified ratio. */
   function inferAspectFromDimensions(w: number, h: number) {
@@ -31,17 +31,23 @@
     return { w: w / d, h: h / d };
   }
 
-  // Sync aspect ratio UI from persisted resolution on first load
+  // Sync aspect ratio UI from generation dimensions (including async settings load)
   $effect(() => {
     const w = generation.width;
     const h = generation.height;
-    if (!initialized && w && h) {
-      initialized = true;
+    if (w && h) {
+      const key = `${w}x${h}`;
+      if (key === lastSyncedDimensions) return;
+      lastSyncedDimensions = key;
+
       const inferred = inferAspectFromDimensions(w, h);
       aspectW = inferred.w;
       aspectH = inferred.h;
       aspectWInput = String(inferred.w);
       aspectHInput = String(inferred.h);
+
+      // Keep side-length control aligned with the current generated area.
+      sideLength = Math.max(64, Math.round(Math.sqrt(w * h) / 8) * 8);
     }
   });
 

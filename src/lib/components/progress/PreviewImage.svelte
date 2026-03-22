@@ -4,6 +4,88 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { generate } from "../../utils/api.js";
 
+  let currentTipIndex = $state(0);
+  let progressPercent = $state(0);
+  let autoPlayInterval: ReturnType<typeof setInterval> | null = null;
+
+  const TIP_DISPLAY_TIME = 6500; // 6.5 seconds per tip
+  const TIP_UPDATE_INTERVAL = 50; // Update progress bar every 50ms
+
+  const tips = [
+    // Prompt tips
+    { category: "Prompts", text: "Clear, specific prompts work better than long ones. Models understand context without repetition." },
+    { category: "Prompts", text: "Try reusing prompts from successful images metadata. Consistency beats reinvention." },
+    { category: "Prompts", text: "When results disappoint, refine your prompt first before adjusting parameters." },
+    
+    // Parameter tips
+    { category: "Parameters", text: "Most models work best with CFG 7-10. Higher doesn't mean better - it can degrade quality." },
+    { category: "Parameters", text: "The sampler matters: DDIM is fast, Euler is stable, DPM++ is flexible. Experiment by model." },
+    { category: "Parameters", text: "Seed lets you iterate. Try small CFG or step changes with the same seed for refinement." },
+    { category: "Parameters", text: "Hover over any setting for explanations. No need to memorize what each does." },
+    
+    // Workflow tips
+    { category: "Workflow", text: "Generate at lower resolution first, then upscale. Saves time and lets you refine results." },
+    { category: "Workflow", text: "Your generation settings are saved. They'll be here next time you return." },
+    { category: "Workflow", text: "If confused, start simple: one good prompt + default settings beats complexity." },
+  ];
+
+  function startAutoPlay() {
+    progressPercent = 0;
+    let elapsedTime = 0;
+    autoPlayInterval = setInterval(() => {
+      elapsedTime += TIP_UPDATE_INTERVAL;
+      progressPercent = (elapsedTime / TIP_DISPLAY_TIME) * 100;
+      
+      if (elapsedTime >= TIP_DISPLAY_TIME) {
+        nextTip();
+        elapsedTime = 0;
+        progressPercent = 0;
+      }
+    }, TIP_UPDATE_INTERVAL);
+  }
+
+  function stopAutoPlay() {
+    if (autoPlayInterval) {
+      clearInterval(autoPlayInterval);
+      autoPlayInterval = null;
+    }
+  }
+
+  function resetAutoPlay() {
+    stopAutoPlay();
+    progressPercent = 0;
+    startAutoPlay();
+  }
+
+  function nextTip() {
+    currentTipIndex = (currentTipIndex + 1) % tips.length;
+    resetAutoPlay();
+  }
+
+  function prevTip() {
+    currentTipIndex = (currentTipIndex - 1 + tips.length) % tips.length;
+    resetAutoPlay();
+  }
+
+  function handleWheel(e: WheelEvent) {
+    e.preventDefault();
+    if (e.deltaY > 0) {
+      nextTip();
+    } else {
+      prevTip();
+    }
+  }
+
+  $effect(() => {
+    // Start auto-play when component mounts or when not generating
+    if (!progress.isGenerating && !progress.displayImage) {
+      startAutoPlay();
+    } else {
+      stopAutoPlay();
+    }
+    return () => stopAutoPlay();
+  });
+
   async function upscaleImage() {
     generation.upscaleEnabled = true;
     if (progress.lastOutputImage) {
@@ -14,7 +96,7 @@
     try {
       const result = await generate(params);
       params.seed = result.seed;
-      progress.startGeneration(result.prompt_id, true, "img2img", params);
+      progress.enqueue(result.prompt_id, true, "img2img", params);
     } catch (e) {
       console.error("Upscale failed:", e);
     }
@@ -65,7 +147,7 @@
   }
 </script>
 
-<div class="relative w-full aspect-square bg-neutral-900 rounded-xl border border-neutral-800 flex items-center justify-center overflow-hidden group">
+<div class="relative w-full aspect-square bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 flex items-center justify-center overflow-hidden group">
   {#if progress.displayImage}
     <button
       class="w-full h-full cursor-pointer"
@@ -114,8 +196,61 @@
       </div>
     {/if}
   {:else if progress.isGenerating}
-    <div class="text-neutral-600 text-sm">Generating...</div>
+    <div class="text-neutral-400 dark:text-neutral-600 text-sm">Generating...</div>
   {:else}
-    <div class="text-neutral-700 text-sm">Output will appear here</div>
+    <!-- Tips Carousel -->
+    <div class="flex flex-col items-center justify-center w-full h-full p-8 gap-6" onwheel={handleWheel}>
+      <div class="flex flex-col items-center gap-3 max-w-md w-full">
+        <span class="text-xs font-semibold text-indigo-600 dark:text-indigo-500 uppercase tracking-wide">
+          {tips[currentTipIndex].category}
+        </span>
+        <p class="text-neutral-700 dark:text-neutral-300 text-sm text-center leading-relaxed">
+          {tips[currentTipIndex].text}
+        </p>
+        
+        <!-- Progress Bar -->
+        <div class="w-full h-0.5 bg-neutral-200 dark:bg-neutral-700 rounded-full overflow-hidden mt-2">
+          <div 
+            class="h-full bg-indigo-600 dark:bg-indigo-500 transition-all ease-linear"
+            style="width: {progressPercent}%"
+          />
+        </div>
+      </div>
+      
+      <!-- Navigation Controls -->
+      <div class="flex items-center gap-3">
+        <button
+          onclick={prevTip}
+          class="p-2 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors"
+          title="Previous tip"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd"/>
+          </svg>
+        </button>
+        
+        <div class="flex gap-1.5">
+          {#each tips as _, index}
+            <div
+              class="w-1.5 h-1.5 rounded-full transition-colors {index === currentTipIndex ? 'bg-indigo-600 dark:bg-indigo-500' : 'bg-neutral-300 dark:bg-neutral-700'}"
+            />
+          {/each}
+        </div>
+        
+        <button
+          onclick={nextTip}
+          class="p-2 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors"
+          title="Next tip"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+          </svg>
+        </button>
+      </div>
+      
+      <span class="text-xs text-neutral-500 dark:text-neutral-600">
+        {currentTipIndex + 1} / {tips.length}
+      </span>
+    </div>
   {/if}
 </div>

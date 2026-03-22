@@ -167,14 +167,39 @@ pub async fn save_to_gallery(
     prompt_id: String,
     mode: Option<String>,
     metadata: Option<std::collections::HashMap<String, String>>,
+    metadata_mode: Option<String>,
 ) -> Result<String, AppError> {
     let bytes = state.get_output_image_bytes(&filename, &subfolder).await?;
+    save_to_gallery_inner(&bytes, &filename, &prompt_id, mode.as_deref(), metadata.as_ref(), metadata_mode.as_deref())
+}
+
+/// Save raw image bytes (from WebSocket) directly to the gallery with optional embedded metadata.
+#[tauri::command]
+pub async fn save_to_gallery_bytes(
+    image_bytes: Vec<u8>,
+    filename: String,
+    prompt_id: String,
+    mode: Option<String>,
+    metadata: Option<std::collections::HashMap<String, String>>,
+    metadata_mode: Option<String>,
+) -> Result<String, AppError> {
+    save_to_gallery_inner(&image_bytes, &filename, &prompt_id, mode.as_deref(), metadata.as_ref(), metadata_mode.as_deref())
+}
+
+fn save_to_gallery_inner(
+    bytes: &[u8],
+    filename: &str,
+    prompt_id: &str,
+    mode: Option<&str>,
+    metadata: Option<&std::collections::HashMap<String, String>>,
+    metadata_mode: Option<&str>,
+) -> Result<String, AppError> {
     let dir = crate::config::app_data_dir()
         .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
         .join("gallery");
     std::fs::create_dir_all(&dir)?;
 
-    let normalized_mode = match mode.as_deref() {
+    let normalized_mode = match mode {
         Some("txt2img") => "txt2img",
         Some("img2img") => "img2img",
         Some("inpainting") => "inpainting",
@@ -184,21 +209,46 @@ pub async fn save_to_gallery(
     let gallery_filename = format!("{}__{}__{}", prompt_id, normalized_mode, filename);
     let path = dir.join(&gallery_filename);
 
+    let raw_mode = metadata_mode.unwrap_or("text_chunk");
+    let mut embed_mode = crate::metadata::MetadataMode::from_str(raw_mode);
+
+    if filename.to_ascii_lowercase().ends_with(".png")
+        && embed_mode == crate::metadata::MetadataMode::StealthAlpha
+    {
+        match crate::metadata::is_png_16bit(bytes) {
+            Ok(true) => {
+                embed_mode = crate::metadata::MetadataMode::Both;
+                log::info!(
+                    "save_to_gallery_inner: forcing metadata mode to Both for 16-bit PNG (requested=stealth) to improve compatibility"
+                );
+            }
+            Ok(false) => {}
+            Err(e) => {
+                log::warn!(
+                    "save_to_gallery_inner: failed to detect PNG bit depth for metadata mode policy: {}",
+                    e
+                );
+            }
+        }
+    }
+
+    log::info!("save_to_gallery_inner: metadata_mode={:?}, effective_embed_mode={:?}, has_metadata={}", raw_mode, embed_mode, metadata.is_some());
+
     // If metadata provided and file is PNG, embed it
-    let final_bytes = if let Some(ref meta) = metadata {
+    let final_bytes = if let Some(meta) = metadata {
         if filename.to_ascii_lowercase().ends_with(".png") {
-            match crate::metadata::embed_png_metadata(&bytes, meta) {
+            match crate::metadata::embed_png_metadata(bytes, meta, embed_mode) {
                 Ok(embedded) => embedded,
                 Err(e) => {
                     log::warn!("Failed to embed metadata: {}, saving without", e);
-                    bytes
+                    bytes.to_vec()
                 }
             }
         } else {
-            bytes
+            bytes.to_vec()
         }
     } else {
-        bytes
+        bytes.to_vec()
     };
 
     std::fs::write(&path, &final_bytes)?;

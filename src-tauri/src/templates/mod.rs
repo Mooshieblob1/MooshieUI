@@ -191,10 +191,10 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
     result.workflow.insert(
         save_id,
         json!({
-            "class_type": "SaveImage",
+            "class_type": "MooshieSaveImage",
             "inputs": {
                 "images": [final_image.0, final_image.1],
-                "filename_prefix": "ComfyUI"
+                "bit_depth": params.output_bit_depth
             }
         }),
     );

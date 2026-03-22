@@ -3,6 +3,7 @@ import {
   listGalleryImageEntries,
   loadGalleryImage,
   saveToGallery,
+  saveToGalleryBytes,
   deleteGalleryImage,
   renameGalleryImage,
   saveImageFile,
@@ -161,17 +162,41 @@ class GalleryStore {
     }, 2000);
   }
 
-  /** Save generated images to the persistent gallery on disk. */
-  async persistImages(images: OutputImage[], metadata?: Record<string, string>) {
-    for (const img of images) {
+  /** Save generated images to the persistent gallery on disk.
+   *  If blobs are provided (from WebSocket delivery), use the bytes-based API
+   *  to avoid a round-trip to ComfyUI's output directory. */
+  async persistImages(
+    images: OutputImage[],
+    metadata?: Record<string, string>,
+    blobs?: Blob[],
+    metadataMode?: string,
+  ) {
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i]!;
       try {
-        const galleryFilename = await saveToGallery(
-          img.filename,
-          img.subfolder,
-          img.prompt_id,
-          img.generation_mode,
-          metadata
-        );
+        let galleryFilename: string;
+        const blob = blobs?.[i];
+        if (blob) {
+          const buf = await blob.arrayBuffer();
+          const bytes = Array.from(new Uint8Array(buf));
+          galleryFilename = await saveToGalleryBytes(
+            bytes,
+            img.filename,
+            img.prompt_id,
+            img.generation_mode,
+            metadata,
+            metadataMode,
+          );
+        } else {
+          galleryFilename = await saveToGallery(
+            img.filename,
+            img.subfolder,
+            img.prompt_id,
+            img.generation_mode,
+            metadata,
+            metadataMode,
+          );
+        }
         img.gallery_filename = galleryFilename;
       } catch (e) {
         console.error("Failed to save image to gallery:", e);
