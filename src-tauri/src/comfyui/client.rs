@@ -33,7 +33,45 @@ impl AppState {
     pub async fn get_models_list(&self, category: &str) -> Result<Vec<String>, AppError> {
         let val = self.api_get(&format!("/models/{}", category)).await?;
         let models: Vec<String> = serde_json::from_value(val)?;
-        Ok(models)
+
+        // ComfyUI may return models from wrong categories when external model
+        // directories (SwarmUI, A1111, etc.) are configured — e.g. LoRAs showing
+        // up under checkpoints.  Filter out entries whose path prefix indicates
+        // they belong to a different category.
+        let exclude: &[&str] = match category {
+            "checkpoints" => &[
+                "Lora/", "Lora\\", "loras/", "loras\\",
+                "LyCORIS/", "LyCORIS\\",
+                "VAE/", "VAE\\", "vae/", "vae\\",
+                "upscale_models/", "upscale_models\\",
+                "ESRGAN/", "ESRGAN\\", "RealESRGAN/", "RealESRGAN\\",
+                "embeddings/", "embeddings\\",
+                "controlnet/", "controlnet\\", "ControlNet/", "ControlNet\\",
+                "ultralytics/", "ultralytics\\", "yolov8/", "yolov8\\",
+                "clip/", "clip\\", "unet/", "unet\\",
+                "diffusion_models/", "diffusion_models\\",
+                "text_encoders/", "text_encoders\\",
+            ],
+            "loras" => &[
+                "checkpoints/", "checkpoints\\",
+                "Stable-diffusion/", "Stable-diffusion\\",
+                "Stable-Diffusion/", "Stable-Diffusion\\",
+                "StableDiffusion/", "StableDiffusion\\",
+                "VAE/", "VAE\\", "vae/", "vae\\",
+                "upscale_models/", "upscale_models\\",
+                "ultralytics/", "ultralytics\\", "yolov8/", "yolov8\\",
+            ],
+            _ => &[],
+        };
+
+        if exclude.is_empty() {
+            Ok(models)
+        } else {
+            Ok(models
+                .into_iter()
+                .filter(|m| !exclude.iter().any(|pfx| m.starts_with(pfx)))
+                .collect())
+        }
     }
 
     pub async fn get_samplers_and_schedulers(&self) -> Result<SamplerInfo, AppError> {

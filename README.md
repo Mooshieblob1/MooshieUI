@@ -325,6 +325,13 @@ Both methods:
 
 ## 📋 Changelog
 
+### v0.3.5
+
+**Model Category Filtering**
+- Fixed LoRAs, upscale models, VAEs, and other non-checkpoint files appearing in the checkpoint dropdown when using external model directories (SwarmUI, A1111, etc.)
+- Added server-side path-prefix filtering to exclude models whose directory path indicates they belong to a different category (e.g. entries starting with `Lora\`, `upscale_models\`, `yolov8\` are excluded from checkpoints)
+- Same filtering applied to LoRA list to exclude checkpoint/VAE/upscale entries
+
 ### v0.3.4
 
 **Extra Model Paths Fix**
