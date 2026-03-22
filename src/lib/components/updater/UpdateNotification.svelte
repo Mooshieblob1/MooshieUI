@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { check } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
+  import { exit } from "@tauri-apps/plugin-process";
+  import { stopComfyui } from "../../utils/api.js";
 
   type UpdateState = "idle" | "available" | "downloading" | "ready" | "error";
 
@@ -61,6 +63,7 @@
   }
 
   async function restartApp() {
+    try { await stopComfyui(); } catch {}
     await relaunch();
   }
 

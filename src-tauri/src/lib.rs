@@ -70,7 +70,8 @@ pub fn run() {
                     .map(|s| s.into_owned())
                     .unwrap_or_else(|_| filename_encoded.to_string());
                 let max_size: u32 = query
-                    .strip_prefix("size=")
+                    .split('&')
+                    .find_map(|p| p.strip_prefix("size="))
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(256);
 
@@ -93,7 +94,7 @@ pub fn run() {
                             tauri::http::Response::builder()
                                 .status(200)
                                 .header("Content-Type", "image/webp")
-                                .header("Cache-Control", "max-age=31536000, immutable")
+                                .header("Cache-Control", "no-cache")
                                 .body(data)
                                 .unwrap(),
                         );

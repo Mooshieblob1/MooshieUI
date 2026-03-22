@@ -969,7 +969,15 @@
                 What's New in v{appVersion}
               </summary>
               <div class="px-3 pb-3 pt-1 text-xs text-neutral-400 space-y-2">
-                <p class="text-neutral-300 font-medium">v0.3.6</p>
+                <p class="text-neutral-300 font-medium">v0.3.7</p>
+                <ul class="list-disc list-inside space-y-0.5">
+                  <li>Fixed recommended models showing as installed when VAE or text encoder is missing</li>
+                  <li>Selecting a recommended model now re-downloads only missing components</li>
+                  <li>Fixed gallery thumbnails appearing broken after app update/relaunch</li>
+                  <li>Added SwarmUI Models/ and dlbackend/ paths for broader directory compatibility</li>
+                  <li>App now fully stops ComfyUI before restarting during updates</li>
+                </ul>
+                <p class="text-neutral-300 font-medium mt-3">v0.3.6</p>
                 <ul class="list-disc list-inside space-y-0.5">
                   <li>Option to disable auto quality tags (Settings > Performance)</li>
                   <li>Confirmation popup warns about quality impact before disabling</li>
@@ -1084,7 +1092,7 @@
                 <div class="px-3 py-2 bg-emerald-900/30 border border-emerald-800/50 rounded-lg">
                   <p class="text-sm text-emerald-200 mb-2">Update downloaded. Restart to apply v{updateVersion}.</p>
                   <button
-                    onclick={() => relaunch()}
+                    onclick={async () => { try { await stopComfyui(); } catch {} await relaunch(); }}
                     class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
                   >
                     Restart Now

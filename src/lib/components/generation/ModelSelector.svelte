@@ -325,13 +325,34 @@
     return parts[parts.length - 1];
   }
 
-  /** Check if a recommended model is already installed (hash-first, filename fallback) */
+  /** Get the correct model list for a given category */
+  function modelListForCategory(category: string): string[] {
+    switch (category) {
+      case "checkpoints": return models.checkpoints;
+      case "vae": return models.vaes;
+      case "loras": return models.loras;
+      case "diffusion_models": return models.diffusionModels;
+      case "text_encoders": return models.textEncoders;
+      case "controlnet": return models.controlnetModels;
+      case "upscale_models": return models.upscaleModels;
+      default: return [];
+    }
+  }
+
+  /** Check if ALL components of a recommended model are installed */
   function isRecommendedInstalled(rec: RecommendedModel): boolean {
     if (rec.splitModel) {
-      return isModelFileInstalled(rec.splitModel.diffusionModel, models.diffusionModels);
+      const sm = rec.splitModel;
+      return (
+        isModelFileInstalled(sm.diffusionModel, models.diffusionModels) &&
+        isModelFileInstalled(sm.clipModel, models.textEncoders) &&
+        isModelFileInstalled(sm.vaeModel, models.vaes)
+      );
     }
     if (rec.checkpoint) {
-      return isModelFileInstalled(rec.checkpoint, models.checkpoints);
+      if (!isModelFileInstalled(rec.checkpoint, models.checkpoints)) return false;
+      if (rec.vaeModel && !isModelFileInstalled(rec.vaeModel, models.vaes)) return false;
+      return true;
     }
     return false;
   }
@@ -405,31 +426,30 @@
     showCheckpointDropdown = false;
     checkpointSearch = "";
 
-    const installed = isRecommendedInstalled(rec);
+    // Check each component individually and download only what's missing
+    const missingFiles: { file: ModelFile; label: string }[] = [];
+    if (rec.splitModel) {
+      const sm = rec.splitModel;
+      if (!isModelFileInstalled(sm.diffusionModel, modelListForCategory(sm.diffusionModel.category)))
+        missingFiles.push({ file: sm.diffusionModel, label: "Downloading diffusion model..." });
+      if (!isModelFileInstalled(sm.clipModel, modelListForCategory(sm.clipModel.category)))
+        missingFiles.push({ file: sm.clipModel, label: "Downloading text encoder..." });
+      if (!isModelFileInstalled(sm.vaeModel, modelListForCategory(sm.vaeModel.category)))
+        missingFiles.push({ file: sm.vaeModel, label: "Downloading VAE..." });
+    } else if (rec.checkpoint) {
+      if (!isModelFileInstalled(rec.checkpoint, modelListForCategory(rec.checkpoint.category)))
+        missingFiles.push({ file: rec.checkpoint, label: "Downloading checkpoint..." });
+      if (rec.vaeModel && !isModelFileInstalled(rec.vaeModel, modelListForCategory(rec.vaeModel.category)))
+        missingFiles.push({ file: rec.vaeModel, label: "Downloading VAE..." });
+    }
 
-    if (!installed) {
+    if (missingFiles.length > 0) {
       downloading = rec.label;
       try {
-        if (rec.splitModel) {
-          const sm = rec.splitModel;
-          downloadProgress = "Downloading diffusion model...";
-          await downloadModel(sm.diffusionModel.url, sm.diffusionModel.category, sm.diffusionModel.filename);
-          await cacheHashAfterDownload(sm.diffusionModel);
-          downloadProgress = "Downloading text encoder...";
-          await downloadModel(sm.clipModel.url, sm.clipModel.category, sm.clipModel.filename);
-          await cacheHashAfterDownload(sm.clipModel);
-          downloadProgress = "Downloading VAE...";
-          await downloadModel(sm.vaeModel.url, sm.vaeModel.category, sm.vaeModel.filename);
-          await cacheHashAfterDownload(sm.vaeModel);
-        } else if (rec.checkpoint) {
-          downloadProgress = "Downloading checkpoint...";
-          await downloadModel(rec.checkpoint.url, rec.checkpoint.category, rec.checkpoint.filename);
-          await cacheHashAfterDownload(rec.checkpoint);
-          if (rec.vaeModel) {
-            downloadProgress = "Downloading VAE...";
-            await downloadModel(rec.vaeModel.url, rec.vaeModel.category, rec.vaeModel.filename);
-            await cacheHashAfterDownload(rec.vaeModel);
-          }
+        for (const { file, label } of missingFiles) {
+          downloadProgress = label;
+          await downloadModel(file.url, file.category, file.filename);
+          await cacheHashAfterDownload(file);
         }
         await models.refresh();
       } catch (e) {

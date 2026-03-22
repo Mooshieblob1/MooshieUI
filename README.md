@@ -325,6 +325,15 @@ Both methods:
 
 ## 📋 Changelog
 
+### v0.3.7
+
+**Model Integrity & Thumbnail Recovery**
+- Fixed recommended models (Anima, SIH) incorrectly showing as installed when VAE or text encoder components are missing — all components are now verified
+- Selecting a recommended model now downloads only the missing components instead of skipping entirely
+- Fixed gallery thumbnails appearing broken/dead after app update or relaunch (added retry logic, fixed query param parsing, removed aggressive caching)
+- Added SwarmUI `Models/` and `dlbackend/comfyui/models/` paths to external model directory scanning for broader compatibility
+- App now stops ComfyUI before restarting during updates, preventing orphan processes
+
 ### v0.3.6
 
 **Quality Tag Controls**
