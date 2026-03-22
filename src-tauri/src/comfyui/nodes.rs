@@ -7,20 +7,28 @@ const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
 
 /// Ensure the mooshie-nodes custom node pack exists in ComfyUI's custom_nodes directory.
 /// Always overwrites to keep in sync with the app version.
-pub fn ensure_mooshie_nodes(comfyui_path: &str) {
+pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
     let target_dir = Path::new(comfyui_path)
         .join("custom_nodes")
         .join("mooshie-nodes");
 
-    if let Err(e) = std::fs::create_dir_all(&target_dir) {
-        log::warn!("Failed to create mooshie-nodes directory: {}", e);
-        return;
-    }
+    std::fs::create_dir_all(&target_dir).map_err(|e| {
+        format!(
+            "Failed to create mooshie-nodes directory at '{}': {}",
+            target_dir.display(),
+            e
+        )
+    })?;
 
     let init_path = target_dir.join("__init__.py");
-    if let Err(e) = std::fs::write(&init_path, MOOSHIE_NODES_INIT) {
-        log::warn!("Failed to write mooshie-nodes/__init__.py: {}", e);
-    } else {
-        log::info!("Deployed mooshie-nodes to {}", target_dir.display());
-    }
+    std::fs::write(&init_path, MOOSHIE_NODES_INIT).map_err(|e| {
+        format!(
+            "Failed to write mooshie-nodes/__init__.py at '{}': {}",
+            init_path.display(),
+            e
+        )
+    })?;
+
+    log::info!("Deployed mooshie-nodes to {}", target_dir.display());
+    Ok(())
 }

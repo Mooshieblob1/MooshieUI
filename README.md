@@ -325,6 +325,12 @@ Both methods:
 
 ## 📋 Changelog
 
+### v0.3.2
+
+**Custom Node Deployment Hotfix**
+- Fixed "Node MooshieSaveImage not found" error caused by silent failure during custom node deployment
+- `ensure_mooshie_nodes` now returns a proper error instead of silently continuing when node files can't be written
+
 ### v0.3.1
 
 **Updater Hotfix**
