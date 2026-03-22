@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { listen } from "@tauri-apps/api/event";
+  import { smoothScroll } from "../../utils/smoothScroll.js";
   import {
     downloadModel,
     listCivitaiArchitectures,
@@ -748,7 +749,7 @@
   });
 </script>
 
-<div class="h-full overflow-y-auto p-6" style="will-change: scroll-position;" bind:this={scrollHost} onscroll={handleScroll}>
+<div class="h-full overflow-y-auto p-6" style="will-change: scroll-position;" bind:this={scrollHost} onscroll={handleScroll} use:smoothScroll>
   <div class="mx-auto space-y-4">
     <div class="flex flex-col gap-1">
       <h2 class="text-lg font-semibold text-neutral-100">Model Hub</h2>

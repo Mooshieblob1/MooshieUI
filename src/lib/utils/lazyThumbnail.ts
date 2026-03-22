@@ -21,11 +21,12 @@ export function lazyThumbnail(node: HTMLImageElement, opts: LazyThumbnailOpts) {
 
   function getSrc(): string | undefined {
     const img = current.image;
-    if (img.url) return img.url;
+    // Prefer thumbnail protocol (smaller WebP) over full-res blob URL
     if (img.thumbnailUrl) {
       const size = current.size ?? 384;
       return `${img.thumbnailUrl}?size=${size}`;
     }
+    if (img.url) return img.url;
     return undefined;
   }
 

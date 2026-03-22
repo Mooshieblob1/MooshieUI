@@ -198,6 +198,7 @@ class GalleryStore {
           );
         }
         img.gallery_filename = galleryFilename;
+        img.thumbnailUrl = `thumbnail://localhost/${encodeURIComponent(galleryFilename)}`;
       } catch (e) {
         console.error("Failed to save image to gallery:", e);
       }

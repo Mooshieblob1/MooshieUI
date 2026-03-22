@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AppConfig } from "../../types/index.js";
   import { getConfig, updateConfig, stopComfyui, startComfyui } from "../../utils/api.js";
+  import { smoothScroll } from "../../utils/smoothScroll.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
@@ -385,7 +386,7 @@
   {/if}
 
   <!-- Scrollable content -->
-  <div class="flex-1 overflow-y-auto p-6">
+  <div class="flex-1 overflow-y-auto p-6" use:smoothScroll>
     <div class="max-w-2xl mx-auto space-y-6">
       {#if loading}
         <div class="flex items-center justify-center py-12 text-neutral-500">

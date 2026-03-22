@@ -19,6 +19,7 @@
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
   import { downloads } from "./lib/stores/downloads.svelte.js";
+  import { smoothScroll } from "./lib/utils/smoothScroll.js";
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
 
   declare const __APP_VERSION__: string;
@@ -100,17 +101,19 @@
     e.preventDefault();
     const img = e.currentTarget as HTMLImageElement;
     const rect = img.getBoundingClientRect();
-    const px = e.clientX - (rect.left + rect.width / 2);
-    const py = e.clientY - (rect.top + rect.height / 2);
-    const nextScale = Math.min(10, Math.max(0.5, lbScale * (e.deltaY > 0 ? 0.9 : 1.1)));
+    // Cursor position relative to the transformed image center
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    // Cursor offset from center in screen pixels
+    const dx = e.clientX - cx;
+    const dy = e.clientY - cy;
 
+    const nextScale = Math.min(10, Math.max(0.5, lbScale * (e.deltaY > 0 ? 0.9 : 1.1)));
     if (nextScale === lbScale) return;
 
-    const worldX = (px - lbOffsetX) / lbScale;
-    const worldY = (py - lbOffsetY) / lbScale;
-
-    lbOffsetX = px - worldX * nextScale;
-    lbOffsetY = py - worldY * nextScale;
+    const ratio = 1 - nextScale / lbScale;
+    lbOffsetX += dx * ratio;
+    lbOffsetY += dy * ratio;
     lbScale = nextScale;
 
     if (lbScale <= 1) {
@@ -1107,7 +1110,7 @@
     {#if currentPage === "generate"}
       <GenerationPage />
     {:else if currentPage === "gallery"}
-      <div class="p-6 h-full overflow-y-auto">
+      <div class="p-6 h-full overflow-y-auto" use:smoothScroll>
         {#if gallery.loading}
           <div class="flex items-center justify-center h-full text-neutral-500">
             Loading gallery...
@@ -1336,7 +1339,7 @@
     {#if gallery.selectedImage}
       <div class="h-full flex shrink-0" style="width: {metadataPanelCollapsed ? 36 : metadataPanelWidth}px;">
         {#if !metadataPanelCollapsed}
-          <div class="flex-1 h-full overflow-y-auto bg-neutral-900/95 p-4 text-xs text-neutral-200 select-text" style="min-width: 0;">
+          <div class="flex-1 h-full overflow-y-auto bg-neutral-900/95 p-4 text-xs text-neutral-200 select-text" style="min-width: 0;" use:smoothScroll>
             <div class="flex items-center justify-between gap-2 mb-3">
               <span class="font-semibold text-sm text-neutral-100">Image Info</span>
               <div class="flex items-center gap-1">

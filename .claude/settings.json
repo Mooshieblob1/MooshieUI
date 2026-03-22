@@ -19,7 +19,14 @@
       "Bash(git tag:*)",
       "Bash(gh release:*)",
       "Bash(cargo generate-lockfile:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(grep -n \"download_model_file\\\\|struct AppState\" /home/blob/Repos/DesktopWebUI/comfyui-desktop/src-tauri/src/**/*.rs)",
+      "Bash(grep -l \"setup_complete\\\\|check_setup\" /home/blob/Repos/DesktopWebUI/comfyui-desktop/src-tauri/src/*.rs)",
+      "Bash(find /home/blob/Repos/DesktopWebUI/comfyui-desktop -path *bundle* -name *nsis* -o -path *bundle* -name *wix*)",
+      "Bash(grep -rn \"check_setup\\\\|setup_complete\" /home/blob/Repos/DesktopWebUI/comfyui-desktop/src --include=*.svelte --include=*.ts --include=*.tsx --include=*.js)",
+      "Bash(ls -la /home/blob/Repos/DesktopWebUI/comfyui-desktop/*.md)",
+      "Bash(npm run:*)",
+      "Bash(npx vite:*)"
     ]
   }
 }

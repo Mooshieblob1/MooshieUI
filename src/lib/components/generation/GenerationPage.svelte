@@ -1,5 +1,6 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
+  import { smoothScroll } from "../../utils/smoothScroll.js";
   import PromptInputs from "./PromptInputs.svelte";
   import ModelSelector from "./ModelSelector.svelte";
   import SamplerSettings from "./SamplerSettings.svelte";
@@ -1444,6 +1445,7 @@
         bind:this={leftColumnRef}
         class="overflow-y-auto overflow-x-hidden px-4 pt-4 flex flex-col gap-4 shrink-0 border-r {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'}"
         style="width: {leftWidth}px"
+        use:smoothScroll
       >
         {#if controlsSide === "left"}
           <div class="sticky top-0 z-10 bg-neutral-950 -mx-4 px-4 -mt-4 pt-4 pb-4">
@@ -1517,7 +1519,7 @@
         <CanvasEditor bind:this={canvasEditorRef} />
       </div>
     {:else}
-      <div class="flex-1 min-w-0 p-6 flex flex-col gap-4 overflow-y-auto">
+      <div class="flex-1 min-w-0 p-6 flex flex-col gap-4 overflow-y-auto" use:smoothScroll>
         <ProgressBar />
         <PreviewImage />
       </div>
@@ -1538,6 +1540,7 @@
         bind:this={rightColumnRef}
         class="overflow-y-auto p-4 space-y-4 shrink-0 border-l {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'}"
         style="width: {rightWidth}px"
+        use:smoothScroll
       >
         {#if controlsSide === "right"}
           <div class="sticky top-0 z-10 bg-neutral-950 -mx-4 px-4 -mt-4 pt-4 pb-4">
