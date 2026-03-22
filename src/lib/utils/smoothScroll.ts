@@ -1,7 +1,6 @@
 /**
  * Svelte action that adds Lenis-style lerp smooth scrolling to a container.
- * Only activates on Windows (WebView2/Chromium). WebKitGTK on Linux already
- * has its own smooth scrolling, and intercepting wheel events there causes jank.
+ * Intercepts wheel events and applies momentum-based scrolling with lerp.
  *
  * Usage: <div use:smoothScroll> or <div use:smoothScroll={{ lerp: 0.1, multiplier: 1.2 }}>
  */
@@ -13,10 +12,7 @@ export interface SmoothScrollOpts {
   multiplier?: number;
 }
 
-const isWindows = navigator.userAgent.includes("Windows");
-
 export function smoothScroll(node: HTMLElement, opts?: SmoothScrollOpts) {
-  if (!isWindows) return {};
 
   let lerp = opts?.lerp ?? 0.1;
   let multiplier = opts?.multiplier ?? 1.2;
@@ -42,7 +38,26 @@ export function smoothScroll(node: HTMLElement, opts?: SmoothScrollOpts) {
     }
   }
 
+  /** Check if an element between the event target and our node can scroll */
+  function hasNestedScroll(target: EventTarget | null): boolean {
+    let el = target as HTMLElement | null;
+    while (el && el !== node) {
+      if (el.scrollHeight > el.clientHeight + 1) {
+        const style = getComputedStyle(el);
+        const ov = style.overflowY;
+        if (ov === "auto" || ov === "scroll" || ov === "overlay") {
+          return true;
+        }
+      }
+      el = el.parentElement;
+    }
+    return false;
+  }
+
   function onWheel(e: WheelEvent) {
+    // Don't intercept if a nested scrollable element should handle it
+    if (hasNestedScroll(e.target)) return;
+
     e.preventDefault();
 
     // Sync target with actual scroll position if user scrolled via other means
