@@ -944,7 +944,13 @@
                 What's New in v{appVersion}
               </summary>
               <div class="px-3 pb-3 pt-1 text-xs text-neutral-400 space-y-2">
-                <p class="text-neutral-300 font-medium">v0.3.3</p>
+                <p class="text-neutral-300 font-medium">v0.3.4</p>
+                <ul class="list-disc list-inside space-y-0.5">
+                  <li>Fixed LoRAs in external model directories appearing as checkpoints</li>
+                  <li>Each model category now only scans its specific subdirectories</li>
+                  <li>Added SwarmUI Stable-Diffusion folder to checkpoint detection</li>
+                </ul>
+                <p class="text-neutral-300 font-medium mt-3">v0.3.3</p>
                 <ul class="list-disc list-inside space-y-0.5">
                   <li>Fixed Anima quality tags now prepended before user prompt instead of appended after</li>
                   <li>Fixed custom node deployment unreachable when using external ComfyUI instances</li>

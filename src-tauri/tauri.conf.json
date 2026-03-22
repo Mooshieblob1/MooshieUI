@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicerlab/files/main/tauri/tauri.conf.json.schema",
   "productName": "MooshieUI",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "identifier": "com.mooshieui.desktop",
   "build": {
     "frontendDist": "../dist",

@@ -325,6 +325,13 @@ Both methods:
 
 ## 📋 Changelog
 
+### v0.3.4
+
+**Extra Model Paths Fix**
+- Fixed LoRA files in external model directories (SwarmUI, A1111, etc.) incorrectly appearing as checkpoints
+- Removed wildcard `.` base scan from all categories in extra_model_paths YAML — each category now only scans its specific subdirectories, preventing cross-contamination
+- Added `Stable-Diffusion` (SwarmUI naming) to checkpoint path detection
+
 ### v0.3.3
 
 **Anima Quality Tags + Changelog Fix**

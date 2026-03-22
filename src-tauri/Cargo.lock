@@ -425,7 +425,7 @@ dependencies = [
 
 [[package]]
 name = "comfyui-desktop"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "base64 0.22.1",
  "dirs 5.0.1",

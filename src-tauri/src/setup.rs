@@ -994,6 +994,7 @@ fn scan_model_directories() -> Vec<DetectedModelDir> {
         // Check what model types exist in this directory
         let has_checkpoints = path.join("checkpoints").is_dir()
             || path.join("Stable-diffusion").is_dir()
+            || path.join("Stable-Diffusion").is_dir()
             || path.join("StableDiffusion").is_dir();
         let has_loras = path.join("loras").is_dir()
             || path.join("Lora").is_dir()
