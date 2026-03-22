@@ -47,3 +47,4 @@ src-tauri/gen/
 
 # Logs
 *.log
+src-tauri/Cargo.toml
