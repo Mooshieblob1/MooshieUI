@@ -944,7 +944,33 @@
                 What's New in v{appVersion}
               </summary>
               <div class="px-3 pb-3 pt-1 text-xs text-neutral-400 space-y-2">
-                <p class="text-neutral-300 font-medium">v0.2.9</p>
+                <p class="text-neutral-300 font-medium">v0.3.3</p>
+                <ul class="list-disc list-inside space-y-0.5">
+                  <li>Fixed Anima quality tags now prepended before user prompt instead of appended after</li>
+                  <li>Fixed custom node deployment unreachable when using external ComfyUI instances</li>
+                  <li>Updated in-app changelog to show all recent versions</li>
+                </ul>
+                <p class="text-neutral-300 font-medium mt-3">v0.3.2</p>
+                <ul class="list-disc list-inside space-y-0.5">
+                  <li>Fixed "Node MooshieSaveImage not found" caused by silent failure in custom node deployment</li>
+                  <li>Node deployment now surfaces errors instead of silently continuing</li>
+                </ul>
+                <p class="text-neutral-300 font-medium mt-3">v0.3.1</p>
+                <ul class="list-disc list-inside space-y-0.5">
+                  <li>Fixed updater 404 caused by tag/filename mismatches in release manifest</li>
+                  <li>Release pipeline now generates correct updater URLs from actual artifact names</li>
+                </ul>
+                <p class="text-neutral-300 font-medium mt-3">v0.3.0</p>
+                <ul class="list-disc list-inside space-y-0.5">
+                  <li>Streaming output pipeline — final PNGs stream over WebSocket via MooshieSaveImage</li>
+                  <li>16-bit PNG output mode (selectable 8-bit/16-bit)</li>
+                  <li>Metadata modes: Text Chunk, Stealth Alpha, and Both</li>
+                  <li>Generation queueing with cancel-current and cancel-all controls</li>
+                  <li>Lightbox actions: Reuse Settings, Remix, and Reuse Seed</li>
+                  <li>Model-aware sampler recommendations for Anima and SIH</li>
+                  <li>Rotating tips carousel in idle preview area</li>
+                </ul>
+                <p class="text-neutral-300 font-medium mt-3">v0.2.9</p>
                 <ul class="list-disc list-inside space-y-0.5">
                   <li>Face Fix (FaceDetailer) support for automatic face correction</li>
                   <li>Session history with pagination for browsing past generations</li>
@@ -953,30 +979,6 @@
                 <p class="text-neutral-300 font-medium mt-3">v0.2.8</p>
                 <ul class="list-disc list-inside space-y-0.5">
                   <li>Fixed: moving installation no longer re-triggers setup wizard</li>
-                  <li>Fixed: app data resolves correctly after moving to a new location</li>
-                  <li>Fixed: symlink copy errors on Windows no longer block installation moves</li>
-                </ul>
-                <p class="text-neutral-300 font-medium mt-3">v0.2.7</p>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li>Model and Sampler are now separate, independently collapsible and draggable sections</li>
-                  <li>Section collapse states persist across tab switches and page reloads</li>
-                  <li>Optional manual ComfyUI startup — toggle "Auto-start" off in Connection settings</li>
-                  <li>Image panning with left click and middle mouse at any zoom level</li>
-                  <li>Performance: fixed event listener leak, debounced storage writes, removed backdrop-blur scroll jank</li>
-                </ul>
-                <p class="text-neutral-300 font-medium mt-3">v0.2.6</p>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li>Choose custom install location during setup (no longer forced to AppData)</li>
-                  <li>Move existing installation to a new drive/folder from Settings</li>
-                  <li>Auto-detect model directories from ComfyUI, A1111/Forge, SwarmUI, StabilityMatrix</li>
-                  <li>Fixed Model Hub search filters (file format, base model) returning errors</li>
-                  <li>Fixed infinite scroll not loading past 30 results</li>
-                  <li>Removed non-functional Status filter from Model Hub</li>
-                  <li>Settings sections now remember collapsed/expanded state</li>
-                  <li>App no longer re-triggers setup when AppData is moved</li>
-                  <li>ControlNet settings UI</li>
-                  <li>Mask editor for inpainting</li>
-                  <li>Download manager banner</li>
                 </ul>
               </div>
             </details>

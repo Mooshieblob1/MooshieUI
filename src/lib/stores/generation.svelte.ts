@@ -459,9 +459,9 @@ class GenerationStore {
     let positivePrompt = this.mergeTagPrompts(this.positivePrompt, style.positive);
     let negativePrompt = this.mergeTagPrompts(this.negativePrompt, style.negative);
 
-    // Auto-apply quality tags for Anima models
+    // Auto-apply quality tags for Anima models (positive before, negative after)
     positivePrompt = this.isAnima
-      ? this.mergeTagPrompts(positivePrompt, ANIMA_POSITIVE_QUALITY)
+      ? this.mergeTagPrompts(ANIMA_POSITIVE_QUALITY, positivePrompt)
       : positivePrompt;
     negativePrompt = this.isAnima
       ? this.mergeTagPrompts(negativePrompt, ANIMA_NEGATIVE_QUALITY)

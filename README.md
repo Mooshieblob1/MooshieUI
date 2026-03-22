@@ -325,6 +325,13 @@ Both methods:
 
 ## 📋 Changelog
 
+### v0.3.3
+
+**Anima Quality Tags + Changelog Fix**
+- Fixed Anima positive quality tags (`year 2025, newest, masterpiece, ...`) now prepended before the user prompt instead of appended after — matches the correct tag ordering for Anima/COSMOS models
+- Fixed custom node deployment unreachable when ComfyUI is started externally (non-AutoLaunch mode)
+- Fixed in-app changelog in About section stuck on v0.2.6–v0.2.9 — now shows all versions through v0.3.3
+
 ### v0.3.2
 
 **Custom Node Deployment Hotfix**
