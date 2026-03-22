@@ -21,6 +21,14 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage } from "../../types/index.js";
+  import { onMount, onDestroy } from "svelte";
+  import {
+    isDroppableSection,
+    handleMetadataImport,
+    getImageFile,
+    getClipboardImageFile,
+    type DroppableSectionId,
+  } from "../../utils/metadataImport.js";
 
   const DIMENSIONS_LAYOUT_KEY = "mooshieui.generation.dimensions.layout.v1";
   const SECTION_LAYOUT_KEY = "mooshieui.generation.sections.layout.v1";
@@ -56,6 +64,11 @@
   let maskDragOver = $state(false);
   let promptsSectionOpen = $state(true);
   let historySectionOpen = $state(true);
+
+  /** Which section (or "preview") currently has an image dragged over it */
+  let metadataDropTarget = $state<string | null>(null);
+  /** Per-target enter/leave counters to handle nested element events */
+  let metadataDropCounters: Record<string, number> = {};
 
   const sortedPromptHistory = $derived(
     [...generation.promptHistory]
@@ -793,6 +806,70 @@
       canvas.isCanvasMode = false;
     }
   });
+
+  function onMetadataDragEnter(e: DragEvent, targetId: string) {
+    if (!e.dataTransfer?.types.includes("Files")) return;
+    if (targetId !== "preview" && !isDroppableSection(targetId)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (metadataDropTarget && metadataDropTarget !== targetId) {
+      metadataDropCounters[metadataDropTarget] = 0;
+    }
+    metadataDropCounters[targetId] = (metadataDropCounters[targetId] || 0) + 1;
+    metadataDropTarget = targetId;
+  }
+
+  function onMetadataDragOver(e: DragEvent, targetId: string) {
+    if (!e.dataTransfer?.types.includes("Files")) return;
+    if (targetId !== "preview" && !isDroppableSection(targetId)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  }
+
+  function onMetadataDragLeave(e: DragEvent, targetId: string) {
+    if (targetId !== "preview" && !isDroppableSection(targetId)) return;
+    metadataDropCounters[targetId] = (metadataDropCounters[targetId] || 0) - 1;
+    if (metadataDropCounters[targetId] <= 0) {
+      metadataDropCounters[targetId] = 0;
+      if (metadataDropTarget === targetId) {
+        metadataDropTarget = null;
+      }
+    }
+  }
+
+  async function onMetadataDrop(e: DragEvent, targetId: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    metadataDropTarget = null;
+    metadataDropCounters = {};
+    if (!e.dataTransfer) return;
+    const file = getImageFile(e.dataTransfer);
+    if (!file) return;
+    const importTarget = targetId === "preview" ? "all" : targetId as DroppableSectionId;
+    await handleMetadataImport(file, importTarget);
+  }
+
+  let pasteHandler: ((e: ClipboardEvent) => void) | null = null;
+
+  onMount(() => {
+    pasteHandler = async (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+      const file = getClipboardImageFile(e);
+      if (!file) return;
+      e.preventDefault();
+      const targetSection = metadataDropTarget && isDroppableSection(metadataDropTarget)
+        ? metadataDropTarget as DroppableSectionId
+        : "all";
+      await handleMetadataImport(file, targetSection);
+    };
+    window.addEventListener("paste", pasteHandler);
+  });
+
+  onDestroy(() => {
+    if (pasteHandler) window.removeEventListener("paste", pasteHandler);
+  });
 </script>
 
   {#snippet dragHandle(section: SectionId)}
@@ -929,7 +1006,12 @@
   {/snippet}
 
   {#snippet dimensionsSection()}
-    <div bind:this={sectionRefs['dimensions']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'dimensions' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['dimensions']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'dimensions' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'dimensions' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+      ondragenter={(e) => onMetadataDragEnter(e, "dimensions")}
+      ondragover={(e) => onMetadataDragOver(e, "dimensions")}
+      ondragleave={(e) => onMetadataDragLeave(e, "dimensions")}
+      ondrop={(e) => onMetadataDrop(e, "dimensions")}
+    >
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("dimensions")}
         <button
@@ -946,11 +1028,23 @@
           <DimensionControls suggestedAspect={imageAspect} />
         </div>
       {/if}
+      {#if metadataDropTarget === "dimensions"}
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
+          <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
+            Drop to import dimensions
+          </span>
+        </div>
+      {/if}
     </div>
   {/snippet}
 
   {#snippet promptsSection()}
-    <div bind:this={sectionRefs['prompts']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'prompts' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['prompts']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'prompts' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'prompts' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+      ondragenter={(e) => onMetadataDragEnter(e, "prompts")}
+      ondragover={(e) => onMetadataDragOver(e, "prompts")}
+      ondragleave={(e) => onMetadataDragLeave(e, "prompts")}
+      ondrop={(e) => onMetadataDrop(e, "prompts")}
+    >
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("prompts")}
         <button
@@ -965,6 +1059,13 @@
       {#if promptsSectionOpen}
         <div class="px-3 pb-3 pt-1">
           <PromptInputs showHistory={false} />
+        </div>
+      {/if}
+      {#if metadataDropTarget === "prompts"}
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
+          <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
+            Drop to import prompts
+          </span>
         </div>
       {/if}
     </div>
@@ -1301,7 +1402,12 @@
   {/snippet}
 
   {#snippet modelSection()}
-    <div bind:this={sectionRefs['model']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'model' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['model']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'model' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'model' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+      ondragenter={(e) => onMetadataDragEnter(e, "model")}
+      ondragover={(e) => onMetadataDragOver(e, "model")}
+      ondragleave={(e) => onMetadataDragLeave(e, "model")}
+      ondrop={(e) => onMetadataDrop(e, "model")}
+    >
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("model")}
         <button
@@ -1318,11 +1424,23 @@
           <ModelSelector />
         </div>
       {/if}
+      {#if metadataDropTarget === "model"}
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
+          <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
+            Drop to import model settings
+          </span>
+        </div>
+      {/if}
     </div>
   {/snippet}
 
   {#snippet samplerSection()}
-    <div bind:this={sectionRefs['sampler']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'sampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['sampler']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'sampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'sampler' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+      ondragenter={(e) => onMetadataDragEnter(e, "sampler")}
+      ondragover={(e) => onMetadataDragOver(e, "sampler")}
+      ondragleave={(e) => onMetadataDragLeave(e, "sampler")}
+      ondrop={(e) => onMetadataDrop(e, "sampler")}
+    >
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("sampler")}
         <button
@@ -1337,6 +1455,13 @@
       {#if samplerSectionOpen}
         <div class="px-3 pb-3 pt-1 space-y-4">
           <SamplerSettings />
+        </div>
+      {/if}
+      {#if metadataDropTarget === "sampler"}
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
+          <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
+            Drop to import sampler settings
+          </span>
         </div>
       {/if}
     </div>
@@ -1364,7 +1489,12 @@
   {/snippet}
 
   {#snippet facefixSection()}
-    <div bind:this={sectionRefs['facefix']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['facefix']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'facefix' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+      ondragenter={(e) => onMetadataDragEnter(e, "facefix")}
+      ondragover={(e) => onMetadataDragOver(e, "facefix")}
+      ondragleave={(e) => onMetadataDragLeave(e, "facefix")}
+      ondrop={(e) => onMetadataDrop(e, "facefix")}
+    >
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("facefix")}
         <button
@@ -1381,11 +1511,23 @@
           <FaceFixSettings />
         </div>
       {/if}
+      {#if metadataDropTarget === "facefix"}
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
+          <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
+            Drop to import face fix settings
+          </span>
+        </div>
+      {/if}
     </div>
   {/snippet}
 
   {#snippet upscaleHistorySection()}
-    <div bind:this={sectionRefs['upscaleHistory']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+    <div bind:this={sectionRefs['upscaleHistory']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'upscaleHistory' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+      ondragenter={(e) => onMetadataDragEnter(e, "upscaleHistory")}
+      ondragover={(e) => onMetadataDragOver(e, "upscaleHistory")}
+      ondragleave={(e) => onMetadataDragLeave(e, "upscaleHistory")}
+      ondrop={(e) => onMetadataDrop(e, "upscaleHistory")}
+    >
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
         {@render dragHandle("upscaleHistory")}
         <button
@@ -1400,6 +1542,13 @@
       {#if postSectionOpen}
         <div class="px-3 pb-3 pt-1 space-y-4">
           <UpscaleSettings />
+        </div>
+      {/if}
+      {#if metadataDropTarget === "upscaleHistory"}
+        <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
+          <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
+            Drop to import upscale settings
+          </span>
         </div>
       {/if}
     </div>
@@ -1519,7 +1668,21 @@
         <CanvasEditor bind:this={canvasEditorRef} />
       </div>
     {:else}
-      <div class="flex-1 min-w-0 p-6 flex flex-col gap-4 overflow-y-auto" use:smoothScroll>
+      <div
+        class="relative flex-1 min-w-0 p-6 flex flex-col gap-4 overflow-y-auto {metadataDropTarget === 'preview' ? 'ring-2 ring-indigo-500/70 ring-inset bg-indigo-500/5' : ''}"
+        use:smoothScroll
+        ondragenter={(e) => onMetadataDragEnter(e, "preview")}
+        ondragover={(e) => onMetadataDragOver(e, "preview")}
+        ondragleave={(e) => onMetadataDragLeave(e, "preview")}
+        ondrop={(e) => onMetadataDrop(e, "preview")}
+      >
+        {#if metadataDropTarget === "preview"}
+          <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 bg-indigo-500/10 border-2 border-dashed border-indigo-400/60 rounded-lg">
+            <span class="text-sm font-medium text-indigo-300 bg-neutral-900/80 px-4 py-2 rounded-full">
+              Drop to import all parameters
+            </span>
+          </div>
+        {/if}
         <ProgressBar />
         <PreviewImage />
       </div>
