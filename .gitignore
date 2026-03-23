@@ -47,3 +47,4 @@ src-tauri/gen/
 
 # Logs
 *.log
+.github/skills/rust-tauri/SKILL.md
