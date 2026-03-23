@@ -1,5 +1,6 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
+  import { progress } from "../../stores/progress.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
 
@@ -216,7 +217,7 @@
         class="text-xs px-2 py-0.5 rounded {randomSeed
           ? 'bg-indigo-600 text-white'
           : 'bg-neutral-700 text-neutral-300'} transition-colors"
-        onclick={() => (generation.seed = randomSeed ? 0 : -1)}
+        onclick={() => (generation.seed = randomSeed ? (progress.lastCompletedSeed ?? 0) : -1)}
       >
         Random
       </button>

@@ -704,6 +704,39 @@ pub async fn install_custom_node(
     Ok(())
 }
 
+/// Install a pip package into the ComfyUI virtual environment.
+/// Used to lazily install dependencies that are only needed for optional features
+/// (e.g. `ultralytics` for face fix).
+#[tauri::command]
+pub async fn install_pip_package(
+    state: State<'_, AppState>,
+    package: String,
+) -> Result<(), AppError> {
+    let config = state.config.read().await;
+
+    #[cfg(target_os = "windows")]
+    let pip_path = format!("{}/Scripts/pip.exe", config.venv_path);
+    #[cfg(not(target_os = "windows"))]
+    let pip_path = format!("{}/bin/pip", config.venv_path);
+
+    let output = tokio::process::Command::new(&pip_path)
+        .args(["install", &package])
+        .output()
+        .await
+        .map_err(|e| AppError::Other(format!("pip install failed to start: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Other(format!(
+            "pip install {} failed: {}",
+            package, stderr
+        )));
+    }
+
+    log::info!("Installed pip package: {}", package);
+    Ok(())
+}
+
 /// Search for a model file by SHA256 hash (full or AutoV2) within a model category directory.
 /// Returns the filename if found, or null if no match.
 /// Note: this hashes each file in the directory, so it may take a while for large collections.

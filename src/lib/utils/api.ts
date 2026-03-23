@@ -316,6 +316,10 @@ export async function installCustomNode(gitUrl: string, nodeName: string): Promi
   return invoke("install_custom_node", { gitUrl, nodeName });
 }
 
+export async function installPipPackage(packageName: string): Promise<void> {
+  return invoke("install_pip_package", { package: packageName });
+}
+
 export async function getConfig(): Promise<AppConfig> {
   return invoke("get_config");
 }

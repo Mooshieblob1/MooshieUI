@@ -37,6 +37,9 @@ class ProgressStore {
   /** Persists wasUpscaled from the last completed prompt (for PreviewImage overlay). */
   private _lastCompletedWasUpscaled = $state(false);
 
+  /** The seed used by the most recently completed generation. */
+  lastCompletedSeed = $state<number | null>(null);
+
   // --- Derived getters ---
 
   get isGenerating(): boolean {
@@ -146,6 +149,9 @@ class ProgressStore {
 
     if (item) {
       this._lastCompletedWasUpscaled = item.wasUpscaled;
+      if (item.params.seed != null && item.params.seed >= 0) {
+        this.lastCompletedSeed = item.params.seed;
+      }
     }
 
     this.pendingPrompts = this.pendingPrompts.filter((p) => p.promptId !== promptId);

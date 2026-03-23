@@ -1,7 +1,7 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
-  import { downloadModel } from "../../utils/api.js";
+  import { downloadModel, installPipPackage } from "../../utils/api.js";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
@@ -88,6 +88,8 @@
       downloadError = null;
       try {
         await downloadModel(rec.url, "ultralytics", rec.filename);
+        // Ensure ultralytics Python package is installed (required by MooshieFaceDetailer)
+        await installPipPackage("ultralytics");
         await models.refresh();
       } catch (e) {
         downloadError = `Download failed: ${e}`;

@@ -32,14 +32,34 @@ function sectionLabel(sectionId: DroppableSectionId | "all"): string {
   }
 }
 
+/** Quality tags that are auto-applied by the app — strip these from imported prompts to avoid duplication. */
+const AUTO_QUALITY_TAGS = new Set([
+  // Anima positive
+  "year 2025", "newest", "masterpiece", "best quality", "score_9", "score_8", "safe", "highres",
+  // Anima negative
+  "worst quality", "low quality", "score_1", "score_2", "score_3", "blurry", "jpeg artifacts", "sepia",
+  // Illustrious positive
+  "very aesthetic", "year 2024", "absurdres",
+  // Illustrious negative
+  "bad quality", "lowres", "artistic error", "bad anatomy", "extra fingers", "text",
+  "signature", "watermark", "long body", "bad hands", "cropped", "username",
+]);
+
+/** Remove auto-applied quality tags from a prompt string. */
+function stripQualityTags(prompt: string): string {
+  const tags = prompt.split(",").map((t) => t.trim()).filter(Boolean);
+  const filtered = tags.filter((t) => !AUTO_QUALITY_TAGS.has(t.toLowerCase()));
+  return filtered.join(", ");
+}
+
 function applyPrompts(meta: Record<string, string>): boolean {
   let applied = false;
   if (meta.positive_prompt !== undefined) {
-    generation.positivePrompt = meta.positive_prompt;
+    generation.positivePrompt = stripQualityTags(meta.positive_prompt);
     applied = true;
   }
   if (meta.negative_prompt !== undefined) {
-    generation.negativePrompt = meta.negative_prompt;
+    generation.negativePrompt = stripQualityTags(meta.negative_prompt);
     applied = true;
   }
   return applied;
@@ -189,6 +209,7 @@ export async function handleMetadataImport(
   file: File,
   target: DroppableSectionId | "all"
 ): Promise<void> {
+  gallery.showToast("Reading image metadata...", "info");
   try {
     const bytes = await fileToPngBytes(file);
     const meta = await readImageMetadataBytes(bytes);

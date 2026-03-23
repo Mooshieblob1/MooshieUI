@@ -27,6 +27,7 @@
     { category: "Workflow", text: "Generate at lower resolution first, then upscale. Saves time and lets you refine results." },
     { category: "Workflow", text: "Your generation settings are saved. They'll be here next time you return." },
     { category: "Workflow", text: "If confused, start simple: one good prompt + default settings beats complexity." },
+    { category: "Workflow", text: "Drag an image with metadata onto any section to import its settings, or drop it here to apply all parameters. Ctrl+V works too!" },
   ];
 
   let tips = $derived(
