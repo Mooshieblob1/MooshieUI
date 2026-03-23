@@ -963,10 +963,10 @@
 
   <!-- Sidebar -->
   <nav
-    class="flex flex-col w-20 bg-neutral-900 border-r border-neutral-800 items-stretch px-2 py-4 gap-2"
+    class="flex flex-col w-14 bg-neutral-900 border-r border-neutral-800 items-stretch px-1.5 py-3 gap-1.5"
   >
     <button
-      class="w-10 h-10 rounded-lg flex items-center justify-center transition-colors {currentPage ===
+      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
       'generate'
         ? 'bg-indigo-600 text-white'
         : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
@@ -975,7 +975,7 @@
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
-        class="w-5 h-5"
+        class="w-4.5 h-4.5"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -988,7 +988,7 @@
       >
     </button>
     <button
-      class="w-10 h-10 rounded-lg flex items-center justify-center transition-colors {currentPage ===
+      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
       'gallery'
         ? 'bg-indigo-600 text-white'
         : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
@@ -997,7 +997,7 @@
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
-        class="w-5 h-5"
+        class="w-4.5 h-4.5"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -1018,7 +1018,7 @@
       >
     </button>
     <button
-      class="w-10 h-10 rounded-lg flex items-center justify-center transition-colors {currentPage ===
+      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
       'modelhub'
         ? 'bg-indigo-600 text-white'
         : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
@@ -1027,7 +1027,7 @@
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
-        class="w-5 h-5"
+        class="w-4.5 h-4.5"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -1041,7 +1041,7 @@
     <div class="flex-1"></div>
 
     <button
-      class="w-10 h-10 rounded-lg flex items-center justify-center transition-colors {currentPage ===
+      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
       'settings'
         ? 'bg-indigo-600 text-white'
         : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
@@ -1050,7 +1050,7 @@
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
-        class="w-5 h-5"
+        class="w-4.5 h-4.5"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"

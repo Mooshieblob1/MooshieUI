@@ -251,6 +251,16 @@ export async function readImageMetadataBytes(
   return invoke("read_image_metadata_bytes", { imageBytes });
 }
 
+export interface ReleaseNote {
+  version: string;
+  body: string;
+  published_at: string;
+}
+
+export async function fetchReleaseNotes(): Promise<ReleaseNote[]> {
+  return invoke("fetch_release_notes");
+}
+
 export async function listGalleryImages(): Promise<string[]> {
   return invoke("list_gallery_images");
 }
@@ -302,6 +312,40 @@ export async function readModelSpec(
   filename: string
 ): Promise<ModelSpec | null> {
   return invoke("read_modelspec", { category, filename });
+}
+
+export interface LoraCivitaiImage {
+  url: string;
+  width?: number;
+  height?: number;
+  nsfw?: string;
+}
+
+export interface LoraCivitaiInfo {
+  filename: string;
+  hash?: string;
+  civitai_name?: string;
+  civitai_description?: string;
+  civitai_model_id?: number;
+  civitai_version_id?: number;
+  civitai_base_model?: string;
+  civitai_images: LoraCivitaiImage[];
+  civitai_trigger_words: string[];
+  civitai_download_count?: number;
+  civitai_thumbs_up_count?: number;
+  civitai_creator?: string;
+  modelspec_title?: string;
+  modelspec_author?: string;
+  modelspec_architecture?: string;
+  modelspec_trigger_phrase?: string;
+  modelspec_description?: string;
+  modelspec_tags?: string;
+}
+
+export async function getLoraCivitaiInfo(
+  filename: string
+): Promise<LoraCivitaiInfo> {
+  return invoke("get_lora_civitai_info", { filename });
 }
 
 export async function checkNodeAvailable(nodeClass: string): Promise<boolean> {

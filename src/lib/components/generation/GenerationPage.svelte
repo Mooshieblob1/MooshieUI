@@ -10,6 +10,7 @@
   import FaceFixSettings from "./FaceFixSettings.svelte";
   import ControlNetSettings from "./ControlNetSettings.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
+  import EditableValue from "../ui/EditableValue.svelte";
   import ProgressBar from "../progress/ProgressBar.svelte";
   import PreviewImage from "../progress/PreviewImage.svelte";
   import CanvasEditor from "../canvas/CanvasEditor.svelte";
@@ -22,6 +23,7 @@
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage } from "../../types/index.js";
   import { onMount, onDestroy } from "svelte";
+  import BottomPanel from "./BottomPanel.svelte";
   import {
     isDroppableSection,
     handleMetadataImport,
@@ -36,8 +38,6 @@
   type SectionId =
     | "dimensions"
     | "prompts"
-    | "history"
-    | "sessionHistory"
     | "imageInputs"
     | "inpaintLayers"
     | "generationSettings"
@@ -63,36 +63,15 @@
   let dragOver = $state(false);
   let maskDragOver = $state(false);
   let promptsSectionOpen = $state(true);
-  let historySectionOpen = $state(true);
 
   /** Which section (or "preview") currently has an image dragged over it */
   let metadataDropTarget = $state<string | null>(null);
   /** Per-target enter/leave counters to handle nested element events */
   let metadataDropCounters: Record<string, number> = {};
 
-  const sortedPromptHistory = $derived(
-    [...generation.promptHistory]
-      .sort((a, b) => {
-        if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
-        return b.createdAt - a.createdAt;
-      })
-      .slice(0, 12)
-  );
-
-  function historyLabel(ts: number): string {
-    return new Date(ts).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
-
   let sectionSides = $state<Record<SectionId, SectionSide>>({
     dimensions: "left",
     prompts: "left",
-    history: "left",
-    sessionHistory: "right",
     imageInputs: "left",
     inpaintLayers: "right",
     generationSettings: "right",
@@ -119,8 +98,6 @@
   const SECTION_ORDER: SectionId[] = [
     "dimensions",
     "prompts",
-    "history",
-    "sessionHistory",
     "imageInputs",
     "inpaintLayers",
     "generationSettings",
@@ -257,8 +234,6 @@
   function sectionLabel(section: SectionId): string {
     if (section === "dimensions") return "Dimensions";
     if (section === "prompts") return "Prompts";
-    if (section === "history") return "Prompt History & Favorites";
-    if (section === "sessionHistory") return "Session History";
     if (section === "imageInputs") return "Image Inputs";
     if (section === "inpaintLayers") return "Inpainting & Layers";
     if (section === "generationSettings") return "Generation Settings";
@@ -268,13 +243,7 @@
     return "Upscale";
   }
 
-  function canShowHistorySection() {
-    return sortedPromptHistory.length > 0;
-  }
-
   function sectionVisible(section: SectionId): boolean {
-    if (section === "history") return canShowHistorySection();
-    if (section === "sessionHistory") return true;
     if (section === "imageInputs") return generation.mode !== "txt2img";
     if (section === "inpaintLayers") return generation.mode === "inpainting";
     if (section === "generationSettings") return generation.mode === "inpainting";
@@ -315,23 +284,6 @@
   let dimensionsSectionOpen = $state(savedCollapse.dimensions !== false);
   let imageSectionOpen = $state(savedCollapse.imageInputs !== false);
   let layersSectionOpen = $state(savedCollapse.inpaintLayers !== false);
-  let sessionSectionOpen = $state(savedCollapse.sessionHistory !== false);
-  let sessionPage = $state(0);
-  let prevSessionCount = $state(gallery.sessionImages.length);
-  const SESSION_PAGE_SIZE = 4;
-  const sessionTotalPages = $derived(Math.max(1, Math.ceil(gallery.sessionImages.length / SESSION_PAGE_SIZE)));
-  const sessionPageImages = $derived(gallery.sessionImages.slice(sessionPage * SESSION_PAGE_SIZE, (sessionPage + 1) * SESSION_PAGE_SIZE));
-  $effect(() => {
-    const count = gallery.sessionImages.length;
-    if (count > prevSessionCount) {
-      // New images added — jump to first page
-      sessionPage = 0;
-    } else if (sessionPage >= sessionTotalPages) {
-      // Images deleted — clamp page
-      sessionPage = Math.max(0, sessionTotalPages - 1);
-    }
-    prevSessionCount = count;
-  });
   let controlsSectionOpen = $state(savedCollapse.generationSettings !== false);
   let modelSectionOpen = $state(savedCollapse.model !== false);
   let samplerSectionOpen = $state(savedCollapse.sampler !== false);
@@ -345,7 +297,6 @@
       dimensions: dimensionsSectionOpen,
       imageInputs: imageSectionOpen,
       inpaintLayers: layersSectionOpen,
-      sessionHistory: sessionSectionOpen,
       generationSettings: controlsSectionOpen,
       model: modelSectionOpen,
       sampler: samplerSectionOpen,
@@ -674,30 +625,79 @@
     }
   }
 
-  const LEFT_DEFAULT = 405;
-  const RIGHT_DEFAULT = 338;
+  const LEFT_DEFAULT = 360;
+  const RIGHT_DEFAULT = 310;
+  const BOTTOM_DEFAULT = 180;
   let leftWidth = $state(LEFT_DEFAULT);
   let rightWidth = $state(RIGHT_DEFAULT);
+  let bottomHeight = $state(BOTTOM_DEFAULT);
 
-  const LEFT_MIN = 280;
+  const LEFT_MIN = 260;
   const LEFT_MAX = 520;
-  const RIGHT_MIN = 250;
+  const RIGHT_MIN = 240;
   const RIGHT_MAX = 450;
+  const BOTTOM_MIN = 100;
+  const BOTTOM_MAX = 500;
 
-  let dragging = $state<"left" | "right" | null>(null);
+  // Panel collapse state
+  let leftCollapsed = $state(false);
+  let rightCollapsed = $state(false);
+  let bottomCollapsed = $state(false);
+
+  // Store pre-collapse widths/heights so we can restore them
+  let leftWidthBeforeCollapse = LEFT_DEFAULT;
+  let rightWidthBeforeCollapse = RIGHT_DEFAULT;
+  let bottomHeightBeforeCollapse = BOTTOM_DEFAULT;
+
+  function toggleLeftPanel() {
+    if (leftCollapsed) {
+      leftWidth = leftWidthBeforeCollapse;
+      leftCollapsed = false;
+    } else {
+      leftWidthBeforeCollapse = leftWidth;
+      leftCollapsed = true;
+    }
+  }
+
+  function toggleRightPanel() {
+    if (rightCollapsed) {
+      rightWidth = rightWidthBeforeCollapse;
+      rightCollapsed = false;
+    } else {
+      rightWidthBeforeCollapse = rightWidth;
+      rightCollapsed = true;
+    }
+  }
+
+  function toggleBottomPanel() {
+    if (bottomCollapsed) {
+      bottomHeight = bottomHeightBeforeCollapse;
+      bottomCollapsed = false;
+    } else {
+      bottomHeightBeforeCollapse = bottomHeight;
+      bottomCollapsed = true;
+    }
+  }
+
+  let dragging = $state<"left" | "right" | "bottom" | null>(null);
   let dragStartX = 0;
+  let dragStartY = 0;
   let dragStartWidth = 0;
+  let dragStartHeight = 0;
 
-  function onDividerDown(side: "left" | "right", e: MouseEvent) {
+  function onDividerDown(side: "left" | "right" | "bottom", e: MouseEvent) {
     dragging = side;
     dragStartX = e.clientX;
+    dragStartY = e.clientY;
     dragStartWidth = side === "left" ? leftWidth : rightWidth;
+    dragStartHeight = bottomHeight;
     e.preventDefault();
   }
 
   function computeDropTarget(mx: number, my: number): { side: SectionSide; index: number } | null {
     // Determine which column the cursor is over
     let side: SectionSide | null = null;
+
     if (leftColumnRef) {
       const r = leftColumnRef.getBoundingClientRect();
       if (mx >= r.left && mx <= r.right) side = "left";
@@ -723,7 +723,6 @@
     const allSections = side === "left" ? leftSections : rightSections;
     const sections = allSections.filter((id) => id !== draggingSection);
 
-    // Find insertion index based on cursor Y vs section midpoints
     let index = sections.length;
     for (let i = 0; i < sections.length; i++) {
       const el = sectionRefs[sections[i]];
@@ -748,11 +747,16 @@
     }
 
     if (!dragging) return;
-    const delta = e.clientX - dragStartX;
-    if (dragging === "left") {
-      leftWidth = Math.min(LEFT_MAX, Math.max(LEFT_MIN, dragStartWidth + delta));
+    if (dragging === "bottom") {
+      const delta = e.clientY - dragStartY;
+      bottomHeight = Math.min(BOTTOM_MAX, Math.max(BOTTOM_MIN, dragStartHeight - delta));
     } else {
-      rightWidth = Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, dragStartWidth - delta));
+      const delta = e.clientX - dragStartX;
+      if (dragging === "left") {
+        leftWidth = Math.min(LEFT_MAX, Math.max(LEFT_MIN, dragStartWidth + delta));
+      } else if (dragging === "right") {
+        rightWidth = Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, dragStartWidth - delta));
+      }
     }
   }
 
@@ -799,6 +803,10 @@
 
   function resetRightWidth() {
     rightWidth = RIGHT_DEFAULT;
+  }
+
+  function resetBottomHeight() {
+    bottomHeight = BOTTOM_DEFAULT;
   }
 
   $effect(() => {
@@ -895,116 +903,6 @@
     {/if}
   {/snippet}
 
-  {#snippet sessionHistoryGrid()}
-    {#if gallery.sessionImages.length === 0}
-      <p class="text-xs text-neutral-500 italic">No images generated this session.</p>
-    {:else}
-      <div>
-        <div class="grid grid-cols-2 gap-2">
-          {#each sessionPageImages as image}
-            <div class="group relative aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors">
-              <button
-                class="w-full h-full"
-                onclick={() => gallery.openLightbox(image)}
-              >
-                  <img
-                    use:lazyThumbnail={{ image }}
-                    alt={image.filename}
-                    class="w-full h-full object-cover"
-                  />
-              </button>
-              <div
-                class="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center p-2 pointer-events-none"
-                onclick={() => gallery.openLightbox(image)}
-              >
-                <div class="grid grid-cols-3 gap-1.5 pointer-events-auto">
-                  {#if !image.is_upscaled}
-                    <button
-                      class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/90 hover:bg-indigo-700 text-neutral-300 text-xs"
-                      title="Upscale"
-                      onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-                    </button>
-                  {/if}
-                  <button
-                    class="w-8 h-8 flex items-center justify-center rounded bg-indigo-900/90 hover:bg-indigo-700 text-neutral-300 text-xs"
-                    title="Inpaint"
-                    onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                  </button>
-                  <button
-                    class="w-8 h-8 flex items-center justify-center rounded bg-neutral-900/95 hover:bg-neutral-700 text-neutral-300 text-xs"
-                    title="Save As"
-                    onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                  </button>
-                  <button
-                    class="w-8 h-8 flex items-center justify-center rounded bg-neutral-900/95 hover:bg-neutral-700 text-neutral-300 text-xs"
-                    title="Copy"
-                    onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                  </button>
-                  <button
-                    class="w-8 h-8 flex items-center justify-center rounded bg-red-900/90 hover:bg-red-800 text-neutral-300 text-xs"
-                    title="Delete"
-                    onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-          {/each}
-        </div>
-
-        {#if sessionTotalPages > 1}
-          <div class="flex items-center justify-between mt-2">
-            <button
-              onclick={() => { sessionPage = Math.max(0, sessionPage - 1); }}
-              disabled={sessionPage === 0}
-              class="px-2 py-1 text-[11px] rounded bg-neutral-800 text-neutral-300 hover:bg-neutral-700 disabled:opacity-30 disabled:pointer-events-none transition-colors"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-            </button>
-            <span class="text-[11px] text-neutral-500 tabular-nums">{sessionPage + 1} / {sessionTotalPages}</span>
-            <button
-              onclick={() => { sessionPage = Math.min(sessionTotalPages - 1, sessionPage + 1); }}
-              disabled={sessionPage >= sessionTotalPages - 1}
-              class="px-2 py-1 text-[11px] rounded bg-neutral-800 text-neutral-300 hover:bg-neutral-700 disabled:opacity-30 disabled:pointer-events-none transition-colors"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-            </button>
-          </div>
-        {/if}
-      </div>
-    {/if}
-  {/snippet}
-
-  {#snippet sessionHistorySection()}
-    <div bind:this={sectionRefs['sessionHistory']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'sessionHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("sessionHistory")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (sessionSectionOpen = !sessionSectionOpen)}
-          title={sessionSectionOpen ? "Collapse Session History" : "Expand Session History"}
-        >
-          <span class="font-medium">Session History</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {sessionSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
-      {#if sessionSectionOpen}
-        <div class="px-3 pb-3 pt-1">
-          {@render sessionHistoryGrid()}
-        </div>
-      {/if}
-    </div>
-  {/snippet}
-
   {#snippet dimensionsSection()}
     <div bind:this={sectionRefs['dimensions']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'dimensions' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'dimensions' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "dimensions")}
@@ -1024,7 +922,7 @@
         </button>
       </div>
       {#if dimensionsSectionOpen}
-        <div class="px-3 pb-3 pt-1 cursor-default">
+        <div class="px-3 pb-2 pt-0.5 cursor-default">
           <DimensionControls suggestedAspect={imageAspect} />
         </div>
       {/if}
@@ -1057,7 +955,7 @@
         </button>
       </div>
       {#if promptsSectionOpen}
-        <div class="px-3 pb-3 pt-1">
+        <div class="px-3 pb-2 pt-0.5">
           <PromptInputs showHistory={false} />
         </div>
       {/if}
@@ -1066,61 +964,6 @@
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
             Drop to import prompts
           </span>
-        </div>
-      {/if}
-    </div>
-  {/snippet}
-
-  {#snippet historySection()}
-    <div bind:this={sectionRefs['history']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'history' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("history")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (historySectionOpen = !historySectionOpen)}
-          title={historySectionOpen ? "Collapse History & Favorites" : "Expand History & Favorites"}
-        >
-          <span class="font-medium">Prompt History & Favorites</span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {historySectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
-      {#if historySectionOpen}
-        <div class="px-3 pb-3 pt-1">
-          <div class="space-y-1.5 max-h-56 overflow-y-auto pr-1">
-            {#each sortedPromptHistory as entry}
-              <div class="rounded border border-neutral-800 bg-neutral-900/80 p-2">
-                <button
-                  class="w-full text-left"
-                  onclick={() => generation.applyPromptHistoryEntry(entry.id)}
-                  title="Load prompt"
-                >
-                  <p class="text-[11px] text-neutral-200 max-h-8 overflow-hidden">{entry.positivePrompt || "(empty positive prompt)"}</p>
-                  {#if entry.negativePrompt}
-                    <p class="text-[10px] text-neutral-500 mt-0.5 whitespace-nowrap overflow-hidden text-ellipsis">Negative: {entry.negativePrompt}</p>
-                  {/if}
-                </button>
-                <div class="mt-1.5 flex items-center justify-between gap-2">
-                  <span class="text-[10px] text-neutral-500">{historyLabel(entry.createdAt)}</span>
-                  <div class="flex items-center gap-1">
-                    <button
-                      class="px-1.5 py-0.5 text-[10px] rounded border transition-colors {entry.favorite ? 'border-amber-500 text-amber-300 bg-amber-500/10' : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-300'}"
-                      onclick={() => generation.togglePromptFavorite(entry.id)}
-                      title={entry.favorite ? "Unfavorite" : "Favorite"}
-                    >
-                      ★
-                    </button>
-                    <button
-                      class="px-1.5 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300 transition-colors"
-                      onclick={() => generation.removePromptHistoryEntry(entry.id)}
-                      title="Remove"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              </div>
-            {/each}
-          </div>
         </div>
       {/if}
     </div>
@@ -1140,7 +983,7 @@
         </button>
       </div>
       {#if imageSectionOpen}
-        <div class="px-3 pb-3 pt-1 space-y-3">
+        <div class="px-3 pb-2 pt-0.5 space-y-2">
           {#if canvas.currentStagingImage}
             <div class="rounded-md border border-amber-700/50 bg-amber-900/20 p-2 flex items-center justify-between gap-2">
               <span class="text-[11px] text-amber-300">Staged image active. Input image controls are disabled.</span>
@@ -1207,7 +1050,7 @@
           <div>
             <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
               <span>Denoise Strength<InfoTip text="How much the AI changes the input image. 0 = no change, 1 = completely new image ignoring the input. Lower values (0.3-0.5) keep the original composition, higher values (0.6-0.8) allow more creative freedom." /></span>
-              <span class="text-neutral-300">{generation.denoise.toFixed(2)}</span>
+              <EditableValue value={generation.denoise} min={0} max={1} step={0.01} decimals={2} onchange={(v) => generation.denoise = v} />
             </label>
             <input
               type="range"
@@ -1326,7 +1169,7 @@
         </button>
       </div>
       {#if layersSectionOpen}
-        <div class="px-3 pb-3 pt-1 space-y-2">
+        <div class="px-3 pb-2 pt-0.5 space-y-2">
           <div class="grid grid-cols-2 gap-1">
             <button
               onclick={() => canvas.setInpaintDrawMode("mask")}
@@ -1386,14 +1229,14 @@
         </button>
       </div>
       {#if controlsSectionOpen}
-        <div class="px-3 pb-3 pt-1 space-y-4">
+        <div class="px-3 pb-2 pt-0.5 space-y-3">
           <ModelSelector />
 
-          <div class="border-t border-neutral-800 pt-4">
+          <div class="border-t border-neutral-800 pt-3">
             <SamplerSettings />
           </div>
 
-          <div class="border-t border-neutral-800 pt-4">
+          <div class="border-t border-neutral-800 pt-3">
             <UpscaleSettings />
           </div>
         </div>
@@ -1420,7 +1263,7 @@
         </button>
       </div>
       {#if modelSectionOpen}
-        <div class="px-3 pb-3 pt-1 space-y-4">
+        <div class="px-3 pb-2 pt-0.5 space-y-3">
           <ModelSelector />
         </div>
       {/if}
@@ -1453,7 +1296,7 @@
         </button>
       </div>
       {#if samplerSectionOpen}
-        <div class="px-3 pb-3 pt-1 space-y-4">
+        <div class="px-3 pb-2 pt-0.5 space-y-3">
           <SamplerSettings />
         </div>
       {/if}
@@ -1481,7 +1324,7 @@
         </button>
       </div>
       {#if controlnetSectionOpen}
-        <div class="px-3 pb-3 pt-1 space-y-4">
+        <div class="px-3 pb-2 pt-0.5 space-y-3">
           <ControlNetSettings />
         </div>
       {/if}
@@ -1507,7 +1350,7 @@
         </button>
       </div>
       {#if facefixSectionOpen}
-        <div class="px-3 pb-3 pt-1 space-y-4">
+        <div class="px-3 pb-2 pt-0.5 space-y-3">
           <FaceFixSettings />
         </div>
       {/if}
@@ -1540,7 +1383,7 @@
         </button>
       </div>
       {#if postSectionOpen}
-        <div class="px-3 pb-3 pt-1 space-y-4">
+        <div class="px-3 pb-2 pt-0.5 space-y-3">
           <UpscaleSettings />
         </div>
       {/if}
@@ -1559,10 +1402,6 @@
       {@render dimensionsSection()}
     {:else if section === "prompts"}
       {@render promptsSection()}
-    {:else if section === "history"}
-      {@render historySection()}
-    {:else if section === "sessionHistory"}
-      {@render sessionHistorySection()}
     {:else if section === "imageInputs"}
       {@render imageInputsSection()}
     {:else if section === "inpaintLayers"}
@@ -1590,14 +1429,15 @@
     onmouseleave={onPointerUp}
   >
     {#if leftHasSections || controlsSide === "left" || draggingSection}
-      <div
-        bind:this={leftColumnRef}
-        class="overflow-y-auto overflow-x-hidden px-4 pt-4 flex flex-col gap-4 shrink-0 border-r {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'}"
-        style="width: {leftWidth}px"
-        use:smoothScroll
-      >
+      {#if !leftCollapsed}
+        <div
+          bind:this={leftColumnRef}
+          class="overflow-y-auto overflow-x-hidden px-3 pt-2 flex flex-col gap-2 shrink-0 border-r {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'}"
+          style="width: {leftWidth}px"
+          use:smoothScroll
+        >
         {#if controlsSide === "left"}
-          <div class="sticky top-0 z-10 bg-neutral-950 -mx-4 px-4 -mt-4 pt-4 pb-4">
+          <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-2 pt-2 pb-2">
             <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
               {#each modes as mode}
                 <button
@@ -1645,22 +1485,33 @@
         {/each}
 
         {#if controlsSide === "left"}
-          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-4">
-            <h3 class="text-xs text-neutral-400 mb-2 font-medium">Generate</h3>
+          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-2 pb-3">
+            <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">Generate</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
         {/if}
-      </div>
+        </div>
+      {/if}
     {/if}
 
     {#if leftHasSections || controlsSide === "left" || draggingSection}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div
-        class="w-1 mx-1 shrink-0 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'left' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
-        onmousedown={(e) => onDividerDown("left", e)}
-        ondblclick={resetLeftWidth}
-        title="Drag to resize, double-click to reset"
-      ></div>
+      <!-- Left divider with collapse button -->
+      <div class="relative shrink-0 flex flex-col items-center">
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="w-1 flex-1 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'left' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
+          onmousedown={(e) => onDividerDown("left", e)}
+          ondblclick={resetLeftWidth}
+          title="Drag to resize, double-click to reset"
+        ></div>
+        <button
+          onclick={toggleLeftPanel}
+          class="absolute top-1/2 -translate-y-1/2 z-20 w-4 h-8 flex items-center justify-center rounded-r bg-neutral-800 border border-neutral-700 border-l-0 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 transition-colors"
+          title={leftCollapsed ? "Expand left panel" : "Collapse left panel"}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 transition-transform {leftCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+      </div>
     {/if}
 
     {#if canvas.isCanvasMode}
@@ -1668,45 +1519,84 @@
         <CanvasEditor bind:this={canvasEditorRef} />
       </div>
     {:else}
-      <div
-        class="relative flex-1 min-w-0 p-6 flex flex-col gap-4 overflow-y-auto {metadataDropTarget === 'preview' ? 'ring-2 ring-indigo-500/70 ring-inset bg-indigo-500/5' : ''}"
-        use:smoothScroll
-        ondragenter={(e) => onMetadataDragEnter(e, "preview")}
-        ondragover={(e) => onMetadataDragOver(e, "preview")}
-        ondragleave={(e) => onMetadataDragLeave(e, "preview")}
-        ondrop={(e) => onMetadataDrop(e, "preview")}
-      >
-        {#if metadataDropTarget === "preview"}
-          <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 bg-indigo-500/10 border-2 border-dashed border-indigo-400/60 rounded-lg">
-            <span class="text-sm font-medium text-indigo-300 bg-neutral-900/80 px-4 py-2 rounded-full">
-              Drop to import all parameters
-            </span>
+      <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <!-- Preview area -->
+        <div
+          class="relative flex-1 min-h-0 p-6 flex flex-col gap-4 overflow-y-auto {metadataDropTarget === 'preview' ? 'ring-2 ring-indigo-500/70 ring-inset bg-indigo-500/5' : ''}"
+          use:smoothScroll
+          ondragenter={(e) => onMetadataDragEnter(e, "preview")}
+          ondragover={(e) => onMetadataDragOver(e, "preview")}
+          ondragleave={(e) => onMetadataDragLeave(e, "preview")}
+          ondrop={(e) => onMetadataDrop(e, "preview")}
+        >
+          {#if metadataDropTarget === "preview"}
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 bg-indigo-500/10 border-2 border-dashed border-indigo-400/60 rounded-lg">
+              <span class="text-sm font-medium text-indigo-300 bg-neutral-900/80 px-4 py-2 rounded-full">
+                Drop to import all parameters
+              </span>
+            </div>
+          {/if}
+          <ProgressBar />
+          <PreviewImage />
+        </div>
+
+        <!-- Bottom panel (LoRAs / Images / Prompts) -->
+        <div class="relative shrink-0 flex items-center">
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="h-1 flex-1 cursor-row-resize hover:bg-indigo-500/40 transition-colors {dragging === 'bottom' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
+            onmousedown={(e) => onDividerDown("bottom", e)}
+            ondblclick={resetBottomHeight}
+            title="Drag to resize, double-click to reset"
+          ></div>
+          <button
+            onclick={toggleBottomPanel}
+            class="absolute left-1/2 -translate-x-1/2 z-20 h-4 w-8 flex items-center justify-center rounded-b bg-neutral-800 border border-neutral-700 border-t-0 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 transition-colors"
+            title={bottomCollapsed ? "Expand bottom panel" : "Collapse bottom panel"}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 transition-transform {bottomCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
+        {#if !bottomCollapsed}
+          <div
+            class="overflow-hidden shrink-0 border-t border-neutral-800/50"
+            style="height: {bottomHeight}px"
+          >
+            <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} />
           </div>
         {/if}
-        <ProgressBar />
-        <PreviewImage />
       </div>
     {/if}
 
     {#if rightHasSections || controlsSide === "right" || draggingSection}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div
-        class="w-1 mx-1 shrink-0 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'right' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
-        onmousedown={(e) => onDividerDown("right", e)}
-        ondblclick={resetRightWidth}
-        title="Drag to resize, double-click to reset"
-      ></div>
+      <!-- Right divider with collapse button -->
+      <div class="relative shrink-0 flex flex-col items-center">
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="w-1 flex-1 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'right' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
+          onmousedown={(e) => onDividerDown("right", e)}
+          ondblclick={resetRightWidth}
+          title="Drag to resize, double-click to reset"
+        ></div>
+        <button
+          onclick={toggleRightPanel}
+          class="absolute top-1/2 -translate-y-1/2 z-20 w-4 h-8 flex items-center justify-center rounded-l bg-neutral-800 border border-neutral-700 border-r-0 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 transition-colors"
+          title={rightCollapsed ? "Expand right panel" : "Collapse right panel"}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 transition-transform {rightCollapsed ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+      </div>
     {/if}
 
-    {#if rightHasSections || controlsSide === "right" || draggingSection}
+    {#if (rightHasSections || controlsSide === "right" || draggingSection) && !rightCollapsed}
       <div
         bind:this={rightColumnRef}
-        class="overflow-y-auto p-4 space-y-4 shrink-0 border-l {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'}"
+        class="overflow-y-auto p-3 space-y-2 shrink-0 border-l {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'}"
         style="width: {rightWidth}px"
         use:smoothScroll
       >
         {#if controlsSide === "right"}
-          <div class="sticky top-0 z-10 bg-neutral-950 -mx-4 px-4 -mt-4 pt-4 pb-4">
+          <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-3 pt-3 pb-2">
             <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
               {#each modes as mode}
                 <button
@@ -1754,8 +1644,8 @@
         {/each}
 
         {#if controlsSide === "right"}
-          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-4">
-            <h3 class="text-xs text-neutral-400 mb-2 font-medium">Generate</h3>
+          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-2 pb-3">
+            <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">Generate</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
         {/if}

@@ -27,7 +27,7 @@
   }
 </script>
 
-<div class="space-y-3">
+<div class="space-y-2">
   {#if generation.stylePresetsEnabled}
     <div>
       <label class="block text-xs text-neutral-400 mb-1">Style Preset<InfoTip text="Fooocus-style presets that automatically inject prompt modifiers. Great for fast starts: pick a style first, then write your subject prompt." /></label>
@@ -42,16 +42,13 @@
     </div>
   {/if}
 
-  {#if generation.isAnima || generation.isIllustrious}
-    <div class="flex justify-end">
-      <span class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">
-        Quality prompts applied
-      </span>
-    </div>
-  {/if}
-
   <div>
-    <label class="block text-xs text-neutral-400 mb-1">Positive Prompt<InfoTip text="Describe what you want to see in the image. Use commas to separate concepts. More specific prompts give better results — include style, subject, lighting, and quality tags." /></label>
+    <div class="flex items-center justify-between mb-1">
+      <label class="text-xs text-neutral-400">Positive Prompt<InfoTip text="Describe what you want to see in the image. Use commas to separate concepts. More specific prompts give better results — include style, subject, lighting, and quality tags." /></label>
+      {#if generation.isAnima || generation.isIllustrious}
+        <span class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">Quality prompts applied</span>
+      {/if}
+    </div>
     {#if generation.isAnima}
       <div class="text-[10px] text-amber-400/80 mb-1">Tip: Start artist tags with @ (e.g. @artist_name)</div>
     {/if}

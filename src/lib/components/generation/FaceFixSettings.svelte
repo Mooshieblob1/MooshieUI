@@ -5,6 +5,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
+  import EditableValue from "../ui/EditableValue.svelte";
 
   interface RecommendedModel {
     label: string;
@@ -171,7 +172,7 @@
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
           <span>Denoise<InfoTip text="How much the AI re-draws each detected face. Lower values (0.2-0.4) preserve the original face closely, higher values add more detail but may change facial features." /></span>
-          <span class="text-neutral-300">{generation.facefixDenoise.toFixed(2)}</span>
+          <EditableValue value={generation.facefixDenoise} min={0} max={1} step={0.05} decimals={2} onchange={(v) => generation.facefixDenoise = v} />
         </label>
         <input
           type="range"
@@ -187,7 +188,7 @@
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
           <span>Steps<InfoTip text="Denoising steps for each face region. More steps = finer detail but slower. 15-25 is usually enough." /></span>
-          <span class="text-neutral-300">{generation.facefixSteps}</span>
+          <EditableValue value={generation.facefixSteps} min={1} max={50} step={1} onchange={(v) => generation.facefixSteps = v} />
         </label>
         <input
           type="range"
@@ -204,7 +205,7 @@
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>Guide Size<InfoTip text="The resolution each detected face is scaled to before denoising. Higher = more detail but uses more VRAM. 512 is a good default for most models." /></span>
-        <span class="text-neutral-300">{generation.facefixGuideSize}px</span>
+        <EditableValue value={generation.facefixGuideSize} min={256} max={1024} step={64} suffix="px" onchange={(v) => generation.facefixGuideSize = v} />
       </label>
       <input
         type="range"

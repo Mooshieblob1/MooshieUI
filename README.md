@@ -328,6 +328,19 @@ Both methods:
 
 ## 📋 Changelog
 
+### v0.3.9
+
+**UI Density, Click-to-Edit Values, Dynamic Release Notes**
+- Tightened spacing across all generation sections, sticky headers, and controls to reduce scrolling
+- Added collapsible left, right, and bottom panels with toggle buttons — panels remember their size
+- Narrower sidebar (cleaner layout with smaller nav buttons and icons)
+- Sampler settings reworked into compact 2-column grid layout
+- Click-to-edit slider values — click any slider readout (Steps, CFG, Batch, Denoise, Scale, Tile Size, etc.) to type an exact value
+- Settings page now uses responsive masonry layout (1/2/3 columns)
+- Release notes in Settings now fetched live from GitHub Releases instead of hardcoded changelog
+- Fixed pip install errors when using uv-created virtual environments (uv pip install fallback)
+- Quality prompts badge moved inline with Positive Prompt label
+
 ### v0.3.8
 
 **Metadata Import, Face Fix Auto-Setup, Windows Fixes**

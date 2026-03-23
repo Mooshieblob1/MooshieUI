@@ -556,6 +556,18 @@ pub async fn check_node_available(
     }
 }
 
+/// Resolve the uv binary path from the venv path.
+/// Layout: {base}/bin/uv.exe and {base}/venv/ — so base = parent of venv_path.
+fn resolve_uv_bin(venv_path: &str) -> std::path::PathBuf {
+    let base = std::path::Path::new(venv_path)
+        .parent()
+        .unwrap_or(std::path::Path::new(venv_path));
+    #[cfg(target_os = "windows")]
+    { base.join("bin").join("uv.exe") }
+    #[cfg(not(target_os = "windows"))]
+    { base.join("bin").join("uv") }
+}
+
 /// Check if a custom node package is installed on disk (directory exists in custom_nodes/).
 #[tauri::command]
 pub async fn is_custom_node_installed(
@@ -649,17 +661,29 @@ pub async fn install_custom_node(
     if req_file.exists() {
         emit_progress("pip", "Installing Python dependencies...", false);
 
-        #[cfg(target_os = "windows")]
-        let pip_path = format!("{}/Scripts/pip.exe", config.venv_path);
-        #[cfg(not(target_os = "windows"))]
-        let pip_path = format!("{}/bin/pip", config.venv_path);
+        let uv_path = resolve_uv_bin(&config.venv_path);
 
-        let mut pip_child = tokio::process::Command::new(&pip_path)
-            .args(["install", "-r", &req_file.to_string_lossy()])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| AppError::Other(format!("pip install failed to start: {}", e)))?;
+        let mut pip_child = if uv_path.exists() {
+            tokio::process::Command::new(&uv_path)
+                .args(["pip", "install", "-r", &req_file.to_string_lossy()])
+                .env("VIRTUAL_ENV", &config.venv_path)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| AppError::Other(format!("uv pip install failed to start: {}", e)))?
+        } else {
+            #[cfg(target_os = "windows")]
+            let pip_path = format!("{}/Scripts/pip.exe", config.venv_path);
+            #[cfg(not(target_os = "windows"))]
+            let pip_path = format!("{}/bin/pip", config.venv_path);
+
+            tokio::process::Command::new(&pip_path)
+                .args(["install", "-r", &req_file.to_string_lossy()])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| AppError::Other(format!("pip install failed to start: {}", e)))?
+        };
 
         // Stream pip stdout for progress
         if let Some(stdout) = pip_child.stdout.take() {
@@ -714,16 +738,28 @@ pub async fn install_pip_package(
 ) -> Result<(), AppError> {
     let config = state.config.read().await;
 
-    #[cfg(target_os = "windows")]
-    let pip_path = format!("{}/Scripts/pip.exe", config.venv_path);
-    #[cfg(not(target_os = "windows"))]
-    let pip_path = format!("{}/bin/pip", config.venv_path);
+    let uv_path = resolve_uv_bin(&config.venv_path);
 
-    let output = tokio::process::Command::new(&pip_path)
-        .args(["install", &package])
-        .output()
-        .await
-        .map_err(|e| AppError::Other(format!("pip install failed to start: {}", e)))?;
+    let output = if uv_path.exists() {
+        tokio::process::Command::new(&uv_path)
+            .args(["pip", "install", &package])
+            .env("VIRTUAL_ENV", &config.venv_path)
+            .output()
+            .await
+            .map_err(|e| AppError::Other(format!("uv pip install failed to start: {}", e)))?
+    } else {
+        // Fallback to venv pip
+        #[cfg(target_os = "windows")]
+        let pip_path = format!("{}/Scripts/pip.exe", config.venv_path);
+        #[cfg(not(target_os = "windows"))]
+        let pip_path = format!("{}/bin/pip", config.venv_path);
+
+        tokio::process::Command::new(&pip_path)
+            .args(["install", &package])
+            .output()
+            .await
+            .map_err(|e| AppError::Other(format!("pip install failed to start: {}", e)))?
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -821,7 +857,7 @@ pub async fn civitai_lookup_hash(hash: String) -> Result<Value, AppError> {
     let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
     let resp = reqwest::Client::new()
         .get(&url)
-        .header("User-Agent", "MooshieUI/0.2.9")
+        .header("User-Agent", "MooshieUI/0.3.9")
         .send()
         .await
         .map_err(|e| AppError::Other(format!("CivitAI request failed: {}", e)))?;
@@ -887,7 +923,7 @@ pub async fn civitai_search_models(
         .http_client
         .get(&url)
         .header("Accept", "application/json")
-        .header("User-Agent", "MooshieUI/0.2.9");
+        .header("User-Agent", "MooshieUI/0.3.9");
 
     if let Some(key) = params.api_key.filter(|v| !v.trim().is_empty()) {
         req = req.bearer_auth(key);
@@ -952,7 +988,7 @@ pub async fn civitai_list_architectures(
             .http_client
             .get("https://civitai.com/api/v1/models")
             .header("Accept", "application/json")
-            .header("User-Agent", "MooshieUI/0.2.9")
+            .header("User-Agent", "MooshieUI/0.3.9")
             .query(&[("limit", "100")]);
 
         if let Some(ref c) = cursor {
@@ -1086,4 +1122,203 @@ fn read_safetensors_modelspec(
     } else {
         Ok(Some(result))
     }
+}
+
+/// Combined LoRA information from ModelSpec + CivitAI.
+#[derive(Debug, Serialize)]
+pub struct LoraCivitaiInfo {
+    pub filename: String,
+    pub hash: Option<String>,
+    pub civitai_name: Option<String>,
+    pub civitai_description: Option<String>,
+    pub civitai_model_id: Option<u64>,
+    pub civitai_version_id: Option<u64>,
+    pub civitai_base_model: Option<String>,
+    pub civitai_images: Vec<LoraCivitaiImage>,
+    pub civitai_trigger_words: Vec<String>,
+    pub civitai_download_count: Option<u64>,
+    pub civitai_thumbs_up_count: Option<u64>,
+    pub civitai_creator: Option<String>,
+    pub modelspec_title: Option<String>,
+    pub modelspec_author: Option<String>,
+    pub modelspec_architecture: Option<String>,
+    pub modelspec_trigger_phrase: Option<String>,
+    pub modelspec_description: Option<String>,
+    pub modelspec_tags: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoraCivitaiImage {
+    pub url: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub nsfw: Option<String>,
+}
+
+/// Fetch combined LoRA info: hash the file, look up on CivitAI, read ModelSpec.
+/// Returns structured info for the LoRA gallery panel.
+#[tauri::command]
+pub async fn get_lora_civitai_info(
+    state: State<'_, AppState>,
+    filename: String,
+) -> Result<LoraCivitaiInfo, AppError> {
+    let config = state.config.read().await;
+    if config.comfyui_path.is_empty() {
+        return Err(AppError::Other("ComfyUI path not configured".into()));
+    }
+    let path = std::path::Path::new(&config.comfyui_path)
+        .join("models")
+        .join("loras")
+        .join(&filename);
+
+    if !path.exists() {
+        return Err(AppError::Other(format!("LoRA file not found: {}", filename)));
+    }
+
+    // Read modelspec in parallel-friendly manner (sync I/O in blocking task)
+    let modelspec = if filename.ends_with(".safetensors") {
+        read_safetensors_modelspec(&path).ok().flatten()
+    } else {
+        None
+    };
+
+    // Hash the file (this is the expensive part for large files)
+    let sha256 = full_sha256(&path)?;
+    let autov2 = autov2_hash(&sha256);
+
+    // Look up on CivitAI by hash
+    let civitai_url = format!(
+        "https://civitai.com/api/v1/model-versions/by-hash/{}",
+        autov2
+    );
+    let civitai_resp = state
+        .http_client
+        .get(&civitai_url)
+        .header("User-Agent", "MooshieUI/0.3.9")
+        .send()
+        .await;
+
+    let mut info = LoraCivitaiInfo {
+        filename: filename.clone(),
+        hash: Some(autov2),
+        civitai_name: None,
+        civitai_description: None,
+        civitai_model_id: None,
+        civitai_version_id: None,
+        civitai_base_model: None,
+        civitai_images: Vec::new(),
+        civitai_trigger_words: Vec::new(),
+        civitai_download_count: None,
+        civitai_thumbs_up_count: None,
+        civitai_creator: None,
+        modelspec_title: modelspec.as_ref().and_then(|m| m.get("title").cloned()),
+        modelspec_author: modelspec.as_ref().and_then(|m| m.get("author").cloned()),
+        modelspec_architecture: modelspec.as_ref().and_then(|m| m.get("architecture").cloned()),
+        modelspec_trigger_phrase: modelspec.as_ref().and_then(|m| m.get("trigger_phrase").cloned()),
+        modelspec_description: modelspec.as_ref().and_then(|m| m.get("description").cloned()),
+        modelspec_tags: modelspec.as_ref().and_then(|m| m.get("tags").cloned()),
+    };
+
+    // Parse CivitAI response if successful
+    if let Ok(resp) = civitai_resp {
+        if resp.status().is_success() {
+            if let Ok(data) = resp.json::<Value>().await {
+                // Version-level fields
+                info.civitai_version_id = data.get("id").and_then(|v| v.as_u64());
+                info.civitai_base_model = data.get("baseModel").and_then(|v| v.as_str()).map(String::from);
+                info.civitai_name = data.get("model").and_then(|m| m.get("name")).and_then(|v| v.as_str()).map(String::from);
+                info.civitai_model_id = data.get("modelId").and_then(|v| v.as_u64());
+
+                // Trigger words
+                if let Some(words) = data.get("trainedWords").and_then(|v| v.as_array()) {
+                    info.civitai_trigger_words = words
+                        .iter()
+                        .filter_map(|w| w.as_str().map(String::from))
+                        .collect();
+                }
+
+                // Images
+                if let Some(images) = data.get("images").and_then(|v| v.as_array()) {
+                    info.civitai_images = images
+                        .iter()
+                        .filter_map(|img| {
+                            img.get("url").and_then(|u| u.as_str()).map(|url| LoraCivitaiImage {
+                                url: url.to_string(),
+                                width: img.get("width").and_then(|w| w.as_u64()).map(|w| w as u32),
+                                height: img.get("height").and_then(|h| h.as_u64()).map(|h| h as u32),
+                                nsfw: img.get("nsfwLevel").and_then(|n| n.as_u64()).map(|n| {
+                                    if n <= 1 { "None".to_string() } else { format!("Level{}", n) }
+                                }),
+                            })
+                        })
+                        .collect();
+                }
+
+                // Stats from parent model
+                if let Some(stats) = data.get("stats") {
+                    info.civitai_download_count = stats.get("downloadCount").and_then(|v| v.as_u64());
+                    info.civitai_thumbs_up_count = stats.get("thumbsUpCount").and_then(|v| v.as_u64());
+                }
+
+                // Creator
+                if let Some(model) = data.get("model") {
+                    if let Some(desc) = model.get("description").and_then(|v| v.as_str()) {
+                        // CivitAI returns HTML descriptions; store raw for now
+                        info.civitai_description = Some(desc.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(info)
+}
+
+#[derive(Serialize)]
+pub struct ReleaseNote {
+    pub version: String,
+    pub body: String,
+    pub published_at: String,
+}
+
+#[tauri::command]
+pub async fn fetch_release_notes(
+    state: State<'_, AppState>,
+) -> Result<Vec<ReleaseNote>, AppError> {
+    let resp = state
+        .http_client
+        .get("https://api.github.com/repos/Mooshieblob1/MooshieUI/releases")
+        .query(&[("per_page", "20")])
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "MooshieUI")
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        return Err(AppError::Other(format!(
+            "GitHub API returned {}",
+            resp.status()
+        )));
+    }
+
+    let releases: Vec<Value> = resp.json().await?;
+    let notes: Vec<ReleaseNote> = releases
+        .into_iter()
+        .filter_map(|r| {
+            let tag = r.get("tag_name")?.as_str()?.to_string();
+            let body = r.get("body").and_then(|b| b.as_str()).unwrap_or("").to_string();
+            let published = r
+                .get("published_at")
+                .and_then(|p| p.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(ReleaseNote {
+                version: tag,
+                body,
+                published_at: published,
+            })
+        })
+        .collect();
+
+    Ok(notes)
 }

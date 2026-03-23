@@ -5,6 +5,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
+  import EditableValue from "../ui/EditableValue.svelte";
 
   interface RecommendedModel {
     label: string;
@@ -145,7 +146,7 @@
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
           <span>Scale<InfoTip text="How much to enlarge the image. 2x doubles the resolution in each dimension (4x the pixels). Higher scales take longer and use more VRAM." /></span>
-          <span class="text-neutral-300">{generation.upscaleScale}x</span>
+          <EditableValue value={generation.upscaleScale} min={1} max={4} step={0.5} decimals={1} suffix="x" onchange={(v) => generation.upscaleScale = v} />
         </label>
         <input
           type="range"
@@ -206,7 +207,7 @@
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
           <span>Denoise<InfoTip text="How much the AI re-draws during upscaling. Lower (0.2-0.4) preserves the original closely, higher adds more detail but may change the image." /></span>
-          <span class="text-neutral-300">{generation.upscaleDenoise.toFixed(2)}</span>
+          <EditableValue value={generation.upscaleDenoise} min={0} max={1} step={0.05} decimals={2} onchange={(v) => generation.upscaleDenoise = v} />
         </label>
         <input
           type="range"
@@ -222,7 +223,7 @@
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
           <span>Steps<InfoTip text="Denoising steps during the upscale pass. More steps = finer detail but slower. 10-20 is usually enough for upscaling." /></span>
-          <span class="text-neutral-300">{generation.upscaleSteps}</span>
+          <EditableValue value={generation.upscaleSteps} min={1} max={50} step={1} onchange={(v) => generation.upscaleSteps = v} />
         </label>
         <input
           type="range"
@@ -267,7 +268,7 @@
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>Tile Size<InfoTip text="The size of each tile when using tiled diffusion. Larger tiles = better coherence but more VRAM. 1024px is a good default. Reduce to 512-768 if you run out of memory." /></span>
-        <span class="text-neutral-300">{generation.upscaleTileSize}px</span>
+        <EditableValue value={generation.upscaleTileSize} min={256} max={2048} step={64} suffix="px" onchange={(v) => generation.upscaleTileSize = v} />
       </label>
       <input
         type="range"
