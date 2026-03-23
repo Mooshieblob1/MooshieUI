@@ -59,9 +59,13 @@ pub fn run() {
             let _app_handle = ctx.app_handle().clone();
             std::thread::spawn(move || {
                 let uri = request.uri().to_string();
-                // URL format: thumbnail://localhost/{filename}?size={max_size}
+                // URL format varies by platform:
+                //   macOS/Linux: thumbnail://localhost/{filename}?size={max_size}
+                //   Windows:     https://thumbnail.localhost/{filename}?size={max_size}
                 let path = uri
-                    .strip_prefix("thumbnail://localhost/")
+                    .strip_prefix("https://thumbnail.localhost/")
+                    .or_else(|| uri.strip_prefix("http://thumbnail.localhost/"))
+                    .or_else(|| uri.strip_prefix("thumbnail://localhost/"))
                     .or_else(|| uri.strip_prefix("thumbnail:///"))
                     .unwrap_or("");
                 let (filename_encoded, query) = path.split_once('?').unwrap_or((path, ""));
@@ -100,7 +104,7 @@ pub fn run() {
                         );
                     }
                     Err(e) => {
-                        log::warn!("Thumbnail generation failed for {}: {}", filename, e);
+                        log::warn!("Thumbnail generation failed for '{}': {}", filename, e);
                         responder.respond(
                             tauri::http::Response::builder()
                                 .status(404)
@@ -143,11 +147,14 @@ pub fn run() {
             commands::api::civitai_search_models,
             commands::api::civitai_list_architectures,
             commands::api::read_modelspec,
+            commands::api::get_lora_civitai_info,
             commands::api::read_image_metadata,
             commands::api::read_image_metadata_bytes,
+            commands::api::fetch_release_notes,
             commands::api::check_node_available,
             commands::api::is_custom_node_installed,
             commands::api::install_custom_node,
+            commands::api::install_pip_package,
             commands::websocket::connect_ws,
             commands::websocket::disconnect_ws,
             commands::workflow::generate,

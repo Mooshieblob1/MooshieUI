@@ -12,6 +12,7 @@ import {
   getGalleryImagePath,
 } from "../utils/api.js";
 import { save } from "@tauri-apps/plugin-dialog";
+import { convertFileSrc } from "@tauri-apps/api/core";
 
 const GALLERY_BOARDS_KEY = "mooshieui.gallery.boards.v1";
 const GALLERY_BOARD_NAMES_KEY = "mooshieui.gallery.boardNames.v1";
@@ -198,7 +199,7 @@ class GalleryStore {
           );
         }
         img.gallery_filename = galleryFilename;
-        img.thumbnailUrl = `thumbnail://localhost/${encodeURIComponent(galleryFilename)}`;
+        img.thumbnailUrl = convertFileSrc(galleryFilename, "thumbnail");
       } catch (e) {
         console.error("Failed to save image to gallery:", e);
       }
@@ -247,7 +248,7 @@ class GalleryStore {
             generation_mode: generationMode,
             is_upscaled: isUpscaled,
             url: undefined,
-            thumbnailUrl: `thumbnail://localhost/${encodeURIComponent(filename)}`,
+            thumbnailUrl: convertFileSrc(filename, "thumbnail"),
             gallery_filename: filename,
             file_size_bytes: entry.size_bytes,
             generated_at_ms: entry.modified_ms,

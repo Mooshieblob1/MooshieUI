@@ -2,7 +2,9 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
   import { canvas } from "../../stores/canvas.svelte.js";
-  import { generate, interruptGeneration, deleteQueueItem } from "../../utils/api.js";
+  import { generate, interruptGeneration, deleteQueueItem, installPipPackage, downloadModel } from "../../utils/api.js";
+  import { models } from "../../stores/models.svelte.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
 
   interface Props {
     canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
@@ -40,6 +42,22 @@
           errorMsg = "Inpainting needs a mask. Paint a mask in Canvas Editor or upload one.";
           return;
         }
+      }
+
+      // Ensure face fix dependencies are ready when enabled
+      if (generation.facefixEnabled) {
+        const detector = generation.facefixDetector || "face_yolov8m.pt";
+        if (!models.ultralyticsModels.includes(detector)) {
+          gallery.showToast("Downloading face fix model...", "info");
+          await downloadModel(
+            `https://huggingface.co/Bingsu/adetailer/resolve/main/${detector}`,
+            "ultralytics",
+            detector,
+          );
+          generation.facefixDetector = detector;
+          await models.refresh();
+        }
+        await installPipPackage("ultralytics");
       }
 
       const params = generation.toParams();

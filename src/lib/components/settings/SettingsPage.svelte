@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AppConfig } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes } from "../../utils/api.js";
+  import type { ReleaseNote } from "../../utils/api.js";
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
@@ -28,6 +29,31 @@
   let tagUrlInput = $state("");
   let tagFileLoading = $state(false);
   let showQualityTagsWarning = $state(false);
+
+  // Release notes from GitHub
+  let releaseNotes = $state<ReleaseNote[]>([]);
+  let releaseNotesLoading = $state(false);
+  let releaseNotesError = $state<string | null>(null);
+
+  async function loadReleaseNotes() {
+    if (releaseNotes.length > 0 || releaseNotesLoading) return;
+    releaseNotesLoading = true;
+    releaseNotesError = null;
+    try {
+      releaseNotes = await fetchReleaseNotes();
+    } catch (e) {
+      releaseNotesError = String(e);
+    } finally {
+      releaseNotesLoading = false;
+    }
+  }
+
+  function parseReleaseBody(body: string): string[] {
+    return body
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^[-*]\s*/, "").trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
+  }
 
   // Model directory auto-detection
   interface DetectedModelDir {
@@ -387,7 +413,7 @@
 
   <!-- Scrollable content -->
   <div class="flex-1 overflow-y-auto p-6" use:smoothScroll>
-    <div class="max-w-2xl mx-auto space-y-6">
+    <div class="columns-1 lg:columns-2 xl:columns-3 gap-4">
       {#if loading}
         <div class="flex items-center justify-center py-12 text-neutral-500">
           <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
@@ -395,7 +421,7 @@
       {:else if config}
         <!-- Connection -->
         {#if sectionVisible("connection")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden">
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.connection = !collapsed.connection)}
@@ -465,7 +491,7 @@
 
         <!-- Appearance -->
         {#if sectionVisible("appearance")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden">
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.appearance = !collapsed.appearance)}
@@ -557,7 +583,7 @@
 
         <!-- Performance -->
         {#if sectionVisible("performance")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden">
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.performance = !collapsed.performance)}
@@ -627,7 +653,7 @@
 
         <!-- Paths -->
         {#if sectionVisible("paths")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden">
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.paths = !collapsed.paths)}
@@ -820,7 +846,7 @@
 
         <!-- Autocomplete -->
         {#if sectionVisible("autocomplete")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden">
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.autocomplete = !collapsed.autocomplete)}
@@ -946,7 +972,7 @@
 
         <!-- About & Updates -->
         {#if sectionVisible("about")}
-        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden">
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.about = !collapsed.about)}
@@ -965,72 +991,34 @@
             </div>
 
             <!-- What's New -->
-            <details class="rounded-lg border border-neutral-800 bg-neutral-950 overflow-hidden">
+            <details class="rounded-lg border border-neutral-800 bg-neutral-950 overflow-hidden" ontoggle={(e) => { if ((e.target as HTMLDetailsElement).open) loadReleaseNotes(); }}>
               <summary class="px-3 py-2 text-xs font-medium text-neutral-300 hover:text-neutral-100 cursor-pointer select-none transition-colors">
                 What's New in v{appVersion}
               </summary>
-              <div class="px-3 pb-3 pt-1 text-xs text-neutral-400 space-y-2">
-                <p class="text-neutral-300 font-medium">v0.3.7</p>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li>Fixed recommended models showing as installed when VAE or text encoder is missing</li>
-                  <li>Selecting a recommended model now re-downloads only missing components</li>
-                  <li>Fixed gallery thumbnails appearing broken after app update/relaunch</li>
-                  <li>Added SwarmUI Models/ and dlbackend/ paths for broader directory compatibility</li>
-                  <li>App now fully stops ComfyUI before restarting during updates</li>
-                </ul>
-                <p class="text-neutral-300 font-medium mt-3">v0.3.6</p>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li>Option to disable auto quality tags (Settings > Performance)</li>
-                  <li>Confirmation popup warns about quality impact before disabling</li>
-                  <li>Preview tip reminds users to re-enable if results are poor</li>
-                </ul>
-                <p class="text-neutral-300 font-medium mt-3">v0.3.5</p>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li>Fixed LoRAs, upscale models, and other files bleeding into checkpoint list</li>
-                  <li>Server-side filtering excludes models by directory prefix (Lora\, upscale_models\, etc.)</li>
-                </ul>
-                <p class="text-neutral-300 font-medium mt-3">v0.3.4</p>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li>Fixed LoRAs in external model directories appearing as checkpoints</li>
-                  <li>Each model category now only scans its specific subdirectories</li>
-                  <li>Added SwarmUI Stable-Diffusion folder to checkpoint detection</li>
-                </ul>
-                <p class="text-neutral-300 font-medium mt-3">v0.3.3</p>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li>Fixed Anima quality tags now prepended before user prompt instead of appended after</li>
-                  <li>Fixed custom node deployment unreachable when using external ComfyUI instances</li>
-                  <li>Updated in-app changelog to show all recent versions</li>
-                </ul>
-                <p class="text-neutral-300 font-medium mt-3">v0.3.2</p>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li>Fixed "Node MooshieSaveImage not found" caused by silent failure in custom node deployment</li>
-                  <li>Node deployment now surfaces errors instead of silently continuing</li>
-                </ul>
-                <p class="text-neutral-300 font-medium mt-3">v0.3.1</p>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li>Fixed updater 404 caused by tag/filename mismatches in release manifest</li>
-                  <li>Release pipeline now generates correct updater URLs from actual artifact names</li>
-                </ul>
-                <p class="text-neutral-300 font-medium mt-3">v0.3.0</p>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li>Streaming output pipeline — final PNGs stream over WebSocket via MooshieSaveImage</li>
-                  <li>16-bit PNG output mode (selectable 8-bit/16-bit)</li>
-                  <li>Metadata modes: Text Chunk, Stealth Alpha, and Both</li>
-                  <li>Generation queueing with cancel-current and cancel-all controls</li>
-                  <li>Lightbox actions: Reuse Settings, Remix, and Reuse Seed</li>
-                  <li>Model-aware sampler recommendations for Anima and SIH</li>
-                  <li>Rotating tips carousel in idle preview area</li>
-                </ul>
-                <p class="text-neutral-300 font-medium mt-3">v0.2.9</p>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li>Face Fix (FaceDetailer) support for automatic face correction</li>
-                  <li>Session history with pagination for browsing past generations</li>
-                  <li>Sticky mode selector — workflow tab stays visible while scrolling</li>
-                </ul>
-                <p class="text-neutral-300 font-medium mt-3">v0.2.8</p>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li>Fixed: moving installation no longer re-triggers setup wizard</li>
-                </ul>
+              <div class="px-3 pb-3 pt-1 text-xs text-neutral-400 space-y-2 max-h-64 overflow-y-auto">
+                {#if releaseNotesLoading}
+                  <div class="flex items-center gap-2 py-2">
+                    <div class="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                    <span>Fetching release notes...</span>
+                  </div>
+                {:else if releaseNotesError}
+                  <p class="text-red-400">Failed to load release notes: {releaseNotesError}</p>
+                {:else if releaseNotes.length > 0}
+                  {#each releaseNotes as release}
+                    <p class="text-neutral-300 font-medium {releaseNotes.indexOf(release) > 0 ? 'mt-3' : ''}">{release.version}</p>
+                    {#if parseReleaseBody(release.body).length > 0}
+                      <ul class="list-disc list-inside space-y-0.5">
+                        {#each parseReleaseBody(release.body) as line}
+                          <li>{line}</li>
+                        {/each}
+                      </ul>
+                    {:else}
+                      <p class="text-neutral-500 italic">No release notes.</p>
+                    {/if}
+                  {/each}
+                {:else}
+                  <p class="text-neutral-500">No release notes available.</p>
+                {/if}
               </div>
             </details>
 
@@ -1121,10 +1109,10 @@
         </section>
         {/if}
 
-        <p class="text-[10px] text-neutral-500"><span class="text-amber-400">*</span> Requires a restart of ComfyUI to take effect.</p>
+        <p class="text-[10px] text-neutral-500 break-inside-avoid"><span class="text-amber-400">*</span> Requires a restart of ComfyUI to take effect.</p>
 
         {#if error}
-          <div class="px-3 py-2 bg-red-900/30 border border-red-800/50 rounded-lg text-red-200 text-xs">
+          <div class="px-3 py-2 bg-red-900/30 border border-red-800/50 rounded-lg text-red-200 text-xs break-inside-avoid">
             {error}
           </div>
         {/if}

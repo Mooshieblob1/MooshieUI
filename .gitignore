@@ -48,3 +48,5 @@ src-tauri/gen/
 # Logs
 *.log
 .github/skills/rust-tauri/SKILL.md
+src-tauri/Cargo.toml
+docs/superpowers/plans/2026-03-23-metadata-drag-drop.md
