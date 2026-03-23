@@ -10,7 +10,7 @@ A modern, beginner-friendly desktop frontend for [ComfyUI](https://github.com/co
   <img src="src/lib/assets/logo.png" alt="Logo" width="200">
 </p>
 
-![alt text](qq20fhm.png)
+![MooshieUI Screenshot](screenshot.webp)
 
 ---
 
@@ -311,6 +311,9 @@ Both methods:
 - [x] **Metadata modes** — `Text Chunk`, `Stealth Alpha`, and `Both` with 16-bit compatibility upgrade to `Both`
 - [x] **Metadata reuse actions** — lightbox actions for `Reuse Settings`, `Remix`, and `Reuse Seed`
 - [x] **Preview tips carousel** — idle preview area shows rotating, auto-cycling tips with manual navigation
+- [x] **Metadata drag-and-drop import** — drag images onto generation sections to import specific settings, or drop on preview to apply all; Ctrl+V paste supported; auto-strips duplicate quality tags
+- [x] **Face fix auto-setup** — auto-downloads detection model and installs ultralytics on first use
+- [x] **Seed recall** — toggling off random seed recalls the last generated seed
 
 ### To Do
 - [ ] **Theme customization** — custom accent colors and themes
@@ -324,6 +327,17 @@ Both methods:
 ---
 
 ## 📋 Changelog
+
+### v0.3.8
+
+**Metadata Import, Face Fix Auto-Setup, Windows Fixes**
+- Drag-and-drop or Ctrl+V images onto generation sections to import metadata (prompts, sampler, dimensions, model, upscale) — or drop on the preview area to apply all parameters
+- Imported prompts automatically strip quality tags already applied by the app to avoid duplication
+- Face fix now auto-downloads the detection model and installs ultralytics before generating — no manual setup needed
+- Toggling off "Random" seed now recalls the last generated seed instead of resetting to 0
+- Fixed drag-and-drop not working on Windows (disabled Tauri native drag handler intercepting HTML5 events)
+- Fixed gallery thumbnails not loading on Windows (cross-platform protocol URL fix via `convertFileSrc`)
+- Smooth scroll improved with time-based interpolation for consistent frame rates
 
 ### v0.3.7
 
