@@ -136,7 +136,18 @@ function applyModel(meta: Record<string, string>): boolean {
 
 function applyUpscale(meta: Record<string, string>): boolean {
   let applied = false;
-  if (meta.upscale_model) { generation.upscaleModel = meta.upscale_model; applied = true; }
+  
+  if (meta.upscale_model) { 
+    generation.upscaleModel = meta.upscale_model; 
+    applied = true;
+    
+    // Auto-detect scale from model name (e.g., "OmniSR_X4_DIV2K" → 4x)
+    const match = meta.upscale_model.match(/_X(\d+)[_\.]/i) || meta.upscale_model.match(/[_-](\d+)x[_\.]/i);
+    if (match) {
+      generation.upscaleScale = parseInt(match[1], 10);
+    }
+  }
+  
   if (meta.upscale_scale) {
     const v = parseFloat(meta.upscale_scale);
     if (!isNaN(v)) { generation.upscaleScale = v; applied = true; }

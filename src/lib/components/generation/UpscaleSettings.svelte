@@ -39,6 +39,12 @@
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 
+  /** Extract scale factor from upscaler model names (e.g., "OmniSR_X4_DIV2K" → 4) */
+  function extractScaleFromModel(filename: string): number | null {
+    const match = filename.match(/_X(\d+)[_\.]/i) || filename.match(/[_-](\d+)x[_\.]/i);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
   const dlPercent = $derived(dlTotal > 0 ? Math.round((dlBytes / dlTotal) * 100) : 0);
 
   onMount(async () => {
@@ -105,6 +111,12 @@
     }
 
     generation.upscaleModel = filename;
+    
+    // Auto-update scale based on model name (e.g., "OmniSR_X4_DIV2K" → 4x)
+    const detectedScale = extractScaleFromModel(filename);
+    if (detectedScale !== null) {
+      generation.upscaleScale = detectedScale;
+    }
   }
 </script>
 
