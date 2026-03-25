@@ -270,6 +270,16 @@ export async function listGalleryImageEntries(): Promise<GalleryImageEntry[]> {
   return invoke("list_gallery_image_entries");
 }
 
+export interface ImportResult {
+  imported: number;
+  skipped: number;
+  failed: number;
+}
+
+export async function importImageDirectory(directory: string): Promise<ImportResult> {
+  return invoke("import_image_directory", { directory });
+}
+
 export async function loadGalleryImage(filename: string): Promise<number[]> {
   return invoke("load_gallery_image", { filename });
 }
@@ -387,4 +397,8 @@ export async function interrogateGalleryImage(filename: string): Promise<Interro
 
 export async function interrogateClipboard(): Promise<InterrogationResult> {
   return invoke("interrogate_clipboard");
+}
+
+export async function exportLogs(destination: string): Promise<void> {
+  return invoke("export_logs", { destination });
 }

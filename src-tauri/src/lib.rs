@@ -152,6 +152,8 @@ pub fn run() {
             commands::api::read_image_metadata,
             commands::api::read_image_metadata_bytes,
             commands::api::fetch_release_notes,
+            commands::api::import_image_directory,
+            commands::api::export_logs,
             commands::api::check_node_available,
             commands::api::is_custom_node_installed,
             commands::api::install_custom_node,

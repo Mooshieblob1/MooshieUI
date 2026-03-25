@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { AppConfig } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes } from "../../utils/api.js";
-  import type { ReleaseNote } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs } from "../../utils/api.js";
+  import type { ReleaseNote, ImportResult } from "../../utils/api.js";
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
@@ -11,7 +11,7 @@
   import { relaunch } from "@tauri-apps/plugin-process";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { onMount } from "svelte";
   import { marked } from "marked";
 
@@ -33,6 +33,52 @@
   let tagUrlInput = $state("");
   let tagFileLoading = $state(false);
   let showQualityTagsWarning = $state(false);
+
+  // Gallery import state
+  let importBusy = $state(false);
+  let importResult = $state<ImportResult | null>(null);
+  let importError = $state<string | null>(null);
+
+  // Log export state
+  let exportingLogs = $state(false);
+  let logExportDone = $state(false);
+  let logExportError = $state<string | null>(null);
+
+  async function handleExportLogs() {
+    const destination = await saveDialog({
+      title: "Save Diagnostic Logs",
+      defaultPath: "mooshieui-diagnostics.log",
+      filters: [{ name: "Log Files", extensions: ["log", "txt"] }],
+    });
+    if (!destination) return;
+    exportingLogs = true;
+    logExportDone = false;
+    logExportError = null;
+    try {
+      await exportLogs(destination);
+      logExportDone = true;
+      setTimeout(() => (logExportDone = false), 4000);
+    } catch (e) {
+      logExportError = String(e);
+    } finally {
+      exportingLogs = false;
+    }
+  }
+
+  async function handleImportDirectory() {
+    const selected = await open({ directory: true, multiple: false, title: "Select image output directory to import" });
+    if (!selected) return;
+    importBusy = true;
+    importResult = null;
+    importError = null;
+    try {
+      importResult = await importImageDirectory(selected as string);
+    } catch (e) {
+      importError = String(e);
+    } finally {
+      importBusy = false;
+    }
+  }
 
   // Release notes from GitHub
   let releaseNotes = $state<ReleaseNote[]>([]);
@@ -255,9 +301,10 @@
     { key: "appearance", label: "Appearance", keywords: "theme dark light font scale size style presets fooocus" },
     { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close quality tags auto" },
     { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
+    { key: "gallery", label: "Gallery", keywords: "import images output directory swarmui comfyui external folder" },
     { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", label: "Interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
-    { key: "about", label: "About", keywords: "version update check updates about" },
+    { key: "about", label: "About", keywords: "version update check updates about troubleshooting logs export diagnostic" },
   ];
 
   function sectionVisible(key: string): boolean {
@@ -856,6 +903,66 @@
         </section>
         {/if}
 
+        <!-- Gallery -->
+        {#if sectionVisible("gallery")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.gallery = !collapsed.gallery)}
+          >
+            Gallery
+            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.gallery ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.gallery}
+          <div class="px-5 pb-5 space-y-4">
+
+            <!-- Import from external directory -->
+            <div>
+              <label class="block text-xs text-neutral-400 mb-1">Import Images from Directory</label>
+              <p class="text-[10px] text-neutral-500 mb-2">Copy images from a SwarmUI output, ComfyUI output, or any other image directory into your gallery. Existing metadata is preserved.</p>
+              <button
+                class="px-4 py-2 text-sm font-medium rounded-lg transition-colors {importBusy ? 'bg-neutral-700 text-neutral-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}"
+                disabled={importBusy}
+                onclick={handleImportDirectory}
+              >
+                {#if importBusy}
+                  Importing...
+                {:else}
+                  Choose Directory...
+                {/if}
+              </button>
+
+              {#if importResult}
+                <div class="mt-2 p-3 rounded-lg bg-neutral-800 border border-neutral-700 text-sm">
+                  <p class="text-green-400">{importResult.imported} image{importResult.imported !== 1 ? 's' : ''} imported</p>
+                  {#if importResult.skipped > 0}
+                    <p class="text-neutral-400">{importResult.skipped} skipped (already in gallery)</p>
+                  {/if}
+                  {#if importResult.failed > 0}
+                    <p class="text-red-400">{importResult.failed} failed</p>
+                  {/if}
+                </div>
+              {/if}
+
+              {#if importError}
+                <p class="mt-2 text-sm text-red-400">{importError}</p>
+              {/if}
+            </div>
+
+            <div class="rounded-lg bg-neutral-800/50 border border-neutral-700/50 p-3">
+              <p class="text-[11px] text-neutral-400 leading-relaxed">
+                <strong class="text-neutral-300">Supported sources:</strong> ComfyUI output, SwarmUI Output, A1111/Forge output, or any folder of PNG/JPG/WebP images. Subdirectories are scanned recursively.
+              </p>
+              <p class="text-[11px] text-neutral-400 mt-1.5 leading-relaxed">
+                <strong class="text-neutral-300">Metadata:</strong> Drag an imported image onto the generation panel or individual sections to load its parameters. SwarmUI-specific tags are automatically cleaned from prompts.
+              </p>
+            </div>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
         <!-- Autocomplete -->
         {#if sectionVisible("autocomplete")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
@@ -1169,6 +1276,31 @@
                   Try again
                 </button>
               {/if}
+            </div>
+
+            <!-- Troubleshooting -->
+            <div class="space-y-2">
+              <p class="text-xs text-neutral-400">Troubleshooting</p>
+              <div class="flex items-center gap-3">
+                <button
+                  onclick={handleExportLogs}
+                  disabled={exportingLogs}
+                  class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {#if exportingLogs}
+                    Exporting...
+                  {:else}
+                    Export Logs
+                  {/if}
+                </button>
+                {#if logExportDone}
+                  <span class="text-xs text-emerald-400">Saved!</span>
+                {/if}
+              </div>
+              {#if logExportError}
+                <p class="text-xs text-red-400">{logExportError}</p>
+              {/if}
+              <p class="text-[11px] text-neutral-500">Save ComfyUI logs, system info, and config to a file for sharing with support.</p>
             </div>
 
             <div class="rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2">

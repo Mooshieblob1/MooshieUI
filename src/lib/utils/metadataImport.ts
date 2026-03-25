@@ -45,9 +45,22 @@ const AUTO_QUALITY_TAGS = new Set([
   "signature", "watermark", "long body", "bad hands", "cropped", "username",
 ]);
 
-/** Remove auto-applied quality tags from a prompt string. */
+/**
+ * Strip SwarmUI-specific inline syntax tags from a prompt string.
+ * Matches patterns like `<segment:...>`, `<random:...>`, `<preset:...>`, `<wildcard:...>`, etc.
+ * LoRA tags `<lora:name:strength>` are also stripped since MooshieUI handles LoRAs separately.
+ * Handles URL-encoded values and nested `//` parameters.
+ */
+const SWARMUI_TAG_RE = /<[a-zA-Z_-]+:[^>]*>/g;
+
+function stripSwarmUITags(prompt: string): string {
+  return prompt.replace(SWARMUI_TAG_RE, "").replace(/,\s*,/g, ",").replace(/^\s*,\s*/, "").replace(/\s*,\s*$/, "").trim();
+}
+
+/** Remove auto-applied quality tags and SwarmUI syntax from a prompt string. */
 function stripQualityTags(prompt: string): string {
-  const tags = prompt.split(",").map((t) => t.trim()).filter(Boolean);
+  const cleaned = stripSwarmUITags(prompt);
+  const tags = cleaned.split(",").map((t) => t.trim()).filter(Boolean);
   const filtered = tags.filter((t) => !AUTO_QUALITY_TAGS.has(t.toLowerCase()));
   return filtered.join(", ");
 }

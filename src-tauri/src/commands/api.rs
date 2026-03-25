@@ -1322,3 +1322,236 @@ pub async fn fetch_release_notes(
 
     Ok(notes)
 }
+
+#[derive(Debug, Serialize)]
+pub struct ImportResult {
+    pub imported: u32,
+    pub skipped: u32,
+    pub failed: u32,
+}
+
+/// Import images from an external directory into the gallery.
+/// Copies each image file (PNG/JPG/WebP) into the gallery directory,
+/// preserving file modification time in the gallery filename for sorting.
+/// Skips files that already exist in the gallery (by original filename).
+#[tauri::command]
+pub async fn import_image_directory(
+    directory: String,
+    app: AppHandle,
+) -> Result<ImportResult, AppError> {
+    let src_dir = std::path::Path::new(&directory);
+    if !src_dir.is_dir() {
+        return Err(AppError::Other(format!("Not a directory: {}", directory)));
+    }
+
+    let gallery_dir = crate::config::app_data_dir()
+        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
+        .join("gallery");
+    std::fs::create_dir_all(&gallery_dir)?;
+
+    // Collect existing gallery filenames to avoid duplicates
+    let existing: std::collections::HashSet<String> = if gallery_dir.exists() {
+        std::fs::read_dir(&gallery_dir)?
+            .filter_map(|e| Some(e.ok()?.file_name().to_string_lossy().into_owned()))
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    let mut imported = 0u32;
+    let mut skipped = 0u32;
+    let mut failed = 0u32;
+
+    // Walk the directory recursively
+    let entries = collect_image_files(src_dir)?;
+
+    let total = entries.len() as u32;
+    for (i, path) in entries.iter().enumerate() {
+        let original_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => { failed += 1; continue; }
+        };
+
+        // Gallery filename: imported__{original_name}
+        let gallery_name = format!("imported__imported__{}", original_name);
+
+        if existing.contains(&gallery_name) {
+            skipped += 1;
+            continue;
+        }
+
+        // Check if there's already a file with the same original name (any prefix)
+        let already_imported = existing.iter().any(|e| e.ends_with(&format!("__{}", original_name)));
+        if already_imported {
+            skipped += 1;
+            continue;
+        }
+
+        match std::fs::copy(path, gallery_dir.join(&gallery_name)) {
+            Ok(_) => imported += 1,
+            Err(e) => {
+                log::warn!("Failed to import {}: {}", path.display(), e);
+                failed += 1;
+            }
+        }
+
+        // Emit progress every 50 files or on last file
+        if imported % 50 == 0 || i as u32 + 1 == total {
+            let _ = app.emit("import_progress", serde_json::json!({
+                "current": i + 1,
+                "total": total,
+                "imported": imported,
+            }));
+        }
+    }
+
+    Ok(ImportResult { imported, skipped, failed })
+}
+
+/// Recursively collect all image files (PNG, JPG, WebP) from a directory.
+fn collect_image_files(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, AppError> {
+    let mut files = Vec::new();
+    collect_image_files_recursive(dir, &mut files)?;
+    // Sort by modification time (newest first) for consistent import order
+    files.sort_by(|a, b| {
+        let ma = a.metadata().and_then(|m| m.modified()).ok();
+        let mb = b.metadata().and_then(|m| m.modified()).ok();
+        mb.cmp(&ma)
+    });
+    Ok(files)
+}
+
+fn collect_image_files_recursive(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) -> Result<(), AppError> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_image_files_recursive(&path, files)?;
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            match ext.to_ascii_lowercase().as_str() {
+                "png" | "jpg" | "jpeg" | "webp" => files.push(path),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Export application logs and system information to a user-chosen file
+/// for troubleshooting. Collects:
+/// - ComfyUI subprocess stderr log
+/// - App config (sanitized)
+/// - Basic system/platform info
+/// - Rust-side log path references
+#[tauri::command]
+pub async fn export_logs(
+    state: State<'_, AppState>,
+    destination: String,
+) -> Result<(), AppError> {
+    use std::fmt::Write;
+
+    let mut output = String::with_capacity(16 * 1024);
+
+    // Header
+    let _ = writeln!(output, "=== MooshieUI Diagnostic Log ===");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let _ = writeln!(output, "Exported: {} (unix timestamp)", now);
+    let _ = writeln!(output, "OS: {} {}", std::env::consts::OS, std::env::consts::ARCH);
+    let _ = writeln!(output);
+
+    // App config (sanitized — no secrets, just relevant settings)
+    {
+        let config = state.config.read().await;
+        let _ = writeln!(output, "=== App Configuration ===");
+        let _ = writeln!(output, "Server mode: {:?}", config.server_mode);
+        let _ = writeln!(output, "Server URL: {}", config.server_url);
+        let _ = writeln!(output, "Server port: {}", config.server_port);
+        let _ = writeln!(output, "VRAM mode: {}", config.vram_mode);
+        let _ = writeln!(output, "Keep alive: {}", config.keep_alive);
+        let _ = writeln!(output, "Auto start: {}", config.auto_start);
+        let _ = writeln!(output, "Extra args: {:?}", config.extra_args);
+        let _ = writeln!(output, "ComfyUI path: {}", config.comfyui_path);
+        let _ = writeln!(output, "Venv path: {}", config.venv_path);
+        let _ = writeln!(output, "Extra model paths: {}", config.extra_model_paths.as_deref().unwrap_or("(none)"));
+        let _ = writeln!(output, "Setup complete: {}", config.setup_complete);
+        let _ = writeln!(output);
+    }
+
+    // GPU info (NVIDIA)
+    let _ = writeln!(output, "=== GPU Info ===");
+    match std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=name,driver_version,memory.total,compute_cap", "--format=csv,noheader"])
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            let _ = write!(output, "{}", String::from_utf8_lossy(&o.stdout));
+        }
+        _ => {
+            let _ = writeln!(output, "(nvidia-smi not available or no NVIDIA GPU)");
+        }
+    }
+    let _ = writeln!(output);
+
+    // Python / ComfyUI version info
+    {
+        let config = state.config.read().await;
+        if !config.venv_path.is_empty() {
+            let _ = writeln!(output, "=== Python Environment ===");
+            let python_path = {
+                let venv = std::path::Path::new(&config.venv_path);
+                if cfg!(target_os = "windows") {
+                    venv.join("Scripts").join("python.exe")
+                } else {
+                    venv.join("bin").join("python")
+                }
+            };
+            if python_path.exists() {
+                if let Ok(o) = std::process::Command::new(&python_path)
+                    .args(["--version"])
+                    .output()
+                {
+                    let _ = write!(output, "Python: {}", String::from_utf8_lossy(&o.stdout));
+                    if !o.stderr.is_empty() {
+                        let _ = write!(output, "{}", String::from_utf8_lossy(&o.stderr));
+                    }
+                }
+                // Get torch version
+                if let Ok(o) = std::process::Command::new(&python_path)
+                    .args(["-c", "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}') if torch.cuda.is_available() else None"])
+                    .output()
+                {
+                    if o.status.success() {
+                        let _ = write!(output, "{}", String::from_utf8_lossy(&o.stdout));
+                    }
+                }
+            } else {
+                let _ = writeln!(output, "Python not found at: {}", python_path.display());
+            }
+            let _ = writeln!(output);
+        }
+    }
+
+    // ComfyUI stderr log
+    let _ = writeln!(output, "=== ComfyUI Log ===");
+    let log_path = std::env::temp_dir().join("comfyui-desktop-stderr.log");
+    let _ = writeln!(output, "(Source: {})", log_path.display());
+    match std::fs::read_to_string(&log_path) {
+        Ok(content) => {
+            if content.is_empty() {
+                let _ = writeln!(output, "(log file is empty)");
+            } else {
+                let _ = write!(output, "{}", content);
+            }
+        }
+        Err(e) => {
+            let _ = writeln!(output, "(Could not read log: {})", e);
+        }
+    }
+
+    // Write to destination
+    std::fs::write(&destination, &output)?;
+    Ok(())
+}
