@@ -21,9 +21,14 @@
   import { uploadImage, uploadImageBytes, loadGalleryImage, getOutputImage } from "../../utils/api.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
-  import type { OutputImage } from "../../types/index.js";
+  import type { OutputImage, InterrogationResult } from "../../types/index.js";
   import { onMount, onDestroy } from "svelte";
   import BottomPanel from "./BottomPanel.svelte";
+  import ContextMenu from "../ui/ContextMenu.svelte";
+  import type { ContextMenuItem } from "../ui/ContextMenu.svelte";
+  import InterrogateModal from "./InterrogateModal.svelte";
+  import { interrogateGalleryImage, interrogateImage } from "../../utils/api.js";
+  import { listen } from "@tauri-apps/api/event";
   import {
     isDroppableSection,
     handleMetadataImport,
@@ -622,6 +627,93 @@
     } catch (e) {
       console.error("Failed to set up inpainting:", e);
       gallery.showToast("Failed to load image", "error");
+    }
+  }
+
+  // Context menu + interrogation for session images
+  let ctxMenuImage = $state<OutputImage | null>(null);
+  let ctxMenuX = $state(0);
+  let ctxMenuY = $state(0);
+  let showCtxMenu = $state(false);
+  let showInterrogateModal = $state(false);
+  let interrogateResult = $state<InterrogationResult | null>(null);
+  let interrogateLoading = $state(false);
+  let interrogateStage = $state<string | null>(null);
+  let interrogateDownloadProgress = $state<{ downloaded: number; total: number; filename: string } | null>(null);
+  let interrogateImageUrl = $state<string | null>(null);
+  let interrogateError = $state<string | null>(null);
+
+  function handleSessionContextMenu(image: OutputImage, x: number, y: number) {
+    ctxMenuImage = image;
+    ctxMenuX = x;
+    ctxMenuY = y;
+    showCtxMenu = true;
+  }
+
+  const sessionCtxMenuItems = $derived.by((): ContextMenuItem[] => {
+    const image = ctxMenuImage;
+    if (!image) return [];
+    return [
+      { label: "Get Image Tags", action: () => interrogateSessionImage(image) },
+      { label: "", action: () => {}, separator: true },
+      { label: "Upscale", action: () => upscaleImage(image) },
+      { label: "Inpaint", action: () => inpaintImage(image) },
+      { label: "", action: () => {}, separator: true },
+      { label: "Save As", action: () => gallery.saveImageAs(image) },
+      { label: "Copy", action: () => gallery.copyToClipboard(image) },
+      { label: "", action: () => {}, separator: true },
+      { label: "Delete", action: () => gallery.deleteImage(image), destructive: true },
+    ];
+  });
+
+  async function interrogateSessionImage(image: OutputImage) {
+    showInterrogateModal = true;
+    interrogateLoading = true;
+    interrogateResult = null;
+    interrogateStage = null;
+    interrogateDownloadProgress = null;
+    interrogateError = null;
+    interrogateImageUrl = image.thumbnailUrl || image.url || null;
+
+    const unlistenDownload = await listen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+      "interrogator:download_progress",
+      (event) => {
+        if (event.payload.done) {
+          interrogateDownloadProgress = null;
+        } else {
+          interrogateDownloadProgress = event.payload;
+        }
+      }
+    );
+
+    const unlistenStage = await listen<string>("interrogator:stage", (event) => {
+      interrogateStage = event.payload;
+    });
+
+    try {
+      let result: InterrogationResult;
+      if (image.gallery_filename) {
+        // Saved to gallery — use gallery interrogation
+        result = await interrogateGalleryImage(image.gallery_filename);
+      } else {
+        // Session image — fetch bytes from ComfyUI and use base64 interrogation
+        const bytes = await getOutputImage(image.filename, image.subfolder);
+        const uint8 = new Uint8Array(bytes);
+        let binary = "";
+        for (let i = 0; i < uint8.length; i++) {
+          binary += String.fromCharCode(uint8[i]);
+        }
+        result = await interrogateImage(btoa(binary));
+      }
+      interrogateResult = result;
+    } catch (e) {
+      console.error("Interrogation failed:", e);
+      interrogateError = e instanceof Error ? e.message : String(e);
+    } finally {
+      interrogateLoading = false;
+      interrogateStage = null;
+      unlistenDownload();
+      unlistenStage();
     }
   }
 
@@ -1562,7 +1654,7 @@
             class="overflow-hidden shrink-0 border-t border-neutral-800/50"
             style="height: {bottomHeight}px"
           >
-            <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} />
+            <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} oncontextmenu={handleSessionContextMenu} />
           </div>
         {/if}
       </div>
@@ -1665,4 +1757,18 @@
         {@html dragCloneHtml}
       </div>
     </div>
+  {/if}
+
+  <ContextMenu items={sessionCtxMenuItems} x={ctxMenuX} y={ctxMenuY} visible={showCtxMenu} onclose={() => showCtxMenu = false} />
+
+  {#if showInterrogateModal}
+    <InterrogateModal
+      result={interrogateResult}
+      loading={interrogateLoading}
+      stage={interrogateStage}
+      downloadProgress={interrogateDownloadProgress}
+      imagePreviewUrl={interrogateImageUrl}
+      error={interrogateError}
+      onclose={() => { showInterrogateModal = false; interrogateResult = null; interrogateImageUrl = null; interrogateError = null; }}
+    />
   {/if}

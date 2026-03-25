@@ -121,6 +121,8 @@ export interface AppConfig {
   font_scale: number;
   setup_complete: boolean;
   extra_model_paths: string | null;
+  interrogator_general_threshold: number;
+  interrogator_character_threshold: number;
 }
 
 export interface QueueInfo {
@@ -135,4 +137,17 @@ export interface QueueDisplayItem {
   mode?: string;
   summary: string;
   raw: unknown;
+}
+
+export interface TagResult {
+  name: string;
+  confidence: number;
+}
+
+export interface InterrogationResult {
+  character_tags: TagResult[];
+  artist_tags: TagResult[];
+  general_tags: TagResult[];
+  copyright_tags: TagResult[];
+  rating_tags: TagResult[];
 }

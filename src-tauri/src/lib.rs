@@ -2,6 +2,7 @@ pub mod commands;
 pub mod comfyui;
 pub mod config;
 pub mod error;
+pub mod interrogator;
 pub mod metadata;
 pub mod setup;
 pub mod state;
@@ -160,6 +161,10 @@ pub fn run() {
             commands::workflow::generate,
             commands::config::get_config,
             commands::config::update_config,
+            commands::interrogator::interrogate_image,
+            commands::interrogator::interrogate_image_path,
+            commands::interrogator::interrogate_gallery_image,
+            commands::interrogator::interrogate_clipboard,
             setup::check_setup,
             setup::detect_gpu,
             setup::run_setup,

@@ -15,12 +15,16 @@
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
   import { accessibility } from "./lib/stores/accessibility.svelte.js";
-  import type { GenerationParams, OutputImage } from "./lib/types/index.js";
+  import type { GenerationParams, OutputImage, InterrogationResult } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
   import { downloads } from "./lib/stores/downloads.svelte.js";
   import { smoothScroll } from "./lib/utils/smoothScroll.js";
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
+  import ContextMenu from "./lib/components/ui/ContextMenu.svelte";
+  import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
+  import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
+  import { interrogateGalleryImage, interrogateImage } from "./lib/utils/api.js";
 
   declare const __APP_VERSION__: string;
   const appVersion = __APP_VERSION__ ?? "dev";
@@ -373,6 +377,95 @@
   const METADATA_MIN_WIDTH = 260;
   const METADATA_MAX_WIDTH = 600;
   const GALLERY_PREFS_KEY = "mooshieui.gallery.prefs.v1";
+
+  // Context menu state
+  let contextMenuImage = $state<OutputImage | null>(null);
+  let contextMenuX = $state(0);
+  let contextMenuY = $state(0);
+  let showContextMenu = $state(false);
+
+  // Interrogation state (for lightbox + context menu)
+  let showInterrogateModal = $state(false);
+  let interrogateResult = $state<InterrogationResult | null>(null);
+  let interrogateLoading = $state(false);
+  let interrogateStage = $state<string | null>(null);
+  let interrogateDownloadProgress = $state<{ downloaded: number; total: number; filename: string } | null>(null);
+  let interrogateImageUrl = $state<string | null>(null);
+  let interrogateError = $state<string | null>(null);
+
+  function openContextMenu(e: MouseEvent, image: OutputImage) {
+    e.preventDefault();
+    contextMenuImage = image;
+    contextMenuX = e.clientX;
+    contextMenuY = e.clientY;
+    showContextMenu = true;
+  }
+
+  const contextMenuItems = $derived.by((): ContextMenuItem[] => {
+    const image = contextMenuImage;
+    if (!image) return [];
+    return [
+      { label: "Get Image Tags", action: () => interrogateFromGallery(image) },
+      { label: "", action: () => {}, separator: true },
+      { label: "Image to Image", action: () => img2imgImage(image) },
+      { label: "Inpaint", action: () => inpaintImage(image) },
+      ...(!image.is_upscaled ? [{ label: "Upscale", action: () => upscaleImage(image) }] : []),
+      { label: "", action: () => {}, separator: true },
+      { label: "Save As", action: () => gallery.saveImageAs(image) },
+      { label: "Copy", action: () => gallery.copyToClipboard(image) },
+      { label: "", action: () => {}, separator: true },
+      { label: "Delete", action: () => gallery.deleteImage(image), destructive: true },
+    ];
+  });
+
+  async function interrogateFromGallery(image: OutputImage) {
+    showInterrogateModal = true;
+    interrogateLoading = true;
+    interrogateResult = null;
+    interrogateStage = null;
+    interrogateDownloadProgress = null;
+    interrogateError = null;
+    interrogateImageUrl = image.thumbnailUrl || image.url || null;
+
+    const unlistenDownload = await listen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+      "interrogator:download_progress",
+      (event) => {
+        if (event.payload.done) {
+          interrogateDownloadProgress = null;
+        } else {
+          interrogateDownloadProgress = event.payload;
+        }
+      }
+    );
+
+    const unlistenStage = await listen<string>("interrogator:stage", (event) => {
+      interrogateStage = event.payload;
+    });
+
+    try {
+      let result;
+      if (image.gallery_filename) {
+        result = await interrogateGalleryImage(image.gallery_filename);
+      } else {
+        const bytes = await getOutputImage(image.filename, image.subfolder);
+        const uint8 = new Uint8Array(bytes);
+        let binary = "";
+        for (let i = 0; i < uint8.length; i++) {
+          binary += String.fromCharCode(uint8[i]);
+        }
+        result = await interrogateImage(btoa(binary));
+      }
+      interrogateResult = result;
+    } catch (e) {
+      console.error("Interrogation failed:", e);
+      interrogateError = e instanceof Error ? e.message : String(e);
+    } finally {
+      interrogateLoading = false;
+      interrogateStage = null;
+      unlistenDownload();
+      unlistenStage();
+    }
+  }
 
   function getImageTimestamp(image: OutputImage): number {
     return image.generated_at_ms ?? 0;
@@ -1228,7 +1321,7 @@
                       <div>Actions</div>
                     </div>
                     {#each group.images as image}
-                      <div class="grid grid-cols-[72px_1fr_150px_120px_320px] gap-2 px-3 py-2 items-center border-b border-neutral-900/80 last:border-b-0">
+                      <div class="grid grid-cols-[72px_1fr_150px_120px_320px] gap-2 px-3 py-2 items-center border-b border-neutral-900/80 last:border-b-0" oncontextmenu={(e) => openContextMenu(e, image)}>
                         <button class="w-14 h-14 rounded border border-neutral-800 overflow-hidden" onclick={() => gallery.openLightbox(image)}>
                           <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} class="w-full h-full object-cover" />
                         </button>
@@ -1265,7 +1358,7 @@
                     style="grid-template-columns: repeat({viewColumns(galleryView)}, minmax(0, 1fr));"
                   >
                     {#each group.images as image}
-                      <div class="group relative rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors {galleryView === 'huge' ? 'aspect-4/3' : galleryView === 'small' ? 'aspect-square' : 'aspect-square'}">
+                      <div class="group relative rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors {galleryView === 'huge' ? 'aspect-4/3' : galleryView === 'small' ? 'aspect-square' : 'aspect-square'}" oncontextmenu={(e) => openContextMenu(e, image)}>
                         <button
                           class="w-full h-full"
                           onclick={() => gallery.openLightbox(image)}
@@ -1436,71 +1529,94 @@
 
       <!-- Action buttons (only for gallery images, not preview URLs) -->
       {#if gallery.selectedImage}
-      <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-10">
+      <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-neutral-900/70 backdrop-blur-sm rounded-xl px-2 py-1.5 border border-neutral-700/50">
+        <!-- Generation group -->
         <button
-          class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm transition-colors"
+          title="Image to Image"
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && img2imgImage(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-          Image to Image
         </button>
         <button
-          class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm transition-colors"
+          title="Inpaint"
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && inpaintImage(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-          Inpaint
         </button>
         {#if gallery.selectedImage && !gallery.selectedImage.is_upscaled}
           <button
-            class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm transition-colors"
+            title="Upscale"
+            class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
             onclick={() => gallery.selectedImage && upscaleImage(gallery.selectedImage)}
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-            Upscale
           </button>
         {/if}
         <button
-          class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm transition-colors"
-          onclick={() => gallery.selectedImage && gallery.saveImageAs(gallery.selectedImage)}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Save As
-        </button>
-        <button
-          class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm transition-colors"
-          onclick={() => gallery.selectedImage && gallery.copyToClipboard(gallery.selectedImage)}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          Copy
-        </button>
-        <button
-          class="flex items-center gap-2 px-4 py-2 bg-emerald-700/80 hover:bg-emerald-600 text-neutral-100 rounded-lg text-sm transition-colors"
-          onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage, "settings")}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Reuse Settings
-        </button>
-        <button
-          class="flex items-center gap-2 px-4 py-2 bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 rounded-lg text-sm transition-colors"
+          title="Remix"
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage, "remix")}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.13-3.36L23 10M1 14l5.37 4.36A9 9 0 0020.49 15"/></svg>
-          Remix
+        </button>
+
+        <!-- Separator -->
+        <div class="w-px h-5 bg-neutral-700/60 mx-0.5"></div>
+
+        <!-- Reuse group -->
+        <button
+          title="Interrogate Tags"
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => gallery.selectedImage && interrogateFromGallery(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
         <button
-          class="flex items-center gap-2 px-4 py-2 bg-neutral-800/80 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm transition-colors"
+          title="Reuse Settings"
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage, "settings")}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        </button>
+        <button
+          title="Reuse Seed"
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage, "seed")}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M5 7h7"/><path d="M5 12h7"/><path d="M5 17h7"/></svg>
-          Reuse Seed
+        </button>
+
+        <!-- Separator -->
+        <div class="w-px h-5 bg-neutral-700/60 mx-0.5"></div>
+
+        <!-- Export group -->
+        <button
+          title="Save As"
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => gallery.selectedImage && gallery.saveImageAs(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
         <button
-          class="flex items-center gap-2 px-4 py-2 bg-red-900/60 hover:bg-red-800 text-neutral-100 rounded-lg text-sm transition-colors"
+          title="Copy to Clipboard"
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => gallery.selectedImage && gallery.copyToClipboard(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+
+        <!-- Separator -->
+        <div class="w-px h-5 bg-neutral-700/60 mx-0.5"></div>
+
+        <!-- Delete (destructive) -->
+        <button
+          title="Delete"
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-red-900/60 hover:bg-red-800 text-red-400 hover:text-red-300 transition-colors"
           onclick={() => gallery.selectedImage && gallery.deleteImage(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-          Delete
         </button>
       </div>
       {/if}
@@ -1549,4 +1665,26 @@
     {/if}
     {gallery.toast.message}
   </div>
+{/if}
+
+<!-- Gallery context menu -->
+<ContextMenu
+  items={contextMenuItems}
+  x={contextMenuX}
+  y={contextMenuY}
+  visible={showContextMenu}
+  onclose={() => { showContextMenu = false; }}
+/>
+
+<!-- Interrogate modal (from gallery/lightbox) -->
+{#if showInterrogateModal}
+  <InterrogateModal
+    result={interrogateResult}
+    loading={interrogateLoading}
+    stage={interrogateStage}
+    downloadProgress={interrogateDownloadProgress}
+    imagePreviewUrl={interrogateImageUrl}
+    error={interrogateError}
+    onclose={() => { showInterrogateModal = false; interrogateResult = null; interrogateImageUrl = null; interrogateError = null; }}
+  />
 {/if}

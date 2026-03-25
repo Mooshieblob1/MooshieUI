@@ -227,14 +227,14 @@
         <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
         <div
           use:lazyFetch={loraName}
-          class="shrink-0 w-48 flex flex-col rounded-lg border bg-neutral-900/60 overflow-hidden transition-colors {enabled
+          class="shrink-0 h-full aspect-[3/4] flex flex-col rounded-lg border bg-neutral-900/60 overflow-hidden transition-colors {enabled
             ? 'border-indigo-500/60 ring-1 ring-indigo-500/20'
             : isSelected ? 'border-neutral-600' : 'border-neutral-800 hover:border-neutral-700'}"
         >
           <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
           <!-- Image area -->
           <div
-            class="relative w-full aspect-[3/4] bg-neutral-950 overflow-hidden cursor-pointer"
+            class="relative w-full flex-1 min-h-0 bg-neutral-950 overflow-hidden cursor-pointer"
             onclick={() => toggleLoraByName(loraName)}
           >
             {#if enabled}
@@ -297,7 +297,7 @@
           </div>
 
           <!-- Info area -->
-          <div class="flex-1 min-h-0 flex flex-col p-2 gap-1 overflow-y-auto">
+          <div class="shrink-0 flex flex-col p-1.5 gap-0.5 overflow-hidden max-h-[40%]">
             <div class="flex items-start justify-between gap-1">
               <button
                 class="text-left"

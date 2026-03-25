@@ -30,6 +30,10 @@ pub struct AppConfig {
     pub setup_complete: bool,
     /// Optional shared model directory (e.g. from another ComfyUI/Forge install)
     pub extra_model_paths: Option<String>,
+    /// Interrogator: general tag confidence threshold (0.0–1.0)
+    pub interrogator_general_threshold: f32,
+    /// Interrogator: character tag confidence threshold (0.0–1.0)
+    pub interrogator_character_threshold: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -64,6 +68,8 @@ impl Default for AppConfig {
             font_scale: 1.0,
             setup_complete: false,
             extra_model_paths: None,
+            interrogator_general_threshold: 0.30,
+            interrogator_character_threshold: 0.85,
         }
     }
 }

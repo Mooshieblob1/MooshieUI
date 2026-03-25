@@ -26,6 +26,9 @@ pub enum AppError {
     #[error("HTTP error: {0}")]
     HttpError(#[from] reqwest::Error),
 
+    #[error("Interrogator error: {0}")]
+    InterrogatorError(String),
+
     #[error("{0}")]
     Other(String),
 }

@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use tokio::process::Child;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::config::AppConfig;
+use crate::interrogator::InterrogatorState;
 
 pub struct AppState {
     pub config: RwLock<AppConfig>,
@@ -10,6 +13,7 @@ pub struct AppState {
     pub ws_handle: Mutex<Option<JoinHandle<()>>>,
     pub client_id: String,
     pub http_client: reqwest::Client,
+    pub interrogator: Arc<RwLock<InterrogatorState>>,
 }
 
 impl AppState {
@@ -20,6 +24,7 @@ impl AppState {
             ws_handle: Mutex::new(None),
             client_id: uuid::Uuid::new_v4().to_string(),
             http_client: reqwest::Client::new(),
+            interrogator: Arc::new(RwLock::new(InterrogatorState::new())),
         }
     }
 

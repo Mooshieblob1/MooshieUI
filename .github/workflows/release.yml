@@ -154,12 +154,15 @@ jobs:
           echo "=== latest.json ==="
           cat release-files/latest.json
 
+      - name: Checkout (for release notes)
+        uses: actions/checkout@v4
+
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          # Build release body — use printf to avoid YAML parsing issues with pipes
+          # Build release body: installer blurb + changelog from RELEASE_NOTES.md
           printf '%s\n' \
             '**One-click installer** — just download and run. The app will automatically install ComfyUI, Python, PyTorch, and everything else you need on first launch.' \
             '' \
@@ -168,7 +171,15 @@ jobs:
             '|----------|------|' \
             '| **Windows** | `.msi` or `.exe` |' \
             '| **Linux** | `.deb` or `.AppImage` |' \
+            '' \
+            '---' \
+            '' \
             > /tmp/release-body.md
+
+          # Append changelog from RELEASE_NOTES.md if it exists
+          if [ -f RELEASE_NOTES.md ]; then
+            cat RELEASE_NOTES.md >> /tmp/release-body.md
+          fi
 
           gh release create "${TAG}" \
             --repo "${{ github.repository }}" \

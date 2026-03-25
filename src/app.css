@@ -245,3 +245,65 @@ html.light .lightbox-backdrop {
 .sim-protanopia { filter: url(#protanopia); }
 .sim-deuteranopia { filter: url(#deuteranopia); }
 .sim-tritanopia { filter: url(#tritanopia); }
+
+/* Release notes markdown rendering */
+.release-body h1, .release-body h2, .release-body h3 {
+  font-weight: 600;
+  color: var(--color-neutral-200);
+  margin-top: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.release-body h1 { font-size: 0.875rem; }
+.release-body h2 { font-size: 0.8125rem; }
+.release-body h3 { font-size: 0.75rem; }
+.release-body p {
+  margin: 0.25rem 0;
+}
+.release-body ul, .release-body ol {
+  list-style-position: inside;
+  padding-left: 0.25rem;
+  margin: 0.25rem 0;
+}
+.release-body ul { list-style-type: disc; }
+.release-body ol { list-style-type: decimal; }
+.release-body li {
+  margin: 0.125rem 0;
+}
+.release-body strong {
+  color: var(--color-neutral-200);
+  font-weight: 600;
+}
+.release-body a {
+  color: var(--color-indigo-400);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.release-body a:hover {
+  color: var(--color-indigo-300);
+}
+.release-body code {
+  background: var(--color-neutral-800);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.6875rem;
+}
+.release-body table {
+  border-collapse: collapse;
+  margin: 0.375rem 0;
+  font-size: 0.6875rem;
+  width: 100%;
+}
+.release-body th, .release-body td {
+  border: 1px solid var(--color-neutral-700);
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+.release-body th {
+  background: var(--color-neutral-800);
+  color: var(--color-neutral-300);
+  font-weight: 600;
+}
+.release-body hr {
+  border-color: var(--color-neutral-800);
+  margin: 0.5rem 0;
+}

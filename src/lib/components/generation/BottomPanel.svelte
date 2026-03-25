@@ -8,9 +8,10 @@
   interface Props {
     onupscale: (image: OutputImage) => void;
     oninpaint: (image: OutputImage) => void;
+    oncontextmenu?: (image: OutputImage, x: number, y: number) => void;
   }
 
-  let { onupscale, oninpaint }: Props = $props();
+  let { onupscale, oninpaint, oncontextmenu }: Props = $props();
 
   type TabId = "loras" | "images" | "prompts";
 
@@ -100,7 +101,7 @@
       {:else}
         <div class="flex gap-2 h-full overflow-x-auto px-2 py-2">
           {#each gallery.sessionImages as image}
-            <div class="group relative shrink-0 h-full aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors">
+            <div class="group relative shrink-0 h-full aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors" oncontextmenu={(e) => { if (oncontextmenu) { e.preventDefault(); oncontextmenu(image, e.clientX, e.clientY); } }}>
               <button
                 class="w-full h-full"
                 onclick={() => gallery.openLightbox(image)}

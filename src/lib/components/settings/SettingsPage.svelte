@@ -13,6 +13,10 @@
   import { listen } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-dialog";
   import { onMount } from "svelte";
+  import { marked } from "marked";
+
+  // Configure marked for safe rendering (no raw HTML passthrough)
+  marked.setOptions({ breaks: true, gfm: true });
 
   declare const __APP_VERSION__: string;
   const appVersion = __APP_VERSION__ ?? "dev";
@@ -48,11 +52,17 @@
     }
   }
 
-  function parseReleaseBody(body: string): string[] {
-    return body
-      .split(/\r?\n/)
-      .map((line) => line.replace(/^[-*]\s*/, "").trim())
-      .filter((line) => line.length > 0 && !line.startsWith("#"));
+  function renderReleaseBody(body: string): string {
+    // Strip the repeated installer blurb that appears at the top of every release
+    const cleaned = body
+      .replace(/\*?\*?One-click installer\*?\*?[\s\S]*?\| \*\*Linux\*\* \| [^\n]+\n?/g, "")
+      .replace(/^\s*\|[^\n]*\n?/gm, (match) => {
+        // Keep tables that aren't the installer table (already stripped above)
+        return match;
+      })
+      .trim();
+    if (!cleaned) return "<p class='text-neutral-500 italic'>No release notes.</p>";
+    return marked.parse(cleaned, { async: false }) as string;
   }
 
   // Model directory auto-detection
@@ -218,6 +228,7 @@
       performance: false,
       paths: false,
       autocomplete: false,
+      interrogator: false,
       about: false,
     };
     try {
@@ -245,6 +256,7 @@
     { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close quality tags auto" },
     { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
     { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
+    { key: "interrogator", label: "Interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
     { key: "about", label: "About", keywords: "version update check updates about" },
   ];
 
@@ -970,6 +982,70 @@
         </section>
         {/if}
 
+        <!-- Interrogator -->
+        {#if sectionVisible("interrogator")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.interrogator = !collapsed.interrogator)}
+          >
+            <span class="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              Interrogator
+            </span>
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-neutral-500 transition-transform {collapsed.interrogator ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.interrogator}
+          <div class="px-5 pb-5 space-y-4">
+            <p class="text-[10px] text-neutral-500">
+              Controls confidence thresholds for the image interrogator (pixai-tagger). Lower values return more tags, higher values are more selective.
+            </p>
+
+            <div>
+              <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+                General Tag Threshold
+                <span class="text-neutral-300">{config.interrogator_general_threshold.toFixed(2)}</span>
+              </label>
+              <input
+                type="range"
+                bind:value={config.interrogator_general_threshold}
+                onchange={() => { autoSave(); }}
+                min="0.05"
+                max="0.95"
+                step="0.05"
+                class="w-full accent-indigo-500"
+              />
+              <div class="flex justify-between text-[10px] text-neutral-600 mt-0.5">
+                <span>More tags</span>
+                <span>Fewer tags</span>
+              </div>
+            </div>
+
+            <div>
+              <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+                Character Tag Threshold
+                <span class="text-neutral-300">{config.interrogator_character_threshold.toFixed(2)}</span>
+              </label>
+              <input
+                type="range"
+                bind:value={config.interrogator_character_threshold}
+                onchange={() => { autoSave(); }}
+                min="0.05"
+                max="0.95"
+                step="0.05"
+                class="w-full accent-indigo-500"
+              />
+              <div class="flex justify-between text-[10px] text-neutral-600 mt-0.5">
+                <span>More tags</span>
+                <span>Fewer tags</span>
+              </div>
+            </div>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
         <!-- About & Updates -->
         {#if sectionVisible("about")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
@@ -1004,17 +1080,11 @@
                 {:else if releaseNotesError}
                   <p class="text-red-400">Failed to load release notes: {releaseNotesError}</p>
                 {:else if releaseNotes.length > 0}
-                  {#each releaseNotes as release}
-                    <p class="text-neutral-300 font-medium {releaseNotes.indexOf(release) > 0 ? 'mt-3' : ''}">{release.version}</p>
-                    {#if parseReleaseBody(release.body).length > 0}
-                      <ul class="list-disc list-inside space-y-0.5">
-                        {#each parseReleaseBody(release.body) as line}
-                          <li>{line}</li>
-                        {/each}
-                      </ul>
-                    {:else}
-                      <p class="text-neutral-500 italic">No release notes.</p>
-                    {/if}
+                  {#each releaseNotes as release, i}
+                    <p class="text-neutral-300 font-medium {i > 0 ? 'mt-3 pt-3 border-t border-neutral-800' : ''}">{release.version}</p>
+                    <div class="release-body">
+                      {@html renderReleaseBody(release.body)}
+                    </div>
                   {/each}
                 {:else}
                   <p class="text-neutral-500">No release notes available.</p>

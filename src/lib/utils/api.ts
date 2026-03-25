@@ -3,6 +3,7 @@ import type {
   AppConfig,
   GalleryImageEntry,
   GenerationParams,
+  InterrogationResult,
   OutputImage,
   QueueInfo,
   SamplerInfo,
@@ -370,4 +371,20 @@ export async function getConfig(): Promise<AppConfig> {
 
 export async function updateConfig(config: AppConfig): Promise<void> {
   return invoke("update_config", { config });
+}
+
+export async function interrogateImage(imageBase64: string): Promise<InterrogationResult> {
+  return invoke("interrogate_image", { imageBase64 });
+}
+
+export async function interrogateImagePath(path: string): Promise<InterrogationResult> {
+  return invoke("interrogate_image_path", { path });
+}
+
+export async function interrogateGalleryImage(filename: string): Promise<InterrogationResult> {
+  return invoke("interrogate_gallery_image", { filename });
+}
+
+export async function interrogateClipboard(): Promise<InterrogationResult> {
+  return invoke("interrogate_clipboard");
 }
