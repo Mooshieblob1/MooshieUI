@@ -147,6 +147,9 @@ jobs:
           echo "=== latest.json ==="
           cat release-files/latest.json
 
+      - name: Preserve release files before checkout
+        run: cp -r release-files /tmp/release-files
+
       - name: Checkout (for release notes)
         uses: actions/checkout@v4
 
@@ -178,4 +181,4 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "MooshieUI ${TAG}" \
             --notes-file /tmp/release-body.md \
-            release-files/*
+            /tmp/release-files/*
