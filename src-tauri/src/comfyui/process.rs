@@ -4,6 +4,33 @@ use crate::config::ServerMode;
 use crate::error::AppError;
 use crate::state::AppState;
 
+/// Detect whether the system has a Blackwell (compute capability 12.x) NVIDIA GPU.
+/// Returns `true` if any installed GPU has compute capability >= 12.0.
+fn has_blackwell_gpu() -> bool {
+    let output = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            for line in stdout.lines() {
+                let trimmed = line.trim();
+                if let Some((major_str, _)) = trimmed.split_once('.') {
+                    if let Ok(major) = major_str.parse::<u32>() {
+                        if major >= 12 {
+                            log::info!("Detected Blackwell GPU (compute capability {})", trimmed);
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 /// Possible outcomes of starting the ComfyUI process.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -87,6 +114,16 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         "none" => { cmd.arg("--novram"); }
         // "normal" and "auto" use ComfyUI's default behavior
         _ => {}
+    }
+
+    // Auto-apply --bf16-vae for Blackwell GPUs to prevent NaN/black images
+    // from fp16 VAE overflow, unless the user has already set a VAE precision flag.
+    let has_vae_flag = config.extra_args.iter().any(|a| {
+        matches!(a.as_str(), "--bf16-vae" | "--fp16-vae" | "--fp32-vae" | "--cpu-vae")
+    });
+    if !has_vae_flag && has_blackwell_gpu() {
+        cmd.arg("--bf16-vae");
+        log::info!("Auto-applied --bf16-vae for Blackwell GPU");
     }
 
     // Shared model directory support (newline-separated for multiple directories)

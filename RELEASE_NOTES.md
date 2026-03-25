@@ -1,33 +1,17 @@
-## What's New in v0.4.0
+## What's New in v0.4.1
 
-### Image Interrogator
-- **New feature**: Analyze any image to extract tags (character, artist, general, copyright, rating) using the WD EVA02 Large v3 ONNX model
-- Interrogate from the prompt area (drag & drop, file browse, or Ctrl+V paste from clipboard)
-- Interrogate from gallery images and session images via right-click context menu or lightbox button
-- Configurable confidence thresholds for general and character tags in Settings > Interrogator
-- Model auto-downloads on first use with progress indicator
-- One-click "Apply to prompt" to inject detected tags directly into your positive prompt
+### Black Image Fix (NaN Guard)
+- Fixed a critical issue where generated images could come out **entirely black** due to NaN (Not-a-Number) values in the VAE output tensor
+- Root cause: fp16 VAE decode overflow under VRAM pressure (especially with WanVAE and large batches) produces NaN values that `np.clip()` cannot catch
+- Added `np.nan_to_num()` guards in all three image encoding paths:
+  - **MooshieFaceDetailer**: input image frames are now sanitized before face detection
+  - **MooshieSaveImage (8-bit PNG)**: output tensor is checked and clamped before uint8 conversion
+  - **MooshieSaveImage (16-bit PNG)**: `_encode_16bit()` sanitizes before the 65535 multiply
+- When NaN values are detected, a warning is printed to the ComfyUI log identifying the affected batch index
 
-### Context Menus
-- Right-click context menu on gallery images (grid and list view) and session panel images
-- Quick access to: Get Image Tags, Img2Img, Inpaint, Upscale, Save As, Copy, Delete
-
-### Lightbox Improvements
-- Compact icon-only action buttons with tooltip labels
-- Buttons grouped by purpose: Generation | Reuse | Export | Delete
-- New Interrogate and Remix buttons added to the lightbox toolbar
-
-### Release Notes Rendering
-- About page now renders release notes as proper formatted markdown (headings, bold, links, lists, tables, code blocks)
-- Powered by the `marked` library for GitHub Flavored Markdown
-
-### LoRA Gallery
-- LoRA cards now scale based on bottom panel height instead of fixed width
-- Cards maintain a constant 3:4 aspect ratio, becoming smaller or larger as you resize the panel
-
-### Under the Hood
-- Added `ort` (ONNX Runtime) and `csv` crates for inference on the Rust backend
-- New `InterrogatorState` manages model lifecycle and caching
-- New Tauri commands: `interrogate_image`, `interrogate_image_path`, `interrogate_gallery_image`, `interrogate_clipboard`
-- Added `clipboard-manager:allow-read-image` capability for clipboard interrogation
-- `InterrogatorError` variant added to `AppError` enum
+### Automatic BF16 VAE for Blackwell GPUs
+- MooshieUI now **auto-detects NVIDIA Blackwell GPUs** (compute capability ≥ 12.0) at launch and automatically applies `--bf16-vae` to ComfyUI
+- BFloat16 VAE uses the same exponent range as fp32 (preventing overflow/NaN) at half the VRAM cost — the best of both worlds
+- This prevents the fp16 VAE overflow that causes black images in the first place, without the VRAM penalty of `--fp32-vae`
+- Detection uses `nvidia-smi --query-gpu=compute_cap` — silently skipped if nvidia-smi is unavailable (e.g. AMD/Intel GPUs)
+- **User override**: if you've manually set any VAE precision flag (`--bf16-vae`, `--fp16-vae`, `--fp32-vae`, `--cpu-vae`) in Settings > Extra Args, the auto-detection is skipped

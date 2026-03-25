@@ -86,7 +86,11 @@ class MooshieFaceDetailer:
         result = image.clone()
 
         for b in range(B):
-            img_np = (image[b].cpu().numpy() * 255).astype(np.uint8)
+            frame = image[b].cpu().numpy()
+            if np.isnan(frame).any():
+                print(f"[MooshieFaceDetailer] WARNING: NaN values detected in input image batch {b}, replacing with zeros")
+                frame = np.nan_to_num(frame, nan=0.0)
+            img_np = (frame * 255).astype(np.uint8)
 
             detections = yolo(img_np, verbose=False)
             if not detections or len(detections[0].boxes) == 0:
@@ -260,12 +264,18 @@ class MooshieSaveImage:
         server = PromptServer.instance
 
         for i in range(images.shape[0]):
+            frame = images[i].cpu().numpy()
+            if np.isnan(frame).any():
+                print(f"[MooshieSaveImage] WARNING: NaN values in output image {i} — VAE may have failed (VRAM pressure?). Replacing NaN with black.")
+                frame = np.nan_to_num(frame, nan=0.0)
+                images[i] = torch.from_numpy(frame).to(images.device)
+
             if bit_depth == "16bit":
                 fmt_tag = self.FMT_PNG_16
                 png_bytes = self._encode_16bit(images[i])
             else:
                 fmt_tag = self.FMT_PNG_8
-                img_np = (255.0 * images[i].cpu().numpy()).clip(0, 255).astype(np.uint8)
+                img_np = (255.0 * frame).clip(0, 255).astype(np.uint8)
                 img = Image.fromarray(img_np)
                 buf = io.BytesIO()
                 img.save(buf, format="PNG")
@@ -284,7 +294,8 @@ class MooshieSaveImage:
         Uses OpenCV when available (fast, correct colour order).
         Falls back to a pure-Python PNG writer (zlib + struct) otherwise.
         """
-        arr = (65535.0 * image_tensor.cpu().numpy()).clip(0, 65535).astype(np.uint16)
+        arr = np.nan_to_num(image_tensor.cpu().numpy(), nan=0.0)
+        arr = (65535.0 * arr).clip(0, 65535).astype(np.uint16)
 
         try:
             import cv2
