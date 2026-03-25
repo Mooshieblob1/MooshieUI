@@ -1,0 +1,9 @@
+# Phase 0 smoke test — Anima-preview-2 on DGX Spark
+torch
+diffusers
+transformers
+accelerate
+safetensors
+huggingface_hub
+Pillow
+numpy
