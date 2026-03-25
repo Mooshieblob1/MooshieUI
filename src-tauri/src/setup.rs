@@ -613,9 +613,36 @@ async fn amd_pytorch_index_url() -> &'static str {
     "https://download.pytorch.org/whl/rocm6.2"
 }
 
+/// Pick the correct PyTorch CUDA wheel index for NVIDIA GPUs.
+/// Blackwell (compute ≥ 12.0) needs cu130+; older GPUs use cu128.
+fn nvidia_pytorch_index_url() -> &'static str {
+    let output = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"])
+        .output();
+
+    if let Ok(o) = output {
+        if o.status.success() {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            for line in stdout.lines() {
+                if let Some((major_str, _)) = line.trim().split_once('.') {
+                    if let Ok(major) = major_str.parse::<u32>() {
+                        if major >= 12 {
+                            log::info!("Blackwell GPU detected — using cu130 PyTorch index");
+                            return "https://download.pytorch.org/whl/cu130";
+                        }
+                    }
+                }
+            }
+        }
+    }
+    "https://download.pytorch.org/whl/cu128"
+}
+
 async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result<(), String> {
     match gpu {
         "nvidia" => {
+            let index_url = nvidia_pytorch_index_url();
+            emit_log(app, &format!("Using PyTorch index: {}", index_url));
             uv_pip(
                 app,
                 base,
@@ -624,7 +651,7 @@ async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result
                     "torchvision",
                     "torchaudio",
                     "--index-url",
-                    "https://download.pytorch.org/whl/cu128",
+                    index_url,
                 ],
             )
             .await
@@ -1175,7 +1202,7 @@ pub async fn reinstall_pytorch(
     let url = match index_url {
         Some(ref url) => url.as_str(),
         None => match gpu.as_str() {
-            "nvidia" => "https://download.pytorch.org/whl/cu128",
+            "nvidia" => nvidia_pytorch_index_url(),
             "amd" => amd_pytorch_index_url().await,
             "intel" => "https://download.pytorch.org/whl/xpu",
             "mps" => "",

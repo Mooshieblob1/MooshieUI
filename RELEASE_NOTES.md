@@ -1,3 +1,20 @@
+## What's New in v0.4.3
+
+### Automatic CUDA 13.0 PyTorch for Blackwell GPUs
+- The setup wizard and **Reinstall PyTorch** button now auto-detect NVIDIA Blackwell GPUs (compute capability ≥ 12.0) and install PyTorch with the `cu130` CUDA toolkit instead of `cu128`
+- Fixes the "You need pytorch with cu130 or higher to use optimized CUDA operations" warning that disabled the optimized `triton` and `cuda` execution backends
+- Detection uses `nvidia-smi --query-gpu=compute_cap` — silently falls back to `cu128` if nvidia-smi is unavailable
+
+### VRAM Flush After Interrupt
+- Interrupting a generation now also calls ComfyUI's `/free` endpoint to fully unload models and flush the execution cache
+- Prevents corrupted VRAM state from rapid cancellations that could cause subsequent generations to produce **all-black images** — especially on Blackwell GPUs with `cudaMallocAsync`
+
+### All-Black Image Detection
+- MooshieSaveImage now detects when an output image is entirely black (pixel max < 1e-6) and prints a diagnostic warning to the ComfyUI log
+- Helps identify VRAM corruption issues that produce zero-valued tensors (as opposed to NaN-based black images caught in v0.4.1)
+
+---
+
 ## What's New in v0.4.2
 
 ### Import Images from External Directories

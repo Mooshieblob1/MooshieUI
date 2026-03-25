@@ -270,6 +270,13 @@ class MooshieSaveImage:
                 frame = np.nan_to_num(frame, nan=0.0)
                 images[i] = torch.from_numpy(frame).to(images.device)
 
+            # Detect all-black output — common after VRAM corruption from rapid
+            # interrupts on Blackwell GPUs with cudaMallocAsync.
+            if frame.max() < 1e-6:
+                print(f"[MooshieSaveImage] WARNING: Output image {i} is all-black (max pixel={frame.max():.2e}). "
+                      "This usually means VRAM was corrupted by rapid generation interrupts. "
+                      "Try generating again — the models will be reloaded cleanly.")
+
             if bit_depth == "16bit":
                 fmt_tag = self.FMT_PNG_16
                 png_bytes = self._encode_16bit(images[i])

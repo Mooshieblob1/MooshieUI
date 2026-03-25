@@ -133,6 +133,16 @@ impl AppState {
 
     pub async fn interrupt(&self) -> Result<(), AppError> {
         self.api_post("/interrupt", &serde_json::json!({})).await?;
+        // Flush execution cache and free VRAM after interruption.
+        // Rapid interrupts on Blackwell GPUs with cudaMallocAsync can leave
+        // VRAM in an inconsistent state, causing subsequent gens to produce
+        // all-black images from corrupted model weights.
+        let _ = self
+            .api_post(
+                "/free",
+                &serde_json::json!({ "unload_models": true, "free_memory": true }),
+            )
+            .await;
         Ok(())
     }
 
