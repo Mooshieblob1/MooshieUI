@@ -81,19 +81,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: artifacts-${{ matrix.target }}
-          path: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.rpm
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage.tar.gz
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage.tar.gz.sig
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi.zip
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi.zip.sig
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.nsis.zip
-            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.nsis.zip.sig
-          if-no-files-found: error
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/
+          if-no-files-found: warn
 
   release:
     needs: build
@@ -109,14 +98,10 @@ jobs:
       - name: Collect release files
         run: |
           mkdir -p release-files
-          find artifacts -type f \( \
-            -name "*.deb" -o -name "*.rpm" \
-            -o -name "*.AppImage" -o -name "*.AppImage.tar.gz" -o -name "*.AppImage.tar.gz.sig" \
-            -o -name "*.msi" -o -name "*.msi.zip" -o -name "*.msi.zip.sig" \
-            -o -name "*.exe" -o -name "*.nsis.zip" -o -name "*.nsis.zip.sig" \
-          \) -exec cp {} release-files/ \;
+          find artifacts -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage*" -o -name "*.exe" -o -name "*.msi*" -o -name "*.nsis.zip*" \) -exec cp {} release-files/ \;
           echo "=== Release files ==="
-          ls -lh release-files/
+          ls -lh release-files/ || echo "No release files found"
+          [ -f "$(find release-files -type f -print -quit)" ] || { echo "ERROR: No release files collected, aborting"; exit 1; }
 
       - name: Generate updater manifest (latest.json)
         env:
