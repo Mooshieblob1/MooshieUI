@@ -23,6 +23,18 @@ async fn run_interrogation(
         }
     }
 
+    // Ensure ONNX Runtime shared library is downloaded
+    {
+        let interrogator = state.interrogator.read().await;
+        if !interrogator.is_ort_library_present() {
+            drop(interrogator);
+            let interrogator = state.interrogator.read().await;
+            interrogator
+                .ensure_ort_library(app, &state.http_client)
+                .await?;
+        }
+    }
+
     let (general_threshold, character_threshold) = {
         let config = state.config.read().await;
         (
@@ -60,6 +72,18 @@ async fn run_interrogation_from_image(
             let interrogator = state.interrogator.read().await;
             interrogator
                 .ensure_model_downloaded(app, &state.http_client)
+                .await?;
+        }
+    }
+
+    // Ensure ONNX Runtime shared library is downloaded
+    {
+        let interrogator = state.interrogator.read().await;
+        if !interrogator.is_ort_library_present() {
+            drop(interrogator);
+            let interrogator = state.interrogator.read().await;
+            interrogator
+                .ensure_ort_library(app, &state.http_client)
                 .await?;
         }
     }

@@ -39,8 +39,12 @@ tauri-plugin-process = "2"
 png = "0.17"
 flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
-ort = { version = "2.0.0-rc.12" }
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "tracing", "tls-native", "api-24", "load-dynamic"] }
 csv = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "=2.0.2"
+tar = "0.4"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+zip = "2"
