@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { tick } from "svelte";
+
   interface Props {
     value: number;
     min: number;
@@ -15,12 +17,12 @@
   let inputEl = $state<HTMLInputElement | null>(null);
   let editValue = $state("");
 
-  function startEdit() {
+  async function startEdit() {
     editValue = decimals > 0 ? value.toFixed(decimals) : String(value);
     editing = true;
-    queueMicrotask(() => {
-      inputEl?.select();
-    });
+    await tick();
+    inputEl?.focus();
+    inputEl?.select();
   }
 
   function commit() {
@@ -42,12 +44,14 @@
   }
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<span onclick={(e) => e.preventDefault()}>
 {#if editing}
   <input
     bind:this={inputEl}
     type="text"
     inputmode="decimal"
-    class="text-neutral-300 bg-transparent border-none outline-none text-right w-[3.5ch] text-xs p-0 m-0 tabular-nums"
+    class="text-neutral-100 bg-neutral-800 rounded border border-indigo-500/70 outline-none text-right w-[4ch] text-xs px-0.5 py-0 m-0 tabular-nums"
     style="font: inherit; line-height: inherit;"
     bind:value={editValue}
     onblur={commit}
@@ -62,3 +66,4 @@
     {decimals > 0 ? value.toFixed(decimals) : value}{suffix}
   </button>
 {/if}
+</span>

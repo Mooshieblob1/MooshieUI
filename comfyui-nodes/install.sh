@@ -25,22 +25,16 @@ fi
 
 echo "Installing MooshieUI nodes into: $COMFYUI_PATH"
 
-# 1. Copy the tiled diffusion node
-echo "  → Copying nodes_tiled_diffusion.py to comfy_extras/"
-cp "$SCRIPT_DIR/nodes_tiled_diffusion.py" "$COMFYUI_PATH/comfy_extras/nodes_tiled_diffusion.py"
+# 1. Copy the tiled diffusion node into custom_nodes/
+# ComfyUI auto-discovers all .py files in custom_nodes/ and supports
+# the comfy_entrypoint extension API used by this node.
+echo "  → Copying nodes_tiled_diffusion.py to custom_nodes/"
+cp "$SCRIPT_DIR/nodes_tiled_diffusion.py" "$COMFYUI_PATH/custom_nodes/nodes_tiled_diffusion.py"
 
 # 2. Copy blueprint
 echo "  → Copying blueprint to blueprints/"
 mkdir -p "$COMFYUI_PATH/blueprints"
 cp "$SCRIPT_DIR/Image Tiled Upscale (img2img).json" "$COMFYUI_PATH/blueprints/"
-
-# 3. Register the node in nodes.py if not already registered
-if grep -q "nodes_tiled_diffusion.py" "$COMFYUI_PATH/nodes.py"; then
-    echo "  → nodes_tiled_diffusion.py already registered in nodes.py"
-else
-    echo "  → Registering nodes_tiled_diffusion.py in nodes.py"
-    sed -i 's/"nodes_upscale_model.py",/"nodes_upscale_model.py",\n        "nodes_tiled_diffusion.py",/' "$COMFYUI_PATH/nodes.py"
-fi
 
 echo ""
 echo "✅ Installation complete!"

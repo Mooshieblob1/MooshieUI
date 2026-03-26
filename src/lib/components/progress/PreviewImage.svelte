@@ -7,6 +7,7 @@
   let currentTipIndex = $state(0);
   let progressPercent = $state(0);
   let autoPlayInterval: ReturnType<typeof setInterval> | null = null;
+  let suppressOpenUntil = 0;
 
   const TIP_DISPLAY_TIME = 6500; // 6.5 seconds per tip
   const TIP_UPDATE_INTERVAL = 50; // Update progress bar every 50ms
@@ -123,6 +124,8 @@
   }
 
   function openPreviewLightbox() {
+    if (Date.now() < suppressOpenUntil) return;
+
     const url = progress.displayImage;
     if (!url) return;
 
@@ -152,6 +155,19 @@
     }
     void gallery.copyToClipboard(savedImage);
   }
+
+  function hasFilePayload(e: DragEvent): boolean {
+    const dt = e.dataTransfer;
+    if (!dt) return false;
+    if (dt.files && dt.files.length > 0) return true;
+    if (dt.items && Array.from(dt.items).some((item) => item.kind === "file")) return true;
+    return false;
+  }
+
+  function suppressPreviewOpenOnFileDrop(e: DragEvent) {
+    if (!hasFilePayload(e)) return;
+    suppressOpenUntil = Date.now() + 500;
+  }
 </script>
 
 <div class="relative w-full aspect-square bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 flex items-center justify-center overflow-hidden group">
@@ -159,6 +175,9 @@
     <button
       class="w-full h-full cursor-pointer"
       onclick={openPreviewLightbox}
+      ondragenter={suppressPreviewOpenOnFileDrop}
+      ondragover={suppressPreviewOpenOnFileDrop}
+      ondrop={suppressPreviewOpenOnFileDrop}
     >
       <img
         src={progress.displayImage}

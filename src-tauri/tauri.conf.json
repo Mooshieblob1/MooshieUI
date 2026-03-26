@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicerlab/files/main/tauri/tauri.conf.json.schema",
   "productName": "MooshieUI",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "identifier": "com.mooshieui.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -18,7 +18,7 @@
         "minWidth": 900,
         "minHeight": 600,
         "resizable": true,
-        "dragDropEnabled": false
+        "dragDropEnabled": true
       }
     ],
     "security": {

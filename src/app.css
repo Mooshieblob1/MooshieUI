@@ -88,6 +88,14 @@ select, option {
 ::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #525252; }
 
+/* Prevent WebKitGTK from intercepting range-slider drags as OS drag-drop gestures. */
+input[type="range"] {
+  -webkit-user-drag: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-user-drag: none;
+}
+
 /* ─── Scroll performance: contain repaints to scrollable regions ─── */
 .overflow-y-auto, .overflow-auto {
   contain: content;

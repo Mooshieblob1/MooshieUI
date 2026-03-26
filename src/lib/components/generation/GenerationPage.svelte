@@ -29,9 +29,13 @@
   import InterrogateModal from "./InterrogateModal.svelte";
   import { interrogateGalleryImage, interrogateImage } from "../../utils/api.js";
   import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
     isDroppableSection,
     handleMetadataImport,
+    handleMetadataImportBytes,
+    handleMetadataImportPath,
     getImageFile,
     getClipboardImageFile,
     type DroppableSectionId,
@@ -907,8 +911,16 @@
     }
   });
 
+  function hasFilePayload(dt: DataTransfer | null): boolean {
+    if (!dt) return false;
+    if (dt.files && dt.files.length > 0) return true;
+    if (dt.items && Array.from(dt.items).some((item) => item.kind === "file")) return true;
+    const types = Array.from(dt.types || []);
+    return types.includes("Files") || types.includes("application/x-moz-file");
+  }
+
   function onMetadataDragEnter(e: DragEvent, targetId: string) {
-    if (!e.dataTransfer?.types.includes("Files")) return;
+    if (!hasFilePayload(e.dataTransfer)) return;
     if (targetId !== "preview" && !isDroppableSection(targetId)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -920,7 +932,7 @@
   }
 
   function onMetadataDragOver(e: DragEvent, targetId: string) {
-    if (!e.dataTransfer?.types.includes("Files")) return;
+    if (!hasFilePayload(e.dataTransfer)) return;
     if (targetId !== "preview" && !isDroppableSection(targetId)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -951,6 +963,135 @@
   }
 
   let pasteHandler: ((e: ClipboardEvent) => void) | null = null;
+  let unlistenDragDrop: (() => void) | null = null;
+
+  /** Find the metadata drop section under the given CSS-pixel coordinates. */
+  function findDropSection(cssX: number, cssY: number): string | null {
+    const el = document.elementFromPoint(cssX, cssY);
+    if (!el) return null;
+    const sectionEl = (el as HTMLElement).closest?.("[data-drop-section]") as HTMLElement | null;
+    if (!sectionEl) return null;
+    const id = sectionEl.dataset.dropSection!;
+    if (id === "preview" || isDroppableSection(id)) return id;
+    return null;
+  }
+
+  /** Check whether a file path looks like an image. */
+  function isImagePath(p: string): boolean {
+    return /\.(png|jpe?g|webp|bmp|gif)$/i.test(p);
+  }
+
+  async function setupTauriDragDrop() {
+    const webview = getCurrentWebview();
+    const appWindow = getCurrentWindow();
+    const scaleFactor = await appWindow.scaleFactor();
+
+    unlistenDragDrop = await webview.onDragDropEvent(async (event) => {
+      const payload = event.payload;
+
+      if (payload.type === "enter" || payload.type === "over") {
+        // Convert physical pixels to CSS pixels for elementFromPoint
+        const cssX = payload.position.x / scaleFactor;
+        const cssY = payload.position.y / scaleFactor;
+        const section = findDropSection(cssX, cssY);
+
+        if (section && section !== metadataDropTarget) {
+          metadataDropTarget = section;
+        } else if (!section && metadataDropTarget) {
+          metadataDropTarget = null;
+        }
+      } else if (payload.type === "drop") {
+        const cssX = payload.position.x / scaleFactor;
+        const cssY = payload.position.y / scaleFactor;
+        const section = findDropSection(cssX, cssY);
+
+        metadataDropTarget = null;
+        metadataDropCounters = {};
+
+        const imgPath = payload.paths.find(isImagePath);
+        if (!imgPath) return;
+
+        if (section) {
+          // Metadata import — send just the path, Rust reads from disk
+          try {
+            const importTarget = section === "preview" ? "all" : section as DroppableSectionId;
+            await handleMetadataImportPath(imgPath, importTarget);
+          } catch (err) {
+            console.error("Tauri drag-drop metadata import failed:", err);
+            gallery.showToast("Failed to read dropped image", "error");
+          }
+          return;
+        }
+
+        // Check for image input / mask drop zones
+        const el = document.elementFromPoint(cssX, cssY);
+        const zoneEl = (el as HTMLElement)?.closest?.("[data-drop-zone]") as HTMLElement | null;
+        if (zoneEl) {
+          const zone = zoneEl.dataset.dropZone;
+          try {
+            const filename = imgPath.split("/").pop() || "dropped_image.png";
+            if (zone === "img-input") {
+              const fileBytes = await readFile(imgPath);
+              const bytes = Array.from(fileBytes);
+              await handleImageDropBytes(bytes, filename);
+            } else if (zone === "mask-input") {
+              const fileBytes = await readFile(imgPath);
+              const bytes = Array.from(fileBytes);
+              await handleMaskDropBytes(bytes, filename);
+            } else {
+              // Dispatch custom event for child components with file path
+              zoneEl.dispatchEvent(new CustomEvent("tauri-file-drop", {
+                bubbles: false,
+                detail: { path: imgPath, filename },
+              }));
+            }
+          } catch (err) {
+            console.error("Tauri drag-drop image upload failed:", err);
+          }
+        }
+      } else if (payload.type === "leave") {
+        metadataDropTarget = null;
+        metadataDropCounters = {};
+      }
+    });
+  }
+
+  /** Handle image input upload from raw bytes (Tauri drag-drop). */
+  async function handleImageDropBytes(bytes: number[], filename: string) {
+    uploading = true;
+    dragOver = false;
+    try {
+      const normalized = await normalizeImageBytes(bytes, filename);
+      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+      imagePreviewUrl = normalized.previewUrl;
+      applyImageGeometry(normalized.width, normalized.height);
+      canvas.setReferenceImage(imagePreviewUrl);
+      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      generation.inputImage = response.name;
+    } catch (e) {
+      console.error("Failed to handle dropped image:", e);
+    } finally {
+      uploading = false;
+    }
+  }
+
+  /** Handle mask upload from raw bytes (Tauri drag-drop). */
+  async function handleMaskDropBytes(bytes: number[], filename: string) {
+    uploading = true;
+    maskDragOver = false;
+    try {
+      const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+      if (maskPreviewUrl) URL.revokeObjectURL(maskPreviewUrl);
+      maskPreviewUrl = URL.createObjectURL(blob);
+      canvas.setPersistedMaskPreview(maskPreviewUrl);
+      const response = await uploadImageBytes(bytes, filename);
+      generation.maskImage = response.name;
+    } catch (e) {
+      console.error("Failed to handle dropped mask:", e);
+    } finally {
+      uploading = false;
+    }
+  }
 
   onMount(() => {
     pasteHandler = async (e: ClipboardEvent) => {
@@ -965,10 +1106,12 @@
       await handleMetadataImport(file, targetSection);
     };
     window.addEventListener("paste", pasteHandler);
+    setupTauriDragDrop();
   });
 
   onDestroy(() => {
     if (pasteHandler) window.removeEventListener("paste", pasteHandler);
+    if (unlistenDragDrop) unlistenDragDrop();
   });
 </script>
 
@@ -996,7 +1139,7 @@
   {/snippet}
 
   {#snippet dimensionsSection()}
-    <div bind:this={sectionRefs['dimensions']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'dimensions' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'dimensions' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['dimensions']} data-drop-section="dimensions" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'dimensions' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'dimensions' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "dimensions")}
       ondragover={(e) => onMetadataDragOver(e, "dimensions")}
       ondragleave={(e) => onMetadataDragLeave(e, "dimensions")}
@@ -1029,7 +1172,7 @@
   {/snippet}
 
   {#snippet promptsSection()}
-    <div bind:this={sectionRefs['prompts']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'prompts' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'prompts' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['prompts']} data-drop-section="prompts" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'prompts' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'prompts' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "prompts")}
       ondragover={(e) => onMetadataDragOver(e, "prompts")}
       ondragleave={(e) => onMetadataDragLeave(e, "prompts")}
@@ -1109,6 +1252,7 @@
             {:else}
               <button
                 type="button"
+                data-drop-zone="img-input"
                 class="w-full bg-neutral-800 border border-dashed rounded-lg p-4 text-sm transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer {dragOver
                   ? 'border-indigo-400 bg-indigo-500/10 text-indigo-300'
                   : 'border-neutral-600 text-neutral-400 hover:border-indigo-500 hover:text-indigo-400'}"
@@ -1197,6 +1341,7 @@
               {:else}
                 <button
                   type="button"
+                  data-drop-zone="mask-input"
                   class="w-full bg-neutral-800 border border-dashed rounded-lg p-4 text-sm transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer {maskDragOver
                     ? 'border-indigo-400 bg-indigo-500/10 text-indigo-300'
                     : 'border-neutral-600 text-neutral-400 hover:border-indigo-500 hover:text-indigo-400'}"
@@ -1337,7 +1482,7 @@
   {/snippet}
 
   {#snippet modelSection()}
-    <div bind:this={sectionRefs['model']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'model' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'model' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['model']} data-drop-section="model" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'model' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'model' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "model")}
       ondragover={(e) => onMetadataDragOver(e, "model")}
       ondragleave={(e) => onMetadataDragLeave(e, "model")}
@@ -1370,7 +1515,7 @@
   {/snippet}
 
   {#snippet samplerSection()}
-    <div bind:this={sectionRefs['sampler']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'sampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'sampler' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['sampler']} data-drop-section="sampler" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'sampler' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'sampler' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "sampler")}
       ondragover={(e) => onMetadataDragOver(e, "sampler")}
       ondragleave={(e) => onMetadataDragLeave(e, "sampler")}
@@ -1424,7 +1569,7 @@
   {/snippet}
 
   {#snippet facefixSection()}
-    <div bind:this={sectionRefs['facefix']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'facefix' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['facefix']} data-drop-section="facefix" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'facefix' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "facefix")}
       ondragover={(e) => onMetadataDragOver(e, "facefix")}
       ondragleave={(e) => onMetadataDragLeave(e, "facefix")}
@@ -1457,7 +1602,7 @@
   {/snippet}
 
   {#snippet upscaleHistorySection()}
-    <div bind:this={sectionRefs['upscaleHistory']} class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'upscaleHistory' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
+    <div bind:this={sectionRefs['upscaleHistory']} data-drop-section="upscaleHistory" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'upscaleHistory' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'upscaleHistory' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "upscaleHistory")}
       ondragover={(e) => onMetadataDragOver(e, "upscaleHistory")}
       ondragleave={(e) => onMetadataDragLeave(e, "upscaleHistory")}
@@ -1614,6 +1759,7 @@
       <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
         <!-- Preview area -->
         <div
+          data-drop-section="preview"
           class="relative flex-1 min-h-0 p-6 flex flex-col gap-4 overflow-y-auto {metadataDropTarget === 'preview' ? 'ring-2 ring-indigo-500/70 ring-inset bg-indigo-500/5' : ''}"
           use:smoothScroll
           ondragenter={(e) => onMetadataDragEnter(e, "preview")}

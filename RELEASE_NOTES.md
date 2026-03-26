@@ -1,3 +1,31 @@
+## What's New in v0.4.4
+
+### Native Drag-and-Drop for Image Import
+- Dragging images from your file manager onto MooshieUI now works reliably via Tauri's native OS drag-drop API — replaces the flaky HTML5 drag-drop that WebKitGTK silently blocked
+- Drop an image onto any section (Prompts, Sampler, Dimensions, Model) to import its embedded metadata into that section, or onto the preview area to import everything
+- Drop onto the ControlNet zone to set a control image, or onto the Interrogate zone to auto-caption
+- Each drop zone highlights with a dashed border and label so you can see exactly where you're dropping
+
+### Path-Based IPC Optimization
+- Native file drops now send just the file path (~50 bytes) to Rust instead of serializing the entire image as a JSON number array over IPC
+- Metadata extraction, ControlNet uploads, and interrogation all use path-based Tauri commands — eliminates redundant multi-megabyte IPC round-trips
+- New `read_image_metadata_path` Rust command reads and parses metadata directly from an OS file path
+
+### Tiled Diffusion Node Fix
+- Fixed "Node 'ApplyTiledDiffusion' not found" error by deploying the tiled diffusion custom node to ComfyUI's `custom_nodes/` directory instead of the wrong location
+- Updated both the setup installer and the node deployment script
+
+### Editable Number Inputs Fix
+- Fixed Steps, CFG, and Batch Size value labels not being editable — clicking the number now properly opens a text input for direct keyboard entry
+- Root cause: the `EditableValue` component was inside a `<label>` that stole focus from the text input before it could receive keystrokes
+- Also improved the edit input styling with a visible background and border so it's clearly in edit mode
+
+### Range Slider Fix on Linux
+- Fixed range sliders (Steps, CFG) being unresponsive on Linux — WebKitGTK was intercepting slider thumb drags as OS drag-drop gestures after `dragDropEnabled` was turned on
+- Added `-webkit-user-drag: none` to all range inputs and their thumb pseudo-elements
+
+---
+
 ## What's New in v0.4.3
 
 ### Automatic CUDA 13.0 PyTorch for Blackwell GPUs

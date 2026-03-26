@@ -271,7 +271,15 @@ pub async fn read_image_metadata(
 pub async fn read_image_metadata_bytes(
     image_bytes: Vec<u8>,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
-    crate::metadata::read_png_metadata(&image_bytes).map_err(|e| AppError::Other(e))
+    crate::metadata::read_png_metadata(&image_bytes).map_err(AppError::Other)
+}
+
+#[tauri::command]
+pub async fn read_image_metadata_path(
+    path: String,
+) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    let bytes = std::fs::read(&path)?;
+    crate::metadata::read_png_metadata(&bytes).map_err(AppError::Other)
 }
 
 #[tauri::command]

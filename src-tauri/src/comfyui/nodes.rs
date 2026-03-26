@@ -4,23 +4,24 @@
 use std::path::Path;
 
 const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
+const TILED_DIFFUSION_PY: &str = include_str!("../../../comfyui-nodes/nodes_tiled_diffusion.py");
 
-/// Ensure the mooshie-nodes custom node pack exists in ComfyUI's custom_nodes directory.
+/// Ensure all bundled MooshieUI custom nodes exist in ComfyUI's custom_nodes directory.
 /// Always overwrites to keep in sync with the app version.
 pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
-    let target_dir = Path::new(comfyui_path)
-        .join("custom_nodes")
-        .join("mooshie-nodes");
+    let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
 
-    std::fs::create_dir_all(&target_dir).map_err(|e| {
+    // ── mooshie-nodes package (face detailer, etc.) ──────────────────────────
+    let mooshie_dir = custom_nodes.join("mooshie-nodes");
+    std::fs::create_dir_all(&mooshie_dir).map_err(|e| {
         format!(
             "Failed to create mooshie-nodes directory at '{}': {}",
-            target_dir.display(),
+            mooshie_dir.display(),
             e
         )
     })?;
 
-    let init_path = target_dir.join("__init__.py");
+    let init_path = mooshie_dir.join("__init__.py");
     std::fs::write(&init_path, MOOSHIE_NODES_INIT).map_err(|e| {
         format!(
             "Failed to write mooshie-nodes/__init__.py at '{}': {}",
@@ -29,6 +30,20 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         )
     })?;
 
-    log::info!("Deployed mooshie-nodes to {}", target_dir.display());
+    // ── Tiled Diffusion node (required for upscale mode) ─────────────────────
+    // Deployed as a top-level file so ComfyUI's comfy_entrypoint discovery works.
+    let tiled_path = custom_nodes.join("nodes_tiled_diffusion.py");
+    std::fs::write(&tiled_path, TILED_DIFFUSION_PY).map_err(|e| {
+        format!(
+            "Failed to write nodes_tiled_diffusion.py at '{}': {}",
+            tiled_path.display(),
+            e
+        )
+    })?;
+
+    log::info!(
+        "Deployed mooshie custom nodes to {}",
+        custom_nodes.display()
+    );
     Ok(())
 }

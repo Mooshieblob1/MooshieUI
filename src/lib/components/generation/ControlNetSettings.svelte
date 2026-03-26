@@ -4,6 +4,7 @@
   import { connection } from "../../stores/connection.svelte.js";
   import {
     downloadModel,
+    uploadImage,
     uploadImageBytes,
     checkNodeAvailable,
     isCustomNodeInstalled,
@@ -17,6 +18,7 @@
     getPresetModel,
   } from "../../config/controlnet-presets.js";
   import { listen } from "@tauri-apps/api/event";
+  import { readFile } from "@tauri-apps/plugin-fs";
   import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
 
@@ -31,6 +33,14 @@
   let dlTotal = $state(0);
   let uploadingImage = $state(false);
   let imagePreviewUrl = $state<string | null>(null);
+  let controlnetDropZone = $state<HTMLElement | null>(null);
+
+  $effect(() => {
+    const el = controlnetDropZone;
+    if (!el) return;
+    el.addEventListener("tauri-file-drop", handleTauriFileDrop);
+    return () => el.removeEventListener("tauri-file-drop", handleTauriFileDrop);
+  });
 
   const dlPercent = $derived(dlTotal > 0 ? Math.round((dlBytes / dlTotal) * 100) : 0);
 
@@ -185,6 +195,23 @@
       setPreview(file);
     } catch (e) {
       console.error("Failed to upload control image:", e);
+    } finally {
+      uploadingImage = false;
+    }
+  }
+
+  /** Handle Tauri native drag-drop via custom event dispatched from parent. */
+  async function handleTauriFileDrop(e: Event) {
+    const { path, filename } = (e as CustomEvent).detail as { path: string; filename: string };
+    uploadingImage = true;
+    try {
+      const result = await uploadImage(path);
+      generation.controlnetImage = result.name;
+      const bytes = await readFile(path);
+      const blob = new Blob([bytes], { type: "image/png" });
+      setPreview(new File([blob], filename, { type: "image/png" }));
+    } catch (e) {
+      console.error("Failed to upload control image from Tauri drop:", e);
     } finally {
       uploadingImage = false;
     }
@@ -522,6 +549,8 @@
       {:else}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
+          bind:this={controlnetDropZone}
+          data-drop-zone="controlnet-image"
           class="border-2 border-dashed border-neutral-700 rounded-lg p-4 text-center hover:border-neutral-600 transition-colors"
           ondragover={(e) => e.preventDefault()}
           ondrop={handleImageDrop}

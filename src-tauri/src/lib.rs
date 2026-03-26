@@ -151,6 +151,7 @@ pub fn run() {
             commands::api::get_lora_civitai_info,
             commands::api::read_image_metadata,
             commands::api::read_image_metadata_bytes,
+            commands::api::read_image_metadata_path,
             commands::api::fetch_release_notes,
             commands::api::import_image_directory,
             commands::api::export_logs,

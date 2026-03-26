@@ -177,6 +177,19 @@
 
   let dropZoneEl: HTMLDivElement | undefined = $state();
 
+  /** Handle Tauri native drag-drop via custom event dispatched from parent. */
+  async function handleTauriFileDrop(e: Event) {
+    const { path } = (e as CustomEvent).detail as { path: string; filename: string };
+    await interrogatePath(path);
+  }
+
+  $effect(() => {
+    const el = dropZoneEl;
+    if (!el) return;
+    el.addEventListener("tauri-file-drop", handleTauriFileDrop);
+    return () => el.removeEventListener("tauri-file-drop", handleTauriFileDrop);
+  });
+
   // Listen for Ctrl+V when interrogate section is open — uses native clipboard (bypasses WebView restrictions)
   $effect(() => {
     if (!interrogateOpen) return;
@@ -252,6 +265,8 @@
     {#if interrogateOpen}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
+        bind:this={dropZoneEl}
+        data-drop-zone="interrogate-image"
         class="mx-3 mb-3 border-2 border-dashed rounded-lg p-4 text-center transition-colors {isDragOver ? 'border-indigo-500 bg-indigo-500/10' : 'border-neutral-700 hover:border-neutral-600'}"
         ondragover={(e) => { e.preventDefault(); isDragOver = true; }}
         ondragleave={() => { isDragOver = false; }}

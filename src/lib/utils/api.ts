@@ -252,6 +252,12 @@ export async function readImageMetadataBytes(
   return invoke("read_image_metadata_bytes", { imageBytes });
 }
 
+export async function readImageMetadataPath(
+  path: string
+): Promise<Record<string, string> | null> {
+  return invoke("read_image_metadata_path", { path });
+}
+
 export interface ReleaseNote {
   version: string;
   body: string;

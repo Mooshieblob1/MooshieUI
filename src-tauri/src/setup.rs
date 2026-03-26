@@ -726,16 +726,18 @@ async fn step_install_deps(app: &AppHandle, base: &Path) -> Result<(), String> {
 
 fn step_install_custom_nodes(base: &Path) -> Result<(), String> {
     let comfyui = base.join("comfyui");
-    let extras = comfyui.join("comfy_extras");
+    // Install into custom_nodes/ — ComfyUI auto-discovers all .py files here
+    // and supports the comfy_entrypoint extension API used by our node.
+    let custom_nodes = comfyui.join("custom_nodes");
     let blueprints = comfyui.join("blueprints");
-    std::fs::create_dir_all(&extras).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&custom_nodes).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&blueprints).map_err(|e| e.to_string())?;
 
     // Embedded at compile time from comfyui-nodes/ directory
     let node_py = include_str!("../../comfyui-nodes/nodes_tiled_diffusion.py");
     let blueprint = include_str!("../../comfyui-nodes/Image Tiled Upscale (img2img).json");
 
-    std::fs::write(extras.join("nodes_tiled_diffusion.py"), node_py)
+    std::fs::write(custom_nodes.join("nodes_tiled_diffusion.py"), node_py)
         .map_err(|e| format!("Failed to write node: {}", e))?;
     std::fs::write(
         blueprints.join("Image Tiled Upscale (img2img).json"),
@@ -743,18 +745,6 @@ fn step_install_custom_nodes(base: &Path) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed to write blueprint: {}", e))?;
 
-    // Register in nodes.py
-    let nodes_py = comfyui.join("nodes.py");
-    let content =
-        std::fs::read_to_string(&nodes_py).map_err(|e| format!("Failed to read nodes.py: {}", e))?;
-    if !content.contains("nodes_tiled_diffusion.py") {
-        let patched = content.replace(
-            "\"nodes_upscale_model.py\",",
-            "\"nodes_upscale_model.py\",\n        \"nodes_tiled_diffusion.py\",",
-        );
-        std::fs::write(&nodes_py, patched)
-            .map_err(|e| format!("Failed to patch nodes.py: {}", e))?;
-    }
     Ok(())
 }
 

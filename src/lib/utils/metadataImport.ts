@@ -1,5 +1,5 @@
 import { generation } from "../stores/generation.svelte.js";
-import { readImageMetadataBytes } from "./api.js";
+import { readImageMetadataBytes, readImageMetadataPath } from "./api.js";
 import { gallery } from "../stores/gallery.svelte.js";
 
 /** Section IDs that accept metadata drops */
@@ -204,10 +204,21 @@ async function fileToPngBytes(file: File): Promise<number[]> {
   return Array.from(new Uint8Array(buffer));
 }
 
+function isImageFile(file: File): boolean {
+  if (file.type && file.type.startsWith("image/")) return true;
+  return /\.(png|jpe?g|webp|bmp|gif)$/i.test(file.name);
+}
+
 /** Extract image file from a DragEvent's dataTransfer. */
 function getImageFile(dt: DataTransfer): File | null {
   for (const file of Array.from(dt.files)) {
-    if (file.type.startsWith("image/")) return file;
+    if (isImageFile(file)) return file;
+  }
+
+  for (const item of Array.from(dt.items || [])) {
+    if (item.kind !== "file") continue;
+    const file = item.getAsFile();
+    if (file && isImageFile(file)) return file;
   }
   return null;
 }
@@ -233,10 +244,67 @@ export async function handleMetadataImport(
   file: File,
   target: DroppableSectionId | "all"
 ): Promise<void> {
-  gallery.showToast("Reading image metadata...", "info");
   try {
     const bytes = await fileToPngBytes(file);
+    await handleMetadataImportBytes(bytes, target);
+  } catch (err) {
+    console.error("Metadata import failed:", err);
+    gallery.showToast("Failed to read image metadata", "error");
+  }
+}
+
+/**
+ * Handle a metadata import from raw image bytes (e.g. from Tauri file read).
+ * @param bytes The image file bytes as number[]
+ * @param target "all" for preview area, or a DroppableSectionId
+ */
+export async function handleMetadataImportBytes(
+  bytes: number[],
+  target: DroppableSectionId | "all"
+): Promise<void> {
+  gallery.showToast("Reading image metadata...", "info");
+  try {
     const meta = await readImageMetadataBytes(bytes);
+
+    if (!meta || Object.keys(meta).length === 0) {
+      gallery.showToast("No metadata found in image", "info");
+      return;
+    }
+
+    if (target === "all") {
+      const applied = applyAllMetadata(meta);
+      if (applied.length > 0) {
+        gallery.showToast(`Applied ${applied.join(", ")} from image metadata`, "success");
+        generation.saveSettings();
+      } else {
+        gallery.showToast("No applicable parameters found in image metadata", "info");
+      }
+    } else {
+      const applied = applyMetadataToSection(meta, target);
+      if (applied) {
+        gallery.showToast(`Applied ${sectionLabel(target)} from image metadata`, "success");
+        generation.saveSettings();
+      } else {
+        gallery.showToast(`No ${sectionLabel(target)} found in image metadata`, "info");
+      }
+    }
+  } catch (err) {
+    console.error("Metadata import failed:", err);
+    gallery.showToast("Failed to read image metadata", "error");
+  }
+}
+
+/**
+ * Handle a metadata import from an OS file path (native drops).
+ * Sends only the path string over IPC — Rust reads the file directly from disk.
+ */
+export async function handleMetadataImportPath(
+  filePath: string,
+  target: DroppableSectionId | "all"
+): Promise<void> {
+  gallery.showToast("Reading image metadata...", "info");
+  try {
+    const meta = await readImageMetadataPath(filePath);
 
     if (!meta || Object.keys(meta).length === 0) {
       gallery.showToast("No metadata found in image", "info");
