@@ -1,16 +1,13 @@
 use base64::Engine;
 use futures_util::StreamExt;
-use tauri::{AppHandle, Emitter};
 use std::time::Instant;
+use tauri::{AppHandle, Emitter};
 use tokio_tungstenite::connect_async;
 
 use crate::error::AppError;
 use crate::state::AppState;
 
-pub async fn connect_websocket(
-    app_handle: AppHandle,
-    state: &AppState,
-) -> Result<(), AppError> {
+pub async fn connect_websocket(app_handle: AppHandle, state: &AppState) -> Result<(), AppError> {
     // Disconnect existing
     let mut handle = state.ws_handle.lock().await;
     if let Some(h) = handle.take() {
@@ -31,7 +28,10 @@ pub async fn connect_websocket(
             Ok(s) => s,
             Err(e) => {
                 log::error!("WebSocket connection failed: {}", e);
-                let _ = app.emit("comfyui:connection", serde_json::json!({"connected": false}));
+                let _ = app.emit(
+                    "comfyui:connection",
+                    serde_json::json!({"connected": false}),
+                );
                 return;
             }
         };
@@ -74,8 +74,7 @@ pub async fn connect_websocket(
                     if data.len() < 4 {
                         continue;
                     }
-                    let event_type =
-                        u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                    let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
 
                     match event_type {
                         1 | 2 => {
@@ -89,8 +88,7 @@ pub async fn connect_websocket(
                                 u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
                             let format = if format_type == 2 { "png" } else { "jpeg" };
                             let image_data = &data[8..];
-                            let b64 = base64::engine::general_purpose::STANDARD
-                                .encode(image_data);
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(image_data);
                             let _ = app.emit(
                                 "comfyui:preview",
                                 serde_json::json!({ "image": b64, "format": format }),
@@ -101,14 +99,13 @@ pub async fn connect_websocket(
                             if data.len() < 8 {
                                 continue;
                             }
-                            let meta_len = u32::from_be_bytes([
-                                data[4], data[5], data[6], data[7],
-                            ]) as usize;
+                            let meta_len =
+                                u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
                             let image_start = 8 + meta_len;
                             if image_start < data.len() {
                                 let image_data = &data[image_start..];
-                                let b64 = base64::engine::general_purpose::STANDARD
-                                    .encode(image_data);
+                                let b64 =
+                                    base64::engine::general_purpose::STANDARD.encode(image_data);
                                 let _ = app.emit(
                                     "comfyui:preview",
                                     serde_json::json!({ "image": b64, "format": "jpeg" }),
@@ -122,14 +119,12 @@ pub async fn connect_websocket(
                             if data.len() < 8 {
                                 continue;
                             }
-                            let format_tag = u32::from_be_bytes([
-                                data[4], data[5], data[6], data[7],
-                            ]);
+                            let format_tag =
+                                u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
                             let started = Instant::now();
                             let bit_depth = if format_tag == 2 { 16 } else { 8 };
                             let image_data = &data[8..];
-                            let b64 = base64::engine::general_purpose::STANDARD
-                                .encode(image_data);
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(image_data);
                             let encode_ms = started.elapsed().as_millis() as u64;
                             let mut payload = serde_json::json!({
                                 "image": b64,
@@ -150,23 +145,24 @@ pub async fn connect_websocket(
                                 );
                             }
 
-                            let _ = app.emit(
-                                "comfyui:output_image",
-                                payload,
-                            );
+                            let _ = app.emit("comfyui:output_image", payload);
                         }
                         _ => {}
                     }
                 }
                 Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
-                    let _ = app
-                        .emit("comfyui:connection", serde_json::json!({"connected": false}));
+                    let _ = app.emit(
+                        "comfyui:connection",
+                        serde_json::json!({"connected": false}),
+                    );
                     break;
                 }
                 Err(e) => {
                     log::error!("WebSocket error: {}", e);
-                    let _ = app
-                        .emit("comfyui:connection", serde_json::json!({"connected": false}));
+                    let _ = app.emit(
+                        "comfyui:connection",
+                        serde_json::json!({"connected": false}),
+                    );
                     break;
                 }
                 _ => {}

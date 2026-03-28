@@ -43,7 +43,9 @@ pub fn embed_png_metadata(
     let json_text = format_swarmui_json(params);
 
     let decoder = png::Decoder::new(Cursor::new(image_bytes));
-    let mut reader = decoder.read_info().map_err(|e| format!("PNG decode error: {}", e))?;
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("PNG decode error: {}", e))?;
     let info = reader.info().clone();
 
     let mut buf = vec![0u8; reader.output_buffer_size()];
@@ -54,20 +56,20 @@ pub fn embed_png_metadata(
 
     // If stealth alpha is requested, embed bits into pixel data
     let is_16bit = info.bit_depth == png::BitDepth::Sixteen;
-    let (pixel_buf, color_type) = if mode == MetadataMode::StealthAlpha || mode == MetadataMode::Both
-    {
-        if is_16bit {
-            let (mut rgba16, w, h) = to_rgba16(&buf, info.color_type, info.width, info.height)?;
-            encode_stealth_alpha(&mut rgba16, w, h, 8, &json_text)?; // 8 bytes/pixel, alpha LSB at +7
-            (rgba16, png::ColorType::Rgba)
+    let (pixel_buf, color_type) =
+        if mode == MetadataMode::StealthAlpha || mode == MetadataMode::Both {
+            if is_16bit {
+                let (mut rgba16, w, h) = to_rgba16(&buf, info.color_type, info.width, info.height)?;
+                encode_stealth_alpha(&mut rgba16, w, h, 8, &json_text)?; // 8 bytes/pixel, alpha LSB at +7
+                (rgba16, png::ColorType::Rgba)
+            } else {
+                let (mut rgba, w, h) = to_rgba8(&buf, info.color_type, info.width, info.height)?;
+                encode_stealth_alpha(&mut rgba, w, h, 4, &json_text)?; // 4 bytes/pixel, alpha LSB at +3
+                (rgba, png::ColorType::Rgba)
+            }
         } else {
-            let (mut rgba, w, h) = to_rgba8(&buf, info.color_type, info.width, info.height)?;
-            encode_stealth_alpha(&mut rgba, w, h, 4, &json_text)?; // 4 bytes/pixel, alpha LSB at +3
-            (rgba, png::ColorType::Rgba)
-        }
-    } else {
-        (buf, info.color_type)
-    };
+            (buf, info.color_type)
+        };
 
     // Re-encode PNG
     let mut output = Vec::new();
@@ -106,7 +108,9 @@ pub fn read_png_metadata(image_bytes: &[u8]) -> Result<Option<HashMap<String, St
 
     // Fall back to text chunks
     let decoder = png::Decoder::new(Cursor::new(image_bytes));
-    let reader = decoder.read_info().map_err(|e| format!("PNG decode error: {}", e))?;
+    let reader = decoder
+        .read_info()
+        .map_err(|e| format!("PNG decode error: {}", e))?;
     let info = reader.info();
 
     for chunk in &info.uncompressed_latin1_text {
@@ -209,7 +213,10 @@ fn to_rgba16(
             }
             Ok((rgba, width, height))
         }
-        _ => Err(format!("Unsupported color type for 16-bit: {:?}", color_type)),
+        _ => Err(format!(
+            "Unsupported color type for 16-bit: {:?}",
+            color_type
+        )),
     }
 }
 
@@ -313,7 +320,9 @@ fn encode_stealth_alpha(
 /// Uses column-major pixel traversal to match the stealth pnginfo format.
 fn read_stealth_alpha(image_bytes: &[u8]) -> Result<Option<HashMap<String, String>>, String> {
     let decoder = png::Decoder::new(Cursor::new(image_bytes));
-    let mut reader = decoder.read_info().map_err(|e| format!("PNG decode error: {}", e))?;
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("PNG decode error: {}", e))?;
     let info = reader.info().clone();
 
     // Only RGBA images can have stealth alpha
@@ -321,7 +330,11 @@ fn read_stealth_alpha(image_bytes: &[u8]) -> Result<Option<HashMap<String, Strin
         return Ok(None);
     }
 
-    let bpp: usize = if info.bit_depth == png::BitDepth::Sixteen { 8 } else { 4 };
+    let bpp: usize = if info.bit_depth == png::BitDepth::Sixteen {
+        8
+    } else {
+        4
+    };
 
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let output_info = reader
@@ -404,8 +417,7 @@ fn read_stealth_alpha(image_bytes: &[u8]) -> Result<Option<HashMap<String, Strin
 // ---------------------------------------------------------------------------
 
 fn gzip_compress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    let mut encoder =
-        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
     encoder.write_all(data)?;
     encoder.finish()
 }
@@ -459,12 +471,18 @@ fn format_swarmui_json(params: &HashMap<String, String>) -> String {
 
     if let Some(v) = params.get("upscale_model") {
         if !v.is_empty() {
-            image_params.insert("upscalemodel".to_string(), serde_json::Value::String(v.clone()));
+            image_params.insert(
+                "upscalemodel".to_string(),
+                serde_json::Value::String(v.clone()),
+            );
         }
     }
     if let Some(v) = params.get("upscale_scale") {
         if !v.is_empty() {
-            image_params.insert("upscalescale".to_string(), serde_json::Value::String(v.clone()));
+            image_params.insert(
+                "upscalescale".to_string(),
+                serde_json::Value::String(v.clone()),
+            );
         }
     }
     if let Some(v) = params.get("upscale_denoise") {
@@ -592,18 +610,14 @@ fn parse_a1111_params(text: &str) -> HashMap<String, String> {
             in_negative = true;
             negative_lines.push(line.trim_start_matches("Negative prompt: "));
         } else if !in_negative && settings_line.is_none() {
-            if line.starts_with("Steps:")
-                || line.starts_with("Sampler:")
-                || line.starts_with("CFG")
+            if line.starts_with("Steps:") || line.starts_with("Sampler:") || line.starts_with("CFG")
             {
                 settings_line = Some(*line);
             } else {
                 positive_lines.push(*line);
             }
         } else if in_negative {
-            if line.starts_with("Steps:")
-                || line.starts_with("Sampler:")
-                || line.starts_with("CFG")
+            if line.starts_with("Steps:") || line.starts_with("Sampler:") || line.starts_with("CFG")
             {
                 settings_line = Some(*line);
                 in_negative = false;
@@ -670,7 +684,11 @@ mod tests {
     fn make_test_png(width: u32, height: u32, bit16: bool) -> Vec<u8> {
         let mut output = Vec::new();
         let bpp: usize = if bit16 { 6 } else { 3 }; // RGB
-        let depth = if bit16 { png::BitDepth::Sixteen } else { png::BitDepth::Eight };
+        let depth = if bit16 {
+            png::BitDepth::Sixteen
+        } else {
+            png::BitDepth::Eight
+        };
         let pixel_count = (width as usize) * (height as usize);
         let buf = vec![128u8; pixel_count * bpp];
         {
@@ -687,7 +705,10 @@ mod tests {
     fn stealth_alpha_round_trip_8bit() {
         let png_bytes = make_test_png(64, 64, false);
         let mut params = HashMap::new();
-        params.insert("positive_prompt".to_string(), "test prompt hello world".to_string());
+        params.insert(
+            "positive_prompt".to_string(),
+            "test prompt hello world".to_string(),
+        );
         params.insert("seed".to_string(), "12345".to_string());
         params.insert("steps".to_string(), "20".to_string());
 
@@ -697,7 +718,10 @@ mod tests {
         let result = read_png_metadata(&embedded).unwrap();
         assert!(result.is_some(), "Should find metadata");
         let read_params = result.unwrap();
-        assert_eq!(read_params.get("positive_prompt").unwrap(), "test prompt hello world");
+        assert_eq!(
+            read_params.get("positive_prompt").unwrap(),
+            "test prompt hello world"
+        );
         assert_eq!(read_params.get("seed").unwrap(), "12345");
     }
 
@@ -711,7 +735,10 @@ mod tests {
         let embedded = embed_png_metadata(&png_bytes, &params, MetadataMode::StealthAlpha).unwrap();
 
         let result = read_png_metadata(&embedded).unwrap();
-        assert!(result.is_some(), "Should find stealth metadata in 16-bit image");
+        assert!(
+            result.is_some(),
+            "Should find stealth metadata in 16-bit image"
+        );
         let read_params = result.unwrap();
         assert_eq!(read_params.get("positive_prompt").unwrap(), "16bit test");
     }
@@ -754,5 +781,4 @@ mod tests {
         }
         assert_eq!(&magic, b"stealth_pngcomp", "Magic header should match");
     }
-
 }

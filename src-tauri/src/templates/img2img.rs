@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::{WorkflowResult, load_model_nodes};
+use super::{load_model_nodes, WorkflowResult};
 use crate::comfyui::types::GenerationParams;
 
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {

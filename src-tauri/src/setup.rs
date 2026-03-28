@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
+use std::process::Stdio;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use std::process::Stdio;
 
 use crate::config;
 use crate::state::AppState;
@@ -118,9 +118,7 @@ async fn run_logged(
     envs: &[(&str, &str)],
 ) -> Result<(), String> {
     let mut cmd = tokio::process::Command::new(program);
-    cmd.args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -421,7 +419,13 @@ async fn step_create_venv(app: &AppHandle, base: &Path) -> Result<(), String> {
     run_logged(
         app,
         uv.to_str().unwrap(),
-        &["venv", venv_dir.to_str().unwrap(), "--python", "3.11", "--allow-existing"],
+        &[
+            "venv",
+            venv_dir.to_str().unwrap(),
+            "--python",
+            "3.11",
+            "--allow-existing",
+        ],
         &[("UV_PYTHON_INSTALL_DIR", &python_dir_str)],
     )
     .await
@@ -533,62 +537,85 @@ async fn uv_pip(app: &AppHandle, base: &Path, args: &[&str]) -> Result<(), Strin
 }
 
 /// Detect the AMD GPU architecture string (e.g. "gfx1100", "gfx1201") by reading
-/// sysfs on Linux. Returns None if detection fails or the GPU is not AMD.
+/// sysfs on Linux. When multiple AMD GPUs are present (e.g. integrated + discrete),
+/// prefers the highest / most capable architecture. Returns None if detection fails
+/// or no AMD GPU is found.
 #[cfg(target_os = "linux")]
 async fn detect_amd_gpu_arch() -> Option<String> {
-    // Try rocm-smi first (most reliable if ROCm is installed)
+    let mut candidates: Vec<String> = Vec::new();
+
+    // Try rocm-smi first (most reliable if ROCm is installed).
+    // Collect ALL gfx versions — multi-GPU systems list several.
     let mut cmd = tokio::process::Command::new("rocm-smi");
     cmd.args(["--showproductname"]);
     hide_window(&mut cmd);
     if let Ok(output) = cmd.output().await {
         if output.status.success() {
             let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
-            // Look for gfx architecture identifiers in output
             for word in text.split_whitespace() {
-                if word.starts_with("gfx") {
-                    return Some(word.to_string());
+                if word.starts_with("gfx") && !candidates.contains(&word.to_string()) {
+                    candidates.push(word.to_string());
                 }
             }
         }
     }
 
-    // Fallback: read the GPU firmware version from sysfs to determine architecture
-    if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
-        for entry in entries.flatten() {
-            let vendor_path = entry.path().join("device/vendor");
+    // Fallback: read the GPU firmware version from sysfs to determine architecture.
+    // Iterate ALL drm cards and collect every architecture we find.
+    if candidates.is_empty() {
+        if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
+            for entry in entries.flatten() {
+                let vendor_path = entry.path().join("device/vendor");
 
-            // Verify this is an AMD GPU (vendor 0x1002)
-            if let Ok(vendor) = std::fs::read_to_string(&vendor_path) {
-                if !vendor.trim().contains("0x1002") {
+                // Verify this is an AMD GPU (vendor 0x1002)
+                if let Ok(vendor) = std::fs::read_to_string(&vendor_path) {
+                    if !vendor.trim().contains("0x1002") {
+                        continue;
+                    }
+                } else {
                     continue;
                 }
-            } else {
-                continue;
-            }
 
-            // Try to read the device ID to infer architecture
-            let device_path = entry.path().join("device/device");
-            if let Ok(device_id) = std::fs::read_to_string(&device_path) {
-                let device_id = device_id.trim().to_lowercase();
-                // RX 9070 XT / RDNA 4 device IDs start with 0x15xx
-                // Map known device ID prefixes to GPU architectures
-                if device_id.starts_with("0x15") {
-                    return Some("gfx1201".to_string());
+                // Try ip_discovery first — it gives the GC major version directly
+                let ip_path = entry.path().join("device/ip_discovery/die/0/GC/0/major");
+                if let Ok(major) = std::fs::read_to_string(&ip_path) {
+                    let major = major.trim();
+                    if major == "12" {
+                        let arch = "gfx1200".to_string(); // RDNA 4 family
+                        if !candidates.contains(&arch) {
+                            candidates.push(arch);
+                        }
+                        continue;
+                    }
                 }
-            }
 
-            // Also try reading the GPU ID from ip_discovery or amdgpu debugfs
-            let ip_path = entry.path().join("device/ip_discovery/die/0/GC/0/major");
-            if let Ok(major) = std::fs::read_to_string(&ip_path) {
-                let major = major.trim();
-                if major == "12" {
-                    return Some("gfx1200".to_string()); // RDNA 4 family
+                // Try to read the device ID to infer architecture
+                let device_path = entry.path().join("device/device");
+                if let Ok(device_id) = std::fs::read_to_string(&device_path) {
+                    let device_id = device_id.trim().to_lowercase();
+                    // RDNA 4 (RX 9070 series) device IDs start with 0x75xx
+                    if device_id.starts_with("0x75") {
+                        let arch = "gfx1201".to_string();
+                        if !candidates.contains(&arch) {
+                            candidates.push(arch);
+                        }
+                    }
                 }
             }
         }
     }
 
-    None
+    if candidates.is_empty() {
+        return None;
+    }
+
+    // Prefer the most capable architecture: gfx120X (RDNA 4) takes priority
+    if let Some(rdna4) = candidates.iter().find(|a| a.starts_with("gfx120")) {
+        return Some(rdna4.clone());
+    }
+
+    // Otherwise return the first candidate
+    Some(candidates.remove(0))
 }
 
 /// Check if the AMD GPU requires nightly ROCm builds (gfx120X = RDNA 4).
@@ -882,7 +909,10 @@ pub async fn check_setup(app: AppHandle) -> Result<bool, String> {
         // Recreate the marker file so future checks are fast
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::write(dir.join(".setup_complete"), "");
-        log::info!("Recovered setup state: ComfyUI found at {}", cfg.comfyui_path);
+        log::info!(
+            "Recovered setup state: ComfyUI found at {}",
+            cfg.comfyui_path
+        );
         return Ok(true);
     }
 
@@ -951,7 +981,10 @@ fn scan_model_directories() -> Vec<DetectedModelDir> {
             "sd-webui-forge",
         ] {
             candidates.push((home.join(name).join("models"), "A1111/Forge"));
-            candidates.push((home.join("Desktop").join(name).join("models"), "A1111/Forge"));
+            candidates.push((
+                home.join("Desktop").join(name).join("models"),
+                "A1111/Forge",
+            ));
         }
 
         // SwarmUI
@@ -959,10 +992,19 @@ fn scan_model_directories() -> Vec<DetectedModelDir> {
         candidates.push((home.join("StableSwarmUI").join("Models"), "SwarmUI"));
 
         // StabilityMatrix
-        candidates.push((home.join("StabilityMatrix").join("Models"), "StabilityMatrix"));
-        candidates.push((home.join(".stabilitymatrix").join("Models"), "StabilityMatrix"));
         candidates.push((
-            home.join("AppData").join("Roaming").join("StabilityMatrix").join("Models"),
+            home.join("StabilityMatrix").join("Models"),
+            "StabilityMatrix",
+        ));
+        candidates.push((
+            home.join(".stabilitymatrix").join("Models"),
+            "StabilityMatrix",
+        ));
+        candidates.push((
+            home.join("AppData")
+                .join("Roaming")
+                .join("StabilityMatrix")
+                .join("Models"),
             "StabilityMatrix",
         ));
     }
@@ -975,14 +1017,14 @@ fn scan_model_directories() -> Vec<DetectedModelDir> {
             for name in &["ComfyUI", "comfyui"] {
                 candidates.push((root.join(name).join("models"), "ComfyUI"));
             }
-            for name in &[
-                "stable-diffusion-webui",
-                "stable-diffusion-webui-forge",
-            ] {
+            for name in &["stable-diffusion-webui", "stable-diffusion-webui-forge"] {
                 candidates.push((root.join(name).join("models"), "A1111/Forge"));
             }
             candidates.push((root.join("SwarmUI").join("Models"), "SwarmUI"));
-            candidates.push((root.join("StabilityMatrix").join("Models"), "StabilityMatrix"));
+            candidates.push((
+                root.join("StabilityMatrix").join("Models"),
+                "StabilityMatrix",
+            ));
         }
     }
 
@@ -991,7 +1033,10 @@ fn scan_model_directories() -> Vec<DetectedModelDir> {
     {
         let opt = PathBuf::from("/opt");
         candidates.push((opt.join("ComfyUI").join("models"), "ComfyUI"));
-        candidates.push((opt.join("stable-diffusion-webui").join("models"), "A1111/Forge"));
+        candidates.push((
+            opt.join("stable-diffusion-webui").join("models"),
+            "A1111/Forge",
+        ));
     }
 
     for (path, tool) in candidates {
@@ -1055,7 +1100,10 @@ pub async fn move_installation(
 
     // Verify current installation exists
     if !current.exists() {
-        return Err(format!("Current data directory does not exist: {}", current.display()));
+        return Err(format!(
+            "Current data directory does not exist: {}",
+            current.display()
+        ));
     }
 
     // Create destination parent if needed
@@ -1066,7 +1114,8 @@ pub async fn move_installation(
 
     // Check destination doesn't already have stuff (unless empty)
     if dest.exists() && dest.is_dir() {
-        let is_empty = dest.read_dir()
+        let is_empty = dest
+            .read_dir()
             .map(|mut d| d.next().is_none())
             .unwrap_or(false);
         if !is_empty {
@@ -1084,11 +1133,15 @@ pub async fn move_installation(
         log::warn!("Could not stop ComfyUI before move: {}", e);
     }
 
-    emit(&app, "move", "Copying files to new location... This may take a few minutes.", 15);
+    emit(
+        &app,
+        "move",
+        "Copying files to new location... This may take a few minutes.",
+        15,
+    );
 
     // Copy the entire directory tree
-    copy_dir_recursive(&current, &dest)
-        .map_err(|e| format!("Failed to copy data: {}", e))?;
+    copy_dir_recursive(&current, &dest).map_err(|e| format!("Failed to copy data: {}", e))?;
 
     emit(&app, "move", "Updating configuration...", 85);
 
@@ -1130,10 +1183,19 @@ pub async fn move_installation(
 
     // Remove old directory
     if let Err(e) = std::fs::remove_dir_all(&current) {
-        log::warn!("Could not remove old data directory {}: {}. You may want to delete it manually.", current.display(), e);
+        log::warn!(
+            "Could not remove old data directory {}: {}. You may want to delete it manually.",
+            current.display(),
+            e
+        );
     }
 
-    emit(&app, "done", &format!("Installation moved to {}", dest.display()), 100);
+    emit(
+        &app,
+        "done",
+        &format!("Installation moved to {}", dest.display()),
+        100,
+    );
     Ok(())
 }
 
@@ -1154,7 +1216,9 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
             let target = std::fs::read_link(&src_path)?;
             let symlink_created = {
                 #[cfg(unix)]
-                { std::os::unix::fs::symlink(&target, &dst_path).is_ok() }
+                {
+                    std::os::unix::fs::symlink(&target, &dst_path).is_ok()
+                }
                 #[cfg(windows)]
                 {
                     if target.is_dir() {
@@ -1202,12 +1266,7 @@ pub async fn reinstall_pytorch(
 
     emit(&app, "pytorch", "Reinstalling PyTorch...", 50);
 
-    let mut args = vec![
-        "torch",
-        "torchvision",
-        "torchaudio",
-        "--force-reinstall",
-    ];
+    let mut args = vec!["torch", "torchvision", "torchaudio", "--force-reinstall"];
     if !url.is_empty() {
         args.push("--index-url");
         args.push(url);
@@ -1219,7 +1278,12 @@ pub async fn reinstall_pytorch(
 }
 
 #[tauri::command]
-pub async fn run_setup(app: AppHandle, state: tauri::State<'_, AppState>, gpu_type: Option<String>, install_path: Option<String>) -> Result<(), String> {
+pub async fn run_setup(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    gpu_type: Option<String>,
+    install_path: Option<String>,
+) -> Result<(), String> {
     // If user chose a custom install path, save it as the bootstrap pointer
     // before anything else so all subsequent path resolution uses it.
     if let Some(ref path) = install_path {

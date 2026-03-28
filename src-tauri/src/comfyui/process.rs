@@ -109,9 +109,15 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
 
     // VRAM management flag
     match config.vram_mode.as_str() {
-        "high" => { cmd.arg("--highvram"); }
-        "low" => { cmd.arg("--lowvram"); }
-        "none" => { cmd.arg("--novram"); }
+        "high" => {
+            cmd.arg("--highvram");
+        }
+        "low" => {
+            cmd.arg("--lowvram");
+        }
+        "none" => {
+            cmd.arg("--novram");
+        }
         // "normal" and "auto" use ComfyUI's default behavior
         _ => {}
     }
@@ -119,7 +125,10 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     // Auto-apply --bf16-vae for Blackwell GPUs to prevent NaN/black images
     // from fp16 VAE overflow, unless the user has already set a VAE precision flag.
     let has_vae_flag = config.extra_args.iter().any(|a| {
-        matches!(a.as_str(), "--bf16-vae" | "--fp16-vae" | "--fp32-vae" | "--cpu-vae")
+        matches!(
+            a.as_str(),
+            "--bf16-vae" | "--fp16-vae" | "--fp32-vae" | "--cpu-vae"
+        )
     });
     if !has_vae_flag && has_blackwell_gpu() {
         cmd.arg("--bf16-vae");
@@ -143,73 +152,74 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
                 // Escape YAML values: quote paths that contain spaces, colons,
                 // backslashes, or other special characters.
                 let quoted_dir = format!("\"{}\"", dir.replace('\\', "\\\\").replace('"', "\\\""));
-                yaml_content.push_str(&format!(concat!(
-                    "mooshieui_{idx}:\n",
-                    "  base_path: {dir}\n",
-                    "  checkpoints: |\n",
-                    "    checkpoints\n",
-                    "    Stable-diffusion\n",
-                    "    Stable-Diffusion\n",
-                    "    StableDiffusion\n",
-                    "    models/Stable-diffusion\n",
-                    "    Models/Stable-Diffusion\n",
-                    "    Models/StableDiffusion\n",
-                    "    dlbackend/comfyui/models/checkpoints\n",
-                    "  vae: |\n",
-                    "    vae\n",
-                    "    VAE\n",
-                    "    models/VAE\n",
-                    "    Models/VAE\n",
-                    "    dlbackend/comfyui/models/vae\n",
-                    "  loras: |\n",
-                    "    loras\n",
-                    "    Lora\n",
-                    "    LyCORIS\n",
-                    "    models/Lora\n",
-                    "    models/LyCORIS\n",
-                    "    Models/Lora\n",
-                    "    Models/LyCORIS\n",
-                    "    dlbackend/comfyui/models/loras\n",
-                    "  upscale_models: |\n",
-                    "    upscale_models\n",
-                    "    ESRGAN\n",
-                    "    models/ESRGAN\n",
-                    "    models/RealESRGAN\n",
-                    "    Models/ESRGAN\n",
-                    "    Models/RealESRGAN\n",
-                    "    dlbackend/comfyui/models/upscale_models\n",
-                    "  embeddings: |\n",
-                    "    embeddings\n",
-                    "    models/TextualInversion\n",
-                    "    Models/TextualInversion\n",
-                    "    dlbackend/comfyui/models/embeddings\n",
-                    "  controlnet: |\n",
-                    "    controlnet\n",
-                    "    ControlNet\n",
-                    "    models/ControlNet\n",
-                    "    Models/ControlNet\n",
-                    "    dlbackend/comfyui/models/controlnet\n",
-                    "  clip: |\n",
-                    "    clip\n",
-                    "    models/clip\n",
-                    "    Models/clip\n",
-                    "    dlbackend/comfyui/models/clip\n",
-                    "  unet: |\n",
-                    "    unet\n",
-                    "    models/unet\n",
-                    "    Models/unet\n",
-                    "    dlbackend/comfyui/models/unet\n",
-                    "  diffusion_models: |\n",
-                    "    diffusion_models\n",
-                    "    models/diffusion_models\n",
-                    "    Models/diffusion_models\n",
-                    "    dlbackend/comfyui/models/diffusion_models\n",
-                    "  text_encoders: |\n",
-                    "    text_encoders\n",
-                    "    models/text_encoders\n",
-                    "    Models/text_encoders\n",
-                    "    dlbackend/comfyui/models/text_encoders\n",
-                ),
+                yaml_content.push_str(&format!(
+                    concat!(
+                        "mooshieui_{idx}:\n",
+                        "  base_path: {dir}\n",
+                        "  checkpoints: |\n",
+                        "    checkpoints\n",
+                        "    Stable-diffusion\n",
+                        "    Stable-Diffusion\n",
+                        "    StableDiffusion\n",
+                        "    models/Stable-diffusion\n",
+                        "    Models/Stable-Diffusion\n",
+                        "    Models/StableDiffusion\n",
+                        "    dlbackend/comfyui/models/checkpoints\n",
+                        "  vae: |\n",
+                        "    vae\n",
+                        "    VAE\n",
+                        "    models/VAE\n",
+                        "    Models/VAE\n",
+                        "    dlbackend/comfyui/models/vae\n",
+                        "  loras: |\n",
+                        "    loras\n",
+                        "    Lora\n",
+                        "    LyCORIS\n",
+                        "    models/Lora\n",
+                        "    models/LyCORIS\n",
+                        "    Models/Lora\n",
+                        "    Models/LyCORIS\n",
+                        "    dlbackend/comfyui/models/loras\n",
+                        "  upscale_models: |\n",
+                        "    upscale_models\n",
+                        "    ESRGAN\n",
+                        "    models/ESRGAN\n",
+                        "    models/RealESRGAN\n",
+                        "    Models/ESRGAN\n",
+                        "    Models/RealESRGAN\n",
+                        "    dlbackend/comfyui/models/upscale_models\n",
+                        "  embeddings: |\n",
+                        "    embeddings\n",
+                        "    models/TextualInversion\n",
+                        "    Models/TextualInversion\n",
+                        "    dlbackend/comfyui/models/embeddings\n",
+                        "  controlnet: |\n",
+                        "    controlnet\n",
+                        "    ControlNet\n",
+                        "    models/ControlNet\n",
+                        "    Models/ControlNet\n",
+                        "    dlbackend/comfyui/models/controlnet\n",
+                        "  clip: |\n",
+                        "    clip\n",
+                        "    models/clip\n",
+                        "    Models/clip\n",
+                        "    dlbackend/comfyui/models/clip\n",
+                        "  unet: |\n",
+                        "    unet\n",
+                        "    models/unet\n",
+                        "    Models/unet\n",
+                        "    dlbackend/comfyui/models/unet\n",
+                        "  diffusion_models: |\n",
+                        "    diffusion_models\n",
+                        "    models/diffusion_models\n",
+                        "    Models/diffusion_models\n",
+                        "    dlbackend/comfyui/models/diffusion_models\n",
+                        "  text_encoders: |\n",
+                        "    text_encoders\n",
+                        "    models/text_encoders\n",
+                        "    Models/text_encoders\n",
+                        "    dlbackend/comfyui/models/text_encoders\n",
+                    ),
                     idx = i + 1,
                     dir = quoted_dir
                 ));
@@ -424,7 +434,10 @@ async fn kill_process_on_port(port: u16) {
 
         // Find PID with netstat, then taskkill
         let mut cmd = tokio::process::Command::new("cmd");
-        cmd.args(["/C", &format!("netstat -ano | findstr :{} | findstr LISTENING", port)]);
+        cmd.args([
+            "/C",
+            &format!("netstat -ano | findstr :{} | findstr LISTENING", port),
+        ]);
         cmd.creation_flags(CREATE_NO_WINDOW);
         if let Ok(output) = cmd.output().await {
             let text = String::from_utf8_lossy(&output.stdout);

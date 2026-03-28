@@ -1,9 +1,9 @@
-use serde_json::Value;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
-use sha2::{Sha256, Digest};
-use std::io::Read;
+use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
+use std::io::Read;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::comfyui::types::*;
 use crate::error::AppError;
@@ -19,7 +19,9 @@ fn full_sha256(path: &std::path::Path) -> Result<String, AppError> {
     let mut buf = vec![0u8; BUF_SIZE];
     loop {
         let n = file.read(&mut buf)?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         hasher.update(&buf[..n]);
     }
     let result = hasher.finalize();
@@ -89,10 +91,7 @@ pub async fn get_queue(state: State<'_, AppState>) -> Result<QueueInfo, AppError
 }
 
 #[tauri::command]
-pub async fn get_history(
-    state: State<'_, AppState>,
-    prompt_id: String,
-) -> Result<Value, AppError> {
+pub async fn get_history(state: State<'_, AppState>, prompt_id: String) -> Result<Value, AppError> {
     state.get_history_for(&prompt_id).await
 }
 
@@ -170,7 +169,14 @@ pub async fn save_to_gallery(
     metadata_mode: Option<String>,
 ) -> Result<String, AppError> {
     let bytes = state.get_output_image_bytes(&filename, &subfolder).await?;
-    save_to_gallery_inner(&bytes, &filename, &prompt_id, mode.as_deref(), metadata.as_ref(), metadata_mode.as_deref())
+    save_to_gallery_inner(
+        &bytes,
+        &filename,
+        &prompt_id,
+        mode.as_deref(),
+        metadata.as_ref(),
+        metadata_mode.as_deref(),
+    )
 }
 
 /// Save raw image bytes (from WebSocket) directly to the gallery with optional embedded metadata.
@@ -183,7 +189,14 @@ pub async fn save_to_gallery_bytes(
     metadata: Option<std::collections::HashMap<String, String>>,
     metadata_mode: Option<String>,
 ) -> Result<String, AppError> {
-    save_to_gallery_inner(&image_bytes, &filename, &prompt_id, mode.as_deref(), metadata.as_ref(), metadata_mode.as_deref())
+    save_to_gallery_inner(
+        &image_bytes,
+        &filename,
+        &prompt_id,
+        mode.as_deref(),
+        metadata.as_ref(),
+        metadata_mode.as_deref(),
+    )
 }
 
 fn save_to_gallery_inner(
@@ -232,7 +245,12 @@ fn save_to_gallery_inner(
         }
     }
 
-    log::info!("save_to_gallery_inner: metadata_mode={:?}, effective_embed_mode={:?}, has_metadata={}", raw_mode, embed_mode, metadata.is_some());
+    log::info!(
+        "save_to_gallery_inner: metadata_mode={:?}, effective_embed_mode={:?}, has_metadata={}",
+        raw_mode,
+        embed_mode,
+        metadata.is_some()
+    );
 
     // If metadata provided and file is PNG, embed it
     let final_bytes = if let Some(meta) = metadata {
@@ -294,7 +312,11 @@ pub async fn list_gallery_images() -> Result<Vec<String>, AppError> {
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.ends_with(".png") || name.ends_with(".jpg") || name.ends_with(".jpeg") || name.ends_with(".webp") {
+            if name.ends_with(".png")
+                || name.ends_with(".jpg")
+                || name.ends_with(".jpeg")
+                || name.ends_with(".webp")
+            {
                 Some((entry.metadata().ok()?.modified().ok()?, name))
             } else {
                 None
@@ -359,7 +381,11 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
 }
 
 /// Generate a WebP thumbnail for a gallery image. Used by the `thumbnail://` protocol.
-pub fn generate_thumbnail(gallery_dir: &std::path::Path, filename: &str, max_size: u32) -> Result<Vec<u8>, String> {
+pub fn generate_thumbnail(
+    gallery_dir: &std::path::Path,
+    filename: &str,
+    max_size: u32,
+) -> Result<Vec<u8>, String> {
     // Reject path traversal attempts — filename must be a plain basename.
     if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
         return Err("Invalid filename".to_string());
@@ -367,8 +393,7 @@ pub fn generate_thumbnail(gallery_dir: &std::path::Path, filename: &str, max_siz
     let path = gallery_dir.join(filename);
     let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;
 
-    let img = image::load_from_memory(&bytes)
-        .map_err(|e| format!("Decode failed: {}", e))?;
+    let img = image::load_from_memory(&bytes).map_err(|e| format!("Decode failed: {}", e))?;
 
     let thumb = img.thumbnail(max_size, max_size);
 
@@ -387,7 +412,10 @@ pub async fn get_gallery_image_path(filename: String) -> Result<String, AppError
         .join("gallery");
     let path = dir.join(&filename);
     if !path.exists() {
-        return Err(AppError::Other(format!("Gallery image not found: {}", filename)));
+        return Err(AppError::Other(format!(
+            "Gallery image not found: {}",
+            filename
+        )));
     }
     Ok(path.to_string_lossy().into_owned())
 }
@@ -405,19 +433,28 @@ pub async fn delete_gallery_image(filename: String) -> Result<(), AppError> {
 }
 
 #[tauri::command]
-pub async fn rename_gallery_image(old_filename: String, new_filename: String) -> Result<String, AppError> {
+pub async fn rename_gallery_image(
+    old_filename: String,
+    new_filename: String,
+) -> Result<String, AppError> {
     let dir = crate::config::app_data_dir()
         .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
         .join("gallery");
 
     let old_path = dir.join(&old_filename);
     if !old_path.exists() {
-        return Err(AppError::Other(format!("Gallery image not found: {}", old_filename)));
+        return Err(AppError::Other(format!(
+            "Gallery image not found: {}",
+            old_filename
+        )));
     }
 
     let new_path = dir.join(&new_filename);
     if new_path.exists() {
-        return Err(AppError::Other(format!("Target gallery filename already exists: {}", new_filename)));
+        return Err(AppError::Other(format!(
+            "Target gallery filename already exists: {}",
+            new_filename
+        )));
     }
 
     std::fs::rename(&old_path, &new_path)?;
@@ -435,7 +472,8 @@ pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> 
         return Err(AppError::Other(format!("File not found: {}", file_path)));
     }
 
-    let canonical = path.canonicalize()
+    let canonical = path
+        .canonicalize()
         .map_err(|e| AppError::Other(e.to_string()))?;
 
     #[cfg(target_os = "linux")]
@@ -478,7 +516,12 @@ pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> 
                 Ok(())
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(format!("{} exited with {}: {}", program, output.status, stderr.trim()))
+                Err(format!(
+                    "{} exited with {}: {}",
+                    program,
+                    output.status,
+                    stderr.trim()
+                ))
             }
         };
 
@@ -527,7 +570,9 @@ pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> 
             .status()
             .map_err(|e| AppError::Other(format!("osascript failed: {}", e)))?;
         if !status.success() {
-            return Err(AppError::Other("Failed to copy file to clipboard via osascript".into()));
+            return Err(AppError::Other(
+                "Failed to copy file to clipboard via osascript".into(),
+            ));
         }
     }
 
@@ -535,17 +580,16 @@ pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> 
     {
         use std::os::windows::process::CommandExt;
         // Use PowerShell Set-Clipboard with file list
-        let ps_cmd = format!(
-            "Set-Clipboard -Path '{}'",
-            canonical.display()
-        );
+        let ps_cmd = format!("Set-Clipboard -Path '{}'", canonical.display());
         let status = Command::new("powershell")
             .args(["-NoProfile", "-Command", &ps_cmd])
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .status()
             .map_err(|e| AppError::Other(format!("PowerShell failed: {}", e)))?;
         if !status.success() {
-            return Err(AppError::Other("Failed to copy file to clipboard via PowerShell".into()));
+            return Err(AppError::Other(
+                "Failed to copy file to clipboard via PowerShell".into(),
+            ));
         }
     }
 
@@ -571,9 +615,13 @@ fn resolve_uv_bin(venv_path: &str) -> std::path::PathBuf {
         .parent()
         .unwrap_or(std::path::Path::new(venv_path));
     #[cfg(target_os = "windows")]
-    { base.join("bin").join("uv.exe") }
+    {
+        base.join("bin").join("uv.exe")
+    }
     #[cfg(not(target_os = "windows"))]
-    { base.join("bin").join("uv") }
+    {
+        base.join("bin").join("uv")
+    }
 }
 
 /// Check if a custom node package is installed on disk (directory exists in custom_nodes/).
@@ -623,7 +671,12 @@ pub async fn install_custom_node(
     emit_progress("clone", &format!("Cloning {}...", node_name), false);
 
     let mut child = tokio::process::Command::new("git")
-        .args(["clone", "--progress", &git_url, &target_dir.to_string_lossy().as_ref()])
+        .args([
+            "clone",
+            "--progress",
+            &git_url,
+            &target_dir.to_string_lossy().as_ref(),
+        ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -724,12 +777,20 @@ pub async fn install_custom_node(
             .map_err(|e| AppError::Other(format!("pip install failed: {}", e)))?;
 
         if !pip_status.success() {
-            emit_progress("error", "pip install failed (some features may not work)", false);
+            emit_progress(
+                "error",
+                "pip install failed (some features may not work)",
+                false,
+            );
             log::warn!("pip install requirements failed for {}", node_name);
         }
     }
 
-    emit_progress("done", &format!("{} installed successfully", node_name), true);
+    emit_progress(
+        "done",
+        &format!("{} installed successfully", node_name),
+        true,
+    );
 
     // Emit event so frontend knows to restart ComfyUI
     let _ = app.emit("custom_node:installed", &node_name);
@@ -874,10 +935,15 @@ pub async fn civitai_lookup_hash(hash: String) -> Result<Value, AppError> {
         return Err(AppError::Other("Model not found on CivitAI".into()));
     }
     if !resp.status().is_success() {
-        return Err(AppError::Other(format!("CivitAI returned status {}", resp.status())));
+        return Err(AppError::Other(format!(
+            "CivitAI returned status {}",
+            resp.status()
+        )));
     }
 
-    let data: Value = resp.json().await
+    let data: Value = resp
+        .json()
+        .await
         .map_err(|e| AppError::Other(format!("Failed to parse CivitAI response: {}", e)))?;
     Ok(data)
 }
@@ -889,18 +955,27 @@ pub async fn civitai_search_models(
 ) -> Result<Value, AppError> {
     // Build query string manually because reqwest percent-encodes brackets in
     // parameter names (baseModels[] → baseModels%5B%5D) which CivitAI ignores.
-    let encode_val = |v: &str| -> String {
-        url::form_urlencoded::byte_serialize(v.as_bytes()).collect()
-    };
+    let encode_val =
+        |v: &str| -> String { url::form_urlencoded::byte_serialize(v.as_bytes()).collect() };
 
     let mut parts: Vec<String> = vec![
-        format!("sort={}", encode_val(&params.sort.unwrap_or_else(|| "Most Downloaded".to_string()))),
-        format!("period={}", encode_val(&params.period.unwrap_or_else(|| "AllTime".to_string()))),
+        format!(
+            "sort={}",
+            encode_val(&params.sort.unwrap_or_else(|| "Most Downloaded".to_string()))
+        ),
+        format!(
+            "period={}",
+            encode_val(&params.period.unwrap_or_else(|| "AllTime".to_string()))
+        ),
         format!("nsfw={}", params.nsfw.unwrap_or(false)),
         format!("limit={}", params.limit.unwrap_or(20)),
     ];
 
-    let has_query = params.query.as_ref().filter(|v| !v.trim().is_empty()).is_some();
+    let has_query = params
+        .query
+        .as_ref()
+        .filter(|v| !v.trim().is_empty())
+        .is_some();
 
     if !has_query {
         parts.push(format!("page={}", params.page.unwrap_or(1)));
@@ -962,28 +1037,61 @@ pub async fn civitai_list_architectures(
     api_key: Option<String>,
 ) -> Result<Vec<String>, AppError> {
     let mut architectures = BTreeSet::<String>::new();
-    
+
     // Add common architectures first to guarantee they're present
     let common = vec![
         // Stable Diffusion 1.x
-        "SD 1.4", "SD 1.5", "SD 1.5 LCM", "SD 1.5 Hyper",
+        "SD 1.4",
+        "SD 1.5",
+        "SD 1.5 LCM",
+        "SD 1.5 Hyper",
         // Stable Diffusion 2.x
-        "SD 2.0", "SD 2.0 768", "SD 2.1", "SD 2.1 768", "SD 2.1 Unclip",
+        "SD 2.0",
+        "SD 2.0 768",
+        "SD 2.1",
+        "SD 2.1 768",
+        "SD 2.1 Unclip",
         // Stable Diffusion 3.x
-        "SD 3", "SD 3.5", "SD 3.5 Large", "SD 3.5 Large Turbo", "SD 3.5 Medium",
+        "SD 3",
+        "SD 3.5",
+        "SD 3.5 Large",
+        "SD 3.5 Large Turbo",
+        "SD 3.5 Medium",
         // SDXL
-        "SDXL 0.9", "SDXL 1.0", "SDXL 1.0 LCM", "SDXL Distilled", "SDXL Turbo", "SDXL Lightning", "SDXL Hyper",
+        "SDXL 0.9",
+        "SDXL 1.0",
+        "SDXL 1.0 LCM",
+        "SDXL Distilled",
+        "SDXL Turbo",
+        "SDXL Lightning",
+        "SDXL Hyper",
         // Anime / Illustrious / NoobAI / Pony
-        "Illustrious", "NoobAI", "Pony",
+        "Illustrious",
+        "NoobAI",
+        "Pony",
         // Flux
-        "Flux.1 S", "Flux.1 D", "Flux.1 S Turbo",
+        "Flux.1 S",
+        "Flux.1 D",
+        "Flux.1 S Turbo",
         // Other popular architectures
-        "AuraFlow", "Hunyuan 1", "HunyuanDiT", "Hunyuan Video",
-        "Lumina", "Kolors", "PixArt-a", "PixArt-E",
-        "Stable Cascade", "SVD", "SVD XT",
-        "PlaygroundV2.5", "CogVideoX",
+        "AuraFlow",
+        "Hunyuan 1",
+        "HunyuanDiT",
+        "Hunyuan Video",
+        "Lumina",
+        "Kolors",
+        "PixArt-a",
+        "PixArt-E",
+        "Stable Cascade",
+        "SVD",
+        "SVD XT",
+        "PlaygroundV2.5",
+        "CogVideoX",
         // Misc
-        "Illusion", "MoDi", "ODOR", "Other",
+        "Illusion",
+        "MoDi",
+        "ODOR",
+        "Other",
     ];
     for &arch in &common {
         architectures.insert(arch.to_string());
@@ -1032,7 +1140,8 @@ pub async fn civitai_list_architectures(
             for item in items {
                 if let Some(versions) = item.get("modelVersions").and_then(|v| v.as_array()) {
                     for version in versions {
-                        if let Some(base_model) = version.get("baseModel").and_then(|v| v.as_str()) {
+                        if let Some(base_model) = version.get("baseModel").and_then(|v| v.as_str())
+                        {
                             let normalized = base_model.trim();
                             if !normalized.is_empty() {
                                 architectures.insert(normalized.to_string());
@@ -1180,7 +1289,10 @@ pub async fn get_lora_civitai_info(
         .join(&filename);
 
     if !path.exists() {
-        return Err(AppError::Other(format!("LoRA file not found: {}", filename)));
+        return Err(AppError::Other(format!(
+            "LoRA file not found: {}",
+            filename
+        )));
     }
 
     // Read modelspec in parallel-friendly manner (sync I/O in blocking task)
@@ -1221,9 +1333,15 @@ pub async fn get_lora_civitai_info(
         civitai_creator: None,
         modelspec_title: modelspec.as_ref().and_then(|m| m.get("title").cloned()),
         modelspec_author: modelspec.as_ref().and_then(|m| m.get("author").cloned()),
-        modelspec_architecture: modelspec.as_ref().and_then(|m| m.get("architecture").cloned()),
-        modelspec_trigger_phrase: modelspec.as_ref().and_then(|m| m.get("trigger_phrase").cloned()),
-        modelspec_description: modelspec.as_ref().and_then(|m| m.get("description").cloned()),
+        modelspec_architecture: modelspec
+            .as_ref()
+            .and_then(|m| m.get("architecture").cloned()),
+        modelspec_trigger_phrase: modelspec
+            .as_ref()
+            .and_then(|m| m.get("trigger_phrase").cloned()),
+        modelspec_description: modelspec
+            .as_ref()
+            .and_then(|m| m.get("description").cloned()),
         modelspec_tags: modelspec.as_ref().and_then(|m| m.get("tags").cloned()),
     };
 
@@ -1233,8 +1351,15 @@ pub async fn get_lora_civitai_info(
             if let Ok(data) = resp.json::<Value>().await {
                 // Version-level fields
                 info.civitai_version_id = data.get("id").and_then(|v| v.as_u64());
-                info.civitai_base_model = data.get("baseModel").and_then(|v| v.as_str()).map(String::from);
-                info.civitai_name = data.get("model").and_then(|m| m.get("name")).and_then(|v| v.as_str()).map(String::from);
+                info.civitai_base_model = data
+                    .get("baseModel")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                info.civitai_name = data
+                    .get("model")
+                    .and_then(|m| m.get("name"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
                 info.civitai_model_id = data.get("modelId").and_then(|v| v.as_u64());
 
                 // Trigger words
@@ -1250,22 +1375,36 @@ pub async fn get_lora_civitai_info(
                     info.civitai_images = images
                         .iter()
                         .filter_map(|img| {
-                            img.get("url").and_then(|u| u.as_str()).map(|url| LoraCivitaiImage {
-                                url: url.to_string(),
-                                width: img.get("width").and_then(|w| w.as_u64()).map(|w| w as u32),
-                                height: img.get("height").and_then(|h| h.as_u64()).map(|h| h as u32),
-                                nsfw: img.get("nsfwLevel").and_then(|n| n.as_u64()).map(|n| {
-                                    if n <= 1 { "None".to_string() } else { format!("Level{}", n) }
-                                }),
-                            })
+                            img.get("url")
+                                .and_then(|u| u.as_str())
+                                .map(|url| LoraCivitaiImage {
+                                    url: url.to_string(),
+                                    width: img
+                                        .get("width")
+                                        .and_then(|w| w.as_u64())
+                                        .map(|w| w as u32),
+                                    height: img
+                                        .get("height")
+                                        .and_then(|h| h.as_u64())
+                                        .map(|h| h as u32),
+                                    nsfw: img.get("nsfwLevel").and_then(|n| n.as_u64()).map(|n| {
+                                        if n <= 1 {
+                                            "None".to_string()
+                                        } else {
+                                            format!("Level{}", n)
+                                        }
+                                    }),
+                                })
                         })
                         .collect();
                 }
 
                 // Stats from parent model
                 if let Some(stats) = data.get("stats") {
-                    info.civitai_download_count = stats.get("downloadCount").and_then(|v| v.as_u64());
-                    info.civitai_thumbs_up_count = stats.get("thumbsUpCount").and_then(|v| v.as_u64());
+                    info.civitai_download_count =
+                        stats.get("downloadCount").and_then(|v| v.as_u64());
+                    info.civitai_thumbs_up_count =
+                        stats.get("thumbsUpCount").and_then(|v| v.as_u64());
                 }
 
                 // Creator
@@ -1290,9 +1429,7 @@ pub struct ReleaseNote {
 }
 
 #[tauri::command]
-pub async fn fetch_release_notes(
-    state: State<'_, AppState>,
-) -> Result<Vec<ReleaseNote>, AppError> {
+pub async fn fetch_release_notes(state: State<'_, AppState>) -> Result<Vec<ReleaseNote>, AppError> {
     let resp = state
         .http_client
         .get("https://api.github.com/repos/Mooshieblob1/MooshieUI/releases")
@@ -1314,7 +1451,11 @@ pub async fn fetch_release_notes(
         .into_iter()
         .filter_map(|r| {
             let tag = r.get("tag_name")?.as_str()?.to_string();
-            let body = r.get("body").and_then(|b| b.as_str()).unwrap_or("").to_string();
+            let body = r
+                .get("body")
+                .and_then(|b| b.as_str())
+                .unwrap_or("")
+                .to_string();
             let published = r
                 .get("published_at")
                 .and_then(|p| p.as_str())
@@ -1377,7 +1518,10 @@ pub async fn import_image_directory(
     for (i, path) in entries.iter().enumerate() {
         let original_name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
-            None => { failed += 1; continue; }
+            None => {
+                failed += 1;
+                continue;
+            }
         };
 
         // Gallery filename: imported__{original_name}
@@ -1389,7 +1533,9 @@ pub async fn import_image_directory(
         }
 
         // Check if there's already a file with the same original name (any prefix)
-        let already_imported = existing.iter().any(|e| e.ends_with(&format!("__{}", original_name)));
+        let already_imported = existing
+            .iter()
+            .any(|e| e.ends_with(&format!("__{}", original_name)));
         if already_imported {
             skipped += 1;
             continue;
@@ -1405,15 +1551,22 @@ pub async fn import_image_directory(
 
         // Emit progress every 50 files or on last file
         if imported % 50 == 0 || i as u32 + 1 == total {
-            let _ = app.emit("import_progress", serde_json::json!({
-                "current": i + 1,
-                "total": total,
-                "imported": imported,
-            }));
+            let _ = app.emit(
+                "import_progress",
+                serde_json::json!({
+                    "current": i + 1,
+                    "total": total,
+                    "imported": imported,
+                }),
+            );
         }
     }
 
-    Ok(ImportResult { imported, skipped, failed })
+    Ok(ImportResult {
+        imported,
+        skipped,
+        failed,
+    })
 }
 
 /// Recursively collect all image files (PNG, JPG, WebP) from a directory.
@@ -1429,7 +1582,10 @@ fn collect_image_files(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>,
     Ok(files)
 }
 
-fn collect_image_files_recursive(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) -> Result<(), AppError> {
+fn collect_image_files_recursive(
+    dir: &std::path::Path,
+    files: &mut Vec<std::path::PathBuf>,
+) -> Result<(), AppError> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -1452,10 +1608,7 @@ fn collect_image_files_recursive(dir: &std::path::Path, files: &mut Vec<std::pat
 /// - Basic system/platform info
 /// - Rust-side log path references
 #[tauri::command]
-pub async fn export_logs(
-    state: State<'_, AppState>,
-    destination: String,
-) -> Result<(), AppError> {
+pub async fn export_logs(state: State<'_, AppState>, destination: String) -> Result<(), AppError> {
     use std::fmt::Write;
 
     let mut output = String::with_capacity(16 * 1024);
@@ -1467,7 +1620,12 @@ pub async fn export_logs(
         .unwrap_or_default()
         .as_secs();
     let _ = writeln!(output, "Exported: {} (unix timestamp)", now);
-    let _ = writeln!(output, "OS: {} {}", std::env::consts::OS, std::env::consts::ARCH);
+    let _ = writeln!(
+        output,
+        "OS: {} {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
     let _ = writeln!(output);
 
     // App config (sanitized — no secrets, just relevant settings)
@@ -1483,7 +1641,11 @@ pub async fn export_logs(
         let _ = writeln!(output, "Extra args: {:?}", config.extra_args);
         let _ = writeln!(output, "ComfyUI path: {}", config.comfyui_path);
         let _ = writeln!(output, "Venv path: {}", config.venv_path);
-        let _ = writeln!(output, "Extra model paths: {}", config.extra_model_paths.as_deref().unwrap_or("(none)"));
+        let _ = writeln!(
+            output,
+            "Extra model paths: {}",
+            config.extra_model_paths.as_deref().unwrap_or("(none)")
+        );
         let _ = writeln!(output, "Setup complete: {}", config.setup_complete);
         let _ = writeln!(output);
     }
@@ -1491,7 +1653,10 @@ pub async fn export_logs(
     // GPU info (NVIDIA)
     let _ = writeln!(output, "=== GPU Info ===");
     match std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=name,driver_version,memory.total,compute_cap", "--format=csv,noheader"])
+        .args([
+            "--query-gpu=name,driver_version,memory.total,compute_cap",
+            "--format=csv,noheader",
+        ])
         .output()
     {
         Ok(o) if o.status.success() => {

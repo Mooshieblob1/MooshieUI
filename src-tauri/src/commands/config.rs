@@ -11,10 +11,7 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, AppErro
 }
 
 #[tauri::command]
-pub async fn update_config(
-    state: State<'_, AppState>,
-    config: AppConfig,
-) -> Result<(), AppError> {
+pub async fn update_config(state: State<'_, AppState>, config: AppConfig) -> Result<(), AppError> {
     save_config(&config).map_err(AppError::Other)?;
     let mut current = state.config.write().await;
     *current = config;

@@ -167,8 +167,10 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
             // Rewire the primary KSampler to use ControlNet-conditioned positive/negative
             if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
                 if let Some(inputs) = sampler_node.get_mut("inputs") {
-                    inputs["positive"] = json!([result.positive_source.0, result.positive_source.1]);
-                    inputs["negative"] = json!([result.negative_source.0, result.negative_source.1]);
+                    inputs["positive"] =
+                        json!([result.positive_source.0, result.positive_source.1]);
+                    inputs["negative"] =
+                        json!([result.negative_source.0, result.negative_source.1]);
                 }
             }
         }

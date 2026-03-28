@@ -1,3 +1,22 @@
+## What's New in v0.4.6
+
+### Wayland AppImage Fix (Issue #3)
+- Fixed white screen on Wayland-based Linux distros (CachyOS, Arch, etc.) when running the AppImage
+- The app now automatically detects Wayland sessions, locates the system `libwayland-client.so.0`, and preloads it so WebKitGTK can render correctly
+- Removes the forced `GDK_BACKEND=x11` set by the AppImage GTK plugin, allowing native Wayland rendering
+- Searches versioned `.so.0` first (required on Arch-based distros), with unversioned `.so` fallback
+
+### AMD Multi-GPU Detection Fix (Issue #2)
+- Fixed ROCm GPU architecture detection on systems with both integrated and discrete AMD GPUs (e.g. Ryzen 9950X3D + RX 9070 XT)
+- Fixed incorrect RDNA 4 device ID prefix — was checking `0x15xx` but RX 9070 series uses `0x75xx`
+- Detection now collects all GPU architectures from rocm-smi and sysfs instead of returning the first match
+- Prefers `gfx120X` (RDNA 4 discrete) over older architectures, ensuring the correct PyTorch ROCm index is used
+
+### Code Formatting
+- Applied `cargo fmt` across the entire Rust codebase for consistent formatting
+
+---
+
 ## What's New in v0.4.5
 
 ### Full Internationalization (i18n)

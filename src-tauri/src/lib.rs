@@ -1,5 +1,5 @@
-pub mod commands;
 pub mod comfyui;
+pub mod commands;
 pub mod config;
 pub mod error;
 pub mod interrogator;
@@ -12,6 +12,72 @@ use config::load_persisted_config;
 use state::AppState;
 use tauri::{Manager, RunEvent};
 
+/// Fix Wayland rendering in AppImage builds.
+///
+/// The linuxdeploy GTK plugin sets `GDK_BACKEND=x11` and bundles its own
+/// library stubs. On Wayland compositors (especially Arch-based distros like
+/// CachyOS), WebKitGTK shows a white screen because the bundled libs don't
+/// include `libwayland-client`. We fix this by:
+///   1. Removing `GDK_BACKEND=x11` so GTK picks the native Wayland backend.
+///   2. Setting `LD_PRELOAD` to the system `libwayland-client.so.0`.
+///   3. Re-executing the process with the corrected environment.
+///
+/// A sentinel env var `_MOOSHIEUI_WAYLAND_FIXED` prevents infinite re-exec.
+#[cfg(target_os = "linux")]
+fn fix_wayland_appimage_env() {
+    // Only relevant inside an AppImage on a Wayland session, and only once.
+    if std::env::var("APPIMAGE").is_err()
+        || std::env::var("WAYLAND_DISPLAY").is_err()
+        || std::env::var("_MOOSHIEUI_WAYLAND_FIXED").is_ok()
+    {
+        return;
+    }
+
+    // Search common library paths for the versioned libwayland-client.
+    // Arch/CachyOS uses /usr/lib/, Debian/Ubuntu uses the multiarch path,
+    // Fedora/RHEL uses /usr/lib64/.
+    let search_paths = [
+        "/usr/lib/libwayland-client.so.0",
+        "/usr/lib/x86_64-linux-gnu/libwayland-client.so.0",
+        "/usr/lib64/libwayland-client.so.0",
+        // Unversioned fallback
+        "/usr/lib/libwayland-client.so",
+        "/usr/lib/x86_64-linux-gnu/libwayland-client.so",
+        "/usr/lib64/libwayland-client.so",
+    ];
+
+    let wayland_lib = match search_paths
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
+    {
+        Some(path) => *path,
+        None => return, // No libwayland-client found; nothing we can do
+    };
+
+    // Remove the forced X11 backend so GTK uses native Wayland
+    std::env::remove_var("GDK_BACKEND");
+
+    // Prepend to any existing LD_PRELOAD
+    let preload = match std::env::var("LD_PRELOAD") {
+        Ok(existing) if !existing.is_empty() => format!("{}:{}", wayland_lib, existing),
+        _ => wayland_lib.to_string(),
+    };
+    std::env::set_var("LD_PRELOAD", &preload);
+    std::env::set_var("_MOOSHIEUI_WAYLAND_FIXED", "1");
+
+    // Re-exec ourselves with the corrected environment
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    use std::os::unix::process::CommandExt;
+    let err = std::process::Command::new(&exe).args(&args).exec();
+    // exec() only returns on error
+    eprintln!("Failed to re-exec for Wayland fix: {}", err);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Fix WebKitGTK scroll jank and rendering glitches on NVIDIA + Wayland.
@@ -21,6 +87,7 @@ pub fn run() {
         if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }
+        fix_wayland_appimage_env();
     }
 
     let config = load_persisted_config();
@@ -227,7 +294,10 @@ pub fn run() {
                     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
                     if let Ok(output) = std::process::Command::new("cmd")
-                        .args(["/C", &format!("netstat -ano | findstr :{} | findstr LISTENING", port)])
+                        .args([
+                            "/C",
+                            &format!("netstat -ano | findstr :{} | findstr LISTENING", port),
+                        ])
                         .creation_flags(CREATE_NO_WINDOW)
                         .output()
                     {

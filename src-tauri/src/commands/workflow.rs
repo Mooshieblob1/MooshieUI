@@ -25,7 +25,10 @@ pub async fn generate(
 
     let workflow = templates::build_workflow(&params, seed);
     if params.controlnet.as_ref().map_or(false, |cn| cn.enabled) || params.facefix_enabled {
-        log::info!("Workflow JSON: {}", serde_json::to_string_pretty(&workflow).unwrap_or_default());
+        log::info!(
+            "Workflow JSON: {}",
+            serde_json::to_string_pretty(&workflow).unwrap_or_default()
+        );
     }
     let response = state
         .queue_prompt_request(workflow, &state.client_id)

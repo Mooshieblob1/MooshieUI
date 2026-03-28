@@ -102,8 +102,8 @@ fn load_custom_data_dir() -> Option<PathBuf> {
 
 /// Save a custom data directory to the bootstrap pointer file.
 pub fn save_custom_data_dir(path: &str) -> Result<(), String> {
-    let default_dir = platform_default_data_dir()
-        .ok_or("Failed to determine platform data directory")?;
+    let default_dir =
+        platform_default_data_dir().ok_or("Failed to determine platform data directory")?;
     std::fs::create_dir_all(&default_dir)
         .map_err(|e| format!("Failed to create data dir: {}", e))?;
     std::fs::write(default_dir.join("data_dir.txt"), path.trim())
@@ -157,7 +157,11 @@ fn migrate_from_old_data_dir() {
         if let Err(e) = std::fs::copy(&old_config, &new_config) {
             eprintln!("Migration: failed to copy config.json: {}", e);
         } else {
-            println!("Migrated config from {} to {}", old_dir.display(), new_dir.display());
+            println!(
+                "Migrated config from {} to {}",
+                old_dir.display(),
+                new_dir.display()
+            );
         }
     }
 }
@@ -171,8 +175,12 @@ pub fn load_persisted_config() -> AppConfig {
         if let Ok(json) = std::fs::read_to_string(&config_path) {
             match serde_json::from_str::<AppConfig>(&json) {
                 Ok(config) => {
-                    eprintln!("Loaded config from {}: comfyui_path={}, venv_path={}",
-                        config_path.display(), config.comfyui_path, config.venv_path);
+                    eprintln!(
+                        "Loaded config from {}: comfyui_path={}, venv_path={}",
+                        config_path.display(),
+                        config.comfyui_path,
+                        config.venv_path
+                    );
                     return config;
                 }
                 Err(e) => {
