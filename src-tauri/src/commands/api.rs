@@ -1563,3 +1563,33 @@ pub async fn export_logs(
     std::fs::write(&destination, &output)?;
     Ok(())
 }
+
+/// Read an image from the native clipboard and return PNG bytes.
+/// Bypasses WebView clipboard restrictions that prevent `navigator.clipboard.read()` from working.
+#[tauri::command]
+pub async fn read_clipboard_image(app: AppHandle) -> Result<Vec<u8>, AppError> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+
+    let clipboard_image = app
+        .clipboard()
+        .read_image()
+        .map_err(|e| AppError::Other(format!("No image in clipboard: {}", e)))?;
+
+    let rgba = clipboard_image.rgba().to_vec();
+    let w = clipboard_image.width();
+    let h = clipboard_image.height();
+
+    let rgba_img = image::RgbaImage::from_raw(w, h, rgba)
+        .ok_or_else(|| AppError::Other("Invalid clipboard image data".into()))?;
+
+    let dynamic = image::DynamicImage::from(rgba_img);
+    let mut png_bytes: Vec<u8> = Vec::new();
+    dynamic
+        .write_to(
+            &mut std::io::Cursor::new(&mut png_bytes),
+            image::ImageFormat::Png,
+        )
+        .map_err(|e| AppError::Other(format!("Failed to encode clipboard image: {}", e)))?;
+
+    Ok(png_bytes)
+}

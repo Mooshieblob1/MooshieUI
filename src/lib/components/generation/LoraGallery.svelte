@@ -1,6 +1,7 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import { getLoraCivitaiInfo, type LoraCivitaiInfo } from "../../utils/api.js";
 
   const CACHE_KEY = "mooshieui.lora.civitai.cache.v1";
@@ -199,18 +200,18 @@
     <input
       type="text"
       bind:value={searchQuery}
-      placeholder="Search LoRAs..."
+      placeholder={locale.t('lora.search_placeholder')}
       class="w-full bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
     />
   </div>
 
   {#if models.loras.length === 0}
     <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
-      <p>No LoRAs available — check your ComfyUI models folder</p>
+      <p>{locale.t('lora.no_loras')}</p>
     </div>
   {:else if filteredLoras().length === 0}
     <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
-      <p>No LoRAs matching "{searchQuery}"</p>
+      <p>{locale.t('lora.no_results', { query: searchQuery })}</p>
     </div>
   {:else}
     <div class="flex gap-2.5 flex-1 min-h-0 overflow-x-auto px-2 py-1.5">
@@ -239,7 +240,7 @@
           >
             {#if enabled}
               <div class="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded text-[9px] font-medium bg-indigo-600 text-white">
-                ON
+                {locale.t('lora.on')}
               </div>
             {/if}
             {#if isLoading}
@@ -265,14 +266,14 @@
                   <button
                     class="w-6 h-6 flex items-center justify-center rounded-full bg-black/60 text-neutral-300 hover:bg-black/80 text-xs"
                     onclick={() => prevImage(loraName)}
-                    title="Previous image"
+                    title={locale.t('lora.prev_image')}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
                   </button>
                   <button
                     class="w-6 h-6 flex items-center justify-center rounded-full bg-black/60 text-neutral-300 hover:bg-black/80 text-xs"
                     onclick={() => nextImage(loraName)}
-                    title="Next image"
+                    title={locale.t('lora.next_image')}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
                   </button>
@@ -281,12 +282,12 @@
             {:else if error}
               <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                <span class="text-[10px] text-neutral-600 text-center">Not on CivitAI</span>
+                <span class="text-[10px] text-neutral-600 text-center">{locale.t('lora.not_on_civitai')}</span>
                 <button
                   class="text-[10px] text-indigo-400 hover:text-indigo-300"
                   onclick={(e) => { e.stopPropagation(); refetchLora(loraName); }}
                 >
-                  Retry
+                  {locale.t('lora.retry')}
                 </button>
               </div>
             {:else}
@@ -313,7 +314,7 @@
                   target="_blank"
                   rel="noopener noreferrer"
                   class="shrink-0 text-neutral-500 hover:text-indigo-400 transition-colors"
-                  title="View on CivitAI"
+                  title={locale.t('lora.view_civitai')}
                   onclick={(e) => e.stopPropagation()}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
@@ -350,7 +351,7 @@
                     <button
                       class="px-1.5 py-0.5 text-[10px] rounded bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/20 hover:border-indigo-400/50 transition-colors"
                       onclick={(e) => { e.stopPropagation(); addTriggerWord(word); }}
-                      title="Add to prompt: {word}"
+                      title={locale.t('lora.add_to_prompt', { word })}
                     >
                       {word}
                     </button>
@@ -360,7 +361,7 @@
                     <button
                       class="px-1.5 py-0.5 text-[10px] rounded bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/20 hover:border-indigo-400/50 transition-colors"
                       onclick={(e) => { e.stopPropagation(); addTriggerWord(word); }}
-                      title="Add to prompt: {word}"
+                      title={locale.t('lora.add_to_prompt', { word })}
                     >
                       {word}
                     </button>

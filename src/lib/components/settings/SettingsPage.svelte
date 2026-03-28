@@ -5,8 +5,9 @@
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
-  import { generation } from "../../stores/generation.svelte.js";
+  import { generation, DEFAULT_ANIMA_POSITIVE_QUALITY, DEFAULT_ANIMA_NEGATIVE_QUALITY, DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY, DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY } from "../../stores/generation.svelte.js";
   import { accessibility } from "../../stores/accessibility.svelte.js";
+  import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { check } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
   import { invoke } from "@tauri-apps/api/core";
@@ -33,6 +34,7 @@
   let tagUrlInput = $state("");
   let tagFileLoading = $state(false);
   let showQualityTagsWarning = $state(false);
+  let showCustomQualityTags = $state(false);
 
   // Gallery import state
   let importBusy = $state(false);
@@ -422,12 +424,12 @@
   <!-- Persistent top bar -->
   {#if config}
     <div class="shrink-0 px-6 py-3 bg-neutral-900 border-b border-neutral-800 flex items-center gap-3">
-      <h1 class="text-lg font-medium text-neutral-100 shrink-0">Settings</h1>
+      <h1 class="text-lg font-medium text-neutral-100 shrink-0">{locale.t('settings.title')}</h1>
 
       <input
         type="text"
         bind:value={search}
-        placeholder="Search settings..."
+        placeholder={locale.t('settings.search_placeholder')}
         class="flex-1 min-w-0 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
       />
 
@@ -435,7 +437,7 @@
       {#if restartNeeded}
         <div class="flex items-center gap-1.5 text-amber-200 text-xs mr-2">
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          Restart needed
+          {locale.t('settings.restart_needed')}
         </div>
       {/if}
 
@@ -445,11 +447,11 @@
         disabled={saving}
       >
         {#if saving}
-          Saving...
+          {locale.t('settings.saving')}
         {:else if saved}
-          Saved!
+          {locale.t('settings.saved')}
         {:else}
-          Save
+          {locale.t('settings.save')}
         {/if}
       </button>
 
@@ -461,9 +463,9 @@
         disabled={restarting}
       >
         {#if restarting}
-          Restarting...
+          {locale.t('settings.restarting')}
         {:else}
-          Restart ComfyUI
+          {locale.t('settings.restart_comfyui')}
         {/if}
       </button>
       </div>
@@ -485,29 +487,29 @@
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.connection = !collapsed.connection)}
           >
-            Connection
+            {locale.t('settings.connection.title')}
             <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.connection ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
 
           {#if !collapsed.connection}
           <div class="px-5 pb-5 space-y-4">
           <div>
-            <label class="block text-xs text-neutral-400 mb-1">Server Mode<span class="text-amber-400">*</span></label>
+            <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.server_mode')}<span class="text-amber-400">*</span></label>
             <select
               bind:value={config.server_mode}
               onchange={() => { autoSave(); }}
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
             >
-              <option value="autolaunch">Auto Launch (start ComfyUI automatically)</option>
-              <option value="remote">Remote (connect to existing server)</option>
+              <option value="autolaunch">{locale.t('settings.connection.mode_autolaunch')}</option>
+              <option value="remote">{locale.t('settings.connection.mode_remote')}</option>
             </select>
           </div>
 
           {#if config.server_mode === "autolaunch"}
           <div class="flex items-center justify-between">
             <div>
-              <p class="text-sm text-neutral-200">Auto-start ComfyUI on launch</p>
-              <p class="text-xs text-neutral-500">When disabled, you can start ComfyUI manually from the banner</p>
+              <p class="text-sm text-neutral-200">{locale.t('settings.connection.auto_start')}</p>
+              <p class="text-xs text-neutral-500">{locale.t('settings.connection.auto_start_desc')}</p>
             </div>
             <button
               class="w-10 h-5 rounded-full transition-colors cursor-pointer {config.auto_start !== false ? 'bg-indigo-600' : 'bg-neutral-700'}"
@@ -522,7 +524,7 @@
 
           <div class="grid grid-cols-3 gap-3">
             <div class="col-span-2">
-              <label class="block text-xs text-neutral-400 mb-1">Server URL<span class="text-amber-400">*</span></label>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.server_url')}<span class="text-amber-400">*</span></label>
               <input
                 type="text"
                 bind:value={config.server_url}
@@ -532,7 +534,7 @@
               />
             </div>
             <div>
-              <label class="block text-xs text-neutral-400 mb-1">Port<span class="text-amber-400">*</span></label>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.port')}<span class="text-amber-400">*</span></label>
               <input
                 type="number"
                 bind:value={config.server_port}
@@ -555,7 +557,7 @@
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.appearance = !collapsed.appearance)}
           >
-            Appearance
+            {locale.t('settings.appearance.title')}
             <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.appearance ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
 
@@ -563,20 +565,20 @@
           <div class="px-5 pb-5 space-y-4">
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs text-neutral-400 mb-1">Theme</label>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.appearance.theme')}</label>
               <select
                 bind:value={config.theme}
                 onchange={() => { if (config) { applyTheme(config.theme); autoSave(); } }}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
               >
-                <option value="dark">Dark</option>
-                <option value="light">Light</option>
+                <option value="dark">{locale.t('settings.appearance.theme_dark')}</option>
+                <option value="light">{locale.t('settings.appearance.theme_light')}</option>
               </select>
             </div>
 
             <div>
               <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-                Font Scale
+                {locale.t('settings.appearance.font_scale')}
                 <span class="text-neutral-300">{Math.round(config.font_scale * 100)}%</span>
               </label>
               <input
@@ -593,18 +595,18 @@
           </div>
 
           <div>
-            <label class="block text-xs text-neutral-400 mb-1">Color Vision Simulator</label>
+            <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.appearance.color_vision')}</label>
             <select
               bind:value={accessibility.visionSimulatorMode}
               onchange={() => accessibility.saveSettings()}
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
             >
-              <option value="none">None</option>
-              <option value="protanopia">Protanopia</option>
-              <option value="deuteranopia">Deuteranopia</option>
-              <option value="tritanopia">Tritanopia</option>
+              <option value="none">{locale.t('settings.appearance.sim_none')}</option>
+              <option value="protanopia">{locale.t('settings.appearance.sim_protanopia')}</option>
+              <option value="deuteranopia">{locale.t('settings.appearance.sim_deuteranopia')}</option>
+              <option value="tritanopia">{locale.t('settings.appearance.sim_tritanopia')}</option>
             </select>
-            <p class="text-[10px] text-neutral-500 mt-0.5">Applies a global filter to simulate color vision deficiencies.</p>
+            <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.appearance.sim_note')}</p>
           </div>
 
           <div class="flex items-start gap-3">
@@ -618,8 +620,8 @@
               class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
             />
             <div>
-              <label for="enable-style-presets" class="text-sm text-neutral-200">Enable Style Presets</label>
-              <p class="text-[10px] text-neutral-500 mt-0.5">Show Fooocus-style presets in the prompt panel. Off by default.</p>
+              <label for="enable-style-presets" class="text-sm text-neutral-200">{locale.t('settings.appearance.style_presets')}</label>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.appearance.style_presets_desc')}</p>
             </div>
           </div>
 
@@ -631,9 +633,23 @@
               class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
             />
             <div>
-              <label for="dyslexic-font" class="text-sm text-neutral-200">Dyslexic-Friendly Font</label>
-              <p class="text-[10px] text-neutral-500 mt-0.5">Use OpenDyslexic font throughout the interface for improved readability.</p>
+              <label for="dyslexic-font" class="text-sm text-neutral-200">{locale.t('settings.appearance.dyslexic_font')}</label>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.appearance.dyslexic_font_desc')}</p>
             </div>
+          </div>
+
+          <div>
+            <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.appearance.language')}</label>
+            <select
+              bind:value={locale.current}
+              onchange={() => locale.saveSettings()}
+              class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+            >
+              {#each LOCALE_OPTIONS as opt}
+                <option value={opt.value}>{opt.label}</option>
+              {/each}
+            </select>
+            <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.appearance.language_desc')}</p>
           </div>
           </div>
           {/if}
@@ -647,25 +663,25 @@
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.performance = !collapsed.performance)}
           >
-            Performance
+            {locale.t('settings.performance.title')}
             <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.performance ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
 
           {#if !collapsed.performance}
           <div class="px-5 pb-5 space-y-4">
           <div>
-            <label class="block text-xs text-neutral-400 mb-1">VRAM Mode<span class="text-amber-400">*</span></label>
+            <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.performance.vram_mode')}<span class="text-amber-400">*</span></label>
             <select
               bind:value={config.vram_mode}
               onchange={() => { autoSave(); }}
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
             >
-              <option value="high">High VRAM (12GB+) — keep models in VRAM</option>
-              <option value="normal">Normal — load for sampling, offload between</option>
-              <option value="low">Low VRAM (&lt;6GB) — aggressive offloading</option>
-              <option value="none">No VRAM — CPU offload everything</option>
+              <option value="high">{locale.t('settings.performance.vram_high')}</option>
+              <option value="normal">{locale.t('settings.performance.vram_normal')}</option>
+              <option value="low">{locale.t('settings.performance.vram_low')}</option>
+              <option value="none">{locale.t('settings.performance.vram_none')}</option>
             </select>
-            <p class="text-[10px] text-neutral-500 mt-0.5">Auto-detected during setup. Change if generation is slow or you run out of VRAM.</p>
+            <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.performance.vram_note')}</p>
           </div>
 
           <div class="flex items-start gap-3">
@@ -677,8 +693,8 @@
               class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
             />
             <div>
-              <label for="keep-alive" class="text-sm text-neutral-200">Keep ComfyUI running after app closes</label>
-              <p class="text-[10px] text-amber-400/80 mt-0.5">Not recommended — ComfyUI will continue using VRAM even when the app is closed.</p>
+              <label for="keep-alive" class="text-sm text-neutral-200">{locale.t('settings.performance.keep_alive')}</label>
+              <p class="text-[10px] text-amber-400/80 mt-0.5">{locale.t('settings.performance.keep_alive_warning')}</p>
             </div>
           </div>
 
@@ -701,10 +717,102 @@
               class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
             />
             <div>
-              <label for="auto-quality-tags" class="text-sm text-neutral-200">Auto-apply quality tags</label>
-              <p class="text-[10px] text-neutral-500 mt-0.5">Automatically prepends recommended quality tags for supported models (Anima, Illustrious/NoobAI).</p>
+              <label for="auto-quality-tags" class="text-sm text-neutral-200">{locale.t('settings.performance.auto_quality_tags')}</label>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.performance.auto_quality_tags_desc')}</p>
             </div>
           </div>
+
+          {#if generation.autoQualityTags}
+          <div class="flex items-start gap-3">
+            <input
+              type="checkbox"
+              id="custom-quality-tags"
+              bind:checked={showCustomQualityTags}
+              class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
+            />
+            <div>
+              <label for="custom-quality-tags" class="text-sm text-neutral-200">{locale.t('settings.performance.custom_quality_tags')}</label>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.performance.custom_quality_tags_desc')}</p>
+            </div>
+          </div>
+
+          {#if showCustomQualityTags}
+          <div class="rounded-lg border border-amber-500/20 bg-neutral-950/50 p-3 space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-amber-400/80 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <p class="text-[10px] text-amber-400/80">{locale.t('settings.performance.quality_tags_warning')}</p>
+              </div>
+              <button
+                onclick={() => {
+                  generation.customAnimaPositiveQuality = DEFAULT_ANIMA_POSITIVE_QUALITY;
+                  generation.customAnimaNegativeQuality = DEFAULT_ANIMA_NEGATIVE_QUALITY;
+                  generation.customIllustriousPositiveQuality = DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY;
+                  generation.customIllustriousNegativeQuality = DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY;
+                  generation.saveSettings();
+                }}
+                class="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer whitespace-nowrap ml-3"
+              >
+                {locale.t('settings.performance.reset_defaults')}
+              </button>
+            </div>
+
+            <!-- Anima Tags -->
+            <div class="space-y-1.5">
+              <p class="text-[10px] text-neutral-500 font-medium uppercase tracking-wide">{locale.t('settings.performance.anima')}</p>
+              <div>
+                <label for="anima-pos-quality" class="text-[10px] text-neutral-500">{locale.t('settings.performance.positive')}</label>
+                <textarea
+                  id="anima-pos-quality"
+                  bind:value={generation.customAnimaPositiveQuality}
+                  onblur={() => generation.saveSettings()}
+                  rows="2"
+                  class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
+                  placeholder="masterpiece, best quality, ..."
+                ></textarea>
+              </div>
+              <div>
+                <label for="anima-neg-quality" class="text-[10px] text-neutral-500">{locale.t('settings.performance.negative')}</label>
+                <textarea
+                  id="anima-neg-quality"
+                  bind:value={generation.customAnimaNegativeQuality}
+                  onblur={() => generation.saveSettings()}
+                  rows="2"
+                  class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
+                  placeholder="worst quality, low quality, ..."
+                ></textarea>
+              </div>
+            </div>
+
+            <!-- Illustrious/NoobAI Tags -->
+            <div class="space-y-1.5">
+              <p class="text-[10px] text-neutral-500 font-medium uppercase tracking-wide">{locale.t('settings.performance.illustrious')}</p>
+              <div>
+                <label for="illustrious-pos-quality" class="text-[10px] text-neutral-500">{locale.t('settings.performance.positive')}</label>
+                <textarea
+                  id="illustrious-pos-quality"
+                  bind:value={generation.customIllustriousPositiveQuality}
+                  onblur={() => generation.saveSettings()}
+                  rows="2"
+                  class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
+                  placeholder="best quality, masterpiece, ..."
+                ></textarea>
+              </div>
+              <div>
+                <label for="illustrious-neg-quality" class="text-[10px] text-neutral-500">{locale.t('settings.performance.negative')}</label>
+                <textarea
+                  id="illustrious-neg-quality"
+                  bind:value={generation.customIllustriousNegativeQuality}
+                  onblur={() => generation.saveSettings()}
+                  rows="2"
+                  class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
+                  placeholder="worst quality, bad quality, ..."
+                ></textarea>
+              </div>
+            </div>
+          </div>
+          {/if}
+          {/if}
           </div>
           {/if}
         </section>
@@ -717,7 +825,7 @@
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.paths = !collapsed.paths)}
           >
-            Paths
+            {locale.t('settings.paths.title')}
             <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.paths ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
 
@@ -727,7 +835,7 @@
           <!-- Move Installation -->
           <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2">
             <div class="flex items-center justify-between">
-              <p class="text-xs text-neutral-400">Data Location</p>
+              <p class="text-xs text-neutral-400">{locale.t('settings.paths.data_location')}</p>
             </div>
             {#if currentInstallPath}
               <p class="text-xs text-neutral-500 font-mono truncate" title={currentInstallPath}>{currentInstallPath}</p>
@@ -735,7 +843,7 @@
 
             {#if moveSuccess}
               <div class="rounded border border-green-800/50 bg-green-900/20 px-2 py-1.5 text-[11px] text-green-300">
-                Installation moved successfully. Restart the app for all changes to take effect.
+                {locale.t('settings.paths.move_success')}
               </div>
             {/if}
 
@@ -751,7 +859,7 @@
                   onclick={browseMoveTarget}
                   class="px-2 py-1.5 rounded-lg border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors text-xs"
                 >
-                  Browse
+                  {locale.t('common.browse')}
                 </button>
               </div>
               {#if moveTargetPath.trim()}
@@ -759,9 +867,9 @@
                   onclick={moveInstallation}
                   class="w-full px-3 py-2 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white transition-colors"
                 >
-                  Move Installation to New Location
+                  {locale.t('settings.paths.move_button')}
                 </button>
-                <p class="text-[10px] text-amber-400/70">This will stop ComfyUI, copy all data (~5-10 GB), and delete the old location. May take several minutes.</p>
+                <p class="text-[10px] text-amber-400/70">{locale.t('settings.paths.move_warning')}</p>
               {/if}
             {:else}
               <div class="flex items-center gap-2 text-xs text-neutral-400">
@@ -776,7 +884,7 @@
           </div>
 
           <div>
-            <label class="block text-xs text-neutral-400 mb-1">ComfyUI Installation</label>
+            <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.paths.comfyui_install')}</label>
             <input
               type="text"
               bind:value={config.comfyui_path}
@@ -786,7 +894,7 @@
           </div>
 
           <div>
-            <label class="block text-xs text-neutral-400 mb-1">Python Virtual Environment</label>
+            <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.paths.venv')}</label>
             <input
               type="text"
               bind:value={config.venv_path}
@@ -797,14 +905,14 @@
 
           <div>
             <div class="flex items-center justify-between mb-1">
-              <label class="block text-xs text-neutral-400">Shared Model Directories<span class="text-amber-400">*</span></label>
+              <label class="block text-xs text-neutral-400">{locale.t('settings.paths.shared_model_dirs')}<span class="text-amber-400">*</span></label>
               <div class="flex gap-1.5">
                 <button
                   class="px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
                   onclick={scanForModelDirs}
                   disabled={scanningModelDirs}
                 >
-                  {scanningModelDirs ? "Scanning..." : "Auto-Detect"}
+                  {scanningModelDirs ? locale.t('settings.paths.scanning') : locale.t('settings.paths.auto_detect')}
                 </button>
                 <button
                   class="px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
@@ -817,7 +925,7 @@
                   }}
                   title="Add another model directory"
                 >
-                  + Add Directory
+                  {locale.t('settings.paths.add_directory')}
                 </button>
               </div>
             </div>
@@ -855,11 +963,11 @@
                 {/if}
               </div>
             {/each}
-            <p class="text-[10px] text-neutral-500 mt-0.5">Point to a root models folder (e.g. from ComfyUI, A1111, or Forge). Subdirectories like checkpoints/, loras/, vae/ are detected automatically. You can also point directly to a folder containing model files.</p>
+            <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.paths.model_dirs_desc')}</p>
 
             {#if detectedModelDirs.length > 0}
               <div class="mt-2 space-y-1">
-                <p class="text-[10px] text-neutral-500">Found model directories from other tools:</p>
+                <p class="text-[10px] text-neutral-500">{locale.t('settings.paths.found_dirs')}</p>
                 {#each detectedModelDirs as dir}
                   <div class="flex items-center gap-1.5">
                     <button
@@ -870,9 +978,9 @@
                       <p class="text-[11px] text-neutral-300 truncate">{dir.path}</p>
                       <p class="text-[10px] text-neutral-500">
                         {dir.tool}
-                        {#if dir.has_checkpoints} · checkpoints{/if}
-                        {#if dir.has_loras} · LoRAs{/if}
-                        {#if dir.has_vae} · VAEs{/if}
+                        {#if dir.has_checkpoints} · {locale.t('settings.paths.checkpoints')}{/if}
+                        {#if dir.has_loras} · {locale.t('settings.paths.loras')}{/if}
+                        {#if dir.has_vae} · {locale.t('settings.paths.vaes')}{/if}
                       </p>
                     </button>
                   </div>
@@ -882,7 +990,7 @@
           </div>
 
           <div>
-            <label class="block text-xs text-neutral-400 mb-1">Extra CLI Arguments<span class="text-amber-400">*</span></label>
+            <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.paths.extra_args')}<span class="text-amber-400">*</span></label>
             <input
               type="text"
               value={config.extra_args.join(" ")}
@@ -896,7 +1004,7 @@
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
               placeholder="--fp16 --force-channels-last"
             />
-            <p class="text-[10px] text-neutral-500 mt-0.5">Additional arguments passed to ComfyUI on launch</p>
+            <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.paths.extra_args_desc')}</p>
           </div>
           </div>
           {/if}
@@ -910,7 +1018,7 @@
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.gallery = !collapsed.gallery)}
           >
-            Gallery
+            {locale.t('settings.gallery.title')}
             <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.gallery ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
 
@@ -919,28 +1027,28 @@
 
             <!-- Import from external directory -->
             <div>
-              <label class="block text-xs text-neutral-400 mb-1">Import Images from Directory</label>
-              <p class="text-[10px] text-neutral-500 mb-2">Copy images from a SwarmUI output, ComfyUI output, or any other image directory into your gallery. Existing metadata is preserved.</p>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.gallery.import_label')}</label>
+              <p class="text-[10px] text-neutral-500 mb-2">{locale.t('settings.gallery.import_desc')}</p>
               <button
                 class="px-4 py-2 text-sm font-medium rounded-lg transition-colors {importBusy ? 'bg-neutral-700 text-neutral-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}"
                 disabled={importBusy}
                 onclick={handleImportDirectory}
               >
                 {#if importBusy}
-                  Importing...
+                  {locale.t('settings.gallery.importing')}
                 {:else}
-                  Choose Directory...
+                  {locale.t('settings.gallery.choose_directory')}
                 {/if}
               </button>
 
               {#if importResult}
                 <div class="mt-2 p-3 rounded-lg bg-neutral-800 border border-neutral-700 text-sm">
-                  <p class="text-green-400">{importResult.imported} image{importResult.imported !== 1 ? 's' : ''} imported</p>
+                  <p class="text-green-400">{locale.t('settings.gallery.imported_count', { count: importResult.imported })}</p>
                   {#if importResult.skipped > 0}
-                    <p class="text-neutral-400">{importResult.skipped} skipped (already in gallery)</p>
+                    <p class="text-neutral-400">{locale.t('settings.gallery.skipped_count', { count: importResult.skipped })}</p>
                   {/if}
                   {#if importResult.failed > 0}
-                    <p class="text-red-400">{importResult.failed} failed</p>
+                    <p class="text-red-400">{locale.t('settings.gallery.failed_count', { count: importResult.failed })}</p>
                   {/if}
                 </div>
               {/if}
@@ -952,10 +1060,10 @@
 
             <div class="rounded-lg bg-neutral-800/50 border border-neutral-700/50 p-3">
               <p class="text-[11px] text-neutral-400 leading-relaxed">
-                <strong class="text-neutral-300">Supported sources:</strong> ComfyUI output, SwarmUI Output, A1111/Forge output, or any folder of PNG/JPG/WebP images. Subdirectories are scanned recursively.
+                <strong class="text-neutral-300">{locale.t('settings.gallery.supported_sources').split(':')[0]}:</strong> {locale.t('settings.gallery.supported_sources').split(':').slice(1).join(':').trim()}
               </p>
               <p class="text-[11px] text-neutral-400 mt-1.5 leading-relaxed">
-                <strong class="text-neutral-300">Metadata:</strong> Drag an imported image onto the generation panel or individual sections to load its parameters. SwarmUI-specific tags are automatically cleaned from prompts.
+                <strong class="text-neutral-300">{locale.t('settings.gallery.metadata_support').split(':')[0]}:</strong> {locale.t('settings.gallery.metadata_support').split(':').slice(1).join(':').trim()}
               </p>
             </div>
           </div>
@@ -970,7 +1078,7 @@
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.autocomplete = !collapsed.autocomplete)}
           >
-            Autocomplete
+            {locale.t('settings.autocomplete.title')}
             <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.autocomplete ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
 
@@ -978,11 +1086,11 @@
           <div class="px-5 pb-5 space-y-4">
             <!-- Current source -->
             <div>
-              <label class="block text-xs text-neutral-400 mb-1">Tag Source</label>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.autocomplete.tag_source')}</label>
               <div class="flex items-center gap-2 text-sm text-neutral-300">
                 {#if autocomplete.sourceMode === "builtin"}
                   <span class="inline-block w-2 h-2 rounded-full bg-indigo-400"></span>
-                  Built-in Danbooru ({autocomplete.tags.length.toLocaleString()} tags)
+                  {locale.t('settings.autocomplete.source_builtin')} ({autocomplete.tags.length.toLocaleString()} {locale.t('settings.autocomplete.tags_count')})
                 {:else if autocomplete.sourceMode === "url"}
                   <span class="inline-block w-2 h-2 rounded-full bg-green-400"></span>
                   URL: <span class="text-neutral-400 truncate max-w-xs">{autocomplete.sourceUrl}</span>
@@ -997,7 +1105,7 @@
 
             <!-- Load from URL -->
             <div>
-              <label class="block text-xs text-neutral-400 mb-1">Load from URL</label>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.autocomplete.load_url')}</label>
               <div class="flex gap-2">
                 <input
                   type="text"
@@ -1018,7 +1126,7 @@
 
             <!-- Upload file -->
             <div>
-              <label class="block text-xs text-neutral-400 mb-1">Upload File</label>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.autocomplete.upload_file')}</label>
               <label
                 class="inline-flex items-center gap-2 px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-sm text-neutral-300 hover:border-indigo-500 transition-colors cursor-pointer"
               >
@@ -1065,7 +1173,7 @@
             <!-- Max results -->
             <div>
               <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-                Max Suggestions
+                {locale.t('settings.autocomplete.max_suggestions')}
                 <span class="text-neutral-300">{autocomplete.maxResults}</span>
               </label>
               <input
@@ -1111,7 +1219,7 @@
 
             <div>
               <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-                General Tag Threshold
+                {locale.t('settings.interrogator.general_threshold')}
                 <span class="text-neutral-300">{config.interrogator_general_threshold.toFixed(2)}</span>
               </label>
               <input
@@ -1131,7 +1239,7 @@
 
             <div>
               <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-                Character Tag Threshold
+                {locale.t('settings.interrogator.character_threshold')}
                 <span class="text-neutral-300">{config.interrogator_character_threshold.toFixed(2)}</span>
               </label>
               <input
@@ -1160,7 +1268,7 @@
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.about = !collapsed.about)}
           >
-            About
+            {locale.t('settings.about.title')}
             <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.about ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
 
@@ -1169,7 +1277,7 @@
             <div class="flex items-center justify-between">
               <div>
                 <p class="text-sm text-neutral-200">MooshieUI</p>
-                <p class="text-xs text-neutral-500">Version {appVersion}</p>
+                <p class="text-xs text-neutral-500">{locale.t('settings.about.version')} {appVersion}</p>
               </div>
             </div>
 
@@ -1205,7 +1313,7 @@
                   onclick={checkForUpdates}
                   class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
                 >
-                  Check for Updates
+                  {locale.t('settings.about.check_updates')}
                 </button>
 
               {:else if updateState === "checking"}
@@ -1261,7 +1369,7 @@
                     onclick={async () => { try { await stopComfyui(); } catch {} await relaunch(); }}
                     class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
                   >
-                    Restart Now
+                    {locale.t('updater.restart_now')}
                   </button>
                 </div>
 
@@ -1288,9 +1396,9 @@
                   class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-100 rounded-lg text-sm transition-colors cursor-pointer disabled:opacity-50"
                 >
                   {#if exportingLogs}
-                    Exporting...
+                    {locale.t('settings.about.saving_logs')}
                   {:else}
-                    Export Logs
+                    {locale.t('settings.about.export_logs')}
                   {/if}
                 </button>
                 {#if logExportDone}
@@ -1326,15 +1434,15 @@
 {#if showQualityTagsWarning}
 <div class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" role="dialog">
   <div class="bg-neutral-900 border border-neutral-700 rounded-xl p-6 max-w-md mx-4 shadow-2xl">
-    <h3 class="text-sm font-semibold text-neutral-100 mb-3">Disable auto quality tags?</h3>
-    <p class="text-xs text-neutral-400 mb-2">Quality tags like <span class="text-neutral-300">masterpiece, best quality, score_9</span> are critical for anime models (Anima, Illustrious, NoobAI). Without them, outputs will be significantly lower quality.</p>
-    <p class="text-xs text-neutral-400 mb-4">Only disable this if you know what you're doing and want full manual control over your prompts.</p>
+    <h3 class="text-sm font-semibold text-neutral-100 mb-3">{locale.t('settings.quality_warning.title')}</h3>
+    <p class="text-xs text-neutral-400 mb-2">{locale.t('settings.quality_warning.body', { tags: 'masterpiece, best quality, score_9' })}</p>
+    <p class="text-xs text-neutral-400 mb-4">{locale.t('settings.quality_warning.body2')}</p>
     <div class="flex gap-3 justify-end">
       <button
         onclick={() => { showQualityTagsWarning = false; }}
         class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors cursor-pointer"
       >
-        Keep enabled
+        {locale.t('settings.quality_warning.keep')}
       </button>
       <button
         onclick={() => {
@@ -1344,7 +1452,7 @@
         }}
         class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
       >
-        Disable anyway
+        {locale.t('settings.quality_warning.disable')}
       </button>
     </div>
   </div>

@@ -2,6 +2,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
   import { models } from "../../stores/models.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
 
@@ -115,7 +116,7 @@
   <!-- Sampler + Scheduler -->
   <div class="grid grid-cols-2 gap-2">
     <div>
-      <label class="block text-xs text-neutral-400 mb-1">Sampler<InfoTip text="The algorithm used to progressively remove noise from the image. Different samplers produce different results — 'euler' is fast and reliable, 'dpmpp' variants offer higher quality, 'ancestral' ones add randomness for variety." /></label>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.label')}<InfoTip text="The algorithm used to progressively remove noise from the image. Different samplers produce different results — 'euler' is fast and reliable, 'dpmpp' variants offer higher quality, 'ancestral' ones add randomness for variety." /></label>
       <select
         bind:value={generation.samplerName}
         onchange={onSamplerChange}
@@ -127,7 +128,7 @@
       </select>
     </div>
     <div>
-      <label class="block text-xs text-neutral-400 mb-1">Scheduler<InfoTip text="Controls how noise is distributed across steps. 'normal' is standard, 'karras' front-loads detail work for sharper results, 'sgm_uniform' spaces steps evenly." /></label>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.scheduler')}<InfoTip text="Controls how noise is distributed across steps. 'normal' is standard, 'karras' front-loads detail work for sharper results, 'sgm_uniform' spaces steps evenly." /></label>
       <select
         bind:value={generation.scheduler}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
@@ -143,7 +144,7 @@
   <div class="grid grid-cols-2 gap-2">
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-        <span>Steps<InfoTip text="How many denoising iterations to run. More steps = finer detail but slower. 20-30 is a good balance for most samplers. Some (like 'euler') converge fast and don't benefit much beyond 25." /></span>
+        <span>{locale.t('generation.sampler.steps')}<InfoTip text="How many denoising iterations to run. More steps = finer detail but slower. 20-30 is a good balance for most samplers. Some (like 'euler') converge fast and don't benefit much beyond 25." /></span>
         <EditableValue value={generation.steps} min={1} max={150} step={1} onchange={(v) => generation.steps = v} />
       </label>
       <input
@@ -157,7 +158,7 @@
     </div>
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-        <span>CFG<InfoTip text="Classifier-Free Guidance — how closely the AI follows your prompt. Higher = more literal but can look artificial. Lower = more creative but may ignore parts of your prompt. CFG++ samplers work best around 1-2." /></span>
+        <span>{locale.t('generation.sampler.cfg')}<InfoTip text="Classifier-Free Guidance — how closely the AI follows your prompt. Higher = more literal but can look artificial. Lower = more creative but may ignore parts of your prompt. CFG++ samplers work best around 1-2." /></span>
         <EditableValue value={generation.cfg} min={0} max={30} step={0.1} decimals={1} onchange={(v) => generation.cfg = v} />
       </label>
       <input
@@ -183,7 +184,7 @@
         class="text-[10px] px-2 py-0.5 rounded border border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200 transition-colors shrink-0"
         onclick={applyRecommendedSamplerTuning}
       >
-        Fix
+        {locale.t('generation.sampler.fix')}
       </button>
     {/if}
   </div>
@@ -192,14 +193,14 @@
   <div class="grid grid-cols-2 gap-2">
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-        <span>Seed<InfoTip text="A number that determines the 'randomness' of your image. Same seed + same settings = same image. Use 'Random' for variety, or set a specific seed to reproduce or iterate on a result." /></span>
+        <span>{locale.t('generation.sampler.seed')}<InfoTip text="A number that determines the 'randomness' of your image. Same seed + same settings = same image. Use 'Random' for variety, or set a specific seed to reproduce or iterate on a result." /></span>
         <button
           class="text-[10px] px-1.5 py-0.5 rounded {randomSeed
             ? 'bg-indigo-600 text-white'
             : 'bg-neutral-700 text-neutral-300'} transition-colors"
           onclick={() => (generation.seed = randomSeed ? (progress.lastCompletedSeed ?? 0) : -1)}
         >
-          Rng
+          {locale.t('generation.sampler.seed_random')}
         </button>
       </label>
       {#if !randomSeed}
@@ -217,7 +218,7 @@
     </div>
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-        <span>Batch<InfoTip text="How many images to generate at once. Higher values use more VRAM but let you compare results quickly. Each image uses the same prompt but a different seed." /></span>
+        <span>{locale.t('generation.sampler.batch')}<InfoTip text="How many images to generate at once. Higher values use more VRAM but let you compare results quickly. Each image uses the same prompt but a different seed." /></span>
         <EditableValue value={generation.batchSize} min={1} max={8} step={1} onchange={(v) => generation.batchSize = v} />
       </label>
       <input
@@ -234,7 +235,7 @@
   <!-- Bit Depth + Metadata -->
   <div class="grid grid-cols-2 gap-2">
     <div>
-      <label class="block text-xs text-neutral-400 mb-1">Bit Depth<InfoTip text="8-bit is standard. 16-bit preserves more precision from the model's float32 output — useful if you plan to post-process in Photoshop/GIMP. Requires OpenCV in the ComfyUI environment." /></label>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.bit_depth')}<InfoTip text="8-bit is standard. 16-bit preserves more precision from the model's float32 output — useful if you plan to post-process in Photoshop/GIMP. Requires OpenCV in the ComfyUI environment." /></label>
       <div class="flex gap-1">
         {#each ["8bit", "16bit"] as depth}
           <button
@@ -243,15 +244,15 @@
               : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'}"
             onclick={() => generation.outputBitDepth = depth as "8bit" | "16bit"}
           >
-            {depth === "8bit" ? "8-bit" : "16-bit"}
+            {depth === "8bit" ? locale.t('generation.sampler.bit_8') : locale.t('generation.sampler.bit_16')}
           </button>
         {/each}
       </div>
     </div>
     <div>
-      <label class="block text-xs text-neutral-400 mb-1">Metadata<InfoTip text="How generation parameters are saved into images. 'Text Chunk' is standard PNG metadata (fast, widely supported). 'Stealth Alpha' hides metadata in the alpha channel and can survive social media re-uploads that strip PNG chunks. 'Both' writes to both locations. For 16-bit PNGs, selecting Stealth Alpha is automatically upgraded to Both for better compatibility." /></label>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.metadata')}<InfoTip text="How generation parameters are saved into images. 'Text Chunk' is standard PNG metadata (fast, widely supported). 'Stealth Alpha' hides metadata in the alpha channel and can survive social media re-uploads that strip PNG chunks. 'Both' writes to both locations. For 16-bit PNGs, selecting Stealth Alpha is automatically upgraded to Both for better compatibility." /></label>
       <div class="flex gap-1">
-        {#each [["text_chunk", "Txt"], ["stealth", "Stealth"], ["both", "Both"]] as [value, label]}
+        {#each [["text_chunk", locale.t('generation.sampler.metadata_text')], ["stealth", locale.t('generation.sampler.metadata_stealth')], ["both", locale.t('generation.sampler.metadata_both')]] as [value, label]}
           <button
             class="flex-1 py-1 text-[11px] rounded-lg border transition-colors {effectiveMetadataMode === value
               ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'

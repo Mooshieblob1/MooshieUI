@@ -405,6 +405,10 @@ export async function interrogateClipboard(): Promise<InterrogationResult> {
   return invoke("interrogate_clipboard");
 }
 
+export async function readClipboardImage(): Promise<number[]> {
+  return invoke("read_clipboard_image");
+}
+
 export async function exportLogs(destination: string): Promise<void> {
   return invoke("export_logs", { destination });
 }

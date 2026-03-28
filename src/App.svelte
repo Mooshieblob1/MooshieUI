@@ -15,6 +15,7 @@
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
   import { accessibility } from "./lib/stores/accessibility.svelte.js";
+  import { locale } from "./lib/stores/locale.svelte.js";
   import type { GenerationParams, OutputImage, InterrogationResult } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
@@ -159,27 +160,28 @@
 
   /** Pretty-print a metadata key for display */
   function metadataLabel(key: string): string {
-    const labels: Record<string, string> = {
-      positive_prompt: "Prompt",
-      negative_prompt: "Negative Prompt",
-      model: "Model",
-      vae: "VAE",
-      seed: "Seed",
-      steps: "Steps",
-      cfg: "CFG Scale",
-      sampler: "Sampler",
-      scheduler: "Scheduler",
-      denoise: "Denoise",
-      mode: "Mode",
-      size: "Size",
-      loras: "LoRAs",
-      upscale_model: "Upscale Model",
-      upscale_scale: "Upscale Scale",
-      upscale_denoise: "Upscale Denoise",
-      date: "Date",
-      generation_time: "Gen Time",
+    const keyMap: Record<string, string> = {
+      positive_prompt: "gallery.meta.prompt",
+      negative_prompt: "gallery.meta.negative_prompt",
+      model: "gallery.meta.model",
+      vae: "gallery.meta.vae",
+      seed: "gallery.meta.seed",
+      steps: "gallery.meta.steps",
+      cfg: "gallery.meta.cfg",
+      sampler: "gallery.meta.sampler",
+      scheduler: "gallery.meta.scheduler",
+      denoise: "gallery.meta.denoise",
+      mode: "gallery.meta.mode",
+      size: "gallery.meta.size",
+      loras: "gallery.meta.loras",
+      upscale_model: "gallery.meta.upscale_model",
+      upscale_scale: "gallery.meta.upscale_scale",
+      upscale_denoise: "gallery.meta.upscale_denoise",
+      date: "gallery.meta.date",
+      generation_time: "gallery.meta.generation_time",
     };
-    return labels[key] ?? key;
+    const tKey = keyMap[key];
+    return tKey ? locale.t(tKey) : key;
   }
 
   function applyTheme(theme: string) {
@@ -276,10 +278,10 @@
       generation.upscaleEnabled = true;
       currentPage = "generate";
       gallery.closeLightbox();
-      gallery.showToast("Image loaded for upscaling", "success");
+      gallery.showToast(locale.t("gallery.toast.loaded_upscale"), "success");
     } catch (e) {
       console.error("Failed to set up upscale:", e);
-      gallery.showToast("Failed to load image", "error");
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
     }
   }
 
@@ -332,13 +334,13 @@
 
       gallery.showToast(
         mode === "inpainting"
-          ? "Image loaded for inpainting"
-          : "Image loaded for image-to-image",
+          ? locale.t("gallery.toast.loaded_inpaint")
+          : locale.t("gallery.toast.loaded_img2img"),
         "success"
       );
     } catch (e) {
       console.error(`Failed to set up ${mode}:`, e);
-      gallery.showToast("Failed to load image", "error");
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
     }
   }
 
@@ -405,16 +407,16 @@
     const image = contextMenuImage;
     if (!image) return [];
     return [
-      { label: "Get Image Tags", action: () => interrogateFromGallery(image) },
+      { label: locale.t("gallery.get_tags"), action: () => interrogateFromGallery(image) },
       { label: "", action: () => {}, separator: true },
-      { label: "Image to Image", action: () => img2imgImage(image) },
-      { label: "Inpaint", action: () => inpaintImage(image) },
-      ...(!image.is_upscaled ? [{ label: "Upscale", action: () => upscaleImage(image) }] : []),
+      { label: locale.t("gallery.img2img"), action: () => img2imgImage(image) },
+      { label: locale.t("gallery.inpaint"), action: () => inpaintImage(image) },
+      ...(!image.is_upscaled ? [{ label: locale.t("gallery.upscale"), action: () => upscaleImage(image) }] : []),
       { label: "", action: () => {}, separator: true },
-      { label: "Save As", action: () => gallery.saveImageAs(image) },
-      { label: "Copy", action: () => gallery.copyToClipboard(image) },
+      { label: locale.t("gallery.save_as"), action: () => gallery.saveImageAs(image) },
+      { label: locale.t("gallery.copy"), action: () => gallery.copyToClipboard(image) },
       { label: "", action: () => {}, separator: true },
-      { label: "Delete", action: () => gallery.deleteImage(image), destructive: true },
+      { label: locale.t("gallery.delete"), action: () => gallery.deleteImage(image), destructive: true },
     ];
   });
 
@@ -498,10 +500,10 @@
   }
 
   function modeLabel(mode: OutputImage["generation_mode"]): string {
-    if (mode === "txt2img") return "Text to Image";
-    if (mode === "img2img") return "Image to Image";
-    if (mode === "inpainting") return "Inpainting";
-    return "Unknown Mode";
+    if (mode === "txt2img") return locale.t("gallery.mode.txt2img");
+    if (mode === "img2img") return locale.t("gallery.mode.img2img");
+    if (mode === "inpainting") return locale.t("gallery.mode.inpainting");
+    return locale.t("gallery.mode.unknown");
   }
 
   function boardLabel(image: OutputImage): string {
@@ -574,14 +576,14 @@
 
   async function applyMetadataToGeneration(image: OutputImage, mode: MetadataApplyMode = "settings") {
     if (!image.gallery_filename) {
-      gallery.showToast("Metadata is only available for saved gallery images", "info");
+      gallery.showToast(locale.t("gallery.toast.metadata_only_saved"), "info");
       return;
     }
 
     try {
       const metadata = await readImageMetadata(image.gallery_filename);
       if (!metadata) {
-        gallery.showToast("No PNG metadata found", "info");
+        gallery.showToast(locale.t("gallery.toast.no_metadata"), "info");
         return;
       }
 
@@ -591,9 +593,9 @@
       if (mode === "seed") {
         if (metadata.seed !== undefined) {
           generation.seed = Number(metadata.seed) || generation.seed;
-          gallery.showToast("Applied seed from PNG metadata", "success");
+          gallery.showToast(locale.t("gallery.toast.applied_seed"), "success");
         } else {
-          gallery.showToast("No seed found in PNG metadata", "info");
+          gallery.showToast(locale.t("gallery.toast.no_seed"), "info");
         }
         return;
       }
@@ -626,15 +628,15 @@
 
       if (mode === "remix") {
         generation.seed = -1;
-        gallery.showToast("Loaded settings for remix (random seed)", "success");
+        gallery.showToast(locale.t("gallery.toast.loaded_remix"), "success");
         return;
       }
 
       if (metadata.seed !== undefined) generation.seed = Number(metadata.seed) || generation.seed;
-      gallery.showToast("Applied generation settings from PNG metadata", "success");
+      gallery.showToast(locale.t("gallery.toast.applied_settings"), "success");
     } catch (e) {
       console.error("Failed to apply metadata:", e);
-      gallery.showToast("Failed to read metadata", "error");
+      gallery.showToast(locale.t("gallery.toast.failed_metadata"), "error");
     }
   }
 
@@ -732,7 +734,7 @@
         images,
       }));
     } else {
-      groupedGalleryImages = [{ label: "All Images", images: filteredByBoard }];
+      groupedGalleryImages = [{ label: locale.t("gallery.all_images"), images: filteredByBoard }];
     }
   });
 
@@ -839,7 +841,7 @@
     }
 
     // Load persisted settings
-    await Promise.all([generation.loadSettings(), autocomplete.loadSettings()]);
+    await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
 
     // Set up event listeners BEFORE starting so we don't miss events
     await Promise.all([
@@ -1064,7 +1066,7 @@
         ? 'bg-indigo-600 text-white'
         : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
       onclick={() => (currentPage = "generate")}
-      title="Generate"
+      title={locale.t('nav.generate')}
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -1086,7 +1088,7 @@
         ? 'bg-indigo-600 text-white'
         : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
       onclick={() => (currentPage = "gallery")}
-      title="Gallery"
+      title={locale.t('nav.gallery')}
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -1116,7 +1118,7 @@
         ? 'bg-indigo-600 text-white'
         : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
       onclick={() => (currentPage = "modelhub")}
-      title="Model Hub"
+      title={locale.t('nav.modelhub')}
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -1139,7 +1141,7 @@
         ? 'bg-indigo-600 text-white'
         : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
       onclick={() => (currentPage = "settings")}
-      title="Settings"
+      title={locale.t('nav.settings')}
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -1163,7 +1165,7 @@
         : startupStatus
           ? 'bg-amber-500 animate-pulse'
           : 'bg-red-500'}"
-      title={connection.connected ? "Connected" : startupStatus || "Disconnected"}
+      title={connection.connected ? locale.t('nav.connected') : startupStatus || locale.t('nav.disconnected')}
     ></div>
 
     <span class="text-[10px] text-neutral-500 text-center mb-2 select-none">v{appVersion}</span>
@@ -1206,20 +1208,20 @@
       <div class="p-6 h-full overflow-y-auto" use:smoothScroll>
         {#if gallery.loading}
           <div class="flex items-center justify-center h-full text-neutral-500">
-            Loading gallery...
+            {locale.t("gallery.loading")}
           </div>
         {:else if gallery.images.length === 0}
           <div
             class="flex items-center justify-center h-full text-neutral-500"
           >
-            No images yet. Generate some!
+            {locale.t("gallery.empty_generate")}
           </div>
         {:else}
           <div class="space-y-4">
             <div class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 space-y-3">
               <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 items-end">
                 <div class="lg:col-span-2">
-                  <div class="text-xs text-neutral-400 mb-1">Images Per Row: {viewColumns(galleryView)}</div>
+                  <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.images_per_row")} {viewColumns(galleryView)}</div>
                   <input
                     type="range"
                     bind:value={galleryImagesPerRow}
@@ -1231,73 +1233,73 @@
                   />
                 </div>
                 <div>
-                  <div class="text-xs text-neutral-400 mb-1">Sort By</div>
+                  <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.sort_by")}</div>
                   <select bind:value={gallerySortBy} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
-                    <option value="date">Date</option>
-                    <option value="name">Name</option>
-                    <option value="size">Size</option>
+                    <option value="date">{locale.t("gallery.sort_date")}</option>
+                    <option value="name">{locale.t("gallery.sort_name")}</option>
+                    <option value="size">{locale.t("gallery.sort_size")}</option>
                   </select>
                 </div>
                 <div>
-                  <div class="text-xs text-neutral-400 mb-1">Group By</div>
+                  <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.group_by")}</div>
                   <select bind:value={galleryGroupBy} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
-                    <option value="none">None</option>
-                    <option value="date">Date Generated</option>
-                    <option value="month">Month Generated</option>
-                    <option value="mode">Generation Mode</option>
-                    <option value="prompt">Prompt ID</option>
-                    <option value="board">Board</option>
+                    <option value="none">{locale.t("gallery.group_none")}</option>
+                    <option value="date">{locale.t("gallery.group_date")}</option>
+                    <option value="month">{locale.t("gallery.group_month")}</option>
+                    <option value="mode">{locale.t("gallery.group_mode")}</option>
+                    <option value="prompt">{locale.t("gallery.group_prompt")}</option>
+                    <option value="board">{locale.t("gallery.group_board")}</option>
                   </select>
                 </div>
               </div>
 
               <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 items-end">
                 <div>
-                  <div class="text-xs text-neutral-400 mb-1">Board Filter</div>
+                  <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.board_filter")}</div>
                   <select bind:value={galleryBoardFilter} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
-                    <option value="all">All Boards</option>
-                    <option value="Unsorted">Unsorted</option>
+                    <option value="all">{locale.t("gallery.all_boards")}</option>
+                    <option value="Unsorted">{locale.t("gallery.unsorted")}</option>
                     {#each gallery.boards as board}
                       <option value={board}>{board}</option>
                     {/each}
                   </select>
                 </div>
                 <div class="lg:col-span-3">
-                  <div class="text-xs text-neutral-400 mb-1">Create Board</div>
+                  <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.create_board")}</div>
                   <div class="flex items-center gap-2">
                     <input
                       type="text"
                       bind:value={newBoardName}
                       class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-100 placeholder-neutral-500"
-                      placeholder="e.g. Portraits"
+                      placeholder={locale.t("gallery.placeholder_board")}
                     />
                     <button
                       class="px-3 py-2 text-xs rounded border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
                       onclick={addBoard}
                       disabled={!newBoardName.trim()}
                     >
-                      Add
+                      {locale.t("gallery.add")}
                     </button>
                   </div>
                 </div>
               </div>
 
               <div>
-                <div class="text-xs text-neutral-400 mb-2">View</div>
+                <div class="text-xs text-neutral-400 mb-2">{locale.t("gallery.view")}</div>
                 <div class="flex flex-wrap gap-2">
                   <button
                     onclick={() => (gallerySortDir = gallerySortDir === "asc" ? "desc" : "asc")}
                     class="px-3 py-1.5 text-xs rounded border transition-colors border-neutral-700 text-neutral-300 hover:border-neutral-500"
-                    title="Toggle sort direction"
+                    title={locale.t("gallery.toggle_sort")}
                   >
-                    {gallerySortDir === "asc" ? "Ascending" : "Descending"}
+                    {gallerySortDir === "asc" ? locale.t("gallery.ascending") : locale.t("gallery.descending")}
                   </button>
-                  <button onclick={() => (galleryView = "huge")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'huge' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">Huge Icons</button>
-                  <button onclick={() => (galleryView = "large")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'large' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">Large Icons</button>
-                  <button onclick={() => (galleryView = "small")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'small' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">Small Icons</button>
-                  <button onclick={() => (galleryView = "details")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'details' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">Detailed View</button>
-                  <button onclick={rescanGalleryMetadata} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200" title="Migrate legacy gallery entries and refresh metadata">
-                    Re-scan Metadata
+                  <button onclick={() => (galleryView = "huge")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'huge' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.huge_icons")}</button>
+                  <button onclick={() => (galleryView = "large")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'large' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.large_icons")}</button>
+                  <button onclick={() => (galleryView = "small")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'small' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.small_icons")}</button>
+                  <button onclick={() => (galleryView = "details")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'details' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.detailed_view")}</button>
+                  <button onclick={rescanGalleryMetadata} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200" title={locale.t("gallery.rescan_tooltip")}>
+                    {locale.t("gallery.rescan_metadata")}
                   </button>
                 </div>
               </div>
@@ -1314,11 +1316,11 @@
                 {#if galleryView === "details"}
                   <div class="rounded-xl border border-neutral-800 overflow-hidden">
                     <div class="grid grid-cols-[72px_1fr_150px_120px_320px] gap-2 px-3 py-2 bg-neutral-900 text-[11px] uppercase tracking-wide text-neutral-500 border-b border-neutral-800">
-                      <div>Preview</div>
-                      <div>Name</div>
-                      <div>Date</div>
-                      <div>Size</div>
-                      <div>Actions</div>
+                      <div>{locale.t("gallery.col_preview")}</div>
+                      <div>{locale.t("gallery.col_name")}</div>
+                      <div>{locale.t("gallery.col_date")}</div>
+                      <div>{locale.t("gallery.col_size")}</div>
+                      <div>{locale.t("gallery.col_actions")}</div>
                     </div>
                     {#each group.images as image}
                       <div class="grid grid-cols-[72px_1fr_150px_120px_320px] gap-2 px-3 py-2 items-center border-b border-neutral-900/80 last:border-b-0" oncontextmenu={(e) => openContextMenu(e, image)}>
@@ -1333,21 +1335,21 @@
                             class="px-2 py-1 text-[11px] rounded bg-neutral-800 border border-neutral-700 text-neutral-200"
                             value={boardLabel(image)}
                             onchange={(e) => assignBoard(image, (e.target as HTMLSelectElement).value)}
-                            title="Assign board"
+                            title={locale.t("gallery.assign_board")}
                           >
-                            <option value="Unsorted">Unsorted</option>
+                            <option value="Unsorted">{locale.t("gallery.unsorted")}</option>
                             {#each gallery.boards as board}
                               <option value={board}>{board}</option>
                             {/each}
                           </select>
-                          <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => img2imgImage(image)}>I2I</button>
-                          <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => inpaintImage(image)}>Inpaint</button>
+                          <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => img2imgImage(image)}>{locale.t("gallery.i2i")}</button>
+                          <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => inpaintImage(image)}>{locale.t("gallery.inpaint")}</button>
                           {#if !image.is_upscaled}
-                            <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => upscaleImage(image)}>Upscale</button>
+                            <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => upscaleImage(image)}>{locale.t("gallery.upscale")}</button>
                           {/if}
-                          <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.saveImageAs(image)}>Save</button>
-                          <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.copyToClipboard(image)}>Copy</button>
-                          <button class="px-2 py-1 text-[11px] rounded bg-red-900/80 hover:bg-red-800 text-neutral-100" onclick={() => gallery.deleteImage(image)}>Delete</button>
+                          <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.saveImageAs(image)}>{locale.t("gallery.save")}</button>
+                          <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.copyToClipboard(image)}>{locale.t("gallery.copy")}</button>
+                          <button class="px-2 py-1 text-[11px] rounded bg-red-900/80 hover:bg-red-800 text-neutral-100" onclick={() => gallery.deleteImage(image)}>{locale.t("gallery.delete")}</button>
                         </div>
                       </div>
                     {/each}
@@ -1374,28 +1376,28 @@
                           {boardLabel(image)}
                         </div>
                         <div class="absolute inset-0 p-3 flex flex-wrap items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                          <button class="h-9 px-3 flex items-center justify-center rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold shadow-lg pointer-events-auto" title="Image to Image" onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold shadow-lg pointer-events-auto" title="Inpaint" onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}>
+                          <button class="h-9 px-3 flex items-center justify-center rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold shadow-lg pointer-events-auto" title={locale.t('gallery.img2img')} onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
+                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold shadow-lg pointer-events-auto" title={locale.t('gallery.inpaint')} onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                            Inpaint
+                            {locale.t('gallery.inpaint')}
                           </button>
                           {#if !image.is_upscaled}
-                            <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold shadow-lg pointer-events-auto" title="Upscale" onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}>
+                            <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold shadow-lg pointer-events-auto" title={locale.t('gallery.upscale')} onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}>
                               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-                              Upscale
+                              {locale.t('gallery.upscale')}
                             </button>
                           {/if}
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-neutral-900/90 hover:bg-neutral-700 text-neutral-100 text-xs font-semibold shadow-lg pointer-events-auto" title="Save As" onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>
+                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-neutral-900/90 hover:bg-neutral-700 text-neutral-100 text-xs font-semibold shadow-lg pointer-events-auto" title={locale.t('gallery.save_as')} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                            Save
+                            {locale.t('preview.save')}
                           </button>
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-neutral-900/90 hover:bg-neutral-700 text-neutral-100 text-xs font-semibold shadow-lg pointer-events-auto" title="Copy" onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}>
+                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-neutral-900/90 hover:bg-neutral-700 text-neutral-100 text-xs font-semibold shadow-lg pointer-events-auto" title={locale.t('gallery.copy')} onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                            Copy
+                            {locale.t('gallery.copy')}
                           </button>
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-red-900/85 hover:bg-red-800 text-neutral-100 text-xs font-semibold shadow-lg pointer-events-auto" title="Delete" onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}>
+                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-red-900/85 hover:bg-red-800 text-neutral-100 text-xs font-semibold shadow-lg pointer-events-auto" title={locale.t('gallery.delete')} onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}>
                             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                            Delete
+                            {locale.t('gallery.delete')}
                           </button>
                         </div>
                       </div>
@@ -1434,15 +1436,15 @@
         {#if !metadataPanelCollapsed}
           <div class="flex-1 h-full overflow-y-auto bg-neutral-900/95 p-4 text-xs text-neutral-200 select-text" style="min-width: 0;" use:smoothScroll>
             <div class="flex items-center justify-between gap-2 mb-3">
-              <span class="font-semibold text-sm text-neutral-100">Image Info</span>
+              <span class="font-semibold text-sm text-neutral-100">{locale.t("gallery.image_info")}</span>
               <div class="flex items-center gap-1">
                 {#if loadingLightboxMetadata}
-                  <span class="text-[10px] text-neutral-400">Loading...</span>
+                  <span class="text-[10px] text-neutral-400">{locale.t("common.loading")}</span>
                 {/if}
                 <button
                   class="p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors"
                   onclick={() => (metadataPanelCollapsed = true)}
-                  title="Collapse panel"
+                  title={locale.t("gallery.collapse_panel")}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
                 </button>
@@ -1451,13 +1453,13 @@
 
             <!-- Board selector -->
             <div class="mb-3">
-              <label class="block text-[10px] text-neutral-500 mb-1 uppercase tracking-wider">Board</label>
+              <label class="block text-[10px] text-neutral-500 mb-1 uppercase tracking-wider">{locale.t("gallery.board")}</label>
               <select
                 class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-200"
                 value={boardLabel(gallery.selectedImage)}
                 onchange={(e) => assignBoard(gallery.selectedImage!, (e.target as HTMLSelectElement).value)}
               >
-                <option value="Unsorted">Unsorted</option>
+                <option value="Unsorted">{locale.t("gallery.unsorted")}</option>
                 {#each gallery.boards as board}
                   <option value={board}>{board}</option>
                 {/each}
@@ -1490,7 +1492,7 @@
                 </div>
               {/if}
             {:else if !loadingLightboxMetadata}
-              <span class="text-neutral-500">No embedded metadata found.</span>
+              <span class="text-neutral-500">{locale.t("gallery.no_metadata")}</span>
             {/if}
           </div>
           <!-- Resize handle -->
@@ -1505,7 +1507,7 @@
             <button
               class="p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors"
               onclick={() => (metadataPanelCollapsed = false)}
-              title="Show metadata panel"
+              title={locale.t("gallery.show_panel")}
             >
               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
@@ -1532,14 +1534,14 @@
       <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-neutral-900/70 backdrop-blur-sm rounded-xl px-2 py-1.5 border border-neutral-700/50">
         <!-- Generation group -->
         <button
-          title="Image to Image"
+          title={locale.t("gallery.img2img")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && img2imgImage(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
         </button>
         <button
-          title="Inpaint"
+          title={locale.t("gallery.inpaint")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && inpaintImage(gallery.selectedImage)}
         >
@@ -1547,7 +1549,7 @@
         </button>
         {#if gallery.selectedImage && !gallery.selectedImage.is_upscaled}
           <button
-            title="Upscale"
+            title={locale.t("gallery.upscale")}
             class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
             onclick={() => gallery.selectedImage && upscaleImage(gallery.selectedImage)}
           >
@@ -1555,7 +1557,7 @@
           </button>
         {/if}
         <button
-          title="Remix"
+          title={locale.t("gallery.remix")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage, "remix")}
         >
@@ -1567,21 +1569,21 @@
 
         <!-- Reuse group -->
         <button
-          title="Interrogate Tags"
+          title={locale.t("gallery.interrogate_tags")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && interrogateFromGallery(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
         <button
-          title="Reuse Settings"
+          title={locale.t("gallery.reuse_settings")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage, "settings")}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
         </button>
         <button
-          title="Reuse Seed"
+          title={locale.t("gallery.reuse_seed")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage, "seed")}
         >
@@ -1593,14 +1595,14 @@
 
         <!-- Export group -->
         <button
-          title="Save As"
+          title={locale.t('gallery.save_as')}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && gallery.saveImageAs(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
         <button
-          title="Copy to Clipboard"
+          title={locale.t('gallery.copy_clipboard')}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => gallery.selectedImage && gallery.copyToClipboard(gallery.selectedImage)}
         >
@@ -1612,7 +1614,7 @@
 
         <!-- Delete (destructive) -->
         <button
-          title="Delete"
+          title={locale.t("gallery.delete")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-red-900/60 hover:bg-red-800 text-red-400 hover:text-red-300 transition-colors"
           onclick={() => gallery.selectedImage && gallery.deleteImage(gallery.selectedImage)}
         >

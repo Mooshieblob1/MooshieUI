@@ -5,6 +5,7 @@
   import { generate, interruptGeneration, deleteQueueItem, installPipPackage, downloadModel } from "../../utils/api.js";
   import { models } from "../../stores/models.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
     canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
@@ -17,7 +18,7 @@
     errorMsg = null;
 
     if (!generation.checkpoint) {
-      errorMsg = "Select a checkpoint first";
+      errorMsg = locale.t('generation.error_no_checkpoint');
       return;
     }
 
@@ -35,11 +36,11 @@
 
       if (generation.mode === "inpainting") {
         if (!generation.inputImage) {
-          errorMsg = "Inpainting needs an input image. Upload one or use a staged image.";
+          errorMsg = locale.t('generation.error_no_image');
           return;
         }
         if (!generation.maskImage) {
-          errorMsg = "Inpainting needs a mask. Paint a mask in Canvas Editor or upload one.";
+          errorMsg = locale.t('generation.error_no_mask');
           return;
         }
       }
@@ -48,7 +49,7 @@
       if (generation.facefixEnabled) {
         const detector = generation.facefixDetector || "face_yolov8m.pt";
         if (!models.ultralyticsModels.includes(detector)) {
-          gallery.showToast("Downloading face fix model...", "info");
+          gallery.showToast(locale.t('generation.downloading_facefix'), "info");
           await downloadModel(
             `https://huggingface.co/Bingsu/adetailer/resolve/main/${detector}`,
             "ultralytics",
@@ -111,9 +112,9 @@
         : 'bg-neutral-800 text-neutral-500 cursor-not-allowed'}"
   >
     {#if progress.queueCount > 0}
-      Generate (+{progress.queueCount})
+      {locale.t('generation.generate_queue', { count: progress.queueCount })}
     {:else}
-      Generate
+      {locale.t('generation.generate')}
     {/if}
   </button>
 
@@ -122,7 +123,7 @@
       onclick={handleCancelCurrent}
       oncontextmenu={handleCancelAll}
       class="px-4 py-3 rounded-xl font-semibold text-sm bg-red-700 hover:bg-red-600 text-white transition-colors"
-      title="Click: skip current — Right-click: cancel all"
+      title={locale.t('generation.cancel_hint')}
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <line x1="18" y1="6" x2="6" y2="18"></line>

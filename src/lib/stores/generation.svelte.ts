@@ -64,13 +64,13 @@ const STYLE_PRESETS: StylePreset[] = [
   },
 ];
 
-/** Quality tags auto-applied for Anima models */
-const ANIMA_POSITIVE_QUALITY = "year 2025, newest, masterpiece, best quality, score_9, score_8, safe, highres";
-const ANIMA_NEGATIVE_QUALITY = "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia";
+/** Default quality tags for Anima models */
+export const DEFAULT_ANIMA_POSITIVE_QUALITY = "newest, masterpiece, best quality, score_9, score_8, safe, highres";
+export const DEFAULT_ANIMA_NEGATIVE_QUALITY = "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia";
 
-/** Quality tags auto-applied for Illustrious/NoobAI family models (SIH, NoobAI vpred, etc.) */
-const ILLUSTRIOUS_POSITIVE_QUALITY = "best quality, masterpiece, absurdres, newest, very aesthetic, year 2024";
-const ILLUSTRIOUS_NEGATIVE_QUALITY = "worst quality, bad quality, low quality, lowres, artistic error, bad anatomy, extra fingers, text, signature, watermark, long body, bad hands, cropped, username";
+/** Default quality tags for Illustrious/NoobAI family models (SIH, NoobAI vpred, etc.) */
+export const DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY = "best quality, masterpiece, absurdres, newest, very aesthetic";
+export const DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY = "worst quality, bad quality, low quality, lowres, artistic error, bad anatomy, extra fingers, text, signature, watermark, long body, bad hands, cropped, username";
 
 class GenerationStore {
   mode = $state<"txt2img" | "img2img" | "inpainting">("txt2img");
@@ -124,6 +124,10 @@ class GenerationStore {
   outputBitDepth = $state<"8bit" | "16bit">("8bit");
   metadataMode = $state<"text_chunk" | "stealth" | "both">("both");
   autoQualityTags = $state(true);
+  customAnimaPositiveQuality = $state(DEFAULT_ANIMA_POSITIVE_QUALITY);
+  customAnimaNegativeQuality = $state(DEFAULT_ANIMA_NEGATIVE_QUALITY);
+  customIllustriousPositiveQuality = $state(DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY);
+  customIllustriousNegativeQuality = $state(DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY);
   promptHistory = $state<PromptHistoryEntry[]>([]);
 
   /** Architecture detected from modelspec metadata, or null if not yet read. */
@@ -383,6 +387,10 @@ class GenerationStore {
         if (saved.outputBitDepth) this.outputBitDepth = saved.outputBitDepth;
         if (saved.metadataMode) this.metadataMode = saved.metadataMode;
         if (saved.autoQualityTags !== undefined) this.autoQualityTags = saved.autoQualityTags;
+        if (saved.customAnimaPositiveQuality !== undefined) this.customAnimaPositiveQuality = saved.customAnimaPositiveQuality;
+        if (saved.customAnimaNegativeQuality !== undefined) this.customAnimaNegativeQuality = saved.customAnimaNegativeQuality;
+        if (saved.customIllustriousPositiveQuality !== undefined) this.customIllustriousPositiveQuality = saved.customIllustriousPositiveQuality;
+        if (saved.customIllustriousNegativeQuality !== undefined) this.customIllustriousNegativeQuality = saved.customIllustriousNegativeQuality;
         // Migrate: old default was "text_chunk", new default is "both" (stealth + text)
         if (!localStorage.getItem("mooshieui.metadataMode.v2")) {
           this.metadataMode = "both";
@@ -448,6 +456,10 @@ class GenerationStore {
         outputBitDepth: this.outputBitDepth,
         metadataMode: this.metadataMode,
         autoQualityTags: this.autoQualityTags,
+        customAnimaPositiveQuality: this.customAnimaPositiveQuality,
+        customAnimaNegativeQuality: this.customAnimaNegativeQuality,
+        customIllustriousPositiveQuality: this.customIllustriousPositiveQuality,
+        customIllustriousNegativeQuality: this.customIllustriousNegativeQuality,
       });
     } catch (e) {
       console.error("Failed to save settings:", e);
@@ -466,14 +478,27 @@ class GenerationStore {
     if (this.autoQualityTags) {
       // Anima models (positive before, negative after)
       if (this.isAnima) {
-        positivePrompt = this.mergeTagPrompts(ANIMA_POSITIVE_QUALITY, positivePrompt);
-        negativePrompt = this.mergeTagPrompts(negativePrompt, ANIMA_NEGATIVE_QUALITY);
+        positivePrompt = this.mergeTagPrompts(this.customAnimaPositiveQuality, positivePrompt);
+        negativePrompt = this.mergeTagPrompts(negativePrompt, this.customAnimaNegativeQuality);
       }
 
       // Illustrious/NoobAI family (positive before, negative after)
       if (this.isIllustrious) {
-        positivePrompt = this.mergeTagPrompts(ILLUSTRIOUS_POSITIVE_QUALITY, positivePrompt);
-        negativePrompt = this.mergeTagPrompts(negativePrompt, ILLUSTRIOUS_NEGATIVE_QUALITY);
+        positivePrompt = this.mergeTagPrompts(this.customIllustriousPositiveQuality, positivePrompt);
+        negativePrompt = this.mergeTagPrompts(negativePrompt, this.customIllustriousNegativeQuality);
+      }
+    }
+
+    // Build quality-only prompts for tiled upscale (reduces tile seam artifacts)
+    let upscalePositivePrompt: string | null = null;
+    let upscaleNegativePrompt: string | null = null;
+    if (this.upscaleEnabled && this.upscaleTiling && this.autoQualityTags) {
+      if (this.isAnima) {
+        upscalePositivePrompt = this.customAnimaPositiveQuality;
+        upscaleNegativePrompt = this.customAnimaNegativeQuality;
+      } else if (this.isIllustrious) {
+        upscalePositivePrompt = this.customIllustriousPositiveQuality;
+        upscaleNegativePrompt = this.customIllustriousNegativeQuality;
       }
     }
 
@@ -511,6 +536,8 @@ class GenerationStore {
       upscale_steps: this.upscaleSteps,
       upscale_tile_size: this.upscaleTileSize,
       upscale_tiling: this.upscaleTiling,
+      upscale_positive_prompt: upscalePositivePrompt,
+      upscale_negative_prompt: upscaleNegativePrompt,
       use_split_model: this.useSplitModel,
       diffusion_model: this.diffusionModel,
       clip_model: this.clipModel,

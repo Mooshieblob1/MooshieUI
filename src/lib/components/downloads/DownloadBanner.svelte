@@ -1,5 +1,6 @@
 <script lang="ts">
   import { downloads } from "../../stores/downloads.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
 
   function formatBytes(bytes: number): string {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -39,9 +40,9 @@
 
         <span class="text-xs text-neutral-300 truncate min-w-0" title={dl.filename}>
           {#if dl.done}
-            Downloaded {shortName(dl.filename)}
+            {locale.t('downloads.downloaded', { filename: shortName(dl.filename) })}
           {:else}
-            Downloading {shortName(dl.filename)}
+            {locale.t('downloads.downloading', { filename: shortName(dl.filename) })}
           {/if}
         </span>
 

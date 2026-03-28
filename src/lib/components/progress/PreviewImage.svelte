@@ -2,6 +2,7 @@
   import { progress } from "../../stores/progress.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import { generate } from "../../utils/api.js";
 
   let currentTipIndex = $state(0);
@@ -14,27 +15,27 @@
 
   const baseTips = [
     // Prompt tips
-    { category: "Prompts", text: "Clear, specific prompts work better than long ones. Models understand context without repetition." },
-    { category: "Prompts", text: "Try reusing prompts from successful images metadata. Consistency beats reinvention." },
-    { category: "Prompts", text: "When results disappoint, refine your prompt first before adjusting parameters." },
+    { category: "preview.tips.prompts", text: "preview.tip.prompt_clear" },
+    { category: "preview.tips.prompts", text: "preview.tip.prompt_reuse" },
+    { category: "preview.tips.prompts", text: "preview.tip.prompt_refine" },
 
     // Parameter tips
-    { category: "Parameters", text: "Most models work best with CFG 7-10. Higher doesn't mean better - it can degrade quality." },
-    { category: "Parameters", text: "The sampler matters: DDIM is fast, Euler is stable, DPM++ is flexible. Experiment by model." },
-    { category: "Parameters", text: "Seed lets you iterate. Try small CFG or step changes with the same seed for refinement." },
-    { category: "Parameters", text: "Hover over any setting for explanations. No need to memorize what each does." },
+    { category: "preview.tips.parameters", text: "preview.tip.cfg" },
+    { category: "preview.tips.parameters", text: "preview.tip.sampler" },
+    { category: "preview.tips.parameters", text: "preview.tip.seed" },
+    { category: "preview.tips.parameters", text: "preview.tip.hover" },
 
     // Workflow tips
-    { category: "Workflow", text: "Generate at lower resolution first, then upscale. Saves time and lets you refine results." },
-    { category: "Workflow", text: "Your generation settings are saved. They'll be here next time you return." },
-    { category: "Workflow", text: "If confused, start simple: one good prompt + default settings beats complexity." },
-    { category: "Workflow", text: "Drag an image with metadata onto any section to import its settings, or drop it here to apply all parameters. Ctrl+V works too!" },
+    { category: "preview.tips.workflow", text: "preview.tip.lower_res" },
+    { category: "preview.tips.workflow", text: "preview.tip.saved" },
+    { category: "preview.tips.workflow", text: "preview.tip.simple" },
+    { category: "preview.tips.workflow", text: "preview.tip.drag" },
   ];
 
   let tips = $derived(
     generation.autoQualityTags
       ? baseTips
-      : [...baseTips, { category: "Quality", text: "Getting blurry or low-quality results? Try re-enabling auto quality tags in Settings > Performance." }]
+      : [...baseTips, { category: "preview.tips.quality", text: "preview.tip.quality_tags" }]
   );
 
   function startAutoPlay() {
@@ -141,7 +142,7 @@
   function handleSave() {
     const savedImage = getActiveSavedImage();
     if (!savedImage) {
-      gallery.showToast("Saved image not available yet", "info");
+      gallery.showToast(locale.t('preview.not_available'), "info");
       return;
     }
     void gallery.saveImageAs(savedImage);
@@ -150,7 +151,7 @@
   function handleCopy() {
     const savedImage = getActiveSavedImage();
     if (!savedImage) {
-      gallery.showToast("Saved image not available yet", "info");
+      gallery.showToast(locale.t('preview.not_available'), "info");
       return;
     }
     void gallery.copyToClipboard(savedImage);
@@ -200,38 +201,38 @@
             <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 01-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 110-2h4a1 1 0 011 1v4a1 1 0 11-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12zm-9 7a1 1 0 112 0v1.586l2.293-2.293a1 1 0 011.414 1.414L6.414 15H8a1 1 0 110 2H4a1 1 0 01-1-1v-4zm13 3a1 1 0 01-1 1h-4a1 1 0 110-2h1.586l-2.293-2.293a1 1 0 011.414-1.414L15 13.586V12a1 1 0 112 0v4z" clip-rule="evenodd"/>
             </svg>
-            Upscale
+            {locale.t('preview.upscale')}
           </button>
         {/if}
         <button
           onclick={handleSave}
           class="flex items-center gap-1.5 bg-neutral-700 hover:bg-neutral-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg shadow-lg transition-colors"
-          title="Save As"
+          title={locale.t('preview.save_as')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Save
+          {locale.t('preview.save')}
         </button>
         <button
           onclick={handleCopy}
           class="flex items-center gap-1.5 bg-neutral-700 hover:bg-neutral-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg shadow-lg transition-colors"
-          title="Copy to clipboard"
+          title={locale.t('preview.copy_clipboard')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          Copy
+          {locale.t('preview.copy')}
         </button>
       </div>
     {/if}
   {:else if progress.isGenerating}
-    <div class="text-neutral-400 dark:text-neutral-600 text-sm">Generating...</div>
+    <div class="text-neutral-400 dark:text-neutral-600 text-sm">{locale.t('progress.generating')}</div>
   {:else}
     <!-- Tips Carousel -->
     <div class="flex flex-col items-center justify-center w-full h-full p-8 gap-6" onwheel={handleWheel}>
       <div class="flex flex-col items-center gap-3 max-w-md w-full">
         <span class="text-xs font-semibold text-indigo-600 dark:text-indigo-500 uppercase tracking-wide">
-          {tips[currentTipIndex].category}
+          {locale.t(tips[currentTipIndex].category)}
         </span>
         <p class="text-neutral-700 dark:text-neutral-300 text-sm text-center leading-relaxed">
-          {tips[currentTipIndex].text}
+          {locale.t(tips[currentTipIndex].text)}
         </p>
         
         <!-- Progress Bar -->
@@ -248,7 +249,7 @@
         <button
           onclick={prevTip}
           class="p-2 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors"
-          title="Previous tip"
+          title={locale.t('preview.previous_tip')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd"/>
@@ -266,7 +267,7 @@
         <button
           onclick={nextTip}
           class="p-2 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors"
-          title="Next tip"
+          title={locale.t('preview.next_tip')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>

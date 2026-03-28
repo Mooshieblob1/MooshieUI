@@ -168,6 +168,7 @@ pub fn run() {
             commands::interrogator::interrogate_image_path,
             commands::interrogator::interrogate_gallery_image,
             commands::interrogator::interrogate_clipboard,
+            commands::api::read_clipboard_image,
             setup::check_setup,
             setup::detect_gpu,
             setup::run_setup,

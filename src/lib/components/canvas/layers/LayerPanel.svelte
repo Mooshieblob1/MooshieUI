@@ -1,5 +1,6 @@
 <script lang="ts">
   import { canvas } from "../../../stores/canvas.svelte.js";
+  import { locale } from "../../../stores/locale.svelte.js";
   import LayerItem from "./LayerItem.svelte";
 
   function handleAddRaster() {
@@ -37,26 +38,26 @@
 
 <div class="space-y-2">
   <div class="flex items-center justify-between">
-    <h3 class="text-xs text-neutral-400 font-medium">Layers</h3>
+    <h3 class="text-xs text-neutral-400 font-medium">{locale.t('canvas.layers')}</h3>
     <div class="flex items-center gap-0.5">
       <button
         onclick={handleAddRaster}
         class="w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-        title="Add raster layer"
+        title={locale.t('canvas.add_raster')}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       </button>
       <button
         onclick={handleAddMask}
         class="w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-        title="Add mask layer"
+        title={locale.t('canvas.add_mask')}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
       </button>
       <button
         onclick={handleDuplicate}
         class="w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-        title="Duplicate layer"
+        title={locale.t('canvas.duplicate')}
         disabled={!canvas.activeLayerId}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -64,7 +65,7 @@
       <button
         onclick={handleRemove}
         class="w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-red-400 hover:bg-neutral-800"
-        title="Delete layer"
+        title={locale.t('canvas.delete_layer')}
         disabled={!canvas.activeLayerId || canvas.layers.length <= 1}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -85,16 +86,16 @@
       <button
         onclick={handleMoveUp}
         class="flex-1 py-1 text-[10px] text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 rounded transition-colors"
-        title="Move layer up"
+        title={locale.t('canvas.move_up_title')}
       >
-        Move Up
+        {locale.t('canvas.move_up')}
       </button>
       <button
         onclick={handleMoveDown}
         class="flex-1 py-1 text-[10px] text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 rounded transition-colors"
-        title="Move layer down"
+        title={locale.t('canvas.move_down_title')}
       >
-        Move Down
+        {locale.t('canvas.move_down')}
       </button>
     </div>
   {/if}
@@ -103,7 +104,7 @@
   {#if canvas.activeLayer}
     <div>
       <label class="flex items-center justify-between text-[10px] text-neutral-500 mb-0.5">
-        Opacity
+        {locale.t('canvas.opacity')}
         <span class="text-neutral-400 tabular-nums">{Math.round(canvas.activeLayer.opacity * 100)}%</span>
       </label>
       <input

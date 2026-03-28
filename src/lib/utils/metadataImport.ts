@@ -32,18 +32,19 @@ function sectionLabel(sectionId: DroppableSectionId | "all"): string {
   }
 }
 
-/** Quality tags that are auto-applied by the app — strip these from imported prompts to avoid duplication. */
-const AUTO_QUALITY_TAGS = new Set([
-  // Anima positive
-  "year 2025", "newest", "masterpiece", "best quality", "score_9", "score_8", "safe", "highres",
-  // Anima negative
-  "worst quality", "low quality", "score_1", "score_2", "score_3", "blurry", "jpeg artifacts", "sepia",
-  // Illustrious positive
-  "very aesthetic", "year 2024", "absurdres",
-  // Illustrious negative
-  "bad quality", "lowres", "artistic error", "bad anatomy", "extra fingers", "text",
-  "signature", "watermark", "long body", "bad hands", "cropped", "username",
-]);
+/** Build a set of quality tags from the user's custom quality tag settings.
+ *  This ensures imported prompts have the user's current custom tags stripped to avoid duplication. */
+function buildAutoQualityTagSet(): Set<string> {
+  const all = [
+    generation.customAnimaPositiveQuality,
+    generation.customAnimaNegativeQuality,
+    generation.customIllustriousPositiveQuality,
+    generation.customIllustriousNegativeQuality,
+  ].join(", ");
+  return new Set(
+    all.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)
+  );
+}
 
 /**
  * Strip SwarmUI-specific inline syntax tags from a prompt string.
@@ -59,9 +60,10 @@ function stripSwarmUITags(prompt: string): string {
 
 /** Remove auto-applied quality tags and SwarmUI syntax from a prompt string. */
 function stripQualityTags(prompt: string): string {
+  const autoTags = buildAutoQualityTagSet();
   const cleaned = stripSwarmUITags(prompt);
   const tags = cleaned.split(",").map((t) => t.trim()).filter(Boolean);
-  const filtered = tags.filter((t) => !AUTO_QUALITY_TAGS.has(t.toLowerCase()));
+  const filtered = tags.filter((t) => !autoTags.has(t.toLowerCase()));
   return filtered.join(", ");
 }
 

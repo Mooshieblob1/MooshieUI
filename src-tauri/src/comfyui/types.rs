@@ -87,6 +87,12 @@ pub struct GenerationParams {
     pub upscale_steps: u32,
     pub upscale_tile_size: u32,
     pub upscale_tiling: bool,
+    /// Quality-only positive prompt for tiled upscale KSampler (reduces tile artifacts)
+    #[serde(default)]
+    pub upscale_positive_prompt: Option<String>,
+    /// Quality-only negative prompt for tiled upscale KSampler (reduces tile artifacts)
+    #[serde(default)]
+    pub upscale_negative_prompt: Option<String>,
     /// When true, use separate UNETLoader + CLIPLoader + VAELoader instead of CheckpointLoaderSimple
     #[serde(default)]
     pub use_split_model: bool,

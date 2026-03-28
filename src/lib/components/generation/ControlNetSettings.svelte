@@ -2,10 +2,12 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import {
     downloadModel,
     uploadImage,
     uploadImageBytes,
+    readClipboardImage,
     checkNodeAvailable,
     isCustomNodeInstalled,
     installCustomNode,
@@ -157,23 +159,13 @@
 
   async function handleImagePaste() {
     try {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        const imageType = item.types.find((t) => t.startsWith("image/"));
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          const ext = imageType.split("/")[1] || "png";
-          const file = new File([blob], `pasted_image.${ext}`, { type: imageType });
-          uploadingImage = true;
-          const buffer = await file.arrayBuffer();
-          const bytes = Array.from(new Uint8Array(buffer));
-          const result = await uploadImageBytes(bytes, file.name);
-          generation.controlnetImage = result.name;
-          setPreview(file);
-          uploadingImage = false;
-          return;
-        }
-      }
+      const bytes = await readClipboardImage();
+      uploadingImage = true;
+      const result = await uploadImageBytes(bytes, "pasted_image.png");
+      generation.controlnetImage = result.name;
+      const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+      const file = new File([blob], "pasted_image.png", { type: "image/png" });
+      setPreview(file);
     } catch (e) {
       console.error("Failed to paste image:", e);
     } finally {
@@ -288,7 +280,7 @@
   <!-- Enable toggle -->
   <div class="flex items-center justify-between">
     <label class="text-xs text-neutral-400"
-      >ControlNet<InfoTip
+      >{locale.t('generation.controlnet.title')}<InfoTip
         text="Use a reference image to guide the generation. ControlNet can preserve edges, depth, pose, and more from a source image."
       /></label
     >
@@ -355,7 +347,7 @@
             onclick={installPreprocessors}
             class="px-3 py-1 rounded bg-amber-700 hover:bg-amber-600 text-white text-xs transition-colors"
           >
-            Install & Restart
+            {locale.t('generation.controlnet.install_restart')}
           </button>
         {/if}
         {#if installError}
@@ -373,7 +365,7 @@
           : 'text-neutral-400 hover:text-neutral-300'}"
         onclick={() => (generation.controlnetMode = "preset")}
       >
-        Presets
+        {locale.t('generation.controlnet.presets')}
       </button>
       <button
         class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.controlnetMode ===
@@ -382,7 +374,7 @@
           : 'text-neutral-400 hover:text-neutral-300'}"
         onclick={() => (generation.controlnetMode = "custom")}
       >
-        Custom
+        {locale.t('generation.controlnet.custom')}
       </button>
     </div>
 
@@ -588,7 +580,7 @@
       <label
         class="flex items-center justify-between text-xs text-neutral-400 mb-1"
       >
-        <span>Strength<InfoTip
+        <span>{locale.t('generation.controlnet.strength')}<InfoTip
           text="How strongly the ControlNet guides the generation. Higher values follow the control image more closely but may reduce creativity."
         /></span>
         <span class="text-neutral-300"
@@ -610,7 +602,7 @@
         <label
           class="flex items-center justify-between text-xs text-neutral-400 mb-1"
         >
-          <span>Start %<InfoTip
+          <span>{locale.t('generation.controlnet.start_percent')}<InfoTip
             text="When ControlNet starts influencing the generation (0% = from the very beginning). Delaying the start can add more variation."
           /></span>
           <span class="text-neutral-300"
@@ -630,7 +622,7 @@
         <label
           class="flex items-center justify-between text-xs text-neutral-400 mb-1"
         >
-          <span>End %<InfoTip
+          <span>{locale.t('generation.controlnet.end_percent')}<InfoTip
             text="When ControlNet stops influencing the generation (100% = until the very end). Ending early lets the model refine details freely."
           /></span>
           <span class="text-neutral-300"

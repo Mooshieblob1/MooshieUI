@@ -1,10 +1,11 @@
 <script lang="ts">
   import { canvas } from "../../../stores/canvas.svelte.js";
+  import { locale } from "../../../stores/locale.svelte.js";
 </script>
 
 <div class="flex items-center gap-2">
   <label class="flex items-center gap-2 text-xs text-neutral-400">
-    Size
+    {locale.t('canvas.brush_size')}
     <input
       type="range"
       bind:value={canvas.brushSettings.size}
@@ -19,7 +20,7 @@
   <div class="w-px h-6 bg-neutral-700"></div>
 
   <label class="flex items-center gap-2 text-xs text-neutral-400">
-    Opacity
+    {locale.t('canvas.opacity')}
     <input
       type="range"
       bind:value={canvas.brushSettings.opacity}

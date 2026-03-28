@@ -1,5 +1,6 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
 
   interface Props {
@@ -133,7 +134,7 @@
 <div class="space-y-3">
   <!-- Aspect Ratio -->
   <div>
-    <p class="text-xs text-neutral-400 mb-1.5">Aspect Ratio<InfoTip text="The shape of your image. 1:1 is square, 16:9 is widescreen, 9:16 is portrait. Pick the ratio first, then adjust resolution to control the total pixel count." /></p>
+    <p class="text-xs text-neutral-400 mb-1.5">{locale.t('generation.dimensions.aspect_ratio')}<InfoTip text="The shape of your image. 1:1 is square, 16:9 is widescreen, 9:16 is portrait. Pick the ratio first, then adjust resolution to control the total pixel count." /></p>
     <div class="flex items-center gap-1 flex-wrap mb-2">
       {#each presets as preset}
         <button
@@ -148,7 +149,7 @@
     </div>
     <div class="flex items-center gap-1.5">
       <div class="flex-1">
-        <span class="block text-[10px] text-neutral-500 mb-0.5">W</span>
+        <span class="block text-[10px] text-neutral-500 mb-0.5">{locale.t('generation.dimensions.width')}</span>
         <input
           type="text"
           inputmode="decimal"
@@ -159,7 +160,7 @@
       </div>
       <span class="text-neutral-500 text-sm mt-4">:</span>
       <div class="flex-1">
-        <span class="block text-[10px] text-neutral-500 mb-0.5">H</span>
+        <span class="block text-[10px] text-neutral-500 mb-0.5">{locale.t('generation.dimensions.height')}</span>
         <input
           type="text"
           inputmode="decimal"
@@ -182,7 +183,7 @@
 
   <!-- Side Length -->
   <div>
-    <label class="block text-xs text-neutral-400 mb-1.5">Resolution<InfoTip text="The total pixel area of your image, expressed as an equivalent square side length. 1024 = ~1 megapixel. Higher resolution = more detail but slower generation and more VRAM usage." /></label>
+    <label class="block text-xs text-neutral-400 mb-1.5">{locale.t('generation.dimensions.resolution')}<InfoTip text="The total pixel area of your image, expressed as an equivalent square side length. 1024 = ~1 megapixel. Higher resolution = more detail but slower generation and more VRAM usage." /></label>
     <input
       type="number"
       bind:value={sideLength}
@@ -196,7 +197,7 @@
 
   <!-- Resulting dimensions -->
   <div class="flex items-center justify-between text-xs text-neutral-400">
-    <span>Result</span>
+    <span>{locale.t('generation.dimensions.result')}</span>
     <span class="text-neutral-200">{generation.width} &times; {generation.height}</span>
   </div>
 </div>

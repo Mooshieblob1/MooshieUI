@@ -13,6 +13,7 @@ import {
 } from "../utils/api.js";
 import { save } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { locale } from "./locale.svelte.js";
 
 const GALLERY_BOARDS_KEY = "mooshieui.gallery.boards.v1";
 const GALLERY_BOARD_NAMES_KEY = "mooshieui.gallery.boardNames.v1";
@@ -299,7 +300,7 @@ class GalleryStore {
         bytes = await getOutputImage(image.filename, image.subfolder);
       }
       await saveImageFile(bytes, path);
-      this.showToast("Image saved", "success");
+      this.showToast(locale.t("gallery.toast.image_saved"), "success");
     } catch (e) {
       console.error("Failed to save image:", e);
     }
@@ -321,7 +322,7 @@ class GalleryStore {
       const arrayBuf = await blob.arrayBuffer();
       const bytes = Array.from(new Uint8Array(arrayBuf));
       await saveImageFile(bytes, path);
-      this.showToast("Image saved", "success");
+      this.showToast(locale.t("gallery.toast.image_saved"), "success");
     } catch (e) {
       console.error("Failed to save image:", e);
     }
@@ -337,13 +338,13 @@ class GalleryStore {
         await this.copyBlobToClipboard(image.url);
         return;
       } else {
-        this.showToast("Image not saved to gallery yet", "info");
+        this.showToast(locale.t("gallery.toast.not_saved_yet"), "info");
         return;
       }
-      this.showToast("Copied to clipboard", "success");
+      this.showToast(locale.t("gallery.toast.copied"), "success");
     } catch (e) {
       console.error("Failed to copy to clipboard:", e);
-      this.showToast("Failed to copy", "error");
+      this.showToast(locale.t("gallery.toast.failed_copy"), "error");
     }
   }
 
@@ -359,10 +360,10 @@ class GalleryStore {
       const tmpPath = `/tmp/mooshieui_clipboard_${Date.now()}.png`;
       await saveImageFile(bytes, tmpPath);
       await copyImageToClipboard(tmpPath);
-      this.showToast("Copied to clipboard", "success");
+      this.showToast(locale.t("gallery.toast.copied"), "success");
     } catch (e) {
       console.error("Failed to copy blob to clipboard:", e);
-      this.showToast("Failed to copy", "error");
+      this.showToast(locale.t("gallery.toast.failed_copy"), "error");
     }
   }
 
@@ -433,13 +434,13 @@ class GalleryStore {
 
       this.showToast(
         migrated > 0
-          ? `Re-scanned metadata: migrated ${migrated} image${migrated === 1 ? "" : "s"}`
-          : "Re-scan complete: no legacy metadata to migrate",
+          ? locale.t("gallery.toast.rescan_migrated", { count: String(migrated) })
+          : locale.t("gallery.toast.rescan_none"),
         migrated > 0 ? "success" : "info"
       );
     } catch (e) {
       console.error("Failed to re-scan gallery metadata:", e);
-      this.showToast("Re-scan failed", "error");
+      this.showToast(locale.t("gallery.toast.rescan_failed"), "error");
     }
   }
 }

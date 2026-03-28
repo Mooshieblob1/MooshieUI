@@ -2,43 +2,44 @@
   import { canvas, type ToolType } from "../../stores/canvas.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { canvasHistory } from "../../stores/canvasHistory.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import BrushSettings from "./controls/BrushSettings.svelte";
   import ColorPicker from "./controls/ColorPicker.svelte";
 
-  const tools: { id: ToolType; label: string; hotkey: string; icon: string }[] = [
+  const tools: { id: ToolType; labelKey: string; hotkey: string; icon: string }[] = [
     {
       id: "brush",
-      label: "Brush",
+      labelKey: "canvas.brush",
       hotkey: "B",
       icon: `<path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/>`,
     },
     {
       id: "eraser",
-      label: "Eraser",
+      labelKey: "canvas.eraser",
       hotkey: "E",
       icon: `<path d="M20 20H7L3 16c-.8-.8-.8-2 0-2.8L13.8 2.4c.8-.8 2-.8 2.8 0L21 6.8c.8.8.8 2 0 2.8L12 18"/>`,
     },
     {
       id: "rectFill",
-      label: "Rectangle",
+      labelKey: "canvas.rectangle",
       hotkey: "U",
       icon: `<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>`,
     },
     {
       id: "eyedropper",
-      label: "Eyedropper",
+      labelKey: "canvas.eyedropper",
       hotkey: "I",
       icon: `<path d="M2 22l1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="M14.5 5.5l4-4a1.4 1.4 0 0 1 2 2l-4 4"/>`,
     },
     {
       id: "move",
-      label: "Move",
+      labelKey: "canvas.move",
       hotkey: "V",
       icon: `<polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>`,
     },
     {
       id: "view",
-      label: "Pan",
+      labelKey: "canvas.pan",
       hotkey: "H",
       icon: `<path d="M18 11V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2 2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-5.7-2.4L3.4 16a2 2 0 0 1 3.2-2.4L8 15"/>`,
     },
@@ -105,18 +106,18 @@
         class="px-2 py-1 text-[10px] rounded border transition-colors {canvas.inpaintDrawMode === 'mask'
           ? 'border-indigo-500 text-indigo-300 bg-indigo-500/10'
           : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}"
-        title="Inpaint Mask Mode"
+        title={locale.t('canvas.inpaint_mask_mode')}
       >
-        Inpaint Mask
+        {locale.t('canvas.inpaint_mask')}
       </button>
       <button
         onclick={() => canvas.setInpaintDrawMode("regular")}
         class="px-2 py-1 text-[10px] rounded border transition-colors {canvas.inpaintDrawMode === 'regular'
           ? 'border-indigo-500 text-indigo-300 bg-indigo-500/10'
           : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}"
-        title="Regular Inpaint Mode"
+        title={locale.t('canvas.regular_inpaint_mode')}
       >
-        Regular Inpaint
+        {locale.t('canvas.regular_inpaint')}
       </button>
     </div>
 
@@ -131,7 +132,7 @@
         class="relative w-8 h-8 flex items-center justify-center rounded-md transition-colors {canvas.activeTool === tool.id
           ? 'bg-indigo-600 text-white'
           : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'}"
-        title="{tool.label} ({tool.hotkey})"
+        title="{locale.t(tool.labelKey)} ({tool.hotkey})"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           {@html tool.icon}
@@ -157,9 +158,9 @@
       class="px-2 py-1 text-[10px] rounded border transition-colors {canvasHistory.canUndo
         ? 'border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300'
         : 'border-neutral-800 text-neutral-600 cursor-not-allowed'}"
-      title="Undo (Ctrl+Z)"
+      title={locale.t('canvas.undo') + ' (Ctrl+Z)'}
     >
-      Undo
+      {locale.t('canvas.undo')}
     </button>
     <button
       onclick={() => canvasHistory.redo()}
@@ -167,9 +168,9 @@
       class="px-2 py-1 text-[10px] rounded border transition-colors {canvasHistory.canRedo
         ? 'border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300'
         : 'border-neutral-800 text-neutral-600 cursor-not-allowed'}"
-      title="Redo (Ctrl+Shift+Z / Ctrl+Y)"
+      title={locale.t('canvas.redo') + ' (Ctrl+Shift+Z / Ctrl+Y)'}
     >
-      Redo
+      {locale.t('canvas.redo')}
     </button>
   </div>
 
@@ -180,7 +181,7 @@
     <button
       onclick={() => canvas.zoomOut()}
       class="w-6 h-6 flex items-center justify-center rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 text-sm"
-      title="Zoom out"
+      title={locale.t('canvas.zoom_out')}
     >
       -
     </button>
@@ -188,14 +189,14 @@
     <button
       onclick={() => canvas.zoomIn()}
       class="w-6 h-6 flex items-center justify-center rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 text-sm"
-      title="Zoom in"
+      title={locale.t('canvas.zoom_in')}
     >
       +
     </button>
     <button
       onclick={() => canvas.resetZoom()}
       class="text-[10px] px-1.5 py-0.5 rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800"
-      title="Reset zoom"
+      title={locale.t('canvas.reset_zoom')}
     >
       1:1
     </button>

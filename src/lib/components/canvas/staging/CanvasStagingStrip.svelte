@@ -2,6 +2,7 @@
   import { canvas } from "../../../stores/canvas.svelte.js";
   import { generation } from "../../../stores/generation.svelte.js";
   import { progress } from "../../../stores/progress.svelte.js";
+  import { locale } from "../../../stores/locale.svelte.js";
 
   const MAX_STAGE_PIXELS = 1024 * 1024;
 
@@ -85,16 +86,16 @@
       class="text-[11px] px-2 py-1 rounded border transition-colors {progress.lastOutputImage
         ? 'border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300'
         : 'border-neutral-800 text-neutral-600 cursor-not-allowed'}"
-      title="Stage latest generation output"
+      title={locale.t('canvas.stage_latest_title')}
     >
-      Stage Latest Output
+      {locale.t('canvas.stage_latest')}
     </button>
 
     {#if canvas.isStagingActive && canvas.currentStagingImage}
       <button
         onclick={() => canvas.prevStaging()}
         class="w-6 h-6 rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800"
-        title="Previous staged image"
+        title={locale.t('canvas.prev_staged')}
       >
         &lt;
       </button>
@@ -108,7 +109,7 @@
       <button
         onclick={() => canvas.nextStaging()}
         class="w-6 h-6 rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800"
-        title="Next staged image"
+        title={locale.t('canvas.next_staged')}
       >
         &gt;
       </button>
@@ -116,24 +117,24 @@
       <button
         onclick={() => canvas.dismissCurrentStaging()}
         class="text-[11px] px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:border-red-500 hover:text-red-300"
-        title="Dismiss current staged image"
+        title={locale.t('canvas.dismiss_title')}
       >
-        Dismiss
+        {locale.t('canvas.dismiss')}
       </button>
 
       <button
         onclick={() => canvas.clearStaging()}
         class="text-[11px] px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:border-neutral-500"
-        title="Clear all staged images"
+        title={locale.t('canvas.clear_all_title')}
       >
-        Clear All
+        {locale.t('canvas.clear_all')}
       </button>
 
       <span class="text-[11px] text-neutral-500 ml-auto">
-        Staging {canvas.stagingIndex + 1} / {canvas.stagingImages.length}
+        {locale.t('canvas.staging_count', { current: String(canvas.stagingIndex + 1), total: String(canvas.stagingImages.length) })}
       </span>
     {:else}
-      <span class="text-[11px] text-neutral-500">No staged images yet.</span>
+      <span class="text-[11px] text-neutral-500">{locale.t('canvas.no_staged')}</span>
     {/if}
   </div>
 </div>

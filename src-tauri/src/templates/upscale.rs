@@ -107,7 +107,55 @@ pub fn append_upscale_chain(
         (result.model_source.0.clone(), result.model_source.1)
     };
 
-    // Step 4: Second KSampler pass at low denoise
+    // Step 4: For tiled upscales, use quality-only prompts to reduce tile seam artifacts.
+    // When upscale_positive_prompt / upscale_negative_prompt are provided, create dedicated
+    // CLIPTextEncode nodes instead of reusing the full creative prompt conditioning.
+    let (pos_source, neg_source) = if use_tiling {
+        if let (Some(ref pos_text), Some(ref neg_text)) = (
+            &params.upscale_positive_prompt,
+            &params.upscale_negative_prompt,
+        ) {
+            let up_pos_id = next_id.to_string();
+            workflow.insert(
+                up_pos_id.clone(),
+                json!({
+                    "class_type": "CLIPTextEncode",
+                    "inputs": {
+                        "clip": [result.clip_source.0.clone(), result.clip_source.1],
+                        "text": pos_text
+                    }
+                }),
+            );
+            *next_id += 1;
+
+            let up_neg_id = next_id.to_string();
+            workflow.insert(
+                up_neg_id.clone(),
+                json!({
+                    "class_type": "CLIPTextEncode",
+                    "inputs": {
+                        "clip": [result.clip_source.0.clone(), result.clip_source.1],
+                        "text": neg_text
+                    }
+                }),
+            );
+            *next_id += 1;
+
+            ((up_pos_id, 0u32), (up_neg_id, 0u32))
+        } else {
+            (
+                (result.positive_source.0.clone(), result.positive_source.1),
+                (result.negative_source.0.clone(), result.negative_source.1),
+            )
+        }
+    } else {
+        (
+            (result.positive_source.0.clone(), result.positive_source.1),
+            (result.negative_source.0.clone(), result.negative_source.1),
+        )
+    };
+
+    // Second KSampler pass at low denoise
     let sampler_id = next_id.to_string();
     workflow.insert(
         sampler_id.clone(),
@@ -115,8 +163,8 @@ pub fn append_upscale_chain(
             "class_type": "KSampler",
             "inputs": {
                 "model": [model_for_sampler.0, model_for_sampler.1],
-                "positive": [result.positive_source.0.clone(), result.positive_source.1],
-                "negative": [result.negative_source.0.clone(), result.negative_source.1],
+                "positive": [pos_source.0, pos_source.1],
+                "negative": [neg_source.0, neg_source.1],
                 "latent_image": [tiled_encode_id, 0],
                 "seed": seed + 1,
                 "steps": params.upscale_steps,

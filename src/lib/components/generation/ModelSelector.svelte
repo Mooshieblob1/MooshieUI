@@ -2,6 +2,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import { downloadModel, findModelByHash, hashModelFile, readModelSpec, type ModelSpec } from "../../utils/api.js";
   import { listen } from "@tauri-apps/api/event";
   import { onMount, onDestroy } from "svelte";
@@ -523,7 +524,7 @@
 <div class="space-y-3">
   <!-- Checkpoint -->
   <div class="relative">
-    <label class="block text-xs text-neutral-400 mb-1">Checkpoint<InfoTip text="The AI model that generates your images. Different checkpoints are trained on different styles — anime, photorealism, illustration, etc." /></label>
+    <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.model.checkpoint')}<InfoTip text="The AI model that generates your images. Different checkpoints are trained on different styles — anime, photorealism, illustration, etc." /></label>
     <button
       class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-left text-neutral-100 hover:border-neutral-600 focus:outline-none focus:border-indigo-500 transition-colors truncate flex items-center gap-2"
       onclick={() => (showCheckpointDropdown = !showCheckpointDropdown)}
@@ -679,7 +680,7 @@
 
   <!-- VAE -->
   <div>
-    <label class="block text-xs text-neutral-400 mb-1">VAE<InfoTip text="Variational Auto-Encoder — converts between pixel images and the latent space the AI works in. 'Automatic' uses the one built into your checkpoint, which is usually best." /></label>
+    <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.model.vae')}<InfoTip text="Variational Auto-Encoder — converts between pixel images and the latent space the AI works in. 'Automatic' uses the one built into your checkpoint, which is usually best." /></label>
     <select
       bind:value={generation.vae}
       class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
@@ -782,7 +783,7 @@
           <div class="space-y-1.5">
             <div>
               <div class="flex items-center justify-between text-xs mb-0.5">
-                <span class="text-neutral-500">Model<InfoTip text="How strongly this LoRA affects the image generation model. Higher values = stronger effect, but too high can distort the image." /></span>
+                <span class="text-neutral-500">{locale.t('generation.model.lora_strength_model')}<InfoTip text="How strongly this LoRA affects the image generation model. Higher values = stronger effect, but too high can distort the image." /></span>
                 <span class="text-neutral-300 tabular-nums">{lora.strength_model.toFixed(2)}</span>
               </div>
               <input
@@ -796,7 +797,7 @@
             </div>
             <div>
               <div class="flex items-center justify-between text-xs mb-0.5">
-                <span class="text-neutral-500">CLIP<InfoTip text="How strongly this LoRA affects text understanding. Controls how much the LoRA changes what the AI 'sees' in your prompt." /></span>
+                <span class="text-neutral-500">{locale.t('generation.model.lora_strength_clip')}<InfoTip text="How strongly this LoRA affects text understanding. Controls how much the LoRA changes what the AI 'sees' in your prompt." /></span>
                 <span class="text-neutral-300 tabular-nums">{lora.strength_clip.toFixed(2)}</span>
               </div>
               <input

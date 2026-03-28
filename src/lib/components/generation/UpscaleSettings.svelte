@@ -1,6 +1,7 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import { downloadModel } from "../../utils/api.js";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
@@ -123,7 +124,7 @@
 <div class="space-y-3">
   <!-- Enable toggle -->
   <div class="flex items-center justify-between">
-    <label class="text-xs text-neutral-400">Upscale<InfoTip text="Increases the resolution of your generated image. 'Model' uses an AI upscaler for sharp detail, 'Algorithmic' uses traditional scaling. Adds a second pass after initial generation." /></label>
+    <label class="text-xs text-neutral-400">{locale.t('generation.upscale.title')}<InfoTip text="Increases the resolution of your generated image. 'Model' uses an AI upscaler for sharp detail, 'Algorithmic' uses traditional scaling. Adds a second pass after initial generation." /></label>
     <button
       class="relative w-10 h-5 rounded-full transition-colors {generation.upscaleEnabled
         ? 'bg-indigo-600'
@@ -157,7 +158,7 @@
       <!-- Scale -->
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-          <span>Scale<InfoTip text="How much to enlarge the image. 2x doubles the resolution in each dimension (4x the pixels). Higher scales take longer and use more VRAM." /></span>
+          <span>{locale.t('generation.upscale.scale')}<InfoTip text="How much to enlarge the image. 2x doubles the resolution in each dimension (4x the pixels). Higher scales take longer and use more VRAM." /></span>
           <EditableValue value={generation.upscaleScale} min={1} max={4} step={0.5} decimals={1} suffix="x" onchange={(v) => generation.upscaleScale = v} />
         </label>
         <input
@@ -174,7 +175,7 @@
     <!-- Upscale Model (only for model method) -->
     {#if generation.upscaleMethod === "model"}
       <div>
-        <label class="block text-xs text-neutral-400 mb-1">Upscale Model<InfoTip text="The AI model used to upscale your image. Omni 2x doubles resolution, Omni 4x quadruples it. Recommended models will be downloaded automatically on first use." /></label>
+        <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.upscale.model')}<InfoTip text="The AI model used to upscale your image. Omni 2x doubles resolution, Omni 4x quadruples it. Recommended models will be downloaded automatically on first use." /></label>
         <select
           value={generation.upscaleModel ?? ""}
           onchange={(e) => handleModelSelect((e.target as HTMLSelectElement).value)}
@@ -218,7 +219,7 @@
       <!-- Denoise -->
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-          <span>Denoise<InfoTip text="How much the AI re-draws during upscaling. Lower (0.2-0.4) preserves the original closely, higher adds more detail but may change the image." /></span>
+          <span>{locale.t('generation.upscale.denoise')}<InfoTip text="How much the AI re-draws during upscaling. Lower (0.2-0.4) preserves the original closely, higher adds more detail but may change the image." /></span>
           <EditableValue value={generation.upscaleDenoise} min={0} max={1} step={0.05} decimals={2} onchange={(v) => generation.upscaleDenoise = v} />
         </label>
         <input
@@ -234,7 +235,7 @@
       <!-- Steps -->
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-          <span>Steps<InfoTip text="Denoising steps during the upscale pass. More steps = finer detail but slower. 10-20 is usually enough for upscaling." /></span>
+          <span>{locale.t('generation.upscale.steps')}<InfoTip text="Denoising steps during the upscale pass. More steps = finer detail but slower. 10-20 is usually enough for upscaling." /></span>
           <EditableValue value={generation.upscaleSteps} min={1} max={50} step={1} onchange={(v) => generation.upscaleSteps = v} />
         </label>
         <input
@@ -279,7 +280,7 @@
     {#if generation.upscaleTiling || generation.isAnima}
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-        <span>Tile Size<InfoTip text="The size of each tile when using tiled diffusion. Larger tiles = better coherence but more VRAM. 1024px is a good default. Reduce to 512-768 if you run out of memory." /></span>
+        <span>{locale.t('generation.upscale.tile_size')}<InfoTip text="The size of each tile when using tiled diffusion. Larger tiles = better coherence but more VRAM. 1024px is a good default. Reduce to 512-768 if you run out of memory." /></span>
         <EditableValue value={generation.upscaleTileSize} min={256} max={2048} step={64} suffix="px" onchange={(v) => generation.upscaleTileSize = v} />
       </label>
       <input

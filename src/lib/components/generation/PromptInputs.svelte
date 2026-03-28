@@ -1,5 +1,6 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import InterrogateModal from "./InterrogateModal.svelte";
@@ -238,7 +239,7 @@
 <div class="space-y-2">
   {#if generation.stylePresetsEnabled}
     <div>
-      <label class="block text-xs text-neutral-400 mb-1">Style Preset<InfoTip text="Fooocus-style presets that automatically inject prompt modifiers. Great for fast starts: pick a style first, then write your subject prompt." /></label>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.prompts.style_preset')}<InfoTip text="Fooocus-style presets that automatically inject prompt modifiers. Great for fast starts: pick a style first, then write your subject prompt." /></label>
       <select
         bind:value={generation.stylePreset}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
@@ -257,7 +258,7 @@
     >
       <span class="flex items-center gap-1.5">
         <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-        Interrogate Image
+        {locale.t('generation.interrogate.title')}
         <InfoTip text="Analyze an image to extract tags (character, artist, general). Drop an image, browse your files, or paste from clipboard. Tags can be applied directly to your prompt." />
       </span>
       <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {interrogateOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -280,7 +281,7 @@
               onchange={handleInterrogateUpload}
               class="hidden"
             />
-            Browse or drop image
+            {locale.t('generation.interrogate.browse_or_drop')}
           </label>
           <span class="text-neutral-700">|</span>
           <button
@@ -289,7 +290,7 @@
             class="text-xs text-emerald-500/70 hover:text-emerald-400 transition-colors flex items-center gap-1"
           >
             <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-            Ctrl+V Paste
+            {locale.t('generation.interrogate.paste')}
           </button>
           <span class="text-neutral-700">|</span>
           <button
@@ -309,7 +310,7 @@
   <div>
     <div class="flex items-center justify-between mb-1">
       <div class="flex items-center gap-1.5">
-        <label class="text-xs text-neutral-400">Positive Prompt<InfoTip text="Describe what you want to see in the image. Use commas to separate concepts. More specific prompts give better results — include style, subject, lighting, and quality tags." /></label>
+        <label class="text-xs text-neutral-400">{locale.t('generation.prompts.positive')}<InfoTip text="Describe what you want to see in the image. Use commas to separate concepts. More specific prompts give better results — include style, subject, lighting, and quality tags." /></label>
       </div>
       {#if generation.isAnima || generation.isIllustrious}
         <span class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">Quality prompts applied</span>
@@ -327,7 +328,7 @@
   </div>
 
   <div>
-    <label class="block text-xs text-neutral-400 mb-1">Negative Prompt<InfoTip text="Describe what you don't want in the image. Common negatives include 'lowres', 'bad anatomy', 'blurry', 'worst quality'. Helps steer the AI away from common artifacts." /></label>
+    <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.prompts.negative')}<InfoTip text="Describe what you don't want in the image. Common negatives include 'lowres', 'bad anatomy', 'blurry', 'worst quality'. Helps steer the AI away from common artifacts." /></label>
     <PromptTextarea
       bind:value={generation.negativePrompt}
       placeholder="blurry, cropped, extra fingers, ..."
@@ -344,7 +345,7 @@
           onclick={() => (historySectionOpen = !historySectionOpen)}
           title={historySectionOpen ? "Collapse Prompt History & Favorites" : "Expand Prompt History & Favorites"}
         >
-          <span>Prompt History & Favorites<InfoTip text="Recent prompts are auto-saved when you generate. Click to reload, star favorites to pin them to the top." /></span>
+          <span>{locale.t('generation.prompts.history')}<InfoTip text="Recent prompts are auto-saved when you generate. Click to reload, star favorites to pin them to the top." /></span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {historySectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>

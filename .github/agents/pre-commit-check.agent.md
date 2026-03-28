@@ -33,6 +33,7 @@ Combine both lists (unstaged + staged) into a single set of changed files. Class
 | `src/**/*.svelte` | svelte |
 | `src/**/*.svelte.ts` | store |
 | `src/**/*.ts` | typescript |
+| `src/lib/locales/*.ts` | locale |
 | `comfyui-nodes/**` | python-nodes |
 | `package.json` | frontend-deps |
 
@@ -155,6 +156,65 @@ For each **changed file**, check the applicable rules below. Use `git diff HEAD`
 | CSP review | If `csp` field changed, flag for manual review | WARN |
 | Permissions | If `capabilities` changed, flag for manual review | WARN |
 
+#### 6g. Locale Files (`src/lib/locales/*.ts`)
+
+**Run if**: any locale files changed.
+
+The codebase uses flat `Record<string, string>` translation files (`en.ts`, `es.ts`) with dot-separated keys (e.g. `"gallery.toast.copied"`) and `{var}` interpolation. All locales must stay in sync.
+
+| Rule | Check | Severity |
+|------|-------|----------|
+| Key parity | Every key in `en.ts` must exist in `es.ts` and vice versa. Extract keys from both files and diff them. Report any keys present in one but missing from the other. | ERROR |
+| Interpolation parity | For each shared key, extract `{varName}` placeholders from both locales. The set of placeholder names must match exactly (order doesn't matter). e.g. if `en.ts` has `"Migrated {count} images"`, `es.ts` must also contain `{count}`. | ERROR |
+| Key naming convention | New keys (added `+` lines in diff) must match the pattern: lowercase words separated by dots and optional underscores within segments (`/^[a-z][a-z0-9]*(\.[a-z][a-z0-9_]*)+$/`). | WARN |
+| No empty values | New translation values must not be empty strings (`""`) | WARN |
+| Export pattern | File must end with `export default <localeName>;` where `<localeName>` matches the filename (e.g. `en.ts` → `export default en;`) | ERROR |
+
+**How to check key parity** (example):
+
+```bash
+# Extract keys from both files (keys are the quoted strings before the colon)
+grep -oP '^\s*"([^"]+)"' src/lib/locales/en.ts | sed 's/.*"\(.*\)"/\1/' | sort > /tmp/en_keys.txt
+grep -oP '^\s*"([^"]+)"' src/lib/locales/es.ts | sed 's/.*"\(.*\)"/\1/' | sort > /tmp/es_keys.txt
+
+# Keys in en.ts but missing from es.ts
+comm -23 /tmp/en_keys.txt /tmp/es_keys.txt
+
+# Keys in es.ts but missing from en.ts
+comm -13 /tmp/en_keys.txt /tmp/es_keys.txt
+```
+
+#### 6h. Hardcoded UI Strings in Components and Stores
+
+**Run if**: any svelte or store files changed.
+
+When a component or store is modified, check the new/changed lines (`+` lines in `git diff`) for hardcoded user-facing English strings that should use `locale.t()` instead.
+
+**What to flag** (in new `+` lines only):
+
+- Literal strings in template text content (text between `>` and `<` that isn't a Svelte expression)
+- `title="English text"`, `placeholder="English text"`, `aria-label="English text"` attributes with literal strings
+- `showToast("English text", ...)` calls with literal string messages
+- Strings assigned to user-visible variables (e.g. `errorMsg = "Something failed"`)
+
+**What to ignore** (NOT hardcoded-string violations):
+
+- CSS class strings, Tailwind utilities
+- `console.log()`, `console.error()`, `console.warn()` messages
+- Technical identifiers: event names, invoke command names, file paths, URLs, MIME types
+- HTML tag names, attribute names (`class=`, `type=`, `id=`)
+- String comparisons and switch-case values (e.g. `if (mode === "txt2img")`)
+- Comments and JSDoc
+- Strings inside `locale.t()` calls (these are translation keys, not hardcoded text)
+- `<code>` or `<pre>` content
+- Interpolated expressions like `{variable}` in templates
+
+| Rule | Check | Severity |
+|------|-------|----------|
+| No new hardcoded strings | New user-facing text in svelte/store files should use `locale.t()` | WARN |
+
+Report each finding with the file, line number, and the suspected hardcoded string. Acknowledge that some may be false positives (e.g. technical labels that intentionally stay in English like "ComfyUI", "SDXL", "LoRA") — flag them but note they may be intentional.
+
 ---
 
 ### Step 7: Cross-File Consistency [NON-BLOCKING]
@@ -171,6 +231,62 @@ grep -oP '(?<=\b)\w+(?=,?\s*$)' src-tauri/src/lib.rs | sort
 # Extract invoke() calls from api.ts
 grep -oP 'invoke\("(\w+)"' src/lib/utils/api.ts | sort
 ```
+
+---
+
+### Step 8: i18n Consistency [NON-BLOCKING unless locale files changed]
+
+**Run if**: any locale, svelte, or store files changed.
+
+This step ensures the i18n system stays coherent across locale files and UI code.
+
+#### 8a. Locale Key Parity
+
+**Run if**: any locale file changed. **Severity: ERROR (blocking)**.
+
+Extract all keys from `src/lib/locales/en.ts` and `src/lib/locales/es.ts`. Report:
+- Keys in `en.ts` missing from `es.ts`
+- Keys in `es.ts` missing from `en.ts`
+
+This is **blocking** because a missing key causes `locale.t()` to fall back silently to English, which defeats the purpose of the translation.
+
+#### 8b. Interpolation Variable Parity
+
+**Run if**: any locale file changed. **Severity: ERROR (blocking)**.
+
+For each key that exists in both locales, extract all `{variableName}` placeholders from the value string. The placeholder sets must match exactly between locales (order doesn't matter).
+
+Example failure:
+```
+en.ts: "gallery.toast.rescan_migrated": "Re-scanned metadata: migrated {count} image(s)"
+es.ts: "gallery.toast.rescan_migrated": "Metadatos re-escaneados: {cantidad} imagen(es) migrada(s)"
+                                                                     ^^^^^^^^ should be {count}
+```
+
+#### 8c. Unused Translation Keys
+
+**Run if**: any locale file changed. **Severity: WARN (non-blocking)**.
+
+For **newly added keys** (from the `+` lines in `git diff` of locale files), search the codebase for usage:
+
+```bash
+# For each new key, check it's referenced somewhere
+grep -r '"new.key.name"' src/ --include='*.svelte' --include='*.ts'
+```
+
+If a newly added key has zero references in any `.svelte` or `.ts` file, flag it as potentially unused. This catches typos in key names and orphaned translations.
+
+#### 8d. Missing Locale Import
+
+**Run if**: any svelte or store file changed. **Severity: WARN (non-blocking)**.
+
+If a changed file has new `locale.t(` calls (in `+` lines of the diff) but does not import `locale`:
+
+```bash
+grep -L 'import.*locale.*from' <changed-file>
+```
+
+This is usually caught by the build step, but flagging it early gives a clearer error message.
 
 ---
 
@@ -194,6 +310,12 @@ After all steps complete, produce a structured report:
 
 ### Convention Audit
 - [ ] Rule name: PASS/WARN/ERROR — details
+
+### i18n Checks
+- [ ] Key parity (en↔es): PASS/FAIL — N missing keys
+- [ ] Interpolation parity: PASS/FAIL — N mismatched
+- [ ] Unused new keys: PASS/WARN — N potentially unused
+- [ ] Hardcoded UI strings: PASS/WARN — N found
 
 ### Summary
 ✅ Ready to commit

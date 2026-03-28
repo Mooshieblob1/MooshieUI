@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { InterrogationResult, TagResult } from "../../types/index.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import animaTags from "../../assets/anima-tags.json";
 
   interface Props {
@@ -213,7 +214,7 @@
       {#if imagePreviewUrl}
         <img src={imagePreviewUrl} alt="" class="w-16 h-16 rounded-lg object-cover shrink-0 border border-neutral-600" />
       {/if}
-      <h2 class="text-lg font-semibold text-neutral-100 flex-1">Image Tags</h2>
+      <h2 class="text-lg font-semibold text-neutral-100 flex-1">{locale.t('generation.interrogate.title')}</h2>
       <button
         onclick={onclose}
         class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors"

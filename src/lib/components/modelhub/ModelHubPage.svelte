@@ -14,6 +14,7 @@
     type CivitaiFileFormat,
   } from "../../utils/api.js";
   import { models } from "../../stores/models.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
 
   const CIVITAI_API_KEY_KEY = "mooshieui.civitai.apiKey.v1";
   const CIVITAI_COLUMNS_KEY = "mooshieui.civitai.columns.v1";
@@ -21,55 +22,55 @@
   const CIVITAI_ARCH_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 12;
   const ARCHITECTURE_LOAD_TIMEOUT_MS = 12000;
 
-  const modelTypes: Array<{ value: CivitaiModelType | ""; label: string }> = [
-    { value: "", label: "All Types" },
-    { value: "Checkpoint", label: "Checkpoint" },
-    { value: "LORA", label: "LoRA" },
-    { value: "Controlnet", label: "ControlNet" },
-    { value: "Upscaler", label: "Upscaler" },
-    { value: "VAE", label: "VAE" },
-    { value: "TextualInversion", label: "Textual Inversion" },
-  ];
+  const modelTypes = $derived<Array<{ value: CivitaiModelType | ""; label: string }>>([
+    { value: "", label: locale.t("modelhub.filter.all_types") },
+    { value: "Checkpoint", label: locale.t("modelhub.filter.checkpoint") },
+    { value: "LORA", label: locale.t("modelhub.filter.lora") },
+    { value: "Controlnet", label: locale.t("modelhub.filter.controlnet") },
+    { value: "Upscaler", label: locale.t("modelhub.filter.upscaler") },
+    { value: "VAE", label: locale.t("modelhub.filter.vae") },
+    { value: "TextualInversion", label: locale.t("modelhub.filter.textual_inversion") },
+  ]);
 
-  const sortOptions: Array<{ value: CivitaiSort; label: string }> = [
-    { value: "Highest Rated", label: "Highest Rated" },
-    { value: "Most Downloaded", label: "Most Downloaded" },
-    { value: "Newest", label: "Newest" },
-  ];
+  const sortOptions = $derived<Array<{ value: CivitaiSort; label: string }>>([
+    { value: "Highest Rated", label: locale.t("modelhub.sort.highest_rated") },
+    { value: "Most Downloaded", label: locale.t("modelhub.sort.most_downloaded") },
+    { value: "Newest", label: locale.t("modelhub.sort.newest") },
+  ]);
 
-  const periodOptions: Array<{ value: CivitaiPeriod; label: string }> = [
-    { value: "AllTime", label: "All Time" },
-    { value: "Month", label: "Month" },
-    { value: "Week", label: "Week" },
-    { value: "Day", label: "Day" },
-  ];
+  const periodOptions = $derived<Array<{ value: CivitaiPeriod; label: string }>>([
+    { value: "AllTime", label: locale.t("modelhub.period.all_time") },
+    { value: "Month", label: locale.t("modelhub.period.month") },
+    { value: "Week", label: locale.t("modelhub.period.week") },
+    { value: "Day", label: locale.t("modelhub.period.day") },
+  ]);
 
   const architectureOptions = $state<Array<{ value: string; label: string }>>([
     { value: "", label: "All Base Models" },
   ]);
 
-  const fileFormatOptions: Array<{ value: CivitaiFileFormat | ""; label: string }> = [
-    { value: "", label: "All File Formats" },
-    { value: "SafeTensor", label: "SafeTensor" },
-    { value: "PickleTensor", label: "PickleTensor" },
-    { value: "GGUF", label: "GGUF" },
-    { value: "Diffusers", label: "Diffusers" },
-    { value: "Core ML", label: "Core ML" },
-    { value: "ONNX", label: "ONNX" },
-    { value: "Other", label: "Other" },
-  ];
+  const fileFormatOptions = $derived<Array<{ value: CivitaiFileFormat | ""; label: string }>>([
+    { value: "", label: locale.t("modelhub.format.all") },
+    { value: "SafeTensor", label: locale.t("modelhub.format.safetensor") },
+    { value: "PickleTensor", label: locale.t("modelhub.format.pickletensor") },
+    { value: "GGUF", label: locale.t("modelhub.format.gguf") },
+    { value: "Diffusers", label: locale.t("modelhub.format.diffusers") },
+    { value: "Core ML", label: locale.t("modelhub.format.core_ml") },
+    { value: "ONNX", label: locale.t("modelhub.format.onnx") },
+    { value: "Other", label: locale.t("modelhub.format.other") },
+  ]);
 
   // Note: CivitAI public API does not support a "status" query parameter.
   // The filter was removed because it had no effect on search results.
 
-  const categoryOptions = [
-    { value: "checkpoints", label: "Checkpoint" },
-    { value: "loras", label: "LoRA" },
-    { value: "upscale_models", label: "Upscaler" },
-    { value: "vae", label: "VAE" },
-    { value: "controlnet", label: "ControlNet" },
-    { value: "embeddings", label: "Textual Inversion" },
-  ];
+  const categoryOptions = $derived([
+    { value: "checkpoints", label: locale.t("modelhub.filter.checkpoint") },
+    { value: "loras", label: locale.t("modelhub.filter.lora") },
+    { value: "upscale_models", label: locale.t("modelhub.filter.upscaler") },
+    { value: "vae", label: locale.t("modelhub.filter.vae") },
+    { value: "controlnet", label: locale.t("modelhub.filter.controlnet") },
+    { value: "embeddings", label: locale.t("modelhub.filter.textual_inversion") },
+  ]);
 
   const hfQuickLinks = [
     {
@@ -551,7 +552,7 @@
   async function installModel(model: CivitaiModel, file: CivitaiModelFile) {
     const category = mapCivitaiTypeToCategory(model.type);
     if (!category) {
-      error = `Cannot auto-install type: ${model.type}. Use Open Link to download manually.`;
+      error = locale.t("modelhub.civitai.cannot_install", { type: model.type });
       return;
     }
 
@@ -569,7 +570,7 @@
       const status = extractApiStatus(message);
       if (status === 401 || status === 403) {
         keyRecommended = true;
-        error = "This model requires a CivitAI API key to download. Add your key above, then try again.";
+        error = locale.t("modelhub.civitai.key_required_download");
       } else {
         error = message;
       }
@@ -583,11 +584,11 @@
   async function installFromDirectUrl() {
     directStatus = null;
     if (!directUrl.trim()) {
-      directStatus = "Direct URL is required.";
+      directStatus = locale.t("modelhub.direct.url_required");
       return;
     }
     if (!directFilename.trim()) {
-      directStatus = "Filename is required.";
+      directStatus = locale.t("modelhub.direct.filename_required");
       return;
     }
 
@@ -595,7 +596,7 @@
     try {
       await downloadModel(directUrl.trim(), directCategory, directFilename.trim());
       await models.refresh();
-      directStatus = "Model downloaded and installed.";
+      directStatus = locale.t("modelhub.direct.installed");
     } catch (e) {
       directStatus = e instanceof Error ? e.message : String(e);
     } finally {
@@ -752,9 +753,9 @@
 <div class="h-full overflow-y-auto p-6" style="will-change: scroll-position;" bind:this={scrollHost} onscroll={handleScroll} use:smoothScroll>
   <div class="mx-auto space-y-4">
     <div class="flex flex-col gap-1">
-      <h2 class="text-lg font-semibold text-neutral-100">Model Hub</h2>
+      <h2 class="text-lg font-semibold text-neutral-100">{locale.t("modelhub.title")}</h2>
       <p class="text-xs text-neutral-400">
-        CivitAI is optional. You can browse CivitAI, use your own API key when needed, or install from direct URLs.
+        {locale.t("modelhub.civitai.description")}
       </p>
     </div>
 
@@ -763,27 +764,27 @@
         class="px-3 py-1.5 text-xs rounded border transition-colors {source === 'civitai' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}"
         onclick={() => (source = "civitai")}
       >
-        CivitAI Browse
+        {locale.t("modelhub.source.civitai")}
       </button>
       <button
         class="px-3 py-1.5 text-xs rounded border transition-colors {source === 'direct' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}"
         onclick={() => (source = "direct")}
       >
-        Direct URL / Hugging Face
+        {locale.t("modelhub.source.direct")}
       </button>
     </div>
 
     <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-3">
       <div class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-end">
         <div>
-          <div class="text-xs mb-1 {keyRecommended ? 'text-red-400' : 'text-neutral-400'}">CivitAI API Key {keyRecommended ? '(Required)' : '(Optional)'}</div>
+          <div class="text-xs mb-1 {keyRecommended ? 'text-red-400' : 'text-neutral-400'}">{locale.t("modelhub.civitai.api_key")} {keyRecommended ? locale.t("modelhub.civitai.required") : locale.t("modelhub.civitai.optional")}</div>
           <input
             id="civitai-api-key"
             name="civitaiApiKey"
             type="password"
             bind:value={apiKeyDraft}
             class="w-full bg-neutral-800 border rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 {keyRecommended ? 'border-red-500 ring-1 ring-red-500/50' : 'border-neutral-700'}"
-            placeholder="Paste CivitAI API key"
+            placeholder={locale.t("modelhub.civitai.paste_key")}
           />
         </div>
         <div class="flex items-center gap-2">
@@ -791,20 +792,20 @@
             class="px-3 py-2 text-xs rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
             onclick={saveApiKey}
           >
-            Save Key
+            {locale.t("modelhub.civitai.save_key")}
           </button>
           {#if keySaved}
-            <span class="text-[11px] text-green-300">Saved</span>
+            <span class="text-[11px] text-green-300">{locale.t("modelhub.civitai.key_saved")}</span>
           {/if}
         </div>
       </div>
 
       {#if keyRecommended}
         <div class="rounded-lg border border-red-800/70 bg-red-900/20 px-3 py-2 text-xs text-red-200 space-y-1.5">
-          <p>A CivitAI API key is needed to download this model.</p>
-          <p class="text-red-300/80">To create one: go to
+          <p>{locale.t("modelhub.civitai.api_recommended")}</p>
+          <p class="text-red-300/80">{locale.t("modelhub.civitai.api_instructions")}
             <a href="https://civitai.com/user/account" target="_blank" rel="noreferrer" class="underline hover:text-white">civitai.com/user/account</a>
-            → scroll to <span class="font-semibold">API Keys</span> → click <span class="font-semibold">Add API Key</span> → copy the key and paste it above.
+            {locale.t("modelhub.civitai.api_scroll")} <span class="font-semibold">{locale.t("modelhub.civitai.api_keys_label")}</span> {locale.t("modelhub.civitai.api_click")} <span class="font-semibold">{locale.t("modelhub.civitai.api_add_key")}</span> {locale.t("modelhub.civitai.api_copy")}
           </p>
         </div>
       {/if}
@@ -814,7 +815,7 @@
       <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-3">
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
           <div class="lg:col-span-2">
-            <div class="text-xs text-neutral-400 mb-1">Search</div>
+            <div class="text-xs text-neutral-400 mb-1">{locale.t("modelhub.civitai.search")}</div>
             <input
               id="civitai-search"
               name="civitaiSearch"
@@ -828,7 +829,7 @@
             />
           </div>
           <div>
-            <div class="text-xs text-neutral-400 mb-1">Type</div>
+            <div class="text-xs text-neutral-400 mb-1">{locale.t("modelhub.civitai.type")}</div>
             <select id="civitai-type" name="civitaiType" bind:value={selectedType} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100">
               {#each modelTypes as option}
                 <option value={option.value}>{option.label}</option>
@@ -839,7 +840,7 @@
 
         <div class="grid grid-cols-1 lg:grid-cols-6 gap-3 items-end">
           <div>
-            <div class="text-xs text-neutral-400 mb-1">Sort</div>
+            <div class="text-xs text-neutral-400 mb-1">{locale.t("modelhub.civitai.sort_label")}</div>
             <select id="civitai-sort" name="civitaiSort" bind:value={sort} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100">
               {#each sortOptions as option}
                 <option value={option.value}>{option.label}</option>
@@ -847,7 +848,7 @@
             </select>
           </div>
           <div>
-            <div class="text-xs text-neutral-400 mb-1">Period</div>
+            <div class="text-xs text-neutral-400 mb-1">{locale.t("modelhub.civitai.period_label")}</div>
             <select id="civitai-period" name="civitaiPeriod" bind:value={period} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100">
               {#each periodOptions as option}
                 <option value={option.value}>{option.label}</option>
@@ -855,7 +856,7 @@
             </select>
           </div>
           <div>
-            <div class="text-xs text-neutral-400 mb-1">Base Model</div>
+            <div class="text-xs text-neutral-400 mb-1">{locale.t("modelhub.civitai.base_model")}</div>
             <select id="civitai-architecture" name="civitaiArchitecture" bind:value={selectedArchitecture} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100">
               {#each architectureOptions as option}
                 <option value={option.value}>{option.label}</option>
@@ -867,20 +868,20 @@
                 onclick={() => fetchArchitectures()}
                 disabled={loadingArchitectures || refreshingArchitectures}
               >
-                {loadingArchitectures || refreshingArchitectures ? "Loading full base-model list..." : "Load full base-model list"}
+                {loadingArchitectures || refreshingArchitectures ? locale.t("modelhub.civitai.loading_base_models") : locale.t("modelhub.civitai.load_base_models")}
               </button>
             {/if}
             {#if loadingArchitectures}
-              <p class="text-[10px] text-neutral-500 mt-0.5">Loading base models from CivitAI...</p>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t("modelhub.civitai.loading_base_from_civitai")}</p>
             {:else if refreshingArchitectures}
-              <p class="text-[10px] text-neutral-500 mt-0.5">Refreshing base models...</p>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t("modelhub.civitai.refreshing_base")}</p>
             {/if}
             {#if architectureError}
               <p class="text-[10px] text-amber-300 mt-0.5">{architectureError}</p>
             {/if}
           </div>
           <div>
-            <div class="text-xs text-neutral-400 mb-1">File Format</div>
+            <div class="text-xs text-neutral-400 mb-1">{locale.t("modelhub.civitai.format_label")}</div>
             <select id="civitai-file-format" name="civitaiFileFormat" bind:value={selectedFileFormat} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100">
               {#each fileFormatOptions as option}
                 <option value={option.value}>{option.label}</option>
@@ -889,7 +890,7 @@
           </div>
           <label class="flex items-center gap-2 text-xs text-neutral-300 pb-2" for="civitai-nsfw">
             <input id="civitai-nsfw" name="civitaiNsfw" type="checkbox" bind:checked={includeNsfw} class="accent-indigo-500" />
-            Include NSFW
+            {locale.t("modelhub.civitai.nsfw")}
           </label>
           <div class="flex items-center justify-end gap-2">
             <button
@@ -897,7 +898,7 @@
               onclick={runSearch}
               disabled={loading}
             >
-              {loading ? "Loading..." : "Search"}
+              {loading ? locale.t("modelhub.civitai.loading_btn") : locale.t("modelhub.civitai.search_btn")}
             </button>
           </div>
         </div>
@@ -908,13 +909,13 @@
       {/if}
 
       <div class="flex items-center justify-between text-xs text-neutral-500">
-        <span>{formatCount(totalItems)} results</span>
-        <span>{formatCount(items.length)} loaded</span>
+        <span>{formatCount(totalItems)} {locale.t("modelhub.civitai.results")}</span>
+        <span>{formatCount(items.length)} {locale.t("modelhub.civitai.loaded")}</span>
       </div>
 
       <div class="rounded-lg border border-neutral-800 bg-neutral-900/50 px-3 py-2">
         <div class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-          <span>Cards Per Row</span>
+          <span>{locale.t("modelhub.civitai.columns")}</span>
           <span class="text-neutral-200 tabular-nums">{civitaiColumns}</span>
         </div>
         <input
@@ -931,11 +932,11 @@
 
       {#if loading}
         <div class="rounded-xl border border-neutral-800 bg-neutral-900/50 p-8 text-sm text-neutral-400 text-center">
-          Fetching models from CivitAI...
+          {locale.t("modelhub.civitai.loading")}
         </div>
       {:else if items.length === 0}
         <div class="rounded-xl border border-neutral-800 bg-neutral-900/50 p-8 text-sm text-neutral-400 text-center">
-          No models found for this search.
+          {locale.t("modelhub.civitai.no_results")}
         </div>
       {:else}
         <div bind:this={gridContainerRef}>
@@ -966,12 +967,12 @@
                     />
                     {#if nsfwPreview}
                       <div class="absolute inset-0 flex items-center justify-center">
-                        <span class="px-2 py-1 rounded bg-red-600/80 text-[10px] font-bold text-white uppercase tracking-wider">NSFW</span>
+                        <span class="px-2 py-1 rounded bg-red-600/80 text-[10px] font-bold text-white uppercase tracking-wider">{locale.t("modelhub.civitai.nsfw_badge")}</span>
                       </div>
                     {/if}
                   {:else}
                     <div class="absolute inset-0 flex items-center justify-center text-xs text-neutral-600">
-                      No preview
+                      {locale.t("modelhub.civitai.no_preview")}
                     </div>
                   {/if}
                   <div class="absolute inset-x-0 bottom-0 bg-linear-to-t from-black/80 via-black/40 to-transparent p-2 pt-6">
@@ -1023,7 +1024,7 @@
                     <p class="text-xs text-neutral-400">
                       {model.type}
                       {#if model.creator?.username}
-                        • by {model.creator.username}
+                        • {locale.t("modelhub.civitai.by")} {model.creator.username}
                       {/if}
                     </p>
                   </div>
@@ -1033,21 +1034,21 @@
                     rel="noreferrer"
                     class="shrink-0 px-2 py-1 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
                   >
-                    Open on CivitAI
+                    {locale.t("modelhub.civitai.open_on_civitai")}
                   </a>
                 </div>
 
                 <div class="grid grid-cols-3 gap-2 text-[11px]">
                   <div class="rounded border border-neutral-800 bg-neutral-950 px-2 py-1.5">
-                    <div class="text-neutral-500">Downloads</div>
+                    <div class="text-neutral-500">{locale.t("modelhub.civitai.stat_downloads")}</div>
                     <div class="text-neutral-200">{formatCount(model.stats?.downloadCount)}</div>
                   </div>
                   <div class="rounded border border-neutral-800 bg-neutral-950 px-2 py-1.5">
-                    <div class="text-neutral-500">Rating</div>
+                    <div class="text-neutral-500">{locale.t("modelhub.civitai.stat_rating")}</div>
                     <div class="text-neutral-200">{model.stats?.rating?.toFixed?.(2) ?? "-"}</div>
                   </div>
                   <div class="rounded border border-neutral-800 bg-neutral-950 px-2 py-1.5">
-                    <div class="text-neutral-500">Votes</div>
+                    <div class="text-neutral-500">{locale.t("modelhub.civitai.stat_votes")}</div>
                     <div class="text-neutral-200">{formatCount(model.stats?.ratingCount)}</div>
                   </div>
                 </div>
@@ -1055,12 +1056,12 @@
                 {#if version}
                   {@const hasExtraRows = version.files.length > 1}
                   <div class="space-y-2">
-                    <p class="text-xs text-neutral-400">Version: <span class="text-neutral-200">{version.name}</span></p>
+                    <p class="text-xs text-neutral-400">{locale.t("modelhub.civitai.version")} <span class="text-neutral-200">{version.name}</span></p>
                     {#if version.baseModel}
-                      <p class="text-xs text-neutral-400">Base Model: <span class="text-neutral-200">{version.baseModel}</span></p>
+                      <p class="text-xs text-neutral-400">{locale.t("modelhub.civitai.base_model_label")} <span class="text-neutral-200">{version.baseModel}</span></p>
                     {/if}
                     {#if version.files.length === 0}
-                      <p class="text-xs text-neutral-500">No downloadable files in this version.</p>
+                      <p class="text-xs text-neutral-500">{locale.t("modelhub.civitai.no_files")}</p>
                     {:else}
                       <div class="space-y-2">
                         {#each expanded || version.files.length <= 2 ? version.files : version.files.slice(0, 1) as file}
@@ -1076,7 +1077,7 @@
                                 <div class="w-full bg-neutral-800 rounded-full h-1.5 overflow-hidden">
                                   <div class="bg-indigo-400 h-full rounded-full" style="width: {pct}%"></div>
                                 </div>
-                                <p class="text-[10px] text-neutral-500">Downloading... {pct}%</p>
+                                <p class="text-[10px] text-neutral-500">{locale.t("modelhub.civitai.downloading_pct", { pct: String(pct) })}</p>
                               </div>
                             {/if}
                             <div class="flex items-center gap-2">
@@ -1086,14 +1087,14 @@
                                 rel="noreferrer"
                                 class="px-2 py-1 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 transition-colors"
                               >
-                                Open Link
+                                {locale.t("modelhub.civitai.open_link")}
                               </a>
                               <button
                                 class="px-2 py-1 text-[11px] rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50"
                                 onclick={() => installModel(model, file)}
                                 disabled={!!dl}
                               >
-                                {dl ? "Installing..." : "Install to App"}
+                                {dl ? locale.t("modelhub.civitai.installing") : locale.t("modelhub.civitai.install_to_app")}
                               </button>
                             </div>
                           </div>
@@ -1105,13 +1106,13 @@
                           class="px-2 py-1 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
                           onclick={() => toggleCardExpanded(model.id)}
                         >
-                          {expanded ? "Show less" : `Show all ${version.files.length} files`}
+                          {expanded ? locale.t("modelhub.civitai.show_less") : locale.t("modelhub.civitai.show_all_files", { count: String(version.files.length) })}
                         </button>
                       {/if}
                     {/if}
                   </div>
                 {:else}
-                  <p class="text-xs text-neutral-500">No versions available.</p>
+                  <p class="text-xs text-neutral-500">{locale.t("modelhub.civitai.no_versions")}</p>
                 {/if}
               </div>
             </div>
@@ -1121,24 +1122,24 @@
 
       <div class="flex items-center justify-center gap-2 pt-2 text-xs text-neutral-500">
         {#if loadingMore}
-          <span>Loading more models...</span>
+          <span>{locale.t("modelhub.civitai.loading_more")}</span>
         {:else if hasMore}
-          <span>Scroll to load more</span>
+          <span>{locale.t("modelhub.civitai.scroll_more")}</span>
         {:else if items.length > 0}
-          <span>End of results</span>
+          <span>{locale.t("modelhub.civitai.end_results")}</span>
         {/if}
       </div>
       <div class="h-8" bind:this={loadMoreSentinel}></div>
     {:else}
       <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-3">
         <div>
-          <h3 class="text-sm font-semibold text-neutral-200">Install From Any Direct URL</h3>
-          <p class="text-xs text-neutral-400 mt-1">Paste any legal, direct model URL (Hugging Face, mirror, private host) and install into your selected model category.</p>
+          <h3 class="text-sm font-semibold text-neutral-200">{locale.t("modelhub.source.direct")}</h3>
+          <p class="text-xs text-neutral-400 mt-1">{locale.t("modelhub.direct.description")}</p>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
           <div>
-            <div class="text-xs text-neutral-400 mb-1">Direct URL</div>
+            <div class="text-xs text-neutral-400 mb-1">{locale.t("modelhub.direct.url")}</div>
             <input
               id="direct-url"
               name="directUrl"
@@ -1149,7 +1150,7 @@
             />
           </div>
           <div>
-            <div class="text-xs text-neutral-400 mb-1">Filename</div>
+            <div class="text-xs text-neutral-400 mb-1">{locale.t("modelhub.direct.filename")}</div>
             <input
               id="direct-filename"
               name="directFilename"
@@ -1163,7 +1164,7 @@
 
         <div class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-end">
           <div>
-            <div class="text-xs text-neutral-400 mb-1">Category</div>
+            <div class="text-xs text-neutral-400 mb-1">{locale.t("modelhub.direct.category")}</div>
             <select id="direct-category" name="directCategory" bind:value={directCategory} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100">
               {#each categoryOptions as option}
                 <option value={option.value}>{option.label}</option>
@@ -1175,7 +1176,7 @@
             onclick={installFromDirectUrl}
             disabled={directInstalling}
           >
-            {directInstalling ? "Installing..." : "Install"}
+            {directInstalling ? locale.t("modelhub.direct.downloading") : locale.t("modelhub.direct.download")}
           </button>
         </div>
 
@@ -1185,15 +1186,15 @@
       </section>
 
       <section class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-3">
-        <h3 class="text-sm font-semibold text-neutral-200">Hugging Face Quick Links</h3>
+        <h3 class="text-sm font-semibold text-neutral-200">{locale.t("modelhub.hf.title")}</h3>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
           {#each hfQuickLinks as item}
             <div class="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-3 space-y-2">
               <p class="text-sm text-neutral-200">{item.label}</p>
               <p class="text-[11px] text-neutral-500 truncate" title={item.filename}>{item.filename}</p>
               <div class="flex items-center gap-2">
-                <a href={item.url} target="_blank" rel="noreferrer" class="px-2 py-1 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 transition-colors">Open</a>
-                <button onclick={() => useQuickLink(item)} class="px-2 py-1 text-[11px] rounded border border-indigo-700 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200 transition-colors">Use</button>
+                <a href={item.url} target="_blank" rel="noreferrer" class="px-2 py-1 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 transition-colors">{locale.t("modelhub.hf.open")}</a>
+                <button onclick={() => useQuickLink(item)} class="px-2 py-1 text-[11px] rounded border border-indigo-700 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200 transition-colors">{locale.t("modelhub.hf.use")}</button>
               </div>
             </div>
           {/each}

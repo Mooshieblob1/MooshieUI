@@ -1,6 +1,7 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import { downloadModel, installPipPackage } from "../../utils/api.js";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
@@ -108,7 +109,7 @@
 <div class="space-y-3">
   <!-- Enable toggle -->
   <div class="flex items-center justify-between">
-    <label class="text-xs text-neutral-400">Face Fix<InfoTip text="Detects faces in the generated image using YOLOv8 and re-denoises each face region for better detail. Runs after generation (and after upscale if enabled)." /></label>
+    <label class="text-xs text-neutral-400">{locale.t('generation.facefix.title')}<InfoTip text="Detects faces in the generated image using YOLOv8 and re-denoises each face region for better detail. Runs after generation (and after upscale if enabled)." /></label>
     <button
       class="relative w-10 h-5 rounded-full transition-colors {generation.facefixEnabled
         ? 'bg-indigo-600'
@@ -128,7 +129,7 @@
   {#if generation.facefixEnabled}
     <!-- Detector Model -->
     <div>
-      <label class="block text-xs text-neutral-400 mb-1">Detector Model<InfoTip text="The YOLOv8 model used to detect faces. 'yolov8m' is more accurate, 'yolov8n' is faster and lighter. Models are downloaded automatically on first use." /></label>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.facefix.detector')}<InfoTip text="The YOLOv8 model used to detect faces. 'yolov8m' is more accurate, 'yolov8n' is faster and lighter. Models are downloaded automatically on first use." /></label>
       <select
         value={generation.facefixDetector ?? ""}
         onchange={(e) => handleModelSelect((e.target as HTMLSelectElement).value)}
@@ -171,7 +172,7 @@
       <!-- Denoise -->
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-          <span>Denoise<InfoTip text="How much the AI re-draws each detected face. Lower values (0.2-0.4) preserve the original face closely, higher values add more detail but may change facial features." /></span>
+          <span>{locale.t('generation.facefix.denoise')}<InfoTip text="How much the AI re-draws each detected face. Lower values (0.2-0.4) preserve the original face closely, higher values add more detail but may change facial features." /></span>
           <EditableValue value={generation.facefixDenoise} min={0} max={1} step={0.05} decimals={2} onchange={(v) => generation.facefixDenoise = v} />
         </label>
         <input
@@ -187,7 +188,7 @@
       <!-- Steps -->
       <div>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-          <span>Steps<InfoTip text="Denoising steps for each face region. More steps = finer detail but slower. 15-25 is usually enough." /></span>
+          <span>{locale.t('generation.facefix.steps')}<InfoTip text="Denoising steps for each face region. More steps = finer detail but slower. 15-25 is usually enough." /></span>
           <EditableValue value={generation.facefixSteps} min={1} max={50} step={1} onchange={(v) => generation.facefixSteps = v} />
         </label>
         <input
@@ -204,7 +205,7 @@
     <!-- Guide Size -->
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-        <span>Guide Size<InfoTip text="The resolution each detected face is scaled to before denoising. Higher = more detail but uses more VRAM. 512 is a good default for most models." /></span>
+        <span>{locale.t('generation.facefix.guide_size')}<InfoTip text="The resolution each detected face is scaled to before denoising. Higher = more detail but uses more VRAM. 512 is a good default for most models." /></span>
         <EditableValue value={generation.facefixGuideSize} min={256} max={1024} step={64} suffix="px" onchange={(v) => generation.facefixGuideSize = v} />
       </label>
       <input

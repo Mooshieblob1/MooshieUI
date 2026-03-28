@@ -1,3 +1,35 @@
+## What's New in v0.4.5
+
+### Full Internationalization (i18n)
+- Added a complete localization system — every user-facing string in the app now goes through a translation layer
+- Ships with **English** and **Spanish** out of the box; adding a new language only requires creating one translation file
+- Language selector in Settings → Appearance lets you switch instantly — no restart needed
+- 618 translation keys covering all UI areas: generation controls, gallery, lightbox, Model Hub, settings, setup wizard, canvas tools, downloads, and toast messages
+- Reactive translated dropdown labels in Model Hub (sort, period, file format, model type) update live when switching language
+
+### Customizable Quality Tags
+- Quality tags for Anima and Illustrious/NoobAI models are now **editable** in Settings instead of hardcoded
+- Separate positive and negative tag fields for each model family (Anima, Illustrious)
+- Defaults ship with the recommended tags — customize them to match your preferred style
+- Changes persist across sessions
+
+### Tiled Upscale Quality Prompts
+- Tiled upscales now use **quality-only prompts** for the KSampler pass instead of the full creative prompt
+- Reduces visible tile seam artifacts by preventing the KSampler from trying to generate new content at tile boundaries
+- When quality tags are enabled, the upscale pass automatically uses your quality tag settings as its conditioning
+- New `upscale_positive_prompt` and `upscale_negative_prompt` fields in the workflow template
+
+### Native Clipboard Image Paste
+- New `read_clipboard_image` Tauri command reads images directly from the OS clipboard
+- Bypasses WebView clipboard restrictions that prevented `navigator.clipboard.read()` from working on Linux
+- Converts clipboard RGBA data to PNG and returns it to the frontend for use in img2img, inpainting, or ControlNet
+
+### Pre-Commit Validation Agent
+- Added i18n-specific checks to the pre-commit validation agent
+- Automatically verifies locale key parity (en ↔ es), interpolation variable matching, key naming conventions, and detects hardcoded UI strings in changed files
+
+---
+
 ## What's New in v0.4.4
 
 ### Native Drag-and-Drop for Image Import

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import PromptInputs from "./PromptInputs.svelte";
   import ModelSelector from "./ModelSelector.svelte";
@@ -18,7 +19,7 @@
   import { canvas } from "../../stores/canvas.svelte.js";
   import { open } from "@tauri-apps/plugin-dialog";
   import { readFile } from "@tauri-apps/plugin-fs";
-  import { uploadImage, uploadImageBytes, loadGalleryImage, getOutputImage } from "../../utils/api.js";
+  import { uploadImage, uploadImageBytes, loadGalleryImage, getOutputImage, readClipboardImage } from "../../utils/api.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage, InterrogationResult } from "../../types/index.js";
@@ -59,9 +60,9 @@
   type SectionSide = "left" | "right";
 
   const modes = [
-    { id: "txt2img" as const, label: "Text to Image" },
-    { id: "img2img" as const, label: "Image to Image" },
-    { id: "inpainting" as const, label: "Inpainting" },
+    { id: "txt2img" as const, label: () => locale.t('generation.mode.txt2img') },
+    { id: "img2img" as const, label: () => locale.t('generation.mode.img2img') },
+    { id: "inpainting" as const, label: () => locale.t('generation.mode.inpainting') },
   ];
 
   let canvasEditorRef: CanvasEditor | undefined = $state();
@@ -241,15 +242,15 @@
   }
 
   function sectionLabel(section: SectionId): string {
-    if (section === "dimensions") return "Dimensions";
-    if (section === "prompts") return "Prompts";
-    if (section === "imageInputs") return "Image Inputs";
-    if (section === "inpaintLayers") return "Inpainting & Layers";
-    if (section === "generationSettings") return "Generation Settings";
-    if (section === "model") return "Model";
-    if (section === "sampler") return "Sampler";
-    if (section === "facefix") return "Face Fix";
-    return "Upscale";
+    if (section === "dimensions") return locale.t('generation.dimensions.title');
+    if (section === "prompts") return locale.t('generation.prompts.title');
+    if (section === "imageInputs") return locale.t('generation.image.title');
+    if (section === "inpaintLayers") return locale.t('generation.inpaint.title');
+    if (section === "generationSettings") return locale.t('generation.settings.title');
+    if (section === "model") return locale.t('generation.model.title');
+    if (section === "sampler") return locale.t('generation.sampler.title');
+    if (section === "facefix") return locale.t('generation.facefix.title');
+    return locale.t('generation.upscale.title');
   }
 
   function sectionVisible(section: SectionId): boolean {
@@ -510,28 +511,17 @@
 
   async function handleImagePaste() {
     try {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        const imageType = item.types.find((t) => t.startsWith("image/"));
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          const ext = imageType.split("/")[1] || "png";
-          const file = new File([blob], `pasted_image.${ext}`, { type: imageType });
-          uploading = true;
-          const buffer = await file.arrayBuffer();
-          const bytes = Array.from(new Uint8Array(buffer));
-          const normalized = await normalizeImageBytes(bytes, file.name);
+      const bytes = await readClipboardImage();
+      uploading = true;
+      const normalized = await normalizeImageBytes(bytes, "pasted_image.png");
 
-          if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-          imagePreviewUrl = normalized.previewUrl;
-          applyImageGeometry(normalized.width, normalized.height);
-          canvas.setReferenceImage(imagePreviewUrl);
+      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+      imagePreviewUrl = normalized.previewUrl;
+      applyImageGeometry(normalized.width, normalized.height);
+      canvas.setReferenceImage(imagePreviewUrl);
 
-          const response = await uploadImageBytes(normalized.bytes, normalized.filename);
-          generation.inputImage = response.name;
-          return;
-        }
-      }
+      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      generation.inputImage = response.name;
     } catch (e) {
       console.error("Failed to paste image:", e);
     } finally {
@@ -541,23 +531,15 @@
 
   async function handleMaskPaste() {
     try {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        const imageType = item.types.find((t) => t.startsWith("image/"));
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          uploading = true;
-          if (maskPreviewUrl) URL.revokeObjectURL(maskPreviewUrl);
-          maskPreviewUrl = URL.createObjectURL(blob);
-          canvas.setPersistedMaskPreview(maskPreviewUrl);
+      const bytes = await readClipboardImage();
+      uploading = true;
+      const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+      if (maskPreviewUrl) URL.revokeObjectURL(maskPreviewUrl);
+      maskPreviewUrl = URL.createObjectURL(blob);
+      canvas.setPersistedMaskPreview(maskPreviewUrl);
 
-          const buffer = await blob.arrayBuffer();
-          const bytes = Array.from(new Uint8Array(buffer));
-          const response = await uploadImageBytes(bytes, "pasted_mask.png");
-          generation.maskImage = response.name;
-          return;
-        }
-      }
+      const response = await uploadImageBytes(bytes, "pasted_mask.png");
+      generation.maskImage = response.name;
     } catch (e) {
       console.error("Failed to paste mask:", e);
     } finally {
@@ -1152,7 +1134,7 @@
           onclick={() => (dimensionsSectionOpen = !dimensionsSectionOpen)}
           title={dimensionsSectionOpen ? "Collapse Dimensions" : "Expand Dimensions"}
         >
-          <span class="font-medium">Dimensions</span>
+          <span class="font-medium">{locale.t('generation.dimensions.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {dimensionsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
@@ -1185,7 +1167,7 @@
           onclick={() => (promptsSectionOpen = !promptsSectionOpen)}
           title={promptsSectionOpen ? "Collapse Prompts" : "Expand Prompts"}
         >
-          <span class="font-medium">Prompts</span>
+          <span class="font-medium">{locale.t('generation.prompts.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {promptsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
@@ -1213,7 +1195,7 @@
           onclick={() => (imageSectionOpen = !imageSectionOpen)}
           title={imageSectionOpen ? "Collapse Image Inputs" : "Expand Image Inputs"}
         >
-          <span class="font-medium">Image Inputs</span>
+          <span class="font-medium">{locale.t('generation.image.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {imageSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
@@ -1233,7 +1215,7 @@
           {/if}
 
           <div class="{canvas.currentStagingImage ? 'opacity-50 pointer-events-none' : ''}">
-            <p class="text-xs text-neutral-400 mb-1">Input Image</p>
+            <p class="text-xs text-neutral-400 mb-1">{locale.t('generation.image.input')}</p>
             {#if imagePreviewUrl}
               <div class="relative group">
                 <img
@@ -1250,42 +1232,47 @@
                 </button>
               </div>
             {:else}
-              <button
-                type="button"
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
                 data-drop-zone="img-input"
-                class="w-full bg-neutral-800 border border-dashed rounded-lg p-4 text-sm transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer {dragOver
-                  ? 'border-indigo-400 bg-indigo-500/10 text-indigo-300'
-                  : 'border-neutral-600 text-neutral-400 hover:border-indigo-500 hover:text-indigo-400'}"
-                onclick={browseImage}
+                class="border-2 border-dashed rounded-lg p-4 text-center transition-colors {dragOver ? 'border-indigo-500 bg-indigo-500/10' : 'border-neutral-700 hover:border-neutral-600'}"
                 ondragover={(e) => { e.preventDefault(); dragOver = true; }}
                 ondragleave={() => { dragOver = false; }}
                 ondrop={handleImageDrop}
               >
                 {#if uploading}
-                  <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
-                  Uploading...
-                {:else if dragOver}
-                  <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                  Drop image here
+                  <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                  <p class="text-xs text-neutral-300">Uploading...</p>
                 {:else}
-                  <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                  Browse or drop image
+                  <div class="flex items-center justify-center gap-3 flex-wrap">
+                    <p class="text-[10px] text-neutral-600">Drag & drop or</p>
+                    <button
+                      type="button"
+                      onclick={handleImagePaste}
+                      class="text-xs text-emerald-500/70 hover:text-emerald-400 transition-colors flex items-center gap-1"
+                    >
+                      <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                      Ctrl+V Paste
+                    </button>
+                    <span class="text-neutral-700">|</span>
+                    <button
+                      type="button"
+                      onclick={browseImage}
+                      class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors flex items-center gap-1"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      Select Image
+                    </button>
+                  </div>
+                  <p class="text-[10px] text-neutral-600 mt-2">Drag & drop, paste from clipboard, or browse to select an image</p>
                 {/if}
-              </button>
-              <button
-                type="button"
-                class="w-full text-xs text-neutral-500 hover:text-neutral-300 transition-colors flex items-center justify-center gap-1 mt-1"
-                onclick={handleImagePaste}
-              >
-                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-                Paste from clipboard
-              </button>
+              </div>
             {/if}
           </div>
 
           <div>
             <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-              <span>Denoise Strength<InfoTip text="How much the AI changes the input image. 0 = no change, 1 = completely new image ignoring the input. Lower values (0.3-0.5) keep the original composition, higher values (0.6-0.8) allow more creative freedom." /></span>
+              <span>{locale.t('generation.image.denoise')}<InfoTip text="How much the AI changes the input image. 0 = no change, 1 = completely new image ignoring the input. Lower values (0.3-0.5) keep the original composition, higher values (0.6-0.8) allow more creative freedom." /></span>
               <EditableValue value={generation.denoise} min={0} max={1} step={0.01} decimals={2} onchange={(v) => generation.denoise = v} />
             </label>
             <input
@@ -1301,7 +1288,7 @@
           {#if generation.mode === "inpainting"}
             <div class="rounded-md border border-neutral-800 bg-neutral-900/70 p-2.5">
               <label class="flex items-center justify-between gap-3 text-xs text-neutral-300">
-                <span class="leading-tight">Differential Diffusion<InfoTip text="Recommended for v-pred / Anima style models during inpainting unless you are using a CFG++ sampler. Helps preserve source structure while editing masked regions." /></span>
+                <span class="leading-tight">{locale.t('generation.inpaint.differential_diffusion')}<InfoTip text="Recommended for v-pred / Anima style models during inpainting unless you are using a CFG++ sampler. Helps preserve source structure while editing masked regions." /></span>
                 <input
                   type="checkbox"
                   bind:checked={generation.differentialDiffusion}
@@ -1314,7 +1301,7 @@
           {#if generation.mode === "inpainting"}
             <div>
               <div class="flex items-center justify-between mb-1">
-                <p class="text-xs text-neutral-400">Mask Image</p>
+                <p class="text-xs text-neutral-400">{locale.t('generation.inpaint.mask')}</p>
                 <button
                   class="px-2 py-1 text-[10px] rounded border border-neutral-700 text-neutral-300 hover:border-red-500 hover:text-red-300 transition-colors"
                   onclick={clearMask}
@@ -1339,42 +1326,47 @@
                   </button>
                 </div>
               {:else}
-                <button
-                  type="button"
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
                   data-drop-zone="mask-input"
-                  class="w-full bg-neutral-800 border border-dashed rounded-lg p-4 text-sm transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer {maskDragOver
-                    ? 'border-indigo-400 bg-indigo-500/10 text-indigo-300'
-                    : 'border-neutral-600 text-neutral-400 hover:border-indigo-500 hover:text-indigo-400'}"
-                  onclick={browseMask}
+                  class="border-2 border-dashed rounded-lg p-4 text-center transition-colors {maskDragOver ? 'border-indigo-500 bg-indigo-500/10' : 'border-neutral-700 hover:border-neutral-600'}"
                   ondragover={(e) => { e.preventDefault(); maskDragOver = true; }}
                   ondragleave={() => { maskDragOver = false; }}
                   ondrop={handleMaskDrop}
                 >
                   {#if uploading}
-                    <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
-                    Uploading...
-                  {:else if maskDragOver}
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                    Drop mask here
+                    <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                    <p class="text-xs text-neutral-300">Uploading...</p>
                   {:else}
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                    Browse or drop mask
+                    <div class="flex items-center justify-center gap-3 flex-wrap">
+                      <p class="text-[10px] text-neutral-600">Drag & drop or</p>
+                      <button
+                        type="button"
+                        onclick={handleMaskPaste}
+                        class="text-xs text-emerald-500/70 hover:text-emerald-400 transition-colors flex items-center gap-1"
+                      >
+                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                        Ctrl+V Paste
+                      </button>
+                      <span class="text-neutral-700">|</span>
+                      <button
+                        type="button"
+                        onclick={browseMask}
+                        class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors flex items-center gap-1"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        Select Mask
+                      </button>
+                    </div>
+                    <p class="text-[10px] text-neutral-600 mt-2">Drag & drop, paste from clipboard, or browse to select a mask</p>
                   {/if}
-                </button>
-                <button
-                  type="button"
-                  class="w-full text-xs text-neutral-500 hover:text-neutral-300 transition-colors flex items-center justify-center gap-1 mt-1"
-                  onclick={handleMaskPaste}
-                >
-                  <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-                  Paste from clipboard
-                </button>
+                </div>
               {/if}
             </div>
 
             <div>
               <div class="flex items-center justify-between text-xs mb-0.5">
-                <span class="text-neutral-400">Grow Mask By<InfoTip text="Expands the masked area by this many pixels. Helps blend the inpainted region into the surrounding image for seamless results." /></span>
+                <span class="text-neutral-400">{locale.t('generation.inpaint.grow_mask')}<InfoTip text="Expands the masked area by this many pixels. Helps blend the inpainted region into the surrounding image for seamless results." /></span>
                 <span class="text-neutral-300 tabular-nums">{generation.growMaskBy}px</span>
               </div>
               <input
@@ -1401,7 +1393,7 @@
           onclick={() => (layersSectionOpen = !layersSectionOpen)}
           title={layersSectionOpen ? "Collapse Inpainting & Layers" : "Expand Inpainting & Layers"}
         >
-          <span class="font-medium">Inpainting & Layers</span>
+          <span class="font-medium">{locale.t('generation.inpaint.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {layersSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
@@ -1461,7 +1453,7 @@
           onclick={() => (controlsSectionOpen = !controlsSectionOpen)}
           title={controlsSectionOpen ? "Collapse Generation Settings" : "Expand Generation Settings"}
         >
-          <span class="font-medium">Generation Settings</span>
+          <span class="font-medium">{locale.t('generation.settings.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {controlsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
@@ -1495,7 +1487,7 @@
           onclick={() => (modelSectionOpen = !modelSectionOpen)}
           title={modelSectionOpen ? "Collapse Model" : "Expand Model"}
         >
-          <span class="font-medium">Model</span>
+          <span class="font-medium">{locale.t('generation.model.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {modelSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
@@ -1528,7 +1520,7 @@
           onclick={() => (samplerSectionOpen = !samplerSectionOpen)}
           title={samplerSectionOpen ? "Collapse Sampler" : "Expand Sampler"}
         >
-          <span class="font-medium">Sampler</span>
+          <span class="font-medium">{locale.t('generation.sampler.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {samplerSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
@@ -1556,7 +1548,7 @@
           onclick={() => (controlnetSectionOpen = !controlnetSectionOpen)}
           title={controlnetSectionOpen ? "Collapse ControlNet" : "Expand ControlNet"}
         >
-          <span class="font-medium">ControlNet</span>
+          <span class="font-medium">{locale.t('generation.controlnet.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {controlnetSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
@@ -1582,7 +1574,7 @@
           onclick={() => (facefixSectionOpen = !facefixSectionOpen)}
           title={facefixSectionOpen ? "Collapse Face Fix" : "Expand Face Fix"}
         >
-          <span class="font-medium">Face Fix</span>
+          <span class="font-medium">{locale.t('generation.facefix.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {facefixSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
@@ -1615,7 +1607,7 @@
           onclick={() => (postSectionOpen = !postSectionOpen)}
           title={postSectionOpen ? "Collapse Upscale" : "Expand Upscale"}
         >
-          <span class="font-medium">Upscale</span>
+          <span class="font-medium">{locale.t('generation.upscale.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {postSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
       </div>
@@ -1686,7 +1678,7 @@
                     ? 'bg-neutral-700 text-white'
                     : 'text-neutral-400 hover:text-neutral-200'}"
                 >
-                  {mode.label}
+                  {mode.label()}
                 </button>
               {/each}
             </div>
@@ -1705,7 +1697,7 @@
               >
                 <span class="flex items-center gap-2">
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                  Canvas Editor
+                  {locale.t('generation.inpaint.canvas_editor')}
                 </span>
                 <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
                   {canvas.isCanvasMode ? 'ON' : 'OFF'}
@@ -1723,7 +1715,7 @@
 
         {#if controlsSide === "left"}
           <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-2 pb-3">
-            <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">Generate</h3>
+            <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">{locale.t('generation.generate')}</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
         {/if}
@@ -1846,7 +1838,7 @@
                     ? 'bg-neutral-700 text-white'
                     : 'text-neutral-400 hover:text-neutral-200'}"
                 >
-                  {mode.label}
+                  {mode.label()}
                 </button>
               {/each}
             </div>
@@ -1865,7 +1857,7 @@
               >
                 <span class="flex items-center gap-2">
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                  Canvas Editor
+                  {locale.t('generation.inpaint.canvas_editor')}
                 </span>
                 <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
                   {canvas.isCanvasMode ? 'ON' : 'OFF'}
@@ -1883,7 +1875,7 @@
 
         {#if controlsSide === "right"}
           <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-2 pb-3">
-            <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">Generate</h3>
+            <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">{locale.t('generation.generate')}</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
         {/if}
