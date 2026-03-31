@@ -5,17 +5,25 @@ argument-hint: "Version number (e.g. 0.4.3) and a brief summary of changes"
 agent: agent
 ---
 
-Cut a new MooshieUI release. Follow every step in order.
+Cut a new MooshieUI release. Execute every step autonomously — do NOT pause for confirmation between steps. Use the todo list to track progress.
 
 ## Required Information
 
-Ask the user for:
+If NOT provided in the user's message, ask for:
 1. **Version number** (e.g. `0.4.3`) — must be semver, no `v` prefix
 2. **Summary of changes** — what features/fixes to include in release notes
 
-## Checklist
+If the user says something like "release it" or "cut a release" without a version, read the current version from `package.json` and auto-increment the patch number. If no summary is given, derive it from `git log` since the last tag.
 
-### 1. Bump version in 3 files
+## Execution Plan
+
+Create a todo list with these items and work through them sequentially:
+
+### 1. Run pre-commit-check agent
+
+Invoke the `pre-commit-check` agent before anything else. If it reports failures, fix them before continuing.
+
+### 2. Bump version in 3 files
 
 All three must have the **exact same version string**:
 
@@ -23,11 +31,11 @@ All three must have the **exact same version string**:
 - **`src-tauri/Cargo.toml`** → `version = "X.Y.Z"` (under `[package]`)
 - **`src-tauri/tauri.conf.json`** → `"version": "X.Y.Z"`
 
-After bumping, run `grep -n "X.Y.Z" package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json` to verify all three match.
+After bumping, run `Select-String -Pattern "X.Y.Z" package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json` to verify all three match.
 
 > `Cargo.lock` updates automatically on next `cargo check`.
 
-### 2. Update RELEASE_NOTES.md and CHANGELOG.md
+### 3. Update RELEASE_NOTES.md and CHANGELOG.md
 
 **RELEASE_NOTES.md** — prepend a new section **above** the existing content:
 
@@ -65,42 +73,83 @@ Format rules (apply to both files):
 - Bullet points for details
 - `---` horizontal rule separating from the previous version
 
-### 3. Build validation
+### 4. Build validation
 
 Run both and confirm they succeed with no errors:
 
-```bash
+```powershell
 cargo check --manifest-path src-tauri/Cargo.toml
 npm run build
 ```
 
-### 4. Commit
+### 5. Commit, branch, and PR
 
-Stage everything and commit with this message format:
+> **CRITICAL**: Branch protection on `main` requires the "GlassWorm Infection Audit" status check to pass. Direct pushes to `main` will be rejected.
 
-```
-vX.Y.Z: Short summary of major changes
+> **CRITICAL**: The pre-commit hook at `.githooks/pre-commit` is a bash script and will hang in PowerShell. Always use `git -c core.hooksPath=/dev/null` for all git commands.
 
-- Bullet point for each notable change
-```
+1. **Create a release branch and commit:**
+   ```powershell
+   git checkout -b release/vX.Y.Z
+   git add -A
+   git -c core.hooksPath=/dev/null commit -m "vX.Y.Z: Short summary of major changes"
+   git -c core.hooksPath=/dev/null push origin release/vX.Y.Z
+   ```
 
-### 5. Tag and push
+2. **Create a PR** from `release/vX.Y.Z` → `main` using `mcp_github_create_pull_request`:
+   - Title: `vX.Y.Z: Short summary`
+   - Body: bullet list of changes
 
-```bash
+3. **Wait for CI** — poll `github-pull-request_pullRequestStatusChecks` until the "GlassWorm Infection Audit" check shows `state: "success"`. Wait 30 seconds between polls. Timeout after 5 minutes.
+
+4. **Merge the PR** using `mcp_github_merge_pull_request` with `merge_method: "squash"`.
+
+5. **Sync local main:**
+   ```powershell
+   git checkout main
+   git fetch origin main
+   git reset --hard origin/main
+   ```
+
+### 6. Tag and push
+
+> **CRITICAL**: Tag protection rules prevent deleting or force-updating tags once pushed. Only push the tag after the PR is merged and main is synced.
+
+```powershell
 git tag vX.Y.Z
-git push && git push --tags
+git -c core.hooksPath=/dev/null push origin vX.Y.Z
 ```
 
-The `v*` tag triggers the **Build & Release** GitHub Actions workflow (`.github/workflows/release.yml`) which:
+The `v*` tag triggers the **Build & Release** GitHub Actions workflow which:
 1. Builds Linux (`.deb`, `.AppImage`) and Windows (`.exe`) installers
 2. Generates `latest.json` updater manifest with signatures
 3. Creates a **GitHub Release** with download table + full `RELEASE_NOTES.md` content as the release body
 
-### 6. Verify CI
+### 7. Verify CI started
 
-After pushing, confirm the workflow started:
-- Go to `https://github.com/Mooshieblob1/MooshieUI/actions`
-- The "Build & Release" workflow should be running for tag `vX.Y.Z`
+After pushing the tag, confirm the release workflow started by checking with the GitHub API or telling the user to check `https://github.com/Mooshieblob1/MooshieUI/actions`.
+
+### 8. Fallback: workflow_dispatch
+
+If the tag push is rejected (e.g. tag already exists due to a previous attempt), or if the tag-triggered workflow fails, use **workflow_dispatch** as a fallback:
+
+```powershell
+# Extract git credential token
+$cred = "protocol=https`nhost=github.com" | git credential fill 2>$null
+$token = ($cred | Select-String "password=").Line -replace "password=",""
+$headers = @{ Authorization = "Bearer $token"; Accept = "application/vnd.github+json" }
+$body = @{ ref = "main"; inputs = @{ tag = "vX.Y.Z" } } | ConvertTo-Json
+Invoke-RestMethod -Uri "https://api.github.com/repos/Mooshieblob1/MooshieUI/actions/workflows/release.yml/dispatches" -Method POST -Headers $headers -Body $body -ContentType "application/json"
+```
+
+This triggers the same Build & Release workflow from the current `main` HEAD.
+
+### 9. Clean up
+
+Delete the release branch (remote only):
+```powershell
+git -c core.hooksPath=/dev/null push origin --delete release/vX.Y.Z
+```
 
 ## How the About section works
 
@@ -112,5 +161,8 @@ No manual edit needed. The About section in Settings auto-populates:
 
 1. **Forgetting one of the 3 version files** — always grep to verify all three match
 2. **Not running cargo check** — the Cargo.lock won't update and the build will fail in CI
-3. **Pushing without the tag** — CI only triggers on `v*` tags, not plain commits
-4. **Tag before commit** — the tag must point at the release commit, not the previous one
+3. **Pushing directly to main** — branch protection will reject it; always use a PR
+4. **Using git without `-c core.hooksPath=/dev/null`** — the bash pre-commit hook hangs in PowerShell
+5. **Pushing a tag before the PR is merged** — the tag must point at the final merge commit on main
+6. **Trying to force-update or delete a tag** — tag protection rules prevent this; use workflow_dispatch instead
+7. **Tag before commit** — the tag must point at the release commit, not the previous one
