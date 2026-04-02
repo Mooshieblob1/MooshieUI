@@ -5,6 +5,7 @@ use std::path::Path;
 
 const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
 const TILED_DIFFUSION_PY: &str = include_str!("../../../comfyui-nodes/nodes_tiled_diffusion.py");
+const GUIDANCE_PY: &str = include_str!("../../../comfyui-nodes/nodes_guidance.py");
 
 /// Ensure all bundled MooshieUI custom nodes exist in ComfyUI's custom_nodes directory.
 /// Always overwrites to keep in sync with the app version.
@@ -37,6 +38,16 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         format!(
             "Failed to write nodes_tiled_diffusion.py at '{}': {}",
             tiled_path.display(),
+            e
+        )
+    })?;
+
+    // ── Guidance nodes (Soft Guidance + Smart Guidance) ──────────────────────
+    let guidance_path = custom_nodes.join("nodes_guidance.py");
+    std::fs::write(&guidance_path, GUIDANCE_PY).map_err(|e| {
+        format!(
+            "Failed to write nodes_guidance.py at '{}': {}",
+            guidance_path.display(),
             e
         )
     })?;

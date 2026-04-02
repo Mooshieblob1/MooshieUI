@@ -1,3 +1,11 @@
+## What's New in v0.5.2
+
+### Bug Fix: Guidance Nodes Not Installed
+- Fixed `MooshieSoftGuidance` and `MooshieSmartGuidance` nodes failing with "Node not found" error because `nodes_guidance.py` was not deployed to ComfyUI's `custom_nodes/` directory
+- The Rust auto-deploy in `nodes.rs` now embeds and writes `nodes_guidance.py` alongside `nodes_tiled_diffusion.py` on every launch
+
+---
+
 ## What's New in v0.5.1
 
 ### Guidance Nodes — Anti-Hallucination for Upscale
