@@ -123,7 +123,7 @@ git -c core.hooksPath=/dev/null push origin vX.Y.Z
 The `v*` tag triggers the **Build & Release** GitHub Actions workflow which:
 1. Builds Linux (`.deb`, `.AppImage`) and Windows (`.exe`) installers
 2. Generates `latest.json` updater manifest with signatures
-3. Creates a **GitHub Release** with download table + full `RELEASE_NOTES.md` content as the release body
+3. Creates a **GitHub Release** with download table + only the current version's section from `RELEASE_NOTES.md`
 
 ### 7. Verify CI started
 

@@ -173,9 +173,10 @@ jobs:
             '' \
             > /tmp/release-body.md
 
-          # Append changelog from RELEASE_NOTES.md if it exists
+          # Append only this version's section from RELEASE_NOTES.md
           if [ -f RELEASE_NOTES.md ]; then
-            cat RELEASE_NOTES.md >> /tmp/release-body.md
+            # Extract from "## What's New in vX.Y.Z" until the next "---" or next version heading
+            sed -n "/^## What's New in ${TAG}/,/^---$/p" RELEASE_NOTES.md | sed '$ { /^---$/d }' >> /tmp/release-body.md
           fi
 
           gh release create "${TAG}" \
