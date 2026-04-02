@@ -271,4 +271,17 @@
     </p>
   {/if}
 
+  <!-- Smart Guidance toggle -->
+  <div class="flex items-center gap-2">
+    <input
+      type="checkbox"
+      id="smart-guidance"
+      bind:checked={generation.smartGuidance}
+      class="w-4 h-4 accent-indigo-500 rounded"
+    />
+    <label for="smart-guidance" class="text-xs text-neutral-400">
+      {locale.t('generation.sampler.smart_guidance_label')}<InfoTip text={locale.t('generation.sampler.smart_guidance_tip')} />
+    </label>
+  </div>
+
 </div>

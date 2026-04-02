@@ -31,6 +31,7 @@ const ko: Record<string, string> = {
   "common.or": "또는",
   "common.on": "켜짐",
   "common.detected": "감지됨",
+  "common.click_to_type": "클릭하여 값 입력",
 
   // ── 설정 마법사 ─────────────────────────────────────────
   "setup.title": "MooshieUI",
@@ -73,6 +74,10 @@ const ko: Record<string, string> = {
   "setup.completion_message": "ComfyUI 서버 시작 중...",
   "setup.error_title": "설치 실패",
   "setup.error_last_output": "마지막 출력:",
+  "setup.detecting_hardware": "하드웨어 감지 중...",
+  "setup.welcome": "환영합니다! 설정을 시작하겠습니다.",
+  "setup.choose_folder_placeholder": "폴더 선택...",
+  "setup.scanning_model_dirs": "기존 모델 디렉토리 검색 중...",
   "setup.footer": "MooshieUI — ComfyUI의 친근한 인터페이스",
 
   // ── 설정 페이지 ─────────────────────────────────────────
@@ -152,6 +157,11 @@ const ko: Record<string, string> = {
   "settings.paths.extra_args": "추가 CLI 인수",
   "settings.paths.extra_args_placeholder": "--fp16 --force-channels-last",
   "settings.paths.extra_args_desc": "시작 시 ComfyUI에 전달할 추가 인수",
+  "settings.paths.new_location_placeholder": "새 위치...",
+  "settings.paths.add_model_dir_title": "모델 디렉토리 추가",
+  "settings.paths.remove_model_dir_title": "이 디렉토리 제거",
+  "settings.paths.click_to_add": "클릭하여 추가",
+  "settings.paths.move_dialog_title": "새 설치 위치 선택",
 
   "settings.gallery.title": "갤러리",
   "settings.gallery.import_label": "디렉토리에서 이미지 가져오기",
@@ -163,6 +173,7 @@ const ko: Record<string, string> = {
   "settings.gallery.failed_count": "{count}장 실패",
   "settings.gallery.supported_sources": "지원 소스: ComfyUI 출력, SwarmUI 출력, A1111/Forge 출력 또는 PNG/JPG/WebP 이미지가 있는 폴더. 하위 디렉토리는 재귀적으로 스캔됩니다.",
   "settings.gallery.metadata_support": "메타데이터: 가져온 이미지를 생성 패널이나 개별 섹션에 드래그하여 매개변수를 로드합니다. SwarmUI 고유 태그는 프롬프트에서 자동으로 정리됩니다.",
+  "settings.gallery.import_dialog_title": "가져올 이미지 출력 디렉토리 선택",
 
   "settings.autocomplete.title": "자동완성",
   "settings.autocomplete.tag_source": "태그 소스",
@@ -187,6 +198,18 @@ const ko: Record<string, string> = {
   "settings.about.export_logs": "진단 로그 내보내기",
   "settings.about.saving_logs": "로그 저장 중...",
   "settings.about.logs_exported": "로그 내보내기 완료",
+  "settings.about.fetching_notes": "릴리스 노트를 가져오는 중...",
+  "settings.about.no_notes": "릴리스 노트가 없습니다.",
+  "settings.about.no_notes_html": "릴리스 노트 없음.",
+  "settings.about.version_available": "버전 {version}을 사용할 수 있습니다",
+  "settings.about.whats_new": "v{version}의 새로운 기능",
+  "settings.about.release_notes_error": "릴리스 노트를 불러오지 못했습니다: {error}",
+  "settings.about.checking_updates": "업데이트 확인 중...",
+  "settings.about.up_to_date": "최신 버전입니다",
+  "settings.about.check_again": "다시 확인",
+  "settings.about.download_install": "다운로드 및 설치",
+  "settings.about.downloading_version": "v{version} 다운로드 중...",
+  "settings.about.update_ready": "업데이트가 다운로드되었습니다. v{version}을 적용하려면 재시작하세요.",
 
   "settings.quality_warning.title": "품질 태그 자동 적용을 비활성화하시겠습니까?",
   "settings.quality_warning.body": "{tags} 같은 품질 태그는 애니메 모델(Anima, Illustrious, NoobAI)에 필수적입니다. 없으면 출력 품질이 크게 저하됩니다.",
@@ -293,6 +316,12 @@ const ko: Record<string, string> = {
   "generation.model.downloading_vae": "VAE 다운로드 중...",
   "generation.model.downloading_checkpoint": "체크포인트 다운로드 중...",
   "generation.model.auto_download": "자동 다운로드",
+  "generation.model.architecture_label": "아키텍처:",
+  "generation.model.resolution_label": "해상도:",
+  "generation.model.prediction_label": "예측:",
+  "generation.model.trigger_phrase_label": "트리거 구문:",
+  "generation.model.copy_trigger": "트리거 구문을 프롬프트에 복사",
+  "generation.model.license_label": "라이선스:",
 
   "generation.image.title": "이미지 입력",
   "generation.image.input": "입력 이미지",
@@ -301,6 +330,8 @@ const ko: Record<string, string> = {
   "generation.image.drag_desc": "기존 생성 이미지를 여기에 드래그하여 편집용으로 로드합니다.",
   "generation.image.denoise": "디노이즈",
   "generation.image.denoise_tip": "AI가 입력 이미지를 얼마나 변경하는지. 0 = 변경 없음, 1 = 입력을 무시하고 완전히 새로운 이미지. 낮은 값(0.3-0.5)은 원래 구도를 보존, 높은 값(0.6-0.8)은 더 많은 창작의 자유를 허용.",
+  "generation.drag_to_move": "드래그하여 섹션 이동",
+  "generation.drag_to_resize": "드래그하여 크기 조정, 더블 클릭으로 초기화",
 
   "generation.inpaint.title": "인페인팅 & 레이어",
   "generation.inpaint.mask": "마스크 이미지",
@@ -331,6 +362,7 @@ const ko: Record<string, string> = {
   "generation.controlnet.model_tip": "models/controlnet/ 폴더의 ControlNet 모델 파일. 모델 허브에서 다운로드하거나 수동으로 배치하세요.",
   "generation.controlnet.image_tip": "ControlNet용 참조 이미지. 프리셋 모드에서는 이 이미지가 안내로 사용되기 전에 처리됩니다(예: 엣지 감지).",
   "generation.controlnet.use_preprocessor": "전처리기 사용",
+  "generation.controlnet.toggle": "ControlNet 전환",
   "generation.controlnet.preprocessor_label": "전처리기",
   "generation.controlnet.preprocessor_placeholder": "예: CannyEdgePreprocessor",
   "generation.controlnet.control_image_label": "제어 이미지",
@@ -382,6 +414,12 @@ const ko: Record<string, string> = {
   "generation.upscale.tiling_label": "타일 확산",
   "generation.upscale.tiling_forced_label": "타일 확산 (Anima에서는 항상 켜짐)",
   "generation.upscale.select_model": "모델 선택...",
+  "generation.upscale.soft_guidance_label": "소프트 가이던스",
+  "generation.upscale.soft_guidance_tip": "타일 업스케일링 중 품질 태그가 환각(여분의 손, 물체)을 일으키는 것을 방지합니다. 가이던스 강도를 부드럽게 재조정합니다. 권장: 켜둠.",
+  "generation.upscale.soft_guidance_multiplier": "가이던스 강도",
+  "generation.upscale.soft_guidance_multiplier_tip": "CFG 재조정 정도. 낮을수록 부드러운 가이던스, 적은 환각. 업스케일에는 0.4, 일반 사용에는 0.7 권장. 0으로 효과 비활성화.",
+  "generation.sampler.smart_guidance_label": "스마트 가이던스",
+  "generation.sampler.smart_guidance_tip": "긍정 편향 적응형 가이던스 — 부정을 피하는 것만이 아니라 프롬프트를 더 충실히 따릅니다. 모든 생성 단계에 적용. 조정 불필요.",
 
   "generation.upscale_history.title": "업스케일 기록",
 
@@ -458,6 +496,7 @@ const ko: Record<string, string> = {
   "modelhub.filter.upscaler": "업스케일러",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "텍스트 인버전",
+  "modelhub.search_placeholder": "모델명, 제작자, 스타일...",
 
   "modelhub.sort.highest_rated": "최고 평점",
   "modelhub.sort.most_downloaded": "최다 다운로드",
@@ -508,6 +547,7 @@ const ko: Record<string, string> = {
   "lora.on": "켜짐",
   "lora.view_civitai": "CivitAI에서 보기",
   "lora.add_to_prompt": "프롬프트에 추가: {word}",
+  "lora.likes": "좋아요",
 
   // ── 하단 패널 ──────────────────────────────────────────
   "bottom_panel.tab.loras": "LoRA",
@@ -752,6 +792,12 @@ const ko: Record<string, string> = {
   "canvas.show_layer": "레이어 표시",
   "canvas.lock_layer": "레이어 잠금",
   "canvas.unlock_layer": "레이어 잠금 해제",
+  "canvas.inpainting_preview": "인페인팅 미리보기",
+  "canvas.waiting_preview": "미리보기 프레임 대기 중...",
+  "canvas.color_bg": "배경색",
+  "canvas.color_fg": "전경색",
+  "canvas.color_swap": "색상 교환 (X)",
+  "canvas.color_reset": "색상 초기화 (D)",
 
   "settings.appearance.show_info_tips_label": "정보 팁 표시",
   "settings.appearance.show_info_tips_tip": "인터페이스 전체의 레이블 옆에 (?) 툴팁 아이콘을 표시합니다.",

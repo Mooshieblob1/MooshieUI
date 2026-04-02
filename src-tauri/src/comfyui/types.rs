@@ -87,6 +87,12 @@ pub struct GenerationParams {
     pub upscale_steps: u32,
     pub upscale_tile_size: u32,
     pub upscale_tiling: bool,
+    /// Enable Soft Guidance (CFG rescaling) for upscale pass to prevent hallucination
+    #[serde(default)]
+    pub upscale_soft_guidance: bool,
+    /// Soft Guidance multiplier (0.0=off, 0.4=recommended for upscale, 0.7=general)
+    #[serde(default = "default_soft_guidance_multiplier")]
+    pub upscale_soft_guidance_multiplier: f64,
     /// Quality-only positive prompt for tiled upscale KSampler (reduces tile artifacts)
     #[serde(default)]
     pub upscale_positive_prompt: Option<String>,
@@ -111,6 +117,9 @@ pub struct GenerationParams {
     /// Detected model architecture from the frontend (e.g. "sd3", "sdxl", "sd15", "illustrious", "unknown")
     #[serde(default)]
     pub model_architecture: String,
+    /// Enable Smart Guidance (positive-biased) — patches model for all generation passes
+    #[serde(default)]
+    pub smart_guidance: bool,
     /// Face fix (FaceDetailer) — detect faces with YOLOv8 and re-denoise them
     #[serde(default)]
     pub facefix_enabled: bool,
@@ -157,6 +166,10 @@ fn default_end_percent() -> f64 {
 }
 
 fn default_facefix_denoise() -> f64 {
+    0.4
+}
+
+fn default_soft_guidance_multiplier() -> f64 {
     0.4
 }
 

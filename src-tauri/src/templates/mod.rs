@@ -168,6 +168,10 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
     // Apply FluxGuidance for Flux Dev (positive conditioning guidance)
     inject_flux_guidance(&mut result, params);
 
+    // Apply Smart Guidance (positive-biased adaptive guidance) — patches model so all
+    // downstream KSamplers (main, upscale, facefix) inherit it.
+    inject_smart_guidance(&mut result, params);
+
     // Inject ControlNet if enabled
     if let Some(ref cn) = params.controlnet {
         if cn.enabled && cn.controlnet_model.is_some() && cn.image.is_some() {
@@ -413,6 +417,32 @@ fn inject_cascade_sampling(result: &mut WorkflowResult, params: &GenerationParam
 
 /// Inject FluxGuidance for Flux Dev models (not Schnell which is guidance-distilled).
 /// Patches the positive conditioning with guidance=3.5 and rewires the KSampler.
+fn inject_smart_guidance(result: &mut WorkflowResult, params: &GenerationParams) {
+    if !params.smart_guidance {
+        return;
+    }
+
+    let node_id = result.next_id.to_string();
+    result.workflow.insert(
+        node_id.clone(),
+        json!({
+            "class_type": "MooshieSmartGuidance",
+            "inputs": {
+                "model": [result.model_source.0.clone(), result.model_source.1]
+            }
+        }),
+    );
+    result.model_source = (node_id, 0);
+    result.next_id += 1;
+
+    // Rewire KSampler to use the Smart Guidance-patched model
+    if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+        if let Some(inputs) = sampler_node.get_mut("inputs") {
+            inputs["model"] = json!([result.model_source.0, result.model_source.1]);
+        }
+    }
+}
+
 fn inject_flux_guidance(result: &mut WorkflowResult, params: &GenerationParams) {
     if !is_flux_architecture(params) {
         return;

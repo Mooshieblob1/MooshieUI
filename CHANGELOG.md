@@ -1,5 +1,25 @@
 # Changelog
 
+## What's New in v0.5.1
+
+### Guidance Nodes — Anti-Hallucination for Upscale
+- New **Soft Guidance** (CFG Rescale) toggle in Upscale Settings — reduces extra hands, objects, and other hallucinations at low denoise by rescaling classifier-free guidance
+- Adjustable multiplier slider (0.0–1.0, default 0.4) for fine-tuning hallucination suppression
+- New **Smart Guidance** (Positive-Biased Adaptive) toggle in Sampler Settings — patches the model to bias toward positive conditioning across all generation passes
+- Custom ComfyUI nodes (`MooshieSoftGuidance`, `MooshieSmartGuidance`) auto-installed alongside existing tiled diffusion nodes
+
+### Comprehensive Internationalization
+- Wired **39 new i18n keys** across 11 components: SetupWizard, SettingsPage, CanvasEditor, ColorPicker, ControlNetSettings, GenerationPage, LoraGallery, ModelSelector, PromptInputs, ModelHubPage, EditableValue
+- All 11 locales (EN, DE, ES, FR, IT, JA, KO, PT, RU, ZH, ZH-TW) now at **789 keys** with full parity
+- Eliminated all remaining hardcoded UI strings from component templates
+
+### Dependency Updates
+- Bumped `png` 0.17 → 0.18 (adapted to new `output_buffer_size()` API)
+- Bumped `dirs` 5 → 6, `rand` 0.9 → 0.10, `zip` 2 → 4
+- Bumped `actions/upload-artifact` 4 → 7 in CI release workflow
+
+---
+
 ## What's New in v0.5.0
 
 ### Expanded Model Architecture Support

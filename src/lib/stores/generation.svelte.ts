@@ -104,6 +104,9 @@ class GenerationStore {
   upscaleSteps = $state(15);
   upscaleTileSize = $state(1024);
   upscaleTiling = $state(true);
+  upscaleSoftGuidance = $state(true);
+  upscaleSoftGuidanceMultiplier = $state(0.4);
+  smartGuidance = $state(false);
   useSplitModel = $state(false);
   diffusionModel = $state<string | null>(null);
   clipModel = $state<string | null>(null);
@@ -565,6 +568,9 @@ class GenerationStore {
         if (saved.upscaleSteps !== undefined) this.upscaleSteps = saved.upscaleSteps;
         if (saved.upscaleTileSize !== undefined) this.upscaleTileSize = saved.upscaleTileSize;
         if (saved.upscaleTiling !== undefined) this.upscaleTiling = saved.upscaleTiling;
+        if (saved.upscaleSoftGuidance !== undefined) this.upscaleSoftGuidance = saved.upscaleSoftGuidance;
+        if (saved.upscaleSoftGuidanceMultiplier !== undefined) this.upscaleSoftGuidanceMultiplier = saved.upscaleSoftGuidanceMultiplier;
+        if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
         if (saved.useSplitModel !== undefined) this.useSplitModel = saved.useSplitModel;
         if (saved.diffusionModel !== undefined) this.diffusionModel = saved.diffusionModel;
         if (saved.clipModel !== undefined) this.clipModel = saved.clipModel;
@@ -636,6 +642,9 @@ class GenerationStore {
         upscaleSteps: this.upscaleSteps,
         upscaleTileSize: this.upscaleTileSize,
         upscaleTiling: this.upscaleTiling,
+        upscaleSoftGuidance: this.upscaleSoftGuidance,
+        upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
+        smartGuidance: this.smartGuidance,
         useSplitModel: this.useSplitModel,
         diffusionModel: this.diffusionModel,
         clipModel: this.clipModel,
@@ -750,6 +759,9 @@ class GenerationStore {
       upscale_steps: this.upscaleSteps,
       upscale_tile_size: this.upscaleTileSize,
       upscale_tiling: this.upscaleTiling,
+      upscale_soft_guidance: this.upscaleSoftGuidance,
+      upscale_soft_guidance_multiplier: this.upscaleSoftGuidanceMultiplier,
+      smart_guidance: this.smartGuidance,
       upscale_positive_prompt: upscalePositivePrompt,
       upscale_negative_prompt: upscaleNegativePrompt,
       use_split_model: this.useSplitModel,

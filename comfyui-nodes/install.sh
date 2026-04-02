@@ -25,11 +25,14 @@ fi
 
 echo "Installing MooshieUI nodes into: $COMFYUI_PATH"
 
-# 1. Copy the tiled diffusion node into custom_nodes/
+# 1. Copy custom nodes into custom_nodes/
 # ComfyUI auto-discovers all .py files in custom_nodes/ and supports
-# the comfy_entrypoint extension API used by this node.
+# the comfy_entrypoint extension API used by these nodes.
 echo "  → Copying nodes_tiled_diffusion.py to custom_nodes/"
 cp "$SCRIPT_DIR/nodes_tiled_diffusion.py" "$COMFYUI_PATH/custom_nodes/nodes_tiled_diffusion.py"
+
+echo "  → Copying nodes_guidance.py to custom_nodes/"
+cp "$SCRIPT_DIR/nodes_guidance.py" "$COMFYUI_PATH/custom_nodes/nodes_guidance.py"
 
 # 2. Copy blueprint
 echo "  → Copying blueprint to blueprints/"

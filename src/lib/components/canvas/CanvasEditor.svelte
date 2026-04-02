@@ -3,6 +3,7 @@
   import { canvas } from "../../stores/canvas.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import CanvasToolbar from "./CanvasToolbar.svelte";
   import CanvasStage from "./CanvasStage.svelte";
   import CanvasStatusBar from "./CanvasStatusBar.svelte";
@@ -52,7 +53,7 @@
       <div class="absolute inset-0 z-20 bg-black/70 flex items-center justify-center p-4">
         <div class="w-full max-w-xl rounded-xl border border-neutral-700 bg-neutral-950/95 shadow-2xl overflow-hidden">
           <div class="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
-            <div class="text-sm font-medium text-neutral-100">Inpainting Preview</div>
+            <div class="text-sm font-medium text-neutral-100">{locale.t('canvas.inpainting_preview')}</div>
             <div class="text-xs text-neutral-400">{progress.phaseLabel || "Generating..."}</div>
           </div>
 
@@ -67,7 +68,7 @@
               {:else}
                 <div class="flex flex-col items-center gap-2 text-neutral-400">
                   <div class="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                  <span class="text-xs">Waiting for preview frames...</span>
+                  <span class="text-xs">{locale.t('canvas.waiting_preview')}</span>
                 </div>
               {/if}
             </div>

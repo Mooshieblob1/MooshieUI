@@ -285,7 +285,7 @@
       /></label
     >
     <button
-      title="Toggle ControlNet"
+      title={locale.t('generation.controlnet.toggle')}
       class="relative w-10 h-5 rounded-full transition-colors {generation.controlnetEnabled
         ? 'bg-indigo-600'
         : 'bg-neutral-700'}"

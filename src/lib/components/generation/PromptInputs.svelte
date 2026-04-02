@@ -331,7 +331,7 @@
     <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.prompts.negative')}<InfoTip text={locale.t('generation.prompts.negative_tip')} /></label>
     <PromptTextarea
       bind:value={generation.negativePrompt}
-      placeholder="blurry, cropped, extra fingers, ..."
+      placeholder={locale.t('generation.prompts.negative_placeholder')}
       rows={3}
       minHeight="min-h-18"
     />
@@ -356,7 +356,7 @@
               <button
                 class="w-full text-left"
                 onclick={() => generation.applyPromptHistoryEntry(entry.id)}
-                title="Load prompt"
+                title={locale.t('bottom_panel.load_prompt')}
               >
                 <p class="text-[11px] text-neutral-200 max-h-8 overflow-hidden">{entry.positivePrompt || locale.t('bottom_panel.empty_prompt')}</p>
                 {#if entry.negativePrompt}

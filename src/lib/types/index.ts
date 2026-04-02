@@ -50,6 +50,9 @@ export interface GenerationParams {
   upscale_steps: number;
   upscale_tile_size: number;
   upscale_tiling: boolean;
+  upscale_soft_guidance: boolean;
+  upscale_soft_guidance_multiplier: number;
+  smart_guidance: boolean;
   use_split_model: boolean;
   diffusion_model: string | null;
   clip_model: string | null;

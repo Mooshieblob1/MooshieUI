@@ -31,6 +31,7 @@ const zhTw: Record<string, string> = {
   "common.or": "或",
   "common.on": "開啟",
   "common.detected": "已偵測",
+  "common.click_to_type": "點擊輸入值",
 
   // ── 安裝精靈 ────────────────────────────────────────────
   "setup.title": "MooshieUI",
@@ -73,6 +74,10 @@ const zhTw: Record<string, string> = {
   "setup.completion_message": "正在啟動 ComfyUI 伺服器...",
   "setup.error_title": "安裝失敗",
   "setup.error_last_output": "最後輸出：",
+  "setup.detecting_hardware": "正在偵測硬體...",
+  "setup.welcome": "歡迎！讓我們開始設定。",
+  "setup.choose_folder_placeholder": "選擇資料夾...",
+  "setup.scanning_model_dirs": "正在掃描現有模型目錄...",
   "setup.footer": "MooshieUI — ComfyUI 的友善介面",
 
   // ── 設定頁面 ────────────────────────────────────────────
@@ -152,6 +157,11 @@ const zhTw: Record<string, string> = {
   "settings.paths.extra_args": "額外 CLI 參數",
   "settings.paths.extra_args_placeholder": "--fp16 --force-channels-last",
   "settings.paths.extra_args_desc": "啟動時傳遞給 ComfyUI 的額外參數",
+  "settings.paths.new_location_placeholder": "新位置...",
+  "settings.paths.add_model_dir_title": "新增另一個模型目錄",
+  "settings.paths.remove_model_dir_title": "移除此目錄",
+  "settings.paths.click_to_add": "點擊新增",
+  "settings.paths.move_dialog_title": "選擇新的安裝位置",
 
   "settings.gallery.title": "圖庫",
   "settings.gallery.import_label": "從目錄匯入影像",
@@ -163,6 +173,7 @@ const zhTw: Record<string, string> = {
   "settings.gallery.failed_count": "{count} 張失敗",
   "settings.gallery.supported_sources": "支援的來源：ComfyUI 輸出、SwarmUI 輸出、A1111/Forge 輸出或包含 PNG/JPG/WebP 影像的資料夾。子目錄會遞迴掃描。",
   "settings.gallery.metadata_support": "中繼資料：將匯入的影像拖曳到生成面板或個別區段以載入參數。SwarmUI 專有標籤會從提示中自動清理。",
+  "settings.gallery.import_dialog_title": "選擇要匯入的影像輸出目錄",
 
   "settings.autocomplete.title": "自動完成",
   "settings.autocomplete.tag_source": "標籤來源",
@@ -187,6 +198,18 @@ const zhTw: Record<string, string> = {
   "settings.about.export_logs": "匯出診斷記錄",
   "settings.about.saving_logs": "正在儲存記錄...",
   "settings.about.logs_exported": "記錄匯出完成",
+  "settings.about.fetching_notes": "正在取得發行說明...",
+  "settings.about.no_notes": "沒有可用的發行說明。",
+  "settings.about.no_notes_html": "沒有發行說明。",
+  "settings.about.version_available": "版本 {version} 可用",
+  "settings.about.whats_new": "v{version} 新功能",
+  "settings.about.release_notes_error": "無法載入發行說明: {error}",
+  "settings.about.checking_updates": "正在檢查更新...",
+  "settings.about.up_to_date": "已是最新版本",
+  "settings.about.check_again": "重新檢查",
+  "settings.about.download_install": "下載並安裝",
+  "settings.about.downloading_version": "正在下載 v{version}...",
+  "settings.about.update_ready": "更新已下載。重啟以套用 v{version}。",
 
   "settings.quality_warning.title": "確定要停用自動品質標籤嗎？",
   "settings.quality_warning.body": "像 {tags} 這樣的品質標籤對動漫模型（Anima、Illustrious、NoobAI）至關重要。沒有它們，輸出品質會顯著下降。",
@@ -293,6 +316,12 @@ const zhTw: Record<string, string> = {
   "generation.model.downloading_vae": "正在下載 VAE...",
   "generation.model.downloading_checkpoint": "正在下載檢查點...",
   "generation.model.auto_download": "自動下載",
+  "generation.model.architecture_label": "架構:",
+  "generation.model.resolution_label": "解析度:",
+  "generation.model.prediction_label": "預測:",
+  "generation.model.trigger_phrase_label": "觸發詞:",
+  "generation.model.copy_trigger": "將觸發詞複製到提示詞",
+  "generation.model.license_label": "授權條款:",
 
   "generation.image.title": "影像輸入",
   "generation.image.input": "輸入影像",
@@ -301,6 +330,8 @@ const zhTw: Record<string, string> = {
   "generation.image.drag_desc": "將已有的生成影像拖曳到此處以載入編輯。",
   "generation.image.denoise": "去雜訊",
   "generation.image.denoise_tip": "AI 改變輸入影像的程度。0 = 不變，1 = 忽略輸入完全生成新圖。低值（0.3-0.5）保留原始構圖，高值（0.6-0.8）允許更多創作自由。",
+  "generation.drag_to_move": "拖曳以移動區域",
+  "generation.drag_to_resize": "拖曳以調整大小，雙擊重置",
 
   "generation.inpaint.title": "局部重繪 & 圖層",
   "generation.inpaint.mask": "遮罩影像",
@@ -331,6 +362,7 @@ const zhTw: Record<string, string> = {
   "generation.controlnet.model_tip": "models/controlnet/ 資料夾中的 ControlNet 模型檔案。從模型中心下載或手動放置。",
   "generation.controlnet.image_tip": "ControlNet 的參考影像。在預設模式下，此影像在用作引導前會被處理（例如邊緣偵測）。",
   "generation.controlnet.use_preprocessor": "使用預處理器",
+  "generation.controlnet.toggle": "切換 ControlNet",
   "generation.controlnet.preprocessor_label": "預處理器",
   "generation.controlnet.preprocessor_placeholder": "例如：CannyEdgePreprocessor",
   "generation.controlnet.control_image_label": "控制影像",
@@ -382,6 +414,12 @@ const zhTw: Record<string, string> = {
   "generation.upscale.tiling_label": "區塊擴散",
   "generation.upscale.tiling_forced_label": "區塊擴散（Anima 始終開啟）",
   "generation.upscale.select_model": "選擇模型...",
+  "generation.upscale.soft_guidance_label": "指定性引導",
+  "generation.upscale.soft_guidance_tip": "防止品質標籤在分塊放大時產生幻覺（多餘的手、物體），透過溫和地重新縮放指定性引導強度實現。建議：保持開啟。",
+  "generation.upscale.soft_guidance_multiplier": "指定性引導強度",
+  "generation.upscale.soft_guidance_multiplier_tip": "CFG重新縮放的程度。越低 = 指定性引導越溫和，幻覺越少。放大推薦0.4，通用推薦0.7。0關閉效果。",
+  "generation.sampler.smart_guidance_label": "偏向性引導",
+  "generation.sampler.smart_guidance_tip": "偏向性自適應引導——模型將更忠實地遵循您的提示詞，而不僅僅是迴避負面內容。適用於所有生成步驟。無需調整。",
 
   "generation.upscale_history.title": "放大歷史",
 
@@ -458,6 +496,7 @@ const zhTw: Record<string, string> = {
   "modelhub.filter.upscaler": "放大器",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "文字反轉",
+  "modelhub.search_placeholder": "模型名稱、創作者、風格...",
 
   "modelhub.sort.highest_rated": "最高評分",
   "modelhub.sort.most_downloaded": "最多下載",
@@ -508,6 +547,7 @@ const zhTw: Record<string, string> = {
   "lora.on": "開啟",
   "lora.view_civitai": "在 CivitAI 上檢視",
   "lora.add_to_prompt": "新增到提示詞：{word}",
+  "lora.likes": "按讚",
 
   // ── 底部面板 ────────────────────────────────────────────
   "bottom_panel.tab.loras": "LoRA",
@@ -752,6 +792,12 @@ const zhTw: Record<string, string> = {
   "canvas.show_layer": "顯示圖層",
   "canvas.lock_layer": "鎖定圖層",
   "canvas.unlock_layer": "解鎖圖層",
+  "canvas.inpainting_preview": "局部重繪預覽",
+  "canvas.waiting_preview": "等待預覽幀...",
+  "canvas.color_bg": "背景顏色",
+  "canvas.color_fg": "前景顏色",
+  "canvas.color_swap": "交換顏色 (X)",
+  "canvas.color_reset": "重置顏色 (D)",
 
   "settings.appearance.show_info_tips_label": "顯示資訊提示",
   "settings.appearance.show_info_tips_tip": "在整個介面的標籤旁邊顯示 (?) 工具提示圖示。",

@@ -4,6 +4,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { onMount } from "svelte";
   import logo from "../../assets/logo.png";
+  import { locale } from "../../stores/locale.svelte.js";
 
   let {
     onSetupComplete,
@@ -280,10 +281,10 @@
           <div
             class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto"
           ></div>
-          <p class="text-neutral-400 mt-4">Detecting your hardware...</p>
+          <p class="text-neutral-400 mt-4">{locale.t('setup.detecting_hardware')}</p>
         </div>
       {:else if phase === "ready"}
-        <h2 class="text-xl font-semibold mb-4">Welcome! Let's get set up.</h2>
+        <h2 class="text-xl font-semibold mb-4">{locale.t('setup.welcome')}</h2>
         <p class="text-neutral-400 text-sm mb-6">
           MooshieUI will automatically install everything you need — ComfyUI,
           Python, and the right AI libraries for your hardware. No manual setup
@@ -298,12 +299,12 @@
                 <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm bg-blue-900/50 text-blue-400">🔵</div>
                 <div>
                   <p class="text-sm font-medium text-neutral-200">Apple Silicon (Metal)</p>
-                  <p class="text-xs text-neutral-500">Optimized acceleration will be configured</p>
+                  <p class="text-xs text-neutral-500">{locale.t('setup.gpu.mps_note')}</p>
                 </div>
               </div>
             </div>
           {:else}
-            <p class="text-xs text-neutral-400 mb-2">Select your GPU type:</p>
+            <p class="text-xs text-neutral-400 mb-2">{locale.t('setup.gpu_section')}</p>
             <div class="space-y-1.5">
               {#each gpuOptions as opt}
                 <button
@@ -328,7 +329,7 @@
               {/each}
             </div>
             {#if gpu === "cpu"}
-              <p class="text-xs text-amber-400/70 mt-2">Generation will be significantly slower without GPU acceleration.</p>
+              <p class="text-xs text-amber-400/70 mt-2">{locale.t('setup.gpu.cpu_warning')}</p>
             {/if}
           {/if}
         </div>
@@ -336,7 +337,7 @@
         <!-- Install Location -->
         <div class="mb-6 rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2">
           <div class="flex items-center justify-between">
-            <p class="text-xs text-neutral-400">Install Location</p>
+            <p class="text-xs text-neutral-400">{locale.t('setup.install_location')}</p>
             <button
               type="button"
               class="text-[10px] px-1.5 py-0.5 rounded border transition-colors cursor-pointer {useCustomPath
@@ -357,7 +358,7 @@
                 type="text"
                 bind:value={customInstallPath}
                 class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500"
-                placeholder="Choose a folder..."
+                placeholder={locale.t('setup.choose_folder_placeholder')}
               />
               <button
                 type="button"
@@ -376,8 +377,8 @@
         <!-- Detected Model Directories -->
         {#if detectedModelDirs.length > 0}
           <div class="mb-6 rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2">
-            <p class="text-xs text-neutral-400">Existing model directories detected</p>
-            <p class="text-[10px] text-neutral-600">Select directories to share models from other AI tools (no files will be copied).</p>
+            <p class="text-xs text-neutral-400">{locale.t('setup.model_dirs_detected')}</p>
+            <p class="text-[10px] text-neutral-600">{locale.t('setup.model_dirs_desc')}</p>
             <div class="space-y-1">
               {#each detectedModelDirs as dir}
                 <button
@@ -407,18 +408,18 @@
           </div>
         {:else if scanningModels}
           <div class="mb-6 rounded-lg border border-neutral-800 bg-neutral-950/50 p-3">
-            <p class="text-[10px] text-neutral-600">Scanning for existing model directories...</p>
+            <p class="text-[10px] text-neutral-600">{locale.t('setup.scanning_model_dirs')}</p>
           </div>
         {/if}
 
         <div class="text-xs text-neutral-500 mb-4 space-y-1">
-          <p>This will install:</p>
+          <p>{locale.t('setup.will_install')}</p>
           <ul class="list-disc list-inside ml-2 space-y-0.5">
-            <li>uv package manager</li>
-            <li>Python 3.11</li>
-            <li>ComfyUI (latest)</li>
-            <li>PyTorch ({gpuLabel})</li>
-            <li>MooshieUI custom nodes</li>
+            <li>{locale.t('setup.install_uv')}</li>
+            <li>{locale.t('setup.install_python')}</li>
+            <li>{locale.t('setup.install_comfyui')}</li>
+            <li>{locale.t('setup.install_pytorch', { gpuLabel })}</li>
+            <li>{locale.t('setup.install_nodes')}</li>
           </ul>
           <p class="mt-2 text-neutral-600">
             ~5-10 GB disk space required. Installation may take 5-15 minutes
@@ -433,7 +434,7 @@
           Install & Get Started
         </button>
       {:else if phase === "installing"}
-        <h2 class="text-xl font-semibold mb-4">Installing...</h2>
+        <h2 class="text-xl font-semibold mb-4">{locale.t('setup.progress_title')}</h2>
 
         <!-- Step checklist -->
         <div class="space-y-1.5 mb-5">
@@ -492,7 +493,7 @@
       {:else if phase === "done"}
         <div class="text-center py-8">
           <div class="text-5xl mb-4">&#10003;</div>
-          <h2 class="text-xl font-semibold">All set!</h2>
+          <h2 class="text-xl font-semibold">{ locale.t('setup.completion_title') }</h2>
           <p class="text-neutral-400 text-sm mt-2">
             Starting ComfyUI server...
           </p>
@@ -500,7 +501,7 @@
       {:else if phase === "error"}
         <div class="text-center py-4">
           <div class="text-4xl mb-3">&#10007;</div>
-          <h2 class="text-xl font-semibold mb-2">Installation Failed</h2>
+          <h2 class="text-xl font-semibold mb-2">{locale.t('setup.error_title')}</h2>
           <div
             class="bg-red-950/50 border border-red-800 rounded-lg p-3 mb-4 text-left"
           >
@@ -512,7 +513,7 @@
           <!-- Show last few log lines for context -->
           {#if logLines.length > 0}
             <div class="bg-neutral-900 border border-neutral-800 rounded-lg p-3 mb-4 text-left max-h-32 overflow-y-auto">
-              <p class="text-[10px] text-neutral-500 mb-1">Last output:</p>
+              <p class="text-[10px] text-neutral-500 mb-1">{locale.t('setup.error_last_output')}</p>
               {#each logLines.slice(-10) as line}
                 <p class="text-[11px] text-neutral-400 font-mono break-all">{line}</p>
               {/each}

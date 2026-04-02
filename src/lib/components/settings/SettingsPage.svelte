@@ -68,7 +68,7 @@
   }
 
   async function handleImportDirectory() {
-    const selected = await open({ directory: true, multiple: false, title: "Select image output directory to import" });
+    const selected = await open({ directory: true, multiple: false, title: locale.t('settings.gallery.import_dialog_title') });
     if (!selected) return;
     importBusy = true;
     importResult = null;
@@ -109,7 +109,7 @@
         return match;
       })
       .trim();
-    if (!cleaned) return "<p class='text-neutral-500 italic'>No release notes.</p>";
+    if (!cleaned) return `<p class='text-neutral-500 italic'>${locale.t('settings.about.no_notes_html')}</p>`;
     return marked.parse(cleaned, { async: false }) as string;
   }
 
@@ -160,7 +160,7 @@
     const selected = await open({
       directory: true,
       multiple: false,
-      title: "Choose New Install Location",
+      title: locale.t('settings.paths.move_dialog_title'),
     });
     if (selected && typeof selected === "string") {
       moveTargetPath = selected;
@@ -867,7 +867,7 @@
                   type="text"
                   bind:value={moveTargetPath}
                   class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-neutral-100 placeholder-neutral-500"
-                  placeholder="New location..."
+                  placeholder={locale.t('settings.paths.new_location_placeholder')}
                 />
                 <button
                   onclick={browseMoveTarget}
@@ -937,7 +937,7 @@
                       checkRestartNeeded();
                     }
                   }}
-                  title="Add another model directory"
+                  title={locale.t('settings.paths.add_model_dir_title')}
                 >
                   {locale.t('settings.paths.add_directory')}
                 </button>
@@ -970,7 +970,7 @@
                         checkRestartNeeded();
                       }
                     }}
-                    title="Remove this directory"
+                    title={locale.t('settings.paths.remove_model_dir_title')}
                   >
                     &times;
                   </button>
@@ -987,7 +987,7 @@
                     <button
                       class="flex-1 text-left px-2 py-1.5 rounded border border-neutral-700/50 bg-neutral-800/50 hover:border-indigo-500/50 transition-colors"
                       onclick={() => addDetectedModelDir(dir.path)}
-                      title="Click to add"
+                      title={locale.t('settings.paths.click_to_add')}
                     >
                       <p class="text-[11px] text-neutral-300 truncate">{dir.path}</p>
                       <p class="text-[10px] text-neutral-500">
@@ -1124,7 +1124,7 @@
                 <input
                   type="text"
                   bind:value={tagUrlInput}
-                  placeholder="https://example.com/tags.json or .csv"
+                  placeholder={locale.t('settings.autocomplete.url_placeholder')}
                   class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
                 />
                 <button
@@ -1298,16 +1298,16 @@
             <!-- What's New -->
             <details class="rounded-lg border border-neutral-800 bg-neutral-950 overflow-hidden" ontoggle={(e) => { if ((e.target as HTMLDetailsElement).open) loadReleaseNotes(); }}>
               <summary class="px-3 py-2 text-xs font-medium text-neutral-300 hover:text-neutral-100 cursor-pointer select-none transition-colors">
-                What's New in v{appVersion}
+                {locale.t('settings.about.whats_new').replace('{version}', appVersion)}
               </summary>
               <div class="px-3 pb-3 pt-1 text-xs text-neutral-400 space-y-2 max-h-64 overflow-y-auto">
                 {#if releaseNotesLoading}
                   <div class="flex items-center gap-2 py-2">
                     <div class="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
-                    <span>Fetching release notes...</span>
+                    <span>{locale.t('settings.about.fetching_notes')}</span>
                   </div>
                 {:else if releaseNotesError}
-                  <p class="text-red-400">Failed to load release notes: {releaseNotesError}</p>
+                  <p class="text-red-400">{locale.t('settings.about.release_notes_error').replace('{error}', releaseNotesError ?? '')}</p>
                 {:else if releaseNotes.length > 0}
                   {#each releaseNotes as release, i}
                     <p class="text-neutral-300 font-medium {i > 0 ? 'mt-3 pt-3 border-t border-neutral-800' : ''}">{release.version}</p>
@@ -1316,7 +1316,7 @@
                     </div>
                   {/each}
                 {:else}
-                  <p class="text-neutral-500">No release notes available.</p>
+                  <p class="text-neutral-500">{locale.t('settings.about.no_notes')}</p>
                 {/if}
               </div>
             </details>
@@ -1333,36 +1333,36 @@
               {:else if updateState === "checking"}
                 <div class="flex items-center gap-2 text-sm text-neutral-400">
                   <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
-                  Checking for updates...
+                  {locale.t('settings.about.checking_updates')}
                 </div>
 
               {:else if updateState === "up-to-date"}
                 <div class="flex items-center gap-2 text-sm text-emerald-400">
                   <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
-                  You're on the latest version
+                  {locale.t('settings.about.up_to_date')}
                 </div>
                 <button
                   onclick={checkForUpdates}
                   class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
                 >
-                  Check again
+                  {locale.t('settings.about.check_again')}
                 </button>
 
               {:else if updateState === "available"}
                 <div class="px-3 py-2 bg-indigo-900/30 border border-indigo-800/50 rounded-lg">
-                  <p class="text-sm text-indigo-200 mb-2">Version <strong>{updateVersion}</strong> is available</p>
+                  <p class="text-sm text-indigo-200 mb-2">{locale.t('settings.about.version_available').replace('{version}', updateVersion)}</p>
                   <button
                     onclick={downloadAndInstallUpdate}
                     class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
                   >
-                    Download & Install
+                    {locale.t('settings.about.download_install')}
                   </button>
                 </div>
 
               {:else if updateState === "downloading"}
                 <div class="px-3 py-2 bg-indigo-900/30 border border-indigo-800/50 rounded-lg space-y-2">
                   <div class="flex items-center justify-between text-xs text-neutral-400">
-                    <span>Downloading v{updateVersion}...</span>
+                    <span>{locale.t('settings.about.downloading_version').replace('{version}', updateVersion)}</span>
                     {#if updateTotal > 0}
                       <span class="tabular-nums">{updatePercent}%</span>
                     {/if}
@@ -1378,7 +1378,7 @@
 
               {:else if updateState === "ready"}
                 <div class="px-3 py-2 bg-emerald-900/30 border border-emerald-800/50 rounded-lg">
-                  <p class="text-sm text-emerald-200 mb-2">Update downloaded. Restart to apply v{updateVersion}.</p>
+                  <p class="text-sm text-emerald-200 mb-2">{locale.t('settings.about.update_ready').replace('{version}', updateVersion)}</p>
                   <button
                     onclick={async () => { try { await stopComfyui(); } catch {} await relaunch(); }}
                     class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm transition-colors cursor-pointer"

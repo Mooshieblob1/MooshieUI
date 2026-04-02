@@ -107,6 +107,26 @@ pub fn append_upscale_chain(
         (result.model_source.0.clone(), result.model_source.1)
     };
 
+    // Step 3b: Apply Soft Guidance (CFG rescaling) to prevent hallucination during upscale.
+    // Rescales the CFG vector so quality-only tags guide gently without generating new content.
+    let model_after_soft = if params.upscale_soft_guidance {
+        let soft_id = next_id.to_string();
+        workflow.insert(
+            soft_id.clone(),
+            json!({
+                "class_type": "MooshieSoftGuidance",
+                "inputs": {
+                    "model": [model_for_sampler.0.clone(), model_for_sampler.1],
+                    "multiplier": params.upscale_soft_guidance_multiplier
+                }
+            }),
+        );
+        *next_id += 1;
+        (soft_id, 0u32)
+    } else {
+        model_for_sampler.clone()
+    };
+
     // Step 4: For tiled upscales, use quality-only prompts to reduce tile seam artifacts.
     // When upscale_positive_prompt / upscale_negative_prompt are provided, create dedicated
     // CLIPTextEncode nodes instead of reusing the full creative prompt conditioning.
@@ -162,7 +182,7 @@ pub fn append_upscale_chain(
         json!({
             "class_type": "KSampler",
             "inputs": {
-                "model": [model_for_sampler.0, model_for_sampler.1],
+                "model": [model_after_soft.0, model_after_soft.1],
                 "positive": [pos_source.0, pos_source.1],
                 "negative": [neg_source.0, neg_source.1],
                 "latent_image": [tiled_encode_id, 0],

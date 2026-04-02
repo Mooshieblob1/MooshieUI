@@ -822,7 +822,7 @@
               type="text"
               bind:value={query}
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500"
-              placeholder="Model name, creator, style..."
+              placeholder={locale.t("modelhub.search_placeholder")}
               onkeydown={(e) => {
                 if (e.key === "Enter") runSearch();
               }}

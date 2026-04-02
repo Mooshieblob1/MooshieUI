@@ -329,13 +329,13 @@
                   <span class="px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400">{info.civitai_base_model}</span>
                 {/if}
                 {#if info.civitai_download_count}
-                  <span class="flex items-center gap-0.5" title="Downloads">
+                  <span class="flex items-center gap-0.5" title={locale.t('modelhub.civitai.stat_downloads')}>
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     {formatCount(info.civitai_download_count)}
                   </span>
                 {/if}
                 {#if info.civitai_thumbs_up_count}
-                  <span class="flex items-center gap-0.5" title="Likes">
+                  <span class="flex items-center gap-0.5" title={locale.t('lora.likes')}>
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
                     {formatCount(info.civitai_thumbs_up_count)}
                   </span>

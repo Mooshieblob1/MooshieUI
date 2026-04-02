@@ -1,5 +1,6 @@
 <script lang="ts">
   import { canvas } from "../../../stores/canvas.svelte.js";
+  import { locale } from "../../../stores/locale.svelte.js";
   import ColorTooltip from "../../ui/ColorTooltip.svelte";
 
   let showFgTooltip = $state(false);
@@ -21,7 +22,7 @@
   <div class="relative w-8 h-8">
     <label 
       class="absolute bottom-0 right-0 w-5 h-5 rounded border border-neutral-600 cursor-pointer overflow-hidden" 
-      title="Background color"
+      title={locale.t('canvas.color_bg')}
       onmouseenter={(e) => onEnter(e, false)}
       onmouseleave={() => showBgTooltip = false}
     >
@@ -34,7 +35,7 @@
     </label>
     <label 
       class="absolute top-0 left-0 w-5 h-5 rounded border border-neutral-600 cursor-pointer overflow-hidden z-10" 
-      title="Foreground color"
+      title={locale.t('canvas.color_fg')}
       onmouseenter={(e) => onEnter(e, true)}
       onmouseleave={() => showFgTooltip = false}
     >
@@ -50,7 +51,7 @@
   <button
     onclick={() => canvas.swapColors()}
     class="text-neutral-500 hover:text-neutral-300 text-[10px] font-bold"
-    title="Swap colors (X)"
+    title={locale.t('canvas.color_swap')}
   >
     X
   </button>
@@ -58,7 +59,7 @@
   <button
     onclick={() => canvas.resetColors()}
     class="text-neutral-500 hover:text-neutral-300 text-[10px] font-bold"
-    title="Reset colors (D)"
+    title={locale.t('canvas.color_reset')}
   >
     D
   </button>

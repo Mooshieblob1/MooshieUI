@@ -1102,7 +1102,7 @@
     <div
       onmousedown={(e) => startSectionDrag(section, e)}
       class="flex items-center px-3 cursor-grab active:cursor-grabbing text-neutral-600 hover:text-neutral-400"
-      title="Drag to move section"
+      title={locale.t('generation.drag_to_move')}
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>
     </div>
@@ -1226,7 +1226,7 @@
                 <button
                   class="absolute top-1 right-1 w-6 h-6 flex items-center justify-center rounded bg-neutral-900/80 hover:bg-red-800 text-neutral-300 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
                   onclick={clearImage}
-                  title="Remove"
+                  title={locale.t('common.remove')}
                 >
                   &times;
                 </button>
@@ -1320,7 +1320,7 @@
                   <button
                     class="absolute top-1 right-1 w-6 h-6 flex items-center justify-center rounded bg-neutral-900/80 hover:bg-red-800 text-neutral-300 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
                     onclick={clearMask}
-                    title="Remove"
+                    title={locale.t('common.remove')}
                   >
                     &times;
                   </button>
@@ -1731,7 +1731,7 @@
           class="w-1 flex-1 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'left' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
           onmousedown={(e) => onDividerDown("left", e)}
           ondblclick={resetLeftWidth}
-          title="Drag to resize, double-click to reset"
+          title={locale.t('generation.drag_to_resize')}
         ></div>
         <button
           onclick={toggleLeftPanel}
@@ -1777,7 +1777,7 @@
             class="h-1 flex-1 cursor-row-resize hover:bg-indigo-500/40 transition-colors {dragging === 'bottom' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
             onmousedown={(e) => onDividerDown("bottom", e)}
             ondblclick={resetBottomHeight}
-            title="Drag to resize, double-click to reset"
+            title={locale.t('generation.drag_to_resize')}
           ></div>
           <button
             onclick={toggleBottomPanel}
@@ -1806,7 +1806,7 @@
           class="w-1 flex-1 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'right' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
           onmousedown={(e) => onDividerDown("right", e)}
           ondblclick={resetRightWidth}
-          title="Drag to resize, double-click to reset"
+          title={locale.t('generation.drag_to_resize')}
         ></div>
         <button
           onclick={toggleRightPanel}

@@ -21,7 +21,7 @@ class AutocompleteStore {
   /** Active tag list used for suggestions */
   tags = $state<TagEntry[]>(builtinTags as TagEntry[]);
   /** Max number of suggestions shown in dropdown */
-  maxResults = $state(10);
+  maxResults = $state(20);
   /** Source mode: "builtin" | "url" | "file" */
   sourceMode = $state<"builtin" | "url" | "file">("builtin");
   /** URL for remote taglist */

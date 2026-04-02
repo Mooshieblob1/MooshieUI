@@ -31,6 +31,7 @@ const ja: Record<string, string> = {
   "common.or": "または",
   "common.on": "オン",
   "common.detected": "検出済み",
+  "common.click_to_type": "クリックして値を入力",
 
   // ── セットアップウィザード ──────────────────────────────
   "setup.title": "MooshieUI",
@@ -73,6 +74,10 @@ const ja: Record<string, string> = {
   "setup.completion_message": "ComfyUIサーバーを起動中...",
   "setup.error_title": "インストール失敗",
   "setup.error_last_output": "最終出力：",
+  "setup.detecting_hardware": "ハードウェアを検出中...",
+  "setup.welcome": "ようこそ！セットアップを始めましょう。",
+  "setup.choose_folder_placeholder": "フォルダを選択...",
+  "setup.scanning_model_dirs": "既存のモデルディレクトリをスキャン中...",
   "setup.footer": "MooshieUI — ComfyUIのフレンドリーなインターフェース",
 
   // ── 設定ページ ──────────────────────────────────────────
@@ -156,6 +161,11 @@ const ja: Record<string, string> = {
   "settings.paths.extra_args": "追加CLI引数",
   "settings.paths.extra_args_placeholder": "--fp16 --force-channels-last",
   "settings.paths.extra_args_desc": "起動時にComfyUIに渡す追加の引数",
+  "settings.paths.new_location_placeholder": "新しい場所...",
+  "settings.paths.add_model_dir_title": "別のモデルディレクトリを追加",
+  "settings.paths.remove_model_dir_title": "このディレクトリを削除",
+  "settings.paths.click_to_add": "クリックして追加",
+  "settings.paths.move_dialog_title": "新しいインストール先を選択",
 
   // ギャラリーセクション
   "settings.gallery.title": "ギャラリー",
@@ -168,6 +178,7 @@ const ja: Record<string, string> = {
   "settings.gallery.failed_count": "{count}枚失敗",
   "settings.gallery.supported_sources": "対応ソース：ComfyUI出力、SwarmUI出力、A1111/Forge出力、またはPNG/JPG/WebP画像の任意のフォルダ。サブディレクトリは再帰的にスキャンされます。",
   "settings.gallery.metadata_support": "メタデータ：インポートした画像を生成パネルまたは個別のセクションにドラッグしてパラメータを読み込みます。SwarmUI固有のタグはプロンプトから自動的にクリーンされます。",
+  "settings.gallery.import_dialog_title": "インポートする画像出力ディレクトリを選択",
 
   // オートコンプリートセクション
   "settings.autocomplete.title": "オートコンプリート",
@@ -195,6 +206,18 @@ const ja: Record<string, string> = {
   "settings.about.export_logs": "診断ログをエクスポート",
   "settings.about.saving_logs": "ログを保存中...",
   "settings.about.logs_exported": "ログをエクスポートしました",
+  "settings.about.fetching_notes": "リリースノートを取得中...",
+  "settings.about.no_notes": "リリースノートはありません。",
+  "settings.about.no_notes_html": "リリースノートなし。",
+  "settings.about.version_available": "バージョン {version} が利用可能です",
+  "settings.about.whats_new": "v{version} の新機能",
+  "settings.about.release_notes_error": "リリースノートの読み込みに失敗しました: {error}",
+  "settings.about.checking_updates": "アップデートを確認中...",
+  "settings.about.up_to_date": "最新バージョンです",
+  "settings.about.check_again": "再確認",
+  "settings.about.download_install": "ダウンロードしてインストール",
+  "settings.about.downloading_version": "v{version} をダウンロード中...",
+  "settings.about.update_ready": "アップデートをダウンロードしました。v{version} を適用するには再起動してください。",
 
   // 品質タグ警告ダイアログ
   "settings.quality_warning.title": "品質タグの自動適用を無効にしますか？",
@@ -307,6 +330,12 @@ const ja: Record<string, string> = {
   "generation.model.downloading_vae": "VAEをダウンロード中...",
   "generation.model.downloading_checkpoint": "チェックポイントをダウンロード中...",
   "generation.model.auto_download": "自動ダウンロード",
+  "generation.model.architecture_label": "アーキテクチャ:",
+  "generation.model.resolution_label": "解像度:",
+  "generation.model.prediction_label": "予測:",
+  "generation.model.trigger_phrase_label": "トリガーフレーズ:",
+  "generation.model.copy_trigger": "トリガーフレーズをプロンプトにコピー",
+  "generation.model.license_label": "ライセンス:",
 
   // 画像入力
   "generation.image.title": "画像入力",
@@ -316,6 +345,8 @@ const ja: Record<string, string> = {
   "generation.image.drag_desc": "既存の生成画像をここにドラッグして編集用に読み込みます。",
   "generation.image.denoise": "デノイズ",
   "generation.image.denoise_tip": "AIが入力画像をどれだけ変更するか。0 = 変更なし、1 = 入力を無視して完全に新しい画像。低い値（0.3-0.5）は元の構図を保持、高い値（0.6-0.8）はより自由な創造を許可。",
+  "generation.drag_to_move": "ドラッグしてセクションを移動",
+  "generation.drag_to_resize": "ドラッグしてリサイズ、ダブルクリックでリセット",
 
   // インペインティング
   "generation.inpaint.title": "インペインティング＆レイヤー",
@@ -348,6 +379,7 @@ const ja: Record<string, string> = {
   "generation.controlnet.model_tip": "models/controlnet/フォルダのControlNetモデルファイル。モデルハブからダウンロードするか、手動で配置してください。",
   "generation.controlnet.image_tip": "ControlNet用の参照画像。プリセットモードでは、この画像はガイダンスとして使用される前に処理（エッジ検出など）されます。",
   "generation.controlnet.use_preprocessor": "プリプロセッサを使用",
+  "generation.controlnet.toggle": "ControlNet を切り替え",
   "generation.controlnet.preprocessor_label": "プリプロセッサ",
   "generation.controlnet.preprocessor_placeholder": "例：CannyEdgePreprocessor",
   "generation.controlnet.control_image_label": "制御画像",
@@ -401,6 +433,12 @@ const ja: Record<string, string> = {
   "generation.upscale.tiling_label": "タイル拡散",
   "generation.upscale.tiling_forced_label": "タイル拡散（Animaでは常時オン）",
   "generation.upscale.select_model": "モデルを選択...",
+  "generation.upscale.soft_guidance_label": "ソフトガイダンス",
+  "generation.upscale.soft_guidance_tip": "タイルアップスケール時に品質タグが幻覚（余分な手や物体）を引き起こすのを防ぎます。ガイダンス強度を穏やかに再スケーリングします。推奨：オンのまま。",
+  "generation.upscale.soft_guidance_multiplier": "ガイダンス強度",
+  "generation.upscale.soft_guidance_multiplier_tip": "CFGの再スケーリング量。低い = より穏やかなガイダンス、幻覚が少ない。アップスケールには0.4、一般用途には0.7を推奨。0で効果を無効化。",
+  "generation.sampler.smart_guidance_label": "スマートガイダンス",
+  "generation.sampler.smart_guidance_tip": "ポジティブ寄りの適応型ガイダンス — ネガティブを避けるだけでなく、プロンプトにより忠実にモデルが従います。すべての生成ステップに適用。調整不要。",
 
   // アップスケール履歴
   "generation.upscale_history.title": "アップスケール履歴",
@@ -480,6 +518,7 @@ const ja: Record<string, string> = {
   "modelhub.filter.upscaler": "アップスケーラー",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "テクスチャルインバージョン",
+  "modelhub.search_placeholder": "モデル名、作成者、スタイル...",
 
   "modelhub.sort.highest_rated": "最高評価",
   "modelhub.sort.most_downloaded": "最多ダウンロード",
@@ -530,6 +569,7 @@ const ja: Record<string, string> = {
   "lora.on": "オン",
   "lora.view_civitai": "CivitAIで表示",
   "lora.add_to_prompt": "プロンプトに追加：{word}",
+  "lora.likes": "いいね",
 
   // ── 下部パネル ──────────────────────────────────────────
   "bottom_panel.tab.loras": "LoRA",
@@ -777,6 +817,12 @@ const ja: Record<string, string> = {
   "canvas.show_layer": "レイヤーを表示",
   "canvas.lock_layer": "レイヤーをロック",
   "canvas.unlock_layer": "レイヤーのロックを解除",
+  "canvas.inpainting_preview": "インペインティング プレビュー",
+  "canvas.waiting_preview": "プレビューフレームを待機中...",
+  "canvas.color_bg": "背景色",
+  "canvas.color_fg": "前景色",
+  "canvas.color_swap": "色を入れ替え (X)",
+  "canvas.color_reset": "色をリセット (D)",
 
   "settings.appearance.show_info_tips_label": "情報ヒントを表示",
   "settings.appearance.show_info_tips_tip": "インターフェース全体のラベル横に (?) ツールチップアイコンを表示します。",

@@ -31,6 +31,7 @@ const es: Record<string, string> = {
   "common.or": "o",
   "common.on": "ON",
   "common.detected": "detectado",
+  "common.click_to_type": "Haz clic para escribir un valor",
 
   // ── Asistente de instalación ────────────────────────────
   "setup.title": "MooshieUI",
@@ -73,6 +74,10 @@ const es: Record<string, string> = {
   "setup.completion_message": "Iniciando servidor ComfyUI...",
   "setup.error_title": "Instalación fallida",
   "setup.error_last_output": "Última salida:",
+  "setup.detecting_hardware": "Detectando tu hardware...",
+  "setup.welcome": "¡Bienvenido! Vamos a configurar.",
+  "setup.choose_folder_placeholder": "Elegir una carpeta...",
+  "setup.scanning_model_dirs": "Buscando directorios de modelos existentes...",
   "setup.footer": "MooshieUI — Una interfaz amigable para ComfyUI",
 
   // ── Página de ajustes ───────────────────────────────────
@@ -156,6 +161,11 @@ const es: Record<string, string> = {
   "settings.paths.extra_args": "Argumentos CLI adicionales",
   "settings.paths.extra_args_placeholder": "--fp16 --force-channels-last",
   "settings.paths.extra_args_desc": "Argumentos adicionales pasados a ComfyUI al iniciar",
+  "settings.paths.new_location_placeholder": "Nueva ubicación...",
+  "settings.paths.add_model_dir_title": "Agregar otro directorio de modelos",
+  "settings.paths.remove_model_dir_title": "Eliminar este directorio",
+  "settings.paths.click_to_add": "Haz clic para agregar",
+  "settings.paths.move_dialog_title": "Elegir nueva ubicación de instalación",
 
   // Galería (ajustes)
   "settings.gallery.title": "Galería",
@@ -168,6 +178,7 @@ const es: Record<string, string> = {
   "settings.gallery.failed_count": "{count} fallidas",
   "settings.gallery.supported_sources": "Fuentes compatibles: salida de ComfyUI, SwarmUI, A1111/Forge, o cualquier carpeta de imágenes PNG/JPG/WebP. Los subdirectorios se escanean recursivamente.",
   "settings.gallery.metadata_support": "Metadatos: Arrastra una imagen importada al panel de generación o a secciones individuales para cargar sus parámetros. Las etiquetas específicas de SwarmUI se limpian automáticamente.",
+  "settings.gallery.import_dialog_title": "Seleccionar directorio de imágenes para importar",
 
   // Autocompletado
   "settings.autocomplete.title": "Autocompletado",
@@ -195,6 +206,18 @@ const es: Record<string, string> = {
   "settings.about.export_logs": "Exportar registros de diagnóstico",
   "settings.about.saving_logs": "Guardando registros...",
   "settings.about.logs_exported": "Registros exportados",
+  "settings.about.fetching_notes": "Obteniendo notas de la versión...",
+  "settings.about.no_notes": "No hay notas de la versión disponibles.",
+  "settings.about.no_notes_html": "Sin notas de la versión.",
+  "settings.about.version_available": "La versión {version} está disponible",
+  "settings.about.whats_new": "Novedades en v{version}",
+  "settings.about.release_notes_error": "Error al cargar las notas de la versión: {error}",
+  "settings.about.checking_updates": "Buscando actualizaciones...",
+  "settings.about.up_to_date": "Tienes la última versión",
+  "settings.about.check_again": "Comprobar de nuevo",
+  "settings.about.download_install": "Descargar e instalar",
+  "settings.about.downloading_version": "Descargando v{version}...",
+  "settings.about.update_ready": "Actualización descargada. Reinicia para aplicar v{version}.",
 
   // Diálogo de advertencia de etiquetas de calidad
   "settings.quality_warning.title": "¿Desactivar etiquetas de calidad automáticas?",
@@ -307,6 +330,12 @@ const es: Record<string, string> = {
   "generation.model.downloading_vae": "Descargando VAE...",
   "generation.model.downloading_checkpoint": "Descargando checkpoint...",
   "generation.model.auto_download": "descarga automática",
+  "generation.model.architecture_label": "Arquitectura:",
+  "generation.model.resolution_label": "Resolución:",
+  "generation.model.prediction_label": "Predicción:",
+  "generation.model.trigger_phrase_label": "Frase de activación:",
+  "generation.model.copy_trigger": "Copiar frase de activación al prompt",
+  "generation.model.license_label": "Licencia:",
 
   // Entradas de imagen
   "generation.image.title": "Entradas de imagen",
@@ -316,6 +345,8 @@ const es: Record<string, string> = {
   "generation.image.drag_desc": "Arrastra una generación existente aquí para cargarla y editarla.",
   "generation.image.denoise": "Eliminación de ruido",
   "generation.image.denoise_tip": "Cuánto cambia la IA la imagen de entrada. 0 = sin cambios, 1 = imagen completamente nueva ignorando la entrada. Valores bajos (0.3-0.5) mantienen la composición original, valores altos (0.6-0.8) permiten más libertad creativa.",
+  "generation.drag_to_move": "Arrastra para mover la sección",
+  "generation.drag_to_resize": "Arrastra para redimensionar, doble clic para restablecer",
 
   // Inpainting
   "generation.inpaint.title": "Inpainting y capas",
@@ -348,6 +379,7 @@ const es: Record<string, string> = {
   "generation.controlnet.model_tip": "El archivo del modelo ControlNet de tu carpeta models/controlnet/. Descarga modelos desde el Hub de Modelos o colócalos manualmente.",
   "generation.controlnet.image_tip": "La imagen de referencia para ControlNet. En modo preajuste, esta imagen será procesada (ej. detección de bordes) antes de usarse como guía.",
   "generation.controlnet.use_preprocessor": "Usar preprocesador",
+  "generation.controlnet.toggle": "Activar/desactivar ControlNet",
   "generation.controlnet.preprocessor_label": "Preprocesador",
   "generation.controlnet.preprocessor_placeholder": "ej. CannyEdgePreprocessor",
   "generation.controlnet.control_image_label": "Imagen de control",
@@ -402,6 +434,12 @@ const es: Record<string, string> = {
   "generation.upscale.tiling_label": "Difusión por mosaicos",
   "generation.upscale.tiling_forced_label": "Difusión por mosaicos (siempre activa para Anima)",
   "generation.upscale.select_model": "Seleccionar modelo...",
+  "generation.upscale.soft_guidance_label": "Guía Suave",
+  "generation.upscale.soft_guidance_tip": "Evita que las etiquetas de calidad causen alucinaciones (manos extra, objetos) durante el upscaling con mosaicos, reescalando suavemente la fuerza de guía. Recomendado: mantener ACTIVADO.",
+  "generation.upscale.soft_guidance_multiplier": "Fuerza de Guía",
+  "generation.upscale.soft_guidance_multiplier_tip": "Cuánto reescalar el CFG. Menor = guía más suave, menos alucinaciones. 0,4 recomendado para upscaling, 0,7 para uso general. 0 desactiva el efecto.",
+  "generation.sampler.smart_guidance_label": "Guía Inteligente",
+  "generation.sampler.smart_guidance_tip": "Guía adaptativa con sesgo positivo: el modelo sigue tu prompt más fielmente en lugar de solo evitar lo negativo. Se aplica a todos los pasos de generación. Sin ajustes necesarios.",
 
   // Historial de escalado
   "generation.upscale_history.title": "Historial de escalado",
@@ -481,6 +519,7 @@ const es: Record<string, string> = {
   "modelhub.filter.upscaler": "Escalador",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "Inversión textual",
+  "modelhub.search_placeholder": "Nombre del modelo, creador, estilo...",
 
   "modelhub.sort.highest_rated": "Mejor valorados",
   "modelhub.sort.most_downloaded": "Más descargados",
@@ -531,6 +570,7 @@ const es: Record<string, string> = {
   "lora.on": "ACT",
   "lora.view_civitai": "Ver en CivitAI",
   "lora.add_to_prompt": "Agregar al prompt: {word}",
+  "lora.likes": "Me gusta",
 
   // ── Panel inferior ──────────────────────────────────────
   "bottom_panel.tab.loras": "LoRAs",
@@ -779,6 +819,12 @@ const es: Record<string, string> = {
   "canvas.show_layer": "Mostrar capa",
   "canvas.lock_layer": "Bloquear capa",
   "canvas.unlock_layer": "Desbloquear capa",
+  "canvas.inpainting_preview": "Vista previa de inpainting",
+  "canvas.waiting_preview": "Esperando los marcos de vista previa...",
+  "canvas.color_bg": "Color de fondo",
+  "canvas.color_fg": "Color de primer plano",
+  "canvas.color_swap": "Intercambiar colores (X)",
+  "canvas.color_reset": "Restablecer colores (D)",
 
   "settings.appearance.show_info_tips_label": "Mostrar consejos",
   "settings.appearance.show_info_tips_tip": "Muestra los iconos de ayuda (?) junto a las etiquetas en toda la interfaz.",

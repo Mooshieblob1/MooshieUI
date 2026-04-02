@@ -31,6 +31,7 @@ const en: Record<string, string> = {
   "common.or": "or",
   "common.on": "ON",
   "common.detected": "detected",
+  "common.click_to_type": "Click to type a value",
 
   // ── Setup Wizard ────────────────────────────────────────
   "setup.title": "MooshieUI",
@@ -73,6 +74,10 @@ const en: Record<string, string> = {
   "setup.completion_message": "Starting ComfyUI server...",
   "setup.error_title": "Installation Failed",
   "setup.error_last_output": "Last output:",
+  "setup.detecting_hardware": "Detecting your hardware...",
+  "setup.welcome": "Welcome! Let's get set up.",
+  "setup.choose_folder_placeholder": "Choose a folder...",
+  "setup.scanning_model_dirs": "Scanning for existing model directories...",
   "setup.footer": "MooshieUI — A friendly face for ComfyUI",
 
   // ── Settings Page ───────────────────────────────────────
@@ -156,6 +161,10 @@ const en: Record<string, string> = {
   "settings.paths.extra_args": "Extra CLI Arguments",
   "settings.paths.extra_args_placeholder": "--fp16 --force-channels-last",
   "settings.paths.extra_args_desc": "Additional arguments passed to ComfyUI on launch",
+  "settings.paths.new_location_placeholder": "New location...",
+  "settings.paths.add_model_dir_title": "Add another model directory",
+  "settings.paths.remove_model_dir_title": "Remove this directory",
+  "settings.paths.click_to_add": "Click to add",
 
   // Gallery section
   "settings.gallery.title": "Gallery",
@@ -195,6 +204,18 @@ const en: Record<string, string> = {
   "settings.about.export_logs": "Export Diagnostic Logs",
   "settings.about.saving_logs": "Saving logs...",
   "settings.about.logs_exported": "Logs exported",
+  "settings.about.fetching_notes": "Fetching release notes...",
+  "settings.about.no_notes": "No release notes available.",
+  "settings.about.no_notes_html": "No release notes.",
+  "settings.about.version_available": "Version {version} is available",
+  "settings.about.whats_new": "What's New in v{version}",
+  "settings.about.release_notes_error": "Failed to load release notes: {error}",
+  "settings.about.checking_updates": "Checking for updates...",
+  "settings.about.up_to_date": "You're on the latest version",
+  "settings.about.check_again": "Check again",
+  "settings.about.download_install": "Download & Install",
+  "settings.about.downloading_version": "Downloading v{version}...",
+  "settings.about.update_ready": "Update downloaded. Restart to apply v{version}.",
 
   // Quality tags warning dialog
   "settings.quality_warning.title": "Disable auto quality tags?",
@@ -307,6 +328,12 @@ const en: Record<string, string> = {
   "generation.model.downloading_vae": "Downloading VAE...",
   "generation.model.downloading_checkpoint": "Downloading checkpoint...",
   "generation.model.auto_download": "auto-download",
+  "generation.model.architecture_label": "Architecture:",
+  "generation.model.resolution_label": "Resolution:",
+  "generation.model.prediction_label": "Prediction:",
+  "generation.model.trigger_phrase_label": "Trigger phrase:",
+  "generation.model.copy_trigger": "Copy trigger phrase to prompt",
+  "generation.model.license_label": "License:",
 
   // Image inputs
   "generation.image.title": "Image Inputs",
@@ -315,6 +342,9 @@ const en: Record<string, string> = {
   "generation.image.uploading": "Uploading...",
   "generation.image.drag_desc": "Drag an existing generation here to load it for editing.",
   "generation.image.denoise": "Denoise",
+  "generation.drag_to_move": "Drag to move section",
+  "generation.drag_to_resize": "Drag to resize, double-click to reset",
+
   "generation.image.denoise_tip": "How much the AI changes the input image. 0 = no change, 1 = completely new image ignoring the input. Lower values (0.3-0.5) keep the original composition, higher values (0.6-0.8) allow more creative freedom.",
 
   // Inpainting
@@ -348,6 +378,7 @@ const en: Record<string, string> = {
   "generation.controlnet.model_tip": "The ControlNet model file from your models/controlnet/ folder. Download models from the Model Hub or place them manually.",
   "generation.controlnet.image_tip": "The reference image for ControlNet. In preset mode, this image will be processed (e.g. edge detection) before being used as guidance.",
   "generation.controlnet.use_preprocessor": "Use preprocessor",
+  "generation.controlnet.toggle": "Toggle ControlNet",
   "generation.controlnet.preprocessor_label": "Preprocessor",
   "generation.controlnet.preprocessor_placeholder": "e.g. CannyEdgePreprocessor",
   "generation.controlnet.control_image_label": "Control Image",
@@ -402,6 +433,12 @@ const en: Record<string, string> = {
   "generation.upscale.tiling_label": "Tiled diffusion",
   "generation.upscale.tiling_forced_label": "Tiled diffusion (always on for Anima)",
   "generation.upscale.select_model": "Select model...",
+  "generation.upscale.soft_guidance_label": "Soft Guidance",
+  "generation.upscale.soft_guidance_tip": "Prevents quality tags from causing hallucinations (extra hands, objects) during tiled upscaling by gently rescaling the guidance strength. Recommended: keep ON.",
+  "generation.upscale.soft_guidance_multiplier": "Guidance Strength",
+  "generation.upscale.soft_guidance_multiplier_tip": "How much to rescale CFG. Lower = gentler guidance, less hallucination. 0.4 is recommended for upscaling, 0.7 for general use. 0 disables the effect.",
+  "generation.sampler.smart_guidance_label": "Smart Guidance",
+  "generation.sampler.smart_guidance_tip": "Positive-biased adaptive guidance — makes the model follow your prompt more closely instead of just avoiding the negative. Applies to all generation steps. No tuning needed.",
 
   // Upscale History
   "generation.upscale_history.title": "Upscale History",
@@ -482,6 +519,8 @@ const en: Record<string, string> = {
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "Textual Inversion",
 
+  "modelhub.search_placeholder": "Model name, creator, style...",
+
   "modelhub.sort.highest_rated": "Highest Rated",
   "modelhub.sort.most_downloaded": "Most Downloaded",
   "modelhub.sort.newest": "Newest",
@@ -531,6 +570,7 @@ const en: Record<string, string> = {
   "lora.on": "ON",
   "lora.view_civitai": "View on CivitAI",
   "lora.add_to_prompt": "Add to prompt: {word}",
+  "lora.likes": "Likes",
 
   // ── Bottom Panel ────────────────────────────────────────
   "bottom_panel.tab.loras": "LoRAs",
@@ -779,6 +819,12 @@ const en: Record<string, string> = {
   "canvas.show_layer": "Show layer",
   "canvas.lock_layer": "Lock layer",
   "canvas.unlock_layer": "Unlock layer",
+  "canvas.inpainting_preview": "Inpainting Preview",
+  "canvas.waiting_preview": "Waiting for preview frames...",
+  "canvas.color_bg": "Background color",
+  "canvas.color_fg": "Foreground color",
+  "canvas.color_swap": "Swap colors (X)",
+  "canvas.color_reset": "Reset colors (D)",
 
   // ── Settings extras ─────────────────────────────────────
   "settings.appearance.show_info_tips_label": "Show Info Tips",
@@ -843,6 +889,8 @@ const en: Record<string, string> = {
   "settings.about.export_logs_desc": "Save ComfyUI logs, system info, and config to a file for sharing with support.",
   "settings.about.data_dir_hint": "To install on a different drive, set the MOOSHIEUI_DATA_DIR environment variable to your preferred path before launching.",
   "settings.about.save_dialog_title": "Save Diagnostic Logs",
+  "settings.gallery.import_dialog_title": "Select image output directory to import",
+  "settings.paths.move_dialog_title": "Choose New Install Location",
   "settings.paths.extra_model_placeholder": "/path/to/shared/models (e.g. from another ComfyUI or Forge install)",
 };
 

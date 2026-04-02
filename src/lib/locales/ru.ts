@@ -31,6 +31,7 @@ const ru: Record<string, string> = {
   "common.or": "или",
   "common.on": "Вкл",
   "common.detected": "Обнаружено",
+  "common.click_to_type": "Нажмите, чтобы ввести значение",
 
   // ── Мастер установки ────────────────────────────────────
   "setup.title": "MooshieUI",
@@ -73,6 +74,10 @@ const ru: Record<string, string> = {
   "setup.completion_message": "Запуск сервера ComfyUI...",
   "setup.error_title": "Установка не удалась",
   "setup.error_last_output": "Последний вывод:",
+  "setup.detecting_hardware": "Обнаружение оборудования...",
+  "setup.welcome": "Добро пожаловать! Давайте настроим.",
+  "setup.choose_folder_placeholder": "Выберите папку...",
+  "setup.scanning_model_dirs": "Поиск существующих каталогов моделей...",
   "setup.footer": "MooshieUI — Дружественный интерфейс для ComfyUI",
 
   // ── Страница настроек ───────────────────────────────────
@@ -152,6 +157,11 @@ const ru: Record<string, string> = {
   "settings.paths.extra_args": "Дополнительные аргументы CLI",
   "settings.paths.extra_args_placeholder": "--fp16 --force-channels-last",
   "settings.paths.extra_args_desc": "Дополнительные аргументы, передаваемые ComfyUI при запуске",
+  "settings.paths.new_location_placeholder": "Новое расположение...",
+  "settings.paths.add_model_dir_title": "Добавить ещё один каталог моделей",
+  "settings.paths.remove_model_dir_title": "Удалить этот каталог",
+  "settings.paths.click_to_add": "Нажмите, чтобы добавить",
+  "settings.paths.move_dialog_title": "Выберите новое расположение установки",
 
   "settings.gallery.title": "Галерея",
   "settings.gallery.import_label": "Импорт изображений из директории",
@@ -163,6 +173,7 @@ const ru: Record<string, string> = {
   "settings.gallery.failed_count": "{count} не удалось",
   "settings.gallery.supported_sources": "Поддерживаемые источники: вывод ComfyUI, SwarmUI, A1111/Forge или любая папка с PNG/JPG/WebP изображениями. Подпапки сканируются рекурсивно.",
   "settings.gallery.metadata_support": "Метаданные: перетащите импортированное изображение на панель генерации или отдельные секции для загрузки параметров. Специфичные для SwarmUI теги автоматически удаляются из промптов.",
+  "settings.gallery.import_dialog_title": "Выберите каталог изображений для импорта",
 
   "settings.autocomplete.title": "Автодополнение",
   "settings.autocomplete.tag_source": "Источник тегов",
@@ -187,6 +198,18 @@ const ru: Record<string, string> = {
   "settings.about.export_logs": "Экспорт диагностических логов",
   "settings.about.saving_logs": "Сохранение логов...",
   "settings.about.logs_exported": "Логи экспортированы",
+  "settings.about.fetching_notes": "Загрузка заметок к выпуску...",
+  "settings.about.no_notes": "Заметки к выпуску отсутствуют.",
+  "settings.about.no_notes_html": "Нет заметок к выпуску.",
+  "settings.about.version_available": "Доступна версия {version}",
+  "settings.about.whats_new": "Что нового в v{version}",
+  "settings.about.release_notes_error": "Не удалось загрузить заметки к выпуску: {error}",
+  "settings.about.checking_updates": "Проверка обновлений...",
+  "settings.about.up_to_date": "У вас последняя версия",
+  "settings.about.check_again": "Проверить снова",
+  "settings.about.download_install": "Скачать и установить",
+  "settings.about.downloading_version": "Загрузка v{version}...",
+  "settings.about.update_ready": "Обновление загружено. Перезапустите для применения v{version}.",
 
   "settings.quality_warning.title": "Отключить автоматические теги качества?",
   "settings.quality_warning.body": "Теги качества, такие как {tags}, критически важны для аниме-моделей (Anima, Illustrious, NoobAI). Без них качество выходных изображений значительно снизится.",
@@ -293,6 +316,12 @@ const ru: Record<string, string> = {
   "generation.model.downloading_vae": "Скачивание VAE...",
   "generation.model.downloading_checkpoint": "Скачивание чекпоинта...",
   "generation.model.auto_download": "Автоскачивание",
+  "generation.model.architecture_label": "Архитектура:",
+  "generation.model.resolution_label": "Разрешение:",
+  "generation.model.prediction_label": "Предсказание:",
+  "generation.model.trigger_phrase_label": "Триггерная фраза:",
+  "generation.model.copy_trigger": "Скопировать триггерную фразу в промпт",
+  "generation.model.license_label": "Лицензия:",
 
   "generation.image.title": "Входные изображения",
   "generation.image.input": "Входное изображение",
@@ -301,6 +330,8 @@ const ru: Record<string, string> = {
   "generation.image.drag_desc": "Перетащите существующую генерацию сюда для загрузки в редактор.",
   "generation.image.denoise": "Шумоподавление",
   "generation.image.denoise_tip": "Насколько сильно ИИ изменяет входное изображение. 0 = без изменений, 1 = полностью новое изображение, игнорируя вход. Низкие значения (0.3-0.5) сохраняют оригинальную композицию, высокие (0.6-0.8) дают больше творческой свободы.",
+  "generation.drag_to_move": "Перетащите для перемещения раздела",
+  "generation.drag_to_resize": "Перетащите для изменения размера, двойной клик для сброса",
 
   "generation.inpaint.title": "Инпейнтинг и слои",
   "generation.inpaint.mask": "Изображение маски",
@@ -331,6 +362,7 @@ const ru: Record<string, string> = {
   "generation.controlnet.model_tip": "Файл модели ControlNet из папки models/controlnet/. Скачайте модели из Хаба моделей или поместите вручную.",
   "generation.controlnet.image_tip": "Эталонное изображение для ControlNet. В режиме пресетов это изображение будет предварительно обработано (напр. обнаружение краёв) перед использованием в качестве руководства.",
   "generation.controlnet.use_preprocessor": "Использовать препроцессор",
+  "generation.controlnet.toggle": "Переключить ControlNet",
   "generation.controlnet.preprocessor_label": "Препроцессор",
   "generation.controlnet.preprocessor_placeholder": "напр. CannyEdgePreprocessor",
   "generation.controlnet.control_image_label": "Контрольное изображение",
@@ -382,6 +414,12 @@ const ru: Record<string, string> = {
   "generation.upscale.tiling_label": "Тайловая диффузия",
   "generation.upscale.tiling_forced_label": "Тайловая диффузия (всегда для Anima)",
   "generation.upscale.select_model": "Выбрать модель...",
+  "generation.upscale.soft_guidance_label": "Мягкое руководство",
+  "generation.upscale.soft_guidance_tip": "Предотвращает появление галлюцинаций (лишние руки, объекты) из-за тегов качества при тайловом увеличении, мягко масштабируя силу руководства. Рекомендуется: оставить ВКЛ.",
+  "generation.upscale.soft_guidance_multiplier": "Сила руководства",
+  "generation.upscale.soft_guidance_multiplier_tip": "Насколько масштабировать CFG. Ниже = мягче руководство, меньше галлюцинаций. 0,4 рекомендуется для увеличения, 0,7 для общего использования. 0 отключает эффект.",
+  "generation.sampler.smart_guidance_label": "Умное руководство",
+  "generation.sampler.smart_guidance_tip": "Адаптивное руководство с позитивным уклоном — модель точнее следует вашему запросу вместо простого избегания негатива. Применяется ко всем этапам генерации. Настройка не требуется.",
 
   "generation.upscale_history.title": "История увеличений",
 
@@ -458,6 +496,7 @@ const ru: Record<string, string> = {
   "modelhub.filter.upscaler": "Апскейлер",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "Textual Inversion",
+  "modelhub.search_placeholder": "Имя модели, автор, стиль...",
 
   "modelhub.sort.highest_rated": "С наивысшим рейтингом",
   "modelhub.sort.most_downloaded": "Наиболее скачиваемые",
@@ -508,6 +547,7 @@ const ru: Record<string, string> = {
   "lora.on": "Вкл",
   "lora.view_civitai": "Открыть на CivitAI",
   "lora.add_to_prompt": "Добавить в промпт: {word}",
+  "lora.likes": "Нравится",
 
   // ── Нижняя панель ───────────────────────────────────────
   "bottom_panel.tab.loras": "LoRA",
@@ -752,6 +792,12 @@ const ru: Record<string, string> = {
   "canvas.show_layer": "Показать слой",
   "canvas.lock_layer": "Заблокировать слой",
   "canvas.unlock_layer": "Разблокировать слой",
+  "canvas.inpainting_preview": "Предварительный просмотр инпейнтинга",
+  "canvas.waiting_preview": "Ожидание кадров предварительного просмотра...",
+  "canvas.color_bg": "Цвет фона",
+  "canvas.color_fg": "Цвет переднего плана",
+  "canvas.color_swap": "Поменять цвета местами (X)",
+  "canvas.color_reset": "Сбросить цвета (D)",
 
   "settings.appearance.show_info_tips_label": "Показывать подсказки",
   "settings.appearance.show_info_tips_tip": "Показывать иконки подсказок (?) рядом с метками по всему интерфейсу.",

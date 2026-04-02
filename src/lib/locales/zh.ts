@@ -31,6 +31,7 @@ const zh: Record<string, string> = {
   "common.or": "或",
   "common.on": "开启",
   "common.detected": "检测到",
+  "common.click_to_type": "点击输入值",
 
   // ── 安装向导 ────────────────────────────────────────────
   "setup.title": "MooshieUI",
@@ -73,6 +74,10 @@ const zh: Record<string, string> = {
   "setup.completion_message": "正在启动 ComfyUI 服务器...",
   "setup.error_title": "安装失败",
   "setup.error_last_output": "报错输出：",
+  "setup.detecting_hardware": "正在检测硬件...",
+  "setup.welcome": "欢迎！让我们开始设置。",
+  "setup.choose_folder_placeholder": "选择文件夹...",
+  "setup.scanning_model_dirs": "正在扫描现有模型目录...",
   "setup.footer": "MooshieUI — ComfyUI 的新手友好界面",
 
   // ── 设置页面 ────────────────────────────────────────────
@@ -152,6 +157,11 @@ const zh: Record<string, string> = {
   "settings.paths.extra_args": "命令行参数",
   "settings.paths.extra_args_placeholder": "--fp16 --force-channels-last",
   "settings.paths.extra_args_desc": "启动时发送给 ComfyUI 的额外参数",
+  "settings.paths.new_location_placeholder": "新位置...",
+  "settings.paths.add_model_dir_title": "添加另一个模型目录",
+  "settings.paths.remove_model_dir_title": "移除此目录",
+  "settings.paths.click_to_add": "点击添加",
+  "settings.paths.move_dialog_title": "选择新的安装位置",
 
   "settings.gallery.title": "图库",
   "settings.gallery.import_label": "从目录导入图像",
@@ -163,6 +173,7 @@ const zh: Record<string, string> = {
   "settings.gallery.failed_count": "{count} 张失败",
   "settings.gallery.supported_sources": "支持的来源：ComfyUI 输出、SwarmUI 输出、A1111/Forge 输出或包含 PNG/JPG/WebP 图像的文件夹。子目录会被递归扫描。",
   "settings.gallery.metadata_support": "标引数据(metadata)：将导入的图像拖到生成面板或单个部分以加载参数。SwarmUI 专有标签会从提示中自动清理。",
+  "settings.gallery.import_dialog_title": "选择要导入的图像输出目录",
 
   "settings.autocomplete.title": "自动补全",
   "settings.autocomplete.tag_source": "标签来源",
@@ -187,6 +198,18 @@ const zh: Record<string, string> = {
   "settings.about.export_logs": "导出诊断日志",
   "settings.about.saving_logs": "正在保存日志...",
   "settings.about.logs_exported": "日志导出完成",
+  "settings.about.fetching_notes": "正在获取发行说明...",
+  "settings.about.no_notes": "没有可用的发行说明。",
+  "settings.about.no_notes_html": "没有发行说明。",
+  "settings.about.version_available": "版本 {version} 可用",
+  "settings.about.whats_new": "v{version} 新功能",
+  "settings.about.release_notes_error": "无法加载发行说明: {error}",
+  "settings.about.checking_updates": "正在检查更新...",
+  "settings.about.up_to_date": "已是最新版本",
+  "settings.about.check_again": "重新检查",
+  "settings.about.download_install": "下载并安装",
+  "settings.about.downloading_version": "正在下载 v{version}...",
+  "settings.about.update_ready": "更新已下载。重启以应用 v{version}。",
 
   "settings.quality_warning.title": "确定要禁用自动质量标签吗？",
   "settings.quality_warning.body": "像 {tags} 这样的质量标签对动漫模型（Anima、Illustrious、NoobAI）至关重要。没有它们，输出质量会显著下降。",
@@ -293,6 +316,12 @@ const zh: Record<string, string> = {
   "generation.model.downloading_vae": "正在下载 VAE...",
   "generation.model.downloading_checkpoint": "正在下载检查点...",
   "generation.model.auto_download": "自动下载",
+  "generation.model.architecture_label": "架构:",
+  "generation.model.resolution_label": "分辨率:",
+  "generation.model.prediction_label": "预测:",
+  "generation.model.trigger_phrase_label": "触发词:",
+  "generation.model.copy_trigger": "将触发词复制到提示词",
+  "generation.model.license_label": "许可证:",
 
   "generation.image.title": "图像输入",
   "generation.image.input": "输入图像",
@@ -301,6 +330,8 @@ const zh: Record<string, string> = {
   "generation.image.drag_desc": "将现有生成的图像拖到此处以加载编辑。",
   "generation.image.denoise": "去噪",
   "generation.image.denoise_tip": "AI 改变输入图像的程度。0 = 不变，1 = 忽略输入完全生成新图。低值（0.3-0.5）保留原始构图，高值（0.6-0.8）允许更多创作自由。",
+  "generation.drag_to_move": "拖动以移动区域",
+  "generation.drag_to_resize": "拖动以调整大小，双击重置",
 
   "generation.inpaint.title": "局部重绘 & 图层",
   "generation.inpaint.mask": "蒙版图像",
@@ -331,6 +362,7 @@ const zh: Record<string, string> = {
   "generation.controlnet.model_tip": "models/controlnet/ 文件夹中的 ControlNet 模型文件。从模型中心下载或手动放置。",
   "generation.controlnet.image_tip": "ControlNet 的参考图像。在预设模式下，此图像在用作引导前会被处理（例如边缘检测）。",
   "generation.controlnet.use_preprocessor": "使用预处理器",
+  "generation.controlnet.toggle": "切换 ControlNet",
   "generation.controlnet.preprocessor_label": "预处理器",
   "generation.controlnet.preprocessor_placeholder": "例如：CannyEdgePreprocessor",
   "generation.controlnet.control_image_label": "控制图像",
@@ -382,6 +414,12 @@ const zh: Record<string, string> = {
   "generation.upscale.tiling_label": "分块扩散",
   "generation.upscale.tiling_forced_label": "分块扩散（Anima 始终开启）",
   "generation.upscale.select_model": "选择模型...",
+  "generation.upscale.soft_guidance_label": "指定性引导",
+  "generation.upscale.soft_guidance_tip": "防止质量标签在分块放大时产生幻觉（多余的手、物体），通过温和地重新缩放指定性引导强度实现。建议：保持开启。",
+  "generation.upscale.soft_guidance_multiplier": "指定性引导强度",
+  "generation.upscale.soft_guidance_multiplier_tip": "CFG重新缩放的程度。越低 = 指定性引导越温和，幻觉越少。放大推荐0.4，通用推荐0.7。0关闭效果。",
+  "generation.sampler.smart_guidance_label": "偏向性引导",
+  "generation.sampler.smart_guidance_tip": "偏向性自适应引导——模型将更忠实地遵循你的提示词，而不仅仅是回避负面内容。适用于所有生成步骤。无需调整。",
 
   "generation.upscale_history.title": "放大历史",
 
@@ -458,6 +496,7 @@ const zh: Record<string, string> = {
   "modelhub.filter.upscaler": "放大器",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "文本反转",
+  "modelhub.search_placeholder": "模型名称、创作者、风格...",
 
   "modelhub.sort.highest_rated": "最高评分",
   "modelhub.sort.most_downloaded": "最多下载",
@@ -508,6 +547,7 @@ const zh: Record<string, string> = {
   "lora.on": "开启",
   "lora.view_civitai": "在 CivitAI 上查看",
   "lora.add_to_prompt": "添加到提示词：{word}",
+  "lora.likes": "点赞",
 
   // ── 底部面板 ────────────────────────────────────────────
   "bottom_panel.tab.loras": "LoRA",
@@ -752,6 +792,12 @@ const zh: Record<string, string> = {
   "canvas.show_layer": "显示图层",
   "canvas.lock_layer": "锁定图层",
   "canvas.unlock_layer": "解锁图层",
+  "canvas.inpainting_preview": "局部重绘预览",
+  "canvas.waiting_preview": "等待预览帧...",
+  "canvas.color_bg": "背景颜色",
+  "canvas.color_fg": "前景颜色",
+  "canvas.color_swap": "交换颜色 (X)",
+  "canvas.color_reset": "重置颜色 (D)",
 
   "settings.appearance.show_info_tips_label": "显示信息提示",
   "settings.appearance.show_info_tips_tip": "在整个界面的标签旁边显示 (?) 工具提示图标。",

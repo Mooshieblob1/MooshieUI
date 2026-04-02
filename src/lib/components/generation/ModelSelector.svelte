@@ -622,28 +622,28 @@
           {/if}
           {#if modelSpec.architecture}
             <div class="flex gap-2">
-              <span class="text-neutral-500">Architecture:</span>
+              <span class="text-neutral-500">{locale.t('generation.model.architecture_label')}</span>
               <span class="text-neutral-300">{modelSpec.architecture}</span>
             </div>
           {/if}
           {#if modelSpec.resolution}
             <div class="flex gap-2">
-              <span class="text-neutral-500">Resolution:</span>
+              <span class="text-neutral-500">{locale.t('generation.model.resolution_label')}</span>
               <span class="text-neutral-300">{modelSpec.resolution}</span>
             </div>
           {/if}
           {#if modelSpec.prediction_type}
             <div class="flex gap-2">
-              <span class="text-neutral-500">Prediction:</span>
+              <span class="text-neutral-500">{locale.t('generation.model.prediction_label')}</span>
               <span class="text-neutral-300">{modelSpec.prediction_type}</span>
             </div>
           {/if}
           {#if modelSpec.trigger_phrase}
             <div>
-              <span class="text-neutral-500">Trigger phrase:</span>
+              <span class="text-neutral-500">{locale.t('generation.model.trigger_phrase_label')}</span>
               <button
                 class="ml-1.5 text-indigo-400 hover:text-indigo-300 transition-colors"
-                title="Copy trigger phrase to prompt"
+                title={locale.t('generation.model.copy_trigger')}
                 onclick={() => {
                   if (modelSpec?.trigger_phrase && !generation.positivePrompt.includes(modelSpec.trigger_phrase)) {
                     generation.positivePrompt = generation.positivePrompt
@@ -669,7 +669,7 @@
           {/if}
           {#if modelSpec.license}
             <div class="flex gap-2 text-[10px]">
-              <span class="text-neutral-600">License:</span>
+              <span class="text-neutral-600">{locale.t('generation.model.license_label')}</span>
               <span class="text-neutral-500">{modelSpec.license}</span>
             </div>
           {/if}
@@ -772,7 +772,7 @@
           <button
             onclick={() => generation.removeLora(i)}
             class="text-neutral-500 hover:text-red-400 transition-colors text-sm leading-none shrink-0"
-            title="Remove"
+            title={locale.t('common.remove')}
           >
             &times;
           </button>

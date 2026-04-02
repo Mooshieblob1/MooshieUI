@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
     value: number;
@@ -61,7 +62,7 @@
   <button
     class="text-neutral-300 cursor-text tabular-nums hover:text-indigo-300 transition-colors"
     onclick={startEdit}
-    title="Click to type a value"
+    title={locale.t('common.click_to_type')}
   >
     {decimals > 0 ? value.toFixed(decimals) : value}{suffix}
   </button>

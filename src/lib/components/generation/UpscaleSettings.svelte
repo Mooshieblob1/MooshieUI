@@ -293,5 +293,37 @@
       />
     </div>
     {/if}
+
+    <!-- Soft Guidance toggle -->
+    <div class="flex items-center gap-2">
+      <input
+        type="checkbox"
+        id="upscale-soft-guidance"
+        bind:checked={generation.upscaleSoftGuidance}
+        class="w-4 h-4 accent-indigo-500 rounded"
+      />
+      <label for="upscale-soft-guidance" class="text-xs text-neutral-400">
+        {locale.t('generation.upscale.soft_guidance_label')}<InfoTip text={locale.t('generation.upscale.soft_guidance_tip')} />
+      </label>
+    </div>
+
+    <!-- Soft Guidance Multiplier (shown when soft guidance enabled) -->
+    {#if generation.upscaleSoftGuidance}
+    <div>
+      <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+        <span>{locale.t('generation.upscale.soft_guidance_multiplier')}<InfoTip text={locale.t('generation.upscale.soft_guidance_multiplier_tip')} /></span>
+        <EditableValue value={generation.upscaleSoftGuidanceMultiplier} min={0} max={1} step={0.05} decimals={2} onchange={(v) => generation.upscaleSoftGuidanceMultiplier = v} />
+      </label>
+      <input
+        type="range"
+        bind:value={generation.upscaleSoftGuidanceMultiplier}
+        min="0"
+        max="1"
+        step="0.05"
+        class="w-full accent-indigo-500"
+      />
+    </div>
+    {/if}
+
   {/if}
 </div>

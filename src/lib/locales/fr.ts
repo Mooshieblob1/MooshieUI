@@ -31,6 +31,7 @@ const fr: Record<string, string> = {
   "common.or": "ou",
   "common.on": "ACTIVÉ",
   "common.detected": "détecté",
+  "common.click_to_type": "Cliquez pour saisir une valeur",
 
   // ── Assistant d'installation ────────────────────────────
   "setup.title": "MooshieUI",
@@ -73,6 +74,10 @@ const fr: Record<string, string> = {
   "setup.completion_message": "Démarrage du serveur ComfyUI...",
   "setup.error_title": "Échec de l'installation",
   "setup.error_last_output": "Dernière sortie :",
+  "setup.detecting_hardware": "Détection du matériel...",
+  "setup.welcome": "Bienvenue ! Configurons tout.",
+  "setup.choose_folder_placeholder": "Choisir un dossier...",
+  "setup.scanning_model_dirs": "Recherche de répertoires de modèles...",
   "setup.footer": "MooshieUI — Une interface conviviale pour ComfyUI",
 
   // ── Page des paramètres ─────────────────────────────────
@@ -156,6 +161,11 @@ const fr: Record<string, string> = {
   "settings.paths.extra_args": "Arguments CLI supplémentaires",
   "settings.paths.extra_args_placeholder": "--fp16 --force-channels-last",
   "settings.paths.extra_args_desc": "Arguments supplémentaires passés à ComfyUI au lancement",
+  "settings.paths.new_location_placeholder": "Nouvel emplacement...",
+  "settings.paths.add_model_dir_title": "Ajouter un autre répertoire de modèles",
+  "settings.paths.remove_model_dir_title": "Supprimer ce répertoire",
+  "settings.paths.click_to_add": "Cliquez pour ajouter",
+  "settings.paths.move_dialog_title": "Choisir un nouvel emplacement d'installation",
 
   // Section galerie
   "settings.gallery.title": "Galerie",
@@ -168,6 +178,7 @@ const fr: Record<string, string> = {
   "settings.gallery.failed_count": "{count} échouées",
   "settings.gallery.supported_sources": "Sources prises en charge : sortie ComfyUI, sortie SwarmUI, sortie A1111/Forge, ou tout dossier d'images PNG/JPG/WebP. Les sous-répertoires sont analysés récursivement.",
   "settings.gallery.metadata_support": "Métadonnées : Faites glisser une image importée sur le panneau de génération ou des sections individuelles pour charger ses paramètres. Les tags spécifiques à SwarmUI sont automatiquement nettoyés des prompts.",
+  "settings.gallery.import_dialog_title": "Sélectionner le répertoire d'images à importer",
 
   // Section autocomplétion
   "settings.autocomplete.title": "Autocomplétion",
@@ -195,6 +206,18 @@ const fr: Record<string, string> = {
   "settings.about.export_logs": "Exporter les logs de diagnostic",
   "settings.about.saving_logs": "Enregistrement des logs...",
   "settings.about.logs_exported": "Logs exportés",
+  "settings.about.fetching_notes": "Récupération des notes de version...",
+  "settings.about.no_notes": "Aucune note de version disponible.",
+  "settings.about.no_notes_html": "Pas de notes de version.",
+  "settings.about.version_available": "La version {version} est disponible",
+  "settings.about.whats_new": "Nouveautés de la v{version}",
+  "settings.about.release_notes_error": "Échec du chargement des notes de version : {error}",
+  "settings.about.checking_updates": "Recherche de mises à jour...",
+  "settings.about.up_to_date": "Vous avez la dernière version",
+  "settings.about.check_again": "Vérifier à nouveau",
+  "settings.about.download_install": "Télécharger et installer",
+  "settings.about.downloading_version": "Téléchargement de la v{version}...",
+  "settings.about.update_ready": "Mise à jour téléchargée. Redémarrez pour appliquer v{version}.",
 
   // Dialogue d'avertissement des tags de qualité
   "settings.quality_warning.title": "Désactiver les tags de qualité automatiques ?",
@@ -307,6 +330,12 @@ const fr: Record<string, string> = {
   "generation.model.downloading_vae": "Téléchargement du VAE...",
   "generation.model.downloading_checkpoint": "Téléchargement du checkpoint...",
   "generation.model.auto_download": "téléchargement auto",
+  "generation.model.architecture_label": "Architecture :",
+  "generation.model.resolution_label": "Résolution :",
+  "generation.model.prediction_label": "Prédiction :",
+  "generation.model.trigger_phrase_label": "Phrase de déclenchement :",
+  "generation.model.copy_trigger": "Copier la phrase de déclenchement dans le prompt",
+  "generation.model.license_label": "Licence :",
 
   // Entrées d'image
   "generation.image.title": "Entrées d'image",
@@ -316,6 +345,8 @@ const fr: Record<string, string> = {
   "generation.image.drag_desc": "Faites glisser une génération existante ici pour la charger en édition.",
   "generation.image.denoise": "Débruitage",
   "generation.image.denoise_tip": "À quel point l'IA modifie l'image d'entrée. 0 = aucun changement, 1 = image entièrement nouvelle ignorant l'entrée. Valeurs basses (0.3-0.5) conservent la composition, valeurs hautes (0.6-0.8) permettent plus de liberté créative.",
+  "generation.drag_to_move": "Glisser pour déplacer la section",
+  "generation.drag_to_resize": "Glisser pour redimensionner, double-cliquer pour réinitialiser",
 
   // Inpainting
   "generation.inpaint.title": "Inpainting et calques",
@@ -348,6 +379,7 @@ const fr: Record<string, string> = {
   "generation.controlnet.model_tip": "Le fichier modèle ControlNet de votre dossier models/controlnet/. Téléchargez des modèles depuis le Hub ou placez-les manuellement.",
   "generation.controlnet.image_tip": "L'image de référence pour ControlNet. En mode préréglage, cette image sera traitée (ex. détection des contours) avant d'être utilisée comme guide.",
   "generation.controlnet.use_preprocessor": "Utiliser le préprocesseur",
+  "generation.controlnet.toggle": "Activer/désactiver ControlNet",
   "generation.controlnet.preprocessor_label": "Préprocesseur",
   "generation.controlnet.preprocessor_placeholder": "ex. CannyEdgePreprocessor",
   "generation.controlnet.control_image_label": "Image de contrôle",
@@ -401,6 +433,12 @@ const fr: Record<string, string> = {
   "generation.upscale.tiling_label": "Diffusion par tuiles",
   "generation.upscale.tiling_forced_label": "Diffusion par tuiles (toujours activé pour Anima)",
   "generation.upscale.select_model": "Sélectionner un modèle...",
+  "generation.upscale.soft_guidance_label": "Guidage Doux",
+  "generation.upscale.soft_guidance_tip": "Empêche les tags de qualité de causer des hallucinations (mains supplémentaires, objets) lors de l'upscaling par tuiles en reéchellonnant doucement la force de guidage. Recommandé : laisser ACTIVÉ.",
+  "generation.upscale.soft_guidance_multiplier": "Force de Guidage",
+  "generation.upscale.soft_guidance_multiplier_tip": "Intensité du reéchellonnage du CFG. Plus bas = guidage plus doux, moins d'hallucinations. 0,4 recommandé pour l'upscaling, 0,7 pour usage général. 0 désactive l'effet.",
+  "generation.sampler.smart_guidance_label": "Guidage Intelligent",
+  "generation.sampler.smart_guidance_tip": "Guidage adaptatif à biais positif — le modèle suit votre prompt de plus près au lieu de simplement éviter le négatif. S'applique à toutes les étapes de génération. Aucun réglage nécessaire.",
 
   // Historique d'upscale
   "generation.upscale_history.title": "Historique d'upscale",
@@ -480,6 +518,7 @@ const fr: Record<string, string> = {
   "modelhub.filter.upscaler": "Upscaler",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "Inversion textuelle",
+  "modelhub.search_placeholder": "Nom du modèle, créateur, style...",
 
   "modelhub.sort.highest_rated": "Mieux notés",
   "modelhub.sort.most_downloaded": "Plus téléchargés",
@@ -530,6 +569,7 @@ const fr: Record<string, string> = {
   "lora.on": "ACTIVÉ",
   "lora.view_civitai": "Voir sur CivitAI",
   "lora.add_to_prompt": "Ajouter au prompt : {word}",
+  "lora.likes": "J'aime",
 
   // ── Panneau inférieur ───────────────────────────────────
   "bottom_panel.tab.loras": "LoRAs",
@@ -777,6 +817,12 @@ const fr: Record<string, string> = {
   "canvas.show_layer": "Afficher le calque",
   "canvas.lock_layer": "Verrouiller le calque",
   "canvas.unlock_layer": "Déverrouiller le calque",
+  "canvas.inpainting_preview": "Aperçu de l'inpainting",
+  "canvas.waiting_preview": "En attente des images de prévisualisation...",
+  "canvas.color_bg": "Couleur d'arrière-plan",
+  "canvas.color_fg": "Couleur de premier plan",
+  "canvas.color_swap": "Intervertir les couleurs (X)",
+  "canvas.color_reset": "Réinitialiser les couleurs (D)",
 
   "settings.appearance.show_info_tips_label": "Afficher les info-bulles",
   "settings.appearance.show_info_tips_tip": "Affiche les icônes d'aide (?) à côté des libellés dans toute l'interface.",
