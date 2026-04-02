@@ -1,3 +1,15 @@
+## What's New in v0.5.4
+
+### Re-Release Stability
+- Re-issued the prior release payload as `v0.5.4` after the cancelled `v0.5.3` run to ensure a clean, complete release pipeline execution
+- Preserved the same MooshieUI metadata compatibility behavior introduced previously, including `mooshie_extra` identification and backward compatibility with SwarmUI parsers
+
+### Release Pipeline Integrity
+- Re-ran version synchronization and build validation (`cargo check` + frontend production build) before tagging
+- Published a fresh release tag to guarantee CI artifacts and GitHub Release assets are generated from a finalized main branch state
+
+---
+
 ## What's New in v0.5.3
 
 ### MooshieUI Metadata Identity
