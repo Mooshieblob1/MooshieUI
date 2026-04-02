@@ -47,4 +47,4 @@ webkit2gtk = "=2.0.2"
 tar = "0.4"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-zip = "2"
+zip = "4"
