@@ -48,7 +48,7 @@ pub fn embed_png_metadata(
         .map_err(|e| format!("PNG decode error: {}", e))?;
     let info = reader.info().clone();
 
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size().expect("PNG output buffer size unavailable")];
     let output_info = reader
         .next_frame(&mut buf)
         .map_err(|e| format!("PNG frame read error: {}", e))?;
@@ -336,7 +336,7 @@ fn read_stealth_alpha(image_bytes: &[u8]) -> Result<Option<HashMap<String, Strin
         4
     };
 
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size().expect("PNG output buffer size unavailable")];
     let output_info = reader
         .next_frame(&mut buf)
         .map_err(|e| format!("PNG frame read error: {}", e))?;
