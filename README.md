@@ -72,6 +72,11 @@ Any other upscale models you place in `models/upscale_models/` will also appear 
 - Uses cosine-feathered blending for seamless tile boundaries
 - Supports both **MultiDiffusion** and **SpotDiffusion** algorithms
 
+#### Guidance Nodes (Anti-Hallucination)
+- **Soft Guidance** (CFG Rescale) — toggle in Upscale Settings to reduce extra hands, objects, and other hallucinations at low denoise; adjustable multiplier (0.0–1.0, default 0.4)
+- **Smart Guidance** (Positive-Biased Adaptive) — toggle in Sampler Settings to bias the model toward positive conditioning across all passes
+- Custom ComfyUI nodes (`MooshieSoftGuidance`, `MooshieSmartGuidance`) auto-installed alongside tiled diffusion
+
 #### Upscale Sampler Controls
 - **Denoise** — 0 to 1 (lower = more detail preservation from original)
 - **Steps** — 1 to 50
@@ -94,6 +99,19 @@ Hover over any generated image to reveal an **Upscale** button — instantly ups
 - **Progress Bar** — Smooth animated bar (indigo for generation, emerald for upscale pass)
 - **Cancel Button** — Interrupt any generation in progress
 
+### 🌐 Internationalization (11 Languages)
+
+- **11 languages** — English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Russian, Chinese (Simplified), and Chinese (Traditional)
+- **789 translation keys** covering every UI string — generation controls, settings, setup wizard, canvas, model hub, tooltips, and more
+- **Instant switching** in Settings → Appearance — no restart needed
+- **Full parity** — all keys present in all locales with native translations
+
+### 🏷️ Quality Tags
+
+- **Anima & Illustrious** — customizable positive/negative quality tags auto-injected into prompts
+- **Pony Diffusion** — auto-applied score-based quality tags (`score_9, score_8_up, score_7_up, source_anime`)
+- All customizable in Settings and persisted across sessions
+
 ### 💾 Settings Persistence
 
 All settings are automatically saved to disk and restored on next launch:
@@ -115,8 +133,13 @@ All settings are automatically saved to disk and restored on next launch:
 - Works with both local and remote ComfyUI instances
 - **Silent background process** — ComfyUI runs without any visible terminal windows (Windows)
 
-### 🧬 Smart Model Detection
+### 🧬 Smart Model Detection & Architecture Presets
 
+- **10 model architectures** — SD1.5, SDXL, Illustrious/NoobAI, SD3/SD3.5, Flux, Pony Diffusion, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, and Kolors
+- **Auto-presets** — each architecture auto-applies optimal sampler, scheduler, steps, CFG, and resolution when selected
+- **Accelerated model detection** — models with "turbo", "lightning", "lcm", or "hyper" in the name get reduced steps (4–6), lower CFG, and appropriate settings
+- **Rectified flow scheduling** — SD3, Flux, AuraFlow, and Stable Cascade models automatically inject the correct ModelSampling node with architecture-specific shift values
+- **FluxGuidance** — Flux Dev models auto-inject a FluxGuidance node; Flux Schnell (guidance-distilled) is detected and skipped
 - **Hash-based identification** — Models are recognized by SHA256 hash (CivitAI AutoV2 format), not just filename — renamed files are still detected
 - **CivitAI integration** — Look up any model's metadata (name, version, preview images) via CivitAI's hash database
 - **Recommended models** — SIH-1.5 (~7.5 GB) and Anima Preview 2 (~13 GB) auto-download on selection with real-time progress bars and file size display
@@ -146,7 +169,8 @@ MooshieUI
 │       ├── setup.rs        # One-click installer (uv, Python, ComfyUI, PyTorch)
 │       └── templates/      # Workflow builders (txt2img, img2img, inpainting, upscale)
 └── comfyui-nodes/          # Custom ComfyUI nodes (install into comfy_extras/)
-    └── nodes_tiled_diffusion.py
+    ├── nodes_tiled_diffusion.py
+    └── nodes_guidance.py
 ```
 
 **How it works:**
@@ -170,8 +194,8 @@ MooshieUI handles everything automatically on first launch:
   - Install Python 3.11 (isolated, won't affect your system)
   - Download ComfyUI (latest from GitHub)
   - Create a virtual environment
-  - Auto-detect your GPU (NVIDIA CUDA / AMD ROCm / CPU)
-  - Install PyTorch with the right acceleration backend
+  - Auto-detect your GPU (NVIDIA CUDA / AMD ROCm / Intel XPU / CPU)
+  - Install PyTorch with the right acceleration backend (including CUDA 13.0 for Blackwell GPUs)
   - Install all ComfyUI dependencies
   - Install MooshieUI's custom nodes
 3. **Start generating** — ComfyUI launches automatically
@@ -237,9 +261,11 @@ The app will run the one-click setup wizard on first launch — no manual ComfyU
 
 ---
 
-## 🧩 Custom Node: Tiled Diffusion
+## 🧩 Custom Nodes
 
-MooshieUI ships with a custom ComfyUI node (`nodes_tiled_diffusion.py`) that implements:
+MooshieUI ships with custom ComfyUI nodes that are auto-installed into ComfyUI's `custom_nodes/` directory.
+
+### Tiled Diffusion (`nodes_tiled_diffusion.py`)
 
 ### MultiDiffusion
 *Bar-Tal et al., "MultiDiffusion: Fusing Diffusion Paths for Controlled Image Generation", ICML 2023*
@@ -261,6 +287,12 @@ Both methods:
 - Automatically detect the model's latent downscale ratio
 - Support ControlNet (proportional cropping/shifting per tile)
 - Handle inpainting conditioning (c_concat)
+
+### Guidance Nodes (`nodes_guidance.py`)
+
+**MooshieSoftGuidance** — CFG Rescale for upscale passes. Rescales classifier-free guidance to reduce hallucinated details (extra hands, objects) that appear at low denoise strengths. Adjustable multiplier (0.0 = off, 0.4 = recommended for upscale).
+
+**MooshieSmartGuidance** — Positive-Biased Adaptive guidance. Patches the model's forward pass to bias toward positive conditioning, reducing negative prompt interference. Applied globally across all generation passes.
 
 ---
 
@@ -299,7 +331,7 @@ Both methods:
 - [x] **ModelSpec support** — reads Stability AI ModelSpec metadata from safetensors headers; displays model title, author, architecture, resolution, trigger phrases (click to add to prompt), tags, and usage hints in the model selector
 - [x] **Native clipboard** — copies images via native OS clipboard (Wayland `wl-copy` and X11 `xclip` with automatic detection)
 - [x] **Auto-update** — check for and apply MooshieUI updates in-app
-- [x] **ControlNet support** — depth, canny, pose, and other control methods with preset-based and custom modes, image upload/paste/drag-drop, preprocessor installation, strength/start/end controls (SD 1.5, SDXL, Illustrious/NoobAI — not available for Anima/COSMOS models)
+- **ControlNet support** — depth, canny, pose, and other control methods with preset-based and custom modes, image upload/paste/drag-drop, preprocessor installation, strength/start/end controls (SD 1.5, SDXL, Illustrious/NoobAI, Flux, SD3.5)
 - [x] **Dark & light mode** — toggle between dark and light themes in settings
 - [x] **Draggable two-column layout** — drag sections between left/right columns and reorder them; layout persists across sessions
 - [x] **Manual ComfyUI start** — optional toggle to start ComfyUI manually instead of on app launch
@@ -315,9 +347,28 @@ Both methods:
 - [x] **Face fix auto-setup** — auto-downloads detection model and installs ultralytics on first use
 - [x] **Seed recall** — toggling off random seed recalls the last generated seed
 
+- [x] **Localization** — 11 languages with 789 keys, full parity across all locales, instant switching
+- [x] **Guidance nodes** — Soft Guidance (CFG Rescale) and Smart Guidance (Positive-Biased Adaptive) for hallucination-free upscaling
+- [x] **10 model architectures** — auto-detection with optimal presets for SD1.5, SDXL, Illustrious, SD3, Flux, Pony, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, Kolors
+- [x] **Accelerated model detection** — Turbo/Lightning/LCM/Hyper variants auto-detected with reduced steps and CFG
+- [x] **Rectified flow scheduling** — SD3, Flux, AuraFlow, Stable Cascade auto-inject correct ModelSampling nodes
+- [x] **FluxGuidance** — automatic guidance node injection for Flux Dev (skipped for Schnell)
+- [x] **Pony quality tags** — auto-applied score-based tags, customizable in Settings
+- [x] **Flux & SD3 ControlNet** — presets for XLabs-AI and Stability official controlnets
+- [x] **BF16 VAE auto-detection** — Blackwell GPUs auto-apply `--bf16-vae` to prevent fp16 overflow
+- [x] **NaN guard** — detects and clamps NaN values in VAE output to prevent black images
+- [x] **CUDA 13.0 for Blackwell** — auto-detects compute capability ≥ 12.0 and installs cu130 PyTorch
+- [x] **VRAM flush on interrupt** — calls `/free` endpoint after cancel to prevent corrupted state
+- [x] **Wayland AppImage fix** — auto-detects Wayland sessions and preloads libwayland for WebKitGTK
+- [x] **AMD multi-GPU fix** — correct ROCm architecture detection for RDNA 4 on mixed iGPU/dGPU systems
+- [x] **Gallery import** — import image output folders from ComfyUI, SwarmUI, or any other tool with duplicate detection
+- [x] **Export diagnostic logs** — single-file export with ComfyUI log, GPU info, and app configuration
+- [x] **SwarmUI metadata compatibility** — auto-strips inline syntax from imported SwarmUI image metadata
+- [x] **Info tips toggle** — hide/show tooltip icons via Settings → Accessibility
+- [x] **Native clipboard image paste** — reads images directly from OS clipboard via Tauri command
+
 ### To Do
 - [ ] **Theme customization** — custom accent colors and themes
-- [ ] **Localization** — multi-language support
 - [ ] **Video generation** — AnimateDiff / COSMOS video workflows
 - [ ] **Training UI** — LoRA training from within the app
 - [ ] **Plugin system** — extend MooshieUI with custom panels and features
