@@ -1,3 +1,37 @@
+## What's New in v0.5.0
+
+### Expanded Model Architecture Support
+- Added detection and optimal presets for **10 model architectures**: SD1.5, SDXL, Illustrious/NoobAI, SD3/SD3.5, Flux, Pony Diffusion, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, and Kolors
+- Each architecture auto-applies optimal sampler, scheduler, steps, CFG, and resolution when selected
+
+### Accelerated Model Detection (Turbo/Lightning/LCM/Hyper)
+- SDXL, SD1.5, and Pony models with "turbo", "lightning", "lcm", or "hyper" in the name are detected automatically
+- Accelerated variants get reduced steps (4–6), lower CFG, and appropriate sampler settings instead of incorrect full-step defaults
+
+### Rectified Flow Scheduling
+- SD3/SD3.5 models inject `ModelSamplingSD3` (shift 3.0, discrete flow matching)
+- Flux models inject `ModelSamplingFlux` (resolution-dependent shift: base 0.5, max 1.15)
+- AuraFlow models inject `ModelSamplingAuraFlow` (shift 1.73)
+- Stable Cascade models inject `ModelSamplingStableCascade` (shift 2.0)
+
+### FluxGuidance for Flux Dev
+- Flux Dev models automatically get a `FluxGuidance` node (guidance 3.5) injected into the positive conditioning
+- Flux Schnell (guidance-distilled) is detected and skipped — no unnecessary guidance node
+
+### SD3 Latent Support
+- txt2img uses `EmptySD3LatentImage` (16-channel) for SD3, Flux, and Anima/WAN models instead of the standard 4-channel `EmptyLatentImage`
+
+### Pony Diffusion Quality Tags
+- Auto-applied score-based quality tags: `score_9, score_8_up, score_7_up, source_anime` (positive) and `score_1, score_2, score_3` (negative)
+- Customizable via Settings, persisted alongside existing Anima and Illustrious quality tags
+
+### Flux & SD3 ControlNet Presets
+- Added Flux ControlNet models: XLabs-AI Canny v3 and Depth v3
+- Added SD3.5 ControlNet models: Stability's official Canny and Depth controlnets
+- ControlNet preset system now supports Flux and SD3 architectures with automatic model selection
+
+---
+
 ## What's New in v0.4.9
 
 ### Bug Fix: Aspect Ratio Input

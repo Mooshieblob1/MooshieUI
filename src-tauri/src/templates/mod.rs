@@ -159,6 +159,15 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
         _ => txt2img::build(params, seed),
     };
 
+    // Apply rectified flow scheduling for SD3/Flux/AuraFlow (patches model before sampling)
+    inject_rectified_flow(&mut result, params);
+
+    // Apply Stable Cascade model sampling if applicable
+    inject_cascade_sampling(&mut result, params);
+
+    // Apply FluxGuidance for Flux Dev (positive conditioning guidance)
+    inject_flux_guidance(&mut result, params);
+
     // Inject ControlNet if enabled
     if let Some(ref cn) = params.controlnet {
         if cn.enabled && cn.controlnet_model.is_some() && cn.image.is_some() {
@@ -202,4 +211,237 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
     );
 
     Value::Object(result.workflow)
+}
+
+/// Returns true when the model is an SD3/SD3.5 architecture.
+pub fn is_sd3_architecture(params: &GenerationParams) -> bool {
+    if params.model_architecture == "sd3" {
+        return true;
+    }
+    let name = model_name_lower(params);
+    if name.contains("sd3")
+        || name.contains("stable-diffusion-3")
+        || name.contains("stable_diffusion_3")
+    {
+        return true;
+    }
+    if let Some(ref clip_type) = params.clip_type {
+        if clip_type == "sd3" {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns true when the model is a Flux architecture.
+pub fn is_flux_architecture(params: &GenerationParams) -> bool {
+    if params.model_architecture == "flux" {
+        return true;
+    }
+    model_name_lower(params).contains("flux")
+}
+
+/// Returns true when the model is a Pony Diffusion architecture (SDXL-based).
+pub fn is_pony_architecture(params: &GenerationParams) -> bool {
+    if params.model_architecture == "pony" {
+        return true;
+    }
+    model_name_lower(params).contains("pony")
+}
+
+/// Returns true when the model is AuraFlow architecture.
+pub fn is_auraflow_architecture(params: &GenerationParams) -> bool {
+    if params.model_architecture == "auraflow" {
+        return true;
+    }
+    model_name_lower(params).contains("auraflow")
+}
+
+/// Returns true when the model is a PixArt architecture.
+pub fn is_pixart_architecture(params: &GenerationParams) -> bool {
+    if params.model_architecture == "pixart" {
+        return true;
+    }
+    model_name_lower(params).contains("pixart")
+}
+
+/// Returns true when the model is HunyuanDiT architecture.
+pub fn is_hunyuandit_architecture(params: &GenerationParams) -> bool {
+    if params.model_architecture == "hunyuandit" {
+        return true;
+    }
+    model_name_lower(params).contains("hunyuan")
+}
+
+/// Returns true when the model is Stable Cascade architecture.
+pub fn is_cascade_architecture(params: &GenerationParams) -> bool {
+    if params.model_architecture == "cascade" {
+        return true;
+    }
+    model_name_lower(params).contains("cascade")
+}
+
+/// Returns true when the model is Kolors architecture.
+pub fn is_kolors_architecture(params: &GenerationParams) -> bool {
+    if params.model_architecture == "kolors" {
+        return true;
+    }
+    model_name_lower(params).contains("kolors")
+}
+
+/// Returns true when the model needs a 16-channel latent (SD3, Flux, Anima/WAN).
+pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
+    if is_sd3_architecture(params) || is_flux_architecture(params) {
+        return true;
+    }
+    let name = model_name_lower(params);
+    name.contains("anima") || name.contains("wan")
+}
+
+/// Lowercase model name for heuristic checks.
+fn model_name_lower(params: &GenerationParams) -> String {
+    params
+        .diffusion_model
+        .as_deref()
+        .unwrap_or(&params.checkpoint)
+        .to_lowercase()
+}
+
+/// Inject rectified flow scheduling for models that use it (SD3, Flux, AuraFlow).
+/// Patches the model with `ModelSamplingSD3`, `ModelSamplingFlux`, or `ModelSamplingAuraFlow`
+/// and rewires the KSampler.
+fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams) {
+    if is_sd3_architecture(params) {
+        // ModelSamplingSD3 — discrete flow matching with constant shift
+        let node_id = result.next_id.to_string();
+        result.workflow.insert(
+            node_id.clone(),
+            json!({
+                "class_type": "ModelSamplingSD3",
+                "inputs": {
+                    "model": [result.model_source.0.clone(), result.model_source.1],
+                    "shift": 3.0
+                }
+            }),
+        );
+        result.model_source = (node_id, 0);
+        result.next_id += 1;
+
+        // Rewire KSampler to use patched model
+        if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+            if let Some(inputs) = sampler_node.get_mut("inputs") {
+                inputs["model"] = json!([result.model_source.0, result.model_source.1]);
+            }
+        }
+    } else if is_flux_architecture(params) {
+        // ModelSamplingFlux — resolution-dependent shift for Flux family
+        let node_id = result.next_id.to_string();
+        result.workflow.insert(
+            node_id.clone(),
+            json!({
+                "class_type": "ModelSamplingFlux",
+                "inputs": {
+                    "model": [result.model_source.0.clone(), result.model_source.1],
+                    "max_shift": 1.15,
+                    "base_shift": 0.5,
+                    "width": params.width,
+                    "height": params.height
+                }
+            }),
+        );
+        result.model_source = (node_id, 0);
+        result.next_id += 1;
+
+        // Rewire KSampler to use patched model
+        if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+            if let Some(inputs) = sampler_node.get_mut("inputs") {
+                inputs["model"] = json!([result.model_source.0, result.model_source.1]);
+            }
+        }
+    } else if is_auraflow_architecture(params) {
+        // ModelSamplingAuraFlow — discrete flow matching with shift 1.73, multiplier 1.0
+        let node_id = result.next_id.to_string();
+        result.workflow.insert(
+            node_id.clone(),
+            json!({
+                "class_type": "ModelSamplingAuraFlow",
+                "inputs": {
+                    "model": [result.model_source.0.clone(), result.model_source.1],
+                    "shift": 1.73
+                }
+            }),
+        );
+        result.model_source = (node_id, 0);
+        result.next_id += 1;
+
+        // Rewire KSampler to use patched model
+        if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+            if let Some(inputs) = sampler_node.get_mut("inputs") {
+                inputs["model"] = json!([result.model_source.0, result.model_source.1]);
+            }
+        }
+    }
+}
+
+/// Inject Stable Cascade model sampling (shift 2.0) for Cascade architecture models.
+fn inject_cascade_sampling(result: &mut WorkflowResult, params: &GenerationParams) {
+    if !is_cascade_architecture(params) {
+        return;
+    }
+
+    let node_id = result.next_id.to_string();
+    result.workflow.insert(
+        node_id.clone(),
+        json!({
+            "class_type": "ModelSamplingStableCascade",
+            "inputs": {
+                "model": [result.model_source.0.clone(), result.model_source.1],
+                "shift": 2.0
+            }
+        }),
+    );
+    result.model_source = (node_id, 0);
+    result.next_id += 1;
+
+    // Rewire KSampler to use patched model
+    if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+        if let Some(inputs) = sampler_node.get_mut("inputs") {
+            inputs["model"] = json!([result.model_source.0, result.model_source.1]);
+        }
+    }
+}
+
+/// Inject FluxGuidance for Flux Dev models (not Schnell which is guidance-distilled).
+/// Patches the positive conditioning with guidance=3.5 and rewires the KSampler.
+fn inject_flux_guidance(result: &mut WorkflowResult, params: &GenerationParams) {
+    if !is_flux_architecture(params) {
+        return;
+    }
+
+    // Skip for Schnell (already guidance-distilled, no guidance needed)
+    let name = model_name_lower(params);
+    if name.contains("schnell") {
+        return;
+    }
+
+    let node_id = result.next_id.to_string();
+    result.workflow.insert(
+        node_id.clone(),
+        json!({
+            "class_type": "FluxGuidance",
+            "inputs": {
+                "conditioning": [result.positive_source.0.clone(), result.positive_source.1],
+                "guidance": 3.5
+            }
+        }),
+    );
+    result.positive_source = (node_id, 0);
+    result.next_id += 1;
+
+    // Rewire KSampler to use guided positive conditioning
+    if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+        if let Some(inputs) = sampler_node.get_mut("inputs") {
+            inputs["positive"] = json!([result.positive_source.0, result.positive_source.1]);
+        }
+    }
 }

@@ -108,6 +108,9 @@ pub struct GenerationParams {
     /// Optional ControlNet parameters
     #[serde(default)]
     pub controlnet: Option<ControlNetParam>,
+    /// Detected model architecture from the frontend (e.g. "sd3", "sdxl", "sd15", "illustrious", "unknown")
+    #[serde(default)]
+    pub model_architecture: String,
     /// Face fix (FaceDetailer) — detect faces with YOLOv8 and re-denoise them
     #[serde(default)]
     pub facefix_enabled: bool,

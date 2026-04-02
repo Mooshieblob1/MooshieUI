@@ -16,6 +16,10 @@ export interface ControlNetPreset {
     illustrious?: ControlNetModelEntry | null;
     /** Stable Diffusion 1.5 */
     sd15?: ControlNetModelEntry | null;
+    /** Flux.1 family */
+    flux?: ControlNetModelEntry | null;
+    /** Stable Diffusion 3 / 3.5 */
+    sd3?: ControlNetModelEntry | null;
   };
 }
 
@@ -39,6 +43,14 @@ export const CONTROLNET_PRESETS: ControlNetPreset[] = [
         filename: "control_v11p_sd15_canny_fp16.safetensors",
         url: "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/main/control_v11p_sd15_canny_fp16.safetensors",
       },
+      flux: {
+        filename: "flux-canny-controlnet-v3.safetensors",
+        url: "https://huggingface.co/XLabs-AI/flux-controlnet-collections/resolve/main/flux-canny-controlnet-v3.safetensors",
+      },
+      sd3: {
+        filename: "sd3.5_large_controlnet_canny.safetensors",
+        url: "https://huggingface.co/stabilityai/stable-diffusion-3.5-controlnets/resolve/main/sd3.5_large_controlnet_canny.safetensors",
+      },
     },
   },
   {
@@ -58,6 +70,14 @@ export const CONTROLNET_PRESETS: ControlNetPreset[] = [
       sd15: {
         filename: "control_v11f1p_sd15_depth_fp16.safetensors",
         url: "https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/main/control_v11f1p_sd15_depth_fp16.safetensors",
+      },
+      flux: {
+        filename: "flux-depth-controlnet-v3.safetensors",
+        url: "https://huggingface.co/XLabs-AI/flux-controlnet-collections/resolve/main/flux-depth-controlnet-v3.safetensors",
+      },
+      sd3: {
+        filename: "sd3.5_large_controlnet_depth.safetensors",
+        url: "https://huggingface.co/stabilityai/stable-diffusion-3.5-controlnets/resolve/main/sd3.5_large_controlnet_depth.safetensors",
       },
     },
   },
@@ -135,12 +155,27 @@ export function getPreset(id: string): ControlNetPreset | undefined {
 /** Get the model entry for a preset + architecture, or null if not available */
 export function getPresetModel(
   presetId: string,
-  arch: "sdxl" | "illustrious" | "sd15" | "unknown",
+  arch: string,
 ): ControlNetModelEntry | null {
   const preset = getPreset(presetId);
   if (!preset) return null;
-  if (arch === "unknown") {
-    return preset.models.illustrious ?? preset.models.sdxl ?? preset.models.sd15 ?? null;
+
+  // Map architectures to their ControlNet compatibility
+  switch (arch) {
+    case "flux":
+      return preset.models.flux ?? null;
+    case "sd3":
+      return preset.models.sd3 ?? null;
+    case "illustrious":
+      return preset.models.illustrious ?? preset.models.sdxl ?? null;
+    case "sdxl":
+    case "pony":
+    case "kolors":
+      return preset.models.sdxl ?? null;
+    case "sd15":
+      return preset.models.sd15 ?? null;
+    default:
+      // Unknown or unsupported (auraflow, pixart, hunyuandit, cascade) — try best match
+      return preset.models.illustrious ?? preset.models.sdxl ?? preset.models.sd15 ?? null;
   }
-  return preset.models[arch] ?? null;
 }

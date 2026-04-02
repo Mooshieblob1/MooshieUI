@@ -72,6 +72,10 @@ export const DEFAULT_ANIMA_NEGATIVE_QUALITY = "worst quality, low quality, score
 export const DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY = "best quality, masterpiece, absurdres, newest, very aesthetic";
 export const DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY = "worst quality, bad quality, low quality, lowres, artistic error, bad anatomy, extra fingers, text, signature, watermark, long body, bad hands, cropped, username";
 
+/** Default quality tags for Pony Diffusion models */
+export const DEFAULT_PONY_POSITIVE_QUALITY = "score_9, score_8_up, score_7_up, source_anime";
+export const DEFAULT_PONY_NEGATIVE_QUALITY = "score_1, score_2, score_3, worst quality, low quality";
+
 class GenerationStore {
   mode = $state<"txt2img" | "img2img" | "inpainting">("txt2img");
   positivePrompt = $state("");
@@ -128,6 +132,8 @@ class GenerationStore {
   customAnimaNegativeQuality = $state(DEFAULT_ANIMA_NEGATIVE_QUALITY);
   customIllustriousPositiveQuality = $state(DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY);
   customIllustriousNegativeQuality = $state(DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY);
+  customPonyPositiveQuality = $state(DEFAULT_PONY_POSITIVE_QUALITY);
+  customPonyNegativeQuality = $state(DEFAULT_PONY_NEGATIVE_QUALITY);
   promptHistory = $state<PromptHistoryEntry[]>([]);
 
   /** Architecture detected from modelspec metadata, or null if not yet read. */
@@ -143,26 +149,112 @@ class GenerationStore {
     return this.detectedArchitecture === "illustrious";
   }
 
-  /** Detect the base model architecture from modelspec (authoritative) or filename (fallback).
-   *  Returns "illustrious" for NoobAI/Illustrious/vpred SDXL variants (need different ControlNets),
-   *  "sdxl" for standard SDXL eps, "sd15" for SD1.5, or "unknown". */
-  get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "unknown" {
+  /** True when the selected model is an SD3/SD3.5 variant. */
+  get isSd3(): boolean {
+    return this.detectedArchitecture === "sd3";
+  }
+
+  /** True when the selected model is a Flux variant. */
+  get isFlux(): boolean {
+    return this.detectedArchitecture === "flux";
+  }
+
+  /** True when the selected model is a Pony Diffusion variant. */
+  get isPony(): boolean {
+    return this.detectedArchitecture === "pony";
+  }
+
+  /** True when the selected model is AuraFlow. */
+  get isAuraFlow(): boolean {
+    return this.detectedArchitecture === "auraflow";
+  }
+
+  /** True when the selected model is PixArt. */
+  get isPixArt(): boolean {
+    return this.detectedArchitecture === "pixart";
+  }
+
+  /** True when the selected model is HunyuanDiT. */
+  get isHunyuanDit(): boolean {
+    return this.detectedArchitecture === "hunyuandit";
+  }
+
+  /** True when the selected model is Stable Cascade. */
+  get isCascade(): boolean {
+    return this.detectedArchitecture === "cascade";
+  }
+
+  /** True when the selected model is Kolors. */
+  get isKolors(): boolean {
+    return this.detectedArchitecture === "kolors";
+  }
+
+  /** True when the model is an accelerated variant (turbo/lightning/lcm/hyper) needing fewer steps. */
+  get isAccelerated(): boolean {
+    const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
+    return name.includes("turbo") || name.includes("lightning") || name.includes("lcm") || name.includes("hyper");
+  }
+
+  /** True when the model uses a 16-channel latent space (SD3, SD3.5, Flux, Anima/WAN). */
+  get needsSd3Latent(): boolean {
+    return this.isSd3 || this.isFlux || this.isAnima;
+  }
+
+  /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow). */
+  get usesRectifiedFlow(): boolean {
+    return this.isSd3 || this.isFlux || this.isAuraFlow;
+  }
+
+  /** Detect the base model architecture from modelspec (authoritative) or filename (fallback). */
+  get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "sd3" | "flux" | "pony" | "auraflow" | "pixart" | "hunyuandit" | "cascade" | "kolors" | "unknown" {
     const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
 
     // 1. Use modelspec architecture if available (definitive)
     if (this.modelspecArchitecture) {
       const arch = this.modelspecArchitecture.toLowerCase();
-      // Check for Illustrious/NoobAI family first (they report as SDXL arch but need special ControlNets)
+      // Illustrious/NoobAI family (they report as SDXL arch but need special ControlNets)
       if (name.includes("illustrious") || name.includes("noobai") || name.includes("noob") || name.includes("sih")) return "illustrious";
-      if (arch.includes("xl") || arch.includes("sdxl") || arch.includes("pony")) return "sdxl";
+      // Pony (SDXL-based but very different optimal settings)
+      if (name.includes("pony")) return "pony";
+      // SD3 / SD3.5 family
+      if (arch.includes("sd3") || arch.includes("sd-3") || arch.includes("stable-diffusion-3")) return "sd3";
+      // Flux family
+      if (arch.includes("flux")) return "flux";
+      // AuraFlow
+      if (arch.includes("auraflow")) return "auraflow";
+      // PixArt
+      if (arch.includes("pixart")) return "pixart";
+      // HunyuanDiT
+      if (arch.includes("hunyuan")) return "hunyuandit";
+      // Stable Cascade
+      if (arch.includes("cascade") || arch.includes("stable_cascade")) return "cascade";
+      // Kolors
+      if (arch.includes("kolors")) return "kolors";
+      if (arch.includes("xl") || arch.includes("sdxl")) return "sdxl";
       if (arch.includes("sd-1") || arch.includes("sd1") || arch.includes("v1-")) return "sd15";
     }
 
     // 2. Fall back to filename heuristics
     if (!name) return "unknown";
-    // Illustrious/NoobAI/vpred SDXL variants — need dedicated ControlNets
+    // Illustrious/NoobAI/vpred SDXL variants
     if (name.includes("illustrious") || name.includes("noobai") || name.includes("noob") || name.includes("sih")) return "illustrious";
-    if (name.includes("sdxl") || name.includes("xl") || name.includes("flux") || name.includes("pony")) return "sdxl";
+    // Pony Diffusion (check before SDXL — pony names often contain "xl")
+    if (name.includes("pony")) return "pony";
+    // SD3 / SD3.5 family (check before SDXL)
+    if (name.includes("sd3") || name.includes("sd3.5") || name.includes("stable-diffusion-3") || name.includes("stable_diffusion_3")) return "sd3";
+    // Flux family (check before SDXL)
+    if (name.includes("flux")) return "flux";
+    // AuraFlow
+    if (name.includes("auraflow")) return "auraflow";
+    // PixArt
+    if (name.includes("pixart")) return "pixart";
+    // HunyuanDiT
+    if (name.includes("hunyuan")) return "hunyuandit";
+    // Stable Cascade
+    if (name.includes("cascade")) return "cascade";
+    // Kolors
+    if (name.includes("kolors")) return "kolors";
+    if (name.includes("sdxl") || name.includes("xl")) return "sdxl";
     if (name.includes("1.5") || name.includes("sd15") || name.includes("sd_15")) return "sd15";
     return "unknown";
   }
@@ -302,29 +394,138 @@ class GenerationStore {
       return;
     }
 
-    if (name.includes("sdxl") || name.includes("flux") || name.includes("sih") || name.includes("xl")) {
-      this.steps = 20;
-      this.cfg = 1.4;
-      this.samplerName = "euler_cfg_pp";
+    // SD3 / SD3.5 family — 28 steps, moderate CFG, euler sampler
+    if (name.includes("sd3") || name.includes("stable-diffusion-3") || name.includes("stable_diffusion_3")) {
+      const isTurbo = name.includes("turbo");
+      this.steps = isTurbo ? 4 : 28;
+      this.cfg = isTurbo ? 1.2 : 4.5;
+      this.samplerName = "euler";
       this.scheduler = "sgm_uniform";
       this.width = 1024;
       this.height = 1024;
-      // Face fix and upscale steps are 1/3 of main image steps
+      this.facefixSteps = Math.ceil(this.steps / 3);
+      this.upscaleSteps = Math.ceil(this.steps / 3);
+      return;
+    }
+
+    // Flux family — euler sampler, low/no CFG (guidance-distilled)
+    if (name.includes("flux")) {
+      const isSchnell = name.includes("schnell");
+      this.steps = isSchnell ? 4 : 20;
+      this.cfg = 1.0;
+      this.samplerName = "euler";
+      this.scheduler = "simple";
+      this.width = 1024;
+      this.height = 1024;
+      this.facefixSteps = Math.ceil(this.steps / 3);
+      this.upscaleSteps = Math.ceil(this.steps / 3);
+      return;
+    }
+
+    // Pony Diffusion — SDXL-based but needs higher CFG and score-based quality tags
+    if (name.includes("pony")) {
+      const isAccel = name.includes("turbo") || name.includes("lightning") || name.includes("lcm") || name.includes("hyper");
+      this.steps = isAccel ? 6 : 25;
+      this.cfg = isAccel ? 2.0 : 7.0;
+      this.samplerName = isAccel ? "euler" : "euler_a";
+      this.scheduler = "normal";
+      this.width = 1024;
+      this.height = 1024;
+      this.facefixSteps = Math.ceil(this.steps / 3);
+      this.upscaleSteps = Math.ceil(this.steps / 3);
+      return;
+    }
+
+    // AuraFlow — rectified flow DiT, shift 1.73
+    if (name.includes("auraflow")) {
+      this.steps = 28;
+      this.cfg = 3.5;
+      this.samplerName = "euler";
+      this.scheduler = "normal";
+      this.width = 1024;
+      this.height = 1024;
+      this.facefixSteps = Math.ceil(28 / 3);
+      this.upscaleSteps = Math.ceil(28 / 3);
+      return;
+    }
+
+    // PixArt — DiT with T5 text encoder
+    if (name.includes("pixart")) {
+      this.steps = 20;
+      this.cfg = 4.5;
+      this.samplerName = "euler";
+      this.scheduler = "normal";
+      this.width = 1024;
+      this.height = 1024;
       this.facefixSteps = Math.ceil(20 / 3);
       this.upscaleSteps = Math.ceil(20 / 3);
       return;
     }
 
+    // HunyuanDiT — bilingual DiT with CLIP + T5
+    if (name.includes("hunyuan")) {
+      this.steps = 30;
+      this.cfg = 6.0;
+      this.samplerName = "euler";
+      this.scheduler = "normal";
+      this.width = 1024;
+      this.height = 1024;
+      this.facefixSteps = Math.ceil(30 / 3);
+      this.upscaleSteps = Math.ceil(30 / 3);
+      return;
+    }
+
+    // Stable Cascade — multi-stage pipeline
+    if (name.includes("cascade")) {
+      this.steps = 20;
+      this.cfg = 4.0;
+      this.samplerName = "euler";
+      this.scheduler = "simple";
+      this.width = 1024;
+      this.height = 1024;
+      this.facefixSteps = Math.ceil(20 / 3);
+      this.upscaleSteps = Math.ceil(20 / 3);
+      return;
+    }
+
+    // Kolors — SDXL-based with ChatGLM text encoder
+    if (name.includes("kolors")) {
+      this.steps = 25;
+      this.cfg = 5.0;
+      this.samplerName = "euler";
+      this.scheduler = "normal";
+      this.width = 1024;
+      this.height = 1024;
+      this.facefixSteps = Math.ceil(25 / 3);
+      this.upscaleSteps = Math.ceil(25 / 3);
+      return;
+    }
+
+    // Standard SDXL (including Illustrious/SIH) — with accelerated variant detection
+    if (name.includes("sdxl") || name.includes("sih") || name.includes("xl")) {
+      const isAccel = name.includes("turbo") || name.includes("lightning") || name.includes("lcm") || name.includes("hyper");
+      this.steps = isAccel ? 6 : 20;
+      this.cfg = isAccel ? 2.0 : 1.4;
+      this.samplerName = isAccel ? "euler" : "euler_cfg_pp";
+      this.scheduler = isAccel ? "normal" : "sgm_uniform";
+      this.width = 1024;
+      this.height = 1024;
+      this.facefixSteps = Math.ceil(this.steps / 3);
+      this.upscaleSteps = Math.ceil(this.steps / 3);
+      return;
+    }
+
+    // SD 1.5 — with accelerated variant detection
     if (name.includes("1.5") || name.includes("sd15") || name.includes("sd_15")) {
-      this.steps = 28;
-      this.cfg = 7.0;
-      this.samplerName = "dpmpp_2m";
-      this.scheduler = "karras";
+      const isAccel = name.includes("turbo") || name.includes("lightning") || name.includes("lcm") || name.includes("hyper");
+      this.steps = isAccel ? 6 : 28;
+      this.cfg = isAccel ? 2.0 : 7.0;
+      this.samplerName = isAccel ? "euler" : "dpmpp_2m";
+      this.scheduler = isAccel ? "normal" : "karras";
       this.width = 512;
       this.height = 512;
-      // Face fix and upscale steps are 1/3 of main image steps
-      this.facefixSteps = Math.ceil(28 / 3);
-      this.upscaleSteps = Math.ceil(28 / 3);
+      this.facefixSteps = Math.ceil(this.steps / 3);
+      this.upscaleSteps = Math.ceil(this.steps / 3);
     }
   }
 
@@ -391,6 +592,8 @@ class GenerationStore {
         if (saved.customAnimaNegativeQuality !== undefined) this.customAnimaNegativeQuality = saved.customAnimaNegativeQuality;
         if (saved.customIllustriousPositiveQuality !== undefined) this.customIllustriousPositiveQuality = saved.customIllustriousPositiveQuality;
         if (saved.customIllustriousNegativeQuality !== undefined) this.customIllustriousNegativeQuality = saved.customIllustriousNegativeQuality;
+        if (saved.customPonyPositiveQuality !== undefined) this.customPonyPositiveQuality = saved.customPonyPositiveQuality;
+        if (saved.customPonyNegativeQuality !== undefined) this.customPonyNegativeQuality = saved.customPonyNegativeQuality;
         // Migrate: old default was "text_chunk", new default is "both" (stealth + text)
         if (!localStorage.getItem("mooshieui.metadataMode.v2")) {
           this.metadataMode = "both";
@@ -460,6 +663,8 @@ class GenerationStore {
         customAnimaNegativeQuality: this.customAnimaNegativeQuality,
         customIllustriousPositiveQuality: this.customIllustriousPositiveQuality,
         customIllustriousNegativeQuality: this.customIllustriousNegativeQuality,
+        customPonyPositiveQuality: this.customPonyPositiveQuality,
+        customPonyNegativeQuality: this.customPonyNegativeQuality,
       });
     } catch (e) {
       console.error("Failed to save settings:", e);
@@ -487,6 +692,12 @@ class GenerationStore {
         positivePrompt = this.mergeTagPrompts(this.customIllustriousPositiveQuality, positivePrompt);
         negativePrompt = this.mergeTagPrompts(negativePrompt, this.customIllustriousNegativeQuality);
       }
+
+      // Pony Diffusion (score-based quality tags)
+      if (this.isPony) {
+        positivePrompt = this.mergeTagPrompts(this.customPonyPositiveQuality, positivePrompt);
+        negativePrompt = this.mergeTagPrompts(negativePrompt, this.customPonyNegativeQuality);
+      }
     }
 
     // Build quality-only prompts for tiled upscale (reduces tile seam artifacts)
@@ -499,6 +710,9 @@ class GenerationStore {
       } else if (this.isIllustrious) {
         upscalePositivePrompt = this.customIllustriousPositiveQuality;
         upscaleNegativePrompt = this.customIllustriousNegativeQuality;
+      } else if (this.isPony) {
+        upscalePositivePrompt = this.customPonyPositiveQuality;
+        upscaleNegativePrompt = this.customPonyNegativeQuality;
       }
     }
 
@@ -561,6 +775,7 @@ class GenerationStore {
       facefix_steps: this.facefixSteps,
       facefix_guide_size: this.facefixGuideSize,
       facefix_max_faces: this.facefixMaxFaces,
+      model_architecture: this.detectedArchitecture,
       output_bit_depth: this.outputBitDepth,
     };
   }

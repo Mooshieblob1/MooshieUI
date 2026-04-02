@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::{load_model_nodes, WorkflowResult};
+use super::{load_model_nodes, needs_sd3_latent, WorkflowResult};
 use crate::comfyui::types::GenerationParams;
 
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
@@ -42,12 +42,13 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     );
     next_id += 1;
 
-    // Empty latent image
+    // Empty latent image — use SD3 variant (16 channels) for SD3/Flux and Anima/WAN models
     let latent_id = next_id.to_string();
+    let use_sd3_latent = needs_sd3_latent(params);
     workflow.insert(
         latent_id.clone(),
         json!({
-            "class_type": "EmptyLatentImage",
+            "class_type": if use_sd3_latent { "EmptySD3LatentImage" } else { "EmptyLatentImage" },
             "inputs": {
                 "width": params.width,
                 "height": params.height,
