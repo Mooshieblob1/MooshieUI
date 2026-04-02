@@ -1,3 +1,20 @@
+## What's New in v0.5.3
+
+### MooshieUI Metadata Identity
+- PNG metadata now includes a `mooshie_extra` object alongside the existing SwarmUI-compatible `sui_image_params` — images are identified as "MooshieUI" by parsers like PI-Chan instead of generic "SwarmUI"
+- Detection marker `"software": "MooshieUI"` is always present in embedded metadata
+- Full backward compatibility preserved — SwarmUI and other parsers ignore `mooshie_extra`
+
+### Extended Metadata Parameters
+- **Model Architecture** — now embedded in image metadata (SD1.5, SDXL, Flux, etc.)
+- **Smart Guidance** — recorded when enabled
+- **Differential Diffusion** — recorded when enabled (inpainting)
+- **ControlNet** — preset name, model, and strength now embedded when ControlNet is active
+- **Upscale details** — tiling, tile size, upscale steps, and soft guidance multiplier now included
+- All MooshieUI-exclusive params round-trip correctly when re-importing images
+
+---
+
 ## What's New in v0.5.2
 
 ### Bug Fix: Guidance Nodes Not Installed

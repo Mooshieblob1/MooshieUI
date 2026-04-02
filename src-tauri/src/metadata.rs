@@ -524,6 +524,27 @@ fn format_swarmui_json(params: &HashMap<String, String>) -> String {
         serde_json::Value::Object(extra_data),
     );
 
+    // MooshieUI marker + any mooshie_-prefixed extras
+    let mut mooshie_extra = serde_json::Map::new();
+    mooshie_extra.insert(
+        "software".to_string(),
+        serde_json::Value::String("MooshieUI".to_string()),
+    );
+    for (key, value) in params {
+        if let Some(stripped) = key.strip_prefix("mooshie_") {
+            if !value.is_empty() {
+                mooshie_extra.insert(
+                    stripped.to_string(),
+                    serde_json::Value::String(value.clone()),
+                );
+            }
+        }
+    }
+    root.insert(
+        "mooshie_extra".to_string(),
+        serde_json::Value::Object(mooshie_extra),
+    );
+
     serde_json::to_string_pretty(&root).unwrap_or_else(|_| "{}".to_string())
 }
 
@@ -588,6 +609,22 @@ fn parse_swarmui_json(text: &str) -> Option<HashMap<String, String>> {
         }
         if let Some(gen_time) = extra.get("generation_time").and_then(|v| v.as_str()) {
             params.insert("generation_time".to_string(), gen_time.to_string());
+        }
+    }
+
+    // Round-trip MooshieUI extras back into the flat map
+    if let Some(mooshie) = obj.get("mooshie_extra").and_then(|v| v.as_object()) {
+        for (key, value) in mooshie {
+            if key == "software" {
+                continue;
+            }
+            let s = match value {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            if !s.is_empty() {
+                params.insert(format!("mooshie_{}", key), s);
+            }
         }
     }
 

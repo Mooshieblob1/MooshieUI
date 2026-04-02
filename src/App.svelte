@@ -567,6 +567,35 @@
       metadata.upscale_model = params.upscale_model ?? "";
       metadata.upscale_scale = String(params.upscale_scale);
       metadata.upscale_denoise = String(params.upscale_denoise);
+      metadata.mooshie_upscale_steps = String(params.upscale_steps);
+      if (params.upscale_tiling) {
+        metadata.mooshie_upscale_tiling = "true";
+        metadata.mooshie_upscale_tile_size = String(params.upscale_tile_size);
+      }
+      if (params.upscale_soft_guidance) {
+        metadata.mooshie_soft_guidance = String(params.upscale_soft_guidance_multiplier);
+      }
+    }
+
+    // MooshieUI-exclusive parameters
+    metadata.mooshie_model_architecture = params.model_architecture;
+
+    if (params.smart_guidance) {
+      metadata.mooshie_smart_guidance = "true";
+    }
+
+    if (params.differential_diffusion) {
+      metadata.mooshie_differential_diffusion = "true";
+    }
+
+    if (params.controlnet?.enabled) {
+      if (params.controlnet.preset) {
+        metadata.mooshie_controlnet_preset = params.controlnet.preset;
+      }
+      if (params.controlnet.controlnet_model) {
+        metadata.mooshie_controlnet_model = params.controlnet.controlnet_model;
+      }
+      metadata.mooshie_controlnet_strength = String(params.controlnet.strength);
     }
 
     return metadata;
@@ -624,6 +653,23 @@
 
       if (metadata.vae !== undefined) {
         generation.vae = metadata.vae;
+      }
+
+      // MooshieUI-exclusive params round-trip
+      if (metadata.mooshie_smart_guidance !== undefined) {
+        generation.smartGuidance = metadata.mooshie_smart_guidance === "true";
+      }
+      if (metadata.mooshie_differential_diffusion !== undefined) {
+        generation.differentialDiffusion = metadata.mooshie_differential_diffusion === "true";
+      }
+      if (metadata.mooshie_controlnet_preset !== undefined) {
+        generation.controlnetPreset = metadata.mooshie_controlnet_preset;
+      }
+      if (metadata.mooshie_controlnet_model !== undefined) {
+        generation.controlnetModel = metadata.mooshie_controlnet_model;
+      }
+      if (metadata.mooshie_controlnet_strength !== undefined) {
+        generation.controlnetStrength = Number(metadata.mooshie_controlnet_strength) || generation.controlnetStrength;
       }
 
       if (mode === "remix") {
