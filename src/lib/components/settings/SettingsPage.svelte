@@ -8,6 +8,7 @@
   import { generation, DEFAULT_ANIMA_POSITIVE_QUALITY, DEFAULT_ANIMA_NEGATIVE_QUALITY, DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY, DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY } from "../../stores/generation.svelte.js";
   import { accessibility } from "../../stores/accessibility.svelte.js";
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
   import { check } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
   import { invoke } from "@tauri-apps/api/core";
@@ -75,6 +76,9 @@
     importError = null;
     try {
       importResult = await importImageDirectory(selected as string);
+      if (importResult.imported > 0) {
+        await gallery.loadFromDisk();
+      }
     } catch (e) {
       importError = String(e);
     } finally {

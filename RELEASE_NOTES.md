@@ -1,3 +1,11 @@
+## What's New in v0.5.9
+
+### Bug Fix: Import Images from Directory
+- Fixed a bug where "Import images from directory" in Settings showed an "Importing..." status but images never appeared in the gallery
+- The gallery now refreshes automatically after a successful import without requiring a manual reload
+
+---
+
 ## What's New in v0.5.8
 
 ### Manual Save Mode
