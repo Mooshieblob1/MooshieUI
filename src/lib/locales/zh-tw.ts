@@ -550,8 +550,10 @@ const zhTw: Record<string, string> = {
   "lora.likes": "按讚",
 
   // ── 底部面板 ────────────────────────────────────────────
-  "bottom_panel.tab.loras": "LoRA",
-  "bottom_panel.tab.images": "影像",
+  "bottom_panel.tab.loras": "LoRA",  "bottom_panel.tab.checkpoints": "檢查點",
+  "checkpoint.search_placeholder": "搜尋檢查點...",
+  "checkpoint.no_results": "找不到檢查點",
+  "checkpoint.active": "目前",  "bottom_panel.tab.images": "影像",
   "bottom_panel.tab.prompts": "提示詞",
   "bottom_panel.no_images": "本次工作階段未生成影像",
   "bottom_panel.no_prompts": "生成後提示詞歷史將顯示在這裡",

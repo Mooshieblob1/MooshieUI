@@ -384,6 +384,29 @@ fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams)
                 inputs["model"] = json!([result.model_source.0, result.model_source.1]);
             }
         }
+    } else if params.uses_rectified_flow {
+        // Generic rectified flow model (e.g. SDXL/Illustrious retrained with RF)
+        // Apply ModelSamplingSD3 with shift 3.0 for discrete flow matching
+        let node_id = result.next_id.to_string();
+        result.workflow.insert(
+            node_id.clone(),
+            json!({
+                "class_type": "ModelSamplingSD3",
+                "inputs": {
+                    "model": [result.model_source.0.clone(), result.model_source.1],
+                    "shift": 3.0
+                }
+            }),
+        );
+        result.model_source = (node_id, 0);
+        result.next_id += 1;
+
+        // Rewire KSampler to use patched model
+        if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+            if let Some(inputs) = sampler_node.get_mut("inputs") {
+                inputs["model"] = json!([result.model_source.0, result.model_source.1]);
+            }
+        }
     }
 }
 

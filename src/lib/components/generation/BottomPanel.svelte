@@ -2,8 +2,10 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { models } from "../../stores/models.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import LoraGallery from "./LoraGallery.svelte";
+  import CheckpointGallery from "./CheckpointGallery.svelte";
   import type { OutputImage } from "../../types/index.js";
 
   interface Props {
@@ -14,21 +16,34 @@
 
   let { onupscale, oninpaint, oncontextmenu }: Props = $props();
 
-  type TabId = "loras" | "images" | "prompts";
+  type TabId = "loras" | "checkpoints" | "images" | "prompts";
 
   const TAB_KEY = "mooshieui.bottomPanel.activeTab.v1";
+
+  const showCheckpointsTab = $derived(models.checkpoints.length > 10);
 
   let activeTab = $state<TabId>(
     (typeof window !== "undefined" && (localStorage.getItem(TAB_KEY) as TabId | null)) || "loras"
   );
 
+  // If the checkpoints tab disappears (count dropped), fall back to loras
+  $effect(() => {
+    if (activeTab === "checkpoints" && !showCheckpointsTab) {
+      activeTab = "loras";
+    }
+  });
+
   $effect(() => {
     try { localStorage.setItem(TAB_KEY, activeTab); } catch {}
   });
 
-  const tabs: TabId[] = ["loras", "images", "prompts"];
+  const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts"];
+  const visibleTabs = $derived(
+    showCheckpointsTab ? allTabs : allTabs.filter((t) => t !== "checkpoints")
+  );
   const tabLabelKeys: Record<TabId, string> = {
     loras: "bottom_panel.tab.loras",
+    checkpoints: "bottom_panel.tab.checkpoints",
     images: "bottom_panel.tab.images",
     prompts: "bottom_panel.tab.prompts",
   };
@@ -64,7 +79,7 @@
 <div class="flex flex-col h-full">
   <!-- Tab bar -->
   <div class="flex items-center gap-0.5 px-2 pt-1 pb-0.5 border-b border-neutral-800 shrink-0">
-    {#each tabs as tab}
+    {#each visibleTabs as tab}
       <button
         onclick={() => { activeTab = tab; }}
         class="px-3 py-1.5 text-[11px] font-medium rounded-t-md transition-colors flex items-center gap-1.5 {activeTab === tab
@@ -73,6 +88,8 @@
       >
         {#if tab === "loras"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        {:else if tab === "checkpoints"}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
         {:else if tab === "images"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
         {:else}
@@ -93,8 +110,8 @@
   <!-- Tab content -->
   <div class="flex-1 min-h-0 overflow-hidden">
     {#if activeTab === "loras"}
-      <LoraGallery />
-    {:else if activeTab === "images"}
+      <LoraGallery />    {:else if activeTab === "checkpoints"}
+      <CheckpointGallery />    {:else if activeTab === "images"}
       <!-- Session History -->
       {#if gallery.sessionImages.length === 0}
         <div class="flex items-center justify-center h-full text-neutral-500 text-xs">

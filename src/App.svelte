@@ -132,6 +132,19 @@
     node.focus();
   }
 
+  function loadMoreGallery(node: HTMLElement) {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          galleryRenderLimit += 48;
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(node);
+    return { destroy() { observer.disconnect(); } };
+  }
+
   // Reset zoom when lightbox opens (only on transition to open)
   let lbWasOpen = false;
   $effect(() => {
@@ -371,6 +384,19 @@
   let galleryView = $state<"huge" | "large" | "small" | "details">("large");
   let sortedGalleryImages = $state<OutputImage[]>([]);
   let groupedGalleryImages = $state<Array<{ label: string; images: OutputImage[] }>>([]);
+  let galleryRenderLimit = $state(48);
+  const galleryTotalCount = $derived(groupedGalleryImages.reduce((sum, g) => sum + g.images.length, 0));
+  const galleryGroupsVisible = $derived.by(() => {
+    let remaining = galleryRenderLimit;
+    const result: Array<{ label: string; images: OutputImage[] }> = [];
+    for (const group of groupedGalleryImages) {
+      if (remaining <= 0) break;
+      const images = group.images.slice(0, remaining);
+      remaining -= images.length;
+      if (images.length > 0) result.push({ label: group.label, images });
+    }
+    return result;
+  });
   let lightboxMetadata = $state<Record<string, string> | null>(null);
   let loadingLightboxMetadata = $state(false);
   let metadataPanelWidth = $state(340);
@@ -782,6 +808,7 @@
     } else {
       groupedGalleryImages = [{ label: locale.t("gallery.all_images"), images: filteredByBoard }];
     }
+    galleryRenderLimit = 48;
   });
 
   $effect(() => {
@@ -1351,7 +1378,7 @@
               </div>
             </div>
 
-            {#each groupedGalleryImages as group}
+            {#each galleryGroupsVisible as group}
               <section class="space-y-2">
                 {#if galleryGroupBy === "date"}
                   <h3 class="text-sm text-neutral-300 font-medium">{group.label}</h3>
@@ -1452,6 +1479,9 @@
                 {/if}
               </section>
             {/each}
+            {#if galleryRenderLimit < galleryTotalCount}
+              <div use:loadMoreGallery class="h-4 w-full"></div>
+            {/if}
           </div>
         {/if}
       </div>

@@ -117,6 +117,9 @@ pub struct GenerationParams {
     /// Detected model architecture from the frontend (e.g. "sd3", "sdxl", "sd15", "illustrious", "unknown")
     #[serde(default)]
     pub model_architecture: String,
+    /// Whether the model uses rectified flow scheduling (detected from filename or architecture)
+    #[serde(default)]
+    pub uses_rectified_flow: bool,
     /// Enable Smart Guidance (positive-biased) — patches model for all generation passes
     #[serde(default)]
     pub smart_guidance: bool,

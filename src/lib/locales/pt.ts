@@ -551,6 +551,10 @@ const pt: Record<string, string> = {
 
   // ── Painel Inferior ─────────────────────────────────────
   "bottom_panel.tab.loras": "LoRAs",
+  "bottom_panel.tab.checkpoints": "Checkpoints",
+  "checkpoint.search_placeholder": "Pesquisar checkpoints...",
+  "checkpoint.no_results": "Nenhum checkpoint encontrado",
+  "checkpoint.active": "Ativo",
   "bottom_panel.tab.images": "Imagens",
   "bottom_panel.tab.prompts": "Prompts",
   "bottom_panel.no_images": "Nenhuma imagem gerada nesta sessão",

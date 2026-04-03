@@ -550,8 +550,10 @@ const zh: Record<string, string> = {
   "lora.likes": "点赞",
 
   // ── 底部面板 ────────────────────────────────────────────
-  "bottom_panel.tab.loras": "LoRA",
-  "bottom_panel.tab.images": "图像",
+  "bottom_panel.tab.loras": "LoRA",  "bottom_panel.tab.checkpoints": "检查点",
+  "checkpoint.search_placeholder": "搜索检查点...",
+  "checkpoint.no_results": "未找到检查点",
+  "checkpoint.active": "当前",  "bottom_panel.tab.images": "图像",
   "bottom_panel.tab.prompts": "提示词",
   "bottom_panel.no_images": "本次会话未生成图像",
   "bottom_panel.no_prompts": "生成后提示词历史将显示在这里",

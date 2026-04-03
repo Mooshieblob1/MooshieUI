@@ -1,3 +1,13 @@
+## What's New in v0.5.5
+
+### Gallery Performance
+- Gallery now renders progressively — first 48 images load immediately, additional batches load as you scroll, eliminating the initial lag spike when opening large galleries
+- An `IntersectionObserver` sentinel at the bottom of the grid seamlessly loads the next 48 images as needed
+- Sort, filter, and group changes reset to the first page, keeping the initial render instant
+- Reduced thumbnail pre-fetch distance (`rootMargin`) from 200 px to 100 px, cutting simultaneous network requests in half when the gallery opens
+
+---
+
 ## What's New in v0.5.4
 
 ### Re-Release Stability

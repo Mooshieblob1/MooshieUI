@@ -1735,10 +1735,12 @@
         ></div>
         <button
           onclick={toggleLeftPanel}
-          class="absolute top-1/2 -translate-y-1/2 z-20 w-4 h-8 flex items-center justify-center rounded-r bg-neutral-800 border border-neutral-700 border-l-0 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 transition-colors"
+          class="absolute top-1/2 -translate-y-1/2 left-0 z-20 w-6 h-12 flex items-center justify-center rounded-r border border-l-0 transition-colors {leftCollapsed
+            ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
+            : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
           title={leftCollapsed ? "Expand left panel" : "Collapse left panel"}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 transition-transform {leftCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {leftCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
       </div>
     {/if}
@@ -1781,10 +1783,12 @@
           ></div>
           <button
             onclick={toggleBottomPanel}
-            class="absolute left-1/2 -translate-x-1/2 z-20 h-4 w-8 flex items-center justify-center rounded-b bg-neutral-800 border border-neutral-700 border-t-0 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 transition-colors"
+            class="absolute left-1/2 -translate-x-1/2 bottom-0 z-20 h-6 w-12 flex items-center justify-center rounded-t border border-b-0 transition-colors {bottomCollapsed
+              ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
+              : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
             title={bottomCollapsed ? "Expand bottom panel" : "Collapse bottom panel"}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 transition-transform {bottomCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {bottomCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
         </div>
         {#if !bottomCollapsed}
@@ -1810,10 +1814,12 @@
         ></div>
         <button
           onclick={toggleRightPanel}
-          class="absolute top-1/2 -translate-y-1/2 z-20 w-4 h-8 flex items-center justify-center rounded-l bg-neutral-800 border border-neutral-700 border-r-0 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 transition-colors"
+          class="absolute top-1/2 -translate-y-1/2 right-0 z-20 w-6 h-12 flex items-center justify-center rounded-l border border-r-0 transition-colors {rightCollapsed
+            ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
+            : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
           title={rightCollapsed ? "Expand right panel" : "Collapse right panel"}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 transition-transform {rightCollapsed ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {rightCollapsed ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
       </div>
     {/if}

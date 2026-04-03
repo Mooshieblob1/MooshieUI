@@ -550,8 +550,10 @@ const ko: Record<string, string> = {
   "lora.likes": "좋아요",
 
   // ── 하단 패널 ──────────────────────────────────────────
-  "bottom_panel.tab.loras": "LoRA",
-  "bottom_panel.tab.images": "이미지",
+  "bottom_panel.tab.loras": "LoRA",  "bottom_panel.tab.checkpoints": "체크포인트",
+  "checkpoint.search_placeholder": "체크포인트 검색...",
+  "checkpoint.no_results": "체크포인트를 찾을 수 없습니다",
+  "checkpoint.active": "활성",  "bottom_panel.tab.images": "이미지",
   "bottom_panel.tab.prompts": "프롬프트",
   "bottom_panel.no_images": "이 세션에서 생성된 이미지 없음",
   "bottom_panel.no_prompts": "생성 후 프롬프트 기록이 여기에 표시됩니다",

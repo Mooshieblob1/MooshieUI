@@ -572,8 +572,10 @@ const ja: Record<string, string> = {
   "lora.likes": "いいね",
 
   // ── 下部パネル ──────────────────────────────────────────
-  "bottom_panel.tab.loras": "LoRA",
-  "bottom_panel.tab.images": "画像",
+  "bottom_panel.tab.loras": "LoRA",  "bottom_panel.tab.checkpoints": "チェックポイント",
+  "checkpoint.search_placeholder": "チェックポイントを検索...",
+  "checkpoint.no_results": "チェックポイントが見つかりません",
+  "checkpoint.active": "使用中",  "bottom_panel.tab.images": "画像",
   "bottom_panel.tab.prompts": "プロンプト",
   "bottom_panel.no_images": "このセッションで生成された画像はありません",
   "bottom_panel.no_prompts": "生成後にプロンプト履歴がここに表示されます",

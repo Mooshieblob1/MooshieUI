@@ -551,6 +551,10 @@ const de: Record<string, string> = {
 
   // ── Unteres Panel ───────────────────────────────────────
   "bottom_panel.tab.loras": "LoRAs",
+  "bottom_panel.tab.checkpoints": "Checkpoints",
+  "checkpoint.search_placeholder": "Checkpoints suchen...",
+  "checkpoint.no_results": "Keine Checkpoints gefunden",
+  "checkpoint.active": "Aktiv",
   "bottom_panel.tab.images": "Bilder",
   "bottom_panel.tab.prompts": "Prompts",
   "bottom_panel.no_images": "Keine Bilder in dieser Sitzung erzeugt",

@@ -550,8 +550,10 @@ const it: Record<string, string> = {
   "lora.likes": "Mi piace",
 
   // ── Pannello inferiore ──────────────────────────────────
-  "bottom_panel.tab.loras": "LoRA",
-  "bottom_panel.tab.images": "Immagini",
+  "bottom_panel.tab.loras": "LoRA",  "bottom_panel.tab.checkpoints": "Checkpoint",
+  "checkpoint.search_placeholder": "Cerca checkpoint...",
+  "checkpoint.no_results": "Nessun checkpoint trovato",
+  "checkpoint.active": "Attivo",  "bottom_panel.tab.images": "Immagini",
   "bottom_panel.tab.prompts": "Prompt",
   "bottom_panel.no_images": "Nessuna immagine generata in questa sessione",
   "bottom_panel.no_prompts": "La cronologia prompt apparirà qui dopo la generazione",

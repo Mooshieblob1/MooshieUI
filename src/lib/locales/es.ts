@@ -574,6 +574,10 @@ const es: Record<string, string> = {
 
   // ── Panel inferior ──────────────────────────────────────
   "bottom_panel.tab.loras": "LoRAs",
+  "bottom_panel.tab.checkpoints": "Checkpoints",
+  "checkpoint.search_placeholder": "Buscar checkpoints...",
+  "checkpoint.no_results": "No se encontraron checkpoints",
+  "checkpoint.active": "Activo",
   "bottom_panel.tab.images": "Imágenes",
   "bottom_panel.tab.prompts": "Prompts",
   "bottom_panel.no_images": "No se generaron imágenes en esta sesión",

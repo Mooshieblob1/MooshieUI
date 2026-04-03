@@ -62,7 +62,7 @@ export function lazyThumbnail(node: HTMLImageElement, opts: LazyThumbnailOpts) {
         }
       }
     },
-    { rootMargin: "200px" },
+    { rootMargin: "100px" },
   );
 
   // Session images already have url — apply immediately if visible

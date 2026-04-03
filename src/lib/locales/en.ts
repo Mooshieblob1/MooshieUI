@@ -572,8 +572,14 @@ const en: Record<string, string> = {
   "lora.add_to_prompt": "Add to prompt: {word}",
   "lora.likes": "Likes",
 
+  // ── Checkpoint Gallery ──────────────────────────────────
+  "checkpoint.search_placeholder": "Search checkpoints...",
+  "checkpoint.no_results": "No checkpoints found",
+  "checkpoint.active": "Active",
+
   // ── Bottom Panel ────────────────────────────────────────
   "bottom_panel.tab.loras": "LoRAs",
+  "bottom_panel.tab.checkpoints": "Checkpoints",
   "bottom_panel.tab.images": "Images",
   "bottom_panel.tab.prompts": "Prompts",
   "bottom_panel.no_images": "No images generated this session",

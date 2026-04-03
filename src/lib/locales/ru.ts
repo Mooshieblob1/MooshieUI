@@ -550,8 +550,10 @@ const ru: Record<string, string> = {
   "lora.likes": "Нравится",
 
   // ── Нижняя панель ───────────────────────────────────────
-  "bottom_panel.tab.loras": "LoRA",
-  "bottom_panel.tab.images": "Изображения",
+  "bottom_panel.tab.loras": "LoRA",  "bottom_panel.tab.checkpoints": "Чекпоинты",
+  "checkpoint.search_placeholder": "Поиск чекпоинтов...",
+  "checkpoint.no_results": "Чекпоинты не найдены",
+  "checkpoint.active": "Активен",  "bottom_panel.tab.images": "Изображения",
   "bottom_panel.tab.prompts": "Промпты",
   "bottom_panel.no_images": "Изображения не сгенерированы в этой сессии",
   "bottom_panel.no_prompts": "История промптов появится здесь после генерации",
