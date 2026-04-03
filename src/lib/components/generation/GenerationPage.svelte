@@ -703,19 +703,43 @@
     }
   }
 
+  const PANEL_LAYOUT_KEY = "mooshieui.panelLayout.v1";
+
+  function loadPanelLayout() {
+    try {
+      const raw = localStorage.getItem(PANEL_LAYOUT_KEY);
+      if (raw) {
+        const s = JSON.parse(raw) as { left?: number; right?: number; bottom?: number };
+        return {
+          left: typeof s.left === "number" ? Math.min(LEFT_MAX, Math.max(LEFT_MIN, s.left)) : LEFT_DEFAULT,
+          right: typeof s.right === "number" ? Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, s.right)) : RIGHT_DEFAULT,
+          bottom: typeof s.bottom === "number" ? Math.min(BOTTOM_MAX, Math.max(BOTTOM_MIN, s.bottom)) : BOTTOM_DEFAULT,
+        };
+      }
+    } catch {}
+    return { left: LEFT_DEFAULT, right: RIGHT_DEFAULT, bottom: BOTTOM_DEFAULT };
+  }
+
+  function savePanelLayout() {
+    try {
+      localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify({ left: leftWidth, right: rightWidth, bottom: bottomHeight }));
+    } catch {}
+  }
+
   const LEFT_DEFAULT = 360;
   const RIGHT_DEFAULT = 310;
   const BOTTOM_DEFAULT = 180;
-  let leftWidth = $state(LEFT_DEFAULT);
-  let rightWidth = $state(RIGHT_DEFAULT);
-  let bottomHeight = $state(BOTTOM_DEFAULT);
-
   const LEFT_MIN = 260;
   const LEFT_MAX = 520;
   const RIGHT_MIN = 240;
   const RIGHT_MAX = 450;
   const BOTTOM_MIN = 100;
   const BOTTOM_MAX = 500;
+
+  const _savedLayout = loadPanelLayout();
+  let leftWidth = $state(_savedLayout.left);
+  let rightWidth = $state(_savedLayout.right);
+  let bottomHeight = $state(_savedLayout.bottom);
 
   // Panel collapse state
   let leftCollapsed = $state(false);
@@ -872,6 +896,9 @@
     dragMouseX = 0;
     dragMouseY = 0;
     dragCloneHtml = "";
+    if (dragging) {
+      savePanelLayout();
+    }
     dragging = null;
   }
 

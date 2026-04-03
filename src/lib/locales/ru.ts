@@ -162,6 +162,7 @@ const ru: Record<string, string> = {
   "settings.paths.remove_model_dir_title": "Удалить этот каталог",
   "settings.paths.click_to_add": "Нажмите, чтобы добавить",
   "settings.paths.move_dialog_title": "Выберите новое расположение установки",
+  "settings.paths.browse_model_dir_title": "Выберите папку моделей",
 
   "settings.gallery.title": "Галерея",
   "settings.gallery.import_label": "Импорт изображений из директории",
@@ -568,6 +569,10 @@ const ru: Record<string, string> = {
   "bottom_panel.load_prompt": "Загрузить этот промпт",
   "bottom_panel.empty_prompt": "(пустой позитивный промпт)",
   "bottom_panel.neg_prefix": "Нег:",
+  "bottom_panel.image_search_placeholder": "Поиск изображений...",
+  "bottom_panel.no_image_results": "Изображения не найдены",
+  "bottom_panel.prompt_search_placeholder": "Поиск промптов...",
+  "bottom_panel.no_prompt_results": "Промпты не найдены",
 
   // ── Загрузки ────────────────────────────────────────────
   "downloads.downloading": "Скачивание {filename}",

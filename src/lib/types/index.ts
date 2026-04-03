@@ -127,6 +127,7 @@ export interface AppConfig {
   extra_model_paths: string | null;
   interrogator_general_threshold: number;
   interrogator_character_threshold: number;
+  civitai_api_key: string | null;
 }
 
 export interface QueueInfo {

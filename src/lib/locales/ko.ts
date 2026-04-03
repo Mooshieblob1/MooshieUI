@@ -162,6 +162,7 @@ const ko: Record<string, string> = {
   "settings.paths.remove_model_dir_title": "이 디렉토리 제거",
   "settings.paths.click_to_add": "클릭하여 추가",
   "settings.paths.move_dialog_title": "새 설치 위치 선택",
+  "settings.paths.browse_model_dir_title": "모델 디렉터리 선택",
 
   "settings.gallery.title": "갤러리",
   "settings.gallery.import_label": "디렉토리에서 이미지 가져오기",
@@ -568,6 +569,10 @@ const ko: Record<string, string> = {
   "bottom_panel.load_prompt": "이 프롬프트 로드",
   "bottom_panel.empty_prompt": "(빈 긍정 프롬프트)",
   "bottom_panel.neg_prefix": "부정:",
+  "bottom_panel.image_search_placeholder": "이미지 검색...",
+  "bottom_panel.no_image_results": "검색 결과에 맞는 이미지가 없습니다",
+  "bottom_panel.prompt_search_placeholder": "프롬프트 검색...",
+  "bottom_panel.no_prompt_results": "검색 결과에 맞는 프롬프트가 없습니다",
 
   // ── 다운로드 ────────────────────────────────────────────
   "downloads.downloading": "{filename} 다운로드 중",

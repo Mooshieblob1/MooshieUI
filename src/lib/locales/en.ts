@@ -595,6 +595,10 @@ const en: Record<string, string> = {
   "bottom_panel.load_prompt": "Load this prompt",
   "bottom_panel.empty_prompt": "(empty positive prompt)",
   "bottom_panel.neg_prefix": "Neg:",
+  "bottom_panel.image_search_placeholder": "Search images...",
+  "bottom_panel.no_image_results": "No images match your search",
+  "bottom_panel.prompt_search_placeholder": "Search prompts...",
+  "bottom_panel.no_prompt_results": "No prompts match your search",
 
   // ── Downloads ───────────────────────────────────────────
   "downloads.downloading": "Downloading {filename}",
@@ -763,6 +767,9 @@ const en: Record<string, string> = {
   "modelhub.civitai.open_link": "Open Link",
   "modelhub.civitai.installing": "Installing...",
   "modelhub.civitai.install_to_app": "Install to App",
+  "modelhub.pick_dir.title": "Choose install directory",
+  "modelhub.pick_dir.description": "Select which directory to install this model to.",
+  "modelhub.pick_dir.cancel": "Cancel",
   "modelhub.civitai.show_less": "Show less",
   "modelhub.civitai.show_all_files": "Show all {count} files",
   "modelhub.civitai.no_versions": "No versions available.",
@@ -849,6 +856,13 @@ const en: Record<string, string> = {
   "settings.interrogator.more_tags": "More tags",
   "settings.interrogator.fewer_tags": "Fewer tags",
 
+  // ── CivitAI section ─────────────────────────────────────
+  "settings.civitai.title": "CivitAI",
+  "settings.civitai.api_key": "API Key",
+  "settings.civitai.api_key_placeholder": "Paste your CivitAI API key here",
+  "settings.civitai.api_key_desc": "Used for model metadata lookups, sample image fetching, and downloads. Required since CivitAI restricted unauthenticated access.",
+  "settings.civitai.api_key_link": "Get your key at civitai.com/user/account",
+
   // ── ControlNet extras ───────────────────────────────────
   "generation.controlnet.browse_or_drop": "Browse or drop image",
   "generation.controlnet.paste": "Paste",
@@ -897,6 +911,7 @@ const en: Record<string, string> = {
   "settings.about.save_dialog_title": "Save Diagnostic Logs",
   "settings.gallery.import_dialog_title": "Select image output directory to import",
   "settings.paths.move_dialog_title": "Choose New Install Location",
+  "settings.paths.browse_model_dir_title": "Choose Models Directory",
   "settings.paths.extra_model_placeholder": "/path/to/shared/models (e.g. from another ComfyUI or Forge install)",
 };
 

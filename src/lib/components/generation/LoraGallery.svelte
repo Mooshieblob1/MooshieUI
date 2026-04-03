@@ -4,12 +4,18 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { getLoraCivitaiInfo, type LoraCivitaiInfo } from "../../utils/api.js";
 
-  const CACHE_KEY = "mooshieui.lora.civitai.cache.v1";
+  const CACHE_KEY = "mooshieui.lora.civitai.cache.v2";
   const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
   interface CacheEntry {
     data: LoraCivitaiInfo;
     fetchedAt: number;
+  }
+
+  /** Returns true when the entry actually contains CivitAI-sourced data. */
+  function hasCivitaiData(entry: CacheEntry): boolean {
+    const d = entry.data;
+    return !!(d.civitai_name || d.civitai_model_id);
   }
 
   // Load cache from localStorage on init
@@ -22,7 +28,8 @@
         const now = Date.now();
         const result: Record<string, CacheEntry> = {};
         for (const [key, entry] of Object.entries(parsed)) {
-          if (now - entry.fetchedAt < CACHE_TTL) {
+          // Drop expired entries and entries with no CivitAI data (stale auth-fail results)
+          if (now - entry.fetchedAt < CACHE_TTL && hasCivitaiData(entry)) {
             result[key] = entry;
           }
         }
@@ -83,6 +90,7 @@
         { name: filename, strength_model: 1.0, strength_clip: 1.0, enabled: true },
       ];
     }
+    generation.saveSettings();
   }
 
   // Lazy fetch: only fetch info for visible LoRAs
@@ -113,7 +121,12 @@
     try {
       const info = await getLoraCivitaiInfo(filename);
       cache = { ...cache, [filename]: { data: info, fetchedAt: Date.now() } };
-      saveCache();
+      // Only persist to localStorage when CivitAI data was retrieved.
+      // Empty results (failed auth, pre-fix) stay in-memory only so they
+      // re-fetch fresh next session once an API key is configured.
+      if (info.civitai_name || info.civitai_model_id) {
+        saveCache();
+      }
     } catch (e) {
       errors = { ...errors, [filename]: String(e) };
     } finally {
@@ -214,7 +227,8 @@
       <p>{locale.t('lora.no_results', { query: searchQuery })}</p>
     </div>
   {:else}
-    <div class="flex gap-2.5 flex-1 min-h-0 overflow-x-auto px-2 py-1.5">
+    <div class="flex-1 min-h-0 overflow-y-auto px-2 py-1.5">
+      <div class="grid gap-2.5" style="grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));">
       {#each filteredLoras() as loraName (loraName)}
         {@const info = getInfo(loraName)}
         {@const isLoading = loading[loraName]}
@@ -228,15 +242,15 @@
         <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
         <div
           use:lazyFetch={loraName}
-          class="shrink-0 h-full aspect-[3/4] flex flex-col rounded-lg border bg-neutral-900/60 overflow-hidden transition-colors {enabled
+          class="aspect-[3/4] flex flex-col rounded-lg border bg-neutral-900/60 overflow-hidden transition-colors cursor-pointer {enabled
             ? 'border-indigo-500/60 ring-1 ring-indigo-500/20'
             : isSelected ? 'border-neutral-600' : 'border-neutral-800 hover:border-neutral-700'}"
+          onclick={() => { selectedLora = loraName; toggleLoraByName(loraName); }}
         >
           <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
           <!-- Image area -->
           <div
-            class="relative w-full flex-1 min-h-0 bg-neutral-950 overflow-hidden cursor-pointer"
-            onclick={() => toggleLoraByName(loraName)}
+            class="relative w-full flex-1 min-h-0 bg-neutral-950 overflow-hidden"
           >
             {#if enabled}
               <div class="absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded text-[9px] font-medium bg-indigo-600 text-white">
@@ -282,7 +296,7 @@
             {:else if error}
               <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                <span class="text-[10px] text-neutral-600 text-center">{locale.t('lora.not_on_civitai')}</span>
+                <span class="text-[10px] text-neutral-600 text-center" title={error}>{error.includes('not found') ? error : locale.t('lora.not_on_civitai')}</span>
                 <button
                   class="text-[10px] text-indigo-400 hover:text-indigo-300"
                   onclick={(e) => { e.stopPropagation(); refetchLora(loraName); }}
@@ -302,7 +316,6 @@
             <div class="flex items-start justify-between gap-1">
               <button
                 class="text-left"
-                onclick={() => { selectedLora = isSelected ? null : loraName; }}
               >
                 <h4 class="text-[11px] font-medium text-neutral-200 leading-tight line-clamp-2" title={loraName}>
                   {displayName(loraName)}
@@ -372,6 +385,7 @@
           </div>
         </div>
       {/each}
+      </div>
     </div>
   {/if}
 </div>

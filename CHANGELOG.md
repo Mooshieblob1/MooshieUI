@@ -1,5 +1,22 @@
 # Changelog
 
+## What's New in v0.5.6
+
+### LoRA Metadata Fetching — Path Resolution Fixed
+- Fixed LoRA metadata and CivitAI images not loading for models stored in extra model directories (`extra_model_paths`)
+- `resolve_model_path` now searches all known subdirectory variants (`loras/`, `Lora/`, `LoRA/`, `LyCORIS/`, etc.) matching the same paths ComfyUI itself scans — previously only the canonical `loras/` subdirectory was checked
+- Flat directories (models stored directly in the root with no subdirectory) now also work correctly
+- Error display in the LoRA gallery now shows the actual error message (e.g. "LoRA file not found") instead of always showing "Not on CivitAI"
+- LoRA file hashing (`full_sha256`) moved to a background thread (`spawn_blocking`), preventing async runtime stalls on large model files
+
+### Windows Venv Auto-Repair After Directory Move
+- Fixed startup failure when users move their MooshieUI data directory: `uv trampoline failed to spawn Python child process — entity not found (os error 2)`
+- On startup, MooshieUI now detects stale venv paths by checking both whether the Python binary exists and whether `pyvenv.cfg`'s `home` key points to a valid directory
+- If stale paths are detected, `uv venv --allow-existing` is run automatically to regenerate trampoline executables and fix path references — no manual intervention required
+- The in-app Move Directory feature also now runs venv repair immediately after copying files to the new location
+
+---
+
 ## What's New in v0.5.5
 
 ### Gallery Performance

@@ -96,9 +96,21 @@ export async function disconnectWs(): Promise<void> {
 export async function downloadModel(
   url: string,
   category: string,
-  filename: string
+  filename: string,
+  installDir?: string,
 ): Promise<void> {
-  return invoke("download_model", { url, category, filename });
+  return invoke("download_model", { url, category, filename, installDir });
+}
+
+export interface ModelInstallDir {
+  path: string;
+  label: string;
+}
+
+export async function getModelInstallDirs(
+  category: string,
+): Promise<ModelInstallDir[]> {
+  return invoke("get_model_install_dirs", { category });
 }
 
 export async function findModelByHash(
@@ -359,10 +371,37 @@ export interface LoraCivitaiInfo {
   modelspec_tags?: string;
 }
 
+export interface CheckpointCivitaiInfo {
+  filename: string;
+  hash?: string;
+  display_name?: string;
+  base_model?: string;
+  /** "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or undefined. */
+  thumbnail_url?: string;
+  civitai_model_id?: number;
+  civitai_version_id?: number;
+  civitai_description?: string;
+  civitai_images: LoraCivitaiImage[];
+  civitai_download_count?: number;
+  civitai_thumbs_up_count?: number;
+  civitai_creator?: string;
+  modelspec_title?: string;
+  modelspec_author?: string;
+  modelspec_architecture?: string;
+  modelspec_description?: string;
+  modelspec_tags?: string;
+}
+
 export async function getLoraCivitaiInfo(
   filename: string
 ): Promise<LoraCivitaiInfo> {
   return invoke("get_lora_civitai_info", { filename });
+}
+
+export async function getCheckpointCivitaiInfo(
+  filename: string
+): Promise<CheckpointCivitaiInfo> {
+  return invoke("get_checkpoint_civitai_info", { filename });
 }
 
 export async function checkNodeAvailable(nodeClass: string): Promise<boolean> {

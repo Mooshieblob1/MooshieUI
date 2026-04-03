@@ -34,6 +34,8 @@ pub struct AppConfig {
     pub interrogator_general_threshold: f32,
     /// Interrogator: character tag confidence threshold (0.0–1.0)
     pub interrogator_character_threshold: f32,
+    /// Optional CivitAI API key for authenticated hash lookups and metadata fetching
+    pub civitai_api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -70,6 +72,7 @@ impl Default for AppConfig {
             extra_model_paths: None,
             interrogator_general_threshold: 0.30,
             interrogator_character_threshold: 0.85,
+            civitai_api_key: None,
         }
     }
 }

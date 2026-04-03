@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
@@ -365,6 +366,16 @@
     await loadImageForMode(image, "inpainting");
   }
 
+  function navigateLightbox(direction: "prev" | "next") {
+    if (!gallery.selectedImage) return;
+    const idx = sortedGalleryImages.indexOf(gallery.selectedImage);
+    if (idx === -1) return;
+    const len = sortedGalleryImages.length;
+    const next = direction === "prev" ? (idx - 1 + len) % len : (idx + 1) % len;
+    const nextImage = sortedGalleryImages[next];
+    if (nextImage) void gallery.openLightbox(nextImage);
+  }
+
   async function rescanGalleryMetadata() {
     await gallery.rescanMetadata();
   }
@@ -373,6 +384,7 @@
   let currentPage = $state<"generate" | "gallery" | "modelhub" | "settings">(
     "generate"
   );
+  let versionTapCount = $state(0);
   let startupStatus = $state<string>("");
 
   let galleryImagesPerRow = $state(5);
@@ -382,8 +394,46 @@
   let galleryBoardFilter = $state<string>("all");
   let newBoardName = $state("");
   let galleryView = $state<"huge" | "large" | "small" | "details">("large");
-  let sortedGalleryImages = $state<OutputImage[]>([]);
-  let groupedGalleryImages = $state<Array<{ label: string; images: OutputImage[] }>>([]);
+  const sortedGalleryImages = $derived.by(() => {
+    const sorted = [...gallery.images].sort((a, b) => {
+      if (gallerySortBy === "name") {
+        const cmp = a.filename.localeCompare(b.filename, undefined, { sensitivity: "base" });
+        return gallerySortDir === "asc" ? cmp : -cmp;
+      }
+      if (gallerySortBy === "size") {
+        const cmp = getImageSize(a) - getImageSize(b);
+        return gallerySortDir === "asc" ? cmp : -cmp;
+      }
+      const cmp = getImageTimestamp(a) - getImageTimestamp(b);
+      return gallerySortDir === "asc" ? cmp : -cmp;
+    });
+    return galleryBoardFilter === "all"
+      ? sorted
+      : sorted.filter((image) => gallery.getBoard(image) === galleryBoardFilter);
+  });
+  const groupedGalleryImages = $derived.by(() => {
+    if (galleryGroupBy !== "none") {
+      const grouped = new Map<string, OutputImage[]>();
+      for (const image of sortedGalleryImages) {
+        const key =
+          galleryGroupBy === "date"
+            ? formatDateGroup(image.generated_at_ms)
+            : galleryGroupBy === "month"
+              ? formatMonthGroup(image.generated_at_ms)
+              : galleryGroupBy === "mode"
+                ? modeLabel(image.generation_mode)
+                : galleryGroupBy === "board"
+                  ? gallery.getBoard(image)
+                  : (image.prompt_id || "No Prompt ID");
+        const bucket = grouped.get(key) ?? [];
+        bucket.push(image);
+        grouped.set(key, bucket);
+      }
+      return Array.from(grouped.entries()).map(([label, images]) => ({ label, images }));
+    } else {
+      return [{ label: locale.t("gallery.all_images"), images: sortedGalleryImages }];
+    }
+  });
   let galleryRenderLimit = $state(48);
   const galleryTotalCount = $derived(groupedGalleryImages.reduce((sum, g) => sum + g.images.length, 0));
   const galleryGroupsVisible = $derived.by(() => {
@@ -405,6 +455,12 @@
   const METADATA_MIN_WIDTH = 260;
   const METADATA_MAX_WIDTH = 600;
   const GALLERY_PREFS_KEY = "mooshieui.gallery.prefs.v1";
+
+  const WIN_STATE_KEY = "mooshieui.window.state.v1";
+
+  function saveWindowMaximized(maximized: boolean) {
+    try { localStorage.setItem(WIN_STATE_KEY, JSON.stringify({ maximized })); } catch {}
+  }
 
   // Context menu state
   let contextMenuImage = $state<OutputImage | null>(null);
@@ -758,56 +814,12 @@
 
   const thumbSize = $derived(viewColumns(galleryView) <= 3 ? 480 : 384);
 
+  // Reset pagination when the user changes sort/filter/group (but NOT on new image additions).
   $effect(() => {
-    void gallery.images;
     void gallerySortBy;
     void gallerySortDir;
     void galleryGroupBy;
     void galleryBoardFilter;
-
-    const sorted = [...gallery.images].sort((a, b) => {
-      if (gallerySortBy === "name") {
-        const cmp = a.filename.localeCompare(b.filename, undefined, { sensitivity: "base" });
-        return gallerySortDir === "asc" ? cmp : -cmp;
-      }
-      if (gallerySortBy === "size") {
-        const cmp = getImageSize(a) - getImageSize(b);
-        return gallerySortDir === "asc" ? cmp : -cmp;
-      }
-      const cmp = getImageTimestamp(a) - getImageTimestamp(b);
-      return gallerySortDir === "asc" ? cmp : -cmp;
-    });
-
-    const filteredByBoard = galleryBoardFilter === "all"
-      ? sorted
-      : sorted.filter((image) => gallery.getBoard(image) === galleryBoardFilter);
-
-    sortedGalleryImages = filteredByBoard;
-
-    if (galleryGroupBy !== "none") {
-      const grouped = new Map<string, OutputImage[]>();
-      for (const image of filteredByBoard) {
-        const key =
-          galleryGroupBy === "date"
-            ? formatDateGroup(image.generated_at_ms)
-            : galleryGroupBy === "month"
-              ? formatMonthGroup(image.generated_at_ms)
-              : galleryGroupBy === "mode"
-                ? modeLabel(image.generation_mode)
-                : galleryGroupBy === "board"
-                  ? gallery.getBoard(image)
-                  : (image.prompt_id || "No Prompt ID");
-        const bucket = grouped.get(key) ?? [];
-        bucket.push(image);
-        grouped.set(key, bucket);
-      }
-      groupedGalleryImages = Array.from(grouped.entries()).map(([label, images]) => ({
-        label,
-        images,
-      }));
-    } else {
-      groupedGalleryImages = [{ label: locale.t("gallery.all_images"), images: filteredByBoard }];
-    }
     galleryRenderLimit = 48;
   });
 
@@ -874,6 +886,21 @@
   }
 
   onMount(async () => {
+    // Restore window maximize state
+    try {
+      const raw = localStorage.getItem(WIN_STATE_KEY);
+      if (raw) {
+        const { maximized } = JSON.parse(raw) as { maximized?: boolean };
+        if (maximized) await getCurrentWindow().maximize();
+      }
+    } catch {}
+
+    // Persist maximize/restore changes
+    await getCurrentWindow().onResized(async () => {
+      const maximized = await getCurrentWindow().isMaximized();
+      saveWindowMaximized(maximized);
+    });
+
     // Apply dyslexic font if enabled
     if (localStorage.getItem("mooshieui.dyslexicFont") === "true") {
       document.documentElement.classList.add("dyslexic-font");
@@ -1241,7 +1268,25 @@
       title={connection.connected ? locale.t('nav.connected') : startupStatus || locale.t('nav.disconnected')}
     ></div>
 
-    <span class="text-[10px] text-neutral-500 text-center mb-2 select-none">v{appVersion}</span>
+    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+    <span
+      class="text-[10px] text-neutral-500 text-center mb-2 select-none cursor-default"
+      onclick={() => {
+        if (currentPage !== 'settings') return;
+        versionTapCount++;
+        if (versionTapCount >= 10) {
+          versionTapCount = 0;
+          if (generation.devModeUnlocked) {
+            generation.devModeUnlocked = false;
+            generation.devMode = false;
+            gallery.showToast('🛠 Developer mode disabled', 'info');
+          } else {
+            generation.devModeUnlocked = true;
+            gallery.showToast('🛠 Developer mode unlocked', 'success');
+          }
+        }
+      }}
+    >v{appVersion}</span>
   </nav>
 
   <!-- Main content -->
@@ -1278,7 +1323,7 @@
     {#if currentPage === "generate"}
       <GenerationPage />
     {:else if currentPage === "gallery"}
-      <div class="p-6 h-full overflow-y-auto" use:smoothScroll>
+      <div class="p-6 h-full overflow-y-auto will-change-scroll" use:smoothScroll>
         {#if gallery.loading}
           <div class="flex items-center justify-center h-full text-neutral-500">
             {locale.t("gallery.loading")}
@@ -1444,35 +1489,32 @@
                             class="w-full h-full object-cover"
                           />
                         </button>
-                        <div class="absolute inset-0 bg-black/55 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
-                        <div class="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200 pointer-events-none">
+                        <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
+                        <div class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200 pointer-events-none">
                           {boardLabel(image)}
                         </div>
-                        <div class="absolute inset-0 p-3 flex flex-wrap items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                          <button class="h-9 px-3 flex items-center justify-center rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold shadow-lg pointer-events-auto" title={locale.t('gallery.img2img')} onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold shadow-lg pointer-events-auto" title={locale.t('gallery.inpaint')} onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}>
-                            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                            {locale.t('gallery.inpaint')}
-                          </button>
-                          {#if !image.is_upscaled}
-                            <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black text-xs font-semibold shadow-lg pointer-events-auto" title={locale.t('gallery.upscale')} onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}>
-                              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-                              {locale.t('gallery.upscale')}
+                        {#if viewColumns(galleryView) <= 5}
+                          <div class="absolute bottom-0 inset-x-0 flex justify-center items-center gap-1 px-1.5 pb-1.5 pt-6 opacity-0 group-hover:opacity-100 transition-opacity bg-linear-to-t from-black/80 to-transparent pointer-events-none">
+                            <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black text-[11px] font-bold shadow pointer-events-auto shrink-0" title={locale.t('gallery.img2img')} onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
+                            <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow pointer-events-auto shrink-0" title={locale.t('gallery.inpaint')} onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}>
+                              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
                             </button>
-                          {/if}
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-neutral-900/90 hover:bg-neutral-700 text-neutral-100 text-xs font-semibold shadow-lg pointer-events-auto" title={locale.t('gallery.save_as')} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>
-                            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                            {locale.t('preview.save')}
-                          </button>
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-neutral-900/90 hover:bg-neutral-700 text-neutral-100 text-xs font-semibold shadow-lg pointer-events-auto" title={locale.t('gallery.copy')} onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}>
-                            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                            {locale.t('gallery.copy')}
-                          </button>
-                          <button class="h-9 px-3 flex items-center justify-center gap-1 rounded bg-red-900/85 hover:bg-red-800 text-neutral-100 text-xs font-semibold shadow-lg pointer-events-auto" title={locale.t('gallery.delete')} onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}>
-                            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                            {locale.t('gallery.delete')}
-                          </button>
-                        </div>
+                            {#if !image.is_upscaled}
+                              <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow pointer-events-auto shrink-0" title={locale.t('gallery.upscale')} onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}>
+                                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                              </button>
+                            {/if}
+                            <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow pointer-events-auto shrink-0" title={locale.t('gallery.save_as')} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>
+                              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow pointer-events-auto shrink-0" title={locale.t('gallery.copy')} onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}>
+                              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            </button>
+                            <button class="w-7 h-7 flex items-center justify-center rounded bg-red-900/80 hover:bg-red-800 text-red-300 hover:text-red-200 shadow pointer-events-auto shrink-0" title={locale.t('gallery.delete')} onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}>
+                              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                            </button>
+                          </div>
+                        {/if}
                       </div>
                     {/each}
                   </div>
@@ -1502,6 +1544,8 @@
     role="dialog"
     onkeydown={(e) => {
       if (e.key === "Escape") gallery.closeLightbox();
+      if (e.key === "ArrowLeft") navigateLightbox("prev");
+      if (e.key === "ArrowRight") navigateLightbox("next");
     }}
     tabindex="-1"
     use:focusOnMount
@@ -1604,6 +1648,24 @@
       >
         &times;
       </button>
+
+      <!-- Arrow navigation -->
+      {#if gallery.selectedImage && sortedGalleryImages.length > 1}
+        <button
+          class="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-10 h-10 flex items-center justify-center rounded-full bg-black/40 hover:bg-black/70 text-white transition-colors"
+          onclick={() => navigateLightbox("prev")}
+          title="Previous image (←)"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <button
+          class="absolute right-14 top-1/2 -translate-y-1/2 z-10 w-10 h-10 flex items-center justify-center rounded-full bg-black/40 hover:bg-black/70 text-white transition-colors"
+          onclick={() => navigateLightbox("next")}
+          title="Next image (→)"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      {/if}
 
       <!-- Action buttons (only for gallery images, not preview URLs) -->
       {#if gallery.selectedImage}

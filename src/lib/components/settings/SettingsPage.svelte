@@ -167,6 +167,21 @@
     }
   }
 
+  async function browseModelDir(i: number) {
+    if (!config) return;
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: locale.t('settings.paths.model_dir_dialog_title'),
+    });
+    if (selected && typeof selected === "string") {
+      const paths = (config.extra_model_paths ?? "").split("\n");
+      paths[i] = selected;
+      config.extra_model_paths = paths.join("\n") || null;
+      checkRestartNeeded();
+    }
+  }
+
   async function moveInstallation() {
     if (!moveTargetPath.trim()) return;
     moving = true;
@@ -277,6 +292,7 @@
       paths: false,
       autocomplete: false,
       interrogator: false,
+      civitai: false,
       about: false,
     };
     try {
@@ -306,6 +322,7 @@
     { key: "gallery", label: "Gallery", keywords: "import images output directory swarmui comfyui external folder" },
     { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", label: "Interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
+    { key: "civitai", label: "CivitAI", keywords: "civitai api key metadata model hub image fetch download authentication" },
     { key: "about", label: "About", keywords: "version update check updates about troubleshooting logs export diagnostic" },
   ];
 
@@ -327,6 +344,16 @@
 
   async function loadConfig() {
     config = await getConfig();
+    // Migrate CivitAI API key from ModelHub localStorage if not already in config
+    if (!config.civitai_api_key) {
+      try {
+        const lsKey = localStorage.getItem("mooshieui.civitai.apiKey.v1");
+        if (lsKey) {
+          config.civitai_api_key = lsKey;
+          await updateConfig(config);
+        }
+      } catch { /* ignore */ }
+    }
     snapshotRestartFields();
   }
 
@@ -959,6 +986,13 @@
                   class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
                   placeholder={locale.t('settings.paths.extra_model_placeholder')}
                 />
+                <button
+                  class="px-2 py-2 rounded-lg border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors text-xs"
+                  onclick={() => browseModelDir(i)}
+                  title={locale.t('settings.paths.browse_model_dir_title')}
+                >
+                  {locale.t('common.browse')}
+                </button>
                 {#if (config.extra_model_paths ?? "").split("\n").length > 1}
                   <button
                     class="px-2 py-2 rounded-lg border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300 transition-colors text-xs"
@@ -1275,6 +1309,45 @@
         </section>
         {/if}
 
+        <!-- CivitAI -->
+        {#if sectionVisible("civitai")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.civitai = !collapsed.civitai)}
+          >
+            <span class="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              {locale.t('settings.civitai.title')}
+            </span>
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-neutral-500 transition-transform {collapsed.civitai ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.civitai}
+          <div class="px-5 pb-5 space-y-3">
+            <p class="text-[10px] text-neutral-500">{locale.t('settings.civitai.api_key_desc')}</p>
+            <div>
+              <label class="text-xs text-neutral-400 block mb-1">{locale.t('settings.civitai.api_key')}</label>
+              <input
+                type="password"
+                value={config.civitai_api_key ?? ""}
+                oninput={(e) => {
+                  if (config) {
+                    const v = (e.target as HTMLInputElement).value.trim();
+                    config.civitai_api_key = v || null;
+                  }
+                }}
+                onchange={() => { autoSave(); }}
+                placeholder={locale.t('settings.civitai.api_key_placeholder')}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
+              />
+              <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.civitai.api_key_link')}</p>
+            </div>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
         <!-- About & Updates -->
         {#if sectionVisible("about")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
@@ -1428,6 +1501,33 @@
             <div class="rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2">
               <p class="text-[11px] text-neutral-500">{locale.t('settings.about.data_dir_hint')}</p>
             </div>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
+        {#if generation.devModeUnlocked}
+        <section class="bg-neutral-900 rounded-xl border border-amber-800/50 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between px-4 py-3 border-b border-amber-800/30 text-left"
+            onclick={() => (collapsed.developer = !collapsed.developer)}
+          >
+            <span class="text-[10px] font-semibold tracking-widest text-amber-400 uppercase">Developer</span>
+            <svg class="w-4 h-4 text-amber-600 transition-transform {collapsed.developer ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          {#if !collapsed.developer}
+          <div class="p-4 space-y-3">
+            <label class="flex items-center gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                class="w-4 h-4 rounded accent-amber-400"
+                bind:checked={generation.devMode}
+              />
+              <div>
+                <p class="text-xs font-medium text-neutral-200">Force-show checkpoints tab</p>
+                <p class="text-[11px] text-neutral-500 mt-0.5">Shows the Checkpoints tab in the bottom panel even when fewer than 10 checkpoints are installed.</p>
+              </div>
+            </label>
           </div>
           {/if}
         </section>

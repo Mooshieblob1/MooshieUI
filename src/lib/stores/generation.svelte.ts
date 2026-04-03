@@ -139,6 +139,11 @@ class GenerationStore {
   customPonyNegativeQuality = $state(DEFAULT_PONY_NEGATIVE_QUALITY);
   promptHistory = $state<PromptHistoryEntry[]>([]);
 
+  /** Whether the developer mode section in Settings has been unlocked (10 version taps). Not persisted. */
+  devModeUnlocked = $state(false);
+  /** Developer mode: bypasses checkpoint selector restrictions. Not persisted. */
+  devMode = $state(false);
+
   /** Architecture detected from modelspec metadata, or null if not yet read. */
   modelspecArchitecture = $state<string | null>(null);
 
@@ -203,12 +208,9 @@ class GenerationStore {
     return this.isSd3 || this.isFlux || this.isAnima;
   }
 
-  /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow, or filename indicates RF). */
+  /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow). */
   get usesRectifiedFlow(): boolean {
-    if (this.isSd3 || this.isFlux || this.isAuraFlow) return true;
-    // Detect SDXL/Illustrious models retrained with rectified flow from filename
-    const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
-    return name.includes("rectified flow") || name.includes("rectified_flow") || name.includes("rectifiedflow");
+    return this.isSd3 || this.isFlux || this.isAuraFlow;
   }
 
   /** Detect the base model architecture from modelspec (authoritative) or filename (fallback). */
@@ -791,7 +793,6 @@ class GenerationStore {
       facefix_guide_size: this.facefixGuideSize,
       facefix_max_faces: this.facefixMaxFaces,
       model_architecture: this.detectedArchitecture,
-      uses_rectified_flow: this.usesRectifiedFlow,
       output_bit_depth: this.outputBitDepth,
     };
   }

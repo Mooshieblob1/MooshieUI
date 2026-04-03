@@ -252,31 +252,38 @@ impl AppState {
 
     /// Downloads a file from a URL to the models/<category> directory,
     /// emitting `download:progress` events with byte-level progress.
+    /// If `dest_dir_override` is provided, the file is written there instead
+    /// of the default `{comfyui_path}/models/{category}` path.
     pub async fn download_model_file(
         &self,
         app: &tauri::AppHandle,
         url: &str,
         category: &str,
         filename: &str,
+        dest_dir_override: Option<&str>,
     ) -> Result<(), AppError> {
         use tauri::Emitter;
 
-        let config = self.config.read().await;
-        let comfyui_path = if config.comfyui_path.is_empty() {
-            let exe_dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-            if let Some(dir) = exe_dir {
-                dir.to_string_lossy().to_string()
-            } else {
-                ".".to_string()
-            }
+        let models_dir = if let Some(dir) = dest_dir_override {
+            std::path::PathBuf::from(dir)
         } else {
-            config.comfyui_path.clone()
+            let config = self.config.read().await;
+            let comfyui_path = if config.comfyui_path.is_empty() {
+                let exe_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+                if let Some(dir) = exe_dir {
+                    dir.to_string_lossy().to_string()
+                } else {
+                    ".".to_string()
+                }
+            } else {
+                config.comfyui_path.clone()
+            };
+            std::path::Path::new(&comfyui_path)
+                .join("models")
+                .join(category)
         };
-        let models_dir = std::path::Path::new(&comfyui_path)
-            .join("models")
-            .join(category);
 
         tokio::fs::create_dir_all(&models_dir).await?;
         let dest = models_dir.join(filename);

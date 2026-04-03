@@ -1208,6 +1208,37 @@ pub async fn move_installation(
     // Update bootstrap pointer
     config::save_custom_data_dir(&new_path)?;
 
+    // Recreate the venv so that pyvenv.cfg and uv trampoline executables
+    // point to the new Python location.  Without this, `uv` / `python.exe`
+    // inside the venv still reference the old absolute path and will fail
+    // with "entity not found" on Windows (os error 2).
+    let uv = uv_bin(&dest);
+    let venv_dir = dest.join("venv");
+    let python_dir = dest.join("python");
+    if uv.exists() && venv_dir.exists() {
+        emit(&app, "move", "Updating virtual environment paths...", 88);
+        let python_dir_str = python_dir.to_string_lossy().to_string();
+        let venv_dir_str = venv_dir.to_string_lossy().to_string();
+        let uv_str = uv.to_string_lossy().to_string();
+        let mut cmd = tokio::process::Command::new(&uv_str);
+        cmd.args(["venv", &venv_dir_str, "--python", "3.11", "--allow-existing"])
+            .env("UV_PYTHON_INSTALL_DIR", &python_dir_str)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        hide_window(&mut cmd);
+        match cmd.status().await {
+            Ok(s) if s.success() => {
+                log::info!("Venv re-created at new location successfully");
+            }
+            Ok(s) => {
+                log::warn!("uv venv --allow-existing exited with {}", s);
+            }
+            Err(e) => {
+                log::warn!("Failed to re-create venv after move: {}", e);
+            }
+        }
+    }
+
     // Copy .setup_complete marker
     if current.join(".setup_complete").exists() && !dest.join(".setup_complete").exists() {
         let _ = std::fs::write(dest.join(".setup_complete"), "1");

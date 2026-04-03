@@ -162,6 +162,7 @@ const de: Record<string, string> = {
   "settings.paths.remove_model_dir_title": "Dieses Verzeichnis entfernen",
   "settings.paths.click_to_add": "Klicken zum Hinzufügen",
   "settings.paths.move_dialog_title": "Neuen Installationsort wählen",
+  "settings.paths.browse_model_dir_title": "Modellverzeichnis wählen",
 
   "settings.gallery.title": "Galerie",
   "settings.gallery.import_label": "Bilder aus Verzeichnis importieren",
@@ -570,6 +571,10 @@ const de: Record<string, string> = {
   "bottom_panel.load_prompt": "Diesen Prompt laden",
   "bottom_panel.empty_prompt": "(Leerer positiver Prompt)",
   "bottom_panel.neg_prefix": "Negativ:",
+  "bottom_panel.image_search_placeholder": "Bilder suchen...",
+  "bottom_panel.no_image_results": "Keine Bilder entsprechen Ihrer Suche",
+  "bottom_panel.prompt_search_placeholder": "Prompts suchen...",
+  "bottom_panel.no_prompt_results": "Keine Prompts entsprechen Ihrer Suche",
 
   // ── Downloads ───────────────────────────────────────────
   "downloads.downloading": "{filename} wird heruntergeladen",

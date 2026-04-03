@@ -166,6 +166,7 @@ const ja: Record<string, string> = {
   "settings.paths.remove_model_dir_title": "このディレクトリを削除",
   "settings.paths.click_to_add": "クリックして追加",
   "settings.paths.move_dialog_title": "新しいインストール先を選択",
+  "settings.paths.browse_model_dir_title": "モデルフォルダを選択",
 
   // ギャラリーセクション
   "settings.gallery.title": "ギャラリー",
@@ -590,6 +591,10 @@ const ja: Record<string, string> = {
   "bottom_panel.load_prompt": "このプロンプトを読み込む",
   "bottom_panel.empty_prompt": "（空のポジティブプロンプト）",
   "bottom_panel.neg_prefix": "ネガ：",
+  "bottom_panel.image_search_placeholder": "画像を検索...",
+  "bottom_panel.no_image_results": "検索に一致する画像がありません",
+  "bottom_panel.prompt_search_placeholder": "プロンプトを検索...",
+  "bottom_panel.no_prompt_results": "検索に一致するプロンプトがありません",
 
   // ── ダウンロード ────────────────────────────────────────
   "downloads.downloading": "{filename}をダウンロード中",

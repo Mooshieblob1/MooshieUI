@@ -97,7 +97,7 @@ pub fn append_upscale_chain(
                     "method": "MultiDiffusion",
                     "tile_width": params.upscale_tile_size,
                     "tile_height": params.upscale_tile_size,
-                    "tile_overlap": 128
+                    "tile_overlap": 256
                 }
             }),
         );
@@ -188,7 +188,7 @@ pub fn append_upscale_chain(
                 "latent_image": [tiled_encode_id, 0],
                 "seed": seed + 1,
                 "steps": params.upscale_steps,
-                "cfg": params.cfg,
+                "cfg": params.cfg / 2.0,
                 "sampler_name": params.sampler_name,
                 "scheduler": params.scheduler,
                 "denoise": params.upscale_denoise

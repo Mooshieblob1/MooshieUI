@@ -162,6 +162,7 @@ const zh: Record<string, string> = {
   "settings.paths.remove_model_dir_title": "移除此目录",
   "settings.paths.click_to_add": "点击添加",
   "settings.paths.move_dialog_title": "选择新的安装位置",
+  "settings.paths.browse_model_dir_title": "选择模型目录",
 
   "settings.gallery.title": "图库",
   "settings.gallery.import_label": "从目录导入图像",
@@ -568,6 +569,10 @@ const zh: Record<string, string> = {
   "bottom_panel.load_prompt": "加载此提示词",
   "bottom_panel.empty_prompt": "（空正面提示词）",
   "bottom_panel.neg_prefix": "负面：",
+  "bottom_panel.image_search_placeholder": "搜索图片...",
+  "bottom_panel.no_image_results": "没有符合搜索条件的图片",
+  "bottom_panel.prompt_search_placeholder": "搜索提示词...",
+  "bottom_panel.no_prompt_results": "没有符合搜索条件的提示词",
 
   // ── 下载 ────────────────────────────────────────────────
   "downloads.downloading": "正在下载 {filename}",

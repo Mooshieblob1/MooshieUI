@@ -20,7 +20,7 @@
 
   const TAB_KEY = "mooshieui.bottomPanel.activeTab.v1";
 
-  const showCheckpointsTab = $derived(models.checkpoints.length > 10);
+  const showCheckpointsTab = $derived(models.checkpoints.length > 10 || generation.devMode);
 
   let activeTab = $state<TabId>(
     (typeof window !== "undefined" && (localStorage.getItem(TAB_KEY) as TabId | null)) || "loras"
@@ -74,6 +74,27 @@
   const favoriteCount = $derived(
     generation.promptHistory.filter((p) => p.favorite).length
   );
+
+  let imageSearch = $state("");
+  let promptSearch = $state("");
+
+  const filteredSessionImages = $derived.by(() => {
+    const q = imageSearch.toLowerCase().trim();
+    if (!q) return gallery.sessionImages;
+    return gallery.sessionImages.filter((img) =>
+      img.filename.toLowerCase().includes(q)
+    );
+  });
+
+  const filteredPromptHistory = $derived.by(() => {
+    const q = promptSearch.toLowerCase().trim();
+    if (!q) return sortedPromptHistory;
+    return sortedPromptHistory.filter(
+      (entry) =>
+        (entry.positivePrompt || "").toLowerCase().includes(q) ||
+        (entry.negativePrompt || "").toLowerCase().includes(q)
+    );
+  });
 </script>
 
 <div class="flex flex-col h-full">
@@ -118,9 +139,23 @@
           <p>{locale.t('bottom_panel.no_images')}</p>
         </div>
       {:else}
-        <div class="flex gap-2 h-full overflow-x-auto px-2 py-2">
-          {#each gallery.sessionImages as image}
-            <div class="group relative shrink-0 h-full aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors" oncontextmenu={(e) => { if (oncontextmenu) { e.preventDefault(); oncontextmenu(image, e.clientX, e.clientY); } }}>
+        <div class="flex flex-col h-full">
+          <div class="px-2 pt-1.5 pb-1 shrink-0">
+            <input
+              type="text"
+              bind:value={imageSearch}
+              placeholder={locale.t('bottom_panel.image_search_placeholder')}
+              class="w-full bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+          </div>
+          {#if filteredSessionImages.length === 0}
+            <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
+              <p>{locale.t('bottom_panel.no_image_results')}</p>
+            </div>
+          {:else}
+            <div class="grid gap-2 flex-1 min-h-0 overflow-y-auto px-2 py-2" style="grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); align-content: start;">
+              {#each filteredSessionImages as image}
+                <div class="group relative aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors" oncontextmenu={(e) => { if (oncontextmenu) { e.preventDefault(); oncontextmenu(image, e.clientX, e.clientY); } }}>
               <button
                 class="w-full h-full"
                 onclick={() => gallery.openLightbox(image)}
@@ -173,7 +208,9 @@
                 </div>
               </div>
             </div>
-          {/each}
+              {/each}
+            </div>
+          {/if}
         </div>
       {/if}
     {:else if activeTab === "prompts"}
@@ -183,11 +220,25 @@
           <p>{locale.t('bottom_panel.no_prompts')}</p>
         </div>
       {:else}
-        <div class="flex gap-2 h-full overflow-x-auto px-2 py-2">
-          {#each sortedPromptHistory as entry}
-            <div class="shrink-0 w-64 flex flex-col rounded-lg border bg-neutral-900/60 overflow-hidden {entry.favorite ? 'border-amber-500/40' : 'border-neutral-800 hover:border-neutral-700'} transition-colors">
+        <div class="flex flex-col h-full">
+          <div class="px-2 pt-1.5 pb-1 shrink-0">
+            <input
+              type="text"
+              bind:value={promptSearch}
+              placeholder={locale.t('bottom_panel.prompt_search_placeholder')}
+              class="w-full bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+          </div>
+          {#if filteredPromptHistory.length === 0}
+            <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
+              <p>{locale.t('bottom_panel.no_prompt_results')}</p>
+            </div>
+          {:else}
+            <div class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto px-2 py-2">
+              {#each filteredPromptHistory as entry}
+                <div class="shrink-0 rounded-lg border bg-neutral-900/60 overflow-hidden {entry.favorite ? 'border-amber-500/40' : 'border-neutral-800 hover:border-neutral-700'} transition-colors">
               <button
-                class="flex-1 min-h-0 text-left p-2.5 overflow-hidden"
+                class="w-full text-left p-2.5"
                 onclick={() => generation.applyPromptHistoryEntry(entry.id)}
                 title={locale.t('bottom_panel.load_prompt')}
               >
@@ -219,7 +270,9 @@
                 </div>
               </div>
             </div>
-          {/each}
+              {/each}
+            </div>
+          {/if}
         </div>
       {/if}
     {/if}

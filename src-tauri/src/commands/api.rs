@@ -139,6 +139,66 @@ pub async fn get_client_id(state: State<'_, AppState>) -> Result<String, AppErro
     Ok(state.client_id.clone())
 }
 
+#[derive(serde::Serialize)]
+pub struct ModelInstallDir {
+    pub path: String,
+    pub label: String,
+}
+
+/// Returns all directories where a model of the given category can be installed.
+/// Always includes the primary app directory; also includes any extra_model_paths
+/// subdirectories for the category that already exist on disk.
+#[tauri::command]
+pub async fn get_model_install_dirs(
+    state: State<'_, AppState>,
+    category: String,
+) -> Result<Vec<ModelInstallDir>, AppError> {
+    let config = state.config.read().await;
+    let comfyui_path = config.comfyui_path.clone();
+    let extra_model_paths = config.extra_model_paths.clone();
+    drop(config);
+
+    let mut dirs: Vec<ModelInstallDir> = Vec::new();
+
+    // Primary: {comfyui_path}/models/{category}
+    if !comfyui_path.is_empty() {
+        let primary = std::path::Path::new(&comfyui_path)
+            .join("models")
+            .join(&category);
+        let label = std::path::Path::new(&comfyui_path)
+            .file_name()
+            .map(|n| format!("App ({})", n.to_string_lossy()))
+            .unwrap_or_else(|| "App".to_string());
+        dirs.push(ModelInstallDir {
+            path: primary.to_string_lossy().to_string(),
+            label,
+        });
+    }
+
+    // Extra paths: each line is a root that contains {category} subdirectories
+    if let Some(extra) = extra_model_paths {
+        for line in extra.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let extra_dir = std::path::Path::new(line).join(&category);
+            if extra_dir.exists() {
+                let label = std::path::Path::new(line)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| line.to_string());
+                dirs.push(ModelInstallDir {
+                    path: extra_dir.to_string_lossy().to_string(),
+                    label,
+                });
+            }
+        }
+    }
+
+    Ok(dirs)
+}
+
 #[tauri::command]
 pub async fn download_model(
     app: AppHandle,
@@ -146,9 +206,10 @@ pub async fn download_model(
     url: String,
     category: String,
     filename: String,
+    install_dir: Option<String>,
 ) -> Result<(), AppError> {
     state
-        .download_model_file(&app, &url, &category, &filename)
+        .download_model_file(&app, &url, &category, &filename, install_dir.as_deref())
         .await
 }
 
@@ -922,11 +983,17 @@ pub async fn hash_model_file(
 /// Look up a model on CivitAI by its hash (SHA256 or AutoV2).
 /// Returns the CivitAI model version info if found.
 #[tauri::command]
-pub async fn civitai_lookup_hash(hash: String) -> Result<Value, AppError> {
+pub async fn civitai_lookup_hash(state: State<'_, AppState>, hash: String) -> Result<Value, AppError> {
+    let api_key = state.config.read().await.civitai_api_key.clone();
     let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
-    let resp = reqwest::Client::new()
+    let mut req = state
+        .http_client
         .get(&url)
-        .header("User-Agent", "MooshieUI/0.3.9")
+        .header("User-Agent", "MooshieUI/0.3.9");
+    if let Some(key) = api_key.filter(|v| !v.trim().is_empty()) {
+        req = req.bearer_auth(key);
+    }
+    let resp = req
         .send()
         .await
         .map_err(|e| AppError::Other(format!("CivitAI request failed: {}", e)))?;
@@ -1272,6 +1339,137 @@ pub struct LoraCivitaiImage {
     pub nsfw: Option<String>,
 }
 
+/// Combined checkpoint information from ModelSpec + local sidecar thumbnail + CivitAI hash lookup.
+#[derive(Debug, Serialize)]
+pub struct CheckpointCivitaiInfo {
+    pub filename: String,
+    pub hash: Option<String>,
+    pub display_name: Option<String>,
+    pub base_model: Option<String>,
+    /// "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or None.
+    pub thumbnail_url: Option<String>,
+    pub civitai_model_id: Option<u64>,
+    pub civitai_version_id: Option<u64>,
+    pub civitai_description: Option<String>,
+    /// All sample images returned by CivitAI (independent of whether a sidecar exists).
+    pub civitai_images: Vec<LoraCivitaiImage>,
+    pub civitai_download_count: Option<u64>,
+    pub civitai_thumbs_up_count: Option<u64>,
+    pub civitai_creator: Option<String>,
+    pub modelspec_title: Option<String>,
+    pub modelspec_author: Option<String>,
+    pub modelspec_architecture: Option<String>,
+    pub modelspec_description: Option<String>,
+    pub modelspec_tags: Option<String>,
+}
+
+/// All known subdirectory names that map to a given ComfyUI model category.
+/// Must stay in sync with the YAML generated in `process.rs`.
+fn category_subdirs(category: &str) -> &'static [&'static str] {
+    match category {
+        "checkpoints" => &[
+            "checkpoints",
+            "Stable-diffusion",
+            "Stable-Diffusion",
+            "StableDiffusion",
+            "models/Stable-diffusion",
+            "Models/Stable-Diffusion",
+            "Models/StableDiffusion",
+        ],
+        "loras" => &[
+            "loras",
+            "lora",
+            "Lora",
+            "LoRA",
+            "LoRAs",
+            "LORA",
+            "Loras",
+            "LyCORIS",
+            "lycoris",
+            "models/Lora",
+            "models/loras",
+            "models/LyCORIS",
+            "Models/Lora",
+            "Models/loras",
+            "Models/LyCORIS",
+        ],
+        "vae" => &["vae", "VAE", "models/VAE", "Models/VAE"],
+        "upscale_models" => &[
+            "upscale_models",
+            "ESRGAN",
+            "models/ESRGAN",
+            "models/RealESRGAN",
+            "Models/ESRGAN",
+            "Models/RealESRGAN",
+        ],
+        "embeddings" => &[
+            "embeddings",
+            "models/TextualInversion",
+            "Models/TextualInversion",
+        ],
+        "controlnet" => &[
+            "controlnet",
+            "ControlNet",
+            "models/ControlNet",
+            "Models/ControlNet",
+        ],
+        "clip" => &["clip", "models/clip", "Models/clip"],
+        "unet" => &["unet", "models/unet", "Models/unet"],
+        "diffusion_models" => &[
+            "diffusion_models",
+            "models/diffusion_models",
+            "Models/diffusion_models",
+        ],
+        "text_encoders" => &[
+            "text_encoders",
+            "models/text_encoders",
+            "Models/text_encoders",
+        ],
+        _ => &[],
+    }
+}
+
+/// Resolve a model file path by searching the primary ComfyUI models directory
+/// and then any extra_model_paths directories (newline-separated).
+/// For extra paths, tries all known subdirectory variants for the category
+/// (matching the YAML config given to ComfyUI) and also tries the file
+/// directly in the root (flat directory case).
+fn resolve_model_path(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+    filename: &str,
+) -> Option<std::path::PathBuf> {
+    // Primary ComfyUI directory always uses the canonical category name
+    let primary = std::path::Path::new(comfyui_path)
+        .join("models")
+        .join(category)
+        .join(filename);
+    if primary.exists() {
+        return Some(primary);
+    }
+
+    if let Some(extra) = extra_model_paths {
+        let subdirs = category_subdirs(category);
+        for dir in extra.split('\n').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            let base = std::path::Path::new(dir);
+            // Try all known subdirectory variants for this category
+            for subdir in subdirs {
+                let candidate = base.join(subdir).join(filename);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+            // Flat directory: file directly in the root
+            let flat = base.join(filename);
+            if flat.exists() {
+                return Some(flat);
+            }
+        }
+    }
+    None
+}
+
 /// Fetch combined LoRA info: hash the file, look up on CivitAI, read ModelSpec.
 /// Returns structured info for the LoRA gallery panel.
 #[tauri::command]
@@ -1279,21 +1477,26 @@ pub async fn get_lora_civitai_info(
     state: State<'_, AppState>,
     filename: String,
 ) -> Result<LoraCivitaiInfo, AppError> {
-    let config = state.config.read().await;
-    if config.comfyui_path.is_empty() {
-        return Err(AppError::Other("ComfyUI path not configured".into()));
-    }
-    let path = std::path::Path::new(&config.comfyui_path)
-        .join("models")
-        .join("loras")
-        .join(&filename);
+    let (comfyui_path, extra_model_paths, civitai_api_key) = {
+        let config = state.config.read().await;
+        if config.comfyui_path.is_empty() {
+            return Err(AppError::Other("ComfyUI path not configured".into()));
+        }
+        (config.comfyui_path.clone(), config.extra_model_paths.clone(), config.civitai_api_key.clone())
+    };
 
-    if !path.exists() {
-        return Err(AppError::Other(format!(
-            "LoRA file not found: {}",
-            filename
-        )));
-    }
+    let path = resolve_model_path(&comfyui_path, extra_model_paths.as_deref(), "loras", &filename)
+        .ok_or_else(|| {
+            log::warn!(
+                "LoRA file not found: '{}' (comfyui_path='{}', extra_model_paths={:?})",
+                filename,
+                comfyui_path,
+                extra_model_paths
+            );
+            AppError::Other(format!("LoRA file not found: {}", filename))
+        })?;
+
+    log::debug!("Resolved LoRA '{}' → {:?}", filename, path);
 
     // Read modelspec in parallel-friendly manner (sync I/O in blocking task)
     let modelspec = if filename.ends_with(".safetensors") {
@@ -1302,8 +1505,11 @@ pub async fn get_lora_civitai_info(
         None
     };
 
-    // Hash the file (this is the expensive part for large files)
-    let sha256 = full_sha256(&path)?;
+    // Hash the file in a blocking task (can take seconds for large files)
+    let path_clone = path.clone();
+    let sha256 = tokio::task::spawn_blocking(move || full_sha256(&path_clone))
+        .await
+        .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
     let autov2 = autov2_hash(&sha256);
 
     // Look up on CivitAI by hash
@@ -1311,12 +1517,14 @@ pub async fn get_lora_civitai_info(
         "https://civitai.com/api/v1/model-versions/by-hash/{}",
         autov2
     );
-    let civitai_resp = state
+    let mut civitai_req = state
         .http_client
         .get(&civitai_url)
-        .header("User-Agent", "MooshieUI/0.3.9")
-        .send()
-        .await;
+        .header("User-Agent", "MooshieUI/0.3.9");
+    if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
+        civitai_req = civitai_req.bearer_auth(key);
+    }
+    let civitai_resp = civitai_req.send().await;
 
     let mut info = LoraCivitaiInfo {
         filename: filename.clone(),
@@ -1346,6 +1554,15 @@ pub async fn get_lora_civitai_info(
     };
 
     // Parse CivitAI response if successful
+    match &civitai_resp {
+        Ok(resp) if !resp.status().is_success() => {
+            log::warn!("CivitAI hash lookup for lora '{}' returned status {}", filename, resp.status());
+        }
+        Err(e) => {
+            log::warn!("CivitAI hash lookup for lora '{}' failed: {}", filename, e);
+        }
+        _ => {}
+    }
     if let Ok(resp) = civitai_resp {
         if resp.status().is_success() {
             if let Ok(data) = resp.json::<Value>().await {
@@ -1412,6 +1629,215 @@ pub async fn get_lora_civitai_info(
                     if let Some(desc) = model.get("description").and_then(|v| v.as_str()) {
                         // CivitAI returns HTML descriptions; store raw for now
                         info.civitai_description = Some(desc.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(info)
+}
+
+/// Fetch combined checkpoint info: ModelSpec metadata + local sidecar thumbnail + CivitAI hash lookup.
+/// Always hashes the file and queries CivitAI so name, base architecture, stats, and sample images
+/// are populated even when a local sidecar preview exists.
+/// Sidecar search order: `{stem}.png`, `{stem}.jpg`, `{stem}.jpeg`,
+/// `{stem}.preview.png`, `{stem}.preview.jpg` (same directory as the model file).
+#[tauri::command]
+pub async fn get_checkpoint_civitai_info(
+    state: State<'_, AppState>,
+    filename: String,
+) -> Result<CheckpointCivitaiInfo, AppError> {
+    let (comfyui_path, extra_model_paths, civitai_api_key) = {
+        let config = state.config.read().await;
+        if config.comfyui_path.is_empty() {
+            return Err(AppError::Other("ComfyUI path not configured".into()));
+        }
+        (config.comfyui_path.clone(), config.extra_model_paths.clone(), config.civitai_api_key.clone())
+    };
+
+    let path = resolve_model_path(&comfyui_path, extra_model_paths.as_deref(), "checkpoints", &filename)
+        .ok_or_else(|| AppError::Other(format!("Checkpoint file not found: {}", filename)))?;
+
+    // Read all modelspec fields (safetensors only, fast)
+    let modelspec = if filename.ends_with(".safetensors") {
+        read_safetensors_modelspec(&path).ok().flatten()
+    } else {
+        None
+    };
+
+    // Check for sidecar thumbnails — prefer local preview but do NOT return early;
+    // we still need the hash + CivitAI call for model name, description, and stats.
+    let mut sidecar_thumbnail: Option<String> = None;
+    if let (Some(model_dir), Some(stem)) = (
+        path.parent(),
+        path.file_stem().and_then(|s| s.to_str()),
+    ) {
+        let candidates = [
+            model_dir.join(format!("{}.png", stem)),
+            model_dir.join(format!("{}.jpg", stem)),
+            model_dir.join(format!("{}.jpeg", stem)),
+            model_dir.join(format!("{}.preview.png", stem)),
+            model_dir.join(format!("{}.preview.jpg", stem)),
+        ];
+        for candidate in &candidates {
+            if candidate.exists() {
+                if let Ok(bytes) = std::fs::read(candidate) {
+                    use base64::Engine as _;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    let mime = match candidate
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                    {
+                        "jpg" | "jpeg" => "image/jpeg",
+                        _ => "image/png",
+                    };
+                    sidecar_thumbnail = Some(format!("data:{};base64,{}", mime, b64));
+                }
+                break; // stop after first readable candidate
+            }
+        }
+    }
+
+    let mut info = CheckpointCivitaiInfo {
+        filename: filename.clone(),
+        hash: None,
+        display_name: modelspec.as_ref().and_then(|m| m.get("title").cloned()),
+        base_model: modelspec.as_ref().and_then(|m| m.get("architecture").cloned()),
+        thumbnail_url: sidecar_thumbnail,
+        civitai_model_id: None,
+        civitai_version_id: None,
+        civitai_description: None,
+        civitai_images: Vec::new(),
+        civitai_download_count: None,
+        civitai_thumbs_up_count: None,
+        civitai_creator: None,
+        modelspec_title: modelspec.as_ref().and_then(|m| m.get("title").cloned()),
+        modelspec_author: modelspec.as_ref().and_then(|m| m.get("author").cloned()),
+        modelspec_architecture: modelspec
+            .as_ref()
+            .and_then(|m| m.get("architecture").cloned()),
+        modelspec_description: modelspec
+            .as_ref()
+            .and_then(|m| m.get("description").cloned()),
+        modelspec_tags: modelspec.as_ref().and_then(|m| m.get("tags").cloned()),
+    };
+
+    // Hash via spawn_blocking — checkpoints can be 5–20 GB so this runs on a thread pool.
+    let path_clone = path.clone();
+    let sha256_result = tokio::task::spawn_blocking(move || full_sha256(&path_clone))
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let sha256 = match sha256_result {
+        Ok(h) => h,
+        Err(e) => {
+            log::warn!("Failed to hash checkpoint {}: {}", filename, e);
+            return Ok(info); // return partial info (modelspec + sidecar if any)
+        }
+    };
+    let autov2 = autov2_hash(&sha256);
+    info.hash = Some(autov2.clone());
+
+    // CivitAI lookup by AutoV2 hash
+    let civitai_url = format!(
+        "https://civitai.com/api/v1/model-versions/by-hash/{}",
+        autov2
+    );
+    let mut civitai_req = state
+        .http_client
+        .get(&civitai_url)
+        .header("User-Agent", "MooshieUI/0.3.9");
+    if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
+        civitai_req = civitai_req.bearer_auth(key);
+    }
+    let civitai_resp = civitai_req.send().await;
+
+    match &civitai_resp {
+        Ok(resp) if !resp.status().is_success() => {
+            log::warn!("CivitAI hash lookup for checkpoint '{}' returned status {}", filename, resp.status());
+        }
+        Err(e) => {
+            log::warn!("CivitAI hash lookup for checkpoint '{}' failed: {}", filename, e);
+        }
+        _ => {}
+    }
+    if let Ok(resp) = civitai_resp {
+        if resp.status().is_success() {
+            if let Ok(data) = resp.json::<Value>().await {
+                info.civitai_version_id = data.get("id").and_then(|v| v.as_u64());
+                info.civitai_model_id = data.get("modelId").and_then(|v| v.as_u64());
+
+                // Prefer CivitAI base model over modelspec architecture
+                if let Some(bm) = data.get("baseModel").and_then(|v| v.as_str()) {
+                    info.base_model = Some(bm.to_string());
+                }
+
+                if info.display_name.is_none() {
+                    info.display_name = data
+                        .get("model")
+                        .and_then(|m| m.get("name"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                }
+
+                // Description + creator from parent model object
+                if let Some(model) = data.get("model") {
+                    info.civitai_description = model
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    info.civitai_creator = model
+                        .get("creator")
+                        .and_then(|c| c.get("username"))
+                        .or_else(|| model.get("user").and_then(|u| u.get("username")))
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                }
+
+                // Stats
+                if let Some(stats) = data.get("stats") {
+                    info.civitai_download_count =
+                        stats.get("downloadCount").and_then(|v| v.as_u64());
+                    info.civitai_thumbs_up_count =
+                        stats.get("thumbsUpCount").and_then(|v| v.as_u64());
+                }
+
+                // All sample images
+                if let Some(images) = data.get("images").and_then(|v| v.as_array()) {
+                    info.civitai_images = images
+                        .iter()
+                        .filter_map(|img| {
+                            img.get("url")
+                                .and_then(|u| u.as_str())
+                                .map(|url| LoraCivitaiImage {
+                                    url: url.to_string(),
+                                    width: img
+                                        .get("width")
+                                        .and_then(|w| w.as_u64())
+                                        .map(|w| w as u32),
+                                    height: img
+                                        .get("height")
+                                        .and_then(|h| h.as_u64())
+                                        .map(|h| h as u32),
+                                    nsfw: img.get("nsfwLevel").and_then(|n| n.as_u64()).map(
+                                        |n| {
+                                            if n <= 1 {
+                                                "None".to_string()
+                                            } else {
+                                                format!("Level{}", n)
+                                            }
+                                        },
+                                    ),
+                                })
+                        })
+                        .collect();
+
+                    // Use first CivitAI image as thumbnail only if no local sidecar
+                    if info.thumbnail_url.is_none() {
+                        info.thumbnail_url =
+                            info.civitai_images.first().map(|i| i.url.clone());
                     }
                 }
             }

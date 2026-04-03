@@ -162,6 +162,7 @@ const zhTw: Record<string, string> = {
   "settings.paths.remove_model_dir_title": "移除此目錄",
   "settings.paths.click_to_add": "點擊新增",
   "settings.paths.move_dialog_title": "選擇新的安裝位置",
+  "settings.paths.browse_model_dir_title": "選擇模型資料夾",
 
   "settings.gallery.title": "圖庫",
   "settings.gallery.import_label": "從目錄匯入影像",
@@ -568,6 +569,10 @@ const zhTw: Record<string, string> = {
   "bottom_panel.load_prompt": "載入此提示詞",
   "bottom_panel.empty_prompt": "（空正面提示詞）",
   "bottom_panel.neg_prefix": "負面：",
+  "bottom_panel.image_search_placeholder": "搜尋圖片...",
+  "bottom_panel.no_image_results": "沒有符合搜尋條件的圖片",
+  "bottom_panel.prompt_search_placeholder": "搜尋提示詞...",
+  "bottom_panel.no_prompt_results": "沒有符合搜尋條件的提示詞",
 
   // ── 下載 ────────────────────────────────────────────────
   "downloads.downloading": "正在下載 {filename}",

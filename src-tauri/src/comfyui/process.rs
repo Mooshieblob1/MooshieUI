@@ -149,6 +149,83 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     let python_path = format!("{}/bin/python", config.venv_path);
     let main_path = format!("{}/main.py", config.comfyui_path);
 
+    // Detect stale venv: the uv trampoline executables and pyvenv.cfg embed
+    // absolute paths to the Python installation.  When the user moves their
+    // data directory (externally, not via the in-app Move feature), these
+    // paths break and uv reports "entity not found (os error 2)".
+    //
+    // We detect this by:
+    //   1. Python binary doesn't exist at all, OR
+    //   2. pyvenv.cfg `home` key points to a non-existent directory
+    // In either case, re-run `uv venv --allow-existing` to fix the paths.
+    if !config.venv_path.is_empty() {
+        let needs_repair = if !std::path::Path::new(&python_path).exists() {
+            true
+        } else {
+            // Check pyvenv.cfg for stale `home` path
+            let pyvenv_cfg = std::path::Path::new(&config.venv_path).join("pyvenv.cfg");
+            if let Ok(content) = std::fs::read_to_string(&pyvenv_cfg) {
+                content.lines().any(|line| {
+                    if let Some(value) = line.strip_prefix("home").and_then(|s| s.strip_prefix('=').or_else(|| s.strip_prefix(" ="))) {
+                        let home_dir = value.trim();
+                        !home_dir.is_empty() && !std::path::Path::new(home_dir).exists()
+                    } else {
+                        false
+                    }
+                })
+            } else {
+                false
+            }
+        };
+
+        if needs_repair {
+            let venv_dir = std::path::Path::new(&config.venv_path);
+            if venv_dir.exists() {
+                log::warn!(
+                    "Stale venv detected (python='{}') — attempting repair",
+                    python_path
+                );
+                if let Some(base) = venv_dir.parent() {
+                    let uv = {
+                        #[cfg(target_os = "windows")]
+                        { base.join("bin").join("uv.exe") }
+                        #[cfg(not(target_os = "windows"))]
+                        { base.join("bin").join("uv") }
+                    };
+                    let python_dir = base.join("python");
+                    if uv.exists() {
+                        let python_dir_str = python_dir.to_string_lossy().to_string();
+                        let venv_str = config.venv_path.clone();
+                        let uv_str = uv.to_string_lossy().to_string();
+                        let mut repair = tokio::process::Command::new(&uv_str);
+                        repair
+                            .args(["venv", &venv_str, "--python", "3.11", "--allow-existing"])
+                            .env("UV_PYTHON_INSTALL_DIR", &python_dir_str)
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null());
+                        #[cfg(target_os = "windows")]
+                        {
+                            #[allow(unused_imports)]
+                            use std::os::windows::process::CommandExt;
+                            repair.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                        }
+                        match repair.status().await {
+                            Ok(s) if s.success() => {
+                                log::info!("Venv repair succeeded");
+                            }
+                            Ok(s) => {
+                                log::warn!("Venv repair: uv exited with {}", s);
+                            }
+                            Err(e) => {
+                                log::warn!("Venv repair failed: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Validate paths before attempting to spawn
     if config.venv_path.is_empty() || !std::path::Path::new(&python_path).exists() {
         return Err(AppError::ProcessSpawnFailed(format!(

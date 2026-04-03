@@ -4,8 +4,12 @@
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import {
     downloadModel,
+    getConfig,
+    getModelInstallDirs,
     listCivitaiArchitectures,
     searchCivitaiModels,
+    updateConfig,
+    type ModelInstallDir,
     type CivitaiModel,
     type CivitaiModelFile,
     type CivitaiModelType,
@@ -171,6 +175,31 @@
   let expandedCards = $state<Record<number, boolean>>({});
   let selectedModel = $state<CivitaiModel | null>(null);
 
+  // Directory picker state for multi-directory installs
+  let dirPickerOpen = $state(false);
+  let dirPickerDirs = $state<ModelInstallDir[]>([]);
+  let dirPickerResolve = $state<((dir: string | null) => void) | null>(null);
+
+  /** Resolves to the chosen install dir path, or null if cancelled.
+   *  Shows a picker only when multiple directories are available. */
+  async function pickInstallDir(category: string): Promise<string | null> {
+    const dirs = await getModelInstallDirs(category);
+    if (dirs.length <= 1) {
+      return dirs[0]?.path ?? null;
+    }
+    return new Promise((resolve) => {
+      dirPickerDirs = dirs;
+      dirPickerOpen = true;
+      dirPickerResolve = resolve;
+    });
+  }
+
+  function confirmDirPick(path: string | null) {
+    dirPickerOpen = false;
+    dirPickerResolve?.(path);
+    dirPickerResolve = null;
+  }
+
   // Virtual scrolling state
   let gridContainerRef = $state<HTMLDivElement | null>(null);
   let scrollY = $state(0);
@@ -332,6 +361,11 @@
     } catch {
       // Ignore storage failures and keep runtime key only.
     }
+    // Also persist to AppConfig so backend hash-lookup commands can use the key
+    getConfig().then((cfg) => {
+      cfg.civitai_api_key = normalized || null;
+      return updateConfig(cfg);
+    }).catch(() => { /* non-fatal */ });
     setTimeout(() => {
       keySaved = false;
     }, 1500);
@@ -556,6 +590,9 @@
       return;
     }
 
+    const installDir = await pickInstallDir(category);
+    if (!installDir) return; // user cancelled
+
     const key = file.name;
     downloading = {
       ...downloading,
@@ -563,7 +600,7 @@
     };
 
     try {
-      await downloadModel(withToken(file.downloadUrl), category, file.name);
+      await downloadModel(withToken(file.downloadUrl), category, file.name, installDir);
       await models.refresh();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -592,9 +629,12 @@
       return;
     }
 
+    const installDir = await pickInstallDir(directCategory);
+    if (!installDir) return; // user cancelled
+
     directInstalling = true;
     try {
-      await downloadModel(directUrl.trim(), directCategory, directFilename.trim());
+      await downloadModel(directUrl.trim(), directCategory, directFilename.trim(), installDir);
       await models.refresh();
       directStatus = locale.t("modelhub.direct.installed");
     } catch (e) {
@@ -1203,3 +1243,33 @@
     {/if}
   </div>
 </div>
+
+{#if dirPickerOpen}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+    onkeydown={(e) => { if (e.key === "Escape") confirmDirPick(null); }}
+  >
+    <div class="bg-neutral-900 border border-neutral-700 rounded-xl p-5 w-105 max-w-[92vw] space-y-3">
+      <h3 class="text-sm font-semibold text-neutral-100">{locale.t("modelhub.pick_dir.title")}</h3>
+      <p class="text-xs text-neutral-400">{locale.t("modelhub.pick_dir.description")}</p>
+      <div class="space-y-2">
+        {#each dirPickerDirs as dir}
+          <button
+            class="w-full text-left px-3 py-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 hover:border-indigo-500 transition-colors"
+            onclick={() => confirmDirPick(dir.path)}
+          >
+            <div class="text-sm text-neutral-100 font-medium">{dir.label}</div>
+            <div class="text-[11px] text-neutral-500 mt-0.5 break-all">{dir.path}</div>
+          </button>
+        {/each}
+      </div>
+      <button
+        class="w-full px-3 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+        onclick={() => confirmDirPick(null)}
+      >
+        {locale.t("modelhub.pick_dir.cancel")}
+      </button>
+    </div>
+  </div>
+{/if}
