@@ -629,12 +629,28 @@
       return;
     }
 
+    // Detect HuggingFace model page URLs (not direct file URLs).
+    // A valid HuggingFace download URL contains /resolve/ in the path.
+    // A page URL like https://huggingface.co/CabalResearch/Mugen would download HTML.
+    const trimmedUrl = directUrl.trim();
+    try {
+      const parsed = new URL(trimmedUrl);
+      const isHuggingFace =
+        parsed.hostname === "huggingface.co" || parsed.hostname.endsWith(".huggingface.co");
+      if (isHuggingFace && !parsed.pathname.includes("/resolve/")) {
+        directStatus = locale.t("modelhub.direct.hf_page_url_error");
+        return;
+      }
+    } catch {
+      // Invalid URL — let the backend report the error
+    }
+
     const installDir = await pickInstallDir(directCategory);
     if (!installDir) return; // user cancelled
 
     directInstalling = true;
     try {
-      await downloadModel(directUrl.trim(), directCategory, directFilename.trim(), installDir);
+      await downloadModel(trimmedUrl, directCategory, directFilename.trim(), installDir);
       await models.refresh();
       directStatus = locale.t("modelhub.direct.installed");
     } catch (e) {

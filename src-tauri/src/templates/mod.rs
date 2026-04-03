@@ -293,6 +293,15 @@ pub fn is_kolors_architecture(params: &GenerationParams) -> bool {
     model_name_lower(params).contains("kolors")
 }
 
+/// Returns true when the model is Mugen (SDXL with Flux2 VAE + rectified flow scheduling).
+/// Must be checked before is_illustrious since Mugen derives from NoobAI.
+pub fn is_mugen_architecture(params: &GenerationParams) -> bool {
+    if params.model_architecture == "mugen" {
+        return true;
+    }
+    model_name_lower(params).contains("mugen")
+}
+
 /// Returns true when the model needs a 16-channel latent (SD3, Flux, Anima/WAN).
 pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
     if is_sd3_architecture(params) || is_flux_architecture(params) {
@@ -311,11 +320,76 @@ fn model_name_lower(params: &GenerationParams) -> String {
         .to_lowercase()
 }
 
-/// Inject rectified flow scheduling for models that use it (SD3, Flux, AuraFlow).
-/// Patches the model with `ModelSamplingSD3`, `ModelSamplingFlux`, or `ModelSamplingAuraFlow`
-/// and rewires the KSampler.
+/// Insert a VAE decode node into the workflow.
+/// Uses `VAEDecodeTiled` for Mugen (Flux2VAE SDXL requires tiled decode to handle the larger
+/// latent space correctly), and standard `VAEDecode` for all other architectures.
+/// Returns `(decode_node_id, next_id)`.
+pub fn insert_vae_decode(
+    workflow: &mut serde_json::Map<String, Value>,
+    next_id: u32,
+    sampler_id: &str,
+    vae_source: &(String, u32),
+    params: &GenerationParams,
+) -> (String, u32) {
+    let decode_id = next_id.to_string();
+    if is_mugen_architecture(params) {
+        workflow.insert(
+            decode_id.clone(),
+            json!({
+                "class_type": "VAEDecodeTiled",
+                "inputs": {
+                    "samples": [sampler_id, 0],
+                    "vae": [vae_source.0, vae_source.1],
+                    "tile_size": 512,
+                    "overlap": 64,
+                    "temporal_size": 64,
+                    "temporal_overlap": 8
+                }
+            }),
+        );
+    } else {
+        workflow.insert(
+            decode_id.clone(),
+            json!({
+                "class_type": "VAEDecode",
+                "inputs": {
+                    "samples": [sampler_id, 0],
+                    "vae": [vae_source.0, vae_source.1]
+                }
+            }),
+        );
+    }
+    (decode_id, next_id + 1)
+}
+
+/// Inject rectified flow scheduling for models that use it (SD3, Flux, AuraFlow, Mugen).
+/// Patches the model with `ModelSamplingSD3`, `ModelSamplingFlux`, `ModelSamplingAuraFlow`,
+/// or for Mugen: `ModelSamplingSD3` with higher shift (8-12 range, default 10).
+/// Rewires the KSampler in all cases.
 fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams) {
-    if is_sd3_architecture(params) {
+    if is_mugen_architecture(params) {
+        // ModelSamplingSD3 with elevated shift for Flux2VAE SDXL (recommended range: 8-12)
+        let node_id = result.next_id.to_string();
+        result.workflow.insert(
+            node_id.clone(),
+            json!({
+                "class_type": "ModelSamplingSD3",
+                "inputs": {
+                    "model": [result.model_source.0.clone(), result.model_source.1],
+                    "shift": 10.0
+                }
+            }),
+        );
+        result.model_source = (node_id, 0);
+        result.next_id += 1;
+
+        // Rewire KSampler to use patched model
+        if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+            if let Some(inputs) = sampler_node.get_mut("inputs") {
+                inputs["model"] = json!([result.model_source.0, result.model_source.1]);
+            }
+        }
+    } else if is_sd3_architecture(params) {
         // ModelSamplingSD3 — discrete flow matching with constant shift
         let node_id = result.next_id.to_string();
         result.workflow.insert(
@@ -372,29 +446,6 @@ fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams)
                 "inputs": {
                     "model": [result.model_source.0.clone(), result.model_source.1],
                     "shift": 1.73
-                }
-            }),
-        );
-        result.model_source = (node_id, 0);
-        result.next_id += 1;
-
-        // Rewire KSampler to use patched model
-        if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
-            if let Some(inputs) = sampler_node.get_mut("inputs") {
-                inputs["model"] = json!([result.model_source.0, result.model_source.1]);
-            }
-        }
-    } else if params.uses_rectified_flow {
-        // Generic rectified flow model (e.g. SDXL/Illustrious retrained with RF)
-        // Apply ModelSamplingSD3 with shift 3.0 for discrete flow matching
-        let node_id = result.next_id.to_string();
-        result.workflow.insert(
-            node_id.clone(),
-            json!({
-                "class_type": "ModelSamplingSD3",
-                "inputs": {
-                    "model": [result.model_source.0.clone(), result.model_source.1],
-                    "shift": 3.0
                 }
             }),
         );

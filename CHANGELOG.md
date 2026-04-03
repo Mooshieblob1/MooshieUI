@@ -1,5 +1,26 @@
 # Changelog
 
+## What's New in v0.5.7
+
+### Mugen Model Support
+- Added support for Mugen (CabalResearch/Mugen) — an SDXL architecture model using a Flux2 VAE and rectified flow scheduling
+- MooshieUI automatically detects Mugen checkpoints by filename and applies the correct generation pipeline: `ModelSamplingSD3` (shift=10) for rectified flow and `VAEDecodeTiled` for the Flux2 VAE
+- Bundled the SDXL-Flux2VAE custom node as a flat deployment to fix a circular import issue that prevented the model-loading patch from applying
+
+### PI-Chan Discord Bot Support
+- MooshieUI images now embed `mooshie_extra` metadata alongside the existing `sui_image_params` block
+- PI-Chan will display "MooshieUI Parameters" instead of "SwarmUI" for MooshieUI-generated images
+- `mooshie_extra.software` acts as the detection marker; future MooshieUI-exclusive params prefixed with `mooshie_` appear automatically in PI-Chan embeds
+- Full backward compatibility — SwarmUI and other parsers ignore the new key
+
+### Model Hub Download Hardening
+- Pasting a HuggingFace model page URL (without `/resolve/`) now shows a clear error before attempting any download
+- Downloads that return `Content-Type: text/html` are rejected with a user-facing error instead of silently writing an HTML file as `.safetensors`
+- Zero-byte leftover files from failed downloads are cleaned up and re-downloaded rather than being treated as complete
+- Error messages now include a formatted example of the correct `/resolve/main/` URL format
+
+---
+
 ## What's New in v0.5.6
 
 ### LoRA Metadata Fetching — Path Resolution Fixed

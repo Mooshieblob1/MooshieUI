@@ -288,8 +288,15 @@ impl AppState {
         tokio::fs::create_dir_all(&models_dir).await?;
         let dest = models_dir.join(filename);
 
+        // Skip if the file already exists and is non-empty (a previous partial/junk
+        // file of 0 bytes should not bypass the download).
         if dest.exists() {
-            return Ok(());
+            let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+            if size > 0 {
+                return Ok(());
+            }
+            // Zero-byte leftover — remove it and re-download.
+            let _ = std::fs::remove_file(&dest);
         }
 
         let resp = self.http_client.get(url).send().await?;
@@ -297,6 +304,23 @@ impl AppState {
             return Err(AppError::ApiError {
                 status: resp.status().as_u16(),
                 message: format!("Failed to download {}", url),
+            });
+        }
+
+        // Reject HTML responses — they indicate a web page URL was used instead
+        // of a direct file URL (e.g. a HuggingFace model page instead of a /resolve/ URL).
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_lowercase();
+        if content_type.contains("text/html") {
+            return Err(AppError::ApiError {
+                status: 200,
+                message:
+                    "The URL points to a web page, not a file. Use a direct download URL (e.g. a HuggingFace /resolve/main/ URL)."
+                        .to_string(),
             });
         }
 
@@ -319,7 +343,11 @@ impl AppState {
         let mut resp = resp;
         while let Some(chunk) = resp.chunk().await? {
             use std::io::Write;
-            file.write_all(&chunk)?;
+            if let Err(e) = file.write_all(&chunk) {
+                drop(file);
+                let _ = std::fs::remove_file(&dest);
+                return Err(e.into());
+            }
             downloaded += chunk.len() as u64;
 
             if downloaded - last_emit > 256 * 1024 || downloaded == total {

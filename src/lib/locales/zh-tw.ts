@@ -750,6 +750,7 @@ const zhTw: Record<string, string> = {
   "modelhub.direct.description": "貼上合法的直接模型 URL（Hugging Face、鏡像、私人主機）並安裝到選定的模型類別。",
   "modelhub.direct.url_required": "需要直接 URL。",
   "modelhub.direct.filename_required": "需要檔名。",
+  "modelhub.direct.hf_page_url_error": "這似乎是HuggingFace模型頁面URL，而非直接檔案URL。\n請使用/resolve/main/ URL，例如:\nhttps://huggingface.co/author/model/resolve/main/model.safetensors",
   "modelhub.direct.installed": "模型已下載並安裝。",
   "modelhub.hf.open": "開啟",
   "modelhub.hf.use": "使用",

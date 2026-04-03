@@ -752,6 +752,7 @@ const pt: Record<string, string> = {
   "modelhub.direct.description": "Cole qualquer URL de modelo direta legítima (Hugging Face, mirror, host privado) e instale na categoria de modelo selecionada.",
   "modelhub.direct.url_required": "URL direta é obrigatória.",
   "modelhub.direct.filename_required": "Nome do arquivo é obrigatório.",
+  "modelhub.direct.hf_page_url_error": "Isso parece uma URL de página do HuggingFace, não uma URL de arquivo direto.\nUse uma URL /resolve/main/, ex.:\nhttps://huggingface.co/author/model/resolve/main/model.safetensors",
   "modelhub.direct.installed": "Modelo baixado e instalado.",
   "modelhub.hf.open": "Abrir",
   "modelhub.hf.use": "Usar",

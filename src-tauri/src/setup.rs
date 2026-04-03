@@ -1221,10 +1221,16 @@ pub async fn move_installation(
         let venv_dir_str = venv_dir.to_string_lossy().to_string();
         let uv_str = uv.to_string_lossy().to_string();
         let mut cmd = tokio::process::Command::new(&uv_str);
-        cmd.args(["venv", &venv_dir_str, "--python", "3.11", "--allow-existing"])
-            .env("UV_PYTHON_INSTALL_DIR", &python_dir_str)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+        cmd.args([
+            "venv",
+            &venv_dir_str,
+            "--python",
+            "3.11",
+            "--allow-existing",
+        ])
+        .env("UV_PYTHON_INSTALL_DIR", &python_dir_str)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
         hide_window(&mut cmd);
         match cmd.status().await {
             Ok(s) if s.success() => {

@@ -775,6 +775,7 @@ const ja: Record<string, string> = {
   "modelhub.direct.description": "合法的な直接モデルURL（Hugging Face、ミラー、プライベートホスト）を貼り付けて、選択したモデルカテゴリにインストールします。",
   "modelhub.direct.url_required": "直接URLが必要です。",
   "modelhub.direct.filename_required": "ファイル名が必要です。",
+  "modelhub.direct.hf_page_url_error": "HuggingFaceのモデルページURLのようです。直接ファイルURLではありません。\n/resolve/main/ URLを使用してください。例:\nhttps://huggingface.co/author/model/resolve/main/model.safetensors",
   "modelhub.direct.installed": "モデルをダウンロードしてインストールしました。",
   "modelhub.hf.open": "開く",
   "modelhub.hf.use": "使用",

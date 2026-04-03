@@ -983,7 +983,10 @@ pub async fn hash_model_file(
 /// Look up a model on CivitAI by its hash (SHA256 or AutoV2).
 /// Returns the CivitAI model version info if found.
 #[tauri::command]
-pub async fn civitai_lookup_hash(state: State<'_, AppState>, hash: String) -> Result<Value, AppError> {
+pub async fn civitai_lookup_hash(
+    state: State<'_, AppState>,
+    hash: String,
+) -> Result<Value, AppError> {
     let api_key = state.config.read().await.civitai_api_key.clone();
     let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
     let mut req = state
@@ -1451,7 +1454,11 @@ fn resolve_model_path(
 
     if let Some(extra) = extra_model_paths {
         let subdirs = category_subdirs(category);
-        for dir in extra.split('\n').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        for dir in extra
+            .split('\n')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
             let base = std::path::Path::new(dir);
             // Try all known subdirectory variants for this category
             for subdir in subdirs {
@@ -1482,19 +1489,28 @@ pub async fn get_lora_civitai_info(
         if config.comfyui_path.is_empty() {
             return Err(AppError::Other("ComfyUI path not configured".into()));
         }
-        (config.comfyui_path.clone(), config.extra_model_paths.clone(), config.civitai_api_key.clone())
+        (
+            config.comfyui_path.clone(),
+            config.extra_model_paths.clone(),
+            config.civitai_api_key.clone(),
+        )
     };
 
-    let path = resolve_model_path(&comfyui_path, extra_model_paths.as_deref(), "loras", &filename)
-        .ok_or_else(|| {
-            log::warn!(
-                "LoRA file not found: '{}' (comfyui_path='{}', extra_model_paths={:?})",
-                filename,
-                comfyui_path,
-                extra_model_paths
-            );
-            AppError::Other(format!("LoRA file not found: {}", filename))
-        })?;
+    let path = resolve_model_path(
+        &comfyui_path,
+        extra_model_paths.as_deref(),
+        "loras",
+        &filename,
+    )
+    .ok_or_else(|| {
+        log::warn!(
+            "LoRA file not found: '{}' (comfyui_path='{}', extra_model_paths={:?})",
+            filename,
+            comfyui_path,
+            extra_model_paths
+        );
+        AppError::Other(format!("LoRA file not found: {}", filename))
+    })?;
 
     log::debug!("Resolved LoRA '{}' → {:?}", filename, path);
 
@@ -1556,7 +1572,11 @@ pub async fn get_lora_civitai_info(
     // Parse CivitAI response if successful
     match &civitai_resp {
         Ok(resp) if !resp.status().is_success() => {
-            log::warn!("CivitAI hash lookup for lora '{}' returned status {}", filename, resp.status());
+            log::warn!(
+                "CivitAI hash lookup for lora '{}' returned status {}",
+                filename,
+                resp.status()
+            );
         }
         Err(e) => {
             log::warn!("CivitAI hash lookup for lora '{}' failed: {}", filename, e);
@@ -1653,11 +1673,20 @@ pub async fn get_checkpoint_civitai_info(
         if config.comfyui_path.is_empty() {
             return Err(AppError::Other("ComfyUI path not configured".into()));
         }
-        (config.comfyui_path.clone(), config.extra_model_paths.clone(), config.civitai_api_key.clone())
+        (
+            config.comfyui_path.clone(),
+            config.extra_model_paths.clone(),
+            config.civitai_api_key.clone(),
+        )
     };
 
-    let path = resolve_model_path(&comfyui_path, extra_model_paths.as_deref(), "checkpoints", &filename)
-        .ok_or_else(|| AppError::Other(format!("Checkpoint file not found: {}", filename)))?;
+    let path = resolve_model_path(
+        &comfyui_path,
+        extra_model_paths.as_deref(),
+        "checkpoints",
+        &filename,
+    )
+    .ok_or_else(|| AppError::Other(format!("Checkpoint file not found: {}", filename)))?;
 
     // Read all modelspec fields (safetensors only, fast)
     let modelspec = if filename.ends_with(".safetensors") {
@@ -1669,10 +1698,9 @@ pub async fn get_checkpoint_civitai_info(
     // Check for sidecar thumbnails — prefer local preview but do NOT return early;
     // we still need the hash + CivitAI call for model name, description, and stats.
     let mut sidecar_thumbnail: Option<String> = None;
-    if let (Some(model_dir), Some(stem)) = (
-        path.parent(),
-        path.file_stem().and_then(|s| s.to_str()),
-    ) {
+    if let (Some(model_dir), Some(stem)) =
+        (path.parent(), path.file_stem().and_then(|s| s.to_str()))
+    {
         let candidates = [
             model_dir.join(format!("{}.png", stem)),
             model_dir.join(format!("{}.jpg", stem)),
@@ -1685,11 +1713,7 @@ pub async fn get_checkpoint_civitai_info(
                 if let Ok(bytes) = std::fs::read(candidate) {
                     use base64::Engine as _;
                     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                    let mime = match candidate
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("")
-                    {
+                    let mime = match candidate.extension().and_then(|e| e.to_str()).unwrap_or("") {
                         "jpg" | "jpeg" => "image/jpeg",
                         _ => "image/png",
                     };
@@ -1704,7 +1728,9 @@ pub async fn get_checkpoint_civitai_info(
         filename: filename.clone(),
         hash: None,
         display_name: modelspec.as_ref().and_then(|m| m.get("title").cloned()),
-        base_model: modelspec.as_ref().and_then(|m| m.get("architecture").cloned()),
+        base_model: modelspec
+            .as_ref()
+            .and_then(|m| m.get("architecture").cloned()),
         thumbnail_url: sidecar_thumbnail,
         civitai_model_id: None,
         civitai_version_id: None,
@@ -1756,10 +1782,18 @@ pub async fn get_checkpoint_civitai_info(
 
     match &civitai_resp {
         Ok(resp) if !resp.status().is_success() => {
-            log::warn!("CivitAI hash lookup for checkpoint '{}' returned status {}", filename, resp.status());
+            log::warn!(
+                "CivitAI hash lookup for checkpoint '{}' returned status {}",
+                filename,
+                resp.status()
+            );
         }
         Err(e) => {
-            log::warn!("CivitAI hash lookup for checkpoint '{}' failed: {}", filename, e);
+            log::warn!(
+                "CivitAI hash lookup for checkpoint '{}' failed: {}",
+                filename,
+                e
+            );
         }
         _ => {}
     }
@@ -1821,23 +1855,20 @@ pub async fn get_checkpoint_civitai_info(
                                         .get("height")
                                         .and_then(|h| h.as_u64())
                                         .map(|h| h as u32),
-                                    nsfw: img.get("nsfwLevel").and_then(|n| n.as_u64()).map(
-                                        |n| {
-                                            if n <= 1 {
-                                                "None".to_string()
-                                            } else {
-                                                format!("Level{}", n)
-                                            }
-                                        },
-                                    ),
+                                    nsfw: img.get("nsfwLevel").and_then(|n| n.as_u64()).map(|n| {
+                                        if n <= 1 {
+                                            "None".to_string()
+                                        } else {
+                                            format!("Level{}", n)
+                                        }
+                                    }),
                                 })
                         })
                         .collect();
 
                     // Use first CivitAI image as thumbnail only if no local sidecar
                     if info.thumbnail_url.is_none() {
-                        info.thumbnail_url =
-                            info.civitai_images.first().map(|i| i.url.clone());
+                        info.thumbnail_url = info.civitai_images.first().map(|i| i.url.clone());
                     }
                 }
             }

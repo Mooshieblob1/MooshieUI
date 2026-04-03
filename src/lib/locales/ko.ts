@@ -750,6 +750,7 @@ const ko: Record<string, string> = {
   "modelhub.direct.description": "합법적인 직접 모델 URL(Hugging Face, 미러, 개인 호스트)을 붙여넣고 선택한 모델 카테고리에 설치합니다.",
   "modelhub.direct.url_required": "직접 URL이 필요합니다.",
   "modelhub.direct.filename_required": "파일명이 필요합니다.",
+  "modelhub.direct.hf_page_url_error": "이것은 HuggingFace 모델 페이지 URL처럼 보입니다. 직접 파일 URL이 아닙니다.\n/resolve/main/ URL을 사용하세요. 예:\nhttps://huggingface.co/author/model/resolve/main/model.safetensors",
   "modelhub.direct.installed": "모델이 다운로드되고 설치되었습니다.",
   "modelhub.hf.open": "열기",
   "modelhub.hf.use": "사용",

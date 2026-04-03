@@ -750,6 +750,7 @@ const ru: Record<string, string> = {
   "modelhub.direct.description": "Вставьте любой легитимный прямой URL модели (Hugging Face, зеркало, частный хост) и установите в выбранную категорию моделей.",
   "modelhub.direct.url_required": "Необходим прямой URL.",
   "modelhub.direct.filename_required": "Требуется имя файла.",
+  "modelhub.direct.hf_page_url_error": "Похоже, это URL страницы HuggingFace, а не прямой URL файла.\nИспользуйте URL вида /resolve/main/, например:\nhttps://huggingface.co/author/model/resolve/main/model.safetensors",
   "modelhub.direct.installed": "Модель загружена и установлена.",
   "modelhub.hf.open": "Открыть",
   "modelhub.hf.use": "Использовать",

@@ -197,6 +197,11 @@ class GenerationStore {
     return this.detectedArchitecture === "kolors";
   }
 
+  /** True when the selected model is Mugen (SDXL with Flux2 VAE + rectified flow). */
+  get isMugen(): boolean {
+    return this.detectedArchitecture === "mugen";
+  }
+
   /** True when the model is an accelerated variant (turbo/lightning/lcm/hyper) needing fewer steps. */
   get isAccelerated(): boolean {
     const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
@@ -208,18 +213,20 @@ class GenerationStore {
     return this.isSd3 || this.isFlux || this.isAnima;
   }
 
-  /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow). */
+  /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow, Mugen). */
   get usesRectifiedFlow(): boolean {
-    return this.isSd3 || this.isFlux || this.isAuraFlow;
+    return this.isSd3 || this.isFlux || this.isAuraFlow || this.isMugen;
   }
 
   /** Detect the base model architecture from modelspec (authoritative) or filename (fallback). */
-  get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "sd3" | "flux" | "pony" | "auraflow" | "pixart" | "hunyuandit" | "cascade" | "kolors" | "unknown" {
+  get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "sd3" | "flux" | "pony" | "auraflow" | "pixart" | "hunyuandit" | "cascade" | "kolors" | "mugen" | "unknown" {
     const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
 
     // 1. Use modelspec architecture if available (definitive)
     if (this.modelspecArchitecture) {
       const arch = this.modelspecArchitecture.toLowerCase();
+      // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
+      if (name.includes("mugen")) return "mugen";
       // Illustrious/NoobAI family (they report as SDXL arch but need special ControlNets)
       if (name.includes("illustrious") || name.includes("noobai") || name.includes("noob") || name.includes("sih")) return "illustrious";
       // Pony (SDXL-based but very different optimal settings)
@@ -244,6 +251,8 @@ class GenerationStore {
 
     // 2. Fall back to filename heuristics
     if (!name) return "unknown";
+    // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
+    if (name.includes("mugen")) return "mugen";
     // Illustrious/NoobAI/vpred SDXL variants
     if (name.includes("illustrious") || name.includes("noobai") || name.includes("noob") || name.includes("sih")) return "illustrious";
     // Pony Diffusion (check before SDXL — pony names often contain "xl")

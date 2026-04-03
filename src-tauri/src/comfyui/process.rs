@@ -166,7 +166,10 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             let pyvenv_cfg = std::path::Path::new(&config.venv_path).join("pyvenv.cfg");
             if let Ok(content) = std::fs::read_to_string(&pyvenv_cfg) {
                 content.lines().any(|line| {
-                    if let Some(value) = line.strip_prefix("home").and_then(|s| s.strip_prefix('=').or_else(|| s.strip_prefix(" ="))) {
+                    if let Some(value) = line
+                        .strip_prefix("home")
+                        .and_then(|s| s.strip_prefix('=').or_else(|| s.strip_prefix(" =")))
+                    {
                         let home_dir = value.trim();
                         !home_dir.is_empty() && !std::path::Path::new(home_dir).exists()
                     } else {
@@ -188,9 +191,13 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
                 if let Some(base) = venv_dir.parent() {
                     let uv = {
                         #[cfg(target_os = "windows")]
-                        { base.join("bin").join("uv.exe") }
+                        {
+                            base.join("bin").join("uv.exe")
+                        }
                         #[cfg(not(target_os = "windows"))]
-                        { base.join("bin").join("uv") }
+                        {
+                            base.join("bin").join("uv")
+                        }
                     };
                     let python_dir = base.join("python");
                     if uv.exists() {

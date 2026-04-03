@@ -750,6 +750,7 @@ const zh: Record<string, string> = {
   "modelhub.direct.description": "粘贴合法的直接模型 URL（Hugging Face、镜像、私有主机）并安装到选定的模型类别。",
   "modelhub.direct.url_required": "需要直接 URL。",
   "modelhub.direct.filename_required": "需要文件名。",
+  "modelhub.direct.hf_page_url_error": "这似乎是HuggingFace模型页面URL，而非直接文件URL。\n请使用/resolve/main/ URL，例如:\nhttps://huggingface.co/author/model/resolve/main/model.safetensors",
   "modelhub.direct.installed": "模型已下载并安装。",
   "modelhub.hf.open": "打开",
   "modelhub.hf.use": "使用",

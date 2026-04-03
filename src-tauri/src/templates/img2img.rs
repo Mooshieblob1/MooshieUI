@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::{load_model_nodes, WorkflowResult};
+use super::{insert_vae_decode, load_model_nodes, WorkflowResult};
 use crate::comfyui::types::GenerationParams;
 
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
@@ -108,19 +108,9 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     );
     next_id += 1;
 
-    // VAE Decode
-    let decode_id = next_id.to_string();
-    workflow.insert(
-        decode_id.clone(),
-        json!({
-            "class_type": "VAEDecode",
-            "inputs": {
-                "samples": [sampler_id, 0],
-                "vae": [vae_source.0.clone(), vae_source.1]
-            }
-        }),
-    );
-    next_id += 1;
+    // VAE Decode — VAEDecodeTiled for Mugen (Flux2VAE SDXL), VAEDecode otherwise
+    let (decode_id, next_id) =
+        insert_vae_decode(&mut workflow, next_id, &sampler_id, &vae_source, params);
 
     WorkflowResult {
         workflow,
