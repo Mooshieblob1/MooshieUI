@@ -7,13 +7,15 @@ import {
   deleteGalleryImage,
   renameGalleryImage,
   saveImageFile,
+  embedPngMetadataBytes,
   getOutputImage,
   copyImageToClipboard,
   getGalleryImagePath,
 } from "../utils/api.js";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { locale } from "./locale.svelte.js";
+import { generation } from "./generation.svelte.js";
 
 const GALLERY_BOARDS_KEY = "mooshieui.gallery.boards.v1";
 const GALLERY_BOARD_NAMES_KEY = "mooshieui.gallery.boardNames.v1";
@@ -165,6 +167,7 @@ class GalleryStore {
   }
 
   /** Save generated images to the persistent gallery on disk.
+   *  Skipped when manualSaveMode is on — user saves manually via saveImageToDir.
    *  If blobs are provided (from WebSocket delivery), use the bytes-based API
    *  to avoid a round-trip to ComfyUI's output directory. */
   async persistImages(
@@ -173,6 +176,7 @@ class GalleryStore {
     blobs?: Blob[],
     metadataMode?: string,
   ) {
+    if (generation.manualSaveMode) return;
     for (let i = 0; i < images.length; i++) {
       const img = images[i]!;
       try {
@@ -328,6 +332,31 @@ class GalleryStore {
     }
   }
 
+  /** Save an image directly to a specific directory (manual save mode). Embeds metadata. */
+  async saveImageToDir(image: OutputImage, dir: string) {
+    try {
+      let bytes: number[];
+      if (image.gallery_filename) {
+        bytes = await loadGalleryImage(image.gallery_filename);
+      } else if (image.url) {
+        const response = await fetch(image.url);
+        const buf = await response.arrayBuffer();
+        bytes = Array.from(new Uint8Array(buf));
+      } else {
+        bytes = await getOutputImage(image.filename, image.subfolder);
+      }
+      const filename = image.filename || `image_${Date.now()}.png`;
+      if (image.metadata && filename.toLowerCase().endsWith(".png")) {
+        bytes = await embedPngMetadataBytes(bytes, image.metadata, generation.metadataMode);
+      }
+      await saveImageFile(bytes, `${dir}/${filename}`);
+      this.showToast(locale.t("gallery.toast.image_saved"), "success");
+    } catch (e) {
+      console.error("Failed to save image to directory:", e);
+      this.showToast(locale.t("gallery.toast.failed_save"), "error");
+    }
+  }
+
   /** Copy a gallery image file to clipboard (as file reference). */
   async copyToClipboard(image: OutputImage) {
     try {
@@ -335,7 +364,7 @@ class GalleryStore {
         const path = await getGalleryImagePath(image.gallery_filename);
         await copyImageToClipboard(path);
       } else if (image.url) {
-        await this.copyBlobToClipboard(image.url);
+        await this.copyBlobToClipboard(image.url, image.metadata ?? undefined);
         return;
       } else {
         this.showToast(locale.t("gallery.toast.not_saved_yet"), "info");
@@ -348,13 +377,17 @@ class GalleryStore {
     }
   }
 
-  /** Copy a blob URL image to clipboard via native Tauri clipboard. */
-  async copyBlobToClipboard(blobUrl: string) {
+  /** Copy a blob URL image to clipboard via native Tauri clipboard, embedding metadata if provided. */
+  async copyBlobToClipboard(blobUrl: string, metadata?: Record<string, string>) {
     try {
       const response = await fetch(blobUrl);
       const blob = await response.blob();
       const arrayBuf = await blob.arrayBuffer();
-      const bytes = Array.from(new Uint8Array(arrayBuf));
+      let bytes = Array.from(new Uint8Array(arrayBuf));
+
+      if (metadata) {
+        bytes = await embedPngMetadataBytes(bytes, metadata);
+      }
 
       // Write to a temp file, then use native clipboard
       const tmpPath = `/tmp/mooshieui_clipboard_${Date.now()}.png`;

@@ -138,6 +138,10 @@ class GenerationStore {
   customPonyPositiveQuality = $state(DEFAULT_PONY_POSITIVE_QUALITY);
   customPonyNegativeQuality = $state(DEFAULT_PONY_NEGATIVE_QUALITY);
   promptHistory = $state<PromptHistoryEntry[]>([]);
+  /** When true, images are NOT auto-saved to the internal gallery — user saves manually. */
+  manualSaveMode = $state(false);
+  /** Directories to auto-save images to when manualSaveMode is enabled. */
+  autoSaveDirs = $state<string[]>([]);
 
   /** Whether the developer mode section in Settings has been unlocked (10 version taps). Not persisted. */
   devModeUnlocked = $state(false);
@@ -614,6 +618,8 @@ class GenerationStore {
         if (saved.customIllustriousNegativeQuality !== undefined) this.customIllustriousNegativeQuality = saved.customIllustriousNegativeQuality;
         if (saved.customPonyPositiveQuality !== undefined) this.customPonyPositiveQuality = saved.customPonyPositiveQuality;
         if (saved.customPonyNegativeQuality !== undefined) this.customPonyNegativeQuality = saved.customPonyNegativeQuality;
+        if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
+        if (Array.isArray(saved.autoSaveDirs)) this.autoSaveDirs = saved.autoSaveDirs;
         // Migrate: old default was "text_chunk", new default is "both" (stealth + text)
         if (!localStorage.getItem("mooshieui.metadataMode.v2")) {
           this.metadataMode = "both";
@@ -688,6 +694,8 @@ class GenerationStore {
         customIllustriousNegativeQuality: this.customIllustriousNegativeQuality,
         customPonyPositiveQuality: this.customPonyPositiveQuality,
         customPonyNegativeQuality: this.customPonyNegativeQuality,
+        manualSaveMode: this.manualSaveMode,
+        autoSaveDirs: this.autoSaveDirs,
       });
     } catch (e) {
       console.error("Failed to save settings:", e);

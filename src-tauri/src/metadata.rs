@@ -504,6 +504,11 @@ fn format_swarmui_json(params: &HashMap<String, String>) -> String {
         }
     }
 
+    image_params.insert(
+        "mooshie_version".to_string(),
+        serde_json::Value::String(env!("CARGO_PKG_VERSION").to_string()),
+    );
+
     let mut extra_data = serde_json::Map::new();
     let extra_keys = ["date", "generation_time"];
     for &key in &extra_keys {
@@ -575,6 +580,7 @@ fn parse_swarmui_json(text: &str) -> Option<HashMap<String, String>> {
         ];
 
         for &(swarm, internal) in reverse_mappings {
+            if swarm == "mooshie_version" { continue; }
             if let Some(value) = image_params.get(swarm) {
                 let s = match value {
                     serde_json::Value::String(s) => s.clone(),

@@ -230,6 +230,14 @@ export async function saveImageFile(
   return invoke("save_image_file", { imageBytes, path });
 }
 
+export async function embedPngMetadataBytes(
+  imageBytes: number[],
+  metadata: Record<string, string>,
+  metadataMode?: string
+): Promise<number[]> {
+  return invoke("embed_png_metadata_bytes", { imageBytes, metadata, metadataMode });
+}
+
 export async function saveToGallery(
   filename: string,
   subfolder: string,
@@ -402,6 +410,15 @@ export async function getCheckpointCivitaiInfo(
   filename: string
 ): Promise<CheckpointCivitaiInfo> {
   return invoke("get_checkpoint_civitai_info", { filename });
+}
+
+/**
+ * Fetch a remote image through the Rust backend so CivitAI auth headers
+ * are applied and the result is cached to disk per-user.
+ * Returns a "data:<mime>;base64,..." string ready for use in <img src>.
+ */
+export async function fetchCachedImage(url: string): Promise<string> {
+  return invoke("fetch_cached_image", { url });
 }
 
 export async function checkNodeAvailable(nodeClass: string): Promise<boolean> {

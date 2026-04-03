@@ -456,6 +456,9 @@
   const METADATA_MAX_WIDTH = 600;
   const GALLERY_PREFS_KEY = "mooshieui.gallery.prefs.v1";
 
+  /** Dir picker shown when manualSaveMode is on and 2+ dirs are configured. */
+  let dirPickerImage = $state<OutputImage | null>(null);
+
   const WIN_STATE_KEY = "mooshieui.window.state.v1";
 
   function saveWindowMaximized(maximized: boolean) {
@@ -883,6 +886,21 @@
     // Pass blobs so persistImages can use the bytes-based API (no ComfyUI disk round-trip)
     const blobs = images.map((img) => img.blob);
     gallery.persistImages(newImages, metadata, blobs, generation.metadataMode);
+  }
+
+  /**
+   * Save an image to a directory when manualSaveMode is on.
+   * 0 dirs → native save-as dialog. 1 dir → save directly. 2+ dirs → show picker.
+   */
+  function saveToDir(image: OutputImage) {
+    const dirs = generation.autoSaveDirs.filter(Boolean);
+    if (dirs.length === 0) {
+      gallery.saveImageAs(image);
+    } else if (dirs.length === 1) {
+      gallery.saveImageToDir(image, dirs[0]!);
+    } else {
+      dirPickerImage = image;
+    }
   }
 
   onMount(async () => {
@@ -1466,6 +1484,9 @@
                             <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => upscaleImage(image)}>{locale.t("gallery.upscale")}</button>
                           {/if}
                           <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.saveImageAs(image)}>{locale.t("gallery.save")}</button>
+                          {#if generation.manualSaveMode && !image.gallery_filename}
+                            <button class="px-2 py-1 text-[11px] rounded bg-indigo-700 hover:bg-indigo-600 text-neutral-100" onclick={() => saveToDir(image)}>{locale.t("gallery.save_to_folder")}</button>
+                          {/if}
                           <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.copyToClipboard(image)}>{locale.t("gallery.copy")}</button>
                           <button class="px-2 py-1 text-[11px] rounded bg-red-900/80 hover:bg-red-800 text-neutral-100" onclick={() => gallery.deleteImage(image)}>{locale.t("gallery.delete")}</button>
                         </div>
@@ -1507,6 +1528,11 @@
                             <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow pointer-events-auto shrink-0" title={locale.t('gallery.save_as')} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>
                               <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                             </button>
+                            {#if generation.manualSaveMode && !image.gallery_filename}
+                              <button class="w-7 h-7 flex items-center justify-center rounded bg-indigo-700/90 hover:bg-indigo-600 text-neutral-100 shadow pointer-events-auto shrink-0" title={locale.t('gallery.save_to_folder')} onclick={(e) => { e.stopPropagation(); saveToDir(image); }}>
+                                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                              </button>
+                            {/if}
                             <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow pointer-events-auto shrink-0" title={locale.t('gallery.copy')} onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}>
                               <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                             </button>
@@ -1739,6 +1765,15 @@
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
+        {#if generation.manualSaveMode && gallery.selectedImage && !gallery.selectedImage.gallery_filename}
+          <button
+            title={locale.t('gallery.save_to_folder')}
+            class="flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-700/80 hover:bg-indigo-600 text-neutral-100 transition-colors"
+            onclick={() => gallery.selectedImage && saveToDir(gallery.selectedImage)}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+          </button>
+        {/if}
         <button
           title={locale.t('gallery.copy_clipboard')}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
@@ -1827,4 +1862,38 @@
     error={interrogateError}
     onclose={() => { showInterrogateModal = false; interrogateResult = null; interrogateImageUrl = null; interrogateError = null; }}
   />
+{/if}
+
+<!-- Dir picker overlay — shown when manual save mode is on and 2+ save dirs configured -->
+{#if dirPickerImage}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="fixed inset-0 z-[200] flex items-center justify-center bg-black/60"
+    onclick={(e) => { if (e.target === e.currentTarget) dirPickerImage = null; }}
+    onkeydown={(e) => { if (e.key === 'Escape') dirPickerImage = null; }}
+  >
+    <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-5 w-80 max-w-full">
+      <h2 class="text-sm font-semibold text-neutral-100 mb-3">{locale.t('gallery.dir_picker_title')}</h2>
+      <div class="space-y-2">
+        {#each generation.autoSaveDirs.filter(Boolean) as dir}
+          <button
+            class="w-full text-left px-3 py-2.5 rounded-lg bg-neutral-800 hover:bg-indigo-700 border border-neutral-700 hover:border-indigo-500 text-sm text-neutral-200 hover:text-white transition-colors truncate"
+            onclick={() => {
+              const img = dirPickerImage;
+              dirPickerImage = null;
+              if (img) gallery.saveImageToDir(img, dir);
+            }}
+          >
+            {dir}
+          </button>
+        {/each}
+      </div>
+      <button
+        class="mt-3 w-full px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
+        onclick={() => { dirPickerImage = null; }}
+      >
+        {locale.t('common.cancel')}
+      </button>
+    </div>
+  </div>
 {/if}

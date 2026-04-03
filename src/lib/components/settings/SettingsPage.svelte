@@ -182,6 +182,20 @@
     }
   }
 
+  async function browseSaveDir(i: number) {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: locale.t('settings.gallery.browse_save_dir_title'),
+    });
+    if (selected && typeof selected === "string") {
+      const dirs = [...generation.autoSaveDirs];
+      dirs[i] = selected;
+      generation.autoSaveDirs = dirs;
+      generation.saveSettings();
+    }
+  }
+
   async function moveInstallation() {
     if (!moveTargetPath.trim()) return;
     moving = true;
@@ -319,7 +333,7 @@
     { key: "appearance", label: "Appearance", keywords: "theme dark light font scale size style presets fooocus" },
     { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close quality tags auto" },
     { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
-    { key: "gallery", label: "Gallery", keywords: "import images output directory swarmui comfyui external folder" },
+    { key: "gallery", label: "Gallery", keywords: "import images output directory swarmui comfyui external folder manual save mode save directory" },
     { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", label: "Interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
     { key: "civitai", label: "CivitAI", keywords: "civitai api key metadata model hub image fetch download authentication" },
@@ -1072,6 +1086,78 @@
 
           {#if !collapsed.gallery}
           <div class="px-5 pb-5 space-y-4">
+
+            <!-- Manual save mode -->
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded accent-indigo-500"
+                  checked={generation.manualSaveMode}
+                  onchange={(e) => {
+                    generation.manualSaveMode = (e.target as HTMLInputElement).checked;
+                    generation.saveSettings();
+                  }}
+                />
+                <span class="text-sm text-neutral-200">{locale.t('settings.gallery.manual_save_label')}</span>
+              </label>
+              <p class="text-[10px] text-neutral-500 mt-1 ml-6">{locale.t('settings.gallery.manual_save_desc')}</p>
+            </div>
+
+            {#if generation.manualSaveMode}
+            <!-- Save directories -->
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="text-xs text-neutral-400">{locale.t('settings.gallery.save_dirs_label')}</label>
+                <button
+                  class="px-2 py-0.5 text-[10px] rounded border border-neutral-700 text-neutral-400 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
+                  onclick={() => {
+                    generation.autoSaveDirs = [...generation.autoSaveDirs, ""];
+                    generation.saveSettings();
+                  }}
+                  title={locale.t('settings.gallery.add_save_dir_title')}
+                >
+                  {locale.t('settings.gallery.add_save_dir')}
+                </button>
+              </div>
+              {#each generation.autoSaveDirs as dir, i}
+                <div class="flex gap-1.5 mb-1.5">
+                  <input
+                    type="text"
+                    value={dir}
+                    oninput={(e) => {
+                      const dirs = [...generation.autoSaveDirs];
+                      dirs[i] = (e.target as HTMLInputElement).value;
+                      generation.autoSaveDirs = dirs;
+                      generation.saveSettings();
+                    }}
+                    class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                    placeholder={locale.t('settings.gallery.save_dir_placeholder')}
+                  />
+                  <button
+                    class="px-2 py-2 rounded-lg border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors text-xs"
+                    onclick={() => browseSaveDir(i)}
+                    title={locale.t('settings.gallery.browse_save_dir_title')}
+                  >
+                    {locale.t('common.browse')}
+                  </button>
+                  {#if generation.autoSaveDirs.length > 1}
+                    <button
+                      class="px-2 py-2 rounded-lg border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300 transition-colors text-xs"
+                      onclick={() => {
+                        generation.autoSaveDirs = generation.autoSaveDirs.filter((_, j) => j !== i);
+                        generation.saveSettings();
+                      }}
+                      title={locale.t('settings.gallery.remove_save_dir_title')}
+                    >
+                      &times;
+                    </button>
+                  {/if}
+                </div>
+              {/each}
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.gallery.save_dirs_desc')}</p>
+            </div>
+            {/if}
 
             <!-- Import from external directory -->
             <div>

@@ -219,6 +219,19 @@ pub async fn save_image_file(image_bytes: Vec<u8>, path: String) -> Result<(), A
     Ok(())
 }
 
+/// Embed metadata into raw PNG bytes and return the result — no disk save.
+/// Used when copying a freshly-generated image before it has been persisted to gallery.
+#[tauri::command]
+pub async fn embed_png_metadata_bytes(
+    image_bytes: Vec<u8>,
+    metadata: std::collections::HashMap<String, String>,
+    metadata_mode: Option<String>,
+) -> Result<Vec<u8>, AppError> {
+    let mode = crate::metadata::MetadataMode::from_str(metadata_mode.as_deref().unwrap_or("text_chunk"));
+    crate::metadata::embed_png_metadata(&image_bytes, &metadata, mode)
+        .map_err(AppError::Other)
+}
+
 #[tauri::command]
 pub async fn save_to_gallery(
     state: State<'_, AppState>,
@@ -2184,6 +2197,104 @@ pub async fn export_logs(state: State<'_, AppState>, destination: String) -> Res
     // Write to destination
     std::fs::write(&destination, &output)?;
     Ok(())
+}
+
+/// Detect the MIME type of image bytes from magic bytes.
+fn detect_image_mime(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(b"\x89PNG") {
+        "image/png"
+    } else if bytes.starts_with(b"\xff\xd8") {
+        "image/jpeg"
+    } else if bytes.starts_with(b"GIF") {
+        "image/gif"
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else {
+        "image/jpeg"
+    }
+}
+
+/// Fetch a remote image URL through the Rust backend (with CivitAI auth headers if
+/// configured), caching the raw bytes to `{app_data_dir}/image_cache/{url_sha256}`.
+///
+/// Returns the image as a `"data:<mime>;base64,..."` string so the WebView can
+/// display it without making its own unauthenticated request to CivitAI.
+/// Cache TTL is 7 days; stale or missing entries are refreshed transparently.
+#[tauri::command]
+pub async fn fetch_cached_image(
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<String, AppError> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    // Build a stable cache filename from the URL hash.
+    let mut hasher = sha2::Sha256::new();
+    sha2::Digest::update(&mut hasher, url.as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+
+    let cache_dir = crate::config::app_data_dir()
+        .ok_or_else(|| AppError::Other("Cannot determine app data directory".into()))?
+        .join("image_cache");
+    std::fs::create_dir_all(&cache_dir)?;
+
+    let cache_path = cache_dir.join(&hash);
+    const CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60; // 7 days
+
+    // Return cached bytes if they exist and are fresh.
+    if let Ok(meta) = std::fs::metadata(&cache_path) {
+        if meta
+            .modified()
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .map(|e| e.as_secs() < CACHE_TTL_SECS)
+            .unwrap_or(false)
+        {
+            if let Ok(bytes) = std::fs::read(&cache_path) {
+                if !bytes.is_empty() {
+                    let mime = detect_image_mime(&bytes);
+                    return Ok(format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)));
+                }
+            }
+        }
+    }
+
+    // Cache miss — fetch through the backend so auth headers are applied.
+    let civitai_api_key = {
+        let config = state.config.read().await;
+        config.civitai_api_key.clone()
+    };
+
+    let mut req = state
+        .http_client
+        .get(&url)
+        .header("User-Agent", "MooshieUI/0.5.7");
+    if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
+        req = req.bearer_auth(key);
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| AppError::Other(format!("Image fetch failed: {}", e)))?;
+
+    if !resp.status().is_success() {
+        return Err(AppError::Other(format!(
+            "Image fetch returned HTTP {}",
+            resp.status()
+        )));
+    }
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| AppError::Other(format!("Failed to read image bytes: {}", e)))?
+        .to_vec();
+
+    // Persist to disk cache (best-effort; ignore write errors).
+    let _ = std::fs::write(&cache_path, &bytes);
+
+    let mime = detect_image_mime(&bytes);
+    Ok(format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)))
 }
 
 /// Read an image from the native clipboard and return PNG bytes.

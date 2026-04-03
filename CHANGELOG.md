@@ -1,5 +1,21 @@
 # Changelog
 
+## What's New in v0.5.8
+
+### Manual Save Mode
+- New **Manual save mode** setting in Settings › Gallery: when enabled, generated images are not auto-saved to the internal gallery
+- A **Save to folder** button appears on each image (grid hover, list view, and lightbox) to write the image — with full embedded metadata — to a directory of your choice
+- Configure one or more save directories; if multiple are set, a picker prompts you to choose on each save
+- Per-directory browsing via the native folder picker
+- All 11 locales fully translated
+
+### LoRA Panel Image Caching
+- CivitAI preview images in the LoRA bottom panel now load through the Rust backend with your CivitAI API key, fixing the white question-mark placeholder caused by unauthenticated CDN requests
+- Images are cached to disk (`{data_dir}/image_cache/`) with a 7-day TTL so they load instantly on subsequent app launches without re-downloading
+- Navigating between preview images (next/prev) pre-resolves the adjacent image in the background
+
+---
+
 ## What's New in v0.5.7
 
 ### Mugen Model Support

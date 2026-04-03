@@ -2,7 +2,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { getLoraCivitaiInfo, type LoraCivitaiInfo } from "../../utils/api.js";
+  import { getLoraCivitaiInfo, fetchCachedImage, type LoraCivitaiInfo } from "../../utils/api.js";
 
   const CACHE_KEY = "mooshieui.lora.civitai.cache.v2";
   const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
@@ -182,14 +182,20 @@
     const info = getInfo(filename);
     if (!info?.civitai_images.length) return;
     const current = imageIndex[filename] ?? 0;
-    imageIndex = { ...imageIndex, [filename]: (current + 1) % info.civitai_images.length };
+    const next = (current + 1) % info.civitai_images.length;
+    imageIndex = { ...imageIndex, [filename]: next };
+    const nextUrl = info.civitai_images[next]?.url;
+    if (nextUrl) resolveImage(nextUrl);
   }
 
   function prevImage(filename: string) {
     const info = getInfo(filename);
     if (!info?.civitai_images.length) return;
     const current = imageIndex[filename] ?? 0;
-    imageIndex = { ...imageIndex, [filename]: current === 0 ? info.civitai_images.length - 1 : current - 1 };
+    const prev = current === 0 ? info.civitai_images.length - 1 : current - 1;
+    imageIndex = { ...imageIndex, [filename]: prev };
+    const prevUrl = info.civitai_images[prev]?.url;
+    if (prevUrl) resolveImage(prevUrl);
   }
 
   function addTriggerWord(word: string) {
@@ -204,6 +210,34 @@
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
     return String(n);
   }
+
+  // Resolved data-URL cache: civitai url → "data:image/...;base64,..."
+  // Populated lazily when an image tile becomes visible.
+  let resolvedImages = $state<Record<string, string>>({});
+  let resolvingImages = new Set<string>();
+
+  async function resolveImage(url: string): Promise<void> {
+    if (resolvedImages[url] || resolvingImages.has(url)) return;
+    resolvingImages.add(url);
+    try {
+      const dataUrl = await fetchCachedImage(url);
+      resolvedImages = { ...resolvedImages, [url]: dataUrl };
+    } catch {
+      // Leave unresolved — the fallback placeholder will show.
+    } finally {
+      resolvingImages.delete(url);
+    }
+  }
+
+  // Resolve the currently-visible image for a LoRA whenever it changes.
+  $effect(() => {
+    for (const loraName of Object.keys(cache)) {
+      const url = currentImageUrl(loraName);
+      if (url && !resolvedImages[url]) {
+        resolveImage(url);
+      }
+    }
+  });
 </script>
 
 <!-- Search + LoRA grid -->
@@ -234,6 +268,7 @@
         {@const isLoading = loading[loraName]}
         {@const error = errors[loraName]}
         {@const imgUrl = currentImageUrl(loraName)}
+        {@const resolvedUrl = imgUrl ? (resolvedImages[imgUrl] ?? null) : null}
         {@const imgCount = info?.civitai_images.length ?? 0}
         {@const imgIdx = imageIndex[loraName] ?? 0}
         {@const isSelected = selectedLora === loraName}
@@ -257,16 +292,15 @@
                 {locale.t('lora.on')}
               </div>
             {/if}
-            {#if isLoading}
+            {#if isLoading || (imgUrl && !resolvedUrl)}
               <div class="absolute inset-0 flex items-center justify-center">
                 <div class="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
               </div>
-            {:else if imgUrl}
+            {:else if resolvedUrl}
               <img
-                src={imgUrl}
+                src={resolvedUrl}
                 alt={displayName(loraName)}
                 class="w-full h-full object-cover"
-                loading="lazy"
               />
               {#if imgCount > 1}
                 <div class="absolute bottom-1 right-1 bg-black/70 text-[10px] text-neutral-300 px-1.5 py-0.5 rounded-full tabular-nums">
