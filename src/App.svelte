@@ -1113,13 +1113,21 @@
     void gallery.lightboxOpen;
     void gallery.selectedImage;
 
-    if (!gallery.lightboxOpen || !gallery.selectedImage?.gallery_filename) {
+    if (!gallery.lightboxOpen || !gallery.selectedImage) {
       lightboxMetadata = null;
       loadingLightboxMetadata = false;
       return;
     }
 
     const target = gallery.selectedImage;
+
+    // Use in-memory metadata if already present (session images from current generation)
+    if (target.metadata) {
+      lightboxMetadata = target.metadata;
+      loadingLightboxMetadata = false;
+      return;
+    }
+
     const galleryFilename = target.gallery_filename;
     if (!galleryFilename) {
       loadingLightboxMetadata = false;

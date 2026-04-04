@@ -1,5 +1,14 @@
 # Changelog
 
+## What's New in v0.6.1
+
+### Fixed Lightbox Metadata for Session Images
+- Fixed metadata panel showing empty in the lightbox when viewing images from the preview pane or bottom panel
+- Session images now display their generation parameters (prompt, model, sampler, seed, etc.) immediately without waiting for the async gallery save to complete
+- Previously the lightbox only loaded metadata from disk, ignoring in-memory metadata that session images already had
+
+---
+
 ## What's New in v0.6.0
 
 ### Fixed Clipboard Copy
