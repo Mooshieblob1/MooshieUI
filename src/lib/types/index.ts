@@ -128,6 +128,7 @@ export interface AppConfig {
   interrogator_general_threshold: number;
   interrogator_character_threshold: number;
   civitai_api_key: string | null;
+  gallery_path: string | null;
 }
 
 export interface QueueInfo {

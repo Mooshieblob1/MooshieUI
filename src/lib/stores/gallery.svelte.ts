@@ -10,6 +10,7 @@ import {
   embedPngMetadataBytes,
   getOutputImage,
   copyImageToClipboard,
+  copyBytesToClipboard,
   getGalleryImagePath,
 } from "../utils/api.js";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -389,10 +390,12 @@ class GalleryStore {
         bytes = await embedPngMetadataBytes(bytes, metadata);
       }
 
-      // Write to a temp file, then use native clipboard
-      const tmpPath = `/tmp/mooshieui_clipboard_${Date.now()}.png`;
-      await saveImageFile(bytes, tmpPath);
-      await copyImageToClipboard(tmpPath);
+      // Infer extension from blob MIME type
+      const ext = blob.type === "image/jpeg" ? "jpg"
+        : blob.type === "image/webp" ? "webp"
+        : "png";
+
+      await copyBytesToClipboard(bytes, ext);
       this.showToast(locale.t("gallery.toast.copied"), "success");
     } catch (e) {
       console.error("Failed to copy blob to clipboard:", e);

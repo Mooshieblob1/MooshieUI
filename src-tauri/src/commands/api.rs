@@ -281,9 +281,8 @@ fn save_to_gallery_inner(
     metadata: Option<&std::collections::HashMap<String, String>>,
     metadata_mode: Option<&str>,
 ) -> Result<String, AppError> {
-    let dir = crate::config::app_data_dir()
-        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
-        .join("gallery");
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     std::fs::create_dir_all(&dir)?;
 
     let normalized_mode = match mode {
@@ -351,9 +350,8 @@ fn save_to_gallery_inner(
 pub async fn read_image_metadata(
     filename: String,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
-    let dir = crate::config::app_data_dir()
-        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
-        .join("gallery");
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let path = dir.join(&filename);
     let bytes = std::fs::read(&path)?;
     crate::metadata::read_png_metadata(&bytes).map_err(|e| AppError::Other(e))
@@ -376,9 +374,8 @@ pub async fn read_image_metadata_path(
 
 #[tauri::command]
 pub async fn list_gallery_images() -> Result<Vec<String>, AppError> {
-    let dir = crate::config::app_data_dir()
-        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
-        .join("gallery");
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     if !dir.exists() {
         return Ok(vec![]);
     }
@@ -403,9 +400,8 @@ pub async fn list_gallery_images() -> Result<Vec<String>, AppError> {
 
 #[tauri::command]
 pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppError> {
-    let dir = crate::config::app_data_dir()
-        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
-        .join("gallery");
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     if !dir.exists() {
         return Ok(vec![]);
     }
@@ -446,9 +442,8 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
     if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
         return Err(AppError::Other("Invalid filename".into()));
     }
-    let dir = crate::config::app_data_dir()
-        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
-        .join("gallery");
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let path = dir.join(&filename);
     let bytes = std::fs::read(&path)?;
     Ok(bytes)
@@ -481,9 +476,8 @@ pub fn generate_thumbnail(
 
 #[tauri::command]
 pub async fn get_gallery_image_path(filename: String) -> Result<String, AppError> {
-    let dir = crate::config::app_data_dir()
-        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
-        .join("gallery");
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let path = dir.join(&filename);
     if !path.exists() {
         return Err(AppError::Other(format!(
@@ -496,9 +490,8 @@ pub async fn get_gallery_image_path(filename: String) -> Result<String, AppError
 
 #[tauri::command]
 pub async fn delete_gallery_image(filename: String) -> Result<(), AppError> {
-    let dir = crate::config::app_data_dir()
-        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
-        .join("gallery");
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let path = dir.join(&filename);
     if path.exists() {
         std::fs::remove_file(&path)?;
@@ -511,9 +504,8 @@ pub async fn rename_gallery_image(
     old_filename: String,
     new_filename: String,
 ) -> Result<String, AppError> {
-    let dir = crate::config::app_data_dir()
-        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
-        .join("gallery");
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
 
     let old_path = dir.join(&old_filename);
     if !old_path.exists() {
@@ -535,138 +527,52 @@ pub async fn rename_gallery_image(
     Ok(new_filename)
 }
 
+/// Decode image bytes (PNG/JPEG/WebP) into RGBA pixels for the Tauri clipboard plugin.
+fn decode_image_to_rgba(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), AppError> {
+    let img = image::load_from_memory(bytes)
+        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    Ok((rgba.into_raw(), w, h))
+}
+
+/// Copy raw image bytes (PNG/JPEG/WebP) to the system clipboard.
 #[tauri::command]
-pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> {
-    use std::process::Command;
-    #[cfg(target_os = "linux")]
-    use std::process::Stdio;
+pub async fn copy_bytes_to_clipboard(
+    app: AppHandle,
+    bytes: Vec<u8>,
+    _ext: String,
+) -> Result<(), AppError> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+
+    let (rgba, w, h) = decode_image_to_rgba(&bytes)?;
+    let img = tauri::image::Image::new_owned(rgba, w, h);
+    app.clipboard()
+        .write_image(&img)
+        .map_err(|e| AppError::Other(format!("Failed to copy image to clipboard: {}", e)))?;
+    Ok(())
+}
+
+/// Copy an image file to the system clipboard.
+#[tauri::command]
+pub async fn copy_image_to_clipboard(
+    app: AppHandle,
+    file_path: String,
+) -> Result<(), AppError> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
 
     let path = std::path::Path::new(&file_path);
     if !path.exists() {
         return Err(AppError::Other(format!("File not found: {}", file_path)));
     }
 
-    let canonical = path
-        .canonicalize()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-
-    #[cfg(target_os = "linux")]
-    {
-        use std::io::Write;
-        let image_bytes = std::fs::read(&canonical)
-            .map_err(|e| AppError::Other(format!("Failed to read image file: {}", e)))?;
-
-        let mime_type = match canonical
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.to_ascii_lowercase())
-            .as_deref()
-        {
-            Some("jpg") | Some("jpeg") => "image/jpeg",
-            Some("webp") => "image/webp",
-            _ => "image/png",
-        };
-
-        let run_clipboard_command = |program: &str, args: &[&str]| -> Result<(), String> {
-            let mut child = Command::new(program)
-                .args(args)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| format!("{} spawn failed: {}", program, e))?;
-
-            if let Some(ref mut stdin) = child.stdin {
-                stdin
-                    .write_all(&image_bytes)
-                    .map_err(|e| format!("{} stdin write failed: {}", program, e))?;
-            }
-
-            let output = child
-                .wait_with_output()
-                .map_err(|e| format!("{} wait failed: {}", program, e))?;
-
-            if output.status.success() {
-                Ok(())
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(format!(
-                    "{} exited with {}: {}",
-                    program,
-                    output.status,
-                    stderr.trim()
-                ))
-            }
-        };
-
-        // Detect Wayland vs X11 and try the appropriate tool first.
-        let on_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
-            || std::env::var("XDG_SESSION_TYPE")
-                .map(|v| v == "wayland")
-                .unwrap_or(false);
-
-        let (primary, primary_args, fallback, fallback_args): (&str, &[&str], &str, &[&str]) =
-            if on_wayland {
-                (
-                    "wl-copy",
-                    &["--type", mime_type] as &[&str],
-                    "xclip",
-                    &["-selection", "clipboard", "-t", mime_type, "-i"] as &[&str],
-                )
-            } else {
-                (
-                    "xclip",
-                    &["-selection", "clipboard", "-t", mime_type, "-i"] as &[&str],
-                    "wl-copy",
-                    &["--type", mime_type] as &[&str],
-                )
-            };
-
-        if let Err(primary_err) = run_clipboard_command(primary, primary_args) {
-            run_clipboard_command(fallback, fallback_args).map_err(|fallback_err| {
-                AppError::Other(format!(
-                    "Clipboard copy failed ({} and {}). {}: {} | {}: {}",
-                    primary, fallback, primary, primary_err, fallback, fallback_err
-                ))
-            })?;
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        // Use osascript to copy file to clipboard (preserves format + metadata)
-        let script = format!(
-            "set the clipboard to (POSIX file \"{}\")",
-            canonical.display()
-        );
-        let status = Command::new("osascript")
-            .args(["-e", &script])
-            .status()
-            .map_err(|e| AppError::Other(format!("osascript failed: {}", e)))?;
-        if !status.success() {
-            return Err(AppError::Other(
-                "Failed to copy file to clipboard via osascript".into(),
-            ));
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        // Use PowerShell Set-Clipboard with file list
-        let ps_cmd = format!("Set-Clipboard -Path '{}'", canonical.display());
-        let status = Command::new("powershell")
-            .args(["-NoProfile", "-Command", &ps_cmd])
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .status()
-            .map_err(|e| AppError::Other(format!("PowerShell failed: {}", e)))?;
-        if !status.success() {
-            return Err(AppError::Other(
-                "Failed to copy file to clipboard via PowerShell".into(),
-            ));
-        }
-    }
-
+    let bytes = std::fs::read(path)
+        .map_err(|e| AppError::Other(format!("Failed to read image file: {}", e)))?;
+    let (rgba, w, h) = decode_image_to_rgba(&bytes)?;
+    let img = tauri::image::Image::new_owned(rgba, w, h);
+    app.clipboard()
+        .write_image(&img)
+        .map_err(|e| AppError::Other(format!("Failed to copy image to clipboard: {}", e)))?;
     Ok(())
 }
 
@@ -1963,9 +1869,8 @@ pub async fn import_image_directory(
         return Err(AppError::Other(format!("Not a directory: {}", directory)));
     }
 
-    let gallery_dir = crate::config::app_data_dir()
-        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
-        .join("gallery");
+    let gallery_dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     std::fs::create_dir_all(&gallery_dir)?;
 
     // Collect existing gallery filenames to avoid duplicates

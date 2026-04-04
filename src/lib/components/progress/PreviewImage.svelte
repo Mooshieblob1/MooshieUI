@@ -141,20 +141,32 @@
 
   function handleSave() {
     const savedImage = getActiveSavedImage();
-    if (!savedImage) {
-      gallery.showToast(locale.t('preview.not_available'), "info");
+    if (savedImage) {
+      void gallery.saveImageAs(savedImage);
       return;
     }
-    void gallery.saveImageAs(savedImage);
+    // Fall back to saving the visible preview/output image directly
+    const url = progress.displayImage;
+    if (url) {
+      void gallery.saveBlobAs(url, `preview_${Date.now()}.png`);
+      return;
+    }
+    gallery.showToast(locale.t('preview.not_available'), "info");
   }
 
   function handleCopy() {
     const savedImage = getActiveSavedImage();
-    if (!savedImage) {
-      gallery.showToast(locale.t('preview.not_available'), "info");
+    if (savedImage) {
+      void gallery.copyToClipboard(savedImage);
       return;
     }
-    void gallery.copyToClipboard(savedImage);
+    // Fall back to copying the visible preview/output image directly
+    const url = progress.displayImage;
+    if (url) {
+      void gallery.copyBlobToClipboard(url);
+      return;
+    }
+    gallery.showToast(locale.t('preview.not_available'), "info");
   }
 
   function hasFilePayload(e: DragEvent): boolean {

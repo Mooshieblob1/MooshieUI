@@ -149,9 +149,8 @@ pub async fn interrogate_gallery_image(
         return Err(AppError::Other("Invalid filename".into()));
     }
 
-    let dir = crate::config::app_data_dir()
-        .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
-        .join("gallery");
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let path = dir.join(&filename);
     let image_bytes = std::fs::read(&path)?;
     run_interrogation(&app, &state, image_bytes).await

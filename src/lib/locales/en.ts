@@ -168,6 +168,14 @@ const en: Record<string, string> = {
 
   // Gallery section
   "settings.gallery.title": "Gallery",
+  "settings.gallery.storage_label": "Gallery Storage Location",
+  "settings.gallery.storage_desc": "Where generated images are saved. Large galleries (100 GB+) can be pointed to a separate drive to avoid copying during installation moves.",
+  "settings.gallery.storage_browse_title": "Choose gallery storage folder",
+  "settings.gallery.storage_reset": "Reset to default",
+  "settings.gallery.storage_reset_title": "Use the default location inside the app data directory",
+  "settings.gallery.storage_custom": "Custom",
+  "settings.gallery.storage_default": "Default",
+  "settings.gallery.storage_moved": "Gallery path updated. Existing images stay at the old location — move them manually if needed.",
   "settings.gallery.import_label": "Import Images from Directory",
   "settings.gallery.import_desc": "Copy images from a SwarmUI output, ComfyUI output, or any other image directory into your gallery. Existing metadata is preserved.",
   "settings.gallery.choose_directory": "Choose Directory...",

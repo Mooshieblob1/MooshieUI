@@ -323,6 +323,10 @@ export async function copyImageToClipboard(filePath: string): Promise<void> {
   return invoke("copy_image_to_clipboard", { filePath });
 }
 
+export async function copyBytesToClipboard(bytes: number[], ext: string): Promise<void> {
+  return invoke("copy_bytes_to_clipboard", { bytes, ext });
+}
+
 export async function getGalleryImagePath(filename: string): Promise<string> {
   return invoke("get_gallery_image_path", { filename });
 }
@@ -443,6 +447,14 @@ export async function getConfig(): Promise<AppConfig> {
 
 export async function updateConfig(config: AppConfig): Promise<void> {
   return invoke("update_config", { config });
+}
+
+export async function getGalleryPath(): Promise<string> {
+  return invoke("get_gallery_path");
+}
+
+export async function setGalleryPath(path: string): Promise<string> {
+  return invoke("set_gallery_path", { path });
 }
 
 export async function interrogateImage(imageBase64: string): Promise<InterrogationResult> {

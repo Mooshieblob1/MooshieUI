@@ -1132,6 +1132,45 @@ pub async fn move_installation(
         return Err("New path is the same as the current location".to_string());
     }
 
+    // Prevent recursive nesting: ensure neither path is inside the other.
+    // Canonicalize existing paths; for the destination (which may not exist yet)
+    // canonicalize the nearest existing ancestor.
+    let current_canon = current
+        .canonicalize()
+        .unwrap_or_else(|_| current.clone());
+    let dest_canon = {
+        let mut ancestor = dest.clone();
+        loop {
+            if ancestor.exists() {
+                break ancestor
+                    .canonicalize()
+                    .unwrap_or_else(|_| ancestor.clone())
+                    .join(
+                        dest.strip_prefix(&ancestor).unwrap_or(Path::new("")),
+                    );
+            }
+            if !ancestor.pop() {
+                break dest.clone();
+            }
+        }
+    };
+    if dest_canon.starts_with(&current_canon) {
+        return Err(format!(
+            "Cannot move into a subdirectory of the current installation. \
+             '{}' is inside '{}'. Choose a location outside the current install folder.",
+            dest.display(),
+            current.display()
+        ));
+    }
+    if current_canon.starts_with(&dest_canon) && current_canon != dest_canon {
+        return Err(format!(
+            "Cannot move to a parent of the current installation. \
+             '{}' contains '{}'. Choose a different location.",
+            dest.display(),
+            current.display()
+        ));
+    }
+
     // Verify current installation exists
     if !current.exists() {
         return Err(format!(
@@ -1167,6 +1206,32 @@ pub async fn move_installation(
         log::warn!("Could not stop ComfyUI before move: {}", e);
     }
 
+    // Determine the current gallery location *before* copying.
+    // If gallery_path is already custom (outside the data dir), it stays as-is.
+    // If it's the default ({data_dir}/gallery), we keep it in place and set
+    // gallery_path to the old absolute path so images are NOT copied (could be 400GB+).
+    let old_gallery = {
+        let cfg = state.config.read().await;
+        if let Some(ref custom) = cfg.gallery_path {
+            let p = PathBuf::from(custom.trim());
+            if !p.as_os_str().is_empty() {
+                Some(p) // Already custom — won't be inside `current`
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    let default_gallery = current.join("gallery");
+    let gallery_is_default = old_gallery.is_none();
+    let preserved_gallery_path = if gallery_is_default && default_gallery.exists() {
+        // Gallery lives inside the data dir — skip copying it and point to the old location
+        Some(default_gallery.clone())
+    } else {
+        old_gallery
+    };
+
     emit(
         &app,
         "move",
@@ -1174,8 +1239,15 @@ pub async fn move_installation(
         15,
     );
 
-    // Copy the entire directory tree
-    copy_dir_recursive(&current, &dest).map_err(|e| format!("Failed to copy data: {}", e))?;
+    // Copy the entire directory tree, but skip the gallery if it's the default location
+    // (it can be enormous — hundreds of GB of images).
+    if gallery_is_default && default_gallery.exists() {
+        copy_dir_recursive_skip(&current, &dest, "gallery")
+            .map_err(|e| format!("Failed to copy data: {}", e))?;
+    } else {
+        copy_dir_recursive(&current, &dest)
+            .map_err(|e| format!("Failed to copy data: {}", e))?;
+    }
 
     emit(&app, "move", "Updating configuration...", 85);
 
@@ -1197,6 +1269,11 @@ pub async fn move_installation(
             cfg.venv_path = cfg.venv_path.replacen(&current_str, &dest_str, 1);
         } else {
             cfg.venv_path = dest.join("venv").to_string_lossy().to_string();
+        }
+
+        // Preserve gallery at its current location instead of copying it
+        if let Some(ref gp) = preserved_gallery_path {
+            cfg.gallery_path = Some(gp.to_string_lossy().to_string());
         }
 
         // Save config to new location
@@ -1270,17 +1347,70 @@ pub async fn move_installation(
     Ok(())
 }
 
+/// Maximum directory nesting depth for recursive copy — a safety net
+/// to prevent infinite recursion if source/destination overlap detection
+/// is somehow bypassed.
+const MAX_COPY_DEPTH: u32 = 64;
+
 /// Recursively copy a directory and all its contents.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    copy_dir_recursive_inner(src, dst, 0, None)
+}
+
+/// Recursively copy a directory, skipping one top-level subdirectory by name.
+fn copy_dir_recursive_skip(src: &Path, dst: &Path, skip_dir_name: &str) -> std::io::Result<()> {
+    copy_dir_recursive_inner(src, dst, 0, Some(skip_dir_name))
+}
+
+fn copy_dir_recursive_inner(src: &Path, dst: &Path, depth: u32, skip_top_level: Option<&str>) -> std::io::Result<()> {
+    if depth > MAX_COPY_DEPTH {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!(
+                "Directory nesting exceeded {} levels — aborting to prevent infinite recursion. \
+                 Source '{}' may overlap with destination '{}'.",
+                MAX_COPY_DEPTH,
+                src.display(),
+                dst.display()
+            ),
+        ));
+    }
     std::fs::create_dir_all(dst)?;
+
+    // Skip the destination directory if it appears inside the source tree
+    let dst_canon = dst.canonicalize().ok();
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
+        // If this source entry IS the destination folder, skip it to avoid recursion
         if file_type.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
+            if let Some(ref dc) = dst_canon {
+                if let Ok(sp) = src_path.canonicalize() {
+                    if sp == *dc {
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // At the top level (depth 0), skip the named directory if requested
+        if depth == 0 && file_type.is_dir() {
+            if let Some(skip_name) = skip_top_level {
+                if entry.file_name().to_string_lossy() == skip_name {
+                    log::info!(
+                        "Skipping '{}' directory during move (gallery preserved in place)",
+                        skip_name
+                    );
+                    continue;
+                }
+            }
+        }
+
+        if file_type.is_dir() {
+            copy_dir_recursive_inner(&src_path, &dst_path, depth + 1, None)?;
         } else if file_type.is_symlink() {
             // Try to preserve symlinks; fall back to copying content on Windows
             // where symlink creation requires admin privileges (error 1314)
@@ -1303,7 +1433,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
                 // Symlink failed — copy the actual content instead
                 let real_path = std::fs::canonicalize(&src_path)?;
                 if real_path.is_dir() {
-                    copy_dir_recursive(&real_path, &dst_path)?;
+                    copy_dir_recursive_inner(&real_path, &dst_path, depth + 1, None)?;
                 } else {
                     std::fs::copy(&real_path, &dst_path)?;
                 }

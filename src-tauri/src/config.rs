@@ -36,6 +36,8 @@ pub struct AppConfig {
     pub interrogator_character_threshold: f32,
     /// Optional CivitAI API key for authenticated hash lookups and metadata fetching
     pub civitai_api_key: Option<String>,
+    /// Custom gallery directory. When `None`, defaults to `{app_data_dir}/gallery`.
+    pub gallery_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -73,8 +75,28 @@ impl Default for AppConfig {
             interrogator_general_threshold: 0.30,
             interrogator_character_threshold: 0.85,
             civitai_api_key: None,
+            gallery_path: None,
         }
     }
+}
+
+/// Resolve the gallery directory.
+/// Uses `AppConfig::gallery_path` if set, otherwise falls back to `{app_data_dir}/gallery`.
+pub fn gallery_dir() -> Option<PathBuf> {
+    // Try to read the config file to check for a custom gallery path
+    let data_dir = app_data_dir()?;
+    let config_path = data_dir.join("config.json");
+    if let Ok(content) = std::fs::read_to_string(&config_path) {
+        if let Ok(cfg) = serde_json::from_str::<AppConfig>(&content) {
+            if let Some(ref custom) = cfg.gallery_path {
+                let p = PathBuf::from(custom.trim());
+                if !p.as_os_str().is_empty() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    Some(data_dir.join("gallery"))
 }
 
 const APP_IDENTIFIER: &str = "com.mooshieui.desktop";

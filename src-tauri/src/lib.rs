@@ -102,11 +102,11 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
-        .setup(|app| {
+        .setup(|_app| {
             #[cfg(target_os = "linux")]
             {
                 use tauri::Manager;
-                if let Some(main_window) = app.get_webview_window("main") {
+                if let Some(main_window) = _app.get_webview_window("main") {
                     let _ = main_window.with_webview(|webview| {
                         use webkit2gtk::WebViewExt;
                         if let Some(settings) = webview.inner().settings() {
@@ -147,8 +147,8 @@ pub fn run() {
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(256);
 
-                let gallery_dir = match config::app_data_dir() {
-                    Some(d) => d.join("gallery"),
+                let gallery_dir = match config::gallery_dir() {
+                    Some(d) => d,
                     None => {
                         responder.respond(
                             tauri::http::Response::builder()
@@ -211,6 +211,7 @@ pub fn run() {
             commands::api::delete_gallery_image,
             commands::api::rename_gallery_image,
             commands::api::copy_image_to_clipboard,
+            commands::api::copy_bytes_to_clipboard,
             commands::api::find_model_by_hash,
             commands::api::hash_model_file,
             commands::api::civitai_lookup_hash,
@@ -234,6 +235,8 @@ pub fn run() {
             commands::workflow::generate,
             commands::config::get_config,
             commands::config::update_config,
+            commands::config::get_gallery_path,
+            commands::config::set_gallery_path,
             commands::interrogator::interrogate_image,
             commands::interrogator::interrogate_image_path,
             commands::interrogator::interrogate_gallery_image,

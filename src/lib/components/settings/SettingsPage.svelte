@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AppConfig } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult } from "../../utils/api.js";
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import { connection } from "../../stores/connection.svelte.js";
@@ -47,6 +47,11 @@
   let logExportDone = $state(false);
   let logExportError = $state<string | null>(null);
 
+  // Gallery path state
+  let galleryPathDisplay = $state("");
+  let galleryPathSaving = $state(false);
+  let galleryPathMessage = $state<string | null>(null);
+
   async function handleExportLogs() {
     const destination = await saveDialog({
       title: locale.t('settings.about.save_dialog_title'),
@@ -83,6 +88,38 @@
       importError = String(e);
     } finally {
       importBusy = false;
+    }
+  }
+
+  async function handleBrowseGalleryPath() {
+    const selected = await open({ directory: true, multiple: false, title: locale.t('settings.gallery.storage_browse_title') });
+    if (!selected) return;
+    galleryPathSaving = true;
+    galleryPathMessage = null;
+    try {
+      galleryPathDisplay = await setGalleryPath(selected as string);
+      if (config) config.gallery_path = selected as string;
+      galleryPathMessage = locale.t('settings.gallery.storage_moved');
+      setTimeout(() => (galleryPathMessage = null), 6000);
+    } catch (e) {
+      galleryPathMessage = String(e);
+    } finally {
+      galleryPathSaving = false;
+    }
+  }
+
+  async function handleResetGalleryPath() {
+    galleryPathSaving = true;
+    galleryPathMessage = null;
+    try {
+      galleryPathDisplay = await setGalleryPath("");
+      if (config) config.gallery_path = null;
+      galleryPathMessage = locale.t('settings.gallery.storage_moved');
+      setTimeout(() => (galleryPathMessage = null), 6000);
+    } catch (e) {
+      galleryPathMessage = String(e);
+    } finally {
+      galleryPathSaving = false;
     }
   }
 
@@ -384,6 +421,7 @@
       loading = false;
     }
     loadInstallPath();
+    getGalleryPath().then(p => { galleryPathDisplay = p; }).catch(() => {});
   });
 
   function snapshotRestartFields() {
@@ -1090,6 +1128,42 @@
 
           {#if !collapsed.gallery}
           <div class="px-5 pb-5 space-y-4">
+
+            <!-- Gallery storage location -->
+            <div>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.gallery.storage_label')}</label>
+              <p class="text-[10px] text-neutral-500 mb-2">{locale.t('settings.gallery.storage_desc')}</p>
+              <div class="flex gap-1.5 items-center">
+                <div class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-300 truncate select-text" title={galleryPathDisplay}>
+                  {#if config?.gallery_path}
+                    <span class="text-indigo-400 text-[10px] uppercase mr-1.5">{locale.t('settings.gallery.storage_custom')}</span>
+                  {:else}
+                    <span class="text-neutral-500 text-[10px] uppercase mr-1.5">{locale.t('settings.gallery.storage_default')}</span>
+                  {/if}
+                  {galleryPathDisplay}
+                </div>
+                <button
+                  class="px-3 py-2 rounded-lg border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors text-xs whitespace-nowrap"
+                  disabled={galleryPathSaving}
+                  onclick={handleBrowseGalleryPath}
+                >
+                  {locale.t('common.browse')}
+                </button>
+                {#if config?.gallery_path}
+                  <button
+                    class="px-2 py-2 rounded-lg border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300 transition-colors text-xs whitespace-nowrap"
+                    disabled={galleryPathSaving}
+                    onclick={handleResetGalleryPath}
+                    title={locale.t('settings.gallery.storage_reset_title')}
+                  >
+                    {locale.t('settings.gallery.storage_reset')}
+                  </button>
+                {/if}
+              </div>
+              {#if galleryPathMessage}
+                <p class="mt-1.5 text-[11px] text-amber-400">{galleryPathMessage}</p>
+              {/if}
+            </div>
 
             <!-- Manual save mode -->
             <div>
