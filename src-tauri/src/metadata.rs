@@ -580,7 +580,9 @@ fn parse_swarmui_json(text: &str) -> Option<HashMap<String, String>> {
         ];
 
         for &(swarm, internal) in reverse_mappings {
-            if swarm == "mooshie_version" { continue; }
+            if swarm == "mooshie_version" {
+                continue;
+            }
             if let Some(value) = image_params.get(swarm) {
                 let s = match value {
                     serde_json::Value::String(s) => s.clone(),

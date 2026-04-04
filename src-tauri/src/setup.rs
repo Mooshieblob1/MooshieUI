@@ -1135,9 +1135,7 @@ pub async fn move_installation(
     // Prevent recursive nesting: ensure neither path is inside the other.
     // Canonicalize existing paths; for the destination (which may not exist yet)
     // canonicalize the nearest existing ancestor.
-    let current_canon = current
-        .canonicalize()
-        .unwrap_or_else(|_| current.clone());
+    let current_canon = current.canonicalize().unwrap_or_else(|_| current.clone());
     let dest_canon = {
         let mut ancestor = dest.clone();
         loop {
@@ -1145,9 +1143,7 @@ pub async fn move_installation(
                 break ancestor
                     .canonicalize()
                     .unwrap_or_else(|_| ancestor.clone())
-                    .join(
-                        dest.strip_prefix(&ancestor).unwrap_or(Path::new("")),
-                    );
+                    .join(dest.strip_prefix(&ancestor).unwrap_or(Path::new("")));
             }
             if !ancestor.pop() {
                 break dest.clone();
@@ -1245,8 +1241,7 @@ pub async fn move_installation(
         copy_dir_recursive_skip(&current, &dest, "gallery")
             .map_err(|e| format!("Failed to copy data: {}", e))?;
     } else {
-        copy_dir_recursive(&current, &dest)
-            .map_err(|e| format!("Failed to copy data: {}", e))?;
+        copy_dir_recursive(&current, &dest).map_err(|e| format!("Failed to copy data: {}", e))?;
     }
 
     emit(&app, "move", "Updating configuration...", 85);
@@ -1362,7 +1357,12 @@ fn copy_dir_recursive_skip(src: &Path, dst: &Path, skip_dir_name: &str) -> std::
     copy_dir_recursive_inner(src, dst, 0, Some(skip_dir_name))
 }
 
-fn copy_dir_recursive_inner(src: &Path, dst: &Path, depth: u32, skip_top_level: Option<&str>) -> std::io::Result<()> {
+fn copy_dir_recursive_inner(
+    src: &Path,
+    dst: &Path,
+    depth: u32,
+    skip_top_level: Option<&str>,
+) -> std::io::Result<()> {
     if depth > MAX_COPY_DEPTH {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,

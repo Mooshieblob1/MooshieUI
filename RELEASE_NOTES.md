@@ -1,3 +1,23 @@
+## What's New in v0.6.0
+
+### Fixed Clipboard Copy
+- Fixed image clipboard copy silently failing on Linux — the "Copied to clipboard" toast appeared but pasting produced nothing
+- Restored native platform clipboard tools (`xclip`/`wl-copy` on Linux, `osascript` on macOS, PowerShell on Windows) replacing the broken `arboard`-based Tauri clipboard plugin which doesn't work reliably on Linux/Wayland
+- Affects all copy actions: preview pane, bottom panel, and gallery lightbox
+
+### Custom Gallery Storage Path
+- New **Gallery location** setting in Settings › Gallery lets you choose any directory to store generated images
+- Useful for pointing the gallery at a larger drive or a shared network folder
+- Browse to select a folder or reset to the default `{data_dir}/gallery` location
+- When moving installations, the gallery is preserved in place (not copied) to avoid duplicating potentially hundreds of gigabytes of images
+
+### Prevent Recursive Installation Move
+- Installation move now detects and blocks recursive nesting (moving into a subdirectory of itself or to a parent directory)
+- Added a depth limit safety net (`MAX_COPY_DEPTH = 64`) to `copy_dir_recursive` to prevent infinite loops if overlap detection is somehow bypassed
+- The copy function now skips the destination directory if it appears inside the source tree
+
+---
+
 ## What's New in v0.5.9
 
 ### Bug Fix: Import Images from Directory

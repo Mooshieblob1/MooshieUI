@@ -227,9 +227,9 @@ pub async fn embed_png_metadata_bytes(
     metadata: std::collections::HashMap<String, String>,
     metadata_mode: Option<String>,
 ) -> Result<Vec<u8>, AppError> {
-    let mode = crate::metadata::MetadataMode::from_str(metadata_mode.as_deref().unwrap_or("text_chunk"));
-    crate::metadata::embed_png_metadata(&image_bytes, &metadata, mode)
-        .map_err(AppError::Other)
+    let mode =
+        crate::metadata::MetadataMode::from_str(metadata_mode.as_deref().unwrap_or("text_chunk"));
+    crate::metadata::embed_png_metadata(&image_bytes, &metadata, mode).map_err(AppError::Other)
 }
 
 #[tauri::command]
@@ -527,53 +527,191 @@ pub async fn rename_gallery_image(
     Ok(new_filename)
 }
 
-/// Decode image bytes (PNG/JPEG/WebP) into RGBA pixels for the Tauri clipboard plugin.
-fn decode_image_to_rgba(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), AppError> {
-    let img = image::load_from_memory(bytes)
-        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
-    let rgba = img.to_rgba8();
-    let (w, h) = rgba.dimensions();
-    Ok((rgba.into_raw(), w, h))
+/// Infer MIME type from image bytes (magic bytes) or file extension.
+fn infer_image_mime(bytes: &[u8], ext_hint: Option<&str>) -> &'static str {
+    if bytes.len() >= 4 {
+        if bytes[0..4] == [0xFF, 0xD8, 0xFF, 0xE0] || bytes[0..4] == [0xFF, 0xD8, 0xFF, 0xE1] {
+            return "image/jpeg";
+        }
+        if bytes.len() >= 4 && bytes[0..4] == [0x52, 0x49, 0x46, 0x46] {
+            // RIFF header — likely WebP
+            return "image/webp";
+        }
+    }
+    match ext_hint {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        _ => "image/png",
+    }
+}
+
+/// Copy image bytes to the system clipboard using native platform tools.
+fn native_clipboard_write(image_bytes: &[u8], mime_type: &str) -> Result<(), AppError> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let run_clipboard_command = |program: &str, args: &[&str]| -> Result<(), String> {
+            let mut child = Command::new(program)
+                .args(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| format!("{} spawn failed: {}", program, e))?;
+
+            if let Some(ref mut stdin) = child.stdin {
+                stdin
+                    .write_all(image_bytes)
+                    .map_err(|e| format!("{} stdin write failed: {}", program, e))?;
+            }
+
+            let output = child
+                .wait_with_output()
+                .map_err(|e| format!("{} wait failed: {}", program, e))?;
+
+            if output.status.success() {
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(format!(
+                    "{} exited with {}: {}",
+                    program,
+                    output.status,
+                    stderr.trim()
+                ))
+            }
+        };
+
+        // Detect Wayland vs X11 and try the appropriate tool first.
+        let on_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+            || std::env::var("XDG_SESSION_TYPE")
+                .map(|v| v == "wayland")
+                .unwrap_or(false);
+
+        let (primary, primary_args, fallback, fallback_args): (&str, Vec<&str>, &str, Vec<&str>) =
+            if on_wayland {
+                (
+                    "wl-copy",
+                    vec!["--type", mime_type],
+                    "xclip",
+                    vec!["-selection", "clipboard", "-t", mime_type, "-i"],
+                )
+            } else {
+                (
+                    "xclip",
+                    vec!["-selection", "clipboard", "-t", mime_type, "-i"],
+                    "wl-copy",
+                    vec!["--type", mime_type],
+                )
+            };
+
+        if let Err(primary_err) = run_clipboard_command(primary, &primary_args) {
+            run_clipboard_command(fallback, &fallback_args).map_err(|fallback_err| {
+                AppError::Other(format!(
+                    "Clipboard copy failed ({} and {}). {}: {} | {}: {}",
+                    primary, fallback, primary, primary_err, fallback, fallback_err
+                ))
+            })?;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        // Write bytes to pasteboard using osascript + temp approach,
+        // or pipe PNG data via pbcopy alternative. For reliability,
+        // write to a temp file and use osascript.
+        let tmp_dir = std::env::temp_dir();
+        let ext = match mime_type {
+            "image/jpeg" => "jpg",
+            "image/webp" => "webp",
+            _ => "png",
+        };
+        let tmp_path = tmp_dir.join(format!("mooshie_clipboard.{}", ext));
+        std::fs::write(&tmp_path, image_bytes)
+            .map_err(|e| AppError::Other(format!("Failed to write temp file: {}", e)))?;
+
+        let script = format!(
+            "set the clipboard to (read (POSIX file \"{}\") as «class PNGf»)",
+            tmp_path.display()
+        );
+        let status = Command::new("osascript")
+            .args(["-e", &script])
+            .status()
+            .map_err(|e| AppError::Other(format!("osascript failed: {}", e)))?;
+        let _ = std::fs::remove_file(&tmp_path);
+        if !status.success() {
+            return Err(AppError::Other(
+                "Failed to copy image to clipboard via osascript".into(),
+            ));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+
+        // Write to temp file, then use PowerShell
+        let tmp_dir = std::env::temp_dir();
+        let tmp_path = tmp_dir.join("mooshie_clipboard.png");
+        std::fs::write(&tmp_path, image_bytes)
+            .map_err(|e| AppError::Other(format!("Failed to write temp file: {}", e)))?;
+
+        let ps_cmd = format!(
+            "Add-Type -AssemblyName System.Windows.Forms; \
+             [System.Windows.Forms.Clipboard]::SetImage([System.Drawing.Image]::FromFile('{}'))",
+            tmp_path.display()
+        );
+        let status = Command::new("powershell")
+            .args(["-NoProfile", "-Command", &ps_cmd])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .status()
+            .map_err(|e| AppError::Other(format!("PowerShell failed: {}", e)))?;
+        let _ = std::fs::remove_file(&tmp_path);
+        if !status.success() {
+            return Err(AppError::Other(
+                "Failed to copy image to clipboard via PowerShell".into(),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Copy raw image bytes (PNG/JPEG/WebP) to the system clipboard.
 #[tauri::command]
-pub async fn copy_bytes_to_clipboard(
-    app: AppHandle,
-    bytes: Vec<u8>,
-    _ext: String,
-) -> Result<(), AppError> {
-    use tauri_plugin_clipboard_manager::ClipboardExt;
-
-    let (rgba, w, h) = decode_image_to_rgba(&bytes)?;
-    let img = tauri::image::Image::new_owned(rgba, w, h);
-    app.clipboard()
-        .write_image(&img)
-        .map_err(|e| AppError::Other(format!("Failed to copy image to clipboard: {}", e)))?;
-    Ok(())
+pub async fn copy_bytes_to_clipboard(bytes: Vec<u8>, ext: String) -> Result<(), AppError> {
+    let mime = infer_image_mime(&bytes, Some(&ext));
+    native_clipboard_write(&bytes, mime)
 }
 
 /// Copy an image file to the system clipboard.
 #[tauri::command]
-pub async fn copy_image_to_clipboard(
-    app: AppHandle,
-    file_path: String,
-) -> Result<(), AppError> {
-    use tauri_plugin_clipboard_manager::ClipboardExt;
-
+pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> {
     let path = std::path::Path::new(&file_path);
     if !path.exists() {
         return Err(AppError::Other(format!("File not found: {}", file_path)));
     }
 
-    let bytes = std::fs::read(path)
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let image_bytes = std::fs::read(&canonical)
         .map_err(|e| AppError::Other(format!("Failed to read image file: {}", e)))?;
-    let (rgba, w, h) = decode_image_to_rgba(&bytes)?;
-    let img = tauri::image::Image::new_owned(rgba, w, h);
-    app.clipboard()
-        .write_image(&img)
-        .map_err(|e| AppError::Other(format!("Failed to copy image to clipboard: {}", e)))?;
-    Ok(())
+
+    let ext_str = canonical
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+    let mime = infer_image_mime(&image_bytes, ext_str.as_deref());
+
+    native_clipboard_write(&image_bytes, mime)
 }
 
 /// Check if a ComfyUI node class is available (used to detect custom node packages).
