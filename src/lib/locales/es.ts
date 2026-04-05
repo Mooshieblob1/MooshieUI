@@ -621,6 +621,7 @@ const es: Record<string, string> = {
   "updater.restart_now": "Reiniciar ahora",
   "updater.error": "Actualización fallida: {error}",
   "updater.dismiss": "Descartar",
+  "updater.version_mismatch": "Es posible que la actualización no se haya aplicado correctamente. Se esperaba v{expected}, pero se ejecuta v{current}. Intenta descargar la versión más reciente manualmente.",
 
   // ── Galería ─────────────────────────────────────────────
   "gallery.empty": "Aún no hay imágenes",

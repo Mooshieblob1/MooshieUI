@@ -596,6 +596,7 @@ const zh: Record<string, string> = {
   "updater.restart_now": "立即重启",
   "updater.error": "更新失败：{error}",
   "updater.dismiss": "关闭",
+  "updater.version_mismatch": "更新可能未正确应用。预期 v{expected}，但正在运行 v{current}。请尝试手动下载最新版本。",
 
   // ── 图库 ────────────────────────────────────────────────
   "gallery.empty": "尚无图像",

@@ -1,3 +1,14 @@
+## What's New in v0.6.2
+
+### Update Reliability Improvements
+- Added version mismatch detection: if an update is applied but the running version doesn't match the expected version, a warning is shown with a link to download manually
+- Windows update installer now uses `basicUi` mode instead of silent `passive` mode, making the update progress visible and reducing cases where the installer appeared to hang
+
+### i18n
+- Added `updater.version_mismatch` translation key to all 11 supported locales (de, es, fr, it, ja, ko, pt, ru, zh, zh-tw)
+
+---
+
 ## What's New in v0.6.1
 
 ### Fixed Lightbox Metadata for Session Images

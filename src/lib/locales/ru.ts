@@ -596,6 +596,7 @@ const ru: Record<string, string> = {
   "updater.restart_now": "Перезапустить сейчас",
   "updater.error": "Обновление не удалось: {error}",
   "updater.dismiss": "Скрыть",
+  "updater.version_mismatch": "Обновление могло не примениться корректно. Ожидалась v{expected}, но запущена v{current}. Попробуйте загрузить последнюю версию вручную.",
 
   // ── Галерея ─────────────────────────────────────────────
   "gallery.empty": "Пока нет изображений",

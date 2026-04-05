@@ -596,6 +596,7 @@ const it: Record<string, string> = {
   "updater.restart_now": "Riavvia ora",
   "updater.error": "Aggiornamento fallito: {error}",
   "updater.dismiss": "Ignora",
+  "updater.version_mismatch": "L'aggiornamento potrebbe non essere stato applicato correttamente. Atteso v{expected}, ma in esecuzione v{current}. Prova a scaricare manualmente l'ultima versione.",
 
   // ── Galleria ─────────────────────────────────────────────
   "gallery.empty": "Nessuna immagine ancora",

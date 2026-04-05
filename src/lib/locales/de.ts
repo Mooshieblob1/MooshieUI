@@ -598,6 +598,7 @@ const de: Record<string, string> = {
   "updater.restart_now": "Jetzt neu starten",
   "updater.error": "Update fehlgeschlagen: {error}",
   "updater.dismiss": "Schließen",
+  "updater.version_mismatch": "Update wurde möglicherweise nicht korrekt angewendet. Erwartet v{expected}, aber läuft v{current}. Versuche die neueste Version manuell herunterzuladen.",
 
   // ── Galerie ─────────────────────────────────────────────
   "gallery.empty": "Noch keine Bilder",

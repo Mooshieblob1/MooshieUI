@@ -598,6 +598,7 @@ const pt: Record<string, string> = {
   "updater.restart_now": "Reiniciar Agora",
   "updater.error": "Atualização falhou: {error}",
   "updater.dismiss": "Dispensar",
+  "updater.version_mismatch": "A atualização pode não ter sido aplicada corretamente. Esperado v{expected}, mas rodando v{current}. Tente baixar a versão mais recente manualmente.",
 
   // ── Galeria ─────────────────────────────────────────────
   "gallery.empty": "Nenhuma imagem ainda",

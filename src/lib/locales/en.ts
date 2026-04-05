@@ -630,6 +630,7 @@ const en: Record<string, string> = {
   "updater.restart_now": "Restart Now",
   "updater.error": "Update failed: {error}",
   "updater.dismiss": "Dismiss",
+  "updater.version_mismatch": "Update may not have applied correctly. Expected v{expected}, but running v{current}. Try downloading the latest version manually.",
 
   // ── Gallery ─────────────────────────────────────────────
   "gallery.empty": "No images yet",

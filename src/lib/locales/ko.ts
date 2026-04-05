@@ -596,6 +596,7 @@ const ko: Record<string, string> = {
   "updater.restart_now": "지금 재시작",
   "updater.error": "업데이트 실패: {error}",
   "updater.dismiss": "닫기",
+  "updater.version_mismatch": "업데이트가 올바르게 적용되지 않았을 수 있습니다. v{expected}를 기대했지만 v{current}가 실행 중입니다. 최신 버전을 수동으로 다운로드해 보세요.",
 
   // ── 갤러리 ──────────────────────────────────────────────
   "gallery.empty": "아직 이미지가 없습니다",

@@ -618,6 +618,7 @@ const ja: Record<string, string> = {
   "updater.restart_now": "今すぐ再起動",
   "updater.error": "更新に失敗：{error}",
   "updater.dismiss": "閉じる",
+  "updater.version_mismatch": "アップデートが正しく適用されていない可能性があります。v{expected}が期待されますが、v{current}が実行中です。最新バージョンを手動でダウンロードしてみてください。",
 
   // ── ギャラリー ──────────────────────────────────────────
   "gallery.empty": "画像はまだありません",

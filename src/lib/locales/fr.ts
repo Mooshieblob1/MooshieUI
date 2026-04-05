@@ -620,6 +620,7 @@ const fr: Record<string, string> = {
   "updater.restart_now": "Redémarrer maintenant",
   "updater.error": "Échec de la mise à jour : {error}",
   "updater.dismiss": "Fermer",
+  "updater.version_mismatch": "La mise à jour n'a peut-être pas été appliquée correctement. v{expected} était attendu, mais v{current} est en cours d'exécution. Essayez de télécharger la dernière version manuellement.",
 
   // ── Galerie ─────────────────────────────────────────────
   "gallery.empty": "Pas encore d'images",
