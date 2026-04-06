@@ -1,3 +1,25 @@
+## What's New in v0.6.3
+
+### Nanosaur 1.2B Support
+- Full support for the Nanosaur 1.2B-Preview model — a 1.2B parameter DiT with 96-channel DINOv3 VAE and Gemma 3 text encoder
+- Custom ComfyUI nodes (NanoSaurLoader, NanoSaurLatentFormat, VAE wrapper) are auto-deployed on startup
+- Architecture auto-detection applies recommended settings: 40 steps, CFG 7, euler sampler, simple scheduler, 896×1152 resolution
+- Sampler settings panel shows a Nanosaur recommendation bar with one-click apply
+- Quality tag customization in Settings for Nanosaur models
+- Latent preview support with Ridge-regularised RGB factors derived from the full VAE encoder
+
+### Windows Clipboard Performance
+- Clipboard copy on Windows is now instant — uses `SetFileDropList` instead of decoding/re-encoding the image through .NET `System.Drawing`
+- Preserves PNG metadata (generation parameters) in the copied file
+
+### Bug Fixes
+- Fixed error messages being invisible on dark theme (text-red-800 → text-red-400)
+
+### i18n
+- Added Nanosaur locale keys to all 11 supported languages
+
+---
+
 ## What's New in v0.6.2
 
 ### Update Reliability Improvements

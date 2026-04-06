@@ -13,6 +13,14 @@ const GUIDANCE_PY: &str = include_str!("../../../comfyui-nodes/nodes_guidance.py
 const SDXL_FLUX2VAE_PY: &str =
     include_str!("../../../comfyui-nodes/nodes_sdxl_flux2vae_combined.py");
 
+// ── Nanosaur custom node package (NanoSaurLoader) ────────────────────────────
+const NANOSAUR_INIT_PY: &str = include_str!("../../../comfyui-nodes/nanosaur_support/__init__.py");
+const NANOSAUR_NODES_PY: &str = include_str!("../../../comfyui-nodes/nanosaur_support/nodes.py");
+const NANOSAUR_MODEL_PY: &str = include_str!("../../../comfyui-nodes/nanosaur_support/model.py");
+const NANOSAUR_TEXT_ENCODER_PY: &str =
+    include_str!("../../../comfyui-nodes/nanosaur_support/text_encoder.py");
+const NANOSAUR_VAE_PY: &str = include_str!("../../../comfyui-nodes/nanosaur_support/vae.py");
+
 /// Ensure all bundled MooshieUI custom nodes exist in ComfyUI's custom_nodes directory.
 /// Always overwrites to keep in sync with the app version.
 pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
@@ -81,6 +89,34 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
             e
         )
     })?;
+
+    // ── Nanosaur custom node package (NanoSaurLoader) ────────────────────────
+    let nanosaur_dir = custom_nodes.join("nanosaur_support");
+    std::fs::create_dir_all(&nanosaur_dir).map_err(|e| {
+        format!(
+            "Failed to create nanosaur_support directory at '{}': {}",
+            nanosaur_dir.display(),
+            e
+        )
+    })?;
+
+    for (name, content) in [
+        ("__init__.py", NANOSAUR_INIT_PY),
+        ("nodes.py", NANOSAUR_NODES_PY),
+        ("model.py", NANOSAUR_MODEL_PY),
+        ("text_encoder.py", NANOSAUR_TEXT_ENCODER_PY),
+        ("vae.py", NANOSAUR_VAE_PY),
+    ] {
+        let path = nanosaur_dir.join(name);
+        std::fs::write(&path, content).map_err(|e| {
+            format!(
+                "Failed to write nanosaur_support/{} at '{}': {}",
+                name,
+                path.display(),
+                e
+            )
+        })?;
+    }
 
     log::info!(
         "Deployed mooshie custom nodes to {}",

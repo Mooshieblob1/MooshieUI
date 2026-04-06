@@ -134,6 +134,7 @@ const zhTw: Record<string, string> = {
   "settings.performance.reset_defaults": "重設為預設",
   "settings.performance.anima": "Anima",
   "settings.performance.illustrious": "Illustrious / NoobAI",
+  "settings.performance.nanosaur": "Nanosaur",
   "settings.performance.positive": "正面",
   "settings.performance.negative": "負面",
 
@@ -294,6 +295,8 @@ const zhTw: Record<string, string> = {
   "generation.sampler.anima_hint": "30 步，CFG 4，取樣器 er_sde（Anima 模型卡指南）。",
   "generation.sampler.sih_recommended": "SIH 建議設定",
   "generation.sampler.sih_hint": "無公開 SIH 模型卡設定。使用專案預設值：20 步，CFG 1.4，euler_cfg_pp，sgm_uniform。",
+  "generation.sampler.nanosaur_recommended": "Nanosaur 建議設定",
+  "generation.sampler.nanosaur_hint": "40 步，CFG 7，euler 取樣器，simple 排程器。預設解析度 896×1152。",
   "generation.sampler.fix": "修復",
 
   "generation.model.title": "模型",

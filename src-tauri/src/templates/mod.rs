@@ -39,7 +39,36 @@ pub fn load_model_nodes(
 ) -> ModelLoadResult {
     let (mut model_source, mut clip_source, mut vae_source);
 
-    if params.use_split_model {
+    if is_nanosaur_architecture(params) {
+        // NanoSaurLoader — custom all-in-one loader for Nanosaur models.
+        // Outputs: MODEL(0), CLIP(1), VAE(2). Includes its own sampler patch.
+        let loader_id = next_id.to_string();
+        workflow.insert(
+            loader_id.clone(),
+            json!({
+                "class_type": "NanoSaurLoader",
+                "inputs": {
+                    "unet_name": params.diffusion_model.as_deref().unwrap_or("nanosaur_diffusion_model.safetensors"),
+                    "text_encoder_name": params.clip_model.as_deref().unwrap_or("nanosaur_text_encoder.safetensors"),
+                    "vae_name": params.vae.as_deref().unwrap_or("nanosaur_vae_decoder.safetensors"),
+                    "uncond_crossover_percent": 1.0,
+                    "weight_dtype": "default",
+                    "clip_device": "default"
+                }
+            }),
+        );
+        model_source = (loader_id.clone(), 0);
+        clip_source = (loader_id.clone(), 1);
+        vae_source = (loader_id, 2);
+        next_id += 1;
+
+        return ModelLoadResult {
+            model_source,
+            clip_source,
+            vae_source,
+            next_id,
+        };
+    } else if params.use_split_model {
         // UNETLoader for diffusion model
         let unet_id = next_id.to_string();
         workflow.insert(
@@ -302,6 +331,15 @@ pub fn is_mugen_architecture(params: &GenerationParams) -> bool {
     model_name_lower(params).contains("mugen")
 }
 
+/// Returns true when the model is Nanosaur (custom 1.2B DiT with DINOv3 VAE).
+/// Uses the `NanoSaurLoader` custom node instead of standard loaders.
+pub fn is_nanosaur_architecture(params: &GenerationParams) -> bool {
+    if params.model_architecture == "nanosaur" {
+        return true;
+    }
+    model_name_lower(params).contains("nanosaur")
+}
+
 /// Returns true when the model needs a 16-channel latent (SD3, Flux, Anima/WAN).
 pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
     if is_sd3_architecture(params) || is_flux_architecture(params) {
@@ -367,6 +405,11 @@ pub fn insert_vae_decode(
 /// or for Mugen: `ModelSamplingSD3` with higher shift (8-12 range, default 10).
 /// Rewires the KSampler in all cases.
 fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams) {
+    // Nanosaur handles flow matching internally via NanoSaurLoader — skip injection
+    if is_nanosaur_architecture(params) {
+        return;
+    }
+
     if is_mugen_architecture(params) {
         // ModelSamplingSD3 with elevated shift for Flux2VAE SDXL (recommended range: 8-12)
         let node_id = result.next_id.to_string();

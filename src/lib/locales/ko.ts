@@ -134,6 +134,7 @@ const ko: Record<string, string> = {
   "settings.performance.reset_defaults": "기본값으로 리셋",
   "settings.performance.anima": "Anima",
   "settings.performance.illustrious": "Illustrious / NoobAI",
+  "settings.performance.nanosaur": "Nanosaur",
   "settings.performance.positive": "긍정",
   "settings.performance.negative": "부정",
 
@@ -294,6 +295,8 @@ const ko: Record<string, string> = {
   "generation.sampler.anima_hint": "30단계, CFG 4, 샘플러 er_sde (Anima 모델 카드 가이드).",
   "generation.sampler.sih_recommended": "SIH 권장 설정",
   "generation.sampler.sih_hint": "공개 SIH 모델 카드 설정 없음. 프로젝트 기본값 사용: 20단계, CFG 1.4, euler_cfg_pp, sgm_uniform.",
+  "generation.sampler.nanosaur_recommended": "Nanosaur 권장 설정",
+  "generation.sampler.nanosaur_hint": "40단계, CFG 7, euler 샘플러, simple 스케줄러. 기본 해상도 896×1152.",
   "generation.sampler.fix": "수정",
 
   "generation.model.title": "모델",

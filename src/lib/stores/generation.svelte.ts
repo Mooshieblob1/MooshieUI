@@ -76,6 +76,10 @@ export const DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY = "worst quality, bad quality,
 export const DEFAULT_PONY_POSITIVE_QUALITY = "score_9, score_8_up, score_7_up, source_anime";
 export const DEFAULT_PONY_NEGATIVE_QUALITY = "score_1, score_2, score_3, worst quality, low quality";
 
+/** Default quality tags for Nanosaur models */
+export const DEFAULT_NANOSAUR_POSITIVE_QUALITY = "newest, masterpiece, best quality, absurdres";
+export const DEFAULT_NANOSAUR_NEGATIVE_QUALITY = "oldest, low quality, cartoon, blurry, sketch, monochrome, flat color, text, watermark";
+
 class GenerationStore {
   mode = $state<"txt2img" | "img2img" | "inpainting">("txt2img");
   positivePrompt = $state("");
@@ -137,6 +141,8 @@ class GenerationStore {
   customIllustriousNegativeQuality = $state(DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY);
   customPonyPositiveQuality = $state(DEFAULT_PONY_POSITIVE_QUALITY);
   customPonyNegativeQuality = $state(DEFAULT_PONY_NEGATIVE_QUALITY);
+  customNanosaurPositiveQuality = $state(DEFAULT_NANOSAUR_POSITIVE_QUALITY);
+  customNanosaurNegativeQuality = $state(DEFAULT_NANOSAUR_NEGATIVE_QUALITY);
   promptHistory = $state<PromptHistoryEntry[]>([]);
   /** When true, images are NOT auto-saved to the internal gallery — user saves manually. */
   manualSaveMode = $state(false);
@@ -206,6 +212,11 @@ class GenerationStore {
     return this.detectedArchitecture === "mugen";
   }
 
+  /** True when the selected model is Nanosaur (custom 1.2B DiT with DINOv3 VAE). */
+  get isNanosaur(): boolean {
+    return this.detectedArchitecture === "nanosaur";
+  }
+
   /** True when the model is an accelerated variant (turbo/lightning/lcm/hyper) needing fewer steps. */
   get isAccelerated(): boolean {
     const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
@@ -217,18 +228,20 @@ class GenerationStore {
     return this.isSd3 || this.isFlux || this.isAnima;
   }
 
-  /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow, Mugen). */
+  /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow, Mugen, Nanosaur). */
   get usesRectifiedFlow(): boolean {
-    return this.isSd3 || this.isFlux || this.isAuraFlow || this.isMugen;
+    return this.isSd3 || this.isFlux || this.isAuraFlow || this.isMugen || this.isNanosaur;
   }
 
   /** Detect the base model architecture from modelspec (authoritative) or filename (fallback). */
-  get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "sd3" | "flux" | "pony" | "auraflow" | "pixart" | "hunyuandit" | "cascade" | "kolors" | "mugen" | "unknown" {
+  get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "sd3" | "flux" | "pony" | "auraflow" | "pixart" | "hunyuandit" | "cascade" | "kolors" | "mugen" | "nanosaur" | "unknown" {
     const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
 
     // 1. Use modelspec architecture if available (definitive)
     if (this.modelspecArchitecture) {
       const arch = this.modelspecArchitecture.toLowerCase();
+      // Nanosaur (custom DiT — check before other heuristics)
+      if (name.includes("nanosaur")) return "nanosaur";
       // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
       if (name.includes("mugen")) return "mugen";
       // Illustrious/NoobAI family (they report as SDXL arch but need special ControlNets)
@@ -255,6 +268,8 @@ class GenerationStore {
 
     // 2. Fall back to filename heuristics
     if (!name) return "unknown";
+    // Nanosaur (custom DiT — check before other heuristics)
+    if (name.includes("nanosaur")) return "nanosaur";
     // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
     if (name.includes("mugen")) return "mugen";
     // Illustrious/NoobAI/vpred SDXL variants
@@ -401,6 +416,20 @@ class GenerationStore {
 
     const isAnima = name.includes("anima") || name.includes("qwen") || name.includes("wan");
     autocomplete.notifyModelChanged(isAnima);
+
+    // Nanosaur — custom 1.2B DiT, flow matching, euler/simple, CFG 7
+    if (name.includes("nanosaur")) {
+      this.steps = 40;
+      this.cfg = 7;
+      this.samplerName = "euler";
+      this.scheduler = "simple";
+      this.width = 896;
+      this.height = 1152;
+      this.facefixSteps = Math.ceil(40 / 3);
+      this.upscaleSteps = 20;
+      this.upscaleDenoise = 0.5;
+      return;
+    }
 
     if (isAnima) {
       this.steps = 30;
@@ -618,6 +647,8 @@ class GenerationStore {
         if (saved.customIllustriousNegativeQuality !== undefined) this.customIllustriousNegativeQuality = saved.customIllustriousNegativeQuality;
         if (saved.customPonyPositiveQuality !== undefined) this.customPonyPositiveQuality = saved.customPonyPositiveQuality;
         if (saved.customPonyNegativeQuality !== undefined) this.customPonyNegativeQuality = saved.customPonyNegativeQuality;
+        if (saved.customNanosaurPositiveQuality !== undefined) this.customNanosaurPositiveQuality = saved.customNanosaurPositiveQuality;
+        if (saved.customNanosaurNegativeQuality !== undefined) this.customNanosaurNegativeQuality = saved.customNanosaurNegativeQuality;
         if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
         if (Array.isArray(saved.autoSaveDirs)) this.autoSaveDirs = saved.autoSaveDirs;
         // Migrate: old default was "text_chunk", new default is "both" (stealth + text)
@@ -694,6 +725,8 @@ class GenerationStore {
         customIllustriousNegativeQuality: this.customIllustriousNegativeQuality,
         customPonyPositiveQuality: this.customPonyPositiveQuality,
         customPonyNegativeQuality: this.customPonyNegativeQuality,
+        customNanosaurPositiveQuality: this.customNanosaurPositiveQuality,
+        customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
         manualSaveMode: this.manualSaveMode,
         autoSaveDirs: this.autoSaveDirs,
       });
@@ -729,6 +762,12 @@ class GenerationStore {
         positivePrompt = this.mergeTagPrompts(this.customPonyPositiveQuality, positivePrompt);
         negativePrompt = this.mergeTagPrompts(negativePrompt, this.customPonyNegativeQuality);
       }
+
+      // Nanosaur (newest/oldest quality tags)
+      if (this.isNanosaur) {
+        positivePrompt = this.mergeTagPrompts(this.customNanosaurPositiveQuality, positivePrompt);
+        negativePrompt = this.mergeTagPrompts(negativePrompt, this.customNanosaurNegativeQuality);
+      }
     }
 
     // Build quality-only prompts for tiled upscale (reduces tile seam artifacts)
@@ -744,6 +783,9 @@ class GenerationStore {
       } else if (this.isPony) {
         upscalePositivePrompt = this.customPonyPositiveQuality;
         upscaleNegativePrompt = this.customPonyNegativeQuality;
+      } else if (this.isNanosaur) {
+        upscalePositivePrompt = this.customNanosaurPositiveQuality;
+        upscaleNegativePrompt = this.customNanosaurNegativeQuality;
       }
     }
 

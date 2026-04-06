@@ -5,7 +5,7 @@
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
-  import { generation, DEFAULT_ANIMA_POSITIVE_QUALITY, DEFAULT_ANIMA_NEGATIVE_QUALITY, DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY, DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY } from "../../stores/generation.svelte.js";
+  import { generation, DEFAULT_ANIMA_POSITIVE_QUALITY, DEFAULT_ANIMA_NEGATIVE_QUALITY, DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY, DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY, DEFAULT_NANOSAUR_POSITIVE_QUALITY, DEFAULT_NANOSAUR_NEGATIVE_QUALITY } from "../../stores/generation.svelte.js";
   import { accessibility } from "../../stores/accessibility.svelte.js";
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
@@ -846,6 +846,8 @@
                   generation.customAnimaNegativeQuality = DEFAULT_ANIMA_NEGATIVE_QUALITY;
                   generation.customIllustriousPositiveQuality = DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY;
                   generation.customIllustriousNegativeQuality = DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY;
+                  generation.customNanosaurPositiveQuality = DEFAULT_NANOSAUR_POSITIVE_QUALITY;
+                  generation.customNanosaurNegativeQuality = DEFAULT_NANOSAUR_NEGATIVE_QUALITY;
                   generation.saveSettings();
                 }}
                 class="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer whitespace-nowrap ml-3"
@@ -904,6 +906,33 @@
                   rows="2"
                   class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
                   placeholder="worst quality, bad quality, ..."
+                ></textarea>
+              </div>
+            </div>
+
+            <!-- Nanosaur Tags -->
+            <div class="space-y-1.5">
+              <p class="text-[10px] text-neutral-500 font-medium uppercase tracking-wide">{locale.t('settings.performance.nanosaur')}</p>
+              <div>
+                <label for="nanosaur-pos-quality" class="text-[10px] text-neutral-500">{locale.t('settings.performance.positive')}</label>
+                <textarea
+                  id="nanosaur-pos-quality"
+                  bind:value={generation.customNanosaurPositiveQuality}
+                  onblur={() => generation.saveSettings()}
+                  rows="2"
+                  class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
+                  placeholder="best quality, masterpiece, ..."
+                ></textarea>
+              </div>
+              <div>
+                <label for="nanosaur-neg-quality" class="text-[10px] text-neutral-500">{locale.t('settings.performance.negative')}</label>
+                <textarea
+                  id="nanosaur-neg-quality"
+                  bind:value={generation.customNanosaurNegativeQuality}
+                  onblur={() => generation.saveSettings()}
+                  rows="2"
+                  class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
+                  placeholder="worst quality, low quality, ..."
                 ></textarea>
               </div>
             </div>

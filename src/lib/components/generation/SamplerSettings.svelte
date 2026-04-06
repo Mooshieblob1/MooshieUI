@@ -10,6 +10,7 @@
   const activeModelName = $derived((generation.diffusionModel || generation.checkpoint || "").toLowerCase());
   const hasAnimaRecommendation = $derived(generation.isAnima || activeModelName.includes("anima"));
   const hasSihRecommendation = $derived(activeModelName.includes("sih") || activeModelName.includes("σih"));
+  const hasNanosaurRecommendation = $derived(generation.isNanosaur || activeModelName.includes("nanosaur"));
 
   function recommendedStepRange() {
     const sampler = generation.samplerName.toLowerCase();
@@ -76,6 +77,15 @@
     generation.facefixSteps = Math.ceil(20 / 3);
     generation.upscaleSteps = Math.ceil(20 / 3);
   }
+
+  function applyNanosaurRecommendation() {
+    generation.steps = 40;
+    generation.cfg = 7;
+    generation.samplerName = "euler";
+    generation.scheduler = "simple";
+    generation.upscaleSteps = 20;
+    generation.upscaleDenoise = 0.5;
+  }
 </script>
 
 <div class="space-y-3">
@@ -106,6 +116,23 @@
         <button
           class="px-2 py-1 text-[10px] rounded border border-neutral-600 text-neutral-300 hover:border-neutral-500 hover:text-neutral-200 transition-colors"
           onclick={applySihRecommendation}
+        >
+          {locale.t('common.apply')}
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  {#if hasNanosaurRecommendation}
+    <div class="rounded-lg border border-emerald-700/50 bg-emerald-900/15 p-2.5">
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <p class="text-xs text-emerald-300 font-medium">{locale.t('generation.sampler.nanosaur_recommended')}</p>
+          <p class="text-[11px] text-neutral-300 mt-0.5">{locale.t('generation.sampler.nanosaur_hint')}</p>
+        </div>
+        <button
+          class="px-2 py-1 text-[10px] rounded border border-emerald-500/70 text-emerald-200 hover:border-emerald-400 hover:text-emerald-100 transition-colors"
+          onclick={applyNanosaurRecommendation}
         >
           {locale.t('common.apply')}
         </button>

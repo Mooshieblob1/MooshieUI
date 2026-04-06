@@ -142,5 +142,5 @@
 </div>
 
 {#if errorMsg}
-  <p class="text-xs text-red-800 text-center mt-1">{errorMsg}</p>
+  <p class="text-xs text-red-400 text-center mt-1">{errorMsg}</p>
 {/if}

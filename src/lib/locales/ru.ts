@@ -134,6 +134,7 @@ const ru: Record<string, string> = {
   "settings.performance.reset_defaults": "Сбросить на стандартные",
   "settings.performance.anima": "Anima",
   "settings.performance.illustrious": "Illustrious / NoobAI",
+  "settings.performance.nanosaur": "Nanosaur",
   "settings.performance.positive": "Позитивный",
   "settings.performance.negative": "Негативный",
 
@@ -294,6 +295,8 @@ const ru: Record<string, string> = {
   "generation.sampler.anima_hint": "30 шагов, CFG 4, сэмплер er_sde (из инструкции к модели Anima).",
   "generation.sampler.sih_recommended": "Рекомендуемые настройки SIH",
   "generation.sampler.sih_hint": "Публичных настроек модели SIH не найдено; используются стандартные проекта: 20 шагов, CFG 1.4, euler_cfg_pp, sgm_uniform.",
+  "generation.sampler.nanosaur_recommended": "Рекомендуемые настройки Nanosaur",
+  "generation.sampler.nanosaur_hint": "40 шагов, CFG 7, сэмплер euler, планировщик simple. Разрешение по умолчанию 896×1152.",
   "generation.sampler.fix": "Исправить",
 
   "generation.model.title": "Модель",

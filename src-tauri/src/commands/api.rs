@@ -545,6 +545,34 @@ fn infer_image_mime(bytes: &[u8], ext_hint: Option<&str>) -> &'static str {
     }
 }
 
+/// Put a file on the Windows clipboard as a file-drop (like right-click → Copy in Explorer).
+/// Much faster than decoding PNGs and preserves all metadata.
+#[cfg(target_os = "windows")]
+fn clipboard_set_file_drop_win(path: &std::path::Path) -> Result<(), AppError> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    let path_escaped = path.display().to_string().replace('\'', "''");
+    let ps_cmd = format!(
+        "Add-Type -AssemblyName System.Windows.Forms; \
+         $f = New-Object System.Collections.Specialized.StringCollection; \
+         $f.Add('{}'); \
+         [System.Windows.Forms.Clipboard]::SetFileDropList($f)",
+        path_escaped
+    );
+    let status = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps_cmd])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .status()
+        .map_err(|e| AppError::Other(format!("PowerShell failed: {}", e)))?;
+    if !status.success() {
+        return Err(AppError::Other(
+            "Failed to copy file to clipboard via PowerShell".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Copy image bytes to the system clipboard using native platform tools.
 fn native_clipboard_write(image_bytes: &[u8], mime_type: &str) -> Result<(), AppError> {
     #[cfg(target_os = "linux")]
@@ -653,31 +681,20 @@ fn native_clipboard_write(image_bytes: &[u8], mime_type: &str) -> Result<(), App
 
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-        use std::process::Command;
-
-        // Write to temp file, then use PowerShell
+        // Write to temp file, then put file reference on clipboard.
+        // Using SetFileDropList instead of SetImage avoids decoding the
+        // image (much faster for large PNGs) and preserves metadata.
         let tmp_dir = std::env::temp_dir();
-        let tmp_path = tmp_dir.join("mooshie_clipboard.png");
+        let ext = match mime_type {
+            "image/jpeg" => "jpg",
+            "image/webp" => "webp",
+            _ => "png",
+        };
+        let tmp_path = tmp_dir.join(format!("mooshie_clipboard.{}", ext));
         std::fs::write(&tmp_path, image_bytes)
             .map_err(|e| AppError::Other(format!("Failed to write temp file: {}", e)))?;
-
-        let ps_cmd = format!(
-            "Add-Type -AssemblyName System.Windows.Forms; \
-             [System.Windows.Forms.Clipboard]::SetImage([System.Drawing.Image]::FromFile('{}'))",
-            tmp_path.display()
-        );
-        let status = Command::new("powershell")
-            .args(["-NoProfile", "-Command", &ps_cmd])
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .status()
-            .map_err(|e| AppError::Other(format!("PowerShell failed: {}", e)))?;
-        let _ = std::fs::remove_file(&tmp_path);
-        if !status.success() {
-            return Err(AppError::Other(
-                "Failed to copy image to clipboard via PowerShell".into(),
-            ));
-        }
+        clipboard_set_file_drop_win(&tmp_path)?;
+        // Don't delete temp file — it must exist when the user pastes.
     }
 
     Ok(())
@@ -702,16 +719,26 @@ pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> 
         .canonicalize()
         .map_err(|e| AppError::Other(e.to_string()))?;
 
-    let image_bytes = std::fs::read(&canonical)
-        .map_err(|e| AppError::Other(format!("Failed to read image file: {}", e)))?;
+    // On Windows, put the actual file on the clipboard as a file drop.
+    // This is instant (no image decoding) and preserves PNG metadata.
+    #[cfg(target_os = "windows")]
+    {
+        clipboard_set_file_drop_win(&canonical)
+    }
 
-    let ext_str = canonical
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase());
-    let mime = infer_image_mime(&image_bytes, ext_str.as_deref());
+    #[cfg(not(target_os = "windows"))]
+    {
+        let image_bytes = std::fs::read(&canonical)
+            .map_err(|e| AppError::Other(format!("Failed to read image file: {}", e)))?;
 
-    native_clipboard_write(&image_bytes, mime)
+        let ext_str = canonical
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase());
+        let mime = infer_image_mime(&image_bytes, ext_str.as_deref());
+
+        native_clipboard_write(&image_bytes, mime)
+    }
 }
 
 /// Check if a ComfyUI node class is available (used to detect custom node packages).

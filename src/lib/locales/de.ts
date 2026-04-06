@@ -134,6 +134,7 @@ const de: Record<string, string> = {
   "settings.performance.reset_defaults": "Auf Standard zurücksetzen",
   "settings.performance.anima": "Anima",
   "settings.performance.illustrious": "Illustrious / NoobAI",
+  "settings.performance.nanosaur": "Nanosaur",
   "settings.performance.positive": "Positiv",
   "settings.performance.negative": "Negativ",
 
@@ -294,6 +295,8 @@ const de: Record<string, string> = {
   "generation.sampler.anima_hint": "30 Schritte, CFG 4, Sampler er_sde (Anima-Modellkarten-Anleitung).",
   "generation.sampler.sih_recommended": "Empfohlene SIH-Einstellungen",
   "generation.sampler.sih_hint": "Keine öffentlichen SIH-Modellkarteneinstellungen. Projekt-Standardwerte: 20 Schritte, CFG 1.4, euler_cfg_pp, sgm_uniform.",
+  "generation.sampler.nanosaur_recommended": "Empfohlene Nanosaur-Einstellungen",
+  "generation.sampler.nanosaur_hint": "40 Schritte, CFG 7, euler Sampler, simple Scheduler. 896×1152 Standardauflösung.",
   "generation.sampler.fix": "Korrigieren",
 
   "generation.model.title": "Modell",

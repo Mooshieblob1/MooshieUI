@@ -137,6 +137,7 @@ const ja: Record<string, string> = {
   "settings.performance.reset_defaults": "デフォルトにリセット",
   "settings.performance.anima": "Anima",
   "settings.performance.illustrious": "Illustrious / NoobAI",
+  "settings.performance.nanosaur": "Nanosaur",
   "settings.performance.positive": "ポジティブ",
   "settings.performance.negative": "ネガティブ",
 
@@ -307,6 +308,8 @@ const ja: Record<string, string> = {
   "generation.sampler.anima_hint": "30ステップ、CFG 4、サンプラー er_sde（Animaモデルカードのガイダンスより）。",
   "generation.sampler.sih_recommended": "SIH推奨設定",
   "generation.sampler.sih_hint": "公開SIHモデルカード設定なし。プロジェクトデフォルト使用：20ステップ、CFG 1.4、euler_cfg_pp、sgm_uniform。",
+  "generation.sampler.nanosaur_recommended": "Nanosaur推奨設定",
+  "generation.sampler.nanosaur_hint": "40ステップ、CFG 7、eulerサンプラー、simpleスケジューラー。デフォルト解像度896×1152。",
   "generation.sampler.fix": "修正",
 
   // モデル

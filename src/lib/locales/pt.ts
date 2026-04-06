@@ -134,6 +134,7 @@ const pt: Record<string, string> = {
   "settings.performance.reset_defaults": "Redefinir para padrões",
   "settings.performance.anima": "Anima",
   "settings.performance.illustrious": "Illustrious / NoobAI",
+  "settings.performance.nanosaur": "Nanosaur",
   "settings.performance.positive": "Positivo",
   "settings.performance.negative": "Negativo",
 
@@ -294,6 +295,8 @@ const pt: Record<string, string> = {
   "generation.sampler.anima_hint": "30 passos, CFG 4, sampler er_sde (do guia do modelo Anima).",
   "generation.sampler.sih_recommended": "Configurações Recomendadas para SIH",
   "generation.sampler.sih_hint": "Sem configurações públicas do modelo SIH; usando padrões do projeto: 20 passos, CFG 1.4, euler_cfg_pp, sgm_uniform.",
+  "generation.sampler.nanosaur_recommended": "Configurações Recomendadas para Nanosaur",
+  "generation.sampler.nanosaur_hint": "40 passos, CFG 7, sampler euler, scheduler simple. Resolução padrão 896×1152.",
   "generation.sampler.fix": "Corrigir",
 
   "generation.model.title": "Modelo",
