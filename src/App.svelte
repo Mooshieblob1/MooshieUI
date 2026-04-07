@@ -21,6 +21,8 @@
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
   import { downloads } from "./lib/stores/downloads.svelte.js";
+  import { compare } from "./lib/stores/compare.svelte.js";
+  import logoUrl from "./lib/assets/logo.png";
   import { smoothScroll } from "./lib/utils/smoothScroll.js";
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
   import ContextMenu from "./lib/components/ui/ContextMenu.svelte";
@@ -889,6 +891,129 @@
   }
 
   /**
+   * Stitch completed grid cell images into a single XYZ-style grid image
+   * with per-cell labels and a single MooshieUI watermark.
+   */
+  async function stitchGrid(
+    cellImages: { blob: Blob; url: string }[],
+    rows: number,
+    cols: number,
+    cellLabels: string[],
+  ) {
+    try {
+      const loadImg = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = src;
+      });
+
+      const [imgElements, logoImg] = await Promise.all([
+        Promise.all(cellImages.map(({ url }) => loadImg(url))),
+        loadImg(logoUrl),
+      ]);
+
+      const cellW = Math.max(...imgElements.map(img => img.naturalWidth));
+      const cellH = Math.max(...imgElements.map(img => img.naturalHeight));
+      const gap = 4;
+      const fontSize = Math.max(14, Math.round(cellW * 0.028));
+      const labelFont = `600 ${fontSize}px sans-serif`;
+      const labelH = fontSize + 10;
+
+      // Reserve footer space for the watermark below the grid
+      const wmSize = Math.max(20, Math.round(cellW * 0.045));
+      const wmFont = `600 ${Math.round(wmSize * 0.8)}px sans-serif`;
+      const wmPad = Math.round(wmSize * 0.5);
+      const footerH = wmSize + wmPad * 2 + wmPad;
+
+      const totalW = cols * cellW + (cols - 1) * gap;
+      const totalH = rows * (labelH + cellH) + (rows - 1) * gap + footerH;
+
+      const cvs = document.createElement("canvas");
+      cvs.width = totalW;
+      cvs.height = totalH;
+      const ctx = cvs.getContext("2d")!;
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, totalW, totalH);
+
+      // Draw each cell with its label above
+      for (let i = 0; i < imgElements.length; i++) {
+        const r = Math.floor(i / cols);
+        const c = i % cols;
+        const x = c * (cellW + gap);
+        const y = r * (labelH + cellH + gap);
+
+        // Per-cell label
+        const label = cellLabels[i] ?? "";
+        if (label) {
+          ctx.font = labelFont;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+          ctx.fillStyle = "#e5e5e5";
+          ctx.fillText(label, x + cellW / 2, y + 3, cellW - 8);
+        }
+
+        // Cell image
+        const img = imgElements[i]!;
+        const ox = (cellW - img.naturalWidth) / 2;
+        const oy = (cellH - img.naturalHeight) / 2;
+        ctx.drawImage(img, x + ox, y + labelH + oy);
+      }
+
+      // Single MooshieUI watermark in the footer area below the grid
+      ctx.font = wmFont;
+      const textW = ctx.measureText("MooshieUI").width;
+      const pillW = wmSize + 6 + textW + wmPad * 2;
+      const pillH = wmSize + wmPad;
+      const gridBottom = rows * (labelH + cellH) + (rows - 1) * gap;
+      const pillX = wmPad;
+      const pillY = gridBottom + (footerH - pillH) / 2;
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+      ctx.beginPath();
+      ctx.roundRect(pillX, pillY, pillW, pillH, 6);
+      ctx.fill();
+
+      const lx = pillX + wmPad;
+      const ly = pillY + (pillH - wmSize) / 2;
+      ctx.drawImage(logoImg, lx, ly, wmSize, wmSize);
+
+      ctx.font = wmFont;
+      ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText("MooshieUI", lx + wmSize + 6, pillY + pillH / 2);
+
+      const gridBlob = await new Promise<Blob>((resolve, reject) => {
+        cvs.toBlob(
+          (b) => b ? resolve(b) : reject(new Error("toBlob failed")),
+          "image/png",
+        );
+      });
+
+      const gridUrl = URL.createObjectURL(gridBlob);
+      const gridPromptId = `grid_${Date.now()}`;
+
+      const gridImage: OutputImage = {
+        filename: `${gridPromptId}.png`,
+        subfolder: "",
+        type: "output",
+        prompt_id: gridPromptId,
+        generation_mode: "txt2img",
+        is_upscaled: false,
+        url: gridUrl,
+        file_size_bytes: gridBlob.size,
+        generated_at_ms: Date.now(),
+      };
+
+      gallery.addImages([gridImage]);
+      gallery.persistImages([gridImage], undefined, [gridBlob], generation.metadataMode);
+    } catch (e) {
+      console.error("Grid stitching failed:", e);
+    }
+  }
+
+  /**
    * Save an image to a directory when manualSaveMode is on.
    * 0 dirs → native save-as dialog. 1 dir → save directly. 2+ dirs → show picker.
    */
@@ -1060,6 +1185,14 @@
             const images = pendingOutputImages.get(promptId) ?? [];
             pendingOutputImages.delete(promptId);
             finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images);
+
+            // Track grid batch completion — stitch when all cells are done
+            if (images.length > 0 && compare.isGridPrompt(promptId)) {
+              const gridResult = compare.addGridResult(promptId, images[0]!);
+              if (gridResult) {
+                stitchGrid(gridResult.images, gridResult.rows, gridResult.cols, gridResult.cellLabels);
+              }
+            }
           }
         } else {
           if (data.prompt_id) {
@@ -1074,10 +1207,12 @@
         if (data.prompt_id) {
           pendingOutputImages.delete(data.prompt_id);
           progress.removePrompt(data.prompt_id);
+          compare.clearGridBatch();
         } else {
           // No prompt_id — clear everything
           pendingOutputImages.clear();
           progress.cancelAll();
+          compare.clearGridBatch();
         }
       }),
       listen("comfyui:execution_success", (_event: any) => {

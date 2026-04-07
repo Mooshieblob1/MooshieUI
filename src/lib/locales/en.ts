@@ -632,6 +632,23 @@ const en: Record<string, string> = {
   "bottom_panel.prompt_search_placeholder": "Search prompts...",
   "bottom_panel.no_prompt_results": "No prompts match your search",
   "bottom_panel.card_size": "Card size",
+  "bottom_panel.tab.compare": "Compare",
+
+  // ── Compare Grid ────────────────────────────────────────
+  "compare.enable": "Start Compare Grid",
+  "compare.disable": "Disable",
+  "compare.add_cell": "Add cell",
+  "compare.add_column": "Add column",
+  "compare.add_row": "Add row",
+  "compare.images": "images",
+  "compare.cell_same": "same",
+  "compare.cell_base": "(base)",
+  "compare.cell_prompt_differs": "prompt ≠",
+  "compare.cell_prompt_changed": "prompt changed",
+  "compare.cell_loras_differ": "LoRAs differ",
+  "compare.cell_default_vae": "default VAE",
+  "compare.cell_neg_prefix": "neg: ",
+  "compare.grid_cells_failed": "Cell(s) {cells} failed — check checkpoint/model availability",
 
   // ── Downloads ───────────────────────────────────────────
   "downloads.downloading": "Downloading {filename}",

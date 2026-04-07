@@ -893,6 +893,23 @@ const zh: Record<string, string> = {
   "settings.about.data_dir_hint": "要安装到其他驱动器，请在启动前将 MOOSHIEUI_DATA_DIR 环境变量设置为您首选的路径。",
   "settings.about.save_dialog_title": "保存诊断日志",
   "settings.paths.extra_model_placeholder": "/共享模型路径（例如来自其他 ComfyUI 或 Forge 的安装）",
+
+  // ── Compare Grid ────────────────────────────────────────
+  "bottom_panel.tab.compare": "比较",
+  "compare.enable": "启动比较网格",
+  "compare.disable": "禁用",
+  "compare.add_cell": "添加单元格",
+  "compare.add_column": "添加列",
+  "compare.add_row": "添加行",
+  "compare.images": "张图片",
+  "compare.cell_same": "相同",
+  "compare.cell_base": "(基准)",
+  "compare.cell_prompt_differs": "提示词 ≠",
+  "compare.cell_prompt_changed": "提示词已更改",
+  "compare.cell_loras_differ": "LoRA 不同",
+  "compare.cell_default_vae": "默认 VAE",
+  "compare.cell_neg_prefix": "反向: ",
+  "compare.grid_cells_failed": "单元格 {cells} 失败 — 请检查检查点/模型可用性",
 };
 
 export default zh;

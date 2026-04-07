@@ -1,5 +1,22 @@
 # Changelog
 
+## What's New in v0.6.6
+
+### Compare Grid
+- **XYZ compare grid** — new Compare tab in the bottom panel lets you create a grid of cells, each with its own generation parameters. Change prompts, checkpoints, samplers, seeds, or any setting per cell to compare results side by side
+- **Grid generation** — pressing Generate with multiple cells queues all cells sequentially with a shared random seed for consistent comparisons
+- **Grid stitching** — completed grids are automatically stitched into a single image with per-cell labels showing only what differs (e.g., "blue eyes" vs "green eyes") and a MooshieUI watermark
+- **Spreadsheet-style naming** — cells use A1/B1/C1 labels; position-stable colors so each grid slot always has the same ring color
+- **Add/remove columns & rows** — new cells clone the adjacent neighbor for quick parameter tweaking
+
+### Face Fix Compositing Fix
+- Fixed a square-box artifact in the face fix node caused by incorrect mask compositing — replaced hard-cutoff blending with smooth cosine falloff
+
+### i18n
+- Compare Grid strings fully localized in all 11 languages
+
+---
+
 ## What's New in v0.6.5
 
 ### Scroll-to-Adjust Sliders

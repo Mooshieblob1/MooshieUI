@@ -893,6 +893,23 @@ const zhTw: Record<string, string> = {
   "settings.about.data_dir_hint": "要安裝到其他磁碟，請在啟動前將 MOOSHIEUI_DATA_DIR 環境變數設定為您首選的路徑。",
   "settings.about.save_dialog_title": "儲存診斷日誌",
   "settings.paths.extra_model_placeholder": "/共享模型路徑（例如來自其他 ComfyUI 或 Forge 的安裝）",
+
+  // ── Compare Grid ────────────────────────────────────────
+  "bottom_panel.tab.compare": "比較",
+  "compare.enable": "啟動比較網格",
+  "compare.disable": "停用",
+  "compare.add_cell": "新增儲存格",
+  "compare.add_column": "新增欄",
+  "compare.add_row": "新增列",
+  "compare.images": "張圖片",
+  "compare.cell_same": "相同",
+  "compare.cell_base": "(基準)",
+  "compare.cell_prompt_differs": "提示詞 ≠",
+  "compare.cell_prompt_changed": "提示詞已更改",
+  "compare.cell_loras_differ": "LoRA 不同",
+  "compare.cell_default_vae": "預設 VAE",
+  "compare.cell_neg_prefix": "反向: ",
+  "compare.grid_cells_failed": "儲存格 {cells} 失敗 — 請檢查檢查點/模型可用性",
 };
 
 export default zhTw;

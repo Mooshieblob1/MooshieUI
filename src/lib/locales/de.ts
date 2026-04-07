@@ -895,6 +895,23 @@ const de: Record<string, string> = {
   "settings.about.data_dir_hint": "Um auf einem anderen Laufwerk zu installieren, setzen Sie die Umgebungsvariable MOOSHIEUI_DATA_DIR vor dem Start auf den gewünschten Pfad.",
   "settings.about.save_dialog_title": "Diagnoseprotokolle speichern",
   "settings.paths.extra_model_placeholder": "/Pfad/zu/gemeinsamen/Modellen (z.B. von einer anderen ComfyUI- oder Forge-Installation)",
+
+  // ── Compare Grid ────────────────────────────────────────
+  "bottom_panel.tab.compare": "Vergleichen",
+  "compare.enable": "Vergleichsraster starten",
+  "compare.disable": "Deaktivieren",
+  "compare.add_cell": "Zelle hinzufügen",
+  "compare.add_column": "Spalte hinzufügen",
+  "compare.add_row": "Zeile hinzufügen",
+  "compare.images": "Bilder",
+  "compare.cell_same": "gleich",
+  "compare.cell_base": "(Basis)",
+  "compare.cell_prompt_differs": "Prompt ≠",
+  "compare.cell_prompt_changed": "Prompt geändert",
+  "compare.cell_loras_differ": "LoRAs unterschiedlich",
+  "compare.cell_default_vae": "Standard-VAE",
+  "compare.cell_neg_prefix": "neg: ",
+  "compare.grid_cells_failed": "Zelle(n) {cells} fehlgeschlagen — Checkpoint/Modellverfügbarkeit prüfen",
 };
 
 export default de;

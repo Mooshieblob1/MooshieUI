@@ -5,8 +5,10 @@
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { models } from "../../stores/models.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
+  import { compare } from "../../stores/compare.svelte.js";
   import LoraGallery from "./LoraGallery.svelte";
   import CheckpointGallery from "./CheckpointGallery.svelte";
+  import CompareGrid from "./CompareGrid.svelte";
   import type { OutputImage } from "../../types/index.js";
 
   interface Props {
@@ -17,7 +19,7 @@
 
   let { onupscale, oninpaint, oncontextmenu }: Props = $props();
 
-  type TabId = "loras" | "checkpoints" | "images" | "prompts";
+  type TabId = "loras" | "checkpoints" | "images" | "prompts" | "compare";
 
   const TAB_KEY = "mooshieui.bottomPanel.activeTab.v1";
 
@@ -38,7 +40,7 @@
     try { localStorage.setItem(TAB_KEY, activeTab); } catch {}
   });
 
-  const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts"];
+  const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts", "compare"];
   const visibleTabs = $derived(
     showCheckpointsTab ? allTabs : allTabs.filter((t) => t !== "checkpoints")
   );
@@ -47,6 +49,7 @@
     checkpoints: "bottom_panel.tab.checkpoints",
     images: "bottom_panel.tab.images",
     prompts: "bottom_panel.tab.prompts",
+    compare: "bottom_panel.tab.compare",
   };
 
   // Prompt history
@@ -135,8 +138,10 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
         {:else if tab === "images"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        {:else}
+        {:else if tab === "prompts"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        {:else if tab === "compare"}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
         {/if}
         {locale.t(tabLabelKeys[tab])}
         {#if tab === "loras" && activeLoraCount > 0}
@@ -145,6 +150,8 @@
           <span class="text-[9px] px-1 py-0 rounded-full bg-indigo-600/30 text-indigo-400 tabular-nums">{sessionImageCount}</span>
         {:else if tab === "prompts" && favoriteCount > 0}
           <span class="text-[9px] px-1 py-0 rounded-full bg-amber-500/30 text-amber-400 tabular-nums">{favoriteCount}</span>
+        {:else if tab === "compare" && compare.enabled}
+          <span class="text-[9px] px-1 py-0 rounded-full bg-indigo-600/30 text-indigo-400 tabular-nums">{compare.cellCount}</span>
         {/if}
       </button>
     {/each}
@@ -307,6 +314,8 @@
           {/if}
         </div>
       {/if}
+    {:else if activeTab === "compare"}
+      <CompareGrid />
     {/if}
   </div>
 </div>

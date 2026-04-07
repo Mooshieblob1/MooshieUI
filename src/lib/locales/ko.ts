@@ -893,6 +893,23 @@ const ko: Record<string, string> = {
   "settings.about.data_dir_hint": "다른 드라이브에 설치하려면 실행 전에 MOOSHIEUI_DATA_DIR 환경 변수를 원하는 경로로 설정하세요.",
   "settings.about.save_dialog_title": "진단 로그 저장",
   "settings.paths.extra_model_placeholder": "/공유/모델/경로 (예: 다른 ComfyUI 또는 Forge 설치에서)",
+
+  // ── Compare Grid ────────────────────────────────────────
+  "bottom_panel.tab.compare": "비교",
+  "compare.enable": "비교 그리드 시작",
+  "compare.disable": "비활성화",
+  "compare.add_cell": "셀 추가",
+  "compare.add_column": "열 추가",
+  "compare.add_row": "행 추가",
+  "compare.images": "이미지",
+  "compare.cell_same": "동일",
+  "compare.cell_base": "(기준)",
+  "compare.cell_prompt_differs": "프롬프트 ≠",
+  "compare.cell_prompt_changed": "프롬프트 변경됨",
+  "compare.cell_loras_differ": "LoRA 다름",
+  "compare.cell_default_vae": "기본 VAE",
+  "compare.cell_neg_prefix": "부정: ",
+  "compare.grid_cells_failed": "셀 {cells} 실패 — 체크포인트/모델 가용성을 확인하세요",
 };
 
 export default ko;

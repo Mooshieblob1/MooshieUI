@@ -893,6 +893,23 @@ const ru: Record<string, string> = {
   "settings.about.data_dir_hint": "Для установки на другой диск установите переменную окружения MOOSHIEUI_DATA_DIR на желаемый путь перед запуском.",
   "settings.about.save_dialog_title": "Сохранить диагностические логи",
   "settings.paths.extra_model_placeholder": "/путь/к/общим/моделям (напр. из другой установки ComfyUI или Forge)",
+
+  // ── Compare Grid ────────────────────────────────────────
+  "bottom_panel.tab.compare": "Сравнение",
+  "compare.enable": "Начать сетку сравнения",
+  "compare.disable": "Отключить",
+  "compare.add_cell": "Добавить ячейку",
+  "compare.add_column": "Добавить столбец",
+  "compare.add_row": "Добавить строку",
+  "compare.images": "изображений",
+  "compare.cell_same": "одинаково",
+  "compare.cell_base": "(базовое)",
+  "compare.cell_prompt_differs": "промпт ≠",
+  "compare.cell_prompt_changed": "промпт изменён",
+  "compare.cell_loras_differ": "LoRA различаются",
+  "compare.cell_default_vae": "VAE по умолчанию",
+  "compare.cell_neg_prefix": "негатив: ",
+  "compare.grid_cells_failed": "Ячейка(и) {cells} не удались — проверьте доступность чекпоинта/модели",
 };
 
 export default ru;

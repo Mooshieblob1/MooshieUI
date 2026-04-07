@@ -918,6 +918,23 @@ const ja: Record<string, string> = {
   "settings.about.data_dir_hint": "別のドライブにインストールするには、起動前にMOOSHIEUI_DATA_DIR環境変数を希望のパスに設定してください。",
   "settings.about.save_dialog_title": "診断ログを保存",
   "settings.paths.extra_model_placeholder": "/共有モデルへのパス（例：別のComfyUIやForgeのインストールから）",
+
+  // ── Compare Grid ────────────────────────────────────────
+  "bottom_panel.tab.compare": "比較",
+  "compare.enable": "比較グリッドを開始",
+  "compare.disable": "無効化",
+  "compare.add_cell": "セルを追加",
+  "compare.add_column": "列を追加",
+  "compare.add_row": "行を追加",
+  "compare.images": "枚",
+  "compare.cell_same": "同一",
+  "compare.cell_base": "(基準)",
+  "compare.cell_prompt_differs": "プロンプト ≠",
+  "compare.cell_prompt_changed": "プロンプト変更",
+  "compare.cell_loras_differ": "LoRA が異なる",
+  "compare.cell_default_vae": "デフォルト VAE",
+  "compare.cell_neg_prefix": "ネガ: ",
+  "compare.grid_cells_failed": "セル {cells} が失敗しました — チェックポイント/モデルの利用可能性を確認してください",
 };
 
 export default ja;

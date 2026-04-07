@@ -2,6 +2,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
   import { canvas } from "../../stores/canvas.svelte.js";
+  import { compare } from "../../stores/compare.svelte.js";
   import { generate, interruptGeneration, deleteQueueItem, installPipPackage, downloadModel } from "../../utils/api.js";
   import { models } from "../../stores/models.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
@@ -23,6 +24,12 @@
     }
 
     try {
+      // If compare grid has multiple cells, generate all cells
+      if (compare.enabled && compare.cellCount > 1) {
+        await handleGridGenerate();
+        return;
+      }
+
       // If canvas mode is active, export canvas content before generating
       if (canvas.isCanvasMode) {
         if (!canvasEditorRef) {
@@ -84,7 +91,6 @@
   /** Left-click: cancel the current generation only, let the queue continue. */
   async function handleCancelCurrent() {
     await interruptGeneration();
-    // The executing:null / execution_error handler will remove this prompt from the queue
   }
 
   /** Right-click: cancel current + clear the entire queue. */
@@ -96,6 +102,56 @@
       try { await deleteQueueItem(pid); } catch { /* already removed */ }
     }
     progress.cancelAll();
+    compare.clearGridBatch();
+  }
+
+  /** Generate all grid cells sequentially with a shared seed, then stitch into a grid. */
+  async function handleGridGenerate() {
+    compare.saveActiveCell();
+    const savedIndex = compare.activeIndex;
+
+    // Resolve one seed for all cells that have random (-1) seed
+    const sharedSeed = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+    const promptIds: string[] = [];
+    const failedCells: number[] = [];
+    const successSnapshots: typeof compare.cells = [];
+
+    for (let i = 0; i < compare.cellCount; i++) {
+      const cell = compare.cells[i]!;
+      compare.applyToGeneration(cell);
+
+      const params = generation.toParams();
+
+      // Use shared seed for random seeds so the grid is consistent
+      if (params.seed < 0) {
+        params.seed = sharedSeed;
+      }
+
+      try {
+        const result = await generate(params);
+        params.seed = result.seed;
+        progress.enqueue(result.prompt_id, params.upscale_enabled, params.mode, params);
+        promptIds.push(result.prompt_id);
+        successSnapshots.push(cell);
+      } catch (e) {
+        console.error(`Grid cell ${i + 1} failed:`, e);
+        failedCells.push(i);
+      }
+    }
+
+    if (promptIds.length >= 2) {
+      compare.startGridBatch(promptIds, compare.rows, compare.cols, successSnapshots, failedCells);
+    }
+
+    // Restore active cell params
+    const activeSnap = compare.cells[savedIndex];
+    if (activeSnap) compare.applyToGeneration(activeSnap);
+
+    if (failedCells.length > 0) {
+      errorMsg = locale.t('compare.grid_cells_failed', { cells: failedCells.map(i => i + 1).join(', ') });
+    }
+
+    generation.saveSettings();
   }
 
   const canGenerate = $derived(!!generation.checkpoint);

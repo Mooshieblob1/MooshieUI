@@ -133,23 +133,17 @@ class MooshieFaceDetailer:
                     align_corners=False,
                 ).permute(0, 2, 3, 1)
 
-                # Create feathered mask — 1.0 in center, fading to 0 at edges
-                mask = self._make_feathered_mask(new_h, new_w, feather, image.device)
+                # Create feathered mask at original crop resolution for pixel-space blending.
+                # Use a generous feather proportional to the crop size for seamless edges.
+                pixel_feather = max(feather, min(crop_h, crop_w) // 6)
+                mask = self._make_feathered_mask(crop_h, crop_w, pixel_feather, image.device)
 
                 # VAE encode
                 latent = vae.encode(resized[:, :, :, :3])
                 latent = comfy.sample.fix_empty_latent_channels(model, latent)
 
-                # Noise mask at latent resolution
-                latent_h, latent_w = latent.shape[-2], latent.shape[-1]
-                noise_mask = torch.nn.functional.interpolate(
-                    mask.unsqueeze(0).unsqueeze(0),
-                    size=(latent_h, latent_w),
-                    mode="bilinear",
-                    align_corners=False,
-                )
-
-                # Sample
+                # Sample — no noise_mask so the entire crop is denoised uniformly.
+                # The pixel-space feathered blend handles the transition to the original.
                 noise = comfy.sample.prepare_noise(latent, seed + b)
                 callback = latent_preview.prepare_callback(model, steps)
                 samples = comfy.sample.sample(
@@ -163,7 +157,6 @@ class MooshieFaceDetailer:
                     negative,
                     latent,
                     denoise=denoise,
-                    noise_mask=noise_mask,
                     force_full_denoise=True,
                     callback=callback,
                     disable_pbar=False,
@@ -186,13 +179,8 @@ class MooshieFaceDetailer:
                     align_corners=False,
                 ).permute(0, 2, 3, 1)
 
-                # Blend mask at original crop resolution
-                blend_mask = torch.nn.functional.interpolate(
-                    mask.unsqueeze(0).unsqueeze(0),
-                    size=(crop_h, crop_w),
-                    mode="bilinear",
-                    align_corners=False,
-                )[0, 0, :, :].unsqueeze(0).unsqueeze(-1)  # [1, H, W, 1]
+                # Blend mask is already at original crop resolution
+                blend_mask = mask.unsqueeze(0).unsqueeze(-1)  # [1, H, W, 1]
 
                 # Composite: denoised * mask + original * (1 - mask)
                 original_crop = result[b : b + 1, cy1:cy2, cx1:cx2, :]
@@ -203,23 +191,34 @@ class MooshieFaceDetailer:
 
     @staticmethod
     def _make_feathered_mask(h, w, feather, device):
-        """Create a mask that's 1.0 in the center and fades to 0.0 at the edges."""
-        mask = torch.ones((h, w), dtype=torch.float32, device=device)
+        """Create a mask that's 1.0 in the center and smoothly fades to 0.0 at the edges.
+
+        Uses a cosine falloff for each edge, then takes the product of all four
+        edges.  This produces smooth, artifact-free transitions — much better
+        than a linear ramp whose corners darken non-uniformly.
+        """
         if feather <= 0:
-            return mask
+            return torch.ones((h, w), dtype=torch.float32, device=device)
 
-        f = min(feather, min(h, w) // 4)
+        f = min(feather, min(h, w) // 3)
         if f <= 0:
-            return mask
+            return torch.ones((h, w), dtype=torch.float32, device=device)
 
-        # Linear ramp at each edge
-        for i in range(f):
-            alpha = (i + 1) / f
-            mask[i, :] *= alpha
-            mask[-(i + 1), :] *= alpha
-            mask[:, i] *= alpha
-            mask[:, -(i + 1)] *= alpha
+        # Build 1-D cosine ramps: 0 at edge → 1 at f pixels in
+        ramp = 0.5 * (1.0 - torch.cos(torch.linspace(0, torch.pi, f, device=device)))
 
+        # Vertical mask: ramp on top/bottom, 1 in the middle
+        v = torch.ones(h, dtype=torch.float32, device=device)
+        v[:f] = ramp
+        v[-f:] = ramp.flip(0)
+
+        # Horizontal mask: ramp on left/right, 1 in the middle
+        u = torch.ones(w, dtype=torch.float32, device=device)
+        u[:f] = ramp[:min(f, w)]
+        u[-f:] = ramp[:min(f, w)].flip(0)
+
+        # Outer product gives smooth 2-D mask (corners blend naturally)
+        mask = v.unsqueeze(1) * u.unsqueeze(0)
         return mask
 
 
