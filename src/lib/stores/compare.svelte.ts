@@ -7,6 +7,11 @@ export interface CellSnapshot {
   negativePrompt: string;
   checkpoint: string;
   vae: string;
+  useSplitModel: boolean;
+  diffusionModel: string | null;
+  clipModel: string | null;
+  clipType: string | null;
+  modelspecArchitecture: string | null;
   loras: LoraEntry[];
   samplerName: string;
   scheduler: string;
@@ -87,6 +92,11 @@ class CompareStore {
       negativePrompt: generation.negativePrompt,
       checkpoint: generation.checkpoint,
       vae: generation.vae,
+      useSplitModel: generation.useSplitModel,
+      diffusionModel: generation.diffusionModel,
+      clipModel: generation.clipModel,
+      clipType: generation.clipType,
+      modelspecArchitecture: generation.modelspecArchitecture,
       loras: generation.loras.map((l) => ({ ...l })),
       samplerName: generation.samplerName,
       scheduler: generation.scheduler,
@@ -105,6 +115,11 @@ class CompareStore {
     generation.negativePrompt = snap.negativePrompt;
     generation.checkpoint = snap.checkpoint;
     generation.vae = snap.vae;
+    generation.useSplitModel = snap.useSplitModel;
+    generation.diffusionModel = snap.diffusionModel;
+    generation.clipModel = snap.clipModel;
+    generation.clipType = snap.clipType;
+    generation.modelspecArchitecture = snap.modelspecArchitecture;
     generation.loras = snap.loras.map((l) => ({ ...l }));
     generation.samplerName = snap.samplerName;
     generation.scheduler = snap.scheduler;

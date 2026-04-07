@@ -1,3 +1,16 @@
+## What's New in v0.6.9 — The "Nice" Update
+
+### Compare Grid Fixes
+- **Model switching actually works now** — compare grid cells now properly capture and apply split-model fields (`diffusionModel`, `clipModel`, `clipType`, `modelspecArchitecture`), so each cell truly generates with its own model instead of silently reusing whichever model was last selected
+- **Smart generation order** — cells are sorted by model before queuing so all cells using the same model generate consecutively, minimizing expensive ComfyUI model swaps
+
+### Compare Grid Visual Improvements
+- **Full-coverage color borders** — cell color coding now renders as an overlay that covers the entire panel including the sticky mode selector and generate button sections (previously hidden behind opaque backgrounds)
+- **Pulsing glow effect** — active cell border has a subtle animated glow that pulses to clearly indicate which cell is being edited
+- **Rounded corners** — compare border overlay uses 6px rounded corners for a polished look
+
+---
+
 ## What's New in v0.6.8
 
 ### Anima Preview 3 Support

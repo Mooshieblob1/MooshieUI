@@ -1698,8 +1698,8 @@
       {#if !leftCollapsed}
         <div
           bind:this={leftColumnRef}
-          class="overflow-y-auto overflow-x-hidden px-3 pt-2 flex flex-col gap-2 shrink-0 border-r {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'ring-2 ring-inset' : ''}"
-          style="width: {leftWidth}px{compare.enabled ? `; --tw-ring-color: ${compare.activeColor}` : ''}"
+          class="overflow-y-auto overflow-x-hidden px-3 pt-2 flex flex-col gap-2 shrink-0 border-r {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
+          style="width: {leftWidth}px{compare.enabled ? `; --compare-color: ${compare.activeColor}` : ''}"
           use:smoothScroll
         >
         {#if controlsSide === "left"}
@@ -1873,8 +1873,8 @@
     {#if (rightHasSections || controlsSide === "right" || draggingSection) && !rightCollapsed}
       <div
         bind:this={rightColumnRef}
-        class="overflow-y-auto p-3 space-y-2 shrink-0 border-l {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'ring-2 ring-inset' : ''}"
-        style="width: {rightWidth}px{compare.enabled ? `; --tw-ring-color: ${compare.activeColor}` : ''}"
+        class="overflow-y-auto p-3 space-y-2 shrink-0 border-l {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
+        style="width: {rightWidth}px{compare.enabled ? `; --compare-color: ${compare.activeColor}` : ''}"
         use:smoothScroll
       >
         {#if controlsSide === "right"}

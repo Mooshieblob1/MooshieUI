@@ -112,12 +112,20 @@
 
     // Resolve one seed for all cells that have random (-1) seed
     const sharedSeed = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
-    const promptIds: string[] = [];
     const failedCells: number[] = [];
-    const successSnapshots: typeof compare.cells = [];
 
-    for (let i = 0; i < compare.cellCount; i++) {
-      const cell = compare.cells[i]!;
+    // Sort cells by model to minimize expensive ComfyUI model swaps
+    const cellOrder = compare.cells.map((cell, i) => ({ cell, index: i }));
+    cellOrder.sort((a, b) => {
+      const modelA = a.cell.diffusionModel ?? a.cell.checkpoint;
+      const modelB = b.cell.diffusionModel ?? b.cell.checkpoint;
+      return modelA.localeCompare(modelB);
+    });
+
+    // Track results by original cell index so the grid stitches in the right order
+    const resultsByIndex = new Map<number, { promptId: string; cell: typeof compare.cells[0] }>();
+
+    for (const { cell, index } of cellOrder) {
       compare.applyToGeneration(cell);
 
       const params = generation.toParams();
@@ -131,11 +139,21 @@
         const result = await generate(params);
         params.seed = result.seed;
         progress.enqueue(result.prompt_id, params.upscale_enabled, params.mode, params);
-        promptIds.push(result.prompt_id);
-        successSnapshots.push(cell);
+        resultsByIndex.set(index, { promptId: result.prompt_id, cell });
       } catch (e) {
-        console.error(`Grid cell ${i + 1} failed:`, e);
-        failedCells.push(i);
+        console.error(`Grid cell ${index + 1} failed:`, e);
+        failedCells.push(index);
+      }
+    }
+
+    // Build arrays in original cell order for correct grid stitching
+    const promptIds: string[] = [];
+    const successSnapshots: typeof compare.cells = [];
+    for (let i = 0; i < compare.cellCount; i++) {
+      const entry = resultsByIndex.get(i);
+      if (entry) {
+        promptIds.push(entry.promptId);
+        successSnapshots.push(entry.cell);
       }
     }
 
