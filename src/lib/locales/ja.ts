@@ -166,6 +166,17 @@ const ja: Record<string, string> = {
   "settings.paths.add_model_dir_title": "別のモデルディレクトリを追加",
   "settings.paths.remove_model_dir_title": "このディレクトリを削除",
   "settings.paths.click_to_add": "クリックして追加",
+  "settings.paths.open_folder.title": "モデルフォルダを開く",
+  "settings.paths.open_folder.checkpoints": "Checkpoints",
+  "settings.paths.open_folder.loras": "LoRAs",
+  "settings.paths.open_folder.vae": "VAE",
+  "settings.paths.open_folder.upscale": "アップスケーラー",
+  "settings.paths.open_folder.facefix": "Face Fix",
+  "settings.paths.open_folder.embeddings": "Embeddings",
+  "settings.paths.open_folder.controlnet": "ControlNet",
+  "settings.paths.open_folder.clip": "CLIP/T.Enc",
+  "settings.paths.open_folder.diffusion": "Diffusion",
+  "settings.paths.open_folder.pick_directory": "複数のディレクトリが見つかりました — どれを開くか選んでください。",
   "settings.paths.move_dialog_title": "新しいインストール先を選択",
   "settings.paths.browse_model_dir_title": "モデルフォルダを選択",
 
@@ -275,6 +286,7 @@ const ja: Record<string, string> = {
   "generation.dimensions.height": "高さ",
   "generation.dimensions.swap": "幅と高さを入れ替え",
   "generation.dimensions.result": "結果",
+  "generation.swap_panels": "左右パネルを入れ替える",
 
   // サンプラー
   "generation.sampler.title": "サンプラー",
@@ -607,6 +619,7 @@ const ja: Record<string, string> = {
   "bottom_panel.no_image_results": "検索に一致する画像がありません",
   "bottom_panel.prompt_search_placeholder": "プロンプトを検索...",
   "bottom_panel.no_prompt_results": "検索に一致するプロンプトがありません",
+  "bottom_panel.card_size": "カードサイズ",
 
   // ── ダウンロード ────────────────────────────────────────
   "downloads.downloading": "{filename}をダウンロード中",

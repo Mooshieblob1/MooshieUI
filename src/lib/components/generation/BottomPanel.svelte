@@ -95,6 +95,27 @@
         (entry.negativePrompt || "").toLowerCase().includes(q)
     );
   });
+
+  // Card size sliders (persisted)
+  const CARD_SIZE_KEY = "mooshieui.bottomPanel.cardSize.v1";
+
+  function loadCardSizes(): { lora: number; image: number } {
+    try {
+      const raw = localStorage.getItem(CARD_SIZE_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return { lora: 120, image: 72 };
+  }
+
+  const savedSizes = loadCardSizes();
+  let loraCardSize = $state(savedSizes.lora);
+  let imageCardSize = $state(savedSizes.image);
+
+  $effect(() => {
+    try {
+      localStorage.setItem(CARD_SIZE_KEY, JSON.stringify({ lora: loraCardSize, image: imageCardSize }));
+    } catch {}
+  });
 </script>
 
 <div class="flex flex-col h-full">
@@ -131,7 +152,7 @@
   <!-- Tab content -->
   <div class="flex-1 min-h-0 overflow-hidden">
     {#if activeTab === "loras"}
-      <LoraGallery />    {:else if activeTab === "checkpoints"}
+      <LoraGallery cardSize={loraCardSize} onCardSizeChange={(s) => { loraCardSize = s; }} />    {:else if activeTab === "checkpoints"}
       <CheckpointGallery />    {:else if activeTab === "images"}
       <!-- Session History -->
       {#if gallery.sessionImages.length === 0}
@@ -140,12 +161,20 @@
         </div>
       {:else}
         <div class="flex flex-col h-full">
-          <div class="px-2 pt-1.5 pb-1 shrink-0">
+          <div class="px-2 pt-1.5 pb-1 shrink-0 flex items-center gap-2">
             <input
               type="text"
               bind:value={imageSearch}
               placeholder={locale.t('bottom_panel.image_search_placeholder')}
-              class="w-full bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+            <input
+              type="range"
+              min="48"
+              max="160"
+              bind:value={imageCardSize}
+              class="w-16 h-4 accent-indigo-500 cursor-pointer"
+              title={locale.t('bottom_panel.card_size')}
             />
           </div>
           {#if filteredSessionImages.length === 0}
@@ -153,7 +182,7 @@
               <p>{locale.t('bottom_panel.no_image_results')}</p>
             </div>
           {:else}
-            <div class="grid gap-2 flex-1 min-h-0 overflow-y-auto px-2 py-2" style="grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); align-content: start;">
+            <div class="grid gap-2 flex-1 min-h-0 overflow-y-auto px-2 py-2" style="grid-template-columns: repeat(auto-fill, minmax({imageCardSize}px, 1fr)); align-content: start;">
               {#each filteredSessionImages as image}
                 <div class="group relative aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors" oncontextmenu={(e) => { if (oncontextmenu) { e.preventDefault(); oncontextmenu(image, e.clientX, e.clientY); } }}>
               <button

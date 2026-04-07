@@ -200,6 +200,7 @@ pub fn run() {
             commands::api::get_client_id,
             commands::api::download_model,
             commands::api::get_model_install_dirs,
+            commands::api::open_directory,
             commands::api::save_image_file,
             commands::api::embed_png_metadata_bytes,
             commands::api::save_to_gallery,

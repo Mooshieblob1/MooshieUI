@@ -110,7 +110,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="flex gap-2">
+<div class="flex gap-3">
   <button
     onclick={handleGenerate}
     disabled={!canGenerate}
@@ -130,8 +130,18 @@
     <button
       onclick={handleCancelCurrent}
       oncontextmenu={handleCancelAll}
-      class="px-4 py-3 rounded-xl font-semibold text-sm bg-red-700 hover:bg-red-600 text-white transition-colors"
+      class="px-5 py-3 rounded-xl font-semibold text-sm bg-red-700 hover:bg-red-600 text-white transition-colors"
       title={locale.t('generation.cancel_hint')}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+  {:else}
+    <button
+      disabled
+      class="px-5 py-3 rounded-xl font-semibold text-sm bg-neutral-800 text-neutral-600 cursor-not-allowed transition-colors"
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <line x1="18" y1="6" x2="6" y2="18"></line>

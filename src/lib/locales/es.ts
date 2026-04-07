@@ -166,6 +166,17 @@ const es: Record<string, string> = {
   "settings.paths.add_model_dir_title": "Agregar otro directorio de modelos",
   "settings.paths.remove_model_dir_title": "Eliminar este directorio",
   "settings.paths.click_to_add": "Haz clic para agregar",
+  "settings.paths.open_folder.title": "Abrir carpetas de modelos",
+  "settings.paths.open_folder.checkpoints": "Checkpoints",
+  "settings.paths.open_folder.loras": "LoRAs",
+  "settings.paths.open_folder.vae": "VAE",
+  "settings.paths.open_folder.upscale": "Escaladores",
+  "settings.paths.open_folder.facefix": "Face Fix",
+  "settings.paths.open_folder.embeddings": "Embeddings",
+  "settings.paths.open_folder.controlnet": "ControlNet",
+  "settings.paths.open_folder.clip": "CLIP/T.Enc",
+  "settings.paths.open_folder.diffusion": "Difusión",
+  "settings.paths.open_folder.pick_directory": "Se encontraron varios directorios — elige cuál abrir.",
   "settings.paths.move_dialog_title": "Elegir nueva ubicación de instalación",
   "settings.paths.browse_model_dir_title": "Elegir directorio de modelos",
 
@@ -275,6 +286,7 @@ const es: Record<string, string> = {
   "generation.dimensions.height": "Al",
   "generation.dimensions.swap": "Intercambiar A/Al",
   "generation.dimensions.result": "Resultado",
+  "generation.swap_panels": "Intercambiar paneles izquierdo/derecho",
 
   // Muestreador
   "generation.sampler.title": "Muestreador",
@@ -610,6 +622,7 @@ const es: Record<string, string> = {
   "bottom_panel.no_image_results": "Ninguna imagen coincide con tu búsqueda",
   "bottom_panel.prompt_search_placeholder": "Buscar prompts...",
   "bottom_panel.no_prompt_results": "Ningún prompt coincide con tu búsqueda",
+  "bottom_panel.card_size": "Tamaño de tarjeta",
 
   // ── Descargas ───────────────────────────────────────────
   "downloads.downloading": "Descargando {filename}",

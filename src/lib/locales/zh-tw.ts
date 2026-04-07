@@ -162,6 +162,17 @@ const zhTw: Record<string, string> = {
   "settings.paths.add_model_dir_title": "新增另一個模型目錄",
   "settings.paths.remove_model_dir_title": "移除此目錄",
   "settings.paths.click_to_add": "點擊新增",
+  "settings.paths.open_folder.title": "開啟模型資料夾",
+  "settings.paths.open_folder.checkpoints": "Checkpoints",
+  "settings.paths.open_folder.loras": "LoRAs",
+  "settings.paths.open_folder.vae": "VAE",
+  "settings.paths.open_folder.upscale": "放大器",
+  "settings.paths.open_folder.facefix": "Face Fix",
+  "settings.paths.open_folder.embeddings": "Embeddings",
+  "settings.paths.open_folder.controlnet": "ControlNet",
+  "settings.paths.open_folder.clip": "CLIP/T.Enc",
+  "settings.paths.open_folder.diffusion": "Diffusion",
+  "settings.paths.open_folder.pick_directory": "找到多個目錄 — 選擇要開啟的目錄。",
   "settings.paths.move_dialog_title": "選擇新的安裝位置",
   "settings.paths.browse_model_dir_title": "選擇模型資料夾",
 
@@ -263,6 +274,7 @@ const zhTw: Record<string, string> = {
   "generation.dimensions.height": "高度",
   "generation.dimensions.swap": "交換寬高",
   "generation.dimensions.result": "結果",
+  "generation.swap_panels": "切換左右面板",
 
   "generation.sampler.title": "取樣器",
   "generation.sampler.label": "取樣器",
@@ -585,6 +597,7 @@ const zhTw: Record<string, string> = {
   "bottom_panel.no_image_results": "沒有符合搜尋條件的圖片",
   "bottom_panel.prompt_search_placeholder": "搜尋提示詞...",
   "bottom_panel.no_prompt_results": "沒有符合搜尋條件的提示詞",
+  "bottom_panel.card_size": "卡片大小",
 
   // ── 下載 ────────────────────────────────────────────────
   "downloads.downloading": "正在下載 {filename}",

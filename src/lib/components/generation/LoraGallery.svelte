@@ -4,6 +4,13 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { getLoraCivitaiInfo, fetchCachedImage, type LoraCivitaiInfo } from "../../utils/api.js";
 
+  interface Props {
+    cardSize?: number;
+    onCardSizeChange?: (size: number) => void;
+  }
+
+  let { cardSize = 120, onCardSizeChange }: Props = $props();
+
   const CACHE_KEY = "mooshieui.lora.civitai.cache.v2";
   const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -242,13 +249,22 @@
 
 <!-- Search + LoRA grid -->
 <div class="flex flex-col h-full">
-  <!-- Search bar -->
-  <div class="px-2 pt-1.5 pb-1 shrink-0">
+  <!-- Search bar + size slider -->
+  <div class="px-2 pt-1.5 pb-1 shrink-0 flex items-center gap-2">
     <input
       type="text"
       bind:value={searchQuery}
       placeholder={locale.t('lora.search_placeholder')}
-      class="w-full bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+      class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+    />
+    <input
+      type="range"
+      min="60"
+      max="200"
+      value={cardSize}
+      oninput={(e) => onCardSizeChange?.(Number(e.currentTarget.value))}
+      class="w-16 h-4 accent-indigo-500 cursor-pointer"
+      title={locale.t('bottom_panel.card_size')}
     />
   </div>
 
@@ -262,7 +278,7 @@
     </div>
   {:else}
     <div class="flex-1 min-h-0 overflow-y-auto px-2 py-1.5">
-      <div class="grid gap-2.5" style="grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));">
+      <div class="grid gap-2.5" style="grid-template-columns: repeat(auto-fill, minmax({cardSize}px, 1fr));">
       {#each filteredLoras() as loraName (loraName)}
         {@const info = getInfo(loraName)}
         {@const isLoading = loading[loraName]}

@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicerlab/files/main/tauri/tauri.conf.json.schema",
   "productName": "MooshieUI",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "identifier": "com.mooshieui.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -52,7 +52,7 @@
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk2QjY5NzZFRjhDODhFMkYKUldRdmpzajRicGUybGx6Y0V5OWpuZFZSMUZnTnVBdDlwWkZxVURyRGx2d0JZQlI4cVN6OGN2cFcK",
       "windows": {
-        "installMode": "basicUi"
+        "installMode": "passive"
       }
     }
   }

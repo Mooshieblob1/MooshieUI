@@ -1,5 +1,28 @@
 # Changelog
 
+## What's New in v0.6.4
+
+### UI Polish
+- **Card size sliders** — bottom panel Images and LoRA tabs now each have a range slider to adjust card size on the fly (persisted across sessions)
+- **Always-visible cancel button** — the Cancel button is now always shown in the generation footer; greyed out when idle, red when a generation is running
+- **Swap panels button** — new horizontal-arrows button next to the mode selector to swap left/right generation panels
+- **Autocomplete mid-prompt fix** — tag autocomplete now works correctly when the cursor is in the middle of a prompt, not just at the end
+- **Button spacing** — slightly increased gap between Generate and Cancel buttons; Cancel button is wider for easier targeting
+- **Taller generation footer** — increased bottom padding on the sticky footer to prevent overlap with the Windows taskbar
+
+### Open Model Folders
+- New "Open Model Folders" section in Settings → Paths with buttons to open each model category directory (Checkpoints, LoRAs, VAE, Upscalers, Face Fix, Embeddings, ControlNet, CLIP/T.Enc, Diffusion) directly in the native file explorer
+- If a category has multiple configured directories, a picker dialog lets you choose which one to open
+- Directories are created automatically if they don't exist yet
+
+### Windows Updater Fix
+- Reverted Windows update installer to `passive` mode — fixes a regression in v0.6.2 where the installer showed a full uninstall/reinstall wizard instead of updating silently
+
+### i18n
+- Added all new UI strings to all 11 supported languages (de, es, fr, it, ja, ko, pt, ru, zh, zh-tw, en)
+
+---
+
 ## What's New in v0.6.3
 
 ### Nanosaur 1.2B Support

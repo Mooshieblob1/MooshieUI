@@ -204,6 +204,14 @@
     }
   }
 
+  function swapPanels() {
+    const swapped = { ...sectionSides } as Record<SectionId, SectionSide>;
+    for (const key of SECTION_ORDER) {
+      swapped[key] = sectionSides[key] === "left" ? "right" : "left";
+    }
+    sectionSides = swapped;
+  }
+
   if (typeof window !== "undefined") {
     loadSectionPlacement();
   }
@@ -1694,20 +1702,29 @@
         >
         {#if controlsSide === "left"}
           <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-2 pt-2 pb-2">
-            <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
-              {#each modes as mode}
-                <button
-                  onclick={() => {
-                    generation.mode = mode.id;
-                    if (mode.id !== "inpainting") canvas.isCanvasMode = false;
-                  }}
-                  class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode === mode.id
-                    ? 'bg-neutral-700 text-white'
-                    : 'text-neutral-400 hover:text-neutral-200'}"
-                >
-                  {mode.label()}
-                </button>
-              {/each}
+            <div class="flex gap-1.5 items-center">
+              <div class="flex gap-1 bg-neutral-900 rounded-lg p-1 flex-1">
+                {#each modes as mode}
+                  <button
+                    onclick={() => {
+                      generation.mode = mode.id;
+                      if (mode.id !== "inpainting") canvas.isCanvasMode = false;
+                    }}
+                    class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode === mode.id
+                      ? 'bg-neutral-700 text-white'
+                      : 'text-neutral-400 hover:text-neutral-200'}"
+                  >
+                    {mode.label()}
+                  </button>
+                {/each}
+              </div>
+              <button
+                onclick={swapPanels}
+                class="p-1.5 rounded-md text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
+                title={locale.t('generation.swap_panels')}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7H20m0 0l-4-4m4 4l-4 4"/><path d="M16 17H4m0 0l4 4m-4-4l4-4"/></svg>
+              </button>
             </div>
 
             {#if generation.mode === "inpainting"}
@@ -1741,7 +1758,7 @@
         {/each}
 
         {#if controlsSide === "left"}
-          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-2 pb-3">
+          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-5">
             <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">{locale.t('generation.generate')}</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
@@ -1860,20 +1877,29 @@
       >
         {#if controlsSide === "right"}
           <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-3 pt-3 pb-2">
-            <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
-              {#each modes as mode}
-                <button
-                  onclick={() => {
-                    generation.mode = mode.id;
-                    if (mode.id !== "inpainting") canvas.isCanvasMode = false;
-                  }}
-                  class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode === mode.id
-                    ? 'bg-neutral-700 text-white'
-                    : 'text-neutral-400 hover:text-neutral-200'}"
-                >
-                  {mode.label()}
-                </button>
-              {/each}
+            <div class="flex gap-1.5 items-center">
+              <div class="flex gap-1 bg-neutral-900 rounded-lg p-1 flex-1">
+                {#each modes as mode}
+                  <button
+                    onclick={() => {
+                      generation.mode = mode.id;
+                      if (mode.id !== "inpainting") canvas.isCanvasMode = false;
+                    }}
+                    class="flex-1 text-xs py-1.5 rounded-md transition-colors {generation.mode === mode.id
+                      ? 'bg-neutral-700 text-white'
+                      : 'text-neutral-400 hover:text-neutral-200'}"
+                  >
+                    {mode.label()}
+                  </button>
+                {/each}
+              </div>
+              <button
+                onclick={swapPanels}
+                class="p-1.5 rounded-md text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
+                title={locale.t('generation.swap_panels')}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7H20m0 0l-4-4m4 4l-4 4"/><path d="M16 17H4m0 0l4 4m-4-4l4-4"/></svg>
+              </button>
             </div>
 
             {#if generation.mode === "inpainting"}
@@ -1907,7 +1933,7 @@
         {/each}
 
         {#if controlsSide === "right"}
-          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-2 pb-3">
+          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-5">
             <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">{locale.t('generation.generate')}</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>

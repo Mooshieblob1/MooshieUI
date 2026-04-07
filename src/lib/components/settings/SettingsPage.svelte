@@ -9,6 +9,7 @@
   import { accessibility } from "../../stores/accessibility.svelte.js";
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
+  import OpenModelFolders from "./OpenModelFolders.svelte";
   import { check } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
   import { invoke } from "@tauri-apps/api/core";
@@ -957,6 +958,9 @@
 
           {#if !collapsed.paths}
           <div class="px-5 pb-5 space-y-4">
+
+          <!-- Open Model Folders -->
+          <OpenModelFolders />
 
           <!-- Move Installation -->
           <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2">

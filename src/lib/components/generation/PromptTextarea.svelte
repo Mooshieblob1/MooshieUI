@@ -79,22 +79,31 @@
     const result = getCurrentTagFragment();
     const pos = textareaEl?.selectionStart ?? 0;
     
-    if (!result || result.fragment.length < 1 || pos < result.trimmedEnd) {
+    if (!result || pos < result.trimmedStart) {
+      showSuggestions = false;
+      suggestions = [];
+      return;
+    }
+
+    // Search based on text from tag start to cursor position (supports mid-prompt editing)
+    const searchFragment = value.substring(result.trimmedStart, pos).replace(/\s+$/, "");
+
+    if (searchFragment.length < 1) {
       showSuggestions = false;
       suggestions = [];
       return;
     }
 
     // Skip if the fragment looks like a weight expression
-    if (/^\(.*:\d/.test(result.fragment)) {
+    if (/^\(.*:\d/.test(searchFragment)) {
       showSuggestions = false;
       suggestions = [];
       return;
     }
 
-    const raw = autocomplete.search(result.fragment);
+    const raw = autocomplete.search(searchFragment);
     // Filter out exact matches — don't suggest a tag that's already fully typed
-    const normalizedFragment = result.fragment.replace(/_/g, " ").replace(/\\/g, "").toLowerCase();
+    const normalizedFragment = searchFragment.replace(/_/g, " ").replace(/\\/g, "").toLowerCase();
     suggestions = raw.filter(tag => tag.n.replace(/_/g, " ").toLowerCase() !== normalizedFragment);
     selectedIndex = 0;
     showSuggestions = suggestions.length > 0;

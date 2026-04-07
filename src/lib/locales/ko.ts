@@ -162,6 +162,17 @@ const ko: Record<string, string> = {
   "settings.paths.add_model_dir_title": "모델 디렉토리 추가",
   "settings.paths.remove_model_dir_title": "이 디렉토리 제거",
   "settings.paths.click_to_add": "클릭하여 추가",
+  "settings.paths.open_folder.title": "모델 폴더 열기",
+  "settings.paths.open_folder.checkpoints": "Checkpoints",
+  "settings.paths.open_folder.loras": "LoRAs",
+  "settings.paths.open_folder.vae": "VAE",
+  "settings.paths.open_folder.upscale": "업스케일러",
+  "settings.paths.open_folder.facefix": "Face Fix",
+  "settings.paths.open_folder.embeddings": "Embeddings",
+  "settings.paths.open_folder.controlnet": "ControlNet",
+  "settings.paths.open_folder.clip": "CLIP/T.Enc",
+  "settings.paths.open_folder.diffusion": "Diffusion",
+  "settings.paths.open_folder.pick_directory": "여러 디렉토리가 발견됨 — 열 디렉토리를 선택하세요.",
   "settings.paths.move_dialog_title": "새 설치 위치 선택",
   "settings.paths.browse_model_dir_title": "모델 디렉터리 선택",
 
@@ -263,6 +274,7 @@ const ko: Record<string, string> = {
   "generation.dimensions.height": "높이",
   "generation.dimensions.swap": "가로/세로 전환",
   "generation.dimensions.result": "결과",
+  "generation.swap_panels": "왼쪽/오른쪽 패널 전환",
 
   "generation.sampler.title": "샘플러",
   "generation.sampler.label": "샘플러",
@@ -585,6 +597,7 @@ const ko: Record<string, string> = {
   "bottom_panel.no_image_results": "검색 결과에 맞는 이미지가 없습니다",
   "bottom_panel.prompt_search_placeholder": "프롬프트 검색...",
   "bottom_panel.no_prompt_results": "검색 결과에 맞는 프롬프트가 없습니다",
+  "bottom_panel.card_size": "카드 크기",
 
   // ── 다운로드 ────────────────────────────────────────────
   "downloads.downloading": "{filename} 다운로드 중",

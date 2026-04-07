@@ -166,6 +166,17 @@ const fr: Record<string, string> = {
   "settings.paths.add_model_dir_title": "Ajouter un autre répertoire de modèles",
   "settings.paths.remove_model_dir_title": "Supprimer ce répertoire",
   "settings.paths.click_to_add": "Cliquez pour ajouter",
+  "settings.paths.open_folder.title": "Ouvrir les dossiers de modèles",
+  "settings.paths.open_folder.checkpoints": "Checkpoints",
+  "settings.paths.open_folder.loras": "LoRAs",
+  "settings.paths.open_folder.vae": "VAE",
+  "settings.paths.open_folder.upscale": "Upscalers",
+  "settings.paths.open_folder.facefix": "Face Fix",
+  "settings.paths.open_folder.embeddings": "Embeddings",
+  "settings.paths.open_folder.controlnet": "ControlNet",
+  "settings.paths.open_folder.clip": "CLIP/T.Enc",
+  "settings.paths.open_folder.diffusion": "Diffusion",
+  "settings.paths.open_folder.pick_directory": "Plusieurs répertoires trouvés — choisissez lequel ouvrir.",
   "settings.paths.move_dialog_title": "Choisir un nouvel emplacement d'installation",
   "settings.paths.browse_model_dir_title": "Choisir le dossier des modèles",
 
@@ -275,6 +286,7 @@ const fr: Record<string, string> = {
   "generation.dimensions.height": "H",
   "generation.dimensions.swap": "Inverser L/H",
   "generation.dimensions.result": "Résultat",
+  "generation.swap_panels": "Échanger les panneaux gauche/droite",
 
   // Échantillonneur
   "generation.sampler.title": "Échantillonneur",
@@ -609,6 +621,7 @@ const fr: Record<string, string> = {
   "bottom_panel.no_image_results": "Aucune image ne correspond à votre recherche",
   "bottom_panel.prompt_search_placeholder": "Rechercher des prompts...",
   "bottom_panel.no_prompt_results": "Aucun prompt ne correspond à votre recherche",
+  "bottom_panel.card_size": "Taille de la carte",
 
   // ── Téléchargements ─────────────────────────────────────
   "downloads.downloading": "Téléchargement de {filename}",

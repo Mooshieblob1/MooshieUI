@@ -162,6 +162,17 @@ const de: Record<string, string> = {
   "settings.paths.add_model_dir_title": "Weiteres Modellverzeichnis hinzufügen",
   "settings.paths.remove_model_dir_title": "Dieses Verzeichnis entfernen",
   "settings.paths.click_to_add": "Klicken zum Hinzufügen",
+  "settings.paths.open_folder.title": "Modellordner öffnen",
+  "settings.paths.open_folder.checkpoints": "Checkpoints",
+  "settings.paths.open_folder.loras": "LoRAs",
+  "settings.paths.open_folder.vae": "VAE",
+  "settings.paths.open_folder.upscale": "Upscaler",
+  "settings.paths.open_folder.facefix": "Face Fix",
+  "settings.paths.open_folder.embeddings": "Embeddings",
+  "settings.paths.open_folder.controlnet": "ControlNet",
+  "settings.paths.open_folder.clip": "CLIP/T.Enc",
+  "settings.paths.open_folder.diffusion": "Diffusion",
+  "settings.paths.open_folder.pick_directory": "Mehrere Verzeichnisse gefunden — wählen Sie eines aus, das geöffnet werden soll.",
   "settings.paths.move_dialog_title": "Neuen Installationsort wählen",
   "settings.paths.browse_model_dir_title": "Modellverzeichnis wählen",
 
@@ -263,6 +274,7 @@ const de: Record<string, string> = {
   "generation.dimensions.height": "Höhe",
   "generation.dimensions.swap": "Breite/Höhe tauschen",
   "generation.dimensions.result": "Ergebnis",
+  "generation.swap_panels": "Linkes/rechtes Panel tauschen",
 
   "generation.sampler.title": "Sampler",
   "generation.sampler.label": "Sampler",
@@ -587,6 +599,7 @@ const de: Record<string, string> = {
   "bottom_panel.no_image_results": "Keine Bilder entsprechen Ihrer Suche",
   "bottom_panel.prompt_search_placeholder": "Prompts suchen...",
   "bottom_panel.no_prompt_results": "Keine Prompts entsprechen Ihrer Suche",
+  "bottom_panel.card_size": "Kartengröße",
 
   // ── Downloads ───────────────────────────────────────────
   "downloads.downloading": "{filename} wird heruntergeladen",

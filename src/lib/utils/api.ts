@@ -113,6 +113,10 @@ export async function getModelInstallDirs(
   return invoke("get_model_install_dirs", { category });
 }
 
+export async function openDirectory(path: string): Promise<void> {
+  return invoke("open_directory", { path });
+}
+
 export async function findModelByHash(
   category: string,
   hash: string

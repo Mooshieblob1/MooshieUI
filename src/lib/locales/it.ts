@@ -162,6 +162,17 @@ const it: Record<string, string> = {
   "settings.paths.add_model_dir_title": "Aggiungi un'altra directory dei modelli",
   "settings.paths.remove_model_dir_title": "Rimuovi questa directory",
   "settings.paths.click_to_add": "Clicca per aggiungere",
+  "settings.paths.open_folder.title": "Apri cartelle modelli",
+  "settings.paths.open_folder.checkpoints": "Checkpoints",
+  "settings.paths.open_folder.loras": "LoRAs",
+  "settings.paths.open_folder.vae": "VAE",
+  "settings.paths.open_folder.upscale": "Upscaler",
+  "settings.paths.open_folder.facefix": "Face Fix",
+  "settings.paths.open_folder.embeddings": "Embeddings",
+  "settings.paths.open_folder.controlnet": "ControlNet",
+  "settings.paths.open_folder.clip": "CLIP/T.Enc",
+  "settings.paths.open_folder.diffusion": "Diffusione",
+  "settings.paths.open_folder.pick_directory": "Più directory trovate — scegli quale aprire.",
   "settings.paths.move_dialog_title": "Scegli una nuova posizione di installazione",
   "settings.paths.browse_model_dir_title": "Scegli la cartella dei modelli",
 
@@ -263,6 +274,7 @@ const it: Record<string, string> = {
   "generation.dimensions.height": "A",
   "generation.dimensions.swap": "Scambia L/A",
   "generation.dimensions.result": "Risultato",
+  "generation.swap_panels": "Scambia pannelli sinistra/destra",
 
   "generation.sampler.title": "Sampler",
   "generation.sampler.label": "Sampler",
@@ -585,6 +597,7 @@ const it: Record<string, string> = {
   "bottom_panel.no_image_results": "Nessuna immagine corrisponde alla ricerca",
   "bottom_panel.prompt_search_placeholder": "Cerca prompt...",
   "bottom_panel.no_prompt_results": "Nessun prompt corrisponde alla ricerca",
+  "bottom_panel.card_size": "Dimensione scheda",
 
   // ── Download ────────────────────────────────────────────
   "downloads.downloading": "Download {filename}",

@@ -162,6 +162,17 @@ const ru: Record<string, string> = {
   "settings.paths.add_model_dir_title": "Добавить ещё один каталог моделей",
   "settings.paths.remove_model_dir_title": "Удалить этот каталог",
   "settings.paths.click_to_add": "Нажмите, чтобы добавить",
+  "settings.paths.open_folder.title": "Открыть папки моделей",
+  "settings.paths.open_folder.checkpoints": "Checkpoints",
+  "settings.paths.open_folder.loras": "LoRAs",
+  "settings.paths.open_folder.vae": "VAE",
+  "settings.paths.open_folder.upscale": "Апскейлеры",
+  "settings.paths.open_folder.facefix": "Face Fix",
+  "settings.paths.open_folder.embeddings": "Embeddings",
+  "settings.paths.open_folder.controlnet": "ControlNet",
+  "settings.paths.open_folder.clip": "CLIP/T.Enc",
+  "settings.paths.open_folder.diffusion": "Diffusion",
+  "settings.paths.open_folder.pick_directory": "Найдено несколько директорий — выберите, какую открыть.",
   "settings.paths.move_dialog_title": "Выберите новое расположение установки",
   "settings.paths.browse_model_dir_title": "Выберите папку моделей",
 
@@ -263,6 +274,7 @@ const ru: Record<string, string> = {
   "generation.dimensions.height": "В",
   "generation.dimensions.swap": "Поменять Ш/В",
   "generation.dimensions.result": "Результат",
+  "generation.swap_panels": "Поменять левую/правую панели",
 
   "generation.sampler.title": "Сэмплер",
   "generation.sampler.label": "Сэмплер",
@@ -585,6 +597,7 @@ const ru: Record<string, string> = {
   "bottom_panel.no_image_results": "Изображения не найдены",
   "bottom_panel.prompt_search_placeholder": "Поиск промптов...",
   "bottom_panel.no_prompt_results": "Промпты не найдены",
+  "bottom_panel.card_size": "Размер карточки",
 
   // ── Загрузки ────────────────────────────────────────────
   "downloads.downloading": "Скачивание {filename}",

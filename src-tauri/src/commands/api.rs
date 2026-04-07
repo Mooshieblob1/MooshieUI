@@ -199,6 +199,43 @@ pub async fn get_model_install_dirs(
     Ok(dirs)
 }
 
+/// Opens a directory in the OS file explorer.
+#[tauri::command]
+pub async fn open_directory(path: String) -> Result<(), AppError> {
+    let dir = std::path::Path::new(&path);
+    if !dir.exists() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let path_str = dir
+        .canonicalize()
+        .unwrap_or_else(|_| dir.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&path_str)
+            .spawn()
+            .map_err(|e| AppError::Other(format!("Failed to open directory: {}", e)))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path_str)
+            .spawn()
+            .map_err(|e| AppError::Other(format!("Failed to open directory: {}", e)))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path_str)
+            .spawn()
+            .map_err(|e| AppError::Other(format!("Failed to open directory: {}", e)))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn download_model(
     app: AppHandle,
@@ -354,7 +391,7 @@ pub async fn read_image_metadata(
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let path = dir.join(&filename);
     let bytes = std::fs::read(&path)?;
-    crate::metadata::read_png_metadata(&bytes).map_err(|e| AppError::Other(e))
+    crate::metadata::read_png_metadata(&bytes).map_err(AppError::Other)
 }
 
 #[tauri::command]
@@ -820,7 +857,7 @@ pub async fn install_custom_node(
             "clone",
             "--progress",
             &git_url,
-            &target_dir.to_string_lossy().as_ref(),
+            target_dir.to_string_lossy().as_ref(),
         ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

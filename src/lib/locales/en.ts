@@ -166,6 +166,17 @@ const en: Record<string, string> = {
   "settings.paths.add_model_dir_title": "Add another model directory",
   "settings.paths.remove_model_dir_title": "Remove this directory",
   "settings.paths.click_to_add": "Click to add",
+  "settings.paths.open_folder.title": "Open Model Folders",
+  "settings.paths.open_folder.checkpoints": "Checkpoints",
+  "settings.paths.open_folder.loras": "LoRAs",
+  "settings.paths.open_folder.vae": "VAE",
+  "settings.paths.open_folder.upscale": "Upscalers",
+  "settings.paths.open_folder.facefix": "Face Fix",
+  "settings.paths.open_folder.embeddings": "Embeddings",
+  "settings.paths.open_folder.controlnet": "ControlNet",
+  "settings.paths.open_folder.clip": "CLIP/T.Enc",
+  "settings.paths.open_folder.diffusion": "Diffusion",
+  "settings.paths.open_folder.pick_directory": "Multiple directories found — choose which one to open.",
 
   // Gallery section
   "settings.gallery.title": "Gallery",
@@ -280,6 +291,7 @@ const en: Record<string, string> = {
   "generation.dimensions.height": "H",
   "generation.dimensions.swap": "Swap W/H",
   "generation.dimensions.result": "Result",
+  "generation.swap_panels": "Swap left/right panels",
 
   // Sampler
   "generation.sampler.title": "Sampler",
@@ -619,6 +631,7 @@ const en: Record<string, string> = {
   "bottom_panel.no_image_results": "No images match your search",
   "bottom_panel.prompt_search_placeholder": "Search prompts...",
   "bottom_panel.no_prompt_results": "No prompts match your search",
+  "bottom_panel.card_size": "Card size",
 
   // ── Downloads ───────────────────────────────────────────
   "downloads.downloading": "Downloading {filename}",
