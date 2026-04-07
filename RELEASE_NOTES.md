@@ -1,3 +1,11 @@
+## What's New in v0.6.8
+
+### Anima Preview 3 Support
+- **One-click Anima Preview 3 setup** — added to the recommended models list with split-model auto-download (diffusion model, Qwen 3 CLIP, and Qwen Image VAE) and tuned defaults (30 steps, CFG 4, er_sde sampler)
+- Optimized upscale and face fix defaults for Anima Preview 3 (10 upscale steps at 0.3 denoise, 10 face fix steps)
+
+---
+
 ## What's New in v0.6.7
 
 ### Security: Supply Chain Hardening

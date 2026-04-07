@@ -65,6 +65,36 @@
       },
     },
     {
+      label: "Anima Preview 3",
+      size: "~13 GB",
+      splitModel: {
+        diffusionModel: {
+          filename: "anima-preview3-base.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-preview3-base.safetensors",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_06b_base.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+          category: "text_encoders",
+          clipType: "wan",
+        },
+        vaeModel: {
+          filename: "qwen_image_vae.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 30,
+        cfg: 4,
+        samplerName: "er_sde",
+        upscaleSteps: 10,
+        upscaleDenoise: 0.3,
+        facefixSteps: 10,
+      },
+    },
+    {
       label: "Anima Preview 2",
       size: "~13 GB",
       splitModel: {
