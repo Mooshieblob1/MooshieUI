@@ -64,6 +64,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Audit npm dependencies
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: Audit Rust dependencies
+        run: cargo install cargo-audit --locked && cd src-tauri && cargo audit
+        continue-on-error: true
+
       - name: Build Tauri app (Linux)
         if: runner.os != 'Windows'
         env:

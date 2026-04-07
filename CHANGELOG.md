@@ -1,5 +1,19 @@
 # Changelog
 
+## What's New in v0.6.7
+
+### Security: Supply Chain Hardening
+- **SHA256 verification for YOLOv8 model downloads** — `face_yolov8m.pt` and `face_yolov8n.pt` are now verified against known-good hashes after download; a mismatch deletes the file and returns an error rather than silently running a corrupt or tampered model
+- **SHA256 check on cached files** — previously downloaded models are re-verified on next use; a tampered cached file is re-downloaded rather than trusted
+- **Pinned `ultralytics` version** — the face fix dependency is now installed as `ultralytics==8.4.34` instead of an unpinned `ultralytics`, preventing a malicious future PyPI release from being pulled automatically
+- **`npm audit` and `cargo audit` in CI** — release builds now run dependency vulnerability scans for both frontend and Rust crates
+- **Pre-commit enforcement** — the pre-commit agent now flags any `installPipPackage()` call that omits a `==version` pin as a blocking error
+
+### Docs Fix
+- Corrected README: MooshieFaceFix uses the `ultralytics` Python package with `.pt` PyTorch weights for YOLOv8 detection (not ONNX Runtime). ONNX Runtime (`ort` crate) is used only for the WD EVA02 image tagger (Describe feature)
+
+---
+
 ## What's New in v0.6.6
 
 ### Compare Grid

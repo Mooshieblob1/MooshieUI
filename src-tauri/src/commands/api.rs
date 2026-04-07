@@ -244,9 +244,17 @@ pub async fn download_model(
     category: String,
     filename: String,
     install_dir: Option<String>,
+    expected_sha256: Option<String>,
 ) -> Result<(), AppError> {
     state
-        .download_model_file(&app, &url, &category, &filename, install_dir.as_deref())
+        .download_model_file(
+            &app,
+            &url,
+            &category,
+            &filename,
+            install_dir.as_deref(),
+            expected_sha256.as_deref(),
+        )
         .await
 }
 

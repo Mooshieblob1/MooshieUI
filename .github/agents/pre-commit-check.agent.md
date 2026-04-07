@@ -118,6 +118,7 @@ For each **changed file**, check the applicable rules below. Use `git diff HEAD`
 | No legacy event directives | Grep for `on:click`, `on:input`, `on:change` etc. in new lines | ERROR |
 | No direct `invoke()` | New lines must not import or call `invoke()` from `@tauri-apps/api/core` | WARN |
 | Tailwind only | No inline `style=` except for dynamic values (width, height, transform) | WARN |
+| `installPipPackage` version pin | Any `installPipPackage("name")` call where the argument does not contain `==` (e.g. must be `"ultralytics==8.4.34"` not `"ultralytics"`) | ERROR |
 
 #### 6b. Svelte Stores (`src/lib/stores/**/*.svelte.ts`)
 

@@ -13,6 +13,7 @@
     label: string;
     filename: string;
     url: string;
+    sha256: string;
   }
 
   const recommendedModels: RecommendedModel[] = [
@@ -20,11 +21,13 @@
       label: "YOLOv8m Face (Recommended)",
       filename: "face_yolov8m.pt",
       url: "https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8m.pt",
+      sha256: "caabb1f274e56d11d815195c849679aefa391e603190b6d24ce17f570827b2c9",
     },
     {
       label: "YOLOv8n Face (Lightweight)",
       filename: "face_yolov8n.pt",
       url: "https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8n.pt",
+      sha256: "d1126adb762a2a935e6a9780395360ba6a223144ee012777342d4258180c3e93",
     },
   ];
 
@@ -90,9 +93,9 @@
       downloading = filename;
       downloadError = null;
       try {
-        await downloadModel(rec.url, "ultralytics", rec.filename);
+        await downloadModel(rec.url, "ultralytics", rec.filename, undefined, rec.sha256);
         // Ensure ultralytics Python package is installed (required by MooshieFaceDetailer)
-        await installPipPackage("ultralytics");
+        await installPipPackage("ultralytics==8.4.34");
         await models.refresh();
       } catch (e) {
         downloadError = `Download failed: ${e}`;

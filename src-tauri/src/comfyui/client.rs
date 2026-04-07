@@ -1,9 +1,27 @@
 use reqwest::multipart;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::comfyui::types::*;
 use crate::error::AppError;
 use crate::state::AppState;
+
+/// Compute SHA256 of a file. Returns lowercase hex. Used to verify downloaded model files.
+fn sha256_file(path: &std::path::Path) -> Result<String, AppError> {
+    use std::io::Read;
+    const BUF_SIZE: usize = 8 * 1024 * 1024;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; BUF_SIZE];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
 
 impl AppState {
     pub async fn api_get(&self, path: &str) -> Result<Value, AppError> {
@@ -261,6 +279,7 @@ impl AppState {
         category: &str,
         filename: &str,
         dest_dir_override: Option<&str>,
+        expected_sha256: Option<&str>,
     ) -> Result<(), AppError> {
         use tauri::Emitter;
 
@@ -288,14 +307,26 @@ impl AppState {
         tokio::fs::create_dir_all(&models_dir).await?;
         let dest = models_dir.join(filename);
 
-        // Skip if the file already exists and is non-empty (a previous partial/junk
-        // file of 0 bytes should not bypass the download).
+        // Skip if the file already exists and is non-empty. If an expected hash is
+        // supplied, verify the cached file before trusting it — a tampered file
+        // is re-downloaded rather than silently accepted.
         if dest.exists() {
             let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
             if size > 0 {
-                return Ok(());
+                if let Some(expected_hex) = expected_sha256 {
+                    let dest_clone = dest.clone();
+                    let computed = tokio::task::spawn_blocking(move || sha256_file(&dest_clone))
+                        .await
+                        .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
+                    if computed == expected_hex.to_lowercase() {
+                        return Ok(()); // Trusted cache hit.
+                    }
+                    // Hash mismatch — fall through to re-download.
+                } else {
+                    return Ok(()); // No verification requested.
+                }
             }
-            // Zero-byte leftover — remove it and re-download.
+            // Zero-byte leftover or hash mismatch — remove before re-downloading.
             let _ = std::fs::remove_file(&dest);
         }
 
@@ -375,6 +406,23 @@ impl AppState {
             },
         )
         .ok();
+
+        // Verify the downloaded file matches the expected SHA256 if supplied.
+        if let Some(expected_hex) = expected_sha256 {
+            let dest_clone = dest.clone();
+            let computed = tokio::task::spawn_blocking(move || sha256_file(&dest_clone))
+                .await
+                .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
+            if computed != expected_hex.to_lowercase() {
+                let _ = std::fs::remove_file(&dest);
+                return Err(AppError::Other(format!(
+                    "SHA256 mismatch for '{}': expected {}, got {}",
+                    filename,
+                    expected_hex.to_lowercase(),
+                    computed
+                )));
+            }
+        }
 
         Ok(())
     }

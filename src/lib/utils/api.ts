@@ -98,8 +98,9 @@ export async function downloadModel(
   category: string,
   filename: string,
   installDir?: string,
+  expectedSha256?: string,
 ): Promise<void> {
-  return invoke("download_model", { url, category, filename, installDir });
+  return invoke("download_model", { url, category, filename, installDir, expectedSha256 });
 }
 
 export interface ModelInstallDir {

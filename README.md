@@ -330,7 +330,7 @@ Custom ComfyUI nodes for the **Nanosaur** 1.2B DiT architecture:
 
 ### Face Fix (`mooshie_nodes.py`)
 
-**MooshieFaceFix** — lightweight face detection and re-denoising using YOLOv8 (via ONNX Runtime). Detects faces, crops them with configurable padding, re-denoises at higher resolution, then composites back using smooth cosine-falloff blending. No Impact Pack dependency — bundled as a self-contained node with auto-download of detection models.
+**MooshieFaceFix** — lightweight face detection and re-denoising using YOLOv8 (via the `ultralytics` Python package). Detects faces, crops them with configurable padding, re-denoises at higher resolution, then composites back using smooth cosine-falloff blending. No Impact Pack dependency — bundled as a self-contained node with auto-download of detection models (`.pt` PyTorch weights).
 
 ---
 
@@ -438,7 +438,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 | Backend API | ComfyUI REST + WebSocket (proxied via Rust) |
 | HTTP Client | reqwest (Rust) — shared connection pool |
 | WebSocket | tokio-tungstenite → Tauri event bridge |
-| Inference | ONNX Runtime (`ort` crate) — YOLOv8 face detection |
+| Inference | ONNX Runtime (`ort` crate) — WD EVA02 image tagger (Describe feature) |
 | Model API | CivitAI REST API (hash-based model lookup), HuggingFace |
 | Autocomplete | Danbooru + Anima tag databases (~100k tags) |
 | i18n | 11 languages, 860+ keys, runtime switching |
@@ -494,7 +494,7 @@ This project is licensed under the [MIT License](LICENSE).
 - **Nanosaur** — 1.2B DiT architecture with 96-channel VAE; custom ComfyUI nodes for model loading, text encoding, and inference
 - **Mugen** — SDXL models using Flux2 VAE (128-channel latents) with rectified flow scheduling
 - [OmniSR](https://huggingface.co/Acly/Omni-SR) — Recommended lightweight upscale models (2x/4x) by Acly
-- [YOLOv8](https://docs.ultralytics.com/) — Face detection model used by MooshieFaceFix via ONNX Runtime
+- [YOLOv8](https://docs.ultralytics.com/) — Face detection model used by MooshieFaceFix via the `ultralytics` Python package (`.pt` weights)
 
 ### Research Papers
 - Bar-Tal et al., "MultiDiffusion: Fusing Diffusion Paths for Controlled Image Generation" (ICML 2023) — Tiled diffusion algorithm
@@ -514,7 +514,7 @@ This project is licensed under the [MIT License](LICENSE).
 ### Rust Crates
 - [reqwest](https://docs.rs/reqwest) — HTTP client for ComfyUI API and model downloads
 - [tokio-tungstenite](https://docs.rs/tokio-tungstenite) — WebSocket client for real-time progress streaming
-- [ort](https://docs.rs/ort) — ONNX Runtime bindings for face detection inference
+- [ort](https://docs.rs/ort) — ONNX Runtime bindings for WD EVA02 tagger inference (Describe feature)
 - [image](https://docs.rs/image) — Image processing (PNG, JPEG, WebP)
 - [serde](https://serde.rs/) / [serde_json](https://docs.rs/serde_json) — Serialization for ComfyUI workflow JSON and config persistence
 
