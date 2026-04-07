@@ -92,7 +92,15 @@ Hover over any generated image to reveal an **Upscale** button — instantly ups
 - **Image Management** — Rename, delete, copy to clipboard, and upscale from the gallery
 - **Generation Mode Labels** — Each image shows whether it was created via txt2img, img2img, or inpainting
 
-### 📊 Real-Time Progress
+### � Compare Grid (XYZ Grid)
+
+- **Multi-cell comparison** — create a grid of cells in the Compare tab (bottom panel), each with its own generation parameters; tweak prompts, checkpoints, samplers, seeds, or any setting per cell
+- **Grid generation** — pressing Generate queues all cells sequentially with a shared random seed for consistent side-by-side comparison
+- **Auto-stitching** — completed grids are stitched into a single labelled image with per-cell annotations showing only what differs (e.g., "blue eyes" vs "green eyes") and a MooshieUI watermark
+- **Spreadsheet naming** — cells use A1/B1/C1 labels with position-stable colors
+- **Add/remove columns & rows** — new cells clone the adjacent neighbor for quick parameter variation
+
+### �📊 Real-Time Progress
 
 - **Live Preview** — See the image as it's being generated (latent previews streamed via WebSocket)
 - **Phase Labels** — "Generating...", "Upscaling...", or "Preparing..." with step counter
@@ -102,7 +110,7 @@ Hover over any generated image to reveal an **Upscale** button — instantly ups
 ### 🌐 Internationalization (11 Languages)
 
 - **11 languages** — English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Russian, Chinese (Simplified), and Chinese (Traditional)
-- **789 translation keys** covering every UI string — generation controls, settings, setup wizard, canvas, model hub, tooltips, and more
+- **860+ translation keys** covering every UI string — generation controls, settings, setup wizard, canvas, model hub, compare grid, tooltips, and more
 - **Instant switching** in Settings → Appearance — no restart needed
 - **Full parity** — all keys present in all locales with native translations
 
@@ -135,14 +143,16 @@ All settings are automatically saved to disk and restored on next launch:
 
 ### 🧬 Smart Model Detection & Architecture Presets
 
-- **10 model architectures** — SD1.5, SDXL, Illustrious/NoobAI, SD3/SD3.5, Flux, Pony Diffusion, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, and Kolors
+- **13 model architectures** — SD 1.5, SDXL, Illustrious/NoobAI, SD3/SD3.5, Flux, Pony Diffusion, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, Kolors, Mugen (Flux2VAE SDXL), and Nanosaur (1.2B DiT)
 - **Auto-presets** — each architecture auto-applies optimal sampler, scheduler, steps, CFG, and resolution when selected
 - **Accelerated model detection** — models with "turbo", "lightning", "lcm", or "hyper" in the name get reduced steps (4–6), lower CFG, and appropriate settings
-- **Rectified flow scheduling** — SD3, Flux, AuraFlow, and Stable Cascade models automatically inject the correct ModelSampling node with architecture-specific shift values
+- **Rectified flow scheduling** — SD3, Flux, AuraFlow, Mugen, and Nanosaur models automatically inject the correct ModelSampling node with architecture-specific shift values
 - **FluxGuidance** — Flux Dev models auto-inject a FluxGuidance node; Flux Schnell (guidance-distilled) is detected and skipped
 - **Hash-based identification** — Models are recognized by SHA256 hash (CivitAI AutoV2 format), not just filename — renamed files are still detected
 - **CivitAI integration** — Look up any model's metadata (name, version, preview images) via CivitAI's hash database
 - **Recommended models** — SIH-1.5 (~7.5 GB) and Anima Preview 2 (~13 GB) auto-download on selection with real-time progress bars and file size display
+- **Mugen support** — SDXL models using the Flux2 VAE (128-channel latents) with rectified flow scheduling, auto-detected and routed through dedicated VAE conversion nodes
+- **Nanosaur support** — 1.2B DiT architecture with 96-channel VAE, custom ComfyUI nodes for model loading, text encoding, and VAE decode, auto-installed alongside MooshieUI's node pack
 
 ---
 
@@ -151,26 +161,38 @@ All settings are automatically saved to disk and restored on next launch:
 ```
 MooshieUI
 ├── src/                    # Svelte 5 frontend (UI)
-│   ├── App.svelte          # Main app shell, gallery, WebSocket listeners
+│   ├── App.svelte          # Main app shell, gallery, WebSocket listeners, grid stitching
 │   ├── lib/
 │   │   ├── components/     # UI components
-│   │   │   ├── generation/ # Model selector, prompts, dimensions, upscale
-│   │   │   ├── canvas/     # Inpainting canvas editor (WIP)
+│   │   │   ├── generation/ # Model selector, prompts, dimensions, upscale, compare grid
+│   │   │   ├── canvas/     # Inpainting canvas editor (Konva)
+│   │   │   ├── mask-editor/# Mask painting for inpainting
+│   │   │   ├── modelhub/   # CivitAI/HuggingFace model browser
+│   │   │   ├── downloads/  # Download progress manager
 │   │   │   ├── progress/   # Live preview and progress display
+│   │   │   ├── queue/      # Batch queue management
+│   │   │   ├── settings/   # Settings pages (paths, appearance, accessibility)
 │   │   │   ├── setup/      # Setup wizard with streaming installer
+│   │   │   ├── updater/    # In-app auto-update UI
 │   │   │   └── ui/         # Shared UI components (tooltips, etc.)
 │   │   ├── stores/         # Svelte 5 rune-based state ($state, $derived)
+│   │   ├── assets/         # Danbooru & Anima tag databases, logo
+│   │   ├── config/         # ControlNet presets
+│   │   ├── locales/        # 11 language translation files
 │   │   ├── types/          # TypeScript interfaces
 │   │   └── utils/          # Tauri API bridge (models, gallery, hashing, CivitAI)
 ├── src-tauri/              # Rust/Tauri backend
 │   └── src/
-│       ├── commands/       # Tauri command handlers (API, config, server, WebSocket)
+│       ├── commands/       # Tauri command handlers (API, config, server, WebSocket, workflow)
 │       ├── comfyui/        # ComfyUI API client, WebSocket, process management
 │       ├── setup.rs        # One-click installer (uv, Python, ComfyUI, PyTorch)
-│       └── templates/      # Workflow builders (txt2img, img2img, inpainting, upscale)
-└── comfyui-nodes/          # Custom ComfyUI nodes (install into comfy_extras/)
-    ├── nodes_tiled_diffusion.py
-    └── nodes_guidance.py
+│       ├── metadata.rs     # PNG metadata embedding (text chunk + stealth alpha)
+│       └── templates/      # Workflow builders (txt2img, img2img, inpainting, upscale, facefix, controlnet)
+└── comfyui-nodes/          # Custom ComfyUI nodes (auto-installed)
+    ├── nodes_tiled_diffusion.py  # MultiDiffusion & SpotDiffusion
+    ├── nodes_guidance.py         # Soft & Smart Guidance
+    ├── nodes_sdxl_flux2vae.py    # SDXL↔Flux VAE adapter (Mugen)
+    └── nanosaur_support/         # Nanosaur DiT model loader & VAE
 ```
 
 **How it works:**
@@ -294,6 +316,22 @@ Both methods:
 
 **MooshieSmartGuidance** — Positive-Biased Adaptive guidance. Patches the model's forward pass to bias toward positive conditioning, reducing negative prompt interference. Applied globally across all generation passes.
 
+### SDXL↔Flux VAE Adapter (`nodes_sdxl_flux2vae.py`)
+
+Patches the SDXL model forward pass to convert between packed (128-channel) Flux2 latents and standard (32-channel) SDXL latents. Used automatically for **Mugen** models that pair an SDXL UNet with the Flux VAE for higher-fidelity decoding.
+
+### Nanosaur Support (`nanosaur_support/`)
+
+Custom ComfyUI nodes for the **Nanosaur** 1.2B DiT architecture:
+- **NanoSaurModelLoader** — loads the DiT transformer with correct configuration
+- **NanoSaurTextEncoder** — tokenizer and text encoder adapted for Nanosaur's conditioning format
+- **NanoSaurVAEDecode** — decodes 96-channel latents through Nanosaur's custom VAE
+- RGB factors computed from the model's VAE for accurate latent previews
+
+### Face Fix (`mooshie_nodes.py`)
+
+**MooshieFaceFix** — lightweight face detection and re-denoising using YOLOv8 (via ONNX Runtime). Detects faces, crops them with configurable padding, re-denoises at higher resolution, then composites back using smooth cosine-falloff blending. No Impact Pack dependency — bundled as a self-contained node with auto-download of detection models.
+
 ---
 
 ## 🚧 Roadmap
@@ -347,11 +385,11 @@ Both methods:
 - [x] **Face fix auto-setup** — auto-downloads detection model and installs ultralytics on first use
 - [x] **Seed recall** — toggling off random seed recalls the last generated seed
 
-- [x] **Localization** — 11 languages with 789 keys, full parity across all locales, instant switching
+- [x] **Localization** — 11 languages with 860+ keys, full parity across all locales, instant switching
 - [x] **Guidance nodes** — Soft Guidance (CFG Rescale) and Smart Guidance (Positive-Biased Adaptive) for hallucination-free upscaling
-- [x] **10 model architectures** — auto-detection with optimal presets for SD1.5, SDXL, Illustrious, SD3, Flux, Pony, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, Kolors
+- [x] **13 model architectures** — auto-detection with optimal presets for SD1.5, SDXL, Illustrious, SD3, Flux, Pony, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, Kolors, Mugen, Nanosaur
 - [x] **Accelerated model detection** — Turbo/Lightning/LCM/Hyper variants auto-detected with reduced steps and CFG
-- [x] **Rectified flow scheduling** — SD3, Flux, AuraFlow, Stable Cascade auto-inject correct ModelSampling nodes
+- [x] **Rectified flow scheduling** — SD3, Flux, AuraFlow, Mugen, Nanosaur, Stable Cascade auto-inject correct ModelSampling nodes
 - [x] **FluxGuidance** — automatic guidance node injection for Flux Dev (skipped for Schnell)
 - [x] **Pony quality tags** — auto-applied score-based tags, customizable in Settings
 - [x] **Flux & SD3 ControlNet** — presets for XLabs-AI and Stability official controlnets
@@ -366,6 +404,11 @@ Both methods:
 - [x] **SwarmUI metadata compatibility** — auto-strips inline syntax from imported SwarmUI image metadata
 - [x] **Info tips toggle** — hide/show tooltip icons via Settings → Accessibility
 - [x] **Native clipboard image paste** — reads images directly from OS clipboard via Tauri command
+- [x] **Compare grid** — XYZ grid comparison with per-cell parameters, shared seed generation, auto-stitching with diff labels and watermark
+- [x] **Mugen support** — Flux2VAE SDXL architecture with 128-channel latents and rectified flow scheduling
+- [x] **Nanosaur support** — 1.2B DiT with 96-channel VAE, custom nodes for model loading and inference
+- [x] **Face fix compositing fix** — smooth cosine falloff blending replaces hard-cutoff mask compositing
+- [x] **Scroll-to-adjust sliders** — click-to-capture scroll wheel for all range inputs with glow indicator
 
 ### To Do
 - [ ] **Theme customization** — custom accent colors and themes
@@ -387,13 +430,20 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | Svelte 5, TypeScript, Tailwind CSS 4 |
+| Frontend | Svelte 5, TypeScript 5, Tailwind CSS 4 |
 | Desktop | Tauri v2 (Rust) |
-| State | Svelte 5 runes (`$state`, `$derived`) |
-| Persistence | `@tauri-apps/plugin-store`, localStorage |
-| Backend API | ComfyUI REST + WebSocket |
-| Model API | CivitAI REST API (hash-based model lookup) |
-| Styling | Tailwind CSS with neutral/indigo theme |
+| State | Svelte 5 runes (`$state`, `$derived`) — class-based singleton stores |
+| Canvas | Konva + svelte-konva (inpainting editor, mask painting) |
+| Persistence | `@tauri-apps/plugin-store` (JSON) |
+| Backend API | ComfyUI REST + WebSocket (proxied via Rust) |
+| HTTP Client | reqwest (Rust) — shared connection pool |
+| WebSocket | tokio-tungstenite → Tauri event bridge |
+| Inference | ONNX Runtime (`ort` crate) — YOLOv8 face detection |
+| Model API | CivitAI REST API (hash-based model lookup), HuggingFace |
+| Autocomplete | Danbooru + Anima tag databases (~100k tags) |
+| i18n | 11 languages, 860+ keys, runtime switching |
+| Styling | Tailwind CSS with neutral/indigo dark theme |
+| Build | Vite 6 + `@sveltejs/vite-plugin-svelte` |
 
 ---
 
@@ -432,10 +482,46 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## 🙏 Acknowledgments
 
-- [ComfyUI](https://github.com/comfyanonymous/ComfyUI) — The powerful node-based backend
-- [Tauri](https://tauri.app/) — Lightweight desktop app framework
-- [Svelte](https://svelte.dev/) — Reactive UI framework
-- [CivitAI](https://civitai.com/) — Model hash database and API
-- [OmniSR](https://huggingface.co/Acly/Omni-SR) — Recommended upscale models by Acly
-- MultiDiffusion paper — Tiled diffusion algorithm
-- SpotDiffusion paper — Fast tiled diffusion variant
+### Core Infrastructure
+- [ComfyUI](https://github.com/comfyanonymous/ComfyUI) — The powerful node-based Stable Diffusion backend that MooshieUI wraps
+- [Tauri](https://tauri.app/) — Lightweight, secure desktop app framework (Rust + WebView)
+- [Svelte](https://svelte.dev/) — Reactive UI framework with rune-based state management
+- [Tailwind CSS](https://tailwindcss.com/) — Utility-first CSS framework
+
+### AI Models & Research
+- **SIH (Stable Illustrious Hentai)** — Illustrious-family checkpoint with curated defaults, auto-download support
+- **Anima (COSMOS)** — Breakthrough anime model with 5D latent space, split model loading (diffusion + CLIP + VAE), custom quality tags
+- **Nanosaur** — 1.2B DiT architecture with 96-channel VAE; custom ComfyUI nodes for model loading, text encoding, and inference
+- **Mugen** — SDXL models using Flux2 VAE (128-channel latents) with rectified flow scheduling
+- [OmniSR](https://huggingface.co/Acly/Omni-SR) — Recommended lightweight upscale models (2x/4x) by Acly
+- [YOLOv8](https://docs.ultralytics.com/) — Face detection model used by MooshieFaceFix via ONNX Runtime
+
+### Research Papers
+- Bar-Tal et al., "MultiDiffusion: Fusing Diffusion Paths for Controlled Image Generation" (ICML 2023) — Tiled diffusion algorithm
+- Ding et al., "SpotDiffusion" (2024) — Fast tiled diffusion variant using random circular shifts
+
+### APIs & Data
+- [CivitAI](https://civitai.com/) — Model hash database, metadata API, and model marketplace
+- [Danbooru](https://danbooru.donmai.us/) — Tag database used for prompt autocomplete
+- [HuggingFace](https://huggingface.co/) — Model hosting and direct download support
+
+### Frontend Libraries
+- [Konva](https://konvajs.org/) + [svelte-konva](https://github.com/konvajs/svelte-konva) — HTML5 Canvas framework for the inpainting editor and mask painting
+- [SortableJS](https://sortablejs.github.io/Sortable/) — Drag-and-drop reordering for the two-column layout
+- [marked](https://marked.js.org/) — Markdown rendering for release notes display in-app
+- [ntc-ts](https://www.npmjs.com/package/ntc-ts) — Nearest color name lookup
+
+### Rust Crates
+- [reqwest](https://docs.rs/reqwest) — HTTP client for ComfyUI API and model downloads
+- [tokio-tungstenite](https://docs.rs/tokio-tungstenite) — WebSocket client for real-time progress streaming
+- [ort](https://docs.rs/ort) — ONNX Runtime bindings for face detection inference
+- [image](https://docs.rs/image) — Image processing (PNG, JPEG, WebP)
+- [serde](https://serde.rs/) / [serde_json](https://docs.rs/serde_json) — Serialization for ComfyUI workflow JSON and config persistence
+
+### Tauri Plugins
+- `@tauri-apps/plugin-store` — JSON key-value persistence for settings
+- `@tauri-apps/plugin-updater` — In-app auto-update with signature verification
+- `@tauri-apps/plugin-fs` — Native filesystem access for gallery and model management
+- `@tauri-apps/plugin-dialog` — Native file/folder picker dialogs
+- `@tauri-apps/plugin-clipboard-manager` — Native clipboard operations (copy images as files)
+- `@tauri-apps/plugin-shell` — Subprocess management for ComfyUI process lifecycle
