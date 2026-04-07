@@ -2,6 +2,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { smoothScroll } from "../../utils/smoothScroll.js";
+  import { scrollCapture } from "../../utils/scrollCapture.js";
   import PromptInputs from "./PromptInputs.svelte";
   import ModelSelector from "./ModelSelector.svelte";
   import SamplerSettings from "./SamplerSettings.svelte";
@@ -1305,7 +1306,7 @@
             {/if}
           </div>
 
-          <div>
+          <div use:scrollCapture>
             <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
               <span>{locale.t('generation.image.denoise')}<InfoTip text={locale.t('generation.image.denoise_tip')} /></span>
               <EditableValue value={generation.denoise} min={0} max={1} step={0.01} decimals={2} onchange={(v) => generation.denoise = v} />
@@ -1399,7 +1400,7 @@
               {/if}
             </div>
 
-            <div>
+            <div use:scrollCapture>
               <div class="flex items-center justify-between text-xs mb-0.5">
                 <span class="text-neutral-400">{locale.t('generation.inpaint.grow_mask')}<InfoTip text={locale.t('generation.inpaint.grow_mask_tip')} /></span>
                 <span class="text-neutral-300 tabular-nums">{generation.growMaskBy}px</span>

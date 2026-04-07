@@ -23,6 +23,7 @@
   import { readFile } from "@tauri-apps/plugin-fs";
   import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
+  import { scrollCapture } from "../../utils/scrollCapture.js";
 
   let preprocessorAvailable = $state<boolean | null>(null);
   let installing = $state(false);
@@ -575,7 +576,7 @@
     </div>
 
     <!-- Strength & range sliders -->
-    <div>
+    <div use:scrollCapture>
       <label
         class="flex items-center justify-between text-xs text-neutral-400 mb-1"
       >
@@ -597,7 +598,7 @@
     </div>
 
     <div class="grid grid-cols-2 gap-3">
-      <div>
+      <div use:scrollCapture>
         <label
           class="flex items-center justify-between text-xs text-neutral-400 mb-1"
         >
@@ -617,7 +618,7 @@
           class="w-full accent-indigo-500"
         />
       </div>
-      <div>
+      <div use:scrollCapture>
         <label
           class="flex items-center justify-between text-xs text-neutral-400 mb-1"
         >

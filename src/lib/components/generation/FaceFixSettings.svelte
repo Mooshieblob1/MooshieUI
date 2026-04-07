@@ -7,6 +7,7 @@
   import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
+  import { scrollCapture } from "../../utils/scrollCapture.js";
 
   interface RecommendedModel {
     label: string;
@@ -170,7 +171,7 @@
 
     <div class="grid grid-cols-2 gap-3">
       <!-- Denoise -->
-      <div>
+      <div use:scrollCapture>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
           <span>{locale.t('generation.facefix.denoise')}<InfoTip text={locale.t('generation.facefix.denoise_tip')} /></span>
           <EditableValue value={generation.facefixDenoise} min={0} max={1} step={0.05} decimals={2} onchange={(v) => generation.facefixDenoise = v} />
@@ -186,7 +187,7 @@
       </div>
 
       <!-- Steps -->
-      <div>
+      <div use:scrollCapture>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
           <span>{locale.t('generation.facefix.steps')}<InfoTip text={locale.t('generation.facefix.steps_tip')} /></span>
           <EditableValue value={generation.facefixSteps} min={1} max={50} step={1} onchange={(v) => generation.facefixSteps = v} />
@@ -203,7 +204,7 @@
     </div>
 
     <!-- Guide Size -->
-    <div>
+    <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.facefix.guide_size')}<InfoTip text={locale.t('generation.facefix.guide_size_tip')} /></span>
         <EditableValue value={generation.facefixGuideSize} min={256} max={1024} step={64} suffix="px" onchange={(v) => generation.facefixGuideSize = v} />

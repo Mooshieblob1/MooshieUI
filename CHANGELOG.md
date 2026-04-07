@@ -1,5 +1,17 @@
 # Changelog
 
+## What's New in v0.6.5
+
+### Scroll-to-Adjust Sliders
+- **Click-to-capture scroll wheel** — click any slider thumb or its value label to "capture" it, then use the mouse scroll wheel anywhere on the page to adjust the value. Click outside the slider to release
+- **Glow indicator** — a pulsing indigo glow animation highlights the captured slider so you always know which control the scroll wheel is adjusting
+- Applied to all 20 range inputs: Steps, CFG, Batch, Denoise, Scale, Tile Size, Soft Guidance, Face Fix (denoise/steps/guide size), ControlNet (strength/start%/end%), LoRA strengths, and card size sliders
+
+### Windows Updater Fix
+- Changed Windows update installer to `quiet` mode — the previous `passive` mode still showed the uninstall/reinstall wizard on some systems. Quiet mode runs the update entirely in the background with no UI
+
+---
+
 ## What's New in v0.6.4
 
 ### UI Polish

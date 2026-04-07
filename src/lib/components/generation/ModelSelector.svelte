@@ -7,6 +7,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount, onDestroy } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
+  import { scrollCapture } from "../../utils/scrollCapture.js";
 
   interface ModelFile {
     filename: string;
@@ -781,7 +782,7 @@
         <!-- Strength sliders -->
         {#if lora.name}
           <div class="space-y-1.5">
-            <div>
+            <div use:scrollCapture>
               <div class="flex items-center justify-between text-xs mb-0.5">
                 <span class="text-neutral-500">{locale.t('generation.model.lora_strength_model')}<InfoTip text={locale.t('generation.model.lora_strength_model_tip')} /></span>
                 <span class="text-neutral-300 tabular-nums">{lora.strength_model.toFixed(2)}</span>
@@ -795,7 +796,7 @@
                 class="w-full accent-indigo-500"
               />
             </div>
-            <div>
+            <div use:scrollCapture>
               <div class="flex items-center justify-between text-xs mb-0.5">
                 <span class="text-neutral-500">{locale.t('generation.model.lora_strength_clip')}<InfoTip text={locale.t('generation.model.lora_strength_clip_tip')} /></span>
                 <span class="text-neutral-300 tabular-nums">{lora.strength_clip.toFixed(2)}</span>

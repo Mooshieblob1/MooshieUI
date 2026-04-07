@@ -3,6 +3,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { getLoraCivitaiInfo, fetchCachedImage, type LoraCivitaiInfo } from "../../utils/api.js";
+  import { scrollCapture } from "../../utils/scrollCapture.js";
 
   interface Props {
     cardSize?: number;
@@ -257,15 +258,17 @@
       placeholder={locale.t('lora.search_placeholder')}
       class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
     />
-    <input
-      type="range"
-      min="60"
-      max="200"
-      value={cardSize}
-      oninput={(e) => onCardSizeChange?.(Number(e.currentTarget.value))}
-      class="w-16 h-4 accent-indigo-500 cursor-pointer"
-      title={locale.t('bottom_panel.card_size')}
-    />
+    <div use:scrollCapture>
+      <input
+        type="range"
+        min="60"
+        max="200"
+        value={cardSize}
+        oninput={(e) => onCardSizeChange?.(Number(e.currentTarget.value))}
+        class="w-16 h-4 accent-indigo-500 cursor-pointer"
+        title={locale.t('bottom_panel.card_size')}
+      />
+    </div>
   </div>
 
   {#if models.loras.length === 0}

@@ -6,6 +6,8 @@
  * Usage: <div use:smoothScroll> or <div use:smoothScroll={{ duration: 1.2, multiplier: 1.8 }}>
  */
 
+import { getScrollCapturedElement } from "./scrollCapture.js";
+
 export interface SmoothScrollOpts {
   /** Scroll duration in seconds — higher = smoother/slower. Default 1.2 */
   duration?: number;
@@ -70,6 +72,9 @@ export function smoothScroll(node: HTMLElement, opts?: SmoothScrollOpts) {
   }
 
   function onWheel(e: WheelEvent) {
+    // Don't intercept if a scroll-captured slider owns the wheel
+    if (getScrollCapturedElement()) return;
+
     // Don't intercept if a nested scrollable element should handle it
     if (hasNestedScroll(e.target)) return;
 

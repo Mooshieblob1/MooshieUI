@@ -5,6 +5,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
+  import { scrollCapture } from "../../utils/scrollCapture.js";
 
   let randomSeed = $derived(generation.seed === -1);
   const activeModelName = $derived((generation.diffusionModel || generation.checkpoint || "").toLowerCase());
@@ -169,7 +170,7 @@
 
   <!-- Steps + CFG side-by-side -->
   <div class="grid grid-cols-2 gap-2">
-    <div>
+    <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.sampler.steps')}<InfoTip text={locale.t('generation.sampler.steps_tip')} /></span>
         <EditableValue value={generation.steps} min={1} max={150} step={1} onchange={(v) => generation.steps = v} />
@@ -183,7 +184,7 @@
         class="w-full accent-indigo-500"
       />
     </div>
-    <div>
+    <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.sampler.cfg')}<InfoTip text={locale.t('generation.sampler.cfg_tip')} /></span>
         <EditableValue value={generation.cfg} min={0} max={30} step={0.1} decimals={1} onchange={(v) => generation.cfg = v} />
@@ -243,7 +244,7 @@
         </div>
       {/if}
     </div>
-    <div>
+    <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.sampler.batch')}<InfoTip text={locale.t('generation.sampler.batch_tip')} /></span>
         <EditableValue value={generation.batchSize} min={1} max={8} step={1} onchange={(v) => generation.batchSize = v} />

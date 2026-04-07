@@ -96,6 +96,23 @@ input[type="range"]::-webkit-slider-thumb {
   -webkit-user-drag: none;
 }
 
+/* ─── Scroll-capture glow ─── */
+.scroll-captured {
+  position: relative;
+}
+.scroll-captured input[type="range"] {
+  filter: drop-shadow(0 0 4px var(--color-indigo-500, #6366f1));
+  transition: filter 0.15s ease-out;
+}
+@keyframes scroll-capture-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.3); }
+  50% { box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.5), 0 0 8px rgba(99, 102, 241, 0.15); }
+}
+.scroll-captured {
+  animation: scroll-capture-pulse 2s ease-in-out infinite;
+  border-radius: 6px;
+}
+
 /* ─── Scroll performance: contain repaints to scrollable regions ─── */
 .overflow-y-auto, .overflow-auto {
   contain: content;

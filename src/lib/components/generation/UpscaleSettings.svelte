@@ -7,6 +7,7 @@
   import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
+  import { scrollCapture } from "../../utils/scrollCapture.js";
 
   interface RecommendedModel {
     label: string;
@@ -156,7 +157,7 @@
 
     {#if generation.upscaleMethod === "algorithmic"}
       <!-- Scale -->
-      <div>
+      <div use:scrollCapture>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
           <span>{locale.t('generation.upscale.scale')}<InfoTip text={locale.t('generation.upscale.scale_tip')} /></span>
           <EditableValue value={generation.upscaleScale} min={1} max={4} step={0.5} decimals={1} suffix="x" onchange={(v) => generation.upscaleScale = v} />
@@ -217,7 +218,7 @@
 
     <div class="grid grid-cols-2 gap-3">
       <!-- Denoise -->
-      <div>
+      <div use:scrollCapture>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
           <span>{locale.t('generation.upscale.denoise')}<InfoTip text={locale.t('generation.upscale.denoise_tip')} /></span>
           <EditableValue value={generation.upscaleDenoise} min={0} max={1} step={0.05} decimals={2} onchange={(v) => generation.upscaleDenoise = v} />
@@ -233,7 +234,7 @@
       </div>
 
       <!-- Steps -->
-      <div>
+      <div use:scrollCapture>
         <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
           <span>{locale.t('generation.upscale.steps')}<InfoTip text={locale.t('generation.upscale.steps_tip')} /></span>
           <EditableValue value={generation.upscaleSteps} min={1} max={50} step={1} onchange={(v) => generation.upscaleSteps = v} />
@@ -278,7 +279,7 @@
 
     <!-- Tile Size (shown when tiling enabled or forced for Anima) -->
     {#if generation.upscaleTiling || generation.isAnima}
-    <div>
+    <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.upscale.tile_size')}<InfoTip text={locale.t('generation.upscale.tile_size_tip')} /></span>
         <EditableValue value={generation.upscaleTileSize} min={256} max={2048} step={64} suffix="px" onchange={(v) => generation.upscaleTileSize = v} />
@@ -309,7 +310,7 @@
 
     <!-- Soft Guidance Multiplier (shown when soft guidance enabled) -->
     {#if generation.upscaleSoftGuidance}
-    <div>
+    <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.upscale.soft_guidance_multiplier')}<InfoTip text={locale.t('generation.upscale.soft_guidance_multiplier_tip')} /></span>
         <EditableValue value={generation.upscaleSoftGuidanceMultiplier} min={0} max={1} step={0.05} decimals={2} onchange={(v) => generation.upscaleSoftGuidanceMultiplier = v} />

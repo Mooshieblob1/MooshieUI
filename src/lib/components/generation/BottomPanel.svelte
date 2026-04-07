@@ -2,6 +2,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { scrollCapture } from "../../utils/scrollCapture.js";
   import { models } from "../../stores/models.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import LoraGallery from "./LoraGallery.svelte";
@@ -168,14 +169,16 @@
               placeholder={locale.t('bottom_panel.image_search_placeholder')}
               class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
             />
-            <input
-              type="range"
-              min="48"
-              max="160"
-              bind:value={imageCardSize}
-              class="w-16 h-4 accent-indigo-500 cursor-pointer"
-              title={locale.t('bottom_panel.card_size')}
-            />
+            <div use:scrollCapture>
+              <input
+                type="range"
+                min="48"
+                max="160"
+                bind:value={imageCardSize}
+                class="w-16 h-4 accent-indigo-500 cursor-pointer"
+                title={locale.t('bottom_panel.card_size')}
+              />
+            </div>
           </div>
           {#if filteredSessionImages.length === 0}
             <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
