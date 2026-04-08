@@ -502,11 +502,22 @@ pub async fn wait_for_ready(state: &AppState, timeout_secs: u64) -> Result<(), A
                     Ok(Some(status)) => {
                         *process = None;
                         let log_excerpt = read_comfyui_log_tail(30);
-                        let msg = if let Some(log) = log_excerpt {
-                            format!(
-                                "ComfyUI process exited with {} — last log output:\n{}",
-                                status, log
-                            )
+                        let msg = if let Some(ref log) = log_excerpt {
+                            // Detect PyTorch installed without GPU support
+                            if log.contains("Torch not compiled with CUDA enabled")
+                                || log.contains("CUDA not available")
+                            {
+                                "PyTorch was installed without CUDA (GPU) support. \
+                                 Your system has an NVIDIA GPU but the CPU-only version of PyTorch was installed. \
+                                 Go to Settings → Advanced → Reinstall PyTorch to fix this, \
+                                 or re-run setup and make sure 'NVIDIA' is selected as your GPU type."
+                                    .to_string()
+                            } else {
+                                format!(
+                                    "ComfyUI process exited with {} — last log output:\n{}",
+                                    status, log
+                                )
+                            }
                         } else {
                             format!("ComfyUI process exited with {}", status)
                         };

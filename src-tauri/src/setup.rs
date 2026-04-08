@@ -435,19 +435,84 @@ async fn step_create_venv(app: &AppHandle, base: &Path) -> Result<(), String> {
 async fn detect_gpu_type() -> String {
     #[cfg(target_os = "macos")]
     {
+        log::info!("GPU detection: macOS detected, using MPS");
         return "mps".to_string();
     }
     #[cfg(not(target_os = "macos"))]
     {
-        // Use hidden-window commands for detection
+        // Try nvidia-smi from PATH first
         let nvidia_result = {
             let mut cmd = tokio::process::Command::new("nvidia-smi");
             hide_window(&mut cmd);
             cmd.output().await
         };
-        if let Ok(output) = nvidia_result {
-            if output.status.success() {
+        match &nvidia_result {
+            Ok(output) if output.status.success() => {
+                log::info!("GPU detection: NVIDIA GPU found via nvidia-smi");
                 return "nvidia".to_string();
+            }
+            Ok(output) => {
+                log::info!("GPU detection: nvidia-smi exited with {}", output.status);
+            }
+            Err(e) => {
+                log::info!("GPU detection: nvidia-smi not found in PATH: {}", e);
+            }
+        }
+
+        // Windows: nvidia-smi may not be in PATH but exists at a known location.
+        // Also try WMI as a secondary check for NVIDIA GPUs.
+        #[cfg(target_os = "windows")]
+        {
+            // Try common nvidia-smi locations
+            let nvidia_paths = [
+                r"C:\Windows\System32\nvidia-smi.exe",
+                r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
+            ];
+            for path in &nvidia_paths {
+                if std::path::Path::new(path).exists() {
+                    let mut cmd = tokio::process::Command::new(path);
+                    hide_window(&mut cmd);
+                    if let Ok(output) = cmd.output().await {
+                        if output.status.success() {
+                            log::info!("GPU detection: NVIDIA GPU found via {}", path);
+                            return "nvidia".to_string();
+                        }
+                    }
+                }
+            }
+
+            // WMI fallback: check video controller names for NVIDIA GPUs
+            let mut cmd = tokio::process::Command::new("powershell");
+            cmd.args([
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+            ]);
+            hide_window(&mut cmd);
+            if let Ok(output) = cmd.output().await {
+                let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
+                log::info!("GPU detection: WMI video controllers: {}", text.trim());
+                if text.contains("nvidia")
+                    || text.contains("geforce")
+                    || text.contains("rtx")
+                    || text.contains("gtx")
+                    || text.contains("quadro")
+                {
+                    log::info!("GPU detection: NVIDIA GPU found via WMI");
+                    return "nvidia".to_string();
+                }
+                // Only match discrete AMD GPUs (RX series) — not integrated Radeon on Ryzen APUs.
+                // Integrated GPUs report as "AMD Radeon Graphics" or "AMD Radeon Vega X Graphics"
+                // and don't support ROCm. Discrete GPUs have "RX" in the name (RX 7900, RX 6800, etc.)
+                if text.contains("radeon rx") || text.contains("radeon pro w") {
+                    log::info!("GPU detection: AMD discrete GPU found via WMI");
+                    return "amd".to_string();
+                }
+                // Intel Arc discrete GPUs (A770, A750, B580, etc.)
+                if text.contains("intel arc") || text.contains("arc a") || text.contains("arc b") {
+                    log::info!("GPU detection: Intel Arc GPU found via WMI");
+                    return "intel".to_string();
+                }
             }
         }
 
@@ -458,12 +523,14 @@ async fn detect_gpu_type() -> String {
         };
         if let Ok(output) = rocm_result {
             if output.status.success() {
+                log::info!("GPU detection: AMD GPU found via rocm-smi");
                 return "amd".to_string();
             }
         }
 
         #[cfg(target_os = "linux")]
         if Path::new("/opt/rocm").exists() {
+            log::info!("GPU detection: AMD GPU found via /opt/rocm");
             return "amd".to_string();
         }
         // Linux: check for Intel Arc discrete GPU via sysfs
@@ -479,6 +546,7 @@ async fn detect_gpu_type() -> String {
                             let class_path = entry.path().join("device/class");
                             if let Ok(class) = std::fs::read_to_string(&class_path) {
                                 if class.trim().starts_with("0x0300") {
+                                    log::info!("GPU detection: Intel Arc GPU found via sysfs");
                                     return "intel".to_string();
                                 }
                             }
@@ -487,30 +555,7 @@ async fn detect_gpu_type() -> String {
                 }
             }
         }
-        // Windows: check for discrete AMD/Intel GPUs via WMI (rocm-smi won't exist on Windows)
-        #[cfg(target_os = "windows")]
-        {
-            let mut cmd = tokio::process::Command::new("powershell");
-            cmd.args([
-                "-NoProfile",
-                "-Command",
-                "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
-            ]);
-            hide_window(&mut cmd);
-            if let Ok(output) = cmd.output().await {
-                let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
-                // Only match discrete AMD GPUs (RX series) — not integrated Radeon on Ryzen APUs.
-                // Integrated GPUs report as "AMD Radeon Graphics" or "AMD Radeon Vega X Graphics"
-                // and don't support ROCm. Discrete GPUs have "RX" in the name (RX 7900, RX 6800, etc.)
-                if text.contains("radeon rx") || text.contains("radeon pro w") {
-                    return "amd".to_string();
-                }
-                // Intel Arc discrete GPUs (A770, A750, B580, etc.)
-                if text.contains("intel arc") || text.contains("arc a") || text.contains("arc b") {
-                    return "intel".to_string();
-                }
-            }
-        }
+        log::warn!("GPU detection: No discrete GPU detected, falling back to CPU");
         "cpu".to_string()
     }
 }
