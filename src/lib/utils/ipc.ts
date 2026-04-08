@@ -6,8 +6,53 @@
 /** True when running inside the Tauri desktop shell. */
 export const isTauri: boolean = !!(window as any).__TAURI_INTERNALS__;
 
+/**
+ * True when served by the embedded axum server in browser mode.
+ * The axum server injects `__MOOSHIE_BROWSER_MODE__` into the HTML.
+ * This is false during normal Vite dev (`pnpm dev`) to avoid
+ * hitting non-existent `/internal-api/` endpoints.
+ */
+export const isBrowserMode: boolean =
+  !isTauri && !!(window as any).__MOOSHIE_BROWSER_MODE__;
+
 type UnlistenFn = () => void;
 type EventCallback = (event: { payload: any }) => void;
+
+// ---------------------------------------------------------------------------
+// Auth token management (browser mode only)
+// ---------------------------------------------------------------------------
+
+const AUTH_TOKEN_KEY = "mooshie:auth_token";
+const AUTH_USER_KEY = "mooshie:auth_user";
+
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function setAuthToken(token: string) {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+
+export function clearAuthToken() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+/** Store the currently logged-in username (for per-user localStorage isolation). */
+export function setAuthUser(username: string) {
+  localStorage.setItem(AUTH_USER_KEY, username);
+}
+
+export function getAuthUser(): string | null {
+  return localStorage.getItem(AUTH_USER_KEY);
+}
+
+/** Build headers with auth token if present. */
+export function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const h: Record<string, string> = { ...extra };
+  const token = getAuthToken();
+  if (token) h["Authorization"] = `Bearer ${token}`;
+  return h;
+}
 
 // ---------------------------------------------------------------------------
 // invoke — call a backend command
@@ -21,9 +66,12 @@ export async function ipcInvoke<T = unknown>(
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke<T>(command, args);
   }
+  if (!isBrowserMode) {
+    throw new Error(`ipcInvoke("${command}"): no backend available (not Tauri, not browser mode)`);
+  }
   const resp = await fetch(`/internal-api/${command}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(args ?? {}),
   });
   if (!resp.ok) {
@@ -45,7 +93,10 @@ const browserListeners = new Map<string, Set<EventCallback>>();
 
 function ensureBrowserEventSource() {
   if (browserEventSource) return;
-  browserEventSource = new EventSource("/internal-api/_events");
+  let url = "/internal-api/_events";
+  const token = getAuthToken();
+  if (token) url += `?token=${encodeURIComponent(token)}`;
+  browserEventSource = new EventSource(url);
   browserEventSource.onmessage = (msg) => {
     try {
       const parsed = JSON.parse(msg.data);
@@ -81,6 +132,10 @@ export async function ipcListen(
     const { listen } = await import("@tauri-apps/api/event");
     return listen(event, callback);
   }
+  if (!isBrowserMode) {
+    // No backend — return a no-op unlisten
+    return () => {};
+  }
 
   // Browser mode — use SSE
   ensureBrowserEventSource();
@@ -110,7 +165,7 @@ export async function ipcListen(
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
 export function startHeartbeat() {
-  if (isTauri || heartbeatInterval) return;
+  if (!isBrowserMode || heartbeatInterval) return;
   heartbeatInterval = setInterval(async () => {
     try {
       await fetch("/internal-api/_heartbeat", { method: "POST" });
@@ -173,7 +228,7 @@ export async function ipcOpenDirectoryDialog(): Promise<string | null> {
   return null;
 }
 
-/** Store abstraction — uses localStorage in browser mode. */
+/** Store abstraction — uses localStorage in browser mode, scoped per-user. */
 export const ipcStore = {
   async get<T>(key: string): Promise<T | undefined> {
     if (isTauri) {
@@ -181,7 +236,8 @@ export const ipcStore = {
       const store = await load("store.json");
       return store.get<T>(key);
     }
-    const raw = localStorage.getItem(`mooshie:${key}`);
+    const prefix = getAuthUser() ? `mooshie:${getAuthUser()}:` : "mooshie:";
+    const raw = localStorage.getItem(`${prefix}${key}`);
     return raw ? JSON.parse(raw) : undefined;
   },
   async set(key: string, value: unknown): Promise<void> {
@@ -192,6 +248,7 @@ export const ipcStore = {
       await store.save();
       return;
     }
-    localStorage.setItem(`mooshie:${key}`, JSON.stringify(value));
+    const prefix = getAuthUser() ? `mooshie:${getAuthUser()}:` : "mooshie:";
+    localStorage.setItem(`${prefix}${key}`, JSON.stringify(value));
   },
 };

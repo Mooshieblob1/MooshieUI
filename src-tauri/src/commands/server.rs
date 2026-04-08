@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::comfyui::process::{self, StartResult};
@@ -19,7 +21,7 @@ fn emit_both(app: &AppHandle, state: &AppState, event: &str, payload: serde_json
 #[tauri::command]
 pub async fn start_comfyui(
     app_handle: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<String, AppError> {
     let result = process::start_comfyui_process(&state).await?;
     let event_tx = state.event_tx.clone();
@@ -29,11 +31,18 @@ pub async fn start_comfyui(
             // Server already up — connect WS and notify frontend immediately
             let app = app_handle.clone();
             tokio::spawn(async move {
-                let state = app.state::<AppState>();
-                if let Err(e) = websocket::connect_websocket(app.clone(), &state, event_tx.clone()).await {
+                let state = app.state::<Arc<AppState>>();
+                if let Err(e) =
+                    websocket::connect_websocket(app.clone(), &state, event_tx.clone()).await
+                {
                     log::error!("Failed to connect WebSocket: {}", e);
                 }
-                emit_both(&app, &state, "comfyui:server_ready", serde_json::json!(null));
+                emit_both(
+                    &app,
+                    &state,
+                    "comfyui:server_ready",
+                    serde_json::json!(null),
+                );
             });
             Ok("already_running".to_string())
         }
@@ -41,14 +50,22 @@ pub async fn start_comfyui(
             // Process spawned — poll in background until ready
             let app = app_handle.clone();
             tokio::spawn(async move {
-                let state = app.state::<AppState>();
+                let state = app.state::<Arc<AppState>>();
                 match process::wait_for_ready(&state, 120).await {
                     Ok(()) => {
                         log::info!("ComfyUI server is ready");
-                        if let Err(e) = websocket::connect_websocket(app.clone(), &state, event_tx.clone()).await {
+                        if let Err(e) =
+                            websocket::connect_websocket(app.clone(), &state, event_tx.clone())
+                                .await
+                        {
                             log::error!("Failed to connect WebSocket: {}", e);
                         }
-                        emit_both(&app, &state, "comfyui:server_ready", serde_json::json!(null));
+                        emit_both(
+                            &app,
+                            &state,
+                            "comfyui:server_ready",
+                            serde_json::json!(null),
+                        );
                     }
                     Err(e) => {
                         let err_str = e.to_string();
@@ -71,11 +88,18 @@ pub async fn start_comfyui(
             // Remote mode — just try to connect WS directly
             let app = app_handle.clone();
             tokio::spawn(async move {
-                let state = app.state::<AppState>();
-                if let Err(e) = websocket::connect_websocket(app.clone(), &state, event_tx.clone()).await {
+                let state = app.state::<Arc<AppState>>();
+                if let Err(e) =
+                    websocket::connect_websocket(app.clone(), &state, event_tx.clone()).await
+                {
                     log::error!("Failed to connect WebSocket: {}", e);
                 }
-                emit_both(&app, &state, "comfyui:server_ready", serde_json::json!(null));
+                emit_both(
+                    &app,
+                    &state,
+                    "comfyui:server_ready",
+                    serde_json::json!(null),
+                );
             });
             Ok("skipped".to_string())
         }
@@ -83,11 +107,11 @@ pub async fn start_comfyui(
 }
 
 #[tauri::command]
-pub async fn stop_comfyui(state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn stop_comfyui(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
     process::stop_comfyui_process(&state).await
 }
 
 #[tauri::command]
-pub async fn check_server_health(state: State<'_, AppState>) -> Result<SystemStats, AppError> {
+pub async fn check_server_health(state: State<'_, Arc<AppState>>) -> Result<SystemStats, AppError> {
     state.get_system_stats_info().await
 }

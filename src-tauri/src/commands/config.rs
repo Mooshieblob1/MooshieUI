@@ -1,17 +1,23 @@
+use std::sync::Arc;
+
 use tauri::State;
 
 use crate::config::{save_config, AppConfig};
 use crate::error::AppError;
 use crate::state::AppState;
+use crate::webserver;
 
 #[tauri::command]
-pub async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, AppError> {
+pub async fn get_config(state: State<'_, Arc<AppState>>) -> Result<AppConfig, AppError> {
     let config = state.config.read().await;
     Ok(config.clone())
 }
 
 #[tauri::command]
-pub async fn update_config(state: State<'_, AppState>, config: AppConfig) -> Result<(), AppError> {
+pub async fn update_config(
+    state: State<'_, Arc<AppState>>,
+    config: AppConfig,
+) -> Result<(), AppError> {
     save_config(&config).map_err(AppError::Other)?;
     let mut current = state.config.write().await;
     *current = config;
@@ -21,7 +27,7 @@ pub async fn update_config(state: State<'_, AppState>, config: AppConfig) -> Res
 /// Return the resolved gallery directory path.
 /// If a custom `gallery_path` is set, returns that; otherwise returns the default.
 #[tauri::command]
-pub async fn get_gallery_path(state: State<'_, AppState>) -> Result<String, AppError> {
+pub async fn get_gallery_path(state: State<'_, Arc<AppState>>) -> Result<String, AppError> {
     let cfg = state.config.read().await;
     if let Some(ref custom) = cfg.gallery_path {
         let trimmed = custom.trim();
@@ -39,7 +45,7 @@ pub async fn get_gallery_path(state: State<'_, AppState>) -> Result<String, AppE
 /// Validates the path is a writable directory (or can be created).
 #[tauri::command]
 pub async fn set_gallery_path(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     path: String,
 ) -> Result<String, AppError> {
     let trimmed = path.trim().to_string();
@@ -72,4 +78,82 @@ pub async fn set_gallery_path(
     };
 
     Ok(resolved)
+}
+
+/// Switch to browser mode at runtime: save config, start the web server,
+/// open the browser, and hide the Tauri window.
+#[tauri::command]
+pub async fn switch_to_browser_mode(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    log::info!("switch_to_browser_mode: called");
+
+    // Save browser_mode = true
+    let (port, lan_enabled) = {
+        let mut cfg = state.config.write().await;
+        cfg.browser_mode = true;
+        save_config(&cfg).map_err(AppError::Other)?;
+        (cfg.ui_server_port, cfg.lan_enabled)
+    };
+    log::info!(
+        "switch_to_browser_mode: config saved, port={}, lan={}",
+        port,
+        lan_enabled
+    );
+
+    // Re-arm the heartbeat watchdog (in case we came from app mode)
+    state
+        .app_mode_active
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    // Refresh the heartbeat so the watchdog doesn't immediately fire
+    {
+        let mut hb = state.last_heartbeat.lock().await;
+        *hb = std::time::Instant::now();
+    }
+
+    // Only start the web server if it isn't already running
+    let server_was_running = state
+        .web_server_running
+        .load(std::sync::atomic::Ordering::SeqCst);
+    log::info!(
+        "switch_to_browser_mode: web_server_running={}",
+        server_was_running
+    );
+    if !server_was_running {
+        let shared_state: Arc<AppState> = state.inner().clone();
+        let state_for_server = shared_state.clone();
+        tokio::spawn(async move {
+            webserver::start_server(state_for_server, port, lan_enabled).await;
+        });
+        // Give the server a moment to bind
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    // Always start a new heartbeat watchdog — the previous one exits when
+    // app_mode_active is set, so we need a fresh one for the new browser session.
+    {
+        let shared_state: Arc<AppState> = state.inner().clone();
+        webserver::start_heartbeat_watchdog(shared_state, 10);
+    }
+
+    // Open the browser
+    let url = format!("http://127.0.0.1:{}", port);
+    log::info!("switch_to_browser_mode: opening {}", url);
+    match open::that(&url) {
+        Ok(_) => log::info!("switch_to_browser_mode: open::that succeeded"),
+        Err(e) => log::error!("switch_to_browser_mode: open::that failed: {}", e),
+    }
+
+    // Hide the Tauri window
+    use tauri::Manager;
+    if let Some(win) = app.get_webview_window("main") {
+        log::info!("switch_to_browser_mode: hiding window");
+        let _ = win.hide();
+    } else {
+        log::warn!("switch_to_browser_mode: no 'main' window to hide");
+    }
+
+    log::info!("switch_to_browser_mode: done");
+    Ok(())
 }

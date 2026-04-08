@@ -7,7 +7,7 @@ use crate::error::AppError;
 use crate::state::AppState;
 
 /// Compute SHA256 of a file. Returns lowercase hex. Used to verify downloaded model files.
-fn sha256_file(path: &std::path::Path) -> Result<String, AppError> {
+pub fn sha256_file(path: &std::path::Path) -> Result<String, AppError> {
     use std::io::Read;
     const BUF_SIZE: usize = 8 * 1024 * 1024;
     let mut file = std::fs::File::open(path)?;

@@ -7,6 +7,9 @@ use tokio::task::JoinHandle;
 use crate::config::AppConfig;
 use crate::interrogator::InterrogatorState;
 
+/// Stored Tauri AppHandle so the headless web server can control the window.
+pub type TauriAppHandle = tauri::AppHandle;
+
 /// An event that can be sent to both Tauri and browser SSE clients.
 #[derive(Clone, Debug)]
 pub struct BroadcastEvent {
@@ -25,6 +28,13 @@ pub struct AppState {
     pub event_tx: broadcast::Sender<BroadcastEvent>,
     /// Timestamp of last heartbeat from browser client.
     pub last_heartbeat: Mutex<std::time::Instant>,
+    /// Tauri AppHandle — set after app setup so the web server can show/hide the window.
+    pub app_handle: Mutex<Option<TauriAppHandle>>,
+    /// Set to true when switching from browser mode to app mode.
+    /// Prevents the heartbeat watchdog from killing the process.
+    pub app_mode_active: std::sync::atomic::AtomicBool,
+    /// True once the embedded web server has been started (prevents double-bind).
+    pub web_server_running: std::sync::atomic::AtomicBool,
 }
 
 impl AppState {
@@ -39,6 +49,9 @@ impl AppState {
             interrogator: Arc::new(RwLock::new(InterrogatorState::new())),
             event_tx,
             last_heartbeat: Mutex::new(std::time::Instant::now()),
+            app_handle: Mutex::new(None),
+            app_mode_active: std::sync::atomic::AtomicBool::new(false),
+            web_server_running: std::sync::atomic::AtomicBool::new(false),
         }
     }
 

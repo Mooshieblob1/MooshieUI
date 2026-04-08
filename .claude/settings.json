@@ -31,7 +31,11 @@
       "WebFetch(domain:blog.novelai.net)",
       "WebFetch(domain:novelai.medium.com)",
       "WebFetch(domain:novelai.net)",
-      "WebFetch(domain:docs.novelai.net)"
+      "WebFetch(domain:docs.novelai.net)",
+      "Bash(git checkout:*)",
+      "Read(//home/blob/.local/share/com.mooshie.ui/**)",
+      "Read(//home/blob/.config/com.mooshie.ui/**)",
+      "Read(//home/blob/**)"
     ]
   }
 }

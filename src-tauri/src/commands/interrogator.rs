@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -8,7 +10,7 @@ use crate::state::AppState;
 /// Shared helper: ensure model downloaded, read thresholds, run inference on blocking thread.
 async fn run_interrogation(
     app: &AppHandle,
-    state: &State<'_, AppState>,
+    state: &State<'_, Arc<AppState>>,
     image_bytes: Vec<u8>,
 ) -> Result<InterrogationResult, AppError> {
     // Ensure model is downloaded
@@ -62,7 +64,7 @@ async fn run_interrogation(
 /// Shared helper that takes a DynamicImage directly (avoids decode round-trip).
 async fn run_interrogation_from_image(
     app: &AppHandle,
-    state: &State<'_, AppState>,
+    state: &State<'_, Arc<AppState>>,
     img: image::DynamicImage,
 ) -> Result<InterrogationResult, AppError> {
     {
@@ -116,7 +118,7 @@ async fn run_interrogation_from_image(
 #[tauri::command]
 pub async fn interrogate_image(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     image_base64: String,
 ) -> Result<InterrogationResult, AppError> {
     use base64::Engine;
@@ -130,7 +132,7 @@ pub async fn interrogate_image(
 #[tauri::command]
 pub async fn interrogate_image_path(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     path: String,
 ) -> Result<InterrogationResult, AppError> {
     let image_bytes = std::fs::read(&path)
@@ -141,7 +143,7 @@ pub async fn interrogate_image_path(
 #[tauri::command]
 pub async fn interrogate_gallery_image(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     filename: String,
 ) -> Result<InterrogationResult, AppError> {
     // Validate filename — no path traversal
@@ -160,7 +162,7 @@ pub async fn interrogate_gallery_image(
 #[tauri::command]
 pub async fn interrogate_clipboard(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<InterrogationResult, AppError> {
     let clipboard_image = app
         .clipboard()

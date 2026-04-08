@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::State;
 
 use crate::comfyui::types::GenerationParams;
@@ -14,7 +16,7 @@ pub struct GenerateResponse {
 
 #[tauri::command]
 pub async fn generate(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     params: GenerationParams,
 ) -> Result<GenerateResponse, AppError> {
     let seed = if params.seed < 0 {

@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use std::process::Stdio;
 use tauri::{AppHandle, Emitter, Manager};
@@ -1162,7 +1163,7 @@ fn scan_model_directories() -> Vec<DetectedModelDir> {
 #[tauri::command]
 pub async fn move_installation(
     app: AppHandle,
-    state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, Arc<AppState>>,
     new_path: String,
 ) -> Result<(), String> {
     let new_path = new_path.trim().to_string();
@@ -1493,7 +1494,7 @@ fn copy_dir_recursive_inner(
 #[tauri::command]
 pub async fn reinstall_pytorch(
     app: AppHandle,
-    _state: tauri::State<'_, AppState>,
+    _state: tauri::State<'_, Arc<AppState>>,
     index_url: Option<String>,
 ) -> Result<(), String> {
     let base = data_dir(&app)?;
@@ -1554,7 +1555,7 @@ pub async fn reinstall_pytorch(
 #[tauri::command]
 pub async fn run_setup(
     app: AppHandle,
-    state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, Arc<AppState>>,
     gpu_type: Option<String>,
     install_path: Option<String>,
 ) -> Result<(), String> {

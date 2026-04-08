@@ -1,8 +1,10 @@
+use std::collections::BTreeSet;
+use std::io::Read;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
-use std::io::Read;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::comfyui::types::*;
@@ -69,40 +71,43 @@ pub struct CivitaiSearchParams {
 
 #[tauri::command]
 pub async fn get_models(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     category: String,
 ) -> Result<Vec<String>, AppError> {
     state.get_models_list(&category).await
 }
 
 #[tauri::command]
-pub async fn get_samplers(state: State<'_, AppState>) -> Result<SamplerInfo, AppError> {
+pub async fn get_samplers(state: State<'_, Arc<AppState>>) -> Result<SamplerInfo, AppError> {
     state.get_samplers_and_schedulers().await
 }
 
 #[tauri::command]
-pub async fn get_embeddings(state: State<'_, AppState>) -> Result<Vec<String>, AppError> {
+pub async fn get_embeddings(state: State<'_, Arc<AppState>>) -> Result<Vec<String>, AppError> {
     state.get_embeddings_list().await
 }
 
 #[tauri::command]
-pub async fn get_queue(state: State<'_, AppState>) -> Result<QueueInfo, AppError> {
+pub async fn get_queue(state: State<'_, Arc<AppState>>) -> Result<QueueInfo, AppError> {
     state.get_queue_info().await
 }
 
 #[tauri::command]
-pub async fn get_history(state: State<'_, AppState>, prompt_id: String) -> Result<Value, AppError> {
+pub async fn get_history(
+    state: State<'_, Arc<AppState>>,
+    prompt_id: String,
+) -> Result<Value, AppError> {
     state.get_history_for(&prompt_id).await
 }
 
 #[tauri::command]
-pub async fn interrupt_generation(state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn interrupt_generation(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
     state.interrupt().await
 }
 
 #[tauri::command]
 pub async fn delete_queue_item(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     prompt_id: String,
 ) -> Result<(), AppError> {
     state.delete_queue_items(vec![prompt_id]).await
@@ -110,7 +115,7 @@ pub async fn delete_queue_item(
 
 #[tauri::command]
 pub async fn upload_image(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     image_path: String,
 ) -> Result<UploadResponse, AppError> {
     state.upload_image_file(&image_path).await
@@ -118,7 +123,7 @@ pub async fn upload_image(
 
 #[tauri::command]
 pub async fn upload_image_bytes(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     image_bytes: Vec<u8>,
     filename: String,
 ) -> Result<UploadResponse, AppError> {
@@ -127,7 +132,7 @@ pub async fn upload_image_bytes(
 
 #[tauri::command]
 pub async fn get_output_image(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     filename: String,
     subfolder: String,
 ) -> Result<Vec<u8>, AppError> {
@@ -135,7 +140,7 @@ pub async fn get_output_image(
 }
 
 #[tauri::command]
-pub async fn get_client_id(state: State<'_, AppState>) -> Result<String, AppError> {
+pub async fn get_client_id(state: State<'_, Arc<AppState>>) -> Result<String, AppError> {
     Ok(state.client_id.clone())
 }
 
@@ -150,7 +155,7 @@ pub struct ModelInstallDir {
 /// subdirectories for the category that already exist on disk.
 #[tauri::command]
 pub async fn get_model_install_dirs(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     category: String,
 ) -> Result<Vec<ModelInstallDir>, AppError> {
     let config = state.config.read().await;
@@ -239,7 +244,7 @@ pub async fn open_directory(path: String) -> Result<(), AppError> {
 #[tauri::command]
 pub async fn download_model(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     url: String,
     category: String,
     filename: String,
@@ -279,7 +284,7 @@ pub async fn embed_png_metadata_bytes(
 
 #[tauri::command]
 pub async fn save_to_gallery(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     filename: String,
     subfolder: String,
     prompt_id: String,
@@ -318,7 +323,7 @@ pub async fn save_to_gallery_bytes(
     )
 }
 
-fn save_to_gallery_inner(
+pub fn save_to_gallery_inner(
     bytes: &[u8],
     filename: &str,
     prompt_id: &str,
@@ -789,7 +794,7 @@ pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> 
 /// Check if a ComfyUI node class is available (used to detect custom node packages).
 #[tauri::command]
 pub async fn check_node_available(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     node_class: String,
 ) -> Result<bool, AppError> {
     match state.api_get(&format!("/object_info/{}", node_class)).await {
@@ -814,10 +819,15 @@ fn resolve_uv_bin(venv_path: &str) -> std::path::PathBuf {
     }
 }
 
+/// Public accessor for `resolve_uv_bin` — used by the browser-mode web server.
+pub fn resolve_uv_bin_pub(venv_path: &str) -> std::path::PathBuf {
+    resolve_uv_bin(venv_path)
+}
+
 /// Check if a custom node package is installed on disk (directory exists in custom_nodes/).
 #[tauri::command]
 pub async fn is_custom_node_installed(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     node_name: String,
 ) -> Result<bool, AppError> {
     let config = state.config.read().await;
@@ -832,7 +842,7 @@ pub async fn is_custom_node_installed(
 #[tauri::command]
 pub async fn install_custom_node(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     git_url: String,
     node_name: String,
 ) -> Result<(), AppError> {
@@ -992,7 +1002,7 @@ pub async fn install_custom_node(
 /// (e.g. `ultralytics` for face fix).
 #[tauri::command]
 pub async fn install_pip_package(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     package: String,
 ) -> Result<(), AppError> {
     let config = state.config.read().await;
@@ -1037,7 +1047,7 @@ pub async fn install_pip_package(
 /// Note: this hashes each file in the directory, so it may take a while for large collections.
 #[tauri::command]
 pub async fn find_model_by_hash(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     category: String,
     hash: String,
 ) -> Result<Option<String>, AppError> {
@@ -1088,7 +1098,7 @@ pub async fn find_model_by_hash(
 /// Also returns the AutoV2 hash (first 10 chars).
 #[tauri::command]
 pub async fn hash_model_file(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     category: String,
     filename: String,
 ) -> Result<ModelHashResult, AppError> {
@@ -1113,7 +1123,7 @@ pub async fn hash_model_file(
 /// Returns the CivitAI model version info if found.
 #[tauri::command]
 pub async fn civitai_lookup_hash(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     hash: String,
 ) -> Result<Value, AppError> {
     let api_key = state.config.read().await.civitai_api_key.clone();
@@ -1149,7 +1159,7 @@ pub async fn civitai_lookup_hash(
 
 #[tauri::command]
 pub async fn civitai_search_models(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     params: CivitaiSearchParams,
 ) -> Result<Value, AppError> {
     // Build query string manually because reqwest percent-encodes brackets in
@@ -1232,7 +1242,7 @@ pub async fn civitai_search_models(
 
 #[tauri::command]
 pub async fn civitai_list_architectures(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     api_key: Option<String>,
 ) -> Result<Vec<String>, AppError> {
     let mut architectures = BTreeSet::<String>::new();
@@ -1372,7 +1382,7 @@ pub async fn civitai_list_architectures(
 /// or null if the file has no ModelSpec metadata.
 #[tauri::command]
 pub async fn read_modelspec(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     category: String,
     filename: String,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
@@ -1610,7 +1620,7 @@ fn resolve_model_path(
 /// Returns structured info for the LoRA gallery panel.
 #[tauri::command]
 pub async fn get_lora_civitai_info(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     filename: String,
 ) -> Result<LoraCivitaiInfo, AppError> {
     let (comfyui_path, extra_model_paths, civitai_api_key) = {
@@ -1794,7 +1804,7 @@ pub async fn get_lora_civitai_info(
 /// `{stem}.preview.png`, `{stem}.preview.jpg` (same directory as the model file).
 #[tauri::command]
 pub async fn get_checkpoint_civitai_info(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     filename: String,
 ) -> Result<CheckpointCivitaiInfo, AppError> {
     let (comfyui_path, extra_model_paths, civitai_api_key) = {
@@ -2015,7 +2025,9 @@ pub struct ReleaseNote {
 }
 
 #[tauri::command]
-pub async fn fetch_release_notes(state: State<'_, AppState>) -> Result<Vec<ReleaseNote>, AppError> {
+pub async fn fetch_release_notes(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ReleaseNote>, AppError> {
     let resp = state
         .http_client
         .get("https://api.github.com/repos/Mooshieblob1/MooshieUI/releases")
@@ -2193,7 +2205,10 @@ fn collect_image_files_recursive(
 /// - Basic system/platform info
 /// - Rust-side log path references
 #[tauri::command]
-pub async fn export_logs(state: State<'_, AppState>, destination: String) -> Result<(), AppError> {
+pub async fn export_logs(
+    state: State<'_, Arc<AppState>>,
+    destination: String,
+) -> Result<(), AppError> {
     use std::fmt::Write;
 
     let mut output = String::with_capacity(16 * 1024);
@@ -2337,7 +2352,7 @@ fn detect_image_mime(bytes: &[u8]) -> &'static str {
 /// Cache TTL is 7 days; stale or missing entries are refreshed transparently.
 #[tauri::command]
 pub async fn fetch_cached_image(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     url: String,
 ) -> Result<String, AppError> {
     use base64::{engine::general_purpose::STANDARD, Engine};

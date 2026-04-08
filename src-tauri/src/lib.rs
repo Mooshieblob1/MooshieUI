@@ -10,6 +10,8 @@ pub mod state;
 pub mod templates;
 pub mod webserver;
 
+use std::sync::Arc;
+
 use config::load_persisted_config;
 use state::AppState;
 use tauri::{Manager, RunEvent};
@@ -97,7 +99,7 @@ pub fn run() {
     let ui_server_port = config.ui_server_port;
     let lan_enabled = config.lan_enabled;
 
-    let app_state = AppState::new(config);
+    let app_state = Arc::new(AppState::new(config));
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -109,6 +111,15 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
         .setup(move |_app| {
+            // Store the AppHandle so the web server can show/hide the window later.
+            {
+                let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
+                let handle = _app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    *shared_state.app_handle.lock().await = Some(handle);
+                });
+            }
+
             // In browser mode: hide the window, start web server, open browser
             if browser_mode {
                 use tauri::Manager;
@@ -116,38 +127,22 @@ pub fn run() {
                     let _ = main_window.hide();
                 }
 
-                // Create a second AppState for the web server.
-                // The web server gets its own AppState that shares the same config
-                // and broadcast channel semantics but has independent locks.
-                // This is acceptable for MVP — both read from the same config file,
-                // and the broadcast channel in the Tauri-managed state is the one
-                // that feeds events. The web server state is used for API proxying.
-                let web_config = config::load_persisted_config();
-                let web_state = std::sync::Arc::new(AppState::new(web_config));
+                // Share the same AppState between Tauri and the web server
+                let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
 
-                // Share the event broadcast channel from the Tauri-managed state
-                // so SSE clients get the same events.
-                let tauri_state = _app.state::<AppState>();
-                let event_rx_source = tauri_state.event_tx.clone();
-
-                // Forward events from Tauri state's broadcast to web state's broadcast
-                let web_tx = web_state.event_tx.clone();
-                let rt = tokio::runtime::Handle::current();
-                rt.spawn(async move {
-                    let mut rx = event_rx_source.subscribe();
-                    while let Ok(evt) = rx.recv().await {
-                        let _ = web_tx.send(evt);
-                    }
-                });
-
-                let state_for_server = web_state.clone();
-                let state_for_watchdog = web_state.clone();
-                rt.spawn(async move {
+                let state_for_server = shared_state.clone();
+                tauri::async_runtime::spawn(async move {
                     webserver::start_server(state_for_server, ui_server_port, lan_enabled).await;
                 });
-                rt.spawn(async move {
-                    webserver::start_heartbeat_watchdog(state_for_watchdog, 10);
-                });
+                // Only start heartbeat watchdog in single-user browser mode.
+                // With LAN access enabled, multiple users may connect and we
+                // must NOT shut down when one browser tab closes.
+                if !lan_enabled {
+                    let state_for_watchdog = shared_state.clone();
+                    tauri::async_runtime::spawn(async move {
+                        webserver::start_heartbeat_watchdog(state_for_watchdog, 10);
+                    });
+                }
 
                 // Open the default browser
                 let url = format!("http://127.0.0.1:{}", ui_server_port);
@@ -291,6 +286,7 @@ pub fn run() {
             commands::config::update_config,
             commands::config::get_gallery_path,
             commands::config::set_gallery_path,
+            commands::config::switch_to_browser_mode,
             commands::interrogator::interrogate_image,
             commands::interrogator::interrogate_image_path,
             commands::interrogator::interrogate_gallery_image,
@@ -311,7 +307,7 @@ pub fn run() {
 
     app.run(|app_handle, event| {
         if let RunEvent::ExitRequested { .. } = event {
-            let state = app_handle.state::<AppState>();
+            let state = app_handle.state::<Arc<AppState>>();
             let keep_alive = {
                 let config = state.config.blocking_read();
                 config.keep_alive

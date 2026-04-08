@@ -127,6 +127,40 @@ impl InterrogatorState {
         Ok(())
     }
 
+    /// Download model files without AppHandle (for browser mode).
+    pub async fn ensure_model_downloaded_headless(
+        &self,
+        client: &reqwest::Client,
+    ) -> Result<(), AppError> {
+        std::fs::create_dir_all(&self.model_dir)?;
+        if !self.model_path().exists() {
+            let url = format!("{}/{}", HF_BASE_URL, MODEL_FILENAME);
+            download_simple(client, &url, &self.model_path()).await?;
+        }
+        if !self.tags_path().exists() {
+            let url = format!("{}/{}", HF_BASE_URL, TAGS_FILENAME);
+            download_simple(client, &url, &self.tags_path()).await?;
+        }
+        Ok(())
+    }
+
+    /// Download ONNX Runtime without AppHandle (for browser mode).
+    pub async fn ensure_ort_library_headless(
+        &self,
+        client: &reqwest::Client,
+    ) -> Result<(), AppError> {
+        if self.is_ort_library_present() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(&self.model_dir)?;
+        let (url, archive_name) = ort_download_info();
+        let archive_path = self.model_dir.join(archive_name);
+        download_simple(client, &url, &archive_path).await?;
+        extract_ort_library(&archive_path, &self.ort_library_path())?;
+        std::fs::remove_file(&archive_path).ok();
+        Ok(())
+    }
+
     /// Load the ONNX session and tag list, caching for subsequent calls.
     /// Uses Level1 optimization only (constant folding) — fast even for large models.
     pub fn load_session(&mut self) -> Result<(), AppError> {
@@ -485,6 +519,34 @@ async fn download_with_progress(
     )
     .ok();
 
+    Ok(())
+}
+
+/// Simple download without progress events (for browser mode headless usage).
+async fn download_simple(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &std::path::Path,
+) -> Result<(), AppError> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| AppError::InterrogatorError(format!("Download failed: {}", e)))?;
+    if !resp.status().is_success() {
+        return Err(AppError::InterrogatorError(format!(
+            "Download returned status {}",
+            resp.status()
+        )));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| AppError::InterrogatorError(format!("Download read error: {}", e)))?;
+    std::fs::write(dest, &bytes)?;
     Ok(())
 }
 

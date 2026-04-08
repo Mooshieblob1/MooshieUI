@@ -10,9 +10,13 @@
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import OpenModelFolders from "./OpenModelFolders.svelte";
-  import { ipcInvoke, ipcListen, isTauri } from "../../utils/ipc.js";
+  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders } from "../../utils/ipc.js";
   import { onMount } from "svelte";
   import { marked } from "marked";
+
+  let { userRole = "admin" }: { userRole?: string } = $props();
+  const isAdmin = $derived(userRole === "admin");
+  const canManageServer = $derived(userRole === "admin" || userRole === "moderator");
 
   /** Open a directory picker. Returns path string or null. */
   async function openDirectoryDialog(title: string): Promise<string | null> {
@@ -55,27 +59,209 @@
   // Mode switching state
   let switchingMode = $state(false);
 
+  // LAN auth state
+  let lanAccounts = $state<{ username: string; role: string }[]>([]);
+  let lanNewUser = $state("");
+  let lanNewPass = $state("");
+  let lanAuthError = $state<string | null>(null);
+  let lanAuthBusy = $state(false);
+  let lanAddresses = $state<string[]>([]);
+  let showAddAccountModal = $state(false);
+
+  // User self-service password change
+  let cpCurrentPass = $state("");
+  let cpNewPass1 = $state("");
+  let cpNewPass2 = $state("");
+  let cpError = $state<string | null>(null);
+  let cpSuccess = $state(false);
+  let cpBusy = $state(false);
+
+  async function changeOwnPassword() {
+    if (cpNewPass1.length < 4) { cpError = "New password must be at least 4 characters."; return; }
+    if (cpNewPass1 !== cpNewPass2) { cpError = "Passwords do not match."; return; }
+    cpBusy = true;
+    cpError = null;
+    cpSuccess = false;
+    try {
+      const resp = await fetch("/internal-api/_auth/change_password", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ current_password: cpCurrentPass, new_password: cpNewPass1 }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { cpError = data.error ?? "Failed to change password."; return; }
+      cpCurrentPass = "";
+      cpNewPass1 = "";
+      cpNewPass2 = "";
+      cpSuccess = true;
+      setTimeout(() => (cpSuccess = false), 4000);
+    } catch (e) {
+      cpError = String(e);
+    } finally {
+      cpBusy = false;
+    }
+  }
+
+  // Admin reset password modal
+  let showResetPasswordModal = $state(false);
+  let resetTargetUser = $state("");
+  let resetTempPass = $state("");
+  let resetError = $state<string | null>(null);
+  let resetSuccess = $state(false);
+  let resetBusy = $state(false);
+
+  async function adminResetPassword() {
+    if (resetTempPass.length < 4) { resetError = "Temporary password must be at least 4 characters."; return; }
+    resetBusy = true;
+    resetError = null;
+    resetSuccess = false;
+    try {
+      const resp = await fetch("/internal-api/_auth/reset_password", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ username: resetTargetUser, temp_password: resetTempPass }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { resetError = data.error ?? "Failed to reset password."; return; }
+      resetSuccess = true;
+      resetTempPass = "";
+    } catch (e) {
+      resetError = String(e);
+    } finally {
+      resetBusy = false;
+    }
+  }
+
+  async function loadLanAccounts() {
+    try {
+      const resp = await fetch("/internal-api/_auth/accounts", { headers: authHeaders() });
+      const data = await resp.json();
+      const raw = data.accounts ?? [];
+      // Normalise: backend now returns {username, role} objects
+      lanAccounts = raw.map((a: any) =>
+        typeof a === "string" ? { username: a, role: "user" } : { username: a.username, role: a.role ?? "user" }
+      );
+    } catch {
+      lanAccounts = [];
+    }
+  }
+
+  async function loadLanInfo() {
+    try {
+      const resp = await fetch("/internal-api/_auth/lan_info", { headers: authHeaders() });
+      const data = await resp.json();
+      lanAddresses = data.addresses ?? [];
+    } catch {
+      lanAddresses = [];
+    }
+  }
+
+  async function createLanAccount() {
+    if (!lanNewUser.trim() || lanNewPass.length < 4) {
+      lanAuthError = "Username required, password must be at least 4 characters.";
+      return;
+    }
+    lanAuthBusy = true;
+    lanAuthError = null;
+    try {
+      const resp = await fetch("/internal-api/_auth/register", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ username: lanNewUser.trim(), password: lanNewPass }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        lanAuthError = data.error ?? "Failed to create account.";
+      } else {
+        lanNewUser = "";
+        lanNewPass = "";
+        await loadLanAccounts();
+      }
+    } catch (e) {
+      lanAuthError = String(e);
+    } finally {
+      lanAuthBusy = false;
+    }
+  }
+
+  async function deleteLanAccount(username: string) {
+    lanAuthBusy = true;
+    lanAuthError = null;
+    try {
+      const resp = await fetch("/internal-api/_auth/delete", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ username }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json();
+        lanAuthError = data.error ?? "Failed to delete account.";
+      } else {
+        await loadLanAccounts();
+      }
+    } catch (e) {
+      lanAuthError = String(e);
+    } finally {
+      lanAuthBusy = false;
+    }
+  }
+
+  async function toggleAccountRole(username: string, currentRole: string) {
+    const newRole = currentRole === "moderator" ? "user" : "moderator";
+    lanAuthBusy = true;
+    lanAuthError = null;
+    try {
+      const resp = await fetch("/internal-api/_auth/set_role", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ username, role: newRole }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json();
+        lanAuthError = data.error ?? "Failed to update role.";
+      } else {
+        await loadLanAccounts();
+      }
+    } catch (e) {
+      lanAuthError = String(e);
+    } finally {
+      lanAuthBusy = false;
+    }
+  }
+
   async function switchUiMode() {
     if (!config) return;
     switchingMode = true;
     const newMode = !config.browser_mode;
-    config.browser_mode = newMode;
+    console.log("[switchUiMode] isTauri:", isTauri, "isBrowserMode:", isBrowserMode, "config.browser_mode:", config.browser_mode, "newMode:", newMode);
     try {
-      await updateConfig(config);
-      // Give the user a moment to see the message
-      await new Promise((r) => setTimeout(r, 1500));
-      if (isTauri) {
-        // Switching from app mode to browser mode — relaunch the app
-        const { relaunch } = await import("@tauri-apps/plugin-process");
-        await relaunch();
-      } else {
-        // Switching from browser mode to app mode — tell user to close tab
-        // The backend will pick up the new config on next launch
+      if (isTauri && newMode) {
+        // App → Browser: call backend to start web server, open browser, hide window
+        console.log("[switchUiMode] calling switch_to_browser_mode via Tauri invoke...");
+        await ipcInvoke("switch_to_browser_mode");
+        console.log("[switchUiMode] switch_to_browser_mode succeeded");
+        config.browser_mode = true;
+      } else if (isTauri && !newMode) {
+        // App mode, user wants to stay in app mode? Shouldn't happen but log it
+        console.warn("[switchUiMode] already in app mode (isTauri=true, newMode=false)");
+        switchingMode = false;
+      } else if (!isTauri && isBrowserMode && !newMode) {
+        // Browser → App: show the native Tauri window
+        console.log("[switchUiMode] calling switch_to_app_mode via HTTP...");
+        const result = await ipcInvoke("switch_to_app_mode");
+        console.log("[switchUiMode] switch_to_app_mode result:", JSON.stringify(result));
+        config.browser_mode = false;
         switchingMode = true; // keep the message visible
+      } else if (!isTauri && isBrowserMode && newMode) {
+        // Already in browser mode wanting browser mode? Shouldn't happen
+        console.warn("[switchUiMode] already in browser mode");
+        switchingMode = false;
+      } else {
+        console.warn("[switchUiMode] no branch matched — isTauri:", isTauri, "isBrowserMode:", isBrowserMode, "newMode:", newMode);
+        switchingMode = false;
       }
     } catch (e) {
-      console.error("Failed to switch mode:", e);
-      config.browser_mode = !newMode; // revert
+      console.error("[switchUiMode] FAILED:", e);
       switchingMode = false;
     }
   }
@@ -449,6 +635,10 @@
     }
     loadInstallPath();
     getGalleryPath().then(p => { galleryPathDisplay = p; }).catch(() => {});
+    if (isBrowserMode) {
+      loadLanAccounts();
+      loadLanInfo();
+    }
   });
 
   function snapshotRestartFields() {
@@ -544,6 +734,7 @@
       />
 
       <div class="ml-auto flex items-center gap-3 shrink-0">
+      {#if canManageServer}
       {#if restartNeeded}
         <div class="flex items-center gap-1.5 text-amber-200 text-xs mr-2">
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -578,6 +769,7 @@
           {locale.t('settings.restart_comfyui')}
         {/if}
       </button>
+      {/if}
       </div>
     </div>
   {/if}
@@ -590,7 +782,8 @@
           <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
         </div>
       {:else if config}
-        <!-- Browser / App Mode Switch -->
+        <!-- Browser / App Mode Switch (admin only) -->
+        {#if isAdmin}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <div class="p-5 space-y-3">
             <div class="flex items-center justify-between">
@@ -616,8 +809,8 @@
             {#if switchingMode}
               <p class="text-xs text-amber-400">
                 {config.browser_mode
-                  ? "Switching to app mode... You can close this tab."
-                  : "Switching to browser mode... The app will relaunch."}
+                  ? "Switched to app mode. The app window should now be visible — you can close this browser tab."
+                  : "Switching to browser mode..."}
               </p>
             {/if}
             {#if config.browser_mode}
@@ -639,16 +832,72 @@
                 </label>
               </div>
               {#if config.lan_enabled}
-                <p class="text-xs text-amber-400">
-                  Warning: Enabling LAN access exposes ComfyUI to your network. Set up authentication in the LAN settings below.
-                </p>
+                <div class="space-y-3 pt-2 border-t border-neutral-800">
+                  <p class="text-xs text-amber-400">
+                    Warning: Enabling LAN access exposes the UI to your local network. Add at least one account to require authentication.
+                  </p>
+
+                  <!-- LAN address -->
+                  {#if lanAddresses.length > 0}
+                    <div class="bg-neutral-800 rounded-lg px-3 py-2">
+                      <p class="text-xs text-neutral-400 mb-1">Access from other devices at:</p>
+                      {#each lanAddresses as addr}
+                        <p class="text-sm text-indigo-400 font-mono select-all">{addr}</p>
+                      {/each}
+                    </div>
+                  {/if}
+
+                  <!-- Existing accounts -->
+                  {#if lanAccounts.length > 0}
+                    <div class="space-y-1">
+                      <p class="text-xs text-neutral-400 font-medium">Accounts</p>
+                      {#each lanAccounts as account}
+                        <div class="flex items-center justify-between bg-neutral-800 rounded-lg px-3 py-2">
+                          <div class="flex items-center gap-2">
+                            <span class="text-sm text-neutral-200">{account.username}</span>
+                            {#if account.role === "moderator"}
+                              <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium">Mod</span>
+                            {/if}
+                          </div>
+                          <div class="flex items-center gap-2">
+                            <button
+                              class="text-xs cursor-pointer {account.role === 'moderator' ? 'text-indigo-400 hover:text-indigo-300' : 'text-neutral-400 hover:text-neutral-300'}"
+                              disabled={lanAuthBusy}
+                              onclick={() => toggleAccountRole(account.username, account.role)}
+                            >{account.role === "moderator" ? "Revoke Mod" : "Make Mod"}</button>
+                            <button
+                              class="text-xs text-amber-400 hover:text-amber-300 cursor-pointer"
+                              disabled={lanAuthBusy}
+                              onclick={() => { resetTargetUser = account.username; resetTempPass = ''; resetError = null; resetSuccess = false; showResetPasswordModal = true; }}
+                            >Reset Password</button>
+                            <button
+                              class="text-xs text-red-400 hover:text-red-300 cursor-pointer"
+                              disabled={lanAuthBusy}
+                              onclick={() => deleteLanAccount(account.username)}
+                            >Remove</button>
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                  {:else}
+                    <p class="text-xs text-neutral-500">No accounts yet — anyone on your network can access the UI without authentication.</p>
+                  {/if}
+
+                  <!-- Add account button -->
+                  <button
+                    class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {lanAuthBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}"
+                    disabled={lanAuthBusy}
+                    onclick={() => { lanNewUser = ''; lanNewPass = ''; lanAuthError = null; showAddAccountModal = true; }}
+                  >+ Add Account</button>
+                </div>
               {/if}
             {/if}
           </div>
         </section>
+        {/if}
 
-        <!-- Connection -->
-        {#if sectionVisible("connection")}
+        <!-- Connection (admin / moderator) -->
+        {#if canManageServer && sectionVisible("connection")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
@@ -837,8 +1086,8 @@
         </section>
         {/if}
 
-        <!-- Performance -->
-        {#if sectionVisible("performance")}
+        <!-- Performance (admin / moderator) -->
+        {#if canManageServer && sectionVisible("performance")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
@@ -1028,8 +1277,8 @@
         </section>
         {/if}
 
-        <!-- Paths -->
-        {#if sectionVisible("paths")}
+        <!-- Paths (admin only) -->
+        {#if isAdmin && sectionVisible("paths")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
@@ -1589,8 +1838,8 @@
         </section>
         {/if}
 
-        <!-- CivitAI -->
-        {#if sectionVisible("civitai")}
+        <!-- CivitAI (admin / moderator) -->
+        {#if canManageServer && sectionVisible("civitai")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
@@ -1625,6 +1874,50 @@
             </div>
           </div>
           {/if}
+        </section>
+        {/if}
+
+        <!-- Account / Change Password (browser mode non-admin users) -->
+        {#if isBrowserMode && !isAdmin}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <div class="p-5 space-y-3">
+            <h3 class="text-sm font-medium text-neutral-200">Account</h3>
+            <p class="text-xs text-neutral-500">Change your password.</p>
+            <div class="space-y-2">
+              <input
+                type="password"
+                bind:value={cpCurrentPass}
+                placeholder="Current password"
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              />
+              <input
+                type="password"
+                bind:value={cpNewPass1}
+                placeholder="New password (4+ characters)"
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              />
+              <input
+                type="password"
+                bind:value={cpNewPass2}
+                placeholder="Confirm new password"
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                onkeydown={(e) => { if (e.key === "Enter") changeOwnPassword(); }}
+              />
+              {#if cpError}
+                <p class="text-xs text-red-400">{cpError}</p>
+              {/if}
+              {#if cpSuccess}
+                <p class="text-xs text-green-400">Password changed successfully.</p>
+              {/if}
+              <button
+                class="w-full py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {cpBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}"
+                disabled={cpBusy}
+                onclick={changeOwnPassword}
+              >
+                {cpBusy ? "Saving..." : "Change Password"}
+              </button>
+            </div>
+          </div>
         </section>
         {/if}
 
@@ -1848,6 +2141,102 @@
       >
         {locale.t('settings.quality_warning.disable')}
       </button>
+    </div>
+  </div>
+</div>
+{/if}
+
+<!-- Add Account Modal -->
+{#if showAddAccountModal}
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+  onclick={(e) => { if (e.target === e.currentTarget) showAddAccountModal = false; }}
+  onkeydown={(e) => { if (e.key === 'Escape') showAddAccountModal = false; }}
+  role="dialog"
+  aria-modal="true"
+  tabindex="-1"
+>
+  <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+    <h3 class="text-sm font-medium text-neutral-100">Add LAN Account</h3>
+    <div class="space-y-3">
+      <div>
+        <label class="block text-xs text-neutral-400 mb-1">Username</label>
+        <input
+          type="text"
+          bind:value={lanNewUser}
+          placeholder="Enter username"
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+        />
+      </div>
+      <div>
+        <label class="block text-xs text-neutral-400 mb-1">Password</label>
+        <input
+          type="password"
+          bind:value={lanNewPass}
+          placeholder="At least 4 characters"
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+        />
+      </div>
+      {#if lanAuthError}
+        <p class="text-xs text-red-400">{lanAuthError}</p>
+      {/if}
+    </div>
+    <div class="flex justify-end gap-2 pt-2">
+      <button
+        class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
+        onclick={() => { showAddAccountModal = false; }}
+      >Cancel</button>
+      <button
+        class="px-4 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {lanAuthBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}"
+        disabled={lanAuthBusy}
+        onclick={async () => { await createLanAccount(); if (!lanAuthError) showAddAccountModal = false; }}
+      >Create Account</button>
+    </div>
+  </div>
+</div>
+{/if}
+
+<!-- Reset Password Modal (admin) -->
+{#if showResetPasswordModal}
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+  onclick={(e) => { if (e.target === e.currentTarget) showResetPasswordModal = false; }}
+  onkeydown={(e) => { if (e.key === 'Escape') showResetPasswordModal = false; }}
+  role="dialog"
+  aria-modal="true"
+  tabindex="-1"
+>
+  <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+    <h3 class="text-sm font-medium text-neutral-100">Reset Password</h3>
+    <p class="text-xs text-neutral-400">Set a temporary password for <span class="text-neutral-200 font-medium">{resetTargetUser}</span>. They will be asked to choose a new password on their next login.</p>
+    <div>
+      <label class="block text-xs text-neutral-400 mb-1">Temporary Password</label>
+      <input
+        type="password"
+        bind:value={resetTempPass}
+        placeholder="At least 4 characters"
+        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+        onkeydown={(e) => { if (e.key === 'Enter') adminResetPassword(); }}
+      />
+    </div>
+    {#if resetError}
+      <p class="text-xs text-red-400">{resetError}</p>
+    {/if}
+    {#if resetSuccess}
+      <p class="text-xs text-green-400">Password reset. The user will be prompted to set a new password on their next login.</p>
+    {/if}
+    <div class="flex justify-end gap-2 pt-2">
+      <button
+        class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
+        onclick={() => { showResetPasswordModal = false; }}
+      >Close</button>
+      {#if !resetSuccess}
+      <button
+        class="px-4 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {resetBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-amber-600 hover:bg-amber-500 text-white'}"
+        disabled={resetBusy}
+        onclick={adminResetPassword}
+      >Reset Password</button>
+      {/if}
     </div>
   </div>
 </div>
