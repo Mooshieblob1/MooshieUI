@@ -6,6 +6,12 @@ use crate::comfyui::websocket;
 use crate::error::AppError;
 use crate::state::AppState;
 
+/// Helper to emit to both Tauri and SSE broadcast.
+fn emit_both(app: &AppHandle, state: &AppState, event: &str, payload: serde_json::Value) {
+    let _ = app.emit(event, payload.clone());
+    state.broadcast(event, payload);
+}
+
 /// Start ComfyUI and return immediately with the result.
 /// If the process was spawned or already running, kicks off a background task
 /// that waits for the server to be ready, connects the WebSocket, and emits
@@ -16,6 +22,7 @@ pub async fn start_comfyui(
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
     let result = process::start_comfyui_process(&state).await?;
+    let event_tx = state.event_tx.clone();
 
     match result {
         StartResult::AlreadyRunning => {
@@ -23,10 +30,10 @@ pub async fn start_comfyui(
             let app = app_handle.clone();
             tokio::spawn(async move {
                 let state = app.state::<AppState>();
-                if let Err(e) = websocket::connect_websocket(app.clone(), &state).await {
+                if let Err(e) = websocket::connect_websocket(app.clone(), &state, event_tx.clone()).await {
                     log::error!("Failed to connect WebSocket: {}", e);
                 }
-                let _ = app.emit("comfyui:server_ready", ());
+                emit_both(&app, &state, "comfyui:server_ready", serde_json::json!(null));
             });
             Ok("already_running".to_string())
         }
@@ -38,15 +45,17 @@ pub async fn start_comfyui(
                 match process::wait_for_ready(&state, 120).await {
                     Ok(()) => {
                         log::info!("ComfyUI server is ready");
-                        if let Err(e) = websocket::connect_websocket(app.clone(), &state).await {
+                        if let Err(e) = websocket::connect_websocket(app.clone(), &state, event_tx.clone()).await {
                             log::error!("Failed to connect WebSocket: {}", e);
                         }
-                        let _ = app.emit("comfyui:server_ready", ());
+                        emit_both(&app, &state, "comfyui:server_ready", serde_json::json!(null));
                     }
                     Err(e) => {
                         let err_str = e.to_string();
                         log::error!("ComfyUI failed to become ready: {}", err_str);
-                        let _ = app.emit(
+                        emit_both(
+                            &app,
+                            &state,
                             "comfyui:server_error",
                             serde_json::json!({
                                 "error": err_str,
@@ -63,10 +72,10 @@ pub async fn start_comfyui(
             let app = app_handle.clone();
             tokio::spawn(async move {
                 let state = app.state::<AppState>();
-                if let Err(e) = websocket::connect_websocket(app.clone(), &state).await {
+                if let Err(e) = websocket::connect_websocket(app.clone(), &state, event_tx.clone()).await {
                     log::error!("Failed to connect WebSocket: {}", e);
                 }
-                let _ = app.emit("comfyui:server_ready", ());
+                emit_both(&app, &state, "comfyui:server_ready", serde_json::json!(null));
             });
             Ok("skipped".to_string())
         }

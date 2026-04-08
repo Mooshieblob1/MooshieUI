@@ -1,4 +1,4 @@
-import { listen } from "@tauri-apps/api/event";
+import { ipcListen } from "../utils/ipc.js";
 
 export interface DownloadEntry {
   filename: string;
@@ -23,7 +23,7 @@ class DownloadsStore {
 
   /** Start listening for download:progress events from the backend */
   async init() {
-    await listen("download:progress", (event: any) => {
+    await ipcListen("download:progress", (event: any) => {
       const data = event.payload as {
         filename: string;
         downloaded: number;

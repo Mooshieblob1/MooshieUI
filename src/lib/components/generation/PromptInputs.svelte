@@ -5,9 +5,7 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import InterrogateModal from "./InterrogateModal.svelte";
   import { interrogateImage, interrogateImagePath, interrogateClipboard } from "../../utils/api.js";
-  import { open } from "@tauri-apps/plugin-dialog";
-  import { listen } from "@tauri-apps/api/event";
-  import { readFile } from "@tauri-apps/plugin-fs";
+  import { ipcListen, isTauri } from "../../utils/ipc.js";
   import type { InterrogationResult } from "../../types/index.js";
 
   interface Props {
@@ -38,9 +36,9 @@
     }
     interrogateError = null;
 
-    const unlistenDownload = await listen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+    const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
-      (event) => {
+      (event: any) => {
         if (event.payload.done) {
           interrogateDownloadProgress = null;
         } else {
@@ -49,7 +47,7 @@
       }
     );
 
-    const unlistenStage = await listen<string>("interrogator:stage", (event) => {
+    const unlistenStage = await ipcListen("interrogator:stage", (event: any) => {
       interrogateStage = event.payload;
     });
 
@@ -75,17 +73,22 @@
     interrogateDownloadProgress = null;
     interrogateError = null;
     // Read file via Tauri fs plugin and create a blob URL for preview
-    try {
-      const bytes = await readFile(path);
-      const blob = new Blob([bytes]);
-      interrogateImageUrl = URL.createObjectURL(blob);
-    } catch {
+    if (isTauri) {
+      try {
+        const { readFile } = await import("@tauri-apps/plugin-fs");
+        const bytes = await readFile(path);
+        const blob = new Blob([bytes]);
+        interrogateImageUrl = URL.createObjectURL(blob);
+      } catch {
+        interrogateImageUrl = null;
+      }
+    } else {
       interrogateImageUrl = null;
     }
 
-    const unlistenDownload = await listen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+    const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
-      (event) => {
+      (event: any) => {
         if (event.payload.done) {
           interrogateDownloadProgress = null;
         } else {
@@ -94,7 +97,7 @@
       }
     );
 
-    const unlistenStage = await listen<string>("interrogator:stage", (event) => {
+    const unlistenStage = await ipcListen("interrogator:stage", (event: any) => {
       interrogateStage = event.payload;
     });
 
@@ -121,9 +124,9 @@
     interrogateImageUrl = null;
     interrogateError = null;
 
-    const unlistenDownload = await listen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+    const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
-      (event) => {
+      (event: any) => {
         if (event.payload.done) {
           interrogateDownloadProgress = null;
         } else {
@@ -132,7 +135,7 @@
       }
     );
 
-    const unlistenStage = await listen<string>("interrogator:stage", (event) => {
+    const unlistenStage = await ipcListen("interrogator:stage", (event: any) => {
       interrogateStage = event.payload;
     });
 
@@ -151,6 +154,8 @@
   }
 
   async function handleInterrogateFromFile() {
+    if (!isTauri) return;
+    const { open } = await import("@tauri-apps/plugin-dialog");
     const selected = await open({
       multiple: false,
       filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }],

@@ -1,4 +1,4 @@
-import { load } from "@tauri-apps/plugin-store";
+import { ipcStore } from "../utils/ipc.js";
 import type { LoraEntry } from "../types/index.js";
 import { autocomplete } from "./autocomplete.svelte.js";
 
@@ -295,7 +295,7 @@ class GenerationStore {
     return "unknown";
   }
 
-  private _store: Awaited<ReturnType<typeof load>> | null = null;
+  private _storeReady = false;
 
   constructor() {
     this.loadPromptHistory();
@@ -581,8 +581,8 @@ class GenerationStore {
 
   async loadSettings() {
     try {
-      this._store = await load("settings.json", { autoSave: true });
-      const saved = await this._store.get<Record<string, any>>(STORE_KEY);
+      this._storeReady = true;
+      const saved = await ipcStore.get<Record<string, any>>(STORE_KEY);
       if (saved) {
         if (saved.checkpoint) this.checkpoint = saved.checkpoint;
         if (saved.vae !== undefined) this.vae = saved.vae;
@@ -666,9 +666,9 @@ class GenerationStore {
   }
 
   async saveSettings() {
-    if (!this._store) return;
+    if (!this._storeReady) return;
     try {
-      await this._store.set(STORE_KEY, {
+      await ipcStore.set(STORE_KEY, {
         mode: this.mode,
         positivePrompt: this.positivePrompt,
         negativePrompt: this.negativePrompt,

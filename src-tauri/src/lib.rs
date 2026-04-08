@@ -7,6 +7,7 @@ pub mod metadata;
 pub mod setup;
 pub mod state;
 pub mod templates;
+pub mod webserver;
 
 use config::load_persisted_config;
 use state::AppState;
@@ -91,6 +92,10 @@ pub fn run() {
     }
 
     let config = load_persisted_config();
+    let browser_mode = config.browser_mode;
+    let ui_server_port = config.ui_server_port;
+    let lan_enabled = config.lan_enabled;
+
     let app_state = AppState::new(config);
 
     let app = tauri::Builder::default()
@@ -102,23 +107,70 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
-        .setup(|_app| {
-            #[cfg(target_os = "linux")]
-            {
+        .setup(move |_app| {
+            // In browser mode: hide the window, start web server, open browser
+            if browser_mode {
                 use tauri::Manager;
                 if let Some(main_window) = _app.get_webview_window("main") {
-                    let _ = main_window.with_webview(|webview| {
-                        use webkit2gtk::WebViewExt;
-                        if let Some(settings) = webview.inner().settings() {
-                            use webkit2gtk::SettingsExt;
-                            settings.set_enable_smooth_scrolling(true);
-                            settings.set_enable_page_cache(true);
-                            settings.set_hardware_acceleration_policy(
-                                webkit2gtk::HardwareAccelerationPolicy::Always,
-                            );
-                            settings.set_enable_developer_extras(true);
-                        }
-                    });
+                    let _ = main_window.hide();
+                }
+
+                // Create a second AppState for the web server.
+                // The web server gets its own AppState that shares the same config
+                // and broadcast channel semantics but has independent locks.
+                // This is acceptable for MVP — both read from the same config file,
+                // and the broadcast channel in the Tauri-managed state is the one
+                // that feeds events. The web server state is used for API proxying.
+                let web_config = config::load_persisted_config();
+                let web_state = std::sync::Arc::new(AppState::new(web_config));
+
+                // Share the event broadcast channel from the Tauri-managed state
+                // so SSE clients get the same events.
+                let tauri_state = _app.state::<AppState>();
+                let event_rx_source = tauri_state.event_tx.clone();
+
+                // Forward events from Tauri state's broadcast to web state's broadcast
+                let web_tx = web_state.event_tx.clone();
+                let rt = tokio::runtime::Handle::current();
+                rt.spawn(async move {
+                    let mut rx = event_rx_source.subscribe();
+                    while let Ok(evt) = rx.recv().await {
+                        let _ = web_tx.send(evt);
+                    }
+                });
+
+                let state_for_server = web_state.clone();
+                let state_for_watchdog = web_state.clone();
+                rt.spawn(async move {
+                    webserver::start_server(state_for_server, ui_server_port, lan_enabled).await;
+                });
+                rt.spawn(async move {
+                    webserver::start_heartbeat_watchdog(state_for_watchdog, 10);
+                });
+
+                // Open the default browser
+                let url = format!("http://127.0.0.1:{}", ui_server_port);
+                log::info!("Opening browser at {}", url);
+                let _ = open::that(&url);
+            } else {
+                // Normal app mode — configure WebView
+                #[cfg(target_os = "linux")]
+                {
+                    use tauri::Manager;
+                    if let Some(main_window) = _app.get_webview_window("main") {
+                        let _ = main_window.with_webview(|webview| {
+                            use webkit2gtk::WebViewExt;
+                            if let Some(settings) = webview.inner().settings() {
+                                use webkit2gtk::SettingsExt;
+                                settings.set_enable_smooth_scrolling(true);
+                                settings.set_enable_page_cache(true);
+                                settings.set_hardware_acceleration_policy(
+                                    webkit2gtk::HardwareAccelerationPolicy::Always,
+                                );
+                                settings.set_enable_developer_extras(true);
+                            }
+                        });
+                    }
                 }
             }
             Ok(())

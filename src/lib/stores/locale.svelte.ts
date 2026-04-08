@@ -1,4 +1,4 @@
-import { load } from "@tauri-apps/plugin-store";
+import { ipcStore } from "../utils/ipc.js";
 import en from "../locales/en.js";
 import es from "../locales/es.js";
 import ja from "../locales/ja.js";
@@ -49,8 +49,7 @@ class LocaleStore {
 
   async loadSettings(): Promise<void> {
     try {
-      const store = await load("settings.json", { autoSave: true });
-      const data = await store.get<{ locale?: Locale }>(STORE_KEY);
+      const data = await ipcStore.get<{ locale?: Locale }>(STORE_KEY);
       if (data?.locale && translations[data.locale]) {
         this.current = data.locale;
       }
@@ -60,8 +59,7 @@ class LocaleStore {
   }
 
   async saveSettings(): Promise<void> {
-    const store = await load("settings.json", { autoSave: true });
-    await store.set(STORE_KEY, { locale: this.current });
+    await ipcStore.set(STORE_KEY, { locale: this.current });
   }
 }
 

@@ -7,7 +7,7 @@ use tokio_tungstenite::connect_async;
 use crate::error::AppError;
 use crate::state::AppState;
 
-pub async fn connect_websocket(app_handle: AppHandle, state: &AppState) -> Result<(), AppError> {
+pub async fn connect_websocket(app_handle: AppHandle, state: &AppState, event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>) -> Result<(), AppError> {
     // Disconnect existing
     let mut handle = state.ws_handle.lock().await;
     if let Some(h) = handle.take() {
@@ -22,13 +22,22 @@ pub async fn connect_websocket(app_handle: AppHandle, state: &AppState) -> Resul
     let ws_url = format!("{}/ws?clientId={}", ws_url, client_id);
 
     let app = app_handle.clone();
+    let tx = event_tx.clone();
     let task = tokio::spawn(async move {
+        // Helper to emit to both Tauri and SSE broadcast
+        let emit = |event: &str, payload: serde_json::Value| {
+            let _ = app.emit(event, payload.clone());
+            let _ = tx.send(crate::state::BroadcastEvent {
+                event: event.to_string(),
+                payload,
+            });
+        };
         let result = connect_async(&ws_url).await;
         let (ws_stream, _) = match result {
             Ok(s) => s,
             Err(e) => {
                 log::error!("WebSocket connection failed: {}", e);
-                let _ = app.emit(
+                emit(
                     "comfyui:connection",
                     serde_json::json!({"connected": false}),
                 );
@@ -36,7 +45,7 @@ pub async fn connect_websocket(app_handle: AppHandle, state: &AppState) -> Resul
             }
         };
 
-        let _ = app.emit("comfyui:connection", serde_json::json!({"connected": true}));
+        emit("comfyui:connection", serde_json::json!({"connected": true}));
 
         let (_, mut read) = ws_stream.split();
         let mut current_prompt_id: Option<String> = None;
@@ -67,7 +76,7 @@ pub async fn connect_websocket(app_handle: AppHandle, state: &AppState) -> Resul
                         }
 
                         let event_name = format!("comfyui:{}", event_type);
-                        let _ = app.emit(&event_name, data.clone());
+                        emit(&event_name, data.clone());
                     }
                 }
                 Ok(tokio_tungstenite::tungstenite::Message::Binary(data)) => {
@@ -89,7 +98,7 @@ pub async fn connect_websocket(app_handle: AppHandle, state: &AppState) -> Resul
                             let format = if format_type == 2 { "png" } else { "jpeg" };
                             let image_data = &data[8..];
                             let b64 = base64::engine::general_purpose::STANDARD.encode(image_data);
-                            let _ = app.emit(
+                            emit(
                                 "comfyui:preview",
                                 serde_json::json!({ "image": b64, "format": format }),
                             );
@@ -106,7 +115,7 @@ pub async fn connect_websocket(app_handle: AppHandle, state: &AppState) -> Resul
                                 let image_data = &data[image_start..];
                                 let b64 =
                                     base64::engine::general_purpose::STANDARD.encode(image_data);
-                                let _ = app.emit(
+                                emit(
                                     "comfyui:preview",
                                     serde_json::json!({ "image": b64, "format": "jpeg" }),
                                 );
@@ -145,13 +154,13 @@ pub async fn connect_websocket(app_handle: AppHandle, state: &AppState) -> Resul
                                 );
                             }
 
-                            let _ = app.emit("comfyui:output_image", payload);
+                            emit("comfyui:output_image", payload);
                         }
                         _ => {}
                     }
                 }
                 Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
-                    let _ = app.emit(
+                    emit(
                         "comfyui:connection",
                         serde_json::json!({"connected": false}),
                     );
@@ -159,7 +168,7 @@ pub async fn connect_websocket(app_handle: AppHandle, state: &AppState) -> Resul
                 }
                 Err(e) => {
                     log::error!("WebSocket error: {}", e);
-                    let _ = app.emit(
+                    emit(
                         "comfyui:connection",
                         serde_json::json!({"connected": false}),
                     );

@@ -10,13 +10,17 @@
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import OpenModelFolders from "./OpenModelFolders.svelte";
-  import { check } from "@tauri-apps/plugin-updater";
-  import { relaunch } from "@tauri-apps/plugin-process";
-  import { invoke } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
-  import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
+  import { ipcInvoke, ipcListen, isTauri } from "../../utils/ipc.js";
   import { onMount } from "svelte";
   import { marked } from "marked";
+
+  /** Open a directory picker. Returns path string or null. */
+  async function openDirectoryDialog(title: string): Promise<string | null> {
+    if (!isTauri) return null;
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({ directory: true, multiple: false, title });
+    return typeof selected === "string" ? selected : null;
+  }
 
   // Configure marked for safe rendering (no raw HTML passthrough)
   marked.setOptions({ breaks: true, gfm: true });
@@ -48,17 +52,49 @@
   let logExportDone = $state(false);
   let logExportError = $state<string | null>(null);
 
+  // Mode switching state
+  let switchingMode = $state(false);
+
+  async function switchUiMode() {
+    if (!config) return;
+    switchingMode = true;
+    const newMode = !config.browser_mode;
+    config.browser_mode = newMode;
+    try {
+      await updateConfig(config);
+      // Give the user a moment to see the message
+      await new Promise((r) => setTimeout(r, 1500));
+      if (isTauri) {
+        // Switching from app mode to browser mode — relaunch the app
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        await relaunch();
+      } else {
+        // Switching from browser mode to app mode — tell user to close tab
+        // The backend will pick up the new config on next launch
+        switchingMode = true; // keep the message visible
+      }
+    } catch (e) {
+      console.error("Failed to switch mode:", e);
+      config.browser_mode = !newMode; // revert
+      switchingMode = false;
+    }
+  }
+
   // Gallery path state
   let galleryPathDisplay = $state("");
   let galleryPathSaving = $state(false);
   let galleryPathMessage = $state<string | null>(null);
 
   async function handleExportLogs() {
-    const destination = await saveDialog({
-      title: locale.t('settings.about.save_dialog_title'),
-      defaultPath: "mooshieui-diagnostics.log",
-      filters: [{ name: "Log Files", extensions: ["log", "txt"] }],
-    });
+    let destination: string | null = null;
+    if (isTauri) {
+      const { save: saveDialog } = await import("@tauri-apps/plugin-dialog");
+      destination = await saveDialog({
+        title: locale.t('settings.about.save_dialog_title'),
+        defaultPath: "mooshieui-diagnostics.log",
+        filters: [{ name: "Log Files", extensions: ["log", "txt"] }],
+      });
+    }
     if (!destination) return;
     exportingLogs = true;
     logExportDone = false;
@@ -75,7 +111,7 @@
   }
 
   async function handleImportDirectory() {
-    const selected = await open({ directory: true, multiple: false, title: locale.t('settings.gallery.import_dialog_title') });
+    const selected = await openDirectoryDialog(locale.t('settings.gallery.import_dialog_title'));
     if (!selected) return;
     importBusy = true;
     importResult = null;
@@ -93,7 +129,7 @@
   }
 
   async function handleBrowseGalleryPath() {
-    const selected = await open({ directory: true, multiple: false, title: locale.t('settings.gallery.storage_browse_title') });
+    const selected = await openDirectoryDialog(locale.t('settings.gallery.storage_browse_title'));
     if (!selected) return;
     galleryPathSaving = true;
     galleryPathMessage = null;
@@ -169,7 +205,7 @@
   async function scanForModelDirs() {
     scanningModelDirs = true;
     try {
-      const dirs = await invoke<DetectedModelDir[]>("detect_model_directories");
+      const dirs = await ipcInvoke<DetectedModelDir[]>("detect_model_directories");
       // Filter out directories already in config
       const existing = new Set(
         (config?.extra_model_paths ?? "").split("\n").map((p: string) => p.trim()).filter(Boolean)
@@ -192,31 +228,23 @@
 
   async function loadInstallPath() {
     try {
-      currentInstallPath = await invoke<string>("get_install_path");
+      currentInstallPath = await ipcInvoke<string>("get_install_path");
     } catch {
       currentInstallPath = "";
     }
   }
 
   async function browseMoveTarget() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: locale.t('settings.paths.move_dialog_title'),
-    });
-    if (selected && typeof selected === "string") {
+    const selected = await openDirectoryDialog(locale.t('settings.paths.move_dialog_title'));
+    if (selected) {
       moveTargetPath = selected;
     }
   }
 
   async function browseModelDir(i: number) {
     if (!config) return;
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: locale.t('settings.paths.model_dir_dialog_title'),
-    });
-    if (selected && typeof selected === "string") {
+    const selected = await openDirectoryDialog(locale.t('settings.paths.model_dir_dialog_title'));
+    if (selected) {
       const paths = (config.extra_model_paths ?? "").split("\n");
       paths[i] = selected;
       config.extra_model_paths = paths.join("\n") || null;
@@ -225,12 +253,8 @@
   }
 
   async function browseSaveDir(i: number) {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: locale.t('settings.gallery.browse_save_dir_title'),
-    });
-    if (selected && typeof selected === "string") {
+    const selected = await openDirectoryDialog(locale.t('settings.gallery.browse_save_dir_title'));
+    if (selected) {
       const dirs = [...generation.autoSaveDirs];
       dirs[i] = selected;
       generation.autoSaveDirs = dirs;
@@ -245,13 +269,13 @@
     moveSuccess = false;
     moveProgress = "Starting move...";
 
-    const unlisten = await listen("setup:progress", (event: any) => {
+    const unlisten = await ipcListen("setup:progress", (event: any) => {
       const data = event.payload as { message: string };
       moveProgress = data.message;
     });
 
     try {
-      await invoke("move_installation", { newPath: moveTargetPath.trim() });
+      await ipcInvoke("move_installation", { newPath: moveTargetPath.trim() });
       moveSuccess = true;
       moveProgress = "";
       currentInstallPath = moveTargetPath.trim();
@@ -295,6 +319,8 @@
     updateState = "checking";
     updateError = "";
     try {
+      if (!isTauri) { updateState = "up-to-date"; return; }
+      const { check } = await import("@tauri-apps/plugin-updater");
       const update = await check();
       if (update) {
         updateObj = update;
@@ -564,6 +590,39 @@
           <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
         </div>
       {:else if config}
+        <!-- Browser / App Mode Switch -->
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <div class="p-5 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-sm font-medium text-neutral-200">
+                  {config.browser_mode ? "Web Browser Mode" : "App Mode"}
+                </h3>
+                <p class="text-xs text-neutral-500 mt-0.5">
+                  {config.browser_mode
+                    ? "UI runs in your web browser. Switch to use the native app window."
+                    : "UI runs in the native app window. Switch to use your web browser."}
+                </p>
+              </div>
+              <button
+                class="px-4 py-2 text-sm font-medium rounded-lg transition-colors {config.browser_mode
+                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                  : 'bg-neutral-700 hover:bg-neutral-600 text-neutral-200'}"
+                onclick={switchUiMode}
+              >
+                {config.browser_mode ? "Switch to App Mode" : "Switch to Web Browser Mode"}
+              </button>
+            </div>
+            {#if switchingMode}
+              <p class="text-xs text-amber-400">
+                {config.browser_mode
+                  ? "Switching to app mode... You can close this tab."
+                  : "Switching to browser mode... The app will relaunch."}
+              </p>
+            {/if}
+          </div>
+        </section>
+
         <!-- Connection -->
         {#if sectionVisible("connection")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
@@ -1650,7 +1709,7 @@
                 <div class="px-3 py-2 bg-emerald-900/30 border border-emerald-800/50 rounded-lg">
                   <p class="text-sm text-emerald-200 mb-2">{locale.t('settings.about.update_ready').replace('{version}', updateVersion)}</p>
                   <button
-                    onclick={async () => { try { await stopComfyui(); } catch {} await relaunch(); }}
+                    onclick={async () => { try { await stopComfyui(); } catch {} if (isTauri) { const { relaunch } = await import("@tauri-apps/plugin-process"); await relaunch(); } else { window.location.reload(); } }}
                     class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
                   >
                     {locale.t('updater.restart_now')}

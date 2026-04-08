@@ -1,8 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { ipcInvoke, ipcListen, isTauri, startHeartbeat } from "./lib/utils/ipc.js";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
@@ -1029,20 +1027,25 @@
   }
 
   onMount(async () => {
-    // Restore window maximize state
-    try {
-      const raw = localStorage.getItem(WIN_STATE_KEY);
-      if (raw) {
-        const { maximized } = JSON.parse(raw) as { maximized?: boolean };
-        if (maximized) await getCurrentWindow().maximize();
-      }
-    } catch {}
+    // Start heartbeat in browser mode to keep backend alive
+    startHeartbeat();
 
-    // Persist maximize/restore changes
-    await getCurrentWindow().onResized(async () => {
-      const maximized = await getCurrentWindow().isMaximized();
-      saveWindowMaximized(maximized);
-    });
+    // Restore window maximize state (Tauri only)
+    if (isTauri) {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const raw = localStorage.getItem(WIN_STATE_KEY);
+        if (raw) {
+          const { maximized } = JSON.parse(raw) as { maximized?: boolean };
+          if (maximized) await getCurrentWindow().maximize();
+        }
+        // Persist maximize/restore changes
+        await getCurrentWindow().onResized(async () => {
+          const maximized = await getCurrentWindow().isMaximized();
+          saveWindowMaximized(maximized);
+        });
+      } catch {}
+    }
 
     // Apply dyslexic font if enabled
     if (localStorage.getItem("mooshieui.dyslexicFont") === "true") {
@@ -1054,7 +1057,7 @@
 
     // Check if first-run setup is needed
     try {
-      setupComplete = await invoke<boolean>("check_setup");
+      setupComplete = await ipcInvoke<boolean>("check_setup");
     } catch {
       setupComplete = false;
     }
@@ -1088,7 +1091,7 @@
 
     // Set up event listeners BEFORE starting so we don't miss events
     await Promise.all([
-      listen("comfyui:connection", (event: any) => {
+      ipcListen("comfyui:connection", (event: any) => {
         console.log("Connection event:", event.payload);
         connection.connected = event.payload.connected;
         if (event.payload.connected) {
@@ -1098,7 +1101,7 @@
           });
         }
       }),
-      listen("comfyui:server_ready", async () => {
+      ipcListen("comfyui:server_ready", async () => {
         console.log("Server ready event received");
         startupStatus = "";
         // Load models now that server is up
@@ -1113,11 +1116,11 @@
           console.error("Model refresh failed after server ready:", e);
         }
       }),
-      listen("comfyui:server_error", (event: any) => {
+      ipcListen("comfyui:server_error", (event: any) => {
         console.error("Server error:", event.payload);
         startupStatus = `Failed to start: ${event.payload?.error || "unknown error"}`;
       }),
-      listen("comfyui:progress", (event: any) => {
+      ipcListen("comfyui:progress", (event: any) => {
         const data = event.payload;
         if (!progress.isGenerating) return;
         lastProgressEventAt = Date.now();
@@ -1129,12 +1132,12 @@
         const node = data.node ?? progress.currentNode;
         progress.updateProgress(data.value, data.max, node);
       }),
-      listen("comfyui:preview", (event: any) => {
+      ipcListen("comfyui:preview", (event: any) => {
         const data = event.payload;
         if (!progress.isGenerating) return;
         progress.previewImage = `data:image/${data.format};base64,${data.image}`;
       }),
-      listen("comfyui:output_image", (event: any) => {
+      ipcListen("comfyui:output_image", (event: any) => {
         // MooshieSaveImage sends final PNG bytes over WS — collect per prompt
         const data = event.payload;
         if (!progress.isGenerating) return;
@@ -1169,7 +1172,7 @@
         arr.push({ blob, url });
         pendingOutputImages.set(pid, arr);
       }),
-      listen("comfyui:executing", (event: any) => {
+      ipcListen("comfyui:executing", (event: any) => {
         const data = event.payload;
         console.log("Executing event:", data);
         // Ignore prompts not in our queue
@@ -1201,7 +1204,7 @@
           progress.currentNode = data.node;
         }
       }),
-      listen("comfyui:execution_error", (event: any) => {
+      ipcListen("comfyui:execution_error", (event: any) => {
         console.error("Execution error:", event.payload);
         const data = event.payload;
         if (data.prompt_id) {
@@ -1215,7 +1218,7 @@
           compare.clearGridBatch();
         }
       }),
-      listen("comfyui:execution_success", (_event: any) => {
+      ipcListen("comfyui:execution_success", (_event: any) => {
         // Success handled via executing node=null
       }),
     ]);
@@ -1225,7 +1228,7 @@
     if (autoStartEnabled) {
       try {
         console.log("Starting ComfyUI...");
-        const result = await invoke<string>("start_comfyui");
+        const result = await ipcInvoke<string>("start_comfyui");
         console.log("start_comfyui returned:", result);
         if (result === "spawned") {
           startupStatus = "Starting ComfyUI...";
@@ -1464,7 +1467,7 @@
             onclick={async () => {
               try {
                 startupStatus = "Starting ComfyUI...";
-                const result = await invoke<string>("start_comfyui");
+                const result = await ipcInvoke<string>("start_comfyui");
                 if (result === "spawned") startupStatus = "Starting ComfyUI...";
                 else if (result === "already_running") startupStatus = "Connecting...";
               } catch (e) {

@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { ipcInvoke, ipcListen, isTauri } from "../../utils/ipc.js";
   import { onMount } from "svelte";
   import logo from "../../assets/logo.png";
   import { locale } from "../../stores/locale.svelte.js";
@@ -89,8 +87,8 @@
   onMount(async () => {
     // Detect GPU and get default install path in parallel
     const [detectedGpuResult, installPathResult] = await Promise.allSettled([
-      invoke<string>("detect_gpu"),
-      invoke<string>("get_install_path"),
+      ipcInvoke<string>("detect_gpu"),
+      ipcInvoke<string>("get_install_path"),
     ]);
 
     if (detectedGpuResult.status === "fulfilled") {
@@ -103,7 +101,7 @@
 
     // Scan for existing model directories in background
     scanningModels = true;
-    invoke<DetectedModelDir[]>("detect_model_directories")
+    ipcInvoke<DetectedModelDir[]>("detect_model_directories")
       .then((dirs) => {
         detectedModelDirs = dirs;
       })
@@ -117,7 +115,7 @@
     phase = "ready";
 
     // Listen for progress events
-    await listen("setup:progress", (event: any) => {
+    await ipcListen("setup:progress", (event: any) => {
       const data = event.payload as {
         step: string;
         message: string;
@@ -138,7 +136,7 @@
     });
 
     // Listen for terminal log lines
-    await listen("setup:log", (event: any) => {
+    await ipcListen("setup:log", (event: any) => {
       const line = event.payload as string;
       logLines = [...logLines, line];
       // Auto-scroll
@@ -150,7 +148,7 @@
     });
 
     // Listen for download progress
-    await listen("download:progress", (event: any) => {
+    await ipcListen("download:progress", (event: any) => {
       const data = event.payload as {
         filename: string;
         downloaded: number;
@@ -177,6 +175,8 @@
   ];
 
   async function browseInstallPath() {
+    if (!isTauri) return;
+    const { open } = await import("@tauri-apps/plugin-dialog");
     const selected = await open({
       directory: true,
       multiple: false,
@@ -206,7 +206,7 @@
     completedSteps = new Set();
     currentStep = "";
     try {
-      await invoke("run_setup", {
+      await ipcInvoke("run_setup", {
         gpuType: gpu,
         installPath: installPath || null,
       });
@@ -215,8 +215,8 @@
       if (selectedModelDirs.size > 0) {
         try {
           const modelPaths = [...selectedModelDirs].join("\n");
-          const config = await invoke<any>("get_config");
-          await invoke("update_config", {
+          const config = await ipcInvoke<any>("get_config");
+          await ipcInvoke("update_config", {
             config: { ...config, extra_model_paths: modelPaths },
           });
         } catch (e) {

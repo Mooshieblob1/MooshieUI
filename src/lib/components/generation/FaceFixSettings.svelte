@@ -3,7 +3,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { downloadModel, installPipPackage } from "../../utils/api.js";
-  import { listen } from "@tauri-apps/api/event";
+  import { ipcListen } from "../../utils/ipc.js";
   import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
@@ -46,7 +46,7 @@
   const dlPercent = $derived(dlTotal > 0 ? Math.round((dlBytes / dlTotal) * 100) : 0);
 
   onMount(async () => {
-    await listen("download:progress", (event: any) => {
+    await ipcListen("download:progress", (event: any) => {
       const data = event.payload as {
         filename: string;
         downloaded: number;

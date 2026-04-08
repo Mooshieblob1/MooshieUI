@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { check } from "@tauri-apps/plugin-updater";
-  import { relaunch } from "@tauri-apps/plugin-process";
+  import { isTauri } from "../../utils/ipc.js";
   import { stopComfyui } from "../../utils/api.js";
   import { locale } from "../../stores/locale.svelte.js";
 
@@ -18,7 +17,7 @@
   let dismissed = $state(false);
   let expectedVersion = $state("");
 
-  let updateObj: Awaited<ReturnType<typeof check>> | null = null;
+  let updateObj: any | null = null;
 
   const progressPercent = $derived(
     totalSize > 0 ? Math.round((downloadProgress / totalSize) * 100) : 0
@@ -47,8 +46,10 @@
 
     // Delay so app startup isn't blocked
     await new Promise((r) => setTimeout(r, 3000));
+    if (!isTauri) return;
     try {
       console.log(`[Updater] Checking for updates (current: v${currentVersion})...`);
+      const { check } = await import("@tauri-apps/plugin-updater");
       const update = await check();
       if (update) {
         updateObj = update;
@@ -94,7 +95,10 @@
   async function restartApp() {
     console.log("[Updater] Restarting app to apply update...");
     try { await stopComfyui(); } catch {}
-    await relaunch();
+    if (isTauri) {
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch();
+    }
   }
 
   function dismiss() {

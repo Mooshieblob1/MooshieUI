@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
+  import { ipcListen } from "../../utils/ipc.js";
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import {
     downloadModel,
@@ -770,7 +770,7 @@
     void fetchArchitectures();
 
     void (async () => {
-      unlisten = await listen("download:progress", (event: any) => {
+      unlisten = await ipcListen("download:progress", (event: any) => {
         const payload = event.payload as {
           filename: string;
           downloaded: number;

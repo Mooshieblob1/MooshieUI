@@ -129,6 +129,9 @@ export interface AppConfig {
   interrogator_character_threshold: number;
   civitai_api_key: string | null;
   gallery_path: string | null;
+  browser_mode: boolean;
+  ui_server_port: number;
+  lan_enabled: boolean;
 }
 
 export interface QueueInfo {

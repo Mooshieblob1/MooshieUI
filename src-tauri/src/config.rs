@@ -38,6 +38,12 @@ pub struct AppConfig {
     pub civitai_api_key: Option<String>,
     /// Custom gallery directory. When `None`, defaults to `{app_data_dir}/gallery`.
     pub gallery_path: Option<String>,
+    /// Run the UI in the default web browser instead of the Tauri window.
+    pub browser_mode: bool,
+    /// Port for the embedded UI web server (used in browser mode). Defaults to 3200.
+    pub ui_server_port: u16,
+    /// Enable LAN access (bind to 0.0.0.0 instead of 127.0.0.1). Only effective in browser mode.
+    pub lan_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -76,6 +82,9 @@ impl Default for AppConfig {
             interrogator_character_threshold: 0.85,
             civitai_api_key: None,
             gallery_path: None,
+            browser_mode: false,
+            ui_server_port: 3200,
+            lan_enabled: false,
         }
     }
 }

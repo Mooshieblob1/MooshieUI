@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { ipcInvoke } from "./ipc.js";
 import type {
   AppConfig,
   GalleryImageEntry,
@@ -11,15 +11,15 @@ import type {
 } from "../types/index.js";
 
 export async function getModels(category: string): Promise<string[]> {
-  return invoke("get_models", { category });
+  return ipcInvoke("get_models", { category });
 }
 
 export async function getSamplers(): Promise<SamplerInfo> {
-  return invoke("get_samplers");
+  return ipcInvoke("get_samplers");
 }
 
 export async function getEmbeddings(): Promise<string[]> {
-  return invoke("get_embeddings");
+  return ipcInvoke("get_embeddings");
 }
 
 export interface GenerateResponse {
@@ -28,23 +28,23 @@ export interface GenerateResponse {
 }
 
 export async function generate(params: GenerationParams): Promise<GenerateResponse> {
-  return invoke("generate", { params });
+  return ipcInvoke("generate", { params });
 }
 
 export async function getHistory(promptId: string): Promise<Record<string, unknown>> {
-  return invoke("get_history", { promptId });
+  return ipcInvoke("get_history", { promptId });
 }
 
 export async function getQueue(): Promise<QueueInfo> {
-  return invoke("get_queue");
+  return ipcInvoke("get_queue");
 }
 
 export async function interruptGeneration(): Promise<void> {
-  return invoke("interrupt_generation");
+  return ipcInvoke("interrupt_generation");
 }
 
 export async function deleteQueueItem(promptId: string): Promise<void> {
-  return invoke("delete_queue_item", { promptId });
+  return ipcInvoke("delete_queue_item", { promptId });
 }
 
 export async function uploadImage(imagePath: string): Promise<{
@@ -52,45 +52,45 @@ export async function uploadImage(imagePath: string): Promise<{
   subfolder: string;
   type: string;
 }> {
-  return invoke("upload_image", { imagePath });
+  return ipcInvoke("upload_image", { imagePath });
 }
 
 export async function uploadImageBytes(
   imageBytes: number[],
   filename: string
 ): Promise<{ name: string; subfolder: string; type: string }> {
-  return invoke("upload_image_bytes", { imageBytes, filename });
+  return ipcInvoke("upload_image_bytes", { imageBytes, filename });
 }
 
 export async function getOutputImage(
   filename: string,
   subfolder: string
 ): Promise<number[]> {
-  return invoke("get_output_image", { filename, subfolder });
+  return ipcInvoke("get_output_image", { filename, subfolder });
 }
 
 export async function getClientId(): Promise<string> {
-  return invoke("get_client_id");
+  return ipcInvoke("get_client_id");
 }
 
 export async function startComfyui(): Promise<void> {
-  return invoke("start_comfyui");
+  return ipcInvoke("start_comfyui");
 }
 
 export async function stopComfyui(): Promise<void> {
-  return invoke("stop_comfyui");
+  return ipcInvoke("stop_comfyui");
 }
 
 export async function checkServerHealth(): Promise<SystemStats> {
-  return invoke("check_server_health");
+  return ipcInvoke("check_server_health");
 }
 
 export async function connectWs(): Promise<void> {
-  return invoke("connect_ws");
+  return ipcInvoke("connect_ws");
 }
 
 export async function disconnectWs(): Promise<void> {
-  return invoke("disconnect_ws");
+  return ipcInvoke("disconnect_ws");
 }
 
 export async function downloadModel(
@@ -100,7 +100,7 @@ export async function downloadModel(
   installDir?: string,
   expectedSha256?: string,
 ): Promise<void> {
-  return invoke("download_model", { url, category, filename, installDir, expectedSha256 });
+  return ipcInvoke("download_model", { url, category, filename, installDir, expectedSha256 });
 }
 
 export interface ModelInstallDir {
@@ -111,31 +111,31 @@ export interface ModelInstallDir {
 export async function getModelInstallDirs(
   category: string,
 ): Promise<ModelInstallDir[]> {
-  return invoke("get_model_install_dirs", { category });
+  return ipcInvoke("get_model_install_dirs", { category });
 }
 
 export async function openDirectory(path: string): Promise<void> {
-  return invoke("open_directory", { path });
+  return ipcInvoke("open_directory", { path });
 }
 
 export async function findModelByHash(
   category: string,
   hash: string
 ): Promise<string | null> {
-  return invoke("find_model_by_hash", { category, hash });
+  return ipcInvoke("find_model_by_hash", { category, hash });
 }
 
 export async function hashModelFile(
   category: string,
   filename: string
 ): Promise<{ sha256: string; autov2: string }> {
-  return invoke("hash_model_file", { category, filename });
+  return ipcInvoke("hash_model_file", { category, filename });
 }
 
 export async function civitaiLookupHash(
   hash: string
 ): Promise<Record<string, unknown>> {
-  return invoke("civitai_lookup_hash", { hash });
+  return ipcInvoke("civitai_lookup_hash", { hash });
 }
 
 export type CivitaiModelType =
@@ -219,20 +219,20 @@ export async function searchCivitaiModels(params: {
   limit?: number;
   apiKey?: string;
 }): Promise<CivitaiSearchResponse> {
-  return invoke("civitai_search_models", { params });
+  return ipcInvoke("civitai_search_models", { params });
 }
 
 export async function listCivitaiArchitectures(
   apiKey?: string
 ): Promise<string[]> {
-  return invoke("civitai_list_architectures", { apiKey });
+  return ipcInvoke("civitai_list_architectures", { apiKey });
 }
 
 export async function saveImageFile(
   imageBytes: number[],
   path: string
 ): Promise<void> {
-  return invoke("save_image_file", { imageBytes, path });
+  return ipcInvoke("save_image_file", { imageBytes, path });
 }
 
 export async function embedPngMetadataBytes(
@@ -240,7 +240,7 @@ export async function embedPngMetadataBytes(
   metadata: Record<string, string>,
   metadataMode?: string
 ): Promise<number[]> {
-  return invoke("embed_png_metadata_bytes", { imageBytes, metadata, metadataMode });
+  return ipcInvoke("embed_png_metadata_bytes", { imageBytes, metadata, metadataMode });
 }
 
 export async function saveToGallery(
@@ -251,7 +251,7 @@ export async function saveToGallery(
   metadata?: Record<string, string>,
   metadataMode?: string,
 ): Promise<string> {
-  return invoke("save_to_gallery", { filename, subfolder, promptId, mode, metadata, metadataMode });
+  return ipcInvoke("save_to_gallery", { filename, subfolder, promptId, mode, metadata, metadataMode });
 }
 
 export async function saveToGalleryBytes(
@@ -262,25 +262,25 @@ export async function saveToGalleryBytes(
   metadata?: Record<string, string>,
   metadataMode?: string,
 ): Promise<string> {
-  return invoke("save_to_gallery_bytes", { imageBytes, filename, promptId, mode, metadata, metadataMode });
+  return ipcInvoke("save_to_gallery_bytes", { imageBytes, filename, promptId, mode, metadata, metadataMode });
 }
 
 export async function readImageMetadata(
   filename: string
 ): Promise<Record<string, string> | null> {
-  return invoke("read_image_metadata", { filename });
+  return ipcInvoke("read_image_metadata", { filename });
 }
 
 export async function readImageMetadataBytes(
   imageBytes: number[]
 ): Promise<Record<string, string> | null> {
-  return invoke("read_image_metadata_bytes", { imageBytes });
+  return ipcInvoke("read_image_metadata_bytes", { imageBytes });
 }
 
 export async function readImageMetadataPath(
   path: string
 ): Promise<Record<string, string> | null> {
-  return invoke("read_image_metadata_path", { path });
+  return ipcInvoke("read_image_metadata_path", { path });
 }
 
 export interface ReleaseNote {
@@ -290,15 +290,15 @@ export interface ReleaseNote {
 }
 
 export async function fetchReleaseNotes(): Promise<ReleaseNote[]> {
-  return invoke("fetch_release_notes");
+  return ipcInvoke("fetch_release_notes");
 }
 
 export async function listGalleryImages(): Promise<string[]> {
-  return invoke("list_gallery_images");
+  return ipcInvoke("list_gallery_images");
 }
 
 export async function listGalleryImageEntries(): Promise<GalleryImageEntry[]> {
-  return invoke("list_gallery_image_entries");
+  return ipcInvoke("list_gallery_image_entries");
 }
 
 export interface ImportResult {
@@ -308,32 +308,32 @@ export interface ImportResult {
 }
 
 export async function importImageDirectory(directory: string): Promise<ImportResult> {
-  return invoke("import_image_directory", { directory });
+  return ipcInvoke("import_image_directory", { directory });
 }
 
 export async function loadGalleryImage(filename: string): Promise<number[]> {
-  return invoke("load_gallery_image", { filename });
+  return ipcInvoke("load_gallery_image", { filename });
 }
 
 
 export async function deleteGalleryImage(filename: string): Promise<void> {
-  return invoke("delete_gallery_image", { filename });
+  return ipcInvoke("delete_gallery_image", { filename });
 }
 
 export async function renameGalleryImage(oldFilename: string, newFilename: string): Promise<string> {
-  return invoke("rename_gallery_image", { oldFilename, newFilename });
+  return ipcInvoke("rename_gallery_image", { oldFilename, newFilename });
 }
 
 export async function copyImageToClipboard(filePath: string): Promise<void> {
-  return invoke("copy_image_to_clipboard", { filePath });
+  return ipcInvoke("copy_image_to_clipboard", { filePath });
 }
 
 export async function copyBytesToClipboard(bytes: number[], ext: string): Promise<void> {
-  return invoke("copy_bytes_to_clipboard", { bytes, ext });
+  return ipcInvoke("copy_bytes_to_clipboard", { bytes, ext });
 }
 
 export async function getGalleryImagePath(filename: string): Promise<string> {
-  return invoke("get_gallery_image_path", { filename });
+  return ipcInvoke("get_gallery_image_path", { filename });
 }
 
 export interface ModelSpec {
@@ -357,7 +357,7 @@ export async function readModelSpec(
   category: string,
   filename: string
 ): Promise<ModelSpec | null> {
-  return invoke("read_modelspec", { category, filename });
+  return ipcInvoke("read_modelspec", { category, filename });
 }
 
 export interface LoraCivitaiImage {
@@ -412,13 +412,13 @@ export interface CheckpointCivitaiInfo {
 export async function getLoraCivitaiInfo(
   filename: string
 ): Promise<LoraCivitaiInfo> {
-  return invoke("get_lora_civitai_info", { filename });
+  return ipcInvoke("get_lora_civitai_info", { filename });
 }
 
 export async function getCheckpointCivitaiInfo(
   filename: string
 ): Promise<CheckpointCivitaiInfo> {
-  return invoke("get_checkpoint_civitai_info", { filename });
+  return ipcInvoke("get_checkpoint_civitai_info", { filename });
 }
 
 /**
@@ -427,61 +427,61 @@ export async function getCheckpointCivitaiInfo(
  * Returns a "data:<mime>;base64,..." string ready for use in <img src>.
  */
 export async function fetchCachedImage(url: string): Promise<string> {
-  return invoke("fetch_cached_image", { url });
+  return ipcInvoke("fetch_cached_image", { url });
 }
 
 export async function checkNodeAvailable(nodeClass: string): Promise<boolean> {
-  return invoke("check_node_available", { nodeClass });
+  return ipcInvoke("check_node_available", { nodeClass });
 }
 
 export async function isCustomNodeInstalled(nodeName: string): Promise<boolean> {
-  return invoke("is_custom_node_installed", { nodeName });
+  return ipcInvoke("is_custom_node_installed", { nodeName });
 }
 
 export async function installCustomNode(gitUrl: string, nodeName: string): Promise<void> {
-  return invoke("install_custom_node", { gitUrl, nodeName });
+  return ipcInvoke("install_custom_node", { gitUrl, nodeName });
 }
 
 export async function installPipPackage(packageName: string): Promise<void> {
-  return invoke("install_pip_package", { package: packageName });
+  return ipcInvoke("install_pip_package", { package: packageName });
 }
 
 export async function getConfig(): Promise<AppConfig> {
-  return invoke("get_config");
+  return ipcInvoke("get_config");
 }
 
 export async function updateConfig(config: AppConfig): Promise<void> {
-  return invoke("update_config", { config });
+  return ipcInvoke("update_config", { config });
 }
 
 export async function getGalleryPath(): Promise<string> {
-  return invoke("get_gallery_path");
+  return ipcInvoke("get_gallery_path");
 }
 
 export async function setGalleryPath(path: string): Promise<string> {
-  return invoke("set_gallery_path", { path });
+  return ipcInvoke("set_gallery_path", { path });
 }
 
 export async function interrogateImage(imageBase64: string): Promise<InterrogationResult> {
-  return invoke("interrogate_image", { imageBase64 });
+  return ipcInvoke("interrogate_image", { imageBase64 });
 }
 
 export async function interrogateImagePath(path: string): Promise<InterrogationResult> {
-  return invoke("interrogate_image_path", { path });
+  return ipcInvoke("interrogate_image_path", { path });
 }
 
 export async function interrogateGalleryImage(filename: string): Promise<InterrogationResult> {
-  return invoke("interrogate_gallery_image", { filename });
+  return ipcInvoke("interrogate_gallery_image", { filename });
 }
 
 export async function interrogateClipboard(): Promise<InterrogationResult> {
-  return invoke("interrogate_clipboard");
+  return ipcInvoke("interrogate_clipboard");
 }
 
 export async function readClipboardImage(): Promise<number[]> {
-  return invoke("read_clipboard_image");
+  return ipcInvoke("read_clipboard_image");
 }
 
 export async function exportLogs(destination: string): Promise<void> {
-  return invoke("export_logs", { destination });
+  return ipcInvoke("export_logs", { destination });
 }

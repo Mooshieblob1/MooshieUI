@@ -19,8 +19,7 @@
     getPreset,
     getPresetModel,
   } from "../../config/controlnet-presets.js";
-  import { listen } from "@tauri-apps/api/event";
-  import { readFile } from "@tauri-apps/plugin-fs";
+  import { ipcListen, isTauri } from "../../utils/ipc.js";
   import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
@@ -55,7 +54,7 @@
   }
 
   onMount(async () => {
-    await listen("download:progress", (event: any) => {
+    await ipcListen("download:progress", (event: any) => {
       const data = event.payload as {
         filename: string;
         downloaded: number;
@@ -70,7 +69,7 @@
         dlTotal = data.total;
       }
     });
-    await listen("install:progress", (event: any) => {
+    await ipcListen("install:progress", (event: any) => {
       const data = event.payload as {
         node_name: string;
         step: string;
@@ -200,9 +199,12 @@
     try {
       const result = await uploadImage(path);
       generation.controlnetImage = result.name;
-      const bytes = await readFile(path);
-      const blob = new Blob([bytes], { type: "image/png" });
-      setPreview(new File([blob], filename, { type: "image/png" }));
+      if (isTauri) {
+        const { readFile } = await import("@tauri-apps/plugin-fs");
+        const bytes = await readFile(path);
+        const blob = new Blob([bytes], { type: "image/png" });
+        setPreview(new File([blob], filename, { type: "image/png" }));
+      }
     } catch (e) {
       console.error("Failed to upload control image from Tauri drop:", e);
     } finally {
@@ -237,14 +239,14 @@
           reject(new Error("ComfyUI did not become ready within 120 seconds"));
         }, 120_000);
 
-        const unlistenReady = listen("comfyui:server_ready", () => {
+        const unlistenReady = ipcListen("comfyui:server_ready", () => {
           clearTimeout(timeout);
           unlistenReady.then((fn) => fn());
           unlistenError.then((fn) => fn());
           resolve();
         });
 
-        const unlistenError = listen("comfyui:server_error", (event: any) => {
+        const unlistenError = ipcListen("comfyui:server_error", (event: any) => {
           clearTimeout(timeout);
           unlistenReady.then((fn) => fn());
           unlistenError.then((fn) => fn());

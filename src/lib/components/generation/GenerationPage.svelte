@@ -19,8 +19,6 @@
   import CanvasEditor from "../canvas/CanvasEditor.svelte";
   import LayerPanel from "../canvas/layers/LayerPanel.svelte";
   import { canvas } from "../../stores/canvas.svelte.js";
-  import { open } from "@tauri-apps/plugin-dialog";
-  import { readFile } from "@tauri-apps/plugin-fs";
   import { uploadImage, uploadImageBytes, loadGalleryImage, getOutputImage, readClipboardImage } from "../../utils/api.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
@@ -31,9 +29,7 @@
   import type { ContextMenuItem } from "../ui/ContextMenu.svelte";
   import InterrogateModal from "./InterrogateModal.svelte";
   import { interrogateGalleryImage, interrogateImage } from "../../utils/api.js";
-  import { listen } from "@tauri-apps/api/event";
-  import { getCurrentWebview } from "@tauri-apps/api/webview";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { ipcListen, isTauri } from "../../utils/ipc.js";
   import {
     isDroppableSection,
     handleMetadataImport,
@@ -417,10 +413,34 @@
   }
 
   async function browseImage() {
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }],
-    });
+    let selected: string | null = null;
+    if (isTauri) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      selected = await open({ multiple: false, filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }] });
+    } else {
+      // Browser fallback: use file input
+      const file = await new Promise<File | null>((resolve) => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = "image/png,image/jpeg,image/webp";
+        input.onchange = () => resolve(input.files?.[0] ?? null);
+        input.click();
+      });
+      if (!file) return;
+      uploading = true;
+      try {
+        const buf = await file.arrayBuffer();
+        const bytes = Array.from(new Uint8Array(buf));
+        const normalized = await normalizeImageBytes(bytes, file.name);
+        if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+        imagePreviewUrl = normalized.previewUrl;
+        applyImageGeometry(normalized.width, normalized.height);
+        canvas.setReferenceImage(imagePreviewUrl);
+        const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+        generation.inputImage = response.name;
+      } catch (e) { console.error("Failed to upload image:", e); } finally { uploading = false; }
+      return;
+    }
     if (!selected) return;
 
     uploading = true;
@@ -428,6 +448,7 @@
       const selectedPath = typeof selected === "string" ? selected : selected[0];
       if (!selectedPath) return;
 
+      const { readFile } = await import("@tauri-apps/plugin-fs");
       const bytes = Array.from(await readFile(selectedPath));
       const normalized = await normalizeImageBytes(bytes, getFilenameFromPath(selectedPath));
 
@@ -446,14 +467,37 @@
   }
 
   async function browseMask() {
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }],
-    });
+    let selected: string | null = null;
+    if (isTauri) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      selected = await open({ multiple: false, filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }] });
+    } else {
+      // Browser fallback
+      const file = await new Promise<File | null>((resolve) => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = "image/png,image/jpeg,image/webp";
+        input.onchange = () => resolve(input.files?.[0] ?? null);
+        input.click();
+      });
+      if (!file) return;
+      uploading = true;
+      try {
+        const buf = await file.arrayBuffer();
+        const blob = new Blob([buf], { type: "image/png" });
+        if (maskPreviewUrl) URL.revokeObjectURL(maskPreviewUrl);
+        maskPreviewUrl = URL.createObjectURL(blob);
+        canvas.setPersistedMaskPreview(maskPreviewUrl);
+        const response = await uploadImageBytes(Array.from(new Uint8Array(buf)), file.name);
+        generation.maskImage = response.name;
+      } catch (e) { console.error("Failed to upload mask:", e); } finally { uploading = false; }
+      return;
+    }
     if (!selected) return;
 
     uploading = true;
     try {
+      const { readFile } = await import("@tauri-apps/plugin-fs");
       const bytes = await readFile(selected);
       const blob = new Blob([bytes], { type: "image/png" });
       if (maskPreviewUrl) URL.revokeObjectURL(maskPreviewUrl);
@@ -1001,6 +1045,10 @@
   }
 
   async function setupTauriDragDrop() {
+    if (!isTauri) return;
+    const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const { readFile } = await import("@tauri-apps/plugin-fs");
     const webview = getCurrentWebview();
     const appWindow = getCurrentWindow();
     const scaleFactor = await appWindow.scaleFactor();

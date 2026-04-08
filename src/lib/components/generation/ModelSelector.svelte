@@ -4,7 +4,7 @@
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { downloadModel, findModelByHash, hashModelFile, readModelSpec, type ModelSpec } from "../../utils/api.js";
-  import { listen } from "@tauri-apps/api/event";
+  import { ipcListen } from "../../utils/ipc.js";
   import { onMount, onDestroy } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
@@ -306,7 +306,7 @@
   let unlistenDownload: (() => void) | null = null;
 
   onMount(async () => {
-    unlistenDownload = await listen("download:progress", (event: any) => {
+    unlistenDownload = await ipcListen("download:progress", (event: any) => {
       const data = event.payload as {
         filename: string;
         downloaded: number;

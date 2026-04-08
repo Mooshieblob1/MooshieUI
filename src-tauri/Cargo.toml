@@ -41,6 +41,11 @@ flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "tracing", "tls-native", "api-24", "load-dynamic"] }
 csv = "1"
+axum = { version = "0.8", features = ["tokio"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+mime_guess = "2"
+tokio-stream = { version = "0.1", features = ["sync"] }
+open = "5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "=2.0.2"

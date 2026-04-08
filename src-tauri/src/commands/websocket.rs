@@ -6,7 +6,8 @@ use crate::state::AppState;
 
 #[tauri::command]
 pub async fn connect_ws(app_handle: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
-    websocket::connect_websocket(app_handle, &state).await
+    let event_tx = state.event_tx.clone();
+    websocket::connect_websocket(app_handle, &state, event_tx).await
 }
 
 #[tauri::command]

@@ -1,4 +1,4 @@
-import { load } from "@tauri-apps/plugin-store";
+import { ipcStore } from "../utils/ipc.js";
 import builtinTags from "../assets/danbooru-tags.json";
 import animaTags from "../assets/anima-tags.json";
 
@@ -33,7 +33,7 @@ class AutocompleteStore {
   /** Error message if loading failed */
   error = $state<string | null>(null);
 
-  private _store: Awaited<ReturnType<typeof load>> | null = null;
+  private _storeReady = false;
   private _customTags: TagEntry[] | null = null;
   private _searchEntries: SearchEntry[] = [];
   private _isAnima = false;
@@ -99,8 +99,8 @@ class AutocompleteStore {
 
   async loadSettings() {
     try {
-      this._store = await load("settings.json", { autoSave: true });
-      const saved = await this._store.get<Record<string, any>>(STORE_KEY);
+      this._storeReady = true;
+      const saved = await ipcStore.get<Record<string, any>>(STORE_KEY);
       if (saved) {
         if (saved.maxResults) this.maxResults = saved.maxResults;
         if (saved.sourceMode) this.sourceMode = saved.sourceMode;
@@ -123,9 +123,9 @@ class AutocompleteStore {
   }
 
   async saveSettings() {
-    if (!this._store) return;
+    if (!this._storeReady) return;
     try {
-      await this._store.set(STORE_KEY, {
+      await ipcStore.set(STORE_KEY, {
         maxResults: this.maxResults,
         sourceMode: this.sourceMode,
         sourceUrl: this.sourceUrl,

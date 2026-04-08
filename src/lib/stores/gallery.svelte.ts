@@ -13,10 +13,28 @@ import {
   copyBytesToClipboard,
   getGalleryImagePath,
 } from "../utils/api.js";
-import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { isTauri } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
 import { generation } from "./generation.svelte.js";
+
+/** Convert a gallery filename to a thumbnail URL. In Tauri, uses the custom protocol; in browser, uses the HTTP server. */
+async function thumbnailUrl(filename: string): Promise<string> {
+  if (isTauri) {
+    const { convertFileSrc } = await import("@tauri-apps/api/core");
+    return convertFileSrc(filename, "thumbnail");
+  }
+  return `/internal-api/_thumbnail/${encodeURIComponent(filename)}`;
+}
+
+/** Show a native save dialog. Returns the chosen path, or null. Tauri-only; browser falls back to download. */
+async function showSaveDialog(defaultPath: string, extensions: string[]): Promise<string | null> {
+  if (isTauri) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    return save({ defaultPath, filters: [{ name: "Images", extensions }] });
+  }
+  // Browser mode: not used for MVP1 — callers should use browser download instead
+  return null;
+}
 
 const GALLERY_BOARDS_KEY = "mooshieui.gallery.boards.v1";
 const GALLERY_BOARD_NAMES_KEY = "mooshieui.gallery.boardNames.v1";
@@ -205,7 +223,7 @@ class GalleryStore {
           );
         }
         img.gallery_filename = galleryFilename;
-        img.thumbnailUrl = convertFileSrc(galleryFilename, "thumbnail");
+        img.thumbnailUrl = await thumbnailUrl(galleryFilename);
       } catch (e) {
         console.error("Failed to save image to gallery:", e);
       }
@@ -254,7 +272,7 @@ class GalleryStore {
             generation_mode: generationMode,
             is_upscaled: isUpscaled,
             url: undefined,
-            thumbnailUrl: convertFileSrc(filename, "thumbnail"),
+            thumbnailUrl: await thumbnailUrl(filename),
             gallery_filename: filename,
             file_size_bytes: entry.size_bytes,
             generated_at_ms: entry.modified_ms,
@@ -290,12 +308,7 @@ class GalleryStore {
   /** Save an image to a user-chosen location via native file dialog. */
   async saveImageAs(image: OutputImage) {
     try {
-      const path = await save({
-        defaultPath: image.filename,
-        filters: [
-          { name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] },
-        ],
-      });
+      const path = await showSaveDialog(image.filename, ["png", "jpg", "jpeg", "webp"]);
       if (!path) return;
 
       let bytes: number[];
@@ -314,12 +327,7 @@ class GalleryStore {
   /** Save a blob URL image to a user-chosen location. */
   async saveBlobAs(blobUrl: string, defaultName: string = "image.png") {
     try {
-      const path = await save({
-        defaultPath: defaultName,
-        filters: [
-          { name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] },
-        ],
-      });
+      const path = await showSaveDialog(defaultName, ["png", "jpg", "jpeg", "webp"]);
       if (!path) return;
 
       const response = await fetch(blobUrl);
