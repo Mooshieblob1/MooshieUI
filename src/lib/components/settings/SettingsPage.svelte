@@ -620,6 +620,30 @@
                   : "Switching to browser mode... The app will relaunch."}
               </p>
             {/if}
+            {#if config.browser_mode}
+              <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
+                <div>
+                  <label class="text-xs text-neutral-300 font-medium">Enable LAN Access</label>
+                  <p class="text-xs text-neutral-500 mt-0.5">
+                    Allow other devices on your network to access the UI. Requires authentication when enabled.
+                  </p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    bind:checked={config.lan_enabled}
+                    onchange={() => { checkRestartNeeded(); autoSave(); }}
+                    class="sr-only peer"
+                  />
+                  <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
+              </div>
+              {#if config.lan_enabled}
+                <p class="text-xs text-amber-400">
+                  Warning: Enabling LAN access exposes ComfyUI to your network. Set up authentication in the LAN settings below.
+                </p>
+              {/if}
+            {/if}
           </div>
         </section>
 

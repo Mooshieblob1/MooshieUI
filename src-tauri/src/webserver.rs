@@ -17,12 +17,21 @@ use axum::{Json, Router};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
+use serde::Deserialize;
+
+use crate::auth::AuthState;
 use crate::commands;
 use crate::config;
 use crate::state::AppState;
 
 /// Shared state for axum handlers.
-pub type SharedState = Arc<AppState>;
+pub struct WebState {
+    pub app: Arc<AppState>,
+    pub auth: Arc<AuthState>,
+    pub lan_enabled: bool,
+}
+
+pub type SharedState = Arc<WebState>;
 
 /// Start the embedded web server.
 /// Returns the `JoinHandle` for the server task.
@@ -32,9 +41,17 @@ pub async fn start_server(
     lan_enabled: bool,
 ) -> tokio::task::JoinHandle<()> {
     let dist_dir = resolve_dist_dir();
-    let shared = state.clone();
+    let web_state = Arc::new(WebState {
+        app: state,
+        auth: Arc::new(AuthState::new()),
+        lan_enabled,
+    });
 
     let app = Router::new()
+        // Auth endpoints (always accessible)
+        .route("/internal-api/_auth/login", post(auth_login_handler))
+        .route("/internal-api/_auth/register", post(auth_register_handler))
+        .route("/internal-api/_auth/status", get(auth_status_handler))
         // SSE event stream
         .route("/internal-api/_events", get(sse_handler))
         // Heartbeat endpoints
@@ -52,7 +69,7 @@ pub async fn start_server(
             let dist = dist_dir.clone();
             async move { serve_static(dist, req).await }
         }))
-        .with_state(shared);
+        .with_state(web_state);
 
     let bind_addr: SocketAddr = if lan_enabled {
         SocketAddr::from(([0, 0, 0, 0], port))
@@ -154,7 +171,7 @@ async fn serve_static(dist_dir: PathBuf, req: axum::extract::Request) -> Respons
 async fn sse_handler(
     AxumState(state): AxumState<SharedState>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let rx = state.event_tx.subscribe();
+    let rx = state.app.event_tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(|result| match result {
         Ok(evt) => {
             let json = serde_json::json!({
@@ -171,7 +188,7 @@ async fn sse_handler(
 
 /// Heartbeat — browser pings this to keep the backend alive.
 async fn heartbeat_handler(AxumState(state): AxumState<SharedState>) -> StatusCode {
-    let mut hb = state.last_heartbeat.lock().await;
+    let mut hb = state.app.last_heartbeat.lock().await;
     *hb = std::time::Instant::now();
     StatusCode::OK
 }
@@ -179,7 +196,7 @@ async fn heartbeat_handler(AxumState(state): AxumState<SharedState>) -> StatusCo
 /// Heartbeat stop — browser sends this via sendBeacon on page unload.
 async fn heartbeat_stop_handler(AxumState(state): AxumState<SharedState>) -> StatusCode {
     // Set heartbeat to epoch so the watchdog triggers immediately
-    let mut hb = state.last_heartbeat.lock().await;
+    let mut hb = state.app.last_heartbeat.lock().await;
     *hb = std::time::Instant::now() - Duration::from_secs(3600);
     StatusCode::OK
 }
@@ -255,7 +272,15 @@ async fn command_handler(
         }
     };
 
-    match dispatch_command(&state, &command, &args).await {
+    // Auth check for LAN mode
+    if state.lan_enabled {
+        let auth_header = body.is_empty(); // placeholder — check below
+        let _ = auth_header;
+        // TODO: For now, LAN auth is checked at the auth endpoints level.
+        // Full middleware auth will be added when we have the login page.
+    }
+
+    match dispatch_command(&state.app, &command, &args).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
@@ -403,6 +428,61 @@ async fn dispatch_command(
             command
         )),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Auth endpoints
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct AuthRequest {
+    username: String,
+    password: String,
+}
+
+/// POST /internal-api/_auth/login — authenticate and return a session token.
+async fn auth_login_handler(
+    AxumState(state): AxumState<SharedState>,
+    Json(req): Json<AuthRequest>,
+) -> Response {
+    match state.auth.login(&req.username, &req.password) {
+        Ok(token) => (StatusCode::OK, Json(serde_json::json!({ "token": token }))).into_response(),
+        Err(e) => (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": e }))).into_response(),
+    }
+}
+
+/// POST /internal-api/_auth/register — create a new account.
+async fn auth_register_handler(
+    AxumState(state): AxumState<SharedState>,
+    Json(req): Json<AuthRequest>,
+) -> Response {
+    if req.username.trim().is_empty() || req.password.len() < 4 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Username required, password must be at least 4 characters" })),
+        )
+            .into_response();
+    }
+    match state.auth.create_account(&req.username, &req.password) {
+        Ok(()) => {
+            // Auto-login after registration
+            match state.auth.login(&req.username, &req.password) {
+                Ok(token) => (StatusCode::OK, Json(serde_json::json!({ "token": token }))).into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e }))).into_response(),
+            }
+        }
+        Err(e) => (StatusCode::CONFLICT, Json(serde_json::json!({ "error": e }))).into_response(),
+    }
+}
+
+/// GET /internal-api/_auth/status — check if auth is required and if any accounts exist.
+async fn auth_status_handler(
+    AxumState(state): AxumState<SharedState>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "auth_required": state.lan_enabled,
+        "has_accounts": state.auth.has_accounts(),
+    }))
 }
 
 /// Start the heartbeat watchdog that shuts down the app when the browser

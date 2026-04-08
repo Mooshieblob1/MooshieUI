@@ -10,9 +10,10 @@
     onSetupComplete: () => void;
   } = $props();
 
-  let phase = $state<"detecting" | "ready" | "installing" | "done" | "error">(
+  let phase = $state<"detecting" | "ready" | "installing" | "choose-mode" | "done" | "error">(
     "detecting"
   );
+  let chosenMode = $state<"app" | "browser">("app");
   let gpu = $state("cpu");
   let detectedGpu = $state("cpu");
   let gpuLabel = $derived(
@@ -78,6 +79,21 @@
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 
+  async function finishSetup() {
+    // Save the chosen browser_mode to config
+    if (chosenMode === "browser") {
+      try {
+        const cfg = await ipcInvoke<any>("get_config");
+        cfg.browser_mode = true;
+        await ipcInvoke("update_config", { config: cfg });
+      } catch (e) {
+        console.error("Failed to set browser mode:", e);
+      }
+    }
+    phase = "done";
+    setTimeout(() => onSetupComplete(), 1500);
+  }
+
   const downloadPercent = $derived(
     downloadTotalBytes > 0
       ? Math.round((downloadedBytes / downloadTotalBytes) * 100)
@@ -130,8 +146,7 @@
       progressPercent = data.percent;
       if (data.step === "done") {
         completedSteps = new Set([...completedSteps, "config"]);
-        phase = "done";
-        setTimeout(() => onSetupComplete(), 1500);
+        phase = "choose-mode";
       }
     });
 
@@ -244,7 +259,7 @@
 
 <div class="relative flex items-center justify-center h-full bg-neutral-950 text-neutral-100 overflow-hidden">
   <!-- Terminal background overlay (visible during installation) -->
-  {#if phase === "installing" || phase === "done" || phase === "error"}
+  {#if phase === "installing" || phase === "choose-mode" || phase === "done" || phase === "error"}
     <div
       bind:this={logContainer}
       class="absolute inset-0 overflow-y-auto p-4 pt-6 font-mono text-[11px] leading-relaxed text-green-500/25 pointer-events-none select-none"
@@ -490,6 +505,55 @@
         <p class="text-xs text-neutral-600 mt-4">
           Please don't close the app during installation.
         </p>
+      {:else if phase === "choose-mode"}
+        <div class="text-center py-6">
+          <div class="text-4xl mb-3">&#10003;</div>
+          <h2 class="text-xl font-semibold mb-2">Installation Complete</h2>
+          <p class="text-neutral-400 text-sm mb-6">
+            How would you like to use MooshieUI?
+          </p>
+
+          <div class="flex gap-4 justify-center mb-6">
+            <!-- App Mode -->
+            <button
+              class="flex-1 max-w-55 p-4 rounded-xl border-2 transition-all text-left {chosenMode === 'app'
+                ? 'border-indigo-500 bg-indigo-500/10'
+                : 'border-neutral-700 bg-neutral-800/50 hover:border-neutral-600'}"
+              onclick={() => (chosenMode = "app")}
+            >
+              <div class="text-2xl mb-2">&#128421;</div>
+              <h3 class="text-sm font-medium text-neutral-200">App Mode</h3>
+              <p class="text-xs text-neutral-500 mt-1">
+                Native desktop window. Recommended for most users.
+              </p>
+            </button>
+
+            <!-- Browser Mode -->
+            <button
+              class="flex-1 max-w-55 p-4 rounded-xl border-2 transition-all text-left {chosenMode === 'browser'
+                ? 'border-indigo-500 bg-indigo-500/10'
+                : 'border-neutral-700 bg-neutral-800/50 hover:border-neutral-600'}"
+              onclick={() => (chosenMode = "browser")}
+            >
+              <div class="text-2xl mb-2">&#127760;</div>
+              <h3 class="text-sm font-medium text-neutral-200">Web Browser Mode</h3>
+              <p class="text-xs text-neutral-500 mt-1">
+                Opens in your default browser. Useful for LAN access or multi-monitor setups.
+              </p>
+            </button>
+          </div>
+
+          <p class="text-xs text-neutral-600 mb-4">
+            You can change this anytime in Settings.
+          </p>
+
+          <button
+            class="px-8 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors"
+            onclick={finishSetup}
+          >
+            Get Started
+          </button>
+        </div>
       {:else if phase === "done"}
         <div class="text-center py-8">
           <div class="text-5xl mb-4">&#10003;</div>

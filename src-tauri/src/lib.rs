@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod comfyui;
 pub mod commands;
 pub mod config;

@@ -535,6 +535,7 @@ dependencies = [
  "env_logger",
  "flate2",
  "futures-util",
+ "hex",
  "image",
  "log",
  "mime_guess",
