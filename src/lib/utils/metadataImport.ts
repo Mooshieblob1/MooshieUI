@@ -1,6 +1,8 @@
 import { generation } from "../stores/generation.svelte.js";
 import { readImageMetadataBytes, readImageMetadataPath } from "./api.js";
 import { gallery } from "../stores/gallery.svelte.js";
+import { readPngMetadataClientSide } from "./pngMetadata.js";
+import { isBrowserMode } from "./ipc.js";
 
 /** Section IDs that accept metadata drops */
 export type DroppableSectionId =
@@ -247,11 +249,47 @@ export async function handleMetadataImport(
   target: DroppableSectionId | "all"
 ): Promise<void> {
   try {
-    const bytes = await fileToPngBytes(file);
-    await handleMetadataImportBytes(bytes, target);
+    if (isBrowserMode) {
+      // Client-side: read metadata directly from the file without server round-trip
+      const buf = await file.arrayBuffer();
+      const meta = await readPngMetadataClientSide(buf);
+      applyParsedMetadata(meta, target);
+    } else {
+      const bytes = await fileToPngBytes(file);
+      await handleMetadataImportBytes(bytes, target);
+    }
   } catch (err) {
     console.error("Metadata import failed:", err);
     gallery.showToast("Failed to read image metadata", "error");
+  }
+}
+
+/** Apply parsed metadata to the appropriate section(s) and show toast feedback. */
+function applyParsedMetadata(
+  meta: Record<string, string> | null,
+  target: DroppableSectionId | "all"
+): void {
+  if (!meta || Object.keys(meta).length === 0) {
+    gallery.showToast("No metadata found in image", "info");
+    return;
+  }
+
+  if (target === "all") {
+    const applied = applyAllMetadata(meta);
+    if (applied.length > 0) {
+      gallery.showToast(`Applied ${applied.join(", ")} from image metadata`, "success");
+      generation.saveSettings();
+    } else {
+      gallery.showToast("No applicable parameters found in image metadata", "info");
+    }
+  } else {
+    const applied = applyMetadataToSection(meta, target);
+    if (applied) {
+      gallery.showToast(`Applied ${sectionLabel(target)} from image metadata`, "success");
+      generation.saveSettings();
+    } else {
+      gallery.showToast(`No ${sectionLabel(target)} found in image metadata`, "info");
+    }
   }
 }
 
@@ -267,29 +305,7 @@ export async function handleMetadataImportBytes(
   gallery.showToast("Reading image metadata...", "info");
   try {
     const meta = await readImageMetadataBytes(bytes);
-
-    if (!meta || Object.keys(meta).length === 0) {
-      gallery.showToast("No metadata found in image", "info");
-      return;
-    }
-
-    if (target === "all") {
-      const applied = applyAllMetadata(meta);
-      if (applied.length > 0) {
-        gallery.showToast(`Applied ${applied.join(", ")} from image metadata`, "success");
-        generation.saveSettings();
-      } else {
-        gallery.showToast("No applicable parameters found in image metadata", "info");
-      }
-    } else {
-      const applied = applyMetadataToSection(meta, target);
-      if (applied) {
-        gallery.showToast(`Applied ${sectionLabel(target)} from image metadata`, "success");
-        generation.saveSettings();
-      } else {
-        gallery.showToast(`No ${sectionLabel(target)} found in image metadata`, "info");
-      }
-    }
+    applyParsedMetadata(meta, target);
   } catch (err) {
     console.error("Metadata import failed:", err);
     gallery.showToast("Failed to read image metadata", "error");
@@ -307,29 +323,7 @@ export async function handleMetadataImportPath(
   gallery.showToast("Reading image metadata...", "info");
   try {
     const meta = await readImageMetadataPath(filePath);
-
-    if (!meta || Object.keys(meta).length === 0) {
-      gallery.showToast("No metadata found in image", "info");
-      return;
-    }
-
-    if (target === "all") {
-      const applied = applyAllMetadata(meta);
-      if (applied.length > 0) {
-        gallery.showToast(`Applied ${applied.join(", ")} from image metadata`, "success");
-        generation.saveSettings();
-      } else {
-        gallery.showToast("No applicable parameters found in image metadata", "info");
-      }
-    } else {
-      const applied = applyMetadataToSection(meta, target);
-      if (applied) {
-        gallery.showToast(`Applied ${sectionLabel(target)} from image metadata`, "success");
-        generation.saveSettings();
-      } else {
-        gallery.showToast(`No ${sectionLabel(target)} found in image metadata`, "info");
-      }
-    }
+    applyParsedMetadata(meta, target);
   } catch (err) {
     console.error("Metadata import failed:", err);
     gallery.showToast("Failed to read image metadata", "error");

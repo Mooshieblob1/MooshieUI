@@ -6,6 +6,36 @@ const STORE_KEY = "generation-settings";
 const PROMPT_HISTORY_KEY = "mooshieui.promptHistory.v1";
 const MAX_PROMPT_HISTORY = 100;
 
+/**
+ * Translate NAI-style weight brackets to ComfyUI (tag:weight) syntax.
+ * - {text} → (text:1.05)   — each layer multiplies by 1.05
+ * - [text] → (text:0.9524)  — each layer divides by 1.05
+ * - 1.1::text:: → (text:1.1) — A1111-style weight prefix
+ * Processes innermost brackets first, so nesting works: {{tag}} → ((tag:1.05):1.05)
+ */
+function translateNaiWeightSyntax(prompt: string): string {
+  // Process A1111-style weight::text:: syntax first
+  prompt = prompt.replace(/(\d+\.?\d*)::([^:]+)::/g, (_m, weight, text) => {
+    return `(${text.trim()}:${parseFloat(weight).toFixed(2)})`;
+  });
+
+  // Process innermost {text} → (text:1.05) repeatedly
+  let prev: string;
+  do {
+    prev = prompt;
+    prompt = prompt.replace(/\{([^{}]+)\}/g, (_m, inner) => `(${inner}:1.05)`);
+  } while (prompt !== prev);
+
+  // Process innermost [text] → (text:0.95) repeatedly
+  // Skip escaped brackets \[ and \]
+  do {
+    prev = prompt;
+    prompt = prompt.replace(/(?<!\\)\[([^\[\]]+)\]/g, (_m, inner) => `(${inner}:0.95)`);
+  } while (prompt !== prev);
+
+  return prompt;
+}
+
 type StylePresetId = "none" | "anime" | "cinematic" | "photoreal" | "digital_art" | "line_art";
 
 interface StylePreset {
@@ -791,8 +821,8 @@ class GenerationStore {
 
     return {
       mode: this.mode,
-      positive_prompt: positivePrompt,
-      negative_prompt: negativePrompt,
+      positive_prompt: translateNaiWeightSyntax(positivePrompt),
+      negative_prompt: translateNaiWeightSyntax(negativePrompt),
       checkpoint: this.checkpoint,
       vae: this.vae || null,
       loras: this.loras

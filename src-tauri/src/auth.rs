@@ -3,6 +3,7 @@
 //! Stores accounts in `{app_data_dir}/auth.json` with bcrypt-hashed passwords.
 //! Sessions are tracked via random bearer tokens held in memory.
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -24,6 +25,12 @@ pub struct Account {
     /// Account role: "user" (default) or "moderator".
     #[serde(default = "default_role")]
     pub role: String,
+    /// ISO 8601 timestamp when the account was created.
+    #[serde(default)]
+    pub created_at: String,
+    /// ISO 8601 timestamp of the last time the user was active (persisted periodically).
+    #[serde(default)]
+    pub last_online: Option<String>,
 }
 
 fn default_role() -> String {
@@ -41,6 +48,8 @@ pub struct AuthState {
     db: RwLock<AuthDatabase>,
     /// Active session tokens → username.
     sessions: RwLock<HashMap<String, String>>,
+    /// Per-user last activity timestamp (username → Instant).
+    last_activity: RwLock<HashMap<String, std::time::Instant>>,
 }
 
 impl AuthState {
@@ -49,6 +58,7 @@ impl AuthState {
         Self {
             db: RwLock::new(db),
             sessions: RwLock::new(HashMap::new()),
+            last_activity: RwLock::new(HashMap::new()),
         }
     }
 
@@ -79,6 +89,8 @@ impl AuthState {
             password_hash: hash_password(password),
             must_change_password: temp,
             role: "user".to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            last_online: None,
         });
         save_auth_db(&db)?;
         Ok(())
@@ -220,6 +232,61 @@ impl AuthState {
         let mut sessions = self.sessions.write().unwrap();
         sessions.retain(|_, u| u != username);
         Ok(())
+    }
+
+    /// Update the last-activity timestamp for a user.
+    pub fn touch_activity(&self, username: &str) {
+        let mut map = self.last_activity.write().unwrap();
+        map.insert(username.to_string(), std::time::Instant::now());
+    }
+
+    /// Persist all accumulated `last_online` timestamps to the auth database.
+    /// Call periodically and on shutdown to avoid losing online-status data.
+    pub fn flush_last_online(&self) {
+        let activity = self.last_activity.read().unwrap();
+        if activity.is_empty() {
+            return;
+        }
+        let now = Utc::now();
+        let mut db = self.db.write().unwrap();
+        let mut changed = false;
+        for account in &mut db.accounts {
+            if activity.contains_key(&account.username) {
+                let ts = now.to_rfc3339();
+                if account.last_online.as_deref() != Some(&ts) {
+                    account.last_online = Some(ts);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            let _ = save_auth_db(&db);
+        }
+    }
+
+    /// List all users with their role, online/offline status, and timestamps.
+    /// A user is "online" if their last activity was within `threshold`.
+    pub fn list_users_status(
+        &self,
+        threshold: std::time::Duration,
+    ) -> Vec<(String, String, bool, String, Option<String>)> {
+        let db = self.db.read().unwrap();
+        let activity = self.last_activity.read().unwrap();
+        db.accounts
+            .iter()
+            .map(|a| {
+                let online = activity
+                    .get(&a.username)
+                    .map_or(false, |t| t.elapsed() < threshold);
+                (
+                    a.username.clone(),
+                    a.role.clone(),
+                    online,
+                    a.created_at.clone(),
+                    a.last_online.clone(),
+                )
+            })
+            .collect()
     }
 }
 

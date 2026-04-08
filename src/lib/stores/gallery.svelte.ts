@@ -13,7 +13,7 @@ import {
   copyBytesToClipboard,
   getGalleryImagePath,
 } from "../utils/api.js";
-import { isTauri } from "../utils/ipc.js";
+import { isTauri, isBrowserMode, getAuthToken } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
 import { generation } from "./generation.svelte.js";
 
@@ -23,7 +23,20 @@ async function thumbnailUrl(filename: string): Promise<string> {
     const { convertFileSrc } = await import("@tauri-apps/api/core");
     return convertFileSrc(filename, "thumbnail");
   }
-  return `/internal-api/_thumbnail/${encodeURIComponent(filename)}`;
+  const token = getAuthToken();
+  const base = `/internal-api/_thumbnail/${encodeURIComponent(filename)}`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
+/** Convert a gallery filename to a full-resolution image URL (serves original PNG with metadata). */
+async function fullImageUrl(filename: string): Promise<string> {
+  if (isTauri) {
+    const { convertFileSrc } = await import("@tauri-apps/api/core");
+    return convertFileSrc(filename, "gallery");
+  }
+  const token = getAuthToken();
+  const base = `/internal-api/_gallery/${encodeURIComponent(filename)}`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 
 /** Show a native save dialog. Returns the chosen path, or null. Tauri-only; browser falls back to download. */
@@ -34,6 +47,19 @@ async function showSaveDialog(defaultPath: string, extensions: string[]): Promis
   }
   // Browser mode: not used for MVP1 — callers should use browser download instead
   return null;
+}
+
+/** Trigger a file download in the browser using a temporary anchor element. */
+function triggerBrowserDownload(data: Uint8Array, filename: string, mimeType: string) {
+  const blob = new Blob([data], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 const GALLERY_BOARDS_KEY = "mooshieui.gallery.boards.v1";
@@ -49,6 +75,8 @@ class GalleryStore {
   lightboxOpen = $state(false);
   lightboxLoading = $state(false);
   loading = $state(false);
+  /** True while a save/download operation is in progress (prevents double-clicks). */
+  saving = $state(false);
   toast = $state<{ message: string; type: "success" | "error" | "info" } | null>(null);
   boardAssignments = $state<Record<string, string>>({});
   customBoards = $state<string[]>([]);
@@ -144,12 +172,16 @@ class GalleryStore {
   async openLightbox(image: OutputImage) {
     this.selectedImage = image;
     this.lightboxOpen = true;
-    if (image.url) {
-      // Session images already have a full-res blob URL
+    if (image.fullImageUrl) {
+      // Serve the real image from backend — supports right-click → Save with metadata
+      this.lightboxUrl = image.fullImageUrl;
+      this.lightboxLoading = false;
+    } else if (image.url) {
+      // Session images still have a blob URL (pre-persistence)
       this.lightboxUrl = image.url;
       this.lightboxLoading = false;
     } else if (image.gallery_filename) {
-      // Persisted images — load full-res from disk
+      // Persisted images without a fullImageUrl — load full-res from disk
       this.lightboxUrl = null;
       this.lightboxLoading = true;
       try {
@@ -176,13 +208,17 @@ class GalleryStore {
     this.lightboxUrl = null;
   }
 
-  showToast(message: string, type: "success" | "error" | "info" = "info") {
+  showToast(message: string, type: "success" | "error" | "info" = "info", persistent = false) {
     this.toast = { message, type };
     if (this._toastTimer) clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(() => {
-      this.toast = null;
+    if (!persistent) {
+      this._toastTimer = setTimeout(() => {
+        this.toast = null;
+        this._toastTimer = null;
+      }, 2000);
+    } else {
       this._toastTimer = null;
-    }, 2000);
+    }
   }
 
   /** Save generated images to the persistent gallery on disk.
@@ -224,10 +260,13 @@ class GalleryStore {
         }
         img.gallery_filename = galleryFilename;
         img.thumbnailUrl = await thumbnailUrl(galleryFilename);
+        img.fullImageUrl = await fullImageUrl(galleryFilename);
       } catch (e) {
         console.error("Failed to save image to gallery:", e);
       }
     }
+    // Trigger reactivity so components re-render with newly assigned thumbnailUrls
+    this.sessionImages = [...this.sessionImages];
   }
 
   /** Load previously saved gallery images from disk on startup (metadata only — no image bytes). */
@@ -273,6 +312,7 @@ class GalleryStore {
             is_upscaled: isUpscaled,
             url: undefined,
             thumbnailUrl: await thumbnailUrl(filename),
+            fullImageUrl: await fullImageUrl(filename),
             gallery_filename: filename,
             file_size_bytes: entry.size_bytes,
             generated_at_ms: entry.modified_ms,
@@ -305,39 +345,58 @@ class GalleryStore {
     return URL.createObjectURL(blob);
   }
 
-  /** Save an image to a user-chosen location via native file dialog. */
+  /** Save an image to a user-chosen location via native file dialog (or browser download). */
   async saveImageAs(image: OutputImage) {
+    if (this.saving) return;
+    this.saving = true;
     try {
-      const path = await showSaveDialog(image.filename, ["png", "jpg", "jpeg", "webp"]);
-      if (!path) return;
-
       let bytes: number[];
       if (image.gallery_filename) {
         bytes = await loadGalleryImage(image.gallery_filename);
+      } else if (image.url) {
+        const response = await fetch(image.url);
+        const buf = await response.arrayBuffer();
+        bytes = Array.from(new Uint8Array(buf));
       } else {
         bytes = await getOutputImage(image.filename, image.subfolder);
       }
-      await saveImageFile(bytes, path);
+
+      const path = await showSaveDialog(image.filename, ["png", "jpg", "jpeg", "webp"]);
+      if (path) {
+        await saveImageFile(bytes, path);
+      } else {
+        triggerBrowserDownload(new Uint8Array(bytes), image.filename, "image/png");
+      }
       this.showToast(locale.t("gallery.toast.image_saved"), "success");
     } catch (e) {
       console.error("Failed to save image:", e);
+    } finally {
+      this.saving = false;
     }
   }
 
-  /** Save a blob URL image to a user-chosen location. */
+  /** Save a blob URL image to a user-chosen location (or browser download). */
   async saveBlobAs(blobUrl: string, defaultName: string = "image.png") {
+    if (this.saving) return;
+    this.saving = true;
     try {
-      const path = await showSaveDialog(defaultName, ["png", "jpg", "jpeg", "webp"]);
-      if (!path) return;
-
       const response = await fetch(blobUrl);
       const blob = await response.blob();
-      const arrayBuf = await blob.arrayBuffer();
-      const bytes = Array.from(new Uint8Array(arrayBuf));
-      await saveImageFile(bytes, path);
+
+      const path = await showSaveDialog(defaultName, ["png", "jpg", "jpeg", "webp"]);
+      if (path) {
+        const arrayBuf = await blob.arrayBuffer();
+        const bytes = Array.from(new Uint8Array(arrayBuf));
+        await saveImageFile(bytes, path);
+      } else {
+        const arrayBuf = await blob.arrayBuffer();
+        triggerBrowserDownload(new Uint8Array(arrayBuf), defaultName, blob.type || "image/png");
+      }
       this.showToast(locale.t("gallery.toast.image_saved"), "success");
     } catch (e) {
       console.error("Failed to save image:", e);
+    } finally {
+      this.saving = false;
     }
   }
 
@@ -368,7 +427,38 @@ class GalleryStore {
 
   /** Copy a gallery image file to clipboard (as file reference). */
   async copyToClipboard(image: OutputImage) {
+    this.showToast(locale.t("gallery.toast.copying"), "info", true);
     try {
+      if (isBrowserMode) {
+        // Browser mode: fetch the image bytes and write to clipboard.
+        // Prefer the real backend URL (already has metadata embedded on disk).
+        let bytes: Uint8Array;
+        if (image.fullImageUrl) {
+          const resp = await fetch(image.fullImageUrl);
+          const buf = await resp.arrayBuffer();
+          bytes = new Uint8Array(buf);
+        } else if (image.url) {
+          const resp = await fetch(image.url);
+          const buf = await resp.arrayBuffer();
+          bytes = new Uint8Array(buf);
+          // Blob URLs don't have metadata embedded — add it
+          if (image.metadata) {
+            const embedded = await embedPngMetadataBytes(Array.from(bytes), image.metadata);
+            bytes = new Uint8Array(embedded);
+          }
+        } else if (image.gallery_filename) {
+          const raw = await loadGalleryImage(image.gallery_filename);
+          bytes = new Uint8Array(raw);
+        } else {
+          this.showToast(locale.t("gallery.toast.not_saved_yet"), "info");
+          return;
+        }
+        const blob = new Blob([bytes], { type: "image/png" });
+        await this.writeBlobToClipboard(blob);
+        this.showToast(locale.t("gallery.toast.copied"), "success");
+        return;
+      }
+      // Tauri mode: prefer native clipboard via file path
       if (image.gallery_filename) {
         const path = await getGalleryImagePath(image.gallery_filename);
         await copyImageToClipboard(path);
@@ -386,8 +476,47 @@ class GalleryStore {
     }
   }
 
-  /** Copy a blob URL image to clipboard via native Tauri clipboard, embedding metadata if provided. */
+  /** Write an image blob to the clipboard, with fallback for non-secure contexts (HTTP LAN). */
+  private async writeBlobToClipboard(blob: Blob) {
+    // navigator.clipboard.write requires a secure context (HTTPS or localhost).
+    // On LAN HTTP, fall back to creating a temporary canvas → execCommand.
+    if (navigator.clipboard?.write) {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+        return;
+      } catch {
+        // Clipboard API blocked — fall through to canvas fallback
+      }
+    }
+    // Canvas fallback: draw image onto a canvas, use legacy copy
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Failed to load image for clipboard fallback"));
+      img.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas 2D context unavailable");
+    ctx.drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+    // Try canvas.toBlob + clipboard.write (works in some contexts where ClipboardItem doesn't)
+    const pngBlob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((b) => b ? resolve(b) : reject(new Error("toBlob failed")), "image/png");
+    });
+    if (navigator.clipboard?.write) {
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+    } else {
+      throw new Error("Clipboard API not available — copy not supported in this browser context");
+    }
+  }
+
+  /** Copy a blob URL image to clipboard via native Tauri clipboard or browser Clipboard API. */
   async copyBlobToClipboard(blobUrl: string, metadata?: Record<string, string>) {
+    this.showToast(locale.t("gallery.toast.copying"), "info", true);
     try {
       const response = await fetch(blobUrl);
       const blob = await response.blob();
@@ -398,12 +527,15 @@ class GalleryStore {
         bytes = await embedPngMetadataBytes(bytes, metadata);
       }
 
-      // Infer extension from blob MIME type
-      const ext = blob.type === "image/jpeg" ? "jpg"
-        : blob.type === "image/webp" ? "webp"
-        : "png";
-
-      await copyBytesToClipboard(bytes, ext);
+      if (isBrowserMode) {
+        const pngBlob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+        await this.writeBlobToClipboard(pngBlob);
+      } else {
+        const ext = blob.type === "image/jpeg" ? "jpg"
+          : blob.type === "image/webp" ? "webp"
+          : "png";
+        await copyBytesToClipboard(bytes, ext);
+      }
       this.showToast(locale.t("gallery.toast.copied"), "success");
     } catch (e) {
       console.error("Failed to copy blob to clipboard:", e);

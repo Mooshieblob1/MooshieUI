@@ -36,6 +36,15 @@ pub async fn connect_websocket(
                 payload,
             });
         };
+        // Split emit: send full payload to Tauri (in-process), lightweight to SSE
+        let emit_split =
+            |event: &str, tauri_payload: serde_json::Value, sse_payload: serde_json::Value| {
+                let _ = app.emit(event, tauri_payload);
+                let _ = tx.send(crate::state::BroadcastEvent {
+                    event: event.to_string(),
+                    payload: sse_payload,
+                });
+            };
         let result = connect_async(&ws_url).await;
         let (ws_stream, _) = match result {
             Ok(s) => s,
@@ -89,6 +98,12 @@ pub async fn connect_websocket(
                     }
                     let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
 
+                    // Skip binary events if we don't know which prompt they belong to
+                    // (prevents cross-user event leaking via SSE)
+                    if current_prompt_id.is_none() && matches!(event_type, 1 | 2 | 4 | 100) {
+                        continue;
+                    }
+
                     match event_type {
                         1 | 2 => {
                             // PREVIEW_IMAGE or UNENCODED_PREVIEW_IMAGE
@@ -100,12 +115,24 @@ pub async fn connect_websocket(
                             let format_type =
                                 u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
                             let format = if format_type == 2 { "png" } else { "jpeg" };
+                            let ext = if format_type == 2 { "png" } else { "jpg" };
                             let image_data = &data[8..];
+                            let prompt_id_str = current_prompt_id.as_deref().unwrap();
+
+                            // Tauri: inline base64 (fast, in-process)
                             let b64 = base64::engine::general_purpose::STANDARD.encode(image_data);
-                            emit(
-                                "comfyui:preview",
-                                serde_json::json!({ "image": b64, "format": format }),
-                            );
+                            let tauri_payload = serde_json::json!({ "image": b64, "format": format, "prompt_id": prompt_id_str });
+
+                            // SSE: save to temp file, send reference
+                            let sse_payload = if let Some(temp_filename) =
+                                crate::temp_images::save(image_data, ext)
+                            {
+                                serde_json::json!({ "temp_filename": temp_filename, "format": format, "prompt_id": prompt_id_str })
+                            } else {
+                                tauri_payload.clone() // fallback to inline
+                            };
+
+                            emit_split("comfyui:preview", tauri_payload, sse_payload);
                         }
                         4 => {
                             // PREVIEW_IMAGE_WITH_METADATA
@@ -117,12 +144,21 @@ pub async fn connect_websocket(
                             let image_start = 8 + meta_len;
                             if image_start < data.len() {
                                 let image_data = &data[image_start..];
+                                let prompt_id_str = current_prompt_id.as_deref().unwrap();
+
                                 let b64 =
                                     base64::engine::general_purpose::STANDARD.encode(image_data);
-                                emit(
-                                    "comfyui:preview",
-                                    serde_json::json!({ "image": b64, "format": "jpeg" }),
-                                );
+                                let tauri_payload = serde_json::json!({ "image": b64, "format": "jpeg", "prompt_id": prompt_id_str });
+
+                                let sse_payload = if let Some(temp_filename) =
+                                    crate::temp_images::save(image_data, "jpg")
+                                {
+                                    serde_json::json!({ "temp_filename": temp_filename, "format": "jpeg", "prompt_id": prompt_id_str })
+                                } else {
+                                    tauri_payload.clone()
+                                };
+
+                                emit_split("comfyui:preview", tauri_payload, sse_payload);
                             }
                         }
                         100 => {
@@ -139,26 +175,42 @@ pub async fn connect_websocket(
                             let image_data = &data[8..];
                             let b64 = base64::engine::general_purpose::STANDARD.encode(image_data);
                             let encode_ms = started.elapsed().as_millis() as u64;
-                            let mut payload = serde_json::json!({
-                                "image": b64,
-                                "bit_depth": bit_depth,
-                                "image_bytes": image_data.len(),
-                                "encode_ms": encode_ms,
-                            });
-                            if let Some(prompt_id) = &current_prompt_id {
-                                payload["prompt_id"] = serde_json::Value::String(prompt_id.clone());
-                            }
+                            let prompt_id_str = current_prompt_id.as_deref().unwrap();
 
                             if bit_depth == 16 && encode_ms > 250 {
                                 log::warn!(
                                     "Slow 16-bit output WS payload processing: encode_ms={} bytes={} prompt_id={}",
                                     encode_ms,
                                     image_data.len(),
-                                    current_prompt_id.as_deref().unwrap_or("unknown")
+                                    prompt_id_str,
                                 );
                             }
 
-                            emit("comfyui:output_image", payload);
+                            // Tauri: inline base64 (in-process, reliable)
+                            let tauri_payload = serde_json::json!({
+                                "image": b64,
+                                "bit_depth": bit_depth,
+                                "image_bytes": image_data.len(),
+                                "encode_ms": encode_ms,
+                                "prompt_id": prompt_id_str,
+                            });
+
+                            // SSE: save to temp file (avoids multi-MB SSE payload)
+                            let sse_payload = if let Some(temp_filename) =
+                                crate::temp_images::save(image_data, "png")
+                            {
+                                serde_json::json!({
+                                    "temp_filename": temp_filename,
+                                    "bit_depth": bit_depth,
+                                    "image_bytes": image_data.len(),
+                                    "encode_ms": encode_ms,
+                                    "prompt_id": prompt_id_str,
+                                })
+                            } else {
+                                tauri_payload.clone()
+                            };
+
+                            emit_split("comfyui:output_image", tauri_payload, sse_payload);
                         }
                         _ => {}
                     }
@@ -189,6 +241,7 @@ pub async fn connect_websocket(
 
 /// Connect the WebSocket to ComfyUI without requiring an AppHandle.
 /// Events are only sent to the broadcast channel (SSE clients).
+/// Handles prompt queue cleanup on completion/error for multi-user isolation.
 pub async fn connect_websocket_headless(
     state: &AppState,
     event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
@@ -207,6 +260,7 @@ pub async fn connect_websocket_headless(
     let ws_url = format!("{}/ws?clientId={}", ws_url, client_id);
 
     let tx = event_tx.clone();
+
     let task = tokio::spawn(async move {
         let emit = |event: &str, payload: serde_json::Value| {
             let _ = tx.send(crate::state::BroadcastEvent {
@@ -266,6 +320,10 @@ pub async fn connect_websocket_headless(
                         continue;
                     }
                     let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                    // Skip binary events if we don't know which prompt they belong to
+                    if current_prompt_id.is_none() && matches!(event_type, 1 | 2 | 4 | 100) {
+                        continue;
+                    }
                     match event_type {
                         1 | 2 => {
                             if data.len() < 8 {
@@ -274,12 +332,21 @@ pub async fn connect_websocket_headless(
                             let format_type =
                                 u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
                             let format = if format_type == 2 { "png" } else { "jpeg" };
+                            let ext = if format_type == 2 { "png" } else { "jpg" };
                             let image_data = &data[8..];
-                            let b64 = base64::engine::general_purpose::STANDARD.encode(image_data);
-                            emit(
-                                "comfyui:preview",
-                                serde_json::json!({ "image": b64, "format": format }),
-                            );
+                            let prompt_id_str = current_prompt_id.as_deref().unwrap();
+
+                            // Headless: always save to temp file (SSE-only path)
+                            let payload = if let Some(temp_filename) =
+                                crate::temp_images::save(image_data, ext)
+                            {
+                                serde_json::json!({ "temp_filename": temp_filename, "format": format, "prompt_id": prompt_id_str })
+                            } else {
+                                let b64 =
+                                    base64::engine::general_purpose::STANDARD.encode(image_data);
+                                serde_json::json!({ "image": b64, "format": format, "prompt_id": prompt_id_str })
+                            };
+                            emit("comfyui:preview", payload);
                         }
                         4 => {
                             if data.len() < 8 {
@@ -290,12 +357,18 @@ pub async fn connect_websocket_headless(
                             let image_start = 8 + meta_len;
                             if image_start < data.len() {
                                 let image_data = &data[image_start..];
-                                let b64 =
-                                    base64::engine::general_purpose::STANDARD.encode(image_data);
-                                emit(
-                                    "comfyui:preview",
-                                    serde_json::json!({ "image": b64, "format": "jpeg" }),
-                                );
+                                let prompt_id_str = current_prompt_id.as_deref().unwrap();
+
+                                let payload = if let Some(temp_filename) =
+                                    crate::temp_images::save(image_data, "jpg")
+                                {
+                                    serde_json::json!({ "temp_filename": temp_filename, "format": "jpeg", "prompt_id": prompt_id_str })
+                                } else {
+                                    let b64 = base64::engine::general_purpose::STANDARD
+                                        .encode(image_data);
+                                    serde_json::json!({ "image": b64, "format": "jpeg", "prompt_id": prompt_id_str })
+                                };
+                                emit("comfyui:preview", payload);
                             }
                         }
                         100 => {
@@ -307,17 +380,40 @@ pub async fn connect_websocket_headless(
                             let started = Instant::now();
                             let bit_depth = if format_tag == 2 { 16 } else { 8 };
                             let image_data = &data[8..];
-                            let b64 = base64::engine::general_purpose::STANDARD.encode(image_data);
                             let encode_ms = started.elapsed().as_millis() as u64;
-                            let mut payload = serde_json::json!({
-                                "image": b64,
-                                "bit_depth": bit_depth,
-                                "image_bytes": image_data.len(),
-                                "encode_ms": encode_ms,
-                            });
-                            if let Some(prompt_id) = &current_prompt_id {
-                                payload["prompt_id"] = serde_json::Value::String(prompt_id.clone());
+                            let prompt_id_str = current_prompt_id.as_deref().unwrap();
+
+                            if bit_depth == 16 && encode_ms > 250 {
+                                log::warn!(
+                                    "Slow 16-bit output WS payload processing (headless): encode_ms={} bytes={} prompt_id={}",
+                                    encode_ms,
+                                    image_data.len(),
+                                    prompt_id_str,
+                                );
                             }
+
+                            // Headless: always save to temp file (SSE-only path)
+                            let payload = if let Some(temp_filename) =
+                                crate::temp_images::save(image_data, "png")
+                            {
+                                serde_json::json!({
+                                    "temp_filename": temp_filename,
+                                    "bit_depth": bit_depth,
+                                    "image_bytes": image_data.len(),
+                                    "encode_ms": encode_ms,
+                                    "prompt_id": prompt_id_str,
+                                })
+                            } else {
+                                let b64 =
+                                    base64::engine::general_purpose::STANDARD.encode(image_data);
+                                serde_json::json!({
+                                    "image": b64,
+                                    "bit_depth": bit_depth,
+                                    "image_bytes": image_data.len(),
+                                    "encode_ms": encode_ms,
+                                    "prompt_id": prompt_id_str,
+                                })
+                            };
                             emit("comfyui:output_image", payload);
                         }
                         _ => {}

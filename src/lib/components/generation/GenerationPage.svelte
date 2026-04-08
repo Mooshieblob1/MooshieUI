@@ -29,6 +29,7 @@
   import type { ContextMenuItem } from "../ui/ContextMenu.svelte";
   import InterrogateModal from "./InterrogateModal.svelte";
   import { interrogateGalleryImage, interrogateImage } from "../../utils/api.js";
+  import InterrogateSection from "./InterrogateSection.svelte";
   import { ipcListen, isTauri } from "../../utils/ipc.js";
   import {
     isDroppableSection,
@@ -46,6 +47,7 @@
   type SectionId =
     | "dimensions"
     | "prompts"
+    | "interrogate"
     | "imageInputs"
     | "inpaintLayers"
     | "generationSettings"
@@ -80,6 +82,7 @@
   let sectionSides = $state<Record<SectionId, SectionSide>>({
     dimensions: "left",
     prompts: "left",
+    interrogate: "left",
     imageInputs: "left",
     inpaintLayers: "right",
     generationSettings: "right",
@@ -106,6 +109,7 @@
   const SECTION_ORDER: SectionId[] = [
     "dimensions",
     "prompts",
+    "interrogate",
     "imageInputs",
     "inpaintLayers",
     "generationSettings",
@@ -298,6 +302,7 @@
   const savedCollapse = typeof window !== "undefined" ? loadCollapseState() : {};
 
   let dimensionsSectionOpen = $state(savedCollapse.dimensions !== false);
+  let interrogateSectionOpen = $state(savedCollapse.interrogate !== false);
   let imageSectionOpen = $state(savedCollapse.imageInputs !== false);
   let layersSectionOpen = $state(savedCollapse.inpaintLayers !== false);
   let controlsSectionOpen = $state(savedCollapse.generationSettings !== false);
@@ -311,6 +316,7 @@
   $effect(() => {
     const state: Record<string, boolean> = {
       dimensions: dimensionsSectionOpen,
+      interrogate: interrogateSectionOpen,
       imageInputs: imageSectionOpen,
       inpaintLayers: layersSectionOpen,
       generationSettings: controlsSectionOpen,
@@ -984,7 +990,7 @@
 
   function onMetadataDragEnter(e: DragEvent, targetId: string) {
     if (!hasFilePayload(e.dataTransfer)) return;
-    if (targetId !== "preview" && !isDroppableSection(targetId)) return;
+    if (!isDroppableSection(targetId)) return;
     e.preventDefault();
     e.stopPropagation();
     if (metadataDropTarget && metadataDropTarget !== targetId) {
@@ -996,14 +1002,14 @@
 
   function onMetadataDragOver(e: DragEvent, targetId: string) {
     if (!hasFilePayload(e.dataTransfer)) return;
-    if (targetId !== "preview" && !isDroppableSection(targetId)) return;
+    if (!isDroppableSection(targetId)) return;
     e.preventDefault();
     e.stopPropagation();
     if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
   }
 
   function onMetadataDragLeave(e: DragEvent, targetId: string) {
-    if (targetId !== "preview" && !isDroppableSection(targetId)) return;
+    if (!isDroppableSection(targetId)) return;
     metadataDropCounters[targetId] = (metadataDropCounters[targetId] || 0) - 1;
     if (metadataDropCounters[targetId] <= 0) {
       metadataDropCounters[targetId] = 0;
@@ -1019,23 +1025,25 @@
     metadataDropTarget = null;
     metadataDropCounters = {};
     if (!e.dataTransfer) return;
+    // Only import metadata on specific param sections, not the preview area
+    if (!isDroppableSection(targetId)) return;
     const file = getImageFile(e.dataTransfer);
     if (!file) return;
-    const importTarget = targetId === "preview" ? "all" : targetId as DroppableSectionId;
-    await handleMetadataImport(file, importTarget);
+    await handleMetadataImport(file, targetId as DroppableSectionId);
   }
 
   let pasteHandler: ((e: ClipboardEvent) => void) | null = null;
   let unlistenDragDrop: (() => void) | null = null;
 
-  /** Find the metadata drop section under the given CSS-pixel coordinates. */
+  /** Find the metadata drop section under the given CSS-pixel coordinates.
+   *  Only returns actual parameter sections — preview area is excluded. */
   function findDropSection(cssX: number, cssY: number): string | null {
     const el = document.elementFromPoint(cssX, cssY);
     if (!el) return null;
     const sectionEl = (el as HTMLElement).closest?.("[data-drop-section]") as HTMLElement | null;
     if (!sectionEl) return null;
     const id = sectionEl.dataset.dropSection!;
-    if (id === "preview" || isDroppableSection(id)) return id;
+    if (isDroppableSection(id)) return id;
     return null;
   }
 
@@ -1271,6 +1279,30 @@
     </div>
   {/snippet}
 
+  {#snippet interrogateSection()}
+    <div bind:this={sectionRefs['interrogate']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'interrogate' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("interrogate")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (interrogateSectionOpen = !interrogateSectionOpen)}
+          title={interrogateSectionOpen ? "Collapse Interrogate Image" : "Expand Interrogate Image"}
+        >
+          <span class="flex items-center gap-1.5 font-medium">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            {locale.t('generation.interrogate.title')}
+          </span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {interrogateSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if interrogateSectionOpen}
+        <div class="px-3 pb-2 pt-0.5">
+          <InterrogateSection />
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
   {#snippet imageInputsSection()}
     <div bind:this={sectionRefs['imageInputs']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'imageInputs' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
@@ -1321,6 +1353,7 @@
               <div
                 data-drop-zone="img-input"
                 class="border-2 border-dashed rounded-lg p-4 text-center transition-colors {dragOver ? 'border-indigo-500 bg-indigo-500/10' : 'border-neutral-700 hover:border-neutral-600'}"
+                ondragenter={(e) => { e.preventDefault(); dragOver = true; }}
                 ondragover={(e) => { e.preventDefault(); dragOver = true; }}
                 ondragleave={() => { dragOver = false; }}
                 ondrop={handleImageDrop}
@@ -1415,6 +1448,7 @@
                 <div
                   data-drop-zone="mask-input"
                   class="border-2 border-dashed rounded-lg p-4 text-center transition-colors {maskDragOver ? 'border-indigo-500 bg-indigo-500/10' : 'border-neutral-700 hover:border-neutral-600'}"
+                  ondragenter={(e) => { e.preventDefault(); maskDragOver = true; }}
                   ondragover={(e) => { e.preventDefault(); maskDragOver = true; }}
                   ondragleave={() => { maskDragOver = false; }}
                   ondrop={handleMaskDrop}
@@ -1716,6 +1750,8 @@
       {@render dimensionsSection()}
     {:else if section === "prompts"}
       {@render promptsSection()}
+    {:else if section === "interrogate"}
+      {@render interrogateSection()}
     {:else if section === "imageInputs"}
       {@render imageInputsSection()}
     {:else if section === "inpaintLayers"}
@@ -1847,21 +1883,9 @@
       <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
         <!-- Preview area -->
         <div
-          data-drop-section="preview"
-          class="relative flex-1 min-h-0 p-6 flex flex-col gap-4 overflow-y-auto {metadataDropTarget === 'preview' ? 'ring-2 ring-indigo-500/70 ring-inset bg-indigo-500/5' : ''}"
+          class="relative flex-1 min-h-0 p-6 flex flex-col gap-4 overflow-y-auto"
           use:smoothScroll
-          ondragenter={(e) => onMetadataDragEnter(e, "preview")}
-          ondragover={(e) => onMetadataDragOver(e, "preview")}
-          ondragleave={(e) => onMetadataDragLeave(e, "preview")}
-          ondrop={(e) => onMetadataDrop(e, "preview")}
         >
-          {#if metadataDropTarget === "preview"}
-            <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 bg-indigo-500/10 border-2 border-dashed border-indigo-400/60 rounded-lg">
-              <span class="text-sm font-medium text-indigo-300 bg-neutral-900/80 px-4 py-2 rounded-full">
-                Drop to import all parameters
-              </span>
-            </div>
-          {/if}
           <ProgressBar />
           <PreviewImage />
         </div>

@@ -1,6 +1,6 @@
 [package]
 name = "comfyui-desktop"
-version = "0.6.9"
+version = "0.7.0"
 edition = "2021"
 license = "MIT"
 
@@ -47,6 +47,7 @@ mime_guess = "2"
 tokio-stream = { version = "0.1", features = ["sync"] }
 open = "5"
 hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "=2.0.2"

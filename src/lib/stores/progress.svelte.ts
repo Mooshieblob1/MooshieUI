@@ -40,6 +40,11 @@ class ProgressStore {
   /** The seed used by the most recently completed generation. */
   lastCompletedSeed = $state<number | null>(null);
 
+  /** Global queue position for this user's next prompt (0 = generating now). */
+  queuePosition = $state<number | null>(null);
+  /** Total prompts in the global queue across all users. */
+  queueTotal = $state(0);
+
   // --- Derived getters ---
 
   get isGenerating(): boolean {
@@ -82,7 +87,19 @@ class ProgressStore {
 
   get phaseLabel(): string {
     if (!this.isGenerating) return "";
+    // Show queue position if waiting behind other users
+    if (this.queuePosition != null && this.queuePosition > 0 && this.totalSteps === 0) {
+      const pos = this.queuePosition;
+      const own = this.queueCount;
+      if (own > 1) return `Queue position #${pos + 1} (+${own - 1} of yours)`;
+      return `Queue position #${pos + 1}`;
+    }
     if (this.totalSteps === 0) {
+      // If at position 0 but other users' prompts exist in the global queue,
+      // ComfyUI may still be working on their prompt — show "In queue"
+      if (this.queueTotal > this.queueCount) {
+        return this.queueCount > 1 ? `In queue (${this.queueCount})` : "In queue...";
+      }
       return this.queueCount > 1 ? `Queued (${this.queueCount})` : "Preparing...";
     }
     if (this.wasUpscaled && this.samplingPass >= 2) {
@@ -111,6 +128,24 @@ class ProgressStore {
     }
     this.currentStep = step;
     this.totalSteps = max;
+  }
+
+  /** Called when a mooshie:queue_update event arrives with position info. */
+  updateQueuePosition(promptId: string, position: number, total: number) {
+    // Only update if this prompt is one of ours
+    if (this.pendingPrompts.some((p) => p.promptId === promptId)) {
+      // Use the lowest position among our pending prompts (the one closest to executing)
+      if (this.queuePosition === null || position < this.queuePosition) {
+        this.queuePosition = position;
+      }
+      this.queueTotal = total;
+    }
+  }
+
+  /** Reset queue position tracking (called before a new batch of updates). */
+  resetQueuePosition() {
+    this.queuePosition = null;
+    this.queueTotal = 0;
   }
 
   /** Add a new prompt to the queue. */
@@ -191,6 +226,8 @@ class ProgressStore {
     this.previewImage = null;
     this.samplingPass = 0;
     this._lastProgressNode = null;
+    this.queuePosition = null;
+    this.queueTotal = 0;
   }
 
   // --- Backward-compat aliases ---

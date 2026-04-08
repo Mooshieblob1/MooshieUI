@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser } from "./lib/utils/ipc.js";
+  import { onMount, onDestroy } from "svelte";
+  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders } from "./lib/utils/ipc.js";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
@@ -9,7 +9,7 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata } from "./lib/utils/api.js";
+  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata, getQueue } from "./lib/utils/api.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
@@ -42,6 +42,7 @@
 
   /** Images received via WebSocket during generation, keyed by prompt_id. */
   let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string }>>();
+  let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
 
   // Lightbox zoom state — only scale needs reactivity (used in template conditionals)
   let lbScale = 1;
@@ -152,6 +153,18 @@
     const isOpen = gallery.lightboxOpen;
     if (isOpen && !lbWasOpen) resetLightboxZoom();
     lbWasOpen = isOpen;
+  });
+
+  // Document-level keyboard handler for lightbox (fallback for browser focus issues)
+  $effect(() => {
+    if (!gallery.lightboxOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") gallery.closeLightbox();
+      if (e.key === "ArrowLeft") navigateLightbox("prev");
+      if (e.key === "ArrowRight") navigateLightbox("next");
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
   });
 
   function startMetadataResize(e: MouseEvent) {
@@ -368,11 +381,17 @@
 
   function navigateLightbox(direction: "prev" | "next") {
     if (!gallery.selectedImage) return;
-    const idx = sortedGalleryImages.indexOf(gallery.selectedImage);
-    if (idx === -1) return;
-    const len = sortedGalleryImages.length;
+    // Try sorted gallery images first, fall back to session images for bottom panel
+    let list = sortedGalleryImages;
+    let idx = list.indexOf(gallery.selectedImage);
+    if (idx === -1) {
+      list = gallery.sessionImages;
+      idx = list.indexOf(gallery.selectedImage);
+    }
+    if (idx === -1 || list.length < 2) return;
+    const len = list.length;
     const next = direction === "prev" ? (idx - 1 + len) % len : (idx + 1) % len;
-    const nextImage = sortedGalleryImages[next];
+    const nextImage = list[next];
     if (nextImage) void gallery.openLightbox(nextImage);
   }
 
@@ -1252,7 +1271,8 @@
         const data = event.payload;
         if (!progress.isGenerating) return;
         lastProgressEventAt = Date.now();
-        // Filter by prompt_id if available
+        // Filter by prompt_id — reject events for other users' prompts
+        if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
         if (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId) return;
         if (data.prompt_id && !progress.activePromptId) {
           progress.setActivePrompt(data.prompt_id);
@@ -1260,15 +1280,46 @@
         const node = data.node ?? progress.currentNode;
         progress.updateProgress(data.value, data.max, node);
       }),
-      ipcListen("comfyui:preview", (event: any) => {
+      ipcListen("mooshie:queue_update", (event: any) => {
+        const data = event.payload;
+        if (data.prompt_id && data.position != null && data.total != null) {
+          // Reset before each new batch (detected by total changing or position 0)
+          if (data.position === 0 || data.total !== progress.queueTotal) {
+            progress.resetQueuePosition();
+          }
+          progress.updateQueuePosition(data.prompt_id, data.position, data.total);
+        }
+      }),
+      ipcListen("comfyui:preview", async (event: any) => {
         const data = event.payload;
         if (!progress.isGenerating) return;
-        progress.previewImage = `data:image/${data.format};base64,${data.image}`;
+        // Filter by prompt_id — reject events for other users' prompts
+        if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
+        if (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId) return;
+
+        if (data.temp_filename) {
+          // SSE/browser path: fetch image from temp endpoint
+          try {
+            const resp = await fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`, {
+              headers: authHeaders(),
+            });
+            if (!resp.ok) return;
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            progress.previewImage = url;
+          } catch (e) {
+            console.warn("[preview] failed to fetch temp image:", e);
+          }
+        } else if (data.image) {
+          progress.previewImage = `data:image/${data.format};base64,${data.image}`;
+        }
       }),
-      ipcListen("comfyui:output_image", (event: any) => {
+      ipcListen("comfyui:output_image", async (event: any) => {
         // MooshieSaveImage sends final PNG bytes over WS — collect per prompt
         const data = event.payload;
         if (!progress.isGenerating) return;
+        // Filter by prompt_id — reject events for other users' prompts
+        if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
 
         if (data.bit_depth === 16) {
           const now = Date.now();
@@ -1289,11 +1340,37 @@
           }
         }
 
-        const raw = atob(data.image);
-        const bytes = new Uint8Array(raw.length);
-        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-        const blob = new Blob([bytes], { type: "image/png" });
-        const url = URL.createObjectURL(blob);
+        let blob: Blob;
+        let url: string;
+
+        if (data.temp_filename) {
+          // SSE/browser path: fetch image from temp endpoint (avoids multi-MB SSE payloads)
+          try {
+            const resp = await fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`, {
+              headers: authHeaders(),
+            });
+            if (!resp.ok) {
+              console.error("[output_image] failed to fetch temp image:", resp.status);
+              return;
+            }
+            blob = await resp.blob();
+            url = URL.createObjectURL(blob);
+          } catch (e) {
+            console.error("[output_image] failed to fetch temp image:", e);
+            return;
+          }
+        } else if (data.image) {
+          // Tauri path: decode inline base64
+          const raw = atob(data.image);
+          const bytes = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+          blob = new Blob([bytes], { type: "image/png" });
+          url = URL.createObjectURL(blob);
+        } else {
+          console.warn("[output_image] event has neither temp_filename nor image");
+          return;
+        }
+
         const pid = data.prompt_id ?? progress.activePromptId;
         if (!pid) return;
         const arr = pendingOutputImages.get(pid) ?? [];
@@ -1350,6 +1427,39 @@
         // Success handled via executing node=null
       }),
     ]);
+
+    // Stuck-generation reconciliation: periodically check if our pending prompts
+    // still exist in ComfyUI's queue. If not, they completed but events were lost
+    // (e.g. SSE broadcast lag). Clear them so the UI doesn't hang.
+    reconcileIntervalId = setInterval(async () => {
+      if (!progress.isGenerating || !connection.connected) return;
+      try {
+        const q = await getQueue();
+        const allPromptIds = new Set<string>();
+        for (const item of [...q.queue_running, ...q.queue_pending]) {
+          // ComfyUI queue entries: [number, prompt_id, ...] or {prompt_id: ...}
+          const pid = Array.isArray(item)
+            ? (item[1] as string)
+            : (item as any)?.prompt_id;
+          if (pid) allPromptIds.add(pid);
+        }
+        for (const p of progress.pendingPrompts) {
+          if (!allPromptIds.has(p.promptId)) {
+            console.warn(`[reconcile] Prompt ${p.promptId} no longer in ComfyUI queue — completing`);
+            const item = progress.completePrompt(p.promptId);
+            if (item) {
+              const images = pendingOutputImages.get(p.promptId) ?? [];
+              pendingOutputImages.delete(p.promptId);
+              if (images.length > 0) {
+                finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images);
+              }
+            }
+          }
+        }
+      } catch {
+        // Queue check failed — not critical
+      }
+    }, 15_000);
 
     // Start ComfyUI server — returns immediately, background task handles readiness
     // The backend will auto-connect WebSocket and emit comfyui:server_ready when done
@@ -1432,6 +1542,10 @@
           loadingLightboxMetadata = false;
         }
       });
+  });
+
+  onDestroy(() => {
+    if (reconcileIntervalId) clearInterval(reconcileIntervalId);
   });
 </script>
 
@@ -1590,6 +1704,7 @@
         /></svg
       >
     </button>
+    {#if userRole === "admin" || userRole === "moderator"}
     <button
       class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
       'modelhub'
@@ -1610,6 +1725,7 @@
         ><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg
       >
     </button>
+    {/if}
 
     <div class="flex-1"></div>
 
@@ -1843,7 +1959,7 @@
                           {#if !image.is_upscaled}
                             <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => upscaleImage(image)}>{locale.t("gallery.upscale")}</button>
                           {/if}
-                          <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.saveImageAs(image)}>{locale.t("gallery.save")}</button>
+                          <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100 disabled:opacity-50 disabled:cursor-not-allowed" disabled={gallery.saving} onclick={() => gallery.saveImageAs(image)}>{gallery.saving ? locale.t("gallery.saving") : locale.t("gallery.save")}</button>
                           {#if generation.manualSaveMode && !image.gallery_filename}
                             <button class="px-2 py-1 text-[11px] rounded bg-indigo-700 hover:bg-indigo-600 text-neutral-100" onclick={() => saveToDir(image)}>{locale.t("gallery.save_to_folder")}</button>
                           {/if}
@@ -1885,7 +2001,7 @@
                                 <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
                               </button>
                             {/if}
-                            <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow pointer-events-auto shrink-0" title={locale.t('gallery.save_as')} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>
+                            <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow pointer-events-auto shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" disabled={gallery.saving} title={locale.t('gallery.save_as')} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>
                               <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                             </button>
                             {#if generation.manualSaveMode && !image.gallery_filename}
@@ -2036,7 +2152,7 @@
       </button>
 
       <!-- Arrow navigation -->
-      {#if gallery.selectedImage && sortedGalleryImages.length > 1}
+      {#if gallery.selectedImage && (sortedGalleryImages.length > 1 || gallery.sessionImages.length > 1)}
         <button
           class="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-10 h-10 flex items-center justify-center rounded-full bg-black/40 hover:bg-black/70 text-white transition-colors"
           onclick={() => navigateLightbox("prev")}
@@ -2120,7 +2236,8 @@
         <!-- Export group -->
         <button
           title={locale.t('gallery.save_as')}
-          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={gallery.saving}
           onclick={() => gallery.selectedImage && gallery.saveImageAs(gallery.selectedImage)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>

@@ -59,22 +59,38 @@ pub fn embed_png_metadata(
         .map_err(|e| format!("PNG frame read error: {}", e))?;
     buf.truncate(output_info.buffer_size());
 
-    // If stealth alpha is requested, embed bits into pixel data
+    // If stealth alpha is requested, embed bits into pixel data.
+    // If stealth fails (e.g. unsupported color type), fall back to text_chunk only.
     let is_16bit = info.bit_depth == png::BitDepth::Sixteen;
-    let (pixel_buf, color_type) =
-        if mode == MetadataMode::StealthAlpha || mode == MetadataMode::Both {
-            if is_16bit {
-                let (mut rgba16, w, h) = to_rgba16(&buf, info.color_type, info.width, info.height)?;
-                encode_stealth_alpha(&mut rgba16, w, h, 8, &json_text)?; // 8 bytes/pixel, alpha LSB at +7
-                (rgba16, png::ColorType::Rgba)
-            } else {
-                let (mut rgba, w, h) = to_rgba8(&buf, info.color_type, info.width, info.height)?;
-                encode_stealth_alpha(&mut rgba, w, h, 4, &json_text)?; // 4 bytes/pixel, alpha LSB at +3
-                (rgba, png::ColorType::Rgba)
-            }
+    let (pixel_buf, color_type, effective_mode) = if mode == MetadataMode::StealthAlpha
+        || mode == MetadataMode::Both
+    {
+        let stealth_result = if is_16bit {
+            to_rgba16(&buf, info.color_type, info.width, info.height).and_then(
+                |(mut rgba16, w, h)| {
+                    encode_stealth_alpha(&mut rgba16, w, h, 8, &json_text)?;
+                    Ok((rgba16, w, h))
+                },
+            )
         } else {
-            (buf, info.color_type)
+            to_rgba8(&buf, info.color_type, info.width, info.height).and_then(|(mut rgba, w, h)| {
+                encode_stealth_alpha(&mut rgba, w, h, 4, &json_text)?;
+                Ok((rgba, w, h))
+            })
         };
+        match stealth_result {
+            Ok((pixels, _w, _h)) => (pixels, png::ColorType::Rgba, mode),
+            Err(e) => {
+                log::warn!(
+                    "Stealth alpha encoding failed ({}), falling back to text_chunk only",
+                    e
+                );
+                (buf, info.color_type, MetadataMode::TextChunk)
+            }
+        }
+    } else {
+        (buf, info.color_type, mode)
+    };
 
     // Re-encode PNG
     let mut output = Vec::new();
@@ -86,7 +102,7 @@ pub fn embed_png_metadata(
             encoder.set_source_srgb(srgb);
         }
 
-        if mode == MetadataMode::TextChunk || mode == MetadataMode::Both {
+        if effective_mode == MetadataMode::TextChunk || effective_mode == MetadataMode::Both {
             encoder
                 .add_text_chunk("parameters".to_string(), json_text)
                 .map_err(|e| format!("Failed to add text chunk: {}", e))?;

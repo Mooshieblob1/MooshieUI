@@ -124,6 +124,14 @@
     return getSavedImageForUrl(progress.lastOutputImage);
   }
 
+  /** Prefer the real backend URL (supports right-click → Save with metadata)
+   *  once persistence completes — fall back to the blob URL for previews. */
+  const previewSrc = $derived.by(() => {
+    const saved = getActiveSavedImage();
+    if (saved?.fullImageUrl) return saved.fullImageUrl;
+    return progress.displayImage;
+  });
+
   function openPreviewLightbox() {
     if (Date.now() < suppressOpenUntil) return;
 
@@ -193,7 +201,7 @@
       ondrop={suppressPreviewOpenOnFileDrop}
     >
       <img
-        src={progress.displayImage}
+        src={previewSrc}
         alt="Preview"
         class="w-full h-full object-contain"
       />
@@ -218,7 +226,8 @@
         {/if}
         <button
           onclick={handleSave}
-          class="flex items-center gap-1.5 bg-neutral-700 hover:bg-neutral-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg shadow-lg transition-colors"
+          class="flex items-center gap-1.5 bg-neutral-700 hover:bg-neutral-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg shadow-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={gallery.saving}
           title={locale.t('preview.save_as')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>

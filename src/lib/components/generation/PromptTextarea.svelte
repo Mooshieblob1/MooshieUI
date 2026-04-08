@@ -2,6 +2,7 @@
   import { onDestroy } from "svelte";
   import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { smoothScroll } from "../../utils/smoothScroll.js";
 
   interface Props {
     value: string;
@@ -193,6 +194,24 @@
       }
     }
 
+    // NAI-style bracket weighting: { wraps selection to increase, [ to decrease
+    if ((e.key === "{" || e.key === "[") && textareaEl) {
+      const start = textareaEl.selectionStart;
+      const end = textareaEl.selectionEnd;
+      if (start !== end) {
+        e.preventDefault();
+        const open = e.key === "{" ? "{" : "[";
+        const close = e.key === "{" ? "}" : "]";
+        const wrapped = `${open}${value.substring(start, end)}${close}`;
+        value = value.substring(0, start) + wrapped + value.substring(end);
+        requestAnimationFrame(() => {
+          textareaEl?.focus();
+          textareaEl?.setSelectionRange(start, start + wrapped.length);
+        });
+        return;
+      }
+    }
+
     // Autocomplete navigation
     if (showSuggestions) {
       if (e.key === "ArrowDown") {
@@ -303,6 +322,7 @@
     {placeholder}
     {rows}
     class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors {minHeight}"
+    use:smoothScroll={{ duration: 0.4, multiplier: 1.2 }}
     onkeydown={handleKeydown}
     oninput={handleInput}
     onclick={handleClick}

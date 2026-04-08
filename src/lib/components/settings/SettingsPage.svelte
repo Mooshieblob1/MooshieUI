@@ -60,13 +60,67 @@
   let switchingMode = $state(false);
 
   // LAN auth state
-  let lanAccounts = $state<{ username: string; role: string }[]>([]);
+  let lanAccounts = $state<{ username: string; role: string; online: boolean; created_at: string; last_online: string | null }[]>([]);
   let lanNewUser = $state("");
   let lanNewPass = $state("");
   let lanAuthError = $state<string | null>(null);
   let lanAuthBusy = $state(false);
   let lanAddresses = $state<string[]>([]);
   let showAddAccountModal = $state(false);
+
+  // Account list: search, sort, and delete modal
+  let accountSearch = $state("");
+  let accountSort = $state<"name" | "joined" | "last_online">("name");
+  let accountSortAsc = $state(true);
+  let showDeleteModal = $state(false);
+  let deleteTargetUser = $state("");
+  let deleteKeepData = $state(true);
+
+  function relativeTime(iso: string | null): string {
+    if (!iso) return "Never";
+    const diff = Date.now() - new Date(iso).getTime();
+    if (diff < 0 || isNaN(diff)) return "Unknown";
+    const sec = Math.floor(diff / 1000);
+    if (sec < 60) return "Just now";
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hrs = Math.floor(min / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    if (days < 7) return `${days}d ago`;
+    const weeks = Math.floor(days / 7);
+    if (weeks < 5) return `${weeks}w ago`;
+    const months = Math.floor(days / 30);
+    if (months < 12) return `${months}mo ago`;
+    return `${Math.floor(days / 365)}y ago`;
+  }
+
+  const sortedAccounts = $derived.by(() => {
+    // Filter by search
+    const query = accountSearch.toLowerCase();
+    const filtered = query
+      ? lanAccounts.filter((a) => a.username.toLowerCase().includes(query))
+      : lanAccounts;
+
+    // Partition: online first
+    const online = filtered.filter((a) => a.online);
+    const offline = filtered.filter((a) => !a.online);
+
+    // Sort helper
+    const cmp = (a: typeof lanAccounts[0], b: typeof lanAccounts[0]): number => {
+      let v = 0;
+      if (accountSort === "name") {
+        v = a.username.localeCompare(b.username);
+      } else if (accountSort === "joined") {
+        v = (a.created_at || "").localeCompare(b.created_at || "");
+      } else {
+        v = (a.last_online || "").localeCompare(b.last_online || "");
+      }
+      return accountSortAsc ? v : -v;
+    };
+
+    return [...online.sort(cmp), ...offline.sort(cmp)];
+  });
 
   // User self-service password change
   let cpCurrentPass = $state("");
@@ -137,9 +191,11 @@
       const resp = await fetch("/internal-api/_auth/accounts", { headers: authHeaders() });
       const data = await resp.json();
       const raw = data.accounts ?? [];
-      // Normalise: backend now returns {username, role} objects
+      // Normalise: backend now returns {username, role, online, created_at, last_online}
       lanAccounts = raw.map((a: any) =>
-        typeof a === "string" ? { username: a, role: "user" } : { username: a.username, role: a.role ?? "user" }
+        typeof a === "string"
+          ? { username: a, role: "user", online: false, created_at: "", last_online: null }
+          : { username: a.username, role: a.role ?? "user", online: !!a.online, created_at: a.created_at ?? "", last_online: a.last_online ?? null }
       );
     } catch {
       lanAccounts = [];
@@ -184,14 +240,14 @@
     }
   }
 
-  async function deleteLanAccount(username: string) {
+  async function deleteLanAccount(username: string, keepData: boolean = false) {
     lanAuthBusy = true;
     lanAuthError = null;
     try {
       const resp = await fetch("/internal-api/_auth/delete", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ username }),
+        body: JSON.stringify({ username, keep_data: keepData }),
       });
       if (!resp.ok) {
         const data = await resp.json();
@@ -641,6 +697,13 @@
     }
   });
 
+  // Poll account list every 10s to refresh online/offline indicators (admin only).
+  $effect(() => {
+    if (!isBrowserMode || !isAdmin) return;
+    const id = setInterval(loadLanAccounts, 10_000);
+    return () => clearInterval(id);
+  });
+
   function snapshotRestartFields() {
     if (!config) return;
     originalUrl = config.server_url;
@@ -849,35 +912,69 @@
 
                   <!-- Existing accounts -->
                   {#if lanAccounts.length > 0}
-                    <div class="space-y-1">
-                      <p class="text-xs text-neutral-400 font-medium">Accounts</p>
-                      {#each lanAccounts as account}
-                        <div class="flex items-center justify-between bg-neutral-800 rounded-lg px-3 py-2">
-                          <div class="flex items-center gap-2">
-                            <span class="text-sm text-neutral-200">{account.username}</span>
-                            {#if account.role === "moderator"}
-                              <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium">Mod</span>
-                            {/if}
+                    <div class="space-y-2">
+                      <div class="flex items-center justify-between">
+                        <p class="text-xs text-neutral-400 font-medium">Accounts</p>
+                        <p class="text-[10px] text-neutral-500">{sortedAccounts.length} of {lanAccounts.length}</p>
+                      </div>
+
+                      <!-- Search -->
+                      <input
+                        type="text"
+                        placeholder="Search accounts…"
+                        bind:value={accountSearch}
+                        class="w-full px-3 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
+                      />
+
+                      <!-- Sort buttons -->
+                      <div class="flex gap-1">
+                        {#each [["name", "Name"], ["joined", "Joined"], ["last_online", "Last Online"]] as [key, label]}
+                          <button
+                            class="text-[10px] px-2 py-1 rounded cursor-pointer transition-colors {accountSort === key ? 'bg-indigo-600/30 text-indigo-300' : 'bg-neutral-800 text-neutral-400 hover:text-neutral-300'}"
+                            onclick={() => { if (accountSort === key) { accountSortAsc = !accountSortAsc; } else { accountSort = key as typeof accountSort; accountSortAsc = true; } }}
+                          >{label} {accountSort === key ? (accountSortAsc ? '↑' : '↓') : ''}</button>
+                        {/each}
+                      </div>
+
+                      <!-- Scrollable account list (max 6 visible) -->
+                      <div class="max-h-[288px] overflow-y-auto space-y-1 pr-1">
+                        {#each sortedAccounts as account}
+                          <div class="flex items-center justify-between bg-neutral-800 rounded-lg px-3 py-2">
+                            <div class="flex items-center gap-2 min-w-0">
+                              <span class="inline-block w-2 h-2 rounded-full shrink-0 {account.online ? 'bg-green-500' : 'bg-neutral-600'}"></span>
+                              <span class="text-sm text-neutral-200 truncate">{account.username}</span>
+                              {#if account.role === "moderator"}
+                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">Mod</span>
+                              {/if}
+                              <span class="text-[10px] text-neutral-500 shrink-0" title={account.created_at ? `Joined: ${new Date(account.created_at).toLocaleDateString()}` : ''}>
+                                {account.created_at ? relativeTime(account.created_at) : ''}
+                              </span>
+                              {#if !account.online && account.last_online}
+                                <span class="text-[10px] text-neutral-600 shrink-0" title={`Last online: ${new Date(account.last_online).toLocaleString()}`}>
+                                  · {relativeTime(account.last_online)}
+                                </span>
+                              {/if}
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0 ml-2">
+                              <button
+                                class="text-xs cursor-pointer {account.role === 'moderator' ? 'text-indigo-400 hover:text-indigo-300' : 'text-neutral-400 hover:text-neutral-300'}"
+                                disabled={lanAuthBusy}
+                                onclick={() => toggleAccountRole(account.username, account.role)}
+                              >{account.role === "moderator" ? "Revoke Mod" : "Make Mod"}</button>
+                              <button
+                                class="text-xs text-amber-400 hover:text-amber-300 cursor-pointer"
+                                disabled={lanAuthBusy}
+                                onclick={() => { resetTargetUser = account.username; resetTempPass = ''; resetError = null; resetSuccess = false; showResetPasswordModal = true; }}
+                              >Reset Password</button>
+                              <button
+                                class="text-xs text-red-400 hover:text-red-300 cursor-pointer"
+                                disabled={lanAuthBusy}
+                                onclick={() => { deleteTargetUser = account.username; deleteKeepData = true; showDeleteModal = true; }}
+                              >Remove</button>
+                            </div>
                           </div>
-                          <div class="flex items-center gap-2">
-                            <button
-                              class="text-xs cursor-pointer {account.role === 'moderator' ? 'text-indigo-400 hover:text-indigo-300' : 'text-neutral-400 hover:text-neutral-300'}"
-                              disabled={lanAuthBusy}
-                              onclick={() => toggleAccountRole(account.username, account.role)}
-                            >{account.role === "moderator" ? "Revoke Mod" : "Make Mod"}</button>
-                            <button
-                              class="text-xs text-amber-400 hover:text-amber-300 cursor-pointer"
-                              disabled={lanAuthBusy}
-                              onclick={() => { resetTargetUser = account.username; resetTempPass = ''; resetError = null; resetSuccess = false; showResetPasswordModal = true; }}
-                            >Reset Password</button>
-                            <button
-                              class="text-xs text-red-400 hover:text-red-300 cursor-pointer"
-                              disabled={lanAuthBusy}
-                              onclick={() => deleteLanAccount(account.username)}
-                            >Remove</button>
-                          </div>
-                        </div>
-                      {/each}
+                        {/each}
+                      </div>
                     </div>
                   {:else}
                     <p class="text-xs text-neutral-500">No accounts yet — anyone on your network can access the UI without authentication.</p>
@@ -2237,6 +2334,53 @@
         onclick={adminResetPassword}
       >Reset Password</button>
       {/if}
+    </div>
+  </div>
+</div>
+{/if}
+
+<!-- Delete Account Confirmation Modal -->
+{#if showDeleteModal}
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+  onclick={(e) => { if (e.target === e.currentTarget) showDeleteModal = false; }}
+  onkeydown={(e) => { if (e.key === 'Escape') showDeleteModal = false; }}
+  role="dialog"
+  aria-modal="true"
+  tabindex="-1"
+>
+  <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+    <h3 class="text-sm font-medium text-neutral-100">Delete Account</h3>
+    <p class="text-xs text-neutral-400">Are you sure you want to delete <span class="text-neutral-200 font-medium">{deleteTargetUser}</span>?</p>
+
+    <label class="flex items-start gap-2 cursor-pointer">
+      <input
+        type="checkbox"
+        bind:checked={deleteKeepData}
+        class="mt-0.5 accent-indigo-600"
+      />
+      <div>
+        <span class="text-xs text-neutral-300">Keep user data (gallery images)</span>
+        <p class="text-[10px] text-neutral-500 mt-0.5">Re-creating an account with this name will restore access to their images.</p>
+      </div>
+    </label>
+
+    {#if !deleteKeepData}
+      <p class="text-[10px] text-red-400 bg-red-400/10 rounded-lg px-3 py-2">
+        This will permanently delete all of {deleteTargetUser}'s generated images. This cannot be undone.
+      </p>
+    {/if}
+
+    <div class="flex justify-end gap-2 pt-2">
+      <button
+        class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
+        onclick={() => { showDeleteModal = false; }}
+      >Cancel</button>
+      <button
+        class="px-4 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {lanAuthBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-red-600 hover:bg-red-500 text-white'}"
+        disabled={lanAuthBusy}
+        onclick={async () => { await deleteLanAccount(deleteTargetUser, deleteKeepData); showDeleteModal = false; }}
+      >Delete Account</button>
     </div>
   </div>
 </div>

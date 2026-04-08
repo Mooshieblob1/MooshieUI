@@ -35,6 +35,12 @@ pub async fn generate(
     let response = state
         .queue_prompt_request(workflow, &state.client_id)
         .await?;
+
+    // Track the Tauri (host) prompt in the shared queue so LAN users see
+    // an accurate queue position.  None = admin / host user.
+    state.prompt_queue.insert(&response.prompt_id, None);
+    state.broadcast_queue_positions();
+
     Ok(GenerateResponse {
         prompt_id: response.prompt_id,
         seed,

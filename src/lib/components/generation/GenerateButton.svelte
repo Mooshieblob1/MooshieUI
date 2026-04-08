@@ -7,6 +7,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { isBrowserMode } from "../../utils/ipc.js";
 
   interface Props {
     canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
@@ -56,6 +57,10 @@
       if (generation.facefixEnabled) {
         const detector = generation.facefixDetector || "face_yolov8m.pt";
         if (!models.ultralyticsModels.includes(detector)) {
+          if (isBrowserMode) {
+            errorMsg = "Face fix model not installed. Ask the host to generate with face fix enabled once to set it up.";
+            return;
+          }
           gallery.showToast(locale.t('generation.downloading_facefix'), "info");
           await downloadModel(
             `https://huggingface.co/Bingsu/adetailer/resolve/main/${detector}`,
@@ -65,7 +70,9 @@
           generation.facefixDetector = detector;
           await models.refresh();
         }
-        await installPipPackage("ultralytics");
+        if (!isBrowserMode) {
+          await installPipPackage("ultralytics==8.4.34");
+        }
       }
 
       // Anima models produce poor results below 1024 — clamp to 1024² area preserving aspect ratio
@@ -81,6 +88,10 @@
       const result = await generate(params);
       params.seed = result.seed;
       progress.enqueue(result.prompt_id, params.upscale_enabled, params.mode, params);
+      // Set initial queue position if returned by server
+      if (result.queue_position != null && result.queue_total != null) {
+        progress.updateQueuePosition(result.prompt_id, result.queue_position, result.queue_total);
+      }
       generation.saveSettings();
     } catch (e) {
       console.error("Generation failed:", e);

@@ -546,6 +546,7 @@
           bind:this={controlnetDropZone}
           data-drop-zone="controlnet-image"
           class="border-2 border-dashed border-neutral-700 rounded-lg p-4 text-center hover:border-neutral-600 transition-colors"
+          ondragenter={(e) => e.preventDefault()}
           ondragover={(e) => e.preventDefault()}
           ondrop={handleImageDrop}
         >

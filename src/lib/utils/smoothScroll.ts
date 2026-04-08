@@ -59,6 +59,13 @@ export function smoothScroll(node: HTMLElement, opts?: SmoothScrollOpts) {
   function hasNestedScroll(target: EventTarget | null): boolean {
     let el = target as HTMLElement | null;
     while (el && el !== node) {
+      // Textareas and contenteditable elements have internal scrolling
+      if (
+        el instanceof HTMLTextAreaElement ||
+        (el as HTMLElement).isContentEditable
+      ) {
+        if (el.scrollHeight > el.clientHeight + 1) return true;
+      }
       if (el.scrollHeight > el.clientHeight + 1) {
         const style = getComputedStyle(el);
         const ov = style.overflowY;
@@ -78,6 +85,10 @@ export function smoothScroll(node: HTMLElement, opts?: SmoothScrollOpts) {
     // Don't intercept if a nested scrollable element should handle it
     if (hasNestedScroll(e.target)) return;
 
+    // Don't intercept if this node has no scrollable overflow (let parent handle it)
+    const maxScroll = node.scrollHeight - node.clientHeight;
+    if (maxScroll <= 0) return;
+
     e.preventDefault();
 
     // Sync with actual scroll position if animation was idle
@@ -89,7 +100,6 @@ export function smoothScroll(node: HTMLElement, opts?: SmoothScrollOpts) {
     targetScroll += e.deltaY * multiplier;
 
     // Clamp to scroll bounds
-    const maxScroll = node.scrollHeight - node.clientHeight;
     targetScroll = Math.max(0, Math.min(maxScroll, targetScroll));
 
     if (!animating) {

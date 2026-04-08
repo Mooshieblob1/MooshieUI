@@ -22,6 +22,11 @@
   let checkedGeneral = $state<Record<string, boolean>>({});
   let checkedCopyright = $state<Record<string, boolean>>({});
 
+  /** Replace mode: true = replace entire prompt, false = append to existing */
+  let replaceMode = $state(true);
+  /** When replacing, preserve existing artist tags (@ prefixed, not @_@) from the current prompt */
+  let preserveArtistTags = $state(false);
+
   // Initialize checked states when result changes
   $effect(() => {
     if (result) {
@@ -143,17 +148,40 @@
       }
     }
 
-    // Smart insertion: artist tags prepend, character+general append
-    let prompt = generation.positivePrompt.trim();
+    let prompt: string;
 
-    if (artistTags.length > 0) {
-      const artistStr = artistTags.join(", ");
-      prompt = prompt ? `${artistStr}, ${prompt}` : artistStr;
-    }
+    if (replaceMode) {
+      // Replace mode: start fresh, optionally preserving existing artist tags
+      const parts: string[] = [];
 
-    if (otherTags.length > 0) {
-      const otherStr = otherTags.join(", ");
-      prompt = prompt ? `${prompt}, ${otherStr}` : otherStr;
+      if (preserveArtistTags) {
+        // Extract artist tags from the current prompt (@ prefixed but not @_@)
+        const existing = generation.positivePrompt.trim();
+        if (existing) {
+          const existingTags = existing.split(",").map((t) => t.trim()).filter(Boolean);
+          const preserved = existingTags.filter(
+            (t) => t.startsWith("@") && !t.startsWith("@_@")
+          );
+          if (preserved.length > 0) parts.push(preserved.join(", "));
+        }
+      }
+
+      if (artistTags.length > 0) parts.push(artistTags.join(", "));
+      if (otherTags.length > 0) parts.push(otherTags.join(", "));
+      prompt = parts.filter(Boolean).join(", ");
+    } else {
+      // Append mode: artist tags prepend, character+general append
+      prompt = generation.positivePrompt.trim();
+
+      if (artistTags.length > 0) {
+        const artistStr = artistTags.join(", ");
+        prompt = prompt ? `${artistStr}, ${prompt}` : artistStr;
+      }
+
+      if (otherTags.length > 0) {
+        const otherStr = otherTags.join(", ");
+        prompt = prompt ? `${prompt}, ${otherStr}` : otherStr;
+      }
     }
 
     generation.positivePrompt = prompt;
@@ -369,22 +397,40 @@
 
     <!-- Footer -->
     {#if result && !loading}
-      <div class="flex items-center justify-between px-5 py-3 border-t border-neutral-700">
-        <div class="flex gap-2">
-          <button onclick={selectAll} class="text-xs text-neutral-400 hover:text-neutral-200 transition-colors">{locale.t('generation.interrogate.select_all')}</button>
-          <span class="text-neutral-600">|</span>
-          <button onclick={deselectAll} class="text-xs text-neutral-400 hover:text-neutral-200 transition-colors">{locale.t('generation.interrogate.deselect_all')}</button>
+      <div class="flex flex-col gap-2 px-5 py-3 border-t border-neutral-700">
+        <div class="flex items-center gap-4">
+          <label class="flex items-center gap-1.5 text-xs text-neutral-300 cursor-pointer">
+            <input type="radio" name="apply-mode" checked={replaceMode} onchange={() => { replaceMode = true; }} class="accent-indigo-500" />
+            Replace prompt
+          </label>
+          <label class="flex items-center gap-1.5 text-xs text-neutral-300 cursor-pointer">
+            <input type="radio" name="apply-mode" checked={!replaceMode} onchange={() => { replaceMode = false; }} class="accent-indigo-500" />
+            Append to prompt
+          </label>
+          {#if replaceMode}
+            <label class="flex items-center gap-1.5 text-xs text-neutral-400 cursor-pointer ml-2">
+              <input type="checkbox" bind:checked={preserveArtistTags} class="accent-indigo-500" />
+              Keep existing artist tags
+            </label>
+          {/if}
         </div>
-        <div class="flex gap-2">
-          <button
-            onclick={handleCopy}
-            class="px-3 py-1.5 text-sm rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-200 transition-colors"
-          >{locale.t('common.copy')}</button>
-          <button
-            onclick={handleApply}
-            disabled={!anyChecked}
-            class="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
-          >{locale.t('generation.interrogate.apply_to_prompt')}</button>
+        <div class="flex items-center justify-between">
+          <div class="flex gap-2">
+            <button onclick={selectAll} class="text-xs text-neutral-400 hover:text-neutral-200 transition-colors">{locale.t('generation.interrogate.select_all')}</button>
+            <span class="text-neutral-600">|</span>
+            <button onclick={deselectAll} class="text-xs text-neutral-400 hover:text-neutral-200 transition-colors">{locale.t('generation.interrogate.deselect_all')}</button>
+          </div>
+          <div class="flex gap-2">
+            <button
+              onclick={handleCopy}
+              class="px-3 py-1.5 text-sm rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-200 transition-colors"
+            >{locale.t('common.copy')}</button>
+            <button
+              onclick={handleApply}
+              disabled={!anyChecked}
+              class="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
+            >{locale.t('generation.interrogate.apply_to_prompt')}</button>
+          </div>
         </div>
       </div>
     {/if}

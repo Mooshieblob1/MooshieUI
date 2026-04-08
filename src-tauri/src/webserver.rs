@@ -212,6 +212,16 @@ pub async fn start_server(
             "/internal-api/_thumbnail/{filename}",
             get(thumbnail_handler),
         )
+        // Full gallery image endpoint (serves original PNG/JPEG with metadata)
+        .route(
+            "/internal-api/_gallery/{filename}",
+            get(gallery_image_handler),
+        )
+        // Temp image endpoint (ephemeral images from WS for SSE clients)
+        .route(
+            "/internal-api/_temp_image/{filename}",
+            get(temp_image_handler),
+        )
         // Generic IPC command proxy
         .route("/internal-api/{command}", post(command_handler))
         // Static file serving (frontend)
@@ -221,7 +231,7 @@ pub async fn start_server(
         }))
         // Images sent as JSON arrays of numbers inflate ~4x, so allow large bodies
         .layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024))
-        .with_state(web_state);
+        .with_state(web_state.clone());
 
     let bind_addr: SocketAddr = if lan_enabled {
         SocketAddr::from(([0, 0, 0, 0], port))
@@ -230,6 +240,108 @@ pub async fn start_server(
     };
 
     log::info!("Starting UI web server on {}", bind_addr);
+
+    // Spawn prompt queue cleanup reactor — listens for completion/error events
+    // and removes finished prompts from the queue, then broadcasts position updates.
+    {
+        let cleanup_state = web_state.app.clone();
+        let mut cleanup_rx = cleanup_state.event_tx.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match cleanup_rx.recv().await {
+                    Ok(evt) => {
+                        let prompt_id = evt
+                            .payload
+                            .get("prompt_id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+
+                        match evt.event.as_str() {
+                            "comfyui:executing" => {
+                                // node=null means execution finished for this prompt
+                                if evt.payload.get("node").map_or(false, |n| n.is_null()) {
+                                    if let Some(pid) = prompt_id {
+                                        let owner = cleanup_state.prompt_queue.owner_of(&pid);
+                                        log::info!(
+                                            "[gen] completed prompt={} user={}",
+                                            &pid[..8.min(pid.len())],
+                                            owner.as_deref().unwrap_or("admin"),
+                                        );
+                                        cleanup_state.prompt_queue.finish(&pid);
+                                        cleanup_state.broadcast_queue_positions();
+                                        // Signal the drain reactor to submit next held prompt
+                                        cleanup_state.prompt_queue.drain_notify.notify_one();
+                                    }
+                                }
+                            }
+                            "comfyui:execution_error" => {
+                                if let Some(pid) = prompt_id {
+                                    let owner = cleanup_state.prompt_queue.owner_of(&pid);
+                                    log::warn!(
+                                        "[gen] error prompt={} user={}",
+                                        &pid[..8.min(pid.len())],
+                                        owner.as_deref().unwrap_or("admin"),
+                                    );
+                                    cleanup_state.prompt_queue.finish(&pid);
+                                    cleanup_state.broadcast_queue_positions();
+                                    // Signal the drain reactor to submit next held prompt
+                                    cleanup_state.prompt_queue.drain_notify.notify_one();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        log::warn!("Queue cleanup reactor lagged by {} events", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    // Spawn held-prompt drain reactor — when a prompt finishes, submits the next
+    // held prompt to ComfyUI (one per user at a time, round-robin fair).
+    {
+        let drain_state = web_state.app.clone();
+        tokio::spawn(async move {
+            loop {
+                drain_state.prompt_queue.drain_notify.notified().await;
+                // Submit one held prompt per completion signal.
+                if let Some(hp) = drain_state.prompt_queue.take_next_held() {
+                    let res = drain_state
+                        .queue_prompt_request(hp.workflow, &drain_state.client_id)
+                        .await;
+                    match res {
+                        Ok(response) => {
+                            // Signal the waiting handler with the result.
+                            // The handler will replace the placeholder in the queue.
+                            *hp.result.lock().await = Some(Ok((response.prompt_id, 0)));
+                        }
+                        Err(e) => {
+                            *hp.result.lock().await =
+                                Some(Err(format!("Queue prompt failed: {}", e)));
+                        }
+                    }
+                    hp.submitted.notify_one();
+                }
+            }
+        });
+    }
+
+    // Periodic flush of last_online timestamps to disk (every 60s).
+    {
+        let flush_auth = web_state.auth.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                flush_auth.flush_last_online();
+            }
+        });
+    }
 
     tokio::spawn(async move {
         let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -337,7 +449,9 @@ async fn serve_static(dist_dir: PathBuf, req: axum::extract::Request) -> Respons
     }
 }
 
-/// SSE endpoint — streams all backend events to browser clients.
+/// SSE endpoint — streams backend events to browser clients.
+/// Events are filtered per-user: each user only receives events for their own
+/// prompts, plus system-level events (connection status, queue updates).
 async fn sse_handler(
     AxumState(state): AxumState<SharedState>,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
@@ -357,18 +471,47 @@ async fn sse_handler(
         return unauthorized_response("Authentication required");
     }
 
+    // Resolve the username for this SSE connection (None = admin)
+    let sse_username = resolve_username(&state, &hdrs, &remote);
+    let prompt_queue = state.app.clone();
+
     let rx = state.app.event_tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
-        Ok(evt) => {
-            let json = serde_json::json!({
-                "event": evt.event,
-                "payload": evt.payload,
-            });
-            Some(Ok::<_, std::convert::Infallible>(
-                Event::default().data(json.to_string()),
-            ))
+    let stream = BroadcastStream::new(rx).filter_map(move |result| {
+        let sse_username = sse_username.clone();
+        let prompt_queue = prompt_queue.clone();
+        match result {
+            Ok(evt) => {
+                // System events (no prompt_id) pass through to everyone
+                // Prompt-specific events are filtered by ownership
+                let prompt_id = evt
+                    .payload
+                    .get("prompt_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                if let Some(ref pid) = prompt_id {
+                    if !prompt_queue.prompt_queue.is_owned_by(pid, &sse_username) {
+                        return None; // Not this user's prompt — skip
+                    }
+                }
+
+                let json = serde_json::json!({
+                    "event": evt.event,
+                    "payload": evt.payload,
+                });
+                Some(Ok::<_, std::convert::Infallible>(
+                    Event::default().data(json.to_string()),
+                ))
+            }
+            Err(e) => {
+                log::warn!(
+                    "SSE stream lagged for user={}: {:?}",
+                    sse_username.as_deref().unwrap_or("admin"),
+                    e,
+                );
+                None
+            }
         }
-        Err(_) => None, // lagged — skip
     });
 
     Sse::new(stream)
@@ -416,18 +559,28 @@ async fn thumbnail_handler(
         return (StatusCode::BAD_REQUEST, "Invalid filename").into_response();
     }
 
-    // Parse optional ?size= query param
-    let max_size: u32 = req
-        .uri()
-        .query()
-        .and_then(|q| {
-            q.split('&')
-                .find_map(|p| p.strip_prefix("size="))
-                .and_then(|s| s.parse().ok())
-        })
+    // Parse optional ?size= and ?token= query params
+    let query = req.uri().query().unwrap_or("");
+    let max_size: u32 = query
+        .split('&')
+        .find_map(|p| p.strip_prefix("size="))
+        .and_then(|s| s.parse().ok())
         .unwrap_or(256);
 
-    let username = resolve_username(&state, &headers, &remote);
+    // Try auth from headers first, then from ?token= query param (for <img> tags)
+    let username = {
+        let from_headers = resolve_username(&state, &headers, &remote);
+        if from_headers.is_some() {
+            from_headers
+        } else if !is_localhost(&remote) && state.lan_enabled {
+            query
+                .split('&')
+                .find_map(|p| p.strip_prefix("token="))
+                .and_then(|t| state.auth.validate_token(t))
+        } else {
+            None
+        }
+    };
     let gallery_dir = match user_gallery_dir(username.as_deref()) {
         Some(d) => d,
         None => {
@@ -446,6 +599,124 @@ async fn thumbnail_handler(
         )
             .into_response(),
         Err(e) => (StatusCode::NOT_FOUND, format!("Thumbnail error: {}", e)).into_response(),
+    }
+}
+
+/// Serve a full-resolution gallery image (original PNG/JPEG with metadata intact).
+async fn gallery_image_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    Path(filename): Path<String>,
+    headers: HeaderMap,
+    req: axum::extract::Request,
+) -> Response {
+    let filename = percent_encoding::percent_decode_str(&filename)
+        .decode_utf8()
+        .map(|s| s.into_owned())
+        .unwrap_or(filename);
+
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return (StatusCode::BAD_REQUEST, "Invalid filename").into_response();
+    }
+
+    let query = req.uri().query().unwrap_or("");
+
+    // Auth: try headers first, then ?token= query param
+    let username = {
+        let from_headers = resolve_username(&state, &headers, &remote);
+        if from_headers.is_some() {
+            from_headers
+        } else if !is_localhost(&remote) && state.lan_enabled {
+            query
+                .split('&')
+                .find_map(|p| p.strip_prefix("token="))
+                .and_then(|t| state.auth.validate_token(t))
+        } else {
+            None
+        }
+    };
+    let gallery_dir = match user_gallery_dir(username.as_deref()) {
+        Some(d) => d,
+        None => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "No gallery dir").into_response();
+        }
+    };
+
+    let file_path = gallery_dir.join(&filename);
+    match tokio::fs::read(&file_path).await {
+        Ok(data) => {
+            let content_type = if filename.ends_with(".webp") {
+                "image/webp"
+            } else if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
+                "image/jpeg"
+            } else {
+                "image/png"
+            };
+            (
+                StatusCode::OK,
+                [
+                    ("content-type", content_type.to_string()),
+                    ("cache-control", "no-cache".to_string()),
+                ],
+                data,
+            )
+                .into_response()
+        }
+        Err(_) => (StatusCode::NOT_FOUND, "Image not found").into_response(),
+    }
+}
+
+/// Serve an ephemeral temp image (written by the WS handler for SSE delivery).
+/// After serving, the temp file is deleted to free space.
+async fn temp_image_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    Path(filename): Path<String>,
+    headers: HeaderMap,
+    req: axum::extract::Request,
+) -> Response {
+    // Auth check (same as thumbnail handler)
+    let query = req.uri().query().unwrap_or("");
+    let username = {
+        let from_headers = resolve_username(&state, &headers, &remote);
+        if from_headers.is_some() {
+            from_headers
+        } else if !is_localhost(&remote) && state.lan_enabled {
+            query
+                .split('&')
+                .find_map(|p| p.strip_prefix("token="))
+                .and_then(|t| state.auth.validate_token(t))
+        } else {
+            None
+        }
+    };
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous && username.is_none() && !is_localhost(&remote) {
+        return unauthorized_response("Authentication required");
+    }
+
+    match crate::temp_images::load(&filename) {
+        Some(data) => {
+            let content_type = if filename.ends_with(".png") {
+                "image/png"
+            } else if filename.ends_with(".webp") {
+                "image/webp"
+            } else {
+                "image/jpeg"
+            };
+            // Delete after serving — one-shot delivery
+            crate::temp_images::remove(&filename);
+            (
+                StatusCode::OK,
+                [
+                    ("content-type", content_type.to_string()),
+                    ("cache-control", "no-store".to_string()),
+                ],
+                data,
+            )
+                .into_response()
+        }
+        None => (StatusCode::NOT_FOUND, "Temp image not found").into_response(),
     }
 }
 
@@ -489,6 +760,11 @@ async fn command_handler(
 
     // Resolve username for per-user gallery isolation
     let username = resolve_username(&state, &headers, &remote);
+
+    // Track last-activity for online/offline status
+    if let Some(ref u) = username {
+        state.auth.touch_activity(u);
+    }
 
     match dispatch_command(state.app.clone(), &command, &args, username.as_deref()).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
@@ -823,14 +1099,82 @@ async fn dispatch_command(
                 params.seed
             };
             let workflow = crate::templates::build_workflow(&params, seed);
-            let response = state
-                .queue_prompt_request(workflow, &state.client_id)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::json!({
-                "prompt_id": response.prompt_id,
-                "seed": seed,
-            }))
+            let user = username.map(|s| s.to_string());
+
+            log::info!(
+                "[gen] user={} seed={} steps={}",
+                user.as_deref().unwrap_or("admin"),
+                seed,
+                params.steps,
+            );
+
+            // Fair queue: LAN users are throttled to one active prompt at a time.
+            // If user already has an active prompt, hold this one until a slot opens.
+            let needs_hold = user.is_some() && state.prompt_queue.active_count_for_user(&user) > 0;
+
+            if needs_hold {
+                // Hold the prompt locally — it will be submitted by the drain reactor.
+                let submitted = Arc::new(tokio::sync::Notify::new());
+                let result_slot: crate::state::HeldPromptResult =
+                    Arc::new(tokio::sync::Mutex::new(None));
+
+                let held = crate::state::HeldPrompt {
+                    workflow,
+                    username: user.clone(),
+                    submitted: submitted.clone(),
+                    result: result_slot.clone(),
+                };
+
+                // Add to held queue and also insert a placeholder into the display queue
+                // so the user sees their position immediately.
+                let placeholder_id = format!("held-{}", uuid::Uuid::new_v4());
+                state.prompt_queue.insert(&placeholder_id, user.clone());
+                {
+                    let mut held_queue = state.prompt_queue.held.lock().unwrap();
+                    held_queue.push(held);
+                }
+                state.broadcast_queue_positions();
+
+                // Wait until the drain reactor submits this prompt
+                submitted.notified().await;
+
+                // Retrieve the result
+                let res = result_slot
+                    .lock()
+                    .await
+                    .take()
+                    .unwrap_or_else(|| Err("Held prompt was never submitted".into()));
+                let (prompt_id, _) = res.map_err(|e| e)?;
+
+                // Remove placeholder and insert the real prompt_id
+                state.prompt_queue.finish(&placeholder_id);
+                state.prompt_queue.insert(&prompt_id, user);
+                state.broadcast_queue_positions();
+
+                Ok(serde_json::json!({
+                    "prompt_id": prompt_id,
+                    "seed": seed,
+                    "queue_position": state.prompt_queue.len() - 1,
+                    "queue_total": state.prompt_queue.len(),
+                }))
+            } else {
+                // Direct submission (admin or user's first prompt)
+                let response = state
+                    .queue_prompt_request(workflow, &state.client_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                state.prompt_queue.insert(&response.prompt_id, user);
+
+                state.broadcast_queue_positions();
+
+                Ok(serde_json::json!({
+                    "prompt_id": response.prompt_id,
+                    "seed": seed,
+                    "queue_position": state.prompt_queue.len() - 1,
+                    "queue_total": state.prompt_queue.len(),
+                }))
+            }
         }
         "delete_queue_item" => {
             let prompt_id = args["promptId"].as_str().ok_or("Missing promptId")?;
@@ -1813,7 +2157,7 @@ async fn auth_status_handler(
     }))
 }
 
-/// GET /internal-api/_auth/accounts — list all accounts with roles. Admin only.
+/// GET /internal-api/_auth/accounts — list all accounts with roles and online status. Admin only.
 async fn auth_list_accounts_handler(
     AxumState(state): AxumState<SharedState>,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
@@ -1823,11 +2167,20 @@ async fn auth_list_accounts_handler(
     if role != UserRole::Admin {
         return forbidden_response("Only the admin (localhost) can list accounts.");
     }
+    let online_threshold = std::time::Duration::from_secs(30);
     let accounts: Vec<serde_json::Value> = state
         .auth
-        .list_accounts_with_roles()
+        .list_users_status(online_threshold)
         .into_iter()
-        .map(|(username, role)| serde_json::json!({ "username": username, "role": role }))
+        .map(|(username, role, online, created_at, last_online)| {
+            serde_json::json!({
+                "username": username,
+                "role": role,
+                "online": online,
+                "created_at": created_at,
+                "last_online": last_online,
+            })
+        })
         .collect();
     (
         StatusCode::OK,
@@ -1837,6 +2190,9 @@ async fn auth_list_accounts_handler(
 }
 
 /// POST /internal-api/_auth/delete — delete an account by username. Admin only.
+/// Accepts optional `keep_data` boolean (default false). When false, the user's
+/// gallery directory is also removed. When true, data is preserved and will be
+/// restored if an account with the same username is re-created.
 async fn auth_delete_account_handler(
     AxumState(state): AxumState<SharedState>,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
@@ -1857,8 +2213,29 @@ async fn auth_delete_account_handler(
                 .into_response();
         }
     };
+    let keep_data = req
+        .get("keep_data")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     match state.auth.delete_account(username) {
-        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Ok(()) => {
+            if !keep_data {
+                // Remove the user's gallery directory
+                if let Some(dir) = user_gallery_dir(Some(username)) {
+                    if dir.exists() {
+                        log::info!("Deleting gallery data for user '{}': {:?}", username, dir);
+                        let _ = std::fs::remove_dir_all(&dir);
+                    }
+                }
+            } else {
+                log::info!(
+                    "Keeping gallery data for deleted user '{}' (re-create to restore)",
+                    username
+                );
+            }
+            (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
+        }
         Err(e) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": e })),

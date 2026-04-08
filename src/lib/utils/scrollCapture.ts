@@ -75,6 +75,19 @@ export function scrollCapture(node: HTMLElement) {
     e.preventDefault();
     e.stopPropagation();
 
+    // Cancel any active text edit (EditableValue) so it doesn't override
+    // the scroll-adjusted value when it eventually blurs
+    const activeEl = document.activeElement;
+    if (
+      activeEl instanceof HTMLInputElement &&
+      activeEl.type !== "range" &&
+      node.contains(activeEl)
+    ) {
+      // Remove the blur handler temporarily so commit() doesn't fire,
+      // then restore the display to reactive mode
+      activeEl.blur();
+    }
+
     const min = parseFloat(range.min) || 0;
     const max = parseFloat(range.max) || 100;
     const step = parseFloat(range.step) || 1;

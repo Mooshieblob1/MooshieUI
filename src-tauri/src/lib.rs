@@ -7,6 +7,7 @@ pub mod interrogator;
 pub mod metadata;
 pub mod setup;
 pub mod state;
+pub mod temp_images;
 pub mod templates;
 pub mod webserver;
 
@@ -111,6 +112,9 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
         .setup(move |_app| {
+            // Clean up and create temp image directory
+            temp_images::init();
+
             // Store the AppHandle so the web server can show/hide the window later.
             {
                 let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
@@ -225,6 +229,80 @@ pub fn run() {
                             tauri::http::Response::builder()
                                 .status(404)
                                 .body(format!("Thumbnail error: {}", e).into_bytes())
+                                .unwrap(),
+                        );
+                    }
+                }
+            });
+        })
+        .register_asynchronous_uri_scheme_protocol("gallery", |ctx, request, responder| {
+            let _app_handle = ctx.app_handle().clone();
+            std::thread::spawn(move || {
+                let uri = request.uri().to_string();
+                // URL format varies by platform:
+                //   macOS/Linux: gallery://localhost/{filename}
+                //   Windows:     https://gallery.localhost/{filename}
+                let path = uri
+                    .strip_prefix("https://gallery.localhost/")
+                    .or_else(|| uri.strip_prefix("http://gallery.localhost/"))
+                    .or_else(|| uri.strip_prefix("gallery://localhost/"))
+                    .or_else(|| uri.strip_prefix("gallery:///"))
+                    .unwrap_or("");
+                let (filename_encoded, _query) = path.split_once('?').unwrap_or((path, ""));
+                let filename = percent_encoding::percent_decode_str(filename_encoded)
+                    .decode_utf8()
+                    .map(|s| s.into_owned())
+                    .unwrap_or_else(|_| filename_encoded.to_string());
+
+                if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+                    responder.respond(
+                        tauri::http::Response::builder()
+                            .status(400)
+                            .body(b"Invalid filename".to_vec())
+                            .unwrap(),
+                    );
+                    return;
+                }
+
+                let gallery_dir = match config::gallery_dir() {
+                    Some(d) => d,
+                    None => {
+                        responder.respond(
+                            tauri::http::Response::builder()
+                                .status(500)
+                                .body(b"No gallery dir".to_vec())
+                                .unwrap(),
+                        );
+                        return;
+                    }
+                };
+
+                let file_path = gallery_dir.join(&filename);
+                match std::fs::read(&file_path) {
+                    Ok(data) => {
+                        // Detect content type from extension
+                        let content_type = if filename.ends_with(".webp") {
+                            "image/webp"
+                        } else if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
+                            "image/jpeg"
+                        } else {
+                            "image/png"
+                        };
+                        responder.respond(
+                            tauri::http::Response::builder()
+                                .status(200)
+                                .header("Content-Type", content_type)
+                                .header("Cache-Control", "no-cache")
+                                .body(data)
+                                .unwrap(),
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!("Gallery image read failed for '{}': {}", filename, e);
+                        responder.respond(
+                            tauri::http::Response::builder()
+                                .status(404)
+                                .body(format!("Not found: {}", e).into_bytes())
                                 .unwrap(),
                         );
                     }

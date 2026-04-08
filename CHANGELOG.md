@@ -1,5 +1,27 @@
 # Changelog
 
+## What's New in v0.7.0
+
+### Enhanced Account Management
+- **Searchable account list** — filter accounts by username with a real-time search box
+- **Sortable columns** — sort by Name, Date Joined, or Last Online with ascending/descending toggle
+- **Online-first grouping** — online users always appear at the top regardless of sort column
+- **Scrollable account list** — shows 6 accounts at a time with smooth scrolling for larger lists
+- **Account timestamps** — tracks when each account was created and when they were last active (persisted to disk every 60 seconds)
+- **Delete confirmation with data retention** — deleting an account now shows a confirmation dialog with a "Keep user data" checkbox; when checked, gallery images are preserved and restored when an account with the same username is re-created
+
+### SSE Image Delivery Fix
+- **Temp-file based image delivery** — preview and output images are now saved to temporary files and delivered via lightweight JSON references over SSE, fixing dropped images when using Cloudflare tunnels or reverse proxies that reject large SSE payloads
+- **Dual-path emission** — Tauri desktop mode still receives full base64 inline for maximum performance; browser/LAN mode uses the temp-file path
+
+### Windows GPU Detection Fix
+- Fixed GPU detection and CUDA mismatch error on Windows systems
+
+### i18n Updates
+- Added missing `gallery.saving` and `gallery.toast.copying` translations across all 10 supported languages
+
+---
+
 ## What's New in v0.6.9 — The "Nice" Update
 
 ### Compare Grid Fixes

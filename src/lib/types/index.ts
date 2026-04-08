@@ -71,6 +71,8 @@ export interface OutputImage {
   is_upscaled?: boolean;
   url?: string;
   thumbnailUrl?: string;
+  /** Full-resolution image URL served by the backend (with metadata). */
+  fullImageUrl?: string;
   gallery_filename?: string;
   file_size_bytes?: number;
   generated_at_ms?: number;

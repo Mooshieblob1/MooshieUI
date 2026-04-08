@@ -25,6 +25,8 @@ export async function getEmbeddings(): Promise<string[]> {
 export interface GenerateResponse {
   prompt_id: string;
   seed: number;
+  queue_position?: number;
+  queue_total?: number;
 }
 
 export async function generate(params: GenerationParams): Promise<GenerateResponse> {
