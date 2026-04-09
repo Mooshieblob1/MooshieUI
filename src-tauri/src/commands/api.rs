@@ -663,7 +663,9 @@ fn native_clipboard_write(image_bytes: &[u8], mime_type: &str) -> Result<(), App
                 .args(args)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::null())
-                .stderr(Stdio::piped())
+                // stderr must be null — xclip/wl-copy fork a background daemon
+                // that inherits piped fds, causing wait_with_output to hang forever.
+                .stderr(Stdio::null())
                 .spawn()
                 .map_err(|e| format!("{} spawn failed: {}", program, e))?;
 
@@ -672,21 +674,17 @@ fn native_clipboard_write(image_bytes: &[u8], mime_type: &str) -> Result<(), App
                     .write_all(image_bytes)
                     .map_err(|e| format!("{} stdin write failed: {}", program, e))?;
             }
+            // Close stdin so the clipboard tool knows we're done writing.
+            drop(child.stdin.take());
 
-            let output = child
-                .wait_with_output()
+            let status = child
+                .wait()
                 .map_err(|e| format!("{} wait failed: {}", program, e))?;
 
-            if output.status.success() {
+            if status.success() {
                 Ok(())
             } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(format!(
-                    "{} exited with {}: {}",
-                    program,
-                    output.status,
-                    stderr.trim()
-                ))
+                Err(format!("{} exited with {}", program, status))
             }
         };
 
@@ -776,6 +774,16 @@ fn native_clipboard_write(image_bytes: &[u8], mime_type: &str) -> Result<(), App
     }
 
     Ok(())
+}
+
+/// Public wrapper for `native_clipboard_write` — used by the web server.
+pub fn native_clipboard_write_pub(image_bytes: &[u8], mime_type: &str) -> Result<(), AppError> {
+    native_clipboard_write(image_bytes, mime_type)
+}
+
+/// Public wrapper for `infer_image_mime` — used by the web server.
+pub fn infer_image_mime_pub(bytes: &[u8], ext_hint: Option<&str>) -> &'static str {
+    infer_image_mime(bytes, ext_hint)
 }
 
 /// Copy raw image bytes (PNG/JPEG/WebP) to the system clipboard.

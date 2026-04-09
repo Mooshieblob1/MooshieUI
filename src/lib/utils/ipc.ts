@@ -24,26 +24,52 @@ type EventCallback = (event: { payload: any }) => void;
 
 const AUTH_TOKEN_KEY = "mooshie:auth_token";
 const AUTH_USER_KEY = "mooshie:auth_user";
+const AUTH_REMEMBER_KEY = "mooshie:remember_me";
 
-export function getAuthToken(): string | null {
-  return localStorage.getItem(AUTH_TOKEN_KEY);
+/** Returns the active storage backend (localStorage if "remember me", sessionStorage otherwise). */
+function authStorage(): Storage {
+  // If a token exists in localStorage, always use localStorage (user chose "remember me")
+  if (localStorage.getItem(AUTH_TOKEN_KEY)) return localStorage;
+  // If a token exists in sessionStorage, use that
+  if (sessionStorage.getItem(AUTH_TOKEN_KEY)) return sessionStorage;
+  // Default to sessionStorage (no remembered session)
+  return sessionStorage;
 }
 
-export function setAuthToken(token: string) {
-  localStorage.setItem(AUTH_TOKEN_KEY, token);
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY) ?? sessionStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function setAuthToken(token: string, rememberMe = false) {
+  if (rememberMe) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+    localStorage.setItem(AUTH_REMEMBER_KEY, "1");
+    sessionStorage.removeItem(AUTH_TOKEN_KEY);
+  } else {
+    sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    localStorage.removeItem(AUTH_REMEMBER_KEY);
+  }
 }
 
 export function clearAuthToken() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_REMEMBER_KEY);
+  sessionStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
 /** Store the currently logged-in username (for per-user localStorage isolation). */
 export function setAuthUser(username: string) {
-  localStorage.setItem(AUTH_USER_KEY, username);
+  authStorage().setItem(AUTH_USER_KEY, username);
 }
 
 export function getAuthUser(): string | null {
-  return localStorage.getItem(AUTH_USER_KEY);
+  return localStorage.getItem(AUTH_USER_KEY) ?? sessionStorage.getItem(AUTH_USER_KEY);
+}
+
+/** Returns true if the user previously selected "Remember me". */
+export function wasRememberMe(): boolean {
+  return localStorage.getItem(AUTH_REMEMBER_KEY) === "1";
 }
 
 /** Build headers with auth token if present. */

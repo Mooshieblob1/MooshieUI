@@ -205,7 +205,22 @@
       if (checkedCopyright[tag.name]) allTags.push(tag.name);
     }
 
-    await navigator.clipboard.writeText(allTags.join(", "));
+    const text = allTags.join(", ");
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return;
+      } catch { /* fall through */ }
+    }
+    // Fallback for insecure (HTTP) contexts
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
   }
 
   function handleKeydown(e: KeyboardEvent) {

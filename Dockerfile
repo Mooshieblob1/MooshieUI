@@ -85,7 +85,8 @@ RUN uv venv ${COMFYUI_PATH}/.venv --python python3.12 && \
     . ${COMFYUI_PATH}/.venv/bin/activate && \
     uv pip install torch==${TORCH_VERSION} torchvision torchaudio \
         --index-url https://download.pytorch.org/whl/cu126 && \
-    uv pip install -r ${COMFYUI_PATH}/requirements.txt
+    uv pip install -r ${COMFYUI_PATH}/requirements.txt && \
+    uv pip install ultralytics==8.4.34
 
 # Copy custom nodes (auto-deployed by the binary on startup, but also
 # pre-copy them so they're available even if the binary doesn't run the
@@ -96,12 +97,18 @@ COPY comfyui-nodes/nodes_sdxl_flux2vae.py ${COMFYUI_PATH}/custom_nodes/
 COPY comfyui-nodes/nodes_sdxl_flux2vae_combined.py ${COMFYUI_PATH}/custom_nodes/
 COPY comfyui-nodes/nanosaur_support/ ${COMFYUI_PATH}/custom_nodes/nanosaur_support/
 
-# Copy server binary and frontend
+# Copy server binary, frontend, and entrypoint
 COPY --from=builder /build/src-tauri/target/release/mooshieui-server /app/mooshieui-server
 COPY --from=frontend /build/dist /app/dist
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 
-# Create data directory and default config
-RUN mkdir -p /data/gallery /data/thumbnails && \
+# Create data directory and default config.
+# Symlink ComfyUI's models directory to the persistent /data/models volume
+# so that downloaded models survive container recreation.
+RUN mkdir -p /data/gallery /data/thumbnails /data/models && \
+    rm -rf ${COMFYUI_PATH}/models && \
+    ln -s /data/models ${COMFYUI_PATH}/models && \
     echo '{"comfyui_path":"/opt/comfyui","venv_path":"/opt/comfyui/.venv","auto_start":true,"setup_complete":true,"browser_mode":true,"ui_server_port":3200,"lan_enabled":true,"server_mode":"autolaunch"}' \
     > /data/config.json
 
@@ -112,4 +119,5 @@ VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:3200/health || exit 1
 
-ENTRYPOINT ["/app/mooshieui-server"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["/app/mooshieui-server"]

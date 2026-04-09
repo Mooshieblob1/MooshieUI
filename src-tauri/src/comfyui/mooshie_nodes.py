@@ -282,7 +282,14 @@ class MooshieSaveImage:
             else:
                 fmt_tag = self.FMT_PNG_8
                 img_np = (255.0 * frame).clip(0, 255).astype(np.uint8)
-                img = Image.fromarray(img_np)
+                # Output RGBA (alpha=255) so the PNG has an alpha channel.
+                # This lets the Rust metadata embedder write stealth-alpha
+                # data directly, and ensures right-click → Copy Image from
+                # the browser gets an image with an alpha layer.
+                h, w, c = img_np.shape
+                rgba = np.full((h, w, 4), 255, dtype=np.uint8)
+                rgba[:, :, :3] = img_np
+                img = Image.fromarray(rgba, "RGBA")
                 buf = io.BytesIO()
                 img.save(buf, format="PNG")
                 png_bytes = buf.getvalue()

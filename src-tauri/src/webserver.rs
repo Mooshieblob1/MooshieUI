@@ -110,7 +110,6 @@ const ADMIN_ONLY_COMMANDS: &[&str] = &[
     "switch_to_app_mode",
     "set_gallery_path",
     "install_custom_node",
-    "install_pip_package",
     "import_image_directory",
     "open_directory",
     "move_installation",
@@ -119,7 +118,12 @@ const ADMIN_ONLY_COMMANDS: &[&str] = &[
 
 /// Commands that moderators (and admins) can execute.
 /// These involve server control and configuration but no filesystem access.
-const MODERATOR_COMMANDS: &[&str] = &["update_config", "stop_comfyui", "export_logs"];
+const MODERATOR_COMMANDS: &[&str] = &[
+    "update_config",
+    "stop_comfyui",
+    "export_logs",
+    "install_pip_package",
+];
 
 /// Check command permission level.
 /// Returns the minimum role required to execute the command.
@@ -224,6 +228,11 @@ pub async fn start_server(
         .route(
             "/internal-api/_temp_image/{filename}",
             get(temp_image_handler),
+        )
+        // Embed metadata into a temp image and return a new temp URL
+        .route(
+            "/internal-api/_embed_temp_metadata",
+            post(embed_temp_metadata_handler),
         )
         // Generic IPC command proxy
         .route("/internal-api/{command}", post(command_handler))
@@ -841,8 +850,8 @@ async fn temp_image_handler(
             } else {
                 "image/jpeg"
             };
-            // Delete after serving — one-shot delivery
-            crate::temp_images::remove(&filename);
+            // Don't delete immediately — the image may be needed later for
+            // save_to_gallery_temp.  Periodic cleanup handles expiry.
             (
                 StatusCode::OK,
                 [
@@ -854,6 +863,65 @@ async fn temp_image_handler(
                 .into_response()
         }
         None => (StatusCode::NOT_FOUND, "Temp image not found").into_response(),
+    }
+}
+
+/// Embed metadata into an existing temp image and return a new temp filename.
+/// Avoids the slow JSON number-array round-trip: the image bytes stay on the
+/// server side; only the compact metadata JSON crosses the wire.
+async fn embed_temp_metadata_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return unauthorized_response("Authentication required");
+    }
+
+    let args: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid JSON").into_response(),
+    };
+
+    let temp_filename = match args["tempFilename"].as_str() {
+        Some(f) => f,
+        None => return (StatusCode::BAD_REQUEST, "Missing tempFilename").into_response(),
+    };
+
+    let metadata: std::collections::HashMap<String, String> =
+        match serde_json::from_value(args["metadata"].clone()) {
+            Ok(m) => m,
+            Err(_) => return (StatusCode::BAD_REQUEST, "Invalid metadata").into_response(),
+        };
+
+    let metadata_mode = args["metadataMode"].as_str().unwrap_or("stealth");
+
+    let bytes = match crate::temp_images::load(temp_filename) {
+        Some(b) => b,
+        None => return (StatusCode::NOT_FOUND, "Temp image not found").into_response(),
+    };
+
+    let embed_mode = crate::metadata::MetadataMode::from_str(metadata_mode);
+    let embedded = match crate::metadata::embed_png_metadata(&bytes, &metadata, embed_mode) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("embed_temp_metadata failed: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response();
+        }
+    };
+
+    match crate::temp_images::save(&embedded, "png") {
+        Some(new_filename) => {
+            let json = serde_json::json!({ "tempFilename": new_filename });
+            axum::Json(json).into_response()
+        }
+        None => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to save embedded image",
+        )
+            .into_response(),
     }
 }
 
@@ -1435,6 +1503,56 @@ async fn dispatch_command(
                 metadata.as_ref(),
                 metadata_mode.as_deref(),
             )?;
+            Ok(serde_json::json!(result))
+        }
+        "save_to_gallery_temp" => {
+            // Save from a temp image file (browser mode: image was already received
+            // via WebSocket and stored as a temp file on the server).
+            let temp_filename = args["tempFilename"]
+                .as_str()
+                .ok_or("Missing tempFilename")?
+                .to_string();
+            let filename = args["filename"].as_str().unwrap_or("image.png").to_string();
+            let prompt_id = args["promptId"].as_str().unwrap_or("").to_string();
+            let mode = args
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let metadata: Option<std::collections::HashMap<String, String>> = args
+                .get("metadata")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+            let metadata_mode = args
+                .get("metadataMode")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let bytes = crate::temp_images::load(&temp_filename)
+                .ok_or_else(|| format!("Temp image '{}' not found or expired", temp_filename))?;
+            let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
+            // Enforce storage limit for non-admin users
+            if let Some(name) = username {
+                let limit = auth.get_storage_limit(name);
+                if limit > 0 {
+                    let usage = dir_usage_bytes(&dir);
+                    if usage + bytes.len() as u64 > limit {
+                        return Err(format!(
+                            "Storage limit exceeded ({:.1} MB / {:.1} MB). Download your images and free space, or ask an admin to increase your limit.",
+                            usage as f64 / 1_048_576.0,
+                            limit as f64 / 1_048_576.0,
+                        ));
+                    }
+                }
+            }
+            let result = save_to_gallery_in_dir(
+                &dir,
+                &bytes,
+                &filename,
+                &prompt_id,
+                mode.as_deref(),
+                metadata.as_ref(),
+                metadata_mode.as_deref(),
+            )?;
+            // Clean up temp file after successful save
+            crate::temp_images::remove(&temp_filename);
             Ok(serde_json::json!(result))
         }
         "delete_gallery_image" => {
@@ -2485,37 +2603,32 @@ async fn dispatch_command(
 
         // --- Clipboard ---
         "copy_image_to_clipboard" => {
-            #[cfg(feature = "desktop")]
-            {
-                let file_path = args["filePath"]
-                    .as_str()
-                    .ok_or("Missing filePath")?
-                    .to_string();
-                crate::commands::api::copy_image_to_clipboard(file_path)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok(serde_json::json!(null))
+            let file_path = args["filePath"]
+                .as_str()
+                .ok_or("Missing filePath")?
+                .to_string();
+            let path = std::path::Path::new(&file_path);
+            if !path.exists() {
+                return Err(format!("File not found: {}", file_path));
             }
-            #[cfg(not(feature = "desktop"))]
-            {
-                Err("Clipboard is not available in headless server mode".to_string())
-            }
+            let bytes = std::fs::read(path).map_err(|e| format!("Read failed: {}", e))?;
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase());
+            let mime = crate::commands::api::infer_image_mime_pub(&bytes, ext.as_deref());
+            crate::commands::api::native_clipboard_write_pub(&bytes, mime)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
         }
         "copy_bytes_to_clipboard" => {
-            #[cfg(feature = "desktop")]
-            {
-                let bytes: Vec<u8> = serde_json::from_value(args["bytes"].clone())
-                    .map_err(|e| format!("Invalid bytes: {}", e))?;
-                let ext = args["ext"].as_str().ok_or("Missing ext")?.to_string();
-                crate::commands::api::copy_bytes_to_clipboard(bytes, ext)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok(serde_json::json!(null))
-            }
-            #[cfg(not(feature = "desktop"))]
-            {
-                Err("Clipboard is not available in headless server mode".to_string())
-            }
+            let bytes: Vec<u8> = serde_json::from_value(args["bytes"].clone())
+                .map_err(|e| format!("Invalid bytes: {}", e))?;
+            let ext = args["ext"].as_str().ok_or("Missing ext")?.to_string();
+            let mime = crate::commands::api::infer_image_mime_pub(&bytes, Some(&ext));
+            crate::commands::api::native_clipboard_write_pub(&bytes, mime)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
         }
         "read_clipboard_image" => {
             Err("read_clipboard_image is not yet available in browser mode".to_string())
@@ -2706,15 +2819,18 @@ async fn auth_list_accounts_handler(
         .auth
         .list_users_status(online_threshold)
         .into_iter()
-        .map(|(username, role, online, created_at, last_online)| {
-            serde_json::json!({
-                "username": username,
-                "role": role,
-                "online": online,
-                "created_at": created_at,
-                "last_online": last_online,
-            })
-        })
+        .map(
+            |(username, role, online, created_at, last_online, storage_limit_bytes)| {
+                serde_json::json!({
+                    "username": username,
+                    "role": role,
+                    "online": online,
+                    "created_at": created_at,
+                    "last_online": last_online,
+                    "storage_limit_bytes": storage_limit_bytes,
+                })
+            },
+        )
         .collect();
     (
         StatusCode::OK,
@@ -2752,11 +2868,11 @@ async fn auth_delete_account_handler(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // Moderators cannot delete admin accounts
+    // Moderators cannot delete admin or other moderator accounts
     if role == UserRole::Moderator {
         if let Some(target_role) = state.auth.get_account_role(username) {
-            if target_role == "admin" {
-                return forbidden_response("Moderators cannot delete admin accounts.");
+            if target_role == "admin" || target_role == "moderator" {
+                return forbidden_response("Moderators can only manage regular user accounts.");
             }
         }
     }
@@ -2861,6 +2977,16 @@ async fn auth_reset_password_handler(
                 .into_response();
         }
     };
+
+    // Moderators cannot reset passwords for admin or other moderator accounts
+    if role == UserRole::Moderator {
+        if let Some(target_role) = state.auth.get_account_role(username) {
+            if target_role == "admin" || target_role == "moderator" {
+                return forbidden_response("Moderators can only manage regular user accounts.");
+            }
+        }
+    }
+
     let temp_pass = match req.get("temp_password").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => {

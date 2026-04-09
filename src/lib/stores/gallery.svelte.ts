@@ -4,6 +4,7 @@ import {
   loadGalleryImage,
   saveToGallery,
   saveToGalleryBytes,
+  saveToGalleryTemp,
   deleteGalleryImage,
   renameGalleryImage,
   saveImageFile,
@@ -85,6 +86,17 @@ class GalleryStore {
   /** Storage info from the server (browser mode only). */
   storageInfo = $state<StorageInfo | null>(null);
   private _toastTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Per-image persist promises.  Resolves with the gallery filename once
+   * the image has been saved to disk and metadata embedded.  Created up-front
+   * in persistImages() so callers (copyToClipboard, openLightbox) can await
+   * completion even if persist hasn't finished yet.
+   */
+  private _persistPromises = new Map<string, Promise<string>>();
+
+  private _imageKey(img: { prompt_id: string; filename: string }) {
+    return `${img.prompt_id}::${img.filename}`;
+  }
 
   constructor() {
     this.loadBoardAssignments();
@@ -181,9 +193,19 @@ class GalleryStore {
       this.lightboxUrl = image.fullImageUrl;
       this.lightboxLoading = false;
     } else if (image.url) {
-      // Session images still have a blob URL (pre-persistence)
+      // Session images still have a blob URL (pre-persistence) — show it
+      // immediately, then upgrade to the gallery URL once persist finishes
+      // so right-click → Copy Image preserves stealth-alpha metadata.
       this.lightboxUrl = image.url;
       this.lightboxLoading = false;
+      const key = this._imageKey(image);
+      const pending = this._persistPromises.get(key);
+      if (pending) {
+        const galleryFilename = await pending;
+        if (galleryFilename && this.lightboxOpen && this._imageKey(this.selectedImage!) === key) {
+          this.lightboxUrl = await fullImageUrl(galleryFilename);
+        }
+      }
     } else if (image.gallery_filename) {
       // Persisted images without a fullImageUrl — load full-res from disk
       this.lightboxUrl = null;
@@ -228,20 +250,45 @@ class GalleryStore {
   /** Save generated images to the persistent gallery on disk.
    *  Skipped when manualSaveMode is on — user saves manually via saveImageToDir.
    *  If blobs are provided (from WebSocket delivery), use the bytes-based API
-   *  to avoid a round-trip to ComfyUI's output directory. */
+   *  to avoid a round-trip to ComfyUI's output directory.
+   *  In browser mode, tempFilenames are used to save directly from server temp storage. */
   async persistImages(
     images: OutputImage[],
     metadata?: Record<string, string>,
     blobs?: Blob[],
     metadataMode?: string,
+    tempFilenames?: (string | undefined)[],
   ) {
     if (generation.manualSaveMode) return;
+
+    // Create per-image persist promises up-front so copyToClipboard / openLightbox
+    // can await them even if this loop hasn't reached the image yet.
+    const resolvers: Array<(gf: string) => void> = [];
+    for (const img of images) {
+      let resolve!: (gf: string) => void;
+      const promise = new Promise<string>((r) => { resolve = r; });
+      this._persistPromises.set(this._imageKey(img), promise);
+      resolvers.push(resolve);
+    }
+
     for (let i = 0; i < images.length; i++) {
       const img = images[i]!;
       try {
         let galleryFilename: string;
         const blob = blobs?.[i];
-        if (blob) {
+        const tempFilename = tempFilenames?.[i];
+        // In browser mode, prefer temp-file save (zero extra data transfer —
+        // the full-res image already lives on the server as a temp file).
+        if (isBrowserMode && tempFilename) {
+          galleryFilename = await saveToGalleryTemp(
+            tempFilename,
+            img.filename,
+            img.prompt_id,
+            img.generation_mode,
+            metadata,
+            metadataMode,
+          );
+        } else if (blob && !isBrowserMode) {
           const buf = await blob.arrayBuffer();
           const bytes = Array.from(new Uint8Array(buf));
           galleryFilename = await saveToGalleryBytes(
@@ -265,8 +312,12 @@ class GalleryStore {
         img.gallery_filename = galleryFilename;
         img.thumbnailUrl = await thumbnailUrl(galleryFilename);
         img.fullImageUrl = await fullImageUrl(galleryFilename);
+        resolvers[i]!(galleryFilename);
       } catch (e) {
         console.error("Failed to save image to gallery:", e);
+        resolvers[i]!("");
+      } finally {
+        this._persistPromises.delete(this._imageKey(img));
       }
     }
     // Trigger reactivity so components re-render with newly assigned thumbnailUrls
@@ -442,32 +493,39 @@ class GalleryStore {
     this.showToast(locale.t("gallery.toast.copying"), "info", true);
     try {
       if (isBrowserMode) {
-        // Browser mode: fetch the image bytes and write to clipboard.
-        // Prefer the real backend URL (already has metadata embedded on disk).
-        let bytes: Uint8Array;
-        if (image.fullImageUrl) {
-          const resp = await fetch(image.fullImageUrl);
-          const buf = await resp.arrayBuffer();
-          bytes = new Uint8Array(buf);
-        } else if (image.url) {
-          const resp = await fetch(image.url);
-          const buf = await resp.arrayBuffer();
-          bytes = new Uint8Array(buf);
-          // Blob URLs don't have metadata embedded — add it
-          if (image.metadata) {
-            const embedded = await embedPngMetadataBytes(Array.from(bytes), image.metadata);
-            bytes = new Uint8Array(embedded);
+        // Browser mode: prefer gallery file (has metadata embedded).
+        // If persist hasn't finished yet, wait for it (shows "Copying…" meanwhile).
+        let galleryFilename = image.gallery_filename;
+        if (!galleryFilename) {
+          const key = this._imageKey(image);
+          const pending = this._persistPromises.get(key);
+          if (pending) {
+            galleryFilename = await pending;
           }
-        } else if (image.gallery_filename) {
-          const raw = await loadGalleryImage(image.gallery_filename);
-          bytes = new Uint8Array(raw);
-        } else {
-          this.showToast(locale.t("gallery.toast.not_saved_yet"), "info");
+        }
+        // Step 1: Try server-side native clipboard (preserves full PNG with metadata).
+        if (galleryFilename) {
+          const path = await getGalleryImagePath(galleryFilename);
+          await copyImageToClipboard(path);
+          this.showToast(locale.t("gallery.toast.copied"), "success");
           return;
         }
-        const blob = new Blob([bytes], { type: "image/png" });
-        await this.writeBlobToClipboard(blob);
-        this.showToast(locale.t("gallery.toast.copied"), "success");
+        // Step 2: Try browser Clipboard API with fullImageUrl (HTTPS / localhost only).
+        const imgUrl = image.fullImageUrl || image.url;
+        if (imgUrl && navigator.clipboard?.write) {
+          try {
+            const resp = await fetch(imgUrl);
+            const blob = await resp.blob();
+            const pngBlob = blob.type.startsWith("image/") ? blob : new Blob([blob], { type: "image/png" });
+            await navigator.clipboard.write([new ClipboardItem({ [pngBlob.type]: pngBlob })]);
+            this.showToast(locale.t("gallery.toast.copied"), "success");
+            return;
+          } catch {
+            // Clipboard API blocked (insecure context) — fall through
+          }
+        }
+        // Step 3: Image not saved yet.
+        this.showToast(locale.t("gallery.toast.not_saved_yet"), "info");
         return;
       }
       // Tauri mode: prefer native clipboard via file path
@@ -491,39 +549,26 @@ class GalleryStore {
   /** Write an image blob to the clipboard, with fallback for non-secure contexts (HTTP LAN). */
   private async writeBlobToClipboard(blob: Blob) {
     // navigator.clipboard.write requires a secure context (HTTPS or localhost).
-    // On LAN HTTP, fall back to creating a temporary canvas → execCommand.
     if (navigator.clipboard?.write) {
       try {
         await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
         return;
       } catch {
-        // Clipboard API blocked — fall through to canvas fallback
+        // Clipboard API blocked — fall through to server fallback
       }
     }
-    // Canvas fallback: draw image onto a canvas, use legacy copy
-    const img = new Image();
-    const url = URL.createObjectURL(blob);
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error("Failed to load image for clipboard fallback"));
-      img.src = url;
-    });
-    const canvas = document.createElement("canvas");
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Canvas 2D context unavailable");
-    ctx.drawImage(img, 0, 0);
-    URL.revokeObjectURL(url);
-    // Try canvas.toBlob + clipboard.write (works in some contexts where ClipboardItem doesn't)
-    const pngBlob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((b) => b ? resolve(b) : reject(new Error("toBlob failed")), "image/png");
-    });
-    if (navigator.clipboard?.write) {
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
-    } else {
-      throw new Error("Clipboard API not available — copy not supported in this browser context");
+    // Browser Clipboard API unavailable (HTTP context) — route through backend
+    // which uses native OS clipboard tools (xclip/wl-copy/pbcopy/PowerShell).
+    if (isBrowserMode) {
+      const buf = await blob.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(buf));
+      const ext = blob.type === "image/jpeg" ? "jpg"
+        : blob.type === "image/webp" ? "webp"
+        : "png";
+      await copyBytesToClipboard(bytes, ext);
+      return;
     }
+    throw new Error("Clipboard API not available — copy not supported in this browser context");
   }
 
   /** Copy a blob URL image to clipboard via native Tauri clipboard or browser Clipboard API. */

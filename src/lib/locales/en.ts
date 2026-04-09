@@ -786,6 +786,7 @@ const en: Record<string, string> = {
   "gallery.toast.copied": "Copied to clipboard",
   "gallery.toast.copying": "Copying...",
   "gallery.toast.failed_copy": "Failed to copy",
+  "gallery.toast.right_click_copy": "Right-click the image and select 'Copy Image'",
   "gallery.toast.rescan_migrated": "Re-scanned metadata: migrated {count} image(s)",
   "gallery.toast.rescan_none": "Re-scan complete: no legacy metadata to migrate",
   "gallery.toast.rescan_failed": "Re-scan failed",

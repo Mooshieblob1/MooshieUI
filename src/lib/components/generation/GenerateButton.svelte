@@ -57,10 +57,6 @@
       if (generation.facefixEnabled) {
         const detector = generation.facefixDetector || "face_yolov8m.pt";
         if (!models.ultralyticsModels.includes(detector)) {
-          if (isBrowserMode) {
-            errorMsg = "Face fix model not installed. Ask the host to generate with face fix enabled once to set it up.";
-            return;
-          }
           gallery.showToast(locale.t('generation.downloading_facefix'), "info");
           await downloadModel(
             `https://huggingface.co/Bingsu/adetailer/resolve/main/${detector}`,

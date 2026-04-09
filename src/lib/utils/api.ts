@@ -267,6 +267,17 @@ export async function saveToGalleryBytes(
   return ipcInvoke("save_to_gallery_bytes", { imageBytes, filename, promptId, mode, metadata, metadataMode });
 }
 
+export async function saveToGalleryTemp(
+  tempFilename: string,
+  filename: string,
+  promptId: string,
+  mode?: "txt2img" | "img2img" | "inpainting",
+  metadata?: Record<string, string>,
+  metadataMode?: string,
+): Promise<string> {
+  return ipcInvoke("save_to_gallery_temp", { tempFilename, filename, promptId, mode, metadata, metadataMode });
+}
+
 export async function readImageMetadata(
   filename: string
 ): Promise<Record<string, string> | null> {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders } from "./lib/utils/ipc.js";
+  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe } from "./lib/utils/ipc.js";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
@@ -41,7 +41,9 @@
   let lastProgressEventAt = 0;
 
   /** Images received via WebSocket during generation, keyed by prompt_id. */
-  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string }>>();
+  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string }>>();
+  /** In-flight output_image fetch promises per prompt_id (for SSE race-condition avoidance). */
+  let pendingOutputFetches = new Map<string, Promise<void>[]>();
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
 
   // Lightbox zoom state — only scale needs reactivity (used in template conditionals)
@@ -412,6 +414,7 @@
   let loginPass = $state("");
   let loginError = $state<string | null>(null);
   let loginBusy = $state(false);
+  let rememberMe = $state(wasRememberMe());
   let mustChangePassword = $state(false);
   let newPass1 = $state("");
   let newPass2 = $state("");
@@ -459,7 +462,7 @@
         loginError = data.error ?? "Login failed.";
         return;
       }
-      setAuthToken(data.token);
+      setAuthToken(data.token, rememberMe);
       setAuthUser(loginUser.trim());
       // Re-check auth status to get the actual role (user vs moderator)
       const statusResp = await fetch("/internal-api/_auth/status", {
@@ -1015,7 +1018,7 @@
     mode: "txt2img" | "img2img" | "inpainting",
     wasUpscaled: boolean,
     params: GenerationParams | null,
-    images: Array<{ blob: Blob; url: string }>,
+    images: Array<{ blob: Blob; url: string; tempFilename?: string }>,
   ) {
     if (images.length === 0) return;
 
@@ -1038,9 +1041,75 @@
     for (const image of newImages) {
       image.metadata = metadata ?? null;
     }
-    // Pass blobs so persistImages can use the bytes-based API (no ComfyUI disk round-trip)
+
+    // In browser mode, embed metadata into the blob URLs immediately so that
+    // right-click → Copy Image has stealth alpha from the start (no waiting
+    // for persistImages to finish).  Uses the temp file path on the server to
+    // avoid serializing multi-MB images as JSON number arrays.
+    if (isBrowserMode && metadata) {
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i]!;
+        const outputImage = newImages[i]!;
+        if (img.tempFilename) {
+          embedTempMetadata(img.tempFilename, metadata, outputImage);
+        }
+      }
+    }
+
+    // Pass blobs and temp filenames so persistImages can use the most efficient path
     const blobs = images.map((img) => img.blob);
-    gallery.persistImages(newImages, metadata, blobs, generation.metadataMode);
+    const tempFilenames = images.map((img) => img.tempFilename);
+    gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
+  }
+
+  /**
+   * Embed metadata into a temp image on the server and upgrade the blob URL.
+   * Runs async in the background — the image is already visible (blob URL),
+   * this just replaces it with a metadata-embedded version.
+   */
+  async function embedTempMetadata(
+    tempFilename: string,
+    metadata: Record<string, string>,
+    image: OutputImage,
+  ) {
+    try {
+      const resp = await fetch("/internal-api/_embed_temp_metadata", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          tempFilename,
+          metadata,
+          metadataMode: generation.metadataMode,
+        }),
+      });
+      if (!resp.ok) return;
+      const result = await resp.json();
+      const newTempFilename = result.tempFilename;
+      if (!newTempFilename) return;
+
+      // Fetch the metadata-embedded image as a new blob URL
+      const imgResp = await fetch(
+        `/internal-api/_temp_image/${encodeURIComponent(newTempFilename)}`,
+        { headers: authHeaders() },
+      );
+      if (!imgResp.ok) return;
+      const newBlob = await imgResp.blob();
+      const newUrl = URL.createObjectURL(newBlob);
+
+      // Revoke old blob URL and update the image
+      const oldUrl = image.url;
+      image.url = newUrl;
+
+      // If the lightbox is showing this image's old blob URL, upgrade it
+      if (gallery.lightboxOpen && gallery.lightboxUrl === oldUrl) {
+        gallery.lightboxUrl = newUrl;
+      }
+
+      if (oldUrl) URL.revokeObjectURL(oldUrl);
+    } catch (e) {
+      // Non-critical — the image is still visible, just without embedded metadata
+      console.warn("[embedTempMetadata] failed:", e);
+    }
   }
 
   /**
@@ -1326,12 +1395,18 @@
           progress.previewImage = `data:image/${data.format};base64,${data.image}`;
         }
       }),
-      ipcListen("comfyui:output_image", async (event: any) => {
-        // MooshieSaveImage sends final PNG bytes over WS — collect per prompt
+      ipcListen("comfyui:output_image", (event: any) => {
+        // MooshieSaveImage sends final PNG bytes over WS — collect per prompt.
+        // NOTE: The actual image fetch (for SSE/browser path) is async but we
+        // must register the promise *synchronously* so that the executing
+        // node=null handler can await it before consuming pendingOutputImages.
         const data = event.payload;
         if (!progress.isGenerating) return;
         // Filter by prompt_id — reject events for other users' prompts
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
+
+        const pid = data.prompt_id ?? progress.activePromptId;
+        if (!pid) return;
 
         if (data.bit_depth === 16) {
           const now = Date.now();
@@ -1341,7 +1416,7 @@
 
           if ((sinceProgressMs !== null && sinceProgressMs > 1500) || (encodeMs !== null && encodeMs > 250)) {
             console.warn("[16-bit diagnostics] output_image timing", {
-              promptId: data.prompt_id ?? progress.activePromptId,
+              promptId: pid,
               sinceProgressMs,
               encodeMs,
               imageBytes,
@@ -1352,44 +1427,52 @@
           }
         }
 
-        let blob: Blob;
-        let url: string;
+        // Start the (possibly async) image fetch and register its promise
+        // synchronously so the executing handler can await it.
+        const fetchPromise = (async () => {
+          let blob: Blob;
+          let url: string;
+          let tempFilename: string | undefined;
 
-        if (data.temp_filename) {
-          // SSE/browser path: fetch image from temp endpoint (avoids multi-MB SSE payloads)
-          try {
-            const resp = await fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`, {
-              headers: authHeaders(),
-            });
-            if (!resp.ok) {
-              console.error("[output_image] failed to fetch temp image:", resp.status);
+          if (data.temp_filename) {
+            tempFilename = data.temp_filename;
+            // SSE/browser path: fetch image from temp endpoint (avoids multi-MB SSE payloads)
+            try {
+              const resp = await fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`, {
+                headers: authHeaders(),
+              });
+              if (!resp.ok) {
+                console.error("[output_image] failed to fetch temp image:", resp.status);
+                return;
+              }
+              blob = await resp.blob();
+              url = URL.createObjectURL(blob);
+            } catch (e) {
+              console.error("[output_image] failed to fetch temp image:", e);
               return;
             }
-            blob = await resp.blob();
+          } else if (data.image) {
+            // Tauri path: decode inline base64
+            const raw = atob(data.image);
+            const bytes = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+            blob = new Blob([bytes], { type: "image/png" });
             url = URL.createObjectURL(blob);
-          } catch (e) {
-            console.error("[output_image] failed to fetch temp image:", e);
+          } else {
+            console.warn("[output_image] event has neither temp_filename nor image");
             return;
           }
-        } else if (data.image) {
-          // Tauri path: decode inline base64
-          const raw = atob(data.image);
-          const bytes = new Uint8Array(raw.length);
-          for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-          blob = new Blob([bytes], { type: "image/png" });
-          url = URL.createObjectURL(blob);
-        } else {
-          console.warn("[output_image] event has neither temp_filename nor image");
-          return;
-        }
 
-        const pid = data.prompt_id ?? progress.activePromptId;
-        if (!pid) return;
-        const arr = pendingOutputImages.get(pid) ?? [];
-        arr.push({ blob, url });
-        pendingOutputImages.set(pid, arr);
+          const arr = pendingOutputImages.get(pid) ?? [];
+          arr.push({ blob, url, tempFilename });
+          pendingOutputImages.set(pid, arr);
+        })();
+
+        const fetches = pendingOutputFetches.get(pid) ?? [];
+        fetches.push(fetchPromise);
+        pendingOutputFetches.set(pid, fetches);
       }),
-      ipcListen("comfyui:executing", (event: any) => {
+      ipcListen("comfyui:executing", async (event: any) => {
         const data = event.payload;
         console.log("Executing event:", data);
         // Ignore prompts not in our queue
@@ -1400,6 +1483,17 @@
           if (!progress.isGenerating) return;
           const promptId = data.prompt_id;
           if (!promptId) return;
+
+          // Wait for any in-flight output_image fetches to complete before
+          // consuming pendingOutputImages.  The output_image handler is async
+          // (fetches temp images over HTTP) and SSE events fire synchronously,
+          // so without this await the images map would be empty.
+          const fetches = pendingOutputFetches.get(promptId);
+          if (fetches && fetches.length > 0) {
+            await Promise.allSettled(fetches);
+            pendingOutputFetches.delete(promptId);
+          }
+
           const item = progress.completePrompt(promptId);
           if (item) {
             const images = pendingOutputImages.get(promptId) ?? [];
@@ -1426,11 +1520,13 @@
         const data = event.payload;
         if (data.prompt_id) {
           pendingOutputImages.delete(data.prompt_id);
+          pendingOutputFetches.delete(data.prompt_id);
           progress.removePrompt(data.prompt_id);
           compare.clearGridBatch();
         } else {
           // No prompt_id — clear everything
           pendingOutputImages.clear();
+          pendingOutputFetches.clear();
           progress.cancelAll();
           compare.clearGridBatch();
         }
@@ -1458,6 +1554,12 @@
         for (const p of progress.pendingPrompts) {
           if (!allPromptIds.has(p.promptId)) {
             console.warn(`[reconcile] Prompt ${p.promptId} no longer in ComfyUI queue — completing`);
+            // Wait for any in-flight output_image fetches
+            const fetches = pendingOutputFetches.get(p.promptId);
+            if (fetches && fetches.length > 0) {
+              await Promise.allSettled(fetches);
+              pendingOutputFetches.delete(p.promptId);
+            }
             const item = progress.completePrompt(p.promptId);
             if (item) {
               const images = pendingOutputImages.get(p.promptId) ?? [];
@@ -1621,6 +1723,14 @@
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
         onkeydown={(e) => { if (e.key === "Enter") handleLogin(); }}
       />
+      <label class="flex items-center gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          bind:checked={rememberMe}
+          class="w-4 h-4 rounded border-neutral-600 bg-neutral-800 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
+        />
+        <span class="text-sm text-neutral-400">Remember me</span>
+      </label>
       {#if loginError}
         <p class="text-xs text-red-400">{loginError}</p>
       {/if}

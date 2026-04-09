@@ -12,8 +12,8 @@ use std::sync::RwLock;
 
 use crate::config;
 
-/// Default storage limit per user: 2 GB.
-const DEFAULT_STORAGE_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
+/// Default storage limit per user: 1 GB.
+const DEFAULT_STORAGE_LIMIT: u64 = 1024 * 1024 * 1024;
 
 /// Default image expiry: 7 days in seconds.
 pub const DEFAULT_EXPIRY_SECS: u64 = 7 * 24 * 60 * 60;
@@ -56,10 +56,11 @@ pub struct AuthDatabase {
     pub accounts: Vec<Account>,
 }
 
-/// In-memory auth state.
+/// Auth state with persistent sessions.
 pub struct AuthState {
     db: RwLock<AuthDatabase>,
-    /// Active session tokens → username.
+    /// Active session tokens → username. Persisted to disk so tokens survive
+    /// server restarts (enables "remember me").
     sessions: RwLock<HashMap<String, String>>,
     /// Per-user last activity timestamp (username → Instant).
     last_activity: RwLock<HashMap<String, std::time::Instant>>,
@@ -68,9 +69,14 @@ pub struct AuthState {
 impl AuthState {
     pub fn new() -> Self {
         let db = load_auth_db().unwrap_or_default();
+        let mut sessions = load_sessions().unwrap_or_default();
+        // Prune sessions for accounts that no longer exist
+        let valid_usernames: std::collections::HashSet<&str> =
+            db.accounts.iter().map(|a| a.username.as_str()).collect();
+        sessions.retain(|_, u| valid_usernames.contains(u.as_str()));
         Self {
             db: RwLock::new(db),
-            sessions: RwLock::new(HashMap::new()),
+            sessions: RwLock::new(sessions),
             last_activity: RwLock::new(HashMap::new()),
         }
     }
@@ -126,10 +132,11 @@ impl AuthState {
 
         let must_change = account.must_change_password;
         let token = generate_token();
-        self.sessions
-            .write()
-            .unwrap()
-            .insert(token.clone(), username.to_string());
+        {
+            let mut sessions = self.sessions.write().unwrap();
+            sessions.insert(token.clone(), username.to_string());
+            let _ = save_sessions(&sessions);
+        }
         Ok((token, must_change))
     }
 
@@ -141,7 +148,9 @@ impl AuthState {
 
     /// Invalidate a session token.
     pub fn logout(&self, token: &str) {
-        self.sessions.write().unwrap().remove(token);
+        let mut sessions = self.sessions.write().unwrap();
+        sessions.remove(token);
+        let _ = save_sessions(&sessions);
     }
 
     /// List all account usernames.
@@ -196,6 +205,7 @@ impl AuthState {
         // Also remove any active sessions for this user
         let mut sessions = self.sessions.write().unwrap();
         sessions.retain(|_, u| u != username);
+        let _ = save_sessions(&sessions);
         Ok(())
     }
 
@@ -268,6 +278,7 @@ impl AuthState {
         // Revoke existing sessions for this user so they must re-login
         let mut sessions = self.sessions.write().unwrap();
         sessions.retain(|_, u| u != username);
+        let _ = save_sessions(&sessions);
         Ok(())
     }
 
@@ -301,12 +312,12 @@ impl AuthState {
         }
     }
 
-    /// List all users with their role, online/offline status, and timestamps.
+    /// List all users with their role, online/offline status, timestamps, and storage limit.
     /// A user is "online" if their last activity was within `threshold`.
     pub fn list_users_status(
         &self,
         threshold: std::time::Duration,
-    ) -> Vec<(String, String, bool, String, Option<String>)> {
+    ) -> Vec<(String, String, bool, String, Option<String>, u64)> {
         let db = self.db.read().unwrap();
         let activity = self.last_activity.read().unwrap();
         db.accounts
@@ -321,6 +332,7 @@ impl AuthState {
                     online,
                     a.created_at.clone(),
                     a.last_online.clone(),
+                    a.storage_limit_bytes,
                 )
             })
             .collect()
@@ -359,6 +371,31 @@ fn save_auth_db(db: &AuthDatabase) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_string_pretty(db).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// --- Session persistence ---
+
+fn sessions_db_path() -> Option<PathBuf> {
+    config::app_data_dir().map(|d| d.join("sessions.json"))
+}
+
+fn load_sessions() -> Result<HashMap<String, String>, String> {
+    let path = sessions_db_path().ok_or("No app data dir")?;
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&content).map_err(|e| e.to_string())
+}
+
+fn save_sessions(sessions: &HashMap<String, String>) -> Result<(), String> {
+    let path = sessions_db_path().ok_or("No app data dir")?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(sessions).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| e.to_string())?;
     Ok(())
 }

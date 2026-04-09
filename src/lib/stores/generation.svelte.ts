@@ -396,7 +396,7 @@ class GenerationStore {
     );
 
     const nextEntry: PromptHistoryEntry = {
-      id: existing?.id ?? crypto.randomUUID(),
+      id: existing?.id ?? (crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`),
       positivePrompt,
       negativePrompt,
       mode: this.mode,

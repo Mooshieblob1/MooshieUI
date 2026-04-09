@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AppConfig } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult } from "../../utils/api.js";
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import { connection } from "../../stores/connection.svelte.js";
@@ -60,7 +60,7 @@
   let switchingMode = $state(false);
 
   // LAN auth state
-  let lanAccounts = $state<{ username: string; role: string; online: boolean; created_at: string; last_online: string | null }[]>([]);
+  let lanAccounts = $state<{ username: string; role: string; online: boolean; created_at: string; last_online: string | null; storage_limit_bytes: number }[]>([]);
   let lanNewUser = $state("");
   let lanNewPass = $state("");
   let lanAuthError = $state<string | null>(null);
@@ -75,6 +75,39 @@
   let showDeleteModal = $state(false);
   let deleteTargetUser = $state("");
   let deleteKeepData = $state(true);
+
+  // Storage limit modal
+  let showStorageModal = $state(false);
+  let storageTargetUser = $state("");
+  let storageInputGB = $state("1");
+  let storageError = $state<string | null>(null);
+  let storageBusy = $state(false);
+
+  function formatBytes(bytes: number): string {
+    if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+    return `${(bytes / 1024).toFixed(0)} KB`;
+  }
+
+  async function applyStorageLimit() {
+    storageBusy = true;
+    storageError = null;
+    try {
+      const gb = parseFloat(storageInputGB);
+      if (isNaN(gb) || gb < 0.1 || gb > 100) {
+        storageError = "Enter a value between 0.1 and 100 GB.";
+        return;
+      }
+      const limitBytes = Math.round(gb * 1024 * 1024 * 1024);
+      await setStorageLimit(storageTargetUser, limitBytes);
+      showStorageModal = false;
+      await loadLanAccounts();
+    } catch (e: any) {
+      storageError = e.message || String(e);
+    } finally {
+      storageBusy = false;
+    }
+  }
 
   function relativeTime(iso: string | null): string {
     if (!iso) return "Never";
@@ -194,8 +227,8 @@
       // Normalise: backend now returns {username, role, online, created_at, last_online}
       lanAccounts = raw.map((a: any) =>
         typeof a === "string"
-          ? { username: a, role: "user", online: false, created_at: "", last_online: null }
-          : { username: a.username, role: a.role ?? "user", online: !!a.online, created_at: a.created_at ?? "", last_online: a.last_online ?? null }
+          ? { username: a, role: "user", online: false, created_at: "", last_online: null, storage_limit_bytes: 1024 * 1024 * 1024 }
+          : { username: a.username, role: a.role ?? "user", online: !!a.online, created_at: a.created_at ?? "", last_online: a.last_online ?? null, storage_limit_bytes: a.storage_limit_bytes ?? 1024 * 1024 * 1024 }
       );
     } catch {
       lanAccounts = [];
@@ -697,9 +730,9 @@
     }
   });
 
-  // Poll account list every 10s to refresh online/offline indicators (admin only).
+  // Poll account list every 10s to refresh online/offline indicators (admin/mod).
   $effect(() => {
-    if (!isBrowserMode || !isAdmin) return;
+    if (!isBrowserMode || !canManageServer) return;
     const id = setInterval(loadLanAccounts, 10_000);
     return () => clearInterval(id);
   });
@@ -946,6 +979,7 @@
                               {#if account.role === "moderator"}
                                 <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">Mod</span>
                               {/if}
+                              <span class="text-[10px] text-neutral-500 shrink-0">{formatBytes(account.storage_limit_bytes)}</span>
                               <span class="text-[10px] text-neutral-500 shrink-0" title={account.created_at ? `Joined: ${new Date(account.created_at).toLocaleDateString()}` : ''}>
                                 {account.created_at ? relativeTime(account.created_at) : ''}
                               </span>
@@ -961,6 +995,11 @@
                                 disabled={lanAuthBusy}
                                 onclick={() => toggleAccountRole(account.username, account.role)}
                               >{account.role === "moderator" ? "Revoke Mod" : "Make Mod"}</button>
+                              <button
+                                class="text-xs text-cyan-400 hover:text-cyan-300 cursor-pointer"
+                                disabled={lanAuthBusy}
+                                onclick={() => { storageTargetUser = account.username; storageInputGB = (account.storage_limit_bytes / (1024 * 1024 * 1024)).toFixed(1); storageError = null; showStorageModal = true; }}
+                              >Storage</button>
                               <button
                                 class="text-xs text-amber-400 hover:text-amber-300 cursor-pointer"
                                 disabled={lanAuthBusy}
@@ -993,8 +1032,97 @@
         </section>
         {/if}
 
+        <!-- Account Management (moderator in browser mode — admins see this inside the LAN section above) -->
+        {#if canManageServer && !isAdmin && isBrowserMode}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <div class="p-5 space-y-3">
+            <h3 class="text-sm font-medium text-neutral-200">Account Management</h3>
+            <p class="text-xs text-neutral-500">Manage user accounts. You can reset passwords and remove accounts (except admin and moderator accounts).</p>
+
+            {#if lanAccounts.length > 0}
+              <div class="space-y-2">
+                <div class="flex items-center justify-between">
+                  <p class="text-xs text-neutral-400 font-medium">Accounts</p>
+                  <p class="text-[10px] text-neutral-500">{sortedAccounts.length} of {lanAccounts.length}</p>
+                </div>
+
+                <input
+                  type="text"
+                  placeholder="Search accounts…"
+                  bind:value={accountSearch}
+                  class="w-full px-3 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
+                />
+
+                <div class="flex gap-1">
+                  {#each [["name", "Name"], ["joined", "Joined"], ["last_online", "Last Online"]] as [key, label]}
+                    <button
+                      class="text-[10px] px-2 py-1 rounded cursor-pointer transition-colors {accountSort === key ? 'bg-indigo-600/30 text-indigo-300' : 'bg-neutral-800 text-neutral-400 hover:text-neutral-300'}"
+                      onclick={() => { if (accountSort === key) { accountSortAsc = !accountSortAsc; } else { accountSort = key as typeof accountSort; accountSortAsc = true; } }}
+                    >{label} {accountSort === key ? (accountSortAsc ? '↑' : '↓') : ''}</button>
+                  {/each}
+                </div>
+
+                <div class="max-h-[288px] overflow-y-auto space-y-1 pr-1">
+                  {#each sortedAccounts as account}
+                    <div class="flex items-center justify-between bg-neutral-800 rounded-lg px-3 py-2">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span class="inline-block w-2 h-2 rounded-full shrink-0 {account.online ? 'bg-green-500' : 'bg-neutral-600'}"></span>
+                        <span class="text-sm text-neutral-200 truncate">{account.username}</span>
+                        {#if account.role === "moderator"}
+                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">Mod</span>
+                        {/if}
+                        {#if account.role === "admin"}
+                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-600/30 text-amber-300 font-medium shrink-0">Admin</span>
+                        {/if}
+                        {#if account.role === "user"}
+                          <span class="text-[10px] text-neutral-500 shrink-0">{formatBytes(account.storage_limit_bytes)}</span>
+                        {/if}
+                        <span class="text-[10px] text-neutral-500 shrink-0" title={account.created_at ? `Joined: ${new Date(account.created_at).toLocaleDateString()}` : ''}>
+                          {account.created_at ? relativeTime(account.created_at) : ''}
+                        </span>
+                        {#if !account.online && account.last_online}
+                          <span class="text-[10px] text-neutral-600 shrink-0" title={`Last online: ${new Date(account.last_online).toLocaleString()}`}>
+                            · {relativeTime(account.last_online)}
+                          </span>
+                        {/if}
+                      </div>
+                      <!-- Mods can only manage regular users — not admins or other mods -->
+                      {#if account.role === "user"}
+                        <div class="flex items-center gap-2 shrink-0 ml-2">
+                          <button
+                            class="text-xs text-cyan-400 hover:text-cyan-300 cursor-pointer"
+                            disabled={lanAuthBusy}
+                            onclick={() => { storageTargetUser = account.username; storageInputGB = (account.storage_limit_bytes / (1024 * 1024 * 1024)).toFixed(1); storageError = null; showStorageModal = true; }}
+                          >Storage</button>
+                          <button
+                            class="text-xs text-amber-400 hover:text-amber-300 cursor-pointer"
+                            disabled={lanAuthBusy}
+                            onclick={() => { resetTargetUser = account.username; resetTempPass = ''; resetError = null; resetSuccess = false; showResetPasswordModal = true; }}
+                          >Reset Password</button>
+                          <button
+                            class="text-xs text-red-400 hover:text-red-300 cursor-pointer"
+                            disabled={lanAuthBusy}
+                            onclick={() => { deleteTargetUser = account.username; deleteKeepData = true; showDeleteModal = true; }}
+                          >Remove</button>
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {:else}
+              <p class="text-xs text-neutral-500">No accounts found.</p>
+            {/if}
+
+            {#if lanAuthError}
+              <p class="text-xs text-red-400 mt-1">{lanAuthError}</p>
+            {/if}
+          </div>
+        </section>
+        {/if}
+
         <!-- Connection (admin / moderator) -->
-        {#if canManageServer && sectionVisible("connection")}
+        {#if isAdmin && sectionVisible("connection")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
@@ -1184,7 +1312,7 @@
         {/if}
 
         <!-- Performance (admin / moderator) -->
-        {#if canManageServer && sectionVisible("performance")}
+        {#if isAdmin && sectionVisible("performance")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
@@ -1591,6 +1719,7 @@
           {#if !collapsed.gallery}
           <div class="px-5 pb-5 space-y-4">
 
+            {#if isAdmin}
             <!-- Gallery storage location -->
             <div>
               <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.gallery.storage_label')}</label>
@@ -1626,6 +1755,7 @@
                 <p class="mt-1.5 text-[11px] text-amber-400">{galleryPathMessage}</p>
               {/if}
             </div>
+            {/if}
 
             <!-- Manual save mode -->
             <div>
@@ -1644,7 +1774,7 @@
               <p class="text-[10px] text-neutral-500 mt-1 ml-6">{locale.t('settings.gallery.manual_save_desc')}</p>
             </div>
 
-            {#if generation.manualSaveMode}
+            {#if generation.manualSaveMode && isAdmin}
             <!-- Save directories -->
             <div>
               <div class="flex items-center justify-between mb-1.5">
@@ -1699,6 +1829,7 @@
             </div>
             {/if}
 
+            {#if isAdmin}
             <!-- Import from external directory -->
             <div>
               <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.gallery.import_label')}</label>
@@ -1740,6 +1871,7 @@
                 <strong class="text-neutral-300">{locale.t('settings.gallery.metadata_support').split(':')[0]}:</strong> {locale.t('settings.gallery.metadata_support').split(':').slice(1).join(':').trim()}
               </p>
             </div>
+            {/if}
           </div>
           {/if}
         </section>
@@ -1758,6 +1890,7 @@
 
           {#if !collapsed.autocomplete}
           <div class="px-5 pb-5 space-y-4">
+            {#if isAdmin}
             <!-- Current source -->
             <div>
               <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.autocomplete.tag_source')}</label>
@@ -1842,6 +1975,7 @@
               <div class="px-3 py-2 bg-red-900/30 border border-red-800/50 rounded-lg text-red-200 text-xs">
                 {autocomplete.error}
               </div>
+            {/if}
             {/if}
 
             <!-- Max results -->
@@ -2381,6 +2515,43 @@
         disabled={lanAuthBusy}
         onclick={async () => { await deleteLanAccount(deleteTargetUser, deleteKeepData); showDeleteModal = false; }}
       >Delete Account</button>
+    </div>
+  </div>
+</div>
+{/if}
+
+{#if showStorageModal}
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+  onclick={(e) => { if (e.target === e.currentTarget) showStorageModal = false; }}
+  onkeydown={(e) => { if (e.key === 'Escape') showStorageModal = false; }}
+  role="dialog"
+  tabindex="-1"
+>
+  <div class="bg-neutral-900 border border-neutral-700 rounded-xl p-5 w-80 space-y-3">
+    <h3 class="text-sm font-medium text-neutral-200">Storage Limit — {storageTargetUser}</h3>
+    <p class="text-xs text-neutral-400">Set the maximum gallery storage for this user (in GB).</p>
+    <input
+      type="number"
+      min="0.1"
+      max="100"
+      step="0.1"
+      bind:value={storageInputGB}
+      class="w-full px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500"
+    />
+    {#if storageError}
+      <p class="text-xs text-red-400">{storageError}</p>
+    {/if}
+    <div class="flex justify-end gap-2 pt-1">
+      <button
+        class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
+        onclick={() => { showStorageModal = false; }}
+      >Cancel</button>
+      <button
+        class="px-4 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {storageBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}"
+        disabled={storageBusy}
+        onclick={applyStorageLimit}
+      >Save</button>
     </div>
   </div>
 </div>

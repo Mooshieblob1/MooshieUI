@@ -1,3 +1,19 @@
+## What's New in v0.7.5
+
+### Generation Reliability Fix
+- **SSE race condition resolved** — fixed a timing bug where the `output_image` handler (async HTTP fetch) could lose the race against the synchronous `executing: node=null` completion event, causing generated images to silently disappear despite successful execution. In-flight image fetches are now tracked and awaited before finalizing output.
+
+### Right-Click Copy with Metadata
+- **MooshieSaveImage outputs RGBA** — the custom ComfyUI output node now produces RGBA PNGs (alpha=255) instead of RGB, ensuring the alpha channel is available for stealth metadata embedding
+- **Server-side metadata embedding** — new `_embed_temp_metadata` endpoint allows the browser to embed stealth alpha metadata into temp images without serializing multi-MB image data over JSON
+- **Automatic blob URL upgrade** — in browser mode, generated images are displayed immediately and then silently upgraded with metadata-embedded versions in the background, so right-click → Copy Image includes stealth alpha metadata from the start
+
+### Clipboard & Lightbox Reliability
+- **Persist promise tracking** — gallery image persistence is now tracked with per-image promises, eliminating race conditions where clipboard copy or lightbox display tried to use gallery URLs before the image was saved
+- **Lightbox URL upgrade** — lightbox now shows the blob URL immediately and upgrades to the gallery URL once persistence completes, instead of waiting or showing a broken reference
+
+---
+
 ## What's New in v0.7.4
 
 ### Image Storage Limits & Expiry

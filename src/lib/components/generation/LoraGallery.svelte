@@ -181,14 +181,14 @@
 
   function currentImageUrl(filename: string): string | null {
     const info = getInfo(filename);
-    if (!info?.civitai_images.length) return null;
+    if (!info?.civitai_images?.length) return null;
     const idx = imageIndex[filename] ?? 0;
     return info.civitai_images[idx]?.url ?? null;
   }
 
   function nextImage(filename: string) {
     const info = getInfo(filename);
-    if (!info?.civitai_images.length) return;
+    if (!info?.civitai_images?.length) return;
     const current = imageIndex[filename] ?? 0;
     const next = (current + 1) % info.civitai_images.length;
     imageIndex = { ...imageIndex, [filename]: next };
@@ -198,7 +198,7 @@
 
   function prevImage(filename: string) {
     const info = getInfo(filename);
-    if (!info?.civitai_images.length) return;
+    if (!info?.civitai_images?.length) return;
     const current = imageIndex[filename] ?? 0;
     const prev = current === 0 ? info.civitai_images.length - 1 : current - 1;
     imageIndex = { ...imageIndex, [filename]: prev };
@@ -288,7 +288,7 @@
         {@const error = errors[loraName]}
         {@const imgUrl = currentImageUrl(loraName)}
         {@const resolvedUrl = imgUrl ? (resolvedImages[imgUrl] ?? null) : null}
-        {@const imgCount = info?.civitai_images.length ?? 0}
+        {@const imgCount = info?.civitai_images?.length ?? 0}
         {@const imgIdx = imageIndex[loraName] ?? 0}
         {@const isSelected = selectedLora === loraName}
         {@const enabled = isLoraEnabled(loraName)}
@@ -410,9 +410,9 @@
             {/if}
 
             <!-- Trigger words -->
-            {#if info?.civitai_trigger_words.length || info?.modelspec_trigger_phrase}
+            {#if info?.civitai_trigger_words?.length || info?.modelspec_trigger_phrase}
               <div class="flex flex-wrap gap-1">
-                {#if info.civitai_trigger_words.length}
+                {#if info.civitai_trigger_words?.length}
                   {#each info.civitai_trigger_words as word}
                     <button
                       class="px-1.5 py-0.5 text-[10px] rounded bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/20 hover:border-indigo-400/50 transition-colors"
