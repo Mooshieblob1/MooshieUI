@@ -1,3 +1,19 @@
+## What's New in v0.7.6
+
+### Pip Install Fix
+- **Fixed pip path resolution** — custom node and pip package installs failed with "No such file or directory (os error 2)" when the `uv` tool wasn't available. The fallback pip path was constructed with string formatting instead of proper OS path joining, breaking on paths with spaces or unusual separators. All 4 affected locations now use `PathBuf::join()`.
+
+### Moderator Account Creation
+- **Moderators can now create accounts** — the "Add Account" button was only visible to admins despite the backend already permitting moderators to create accounts. The button now appears in the moderator account management section.
+
+### Browser-Mode Clipboard Copy
+- **Image copy works on headless servers** — copying images in browser mode failed on servers without `xclip`/`wl-copy` installed. The copy flow now falls through from server-side clipboard to the browser's native Clipboard API (available over HTTPS), so copy works without any tools installed on the server.
+
+### UI Polish
+- **Username tooltip on hover** — account list entries now show the full username on mouseover, so long names truncated by narrow windows are still readable.
+
+---
+
 ## What's New in v0.7.5
 
 ### Generation Reliability Fix

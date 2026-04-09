@@ -504,17 +504,22 @@ class GalleryStore {
           }
         }
         // Step 1: Try server-side native clipboard (preserves full PNG with metadata).
+        // May fail on headless servers without xclip/wl-copy — fall through to browser API.
         if (galleryFilename) {
-          const path = await getGalleryImagePath(galleryFilename);
-          await copyImageToClipboard(path);
-          this.showToast(locale.t("gallery.toast.copied"), "success");
-          return;
-        }
-        // Step 2: Try browser Clipboard API with fullImageUrl (HTTPS / localhost only).
-        const imgUrl = image.fullImageUrl || image.url;
-        if (imgUrl && navigator.clipboard?.write) {
           try {
-            const resp = await fetch(imgUrl);
+            const path = await getGalleryImagePath(galleryFilename);
+            await copyImageToClipboard(path);
+            this.showToast(locale.t("gallery.toast.copied"), "success");
+            return;
+          } catch {
+            // Server-side clipboard unavailable — fall through to browser API
+          }
+        }
+        // Step 2: Try browser Clipboard API with gallery URL or fullImageUrl.
+        const fetchUrl = image.fullImageUrl || image.url;
+        if (fetchUrl && navigator.clipboard?.write) {
+          try {
+            const resp = await fetch(fetchUrl);
             const blob = await resp.blob();
             const pngBlob = blob.type.startsWith("image/") ? blob : new Blob([blob], { type: "image/png" });
             await navigator.clipboard.write([new ClipboardItem({ [pngBlob.type]: pngBlob })]);

@@ -1707,10 +1707,11 @@ async fn dispatch_command(
                         .await
                         .map_err(|e| format!("uv pip install failed: {}", e))?
                 } else {
+                    let venv_base = std::path::Path::new(&venv_path);
                     #[cfg(target_os = "windows")]
-                    let pip_path = format!("{}/Scripts/pip.exe", venv_path);
+                    let pip_path = venv_base.join("Scripts").join("pip.exe");
                     #[cfg(not(target_os = "windows"))]
-                    let pip_path = format!("{}/bin/pip", venv_path);
+                    let pip_path = venv_base.join("bin").join("pip");
                     tokio::process::Command::new(&pip_path)
                         .args(["install", "-r", &req_file.to_string_lossy()])
                         .status()
@@ -1753,10 +1754,11 @@ async fn dispatch_command(
                     .await
                     .map_err(|e| format!("uv pip install failed to start: {}", e))?
             } else {
+                let venv_base = std::path::Path::new(&venv_path);
                 #[cfg(target_os = "windows")]
-                let pip_path = format!("{}/Scripts/pip.exe", venv_path);
+                let pip_path = venv_base.join("Scripts").join("pip.exe");
                 #[cfg(not(target_os = "windows"))]
-                let pip_path = format!("{}/bin/pip", venv_path);
+                let pip_path = venv_base.join("bin").join("pip");
                 tokio::process::Command::new(&pip_path)
                     .args(["install", &package])
                     .output()

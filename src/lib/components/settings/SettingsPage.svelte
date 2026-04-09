@@ -975,7 +975,7 @@
                           <div class="flex items-center justify-between bg-neutral-800 rounded-lg px-3 py-2">
                             <div class="flex items-center gap-2 min-w-0">
                               <span class="inline-block w-2 h-2 rounded-full shrink-0 {account.online ? 'bg-green-500' : 'bg-neutral-600'}"></span>
-                              <span class="text-sm text-neutral-200 truncate">{account.username}</span>
+                              <span class="text-sm text-neutral-200 truncate" title={account.username}>{account.username}</span>
                               {#if account.role === "moderator"}
                                 <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">Mod</span>
                               {/if}
@@ -1067,7 +1067,7 @@
                     <div class="flex items-center justify-between bg-neutral-800 rounded-lg px-3 py-2">
                       <div class="flex items-center gap-2 min-w-0">
                         <span class="inline-block w-2 h-2 rounded-full shrink-0 {account.online ? 'bg-green-500' : 'bg-neutral-600'}"></span>
-                        <span class="text-sm text-neutral-200 truncate">{account.username}</span>
+                        <span class="text-sm text-neutral-200 truncate" title={account.username}>{account.username}</span>
                         {#if account.role === "moderator"}
                           <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">Mod</span>
                         {/if}
@@ -1113,6 +1113,13 @@
             {:else}
               <p class="text-xs text-neutral-500">No accounts found.</p>
             {/if}
+
+            <!-- Add account button (moderators can create accounts too) -->
+            <button
+              class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {lanAuthBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}"
+              disabled={lanAuthBusy}
+              onclick={() => { lanNewUser = ''; lanNewPass = ''; lanAuthError = null; showAddAccountModal = true; }}
+            >+ Add Account</button>
 
             {#if lanAuthError}
               <p class="text-xs text-red-400 mt-1">{lanAuthError}</p>
