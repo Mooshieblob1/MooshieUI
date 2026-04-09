@@ -760,6 +760,11 @@ const ja: Record<string, string> = {
   "gallery.toast.rescan_migrated": "メタデータを再スキャン：{count}枚の画像を移行しました",
   "gallery.toast.rescan_none": "再スキャン完了：移行するレガシーメタデータはありません",
   "gallery.toast.rescan_failed": "再スキャンに失敗しました",
+  "gallery.expiry_warning": "Images expire after 7 days. Download any images you want to keep!",
+  "gallery.expiry_hint": "Right-click an image and choose Save, or use the download button to save images locally before they are automatically deleted.",
+  "gallery.expiry_soon": "{count} image(s) expiring within 24 hours!",
+  "gallery.storage_usage": "Storage used",
+  "gallery.storage_limit_exceeded": "Storage limit exceeded. Download and delete old images to free space.",
 
   // ── モデルハブ（追加） ──────────────────────────────────
   "modelhub.civitai.description": "CivitAIはオプションです。CivitAIの閲覧、必要時のAPIキー使用、または直接URLからのインストールが可能です。",

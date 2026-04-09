@@ -192,6 +192,12 @@ pub async fn start_server(
         )
         .route("/internal-api/_auth/set_role", post(auth_set_role_handler))
         .route("/internal-api/_auth/lan_info", get(auth_lan_info_handler))
+        // Storage management
+        .route("/internal-api/_storage/info", get(storage_info_handler))
+        .route(
+            "/internal-api/_storage/set_limit",
+            post(storage_set_limit_handler),
+        )
         // Health check (unauthenticated, for K8s probes)
         .route("/health", get(health_handler))
         // Update check (admin/moderator only)
@@ -336,6 +342,20 @@ pub async fn start_server(
             loop {
                 interval.tick().await;
                 flush_auth.flush_last_online();
+            }
+        });
+    }
+
+    // Periodic image expiry cleanup — delete images older than 7 days (every 30 min).
+    {
+        let expiry_auth = web_state.auth.clone();
+        tokio::spawn(async move {
+            // Run once at startup after a short delay, then every 30 minutes
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30 * 60));
+            loop {
+                interval.tick().await;
+                cleanup_expired_images(&expiry_auth);
             }
         });
     }
@@ -628,7 +648,11 @@ async fn sse_handler(
     });
 
     Sse::new(stream)
-        .keep_alive(KeepAlive::default())
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("ping"),
+        )
         .into_response()
 }
 
@@ -879,7 +903,15 @@ async fn command_handler(
         state.auth.touch_activity(u);
     }
 
-    match dispatch_command(state.app.clone(), &command, &args, username.as_deref()).await {
+    match dispatch_command(
+        state.app.clone(),
+        &state.auth,
+        &command,
+        &args,
+        username.as_deref(),
+    )
+    .await
+    {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     }
@@ -894,6 +926,7 @@ async fn command_handler(
 /// Gallery commands use this to isolate per-user image storage.
 async fn dispatch_command(
     state: Arc<AppState>,
+    auth: &Arc<AuthState>,
     command: &str,
     args: &serde_json::Value,
     username: Option<&str>,
@@ -1337,6 +1370,20 @@ async fn dispatch_command(
                 .await
                 .map_err(|e| e.to_string())?;
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
+            // Enforce storage limit for non-admin users
+            if let Some(name) = username {
+                let limit = auth.get_storage_limit(name);
+                if limit > 0 {
+                    let usage = dir_usage_bytes(&dir);
+                    if usage + bytes.len() as u64 > limit {
+                        return Err(format!(
+                            "Storage limit exceeded ({:.1} MB / {:.1} MB). Download your images and free space, or ask an admin to increase your limit.",
+                            usage as f64 / 1_048_576.0,
+                            limit as f64 / 1_048_576.0,
+                        ));
+                    }
+                }
+            }
             let result = save_to_gallery_in_dir(
                 &dir,
                 &bytes,
@@ -1365,6 +1412,20 @@ async fn dispatch_command(
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
+            // Enforce storage limit for non-admin users
+            if let Some(name) = username {
+                let limit = auth.get_storage_limit(name);
+                if limit > 0 {
+                    let usage = dir_usage_bytes(&dir);
+                    if usage + image_bytes.len() as u64 > limit {
+                        return Err(format!(
+                            "Storage limit exceeded ({:.1} MB / {:.1} MB). Download your images and free space, or ask an admin to increase your limit.",
+                            usage as f64 / 1_048_576.0,
+                            limit as f64 / 1_048_576.0,
+                        ));
+                    }
+                }
+            }
             let result = save_to_gallery_in_dir(
                 &dir,
                 &image_bytes,
@@ -1593,12 +1654,159 @@ async fn dispatch_command(
             Ok(serde_json::json!(null))
         }
 
-        // --- Model info ---
-        "get_model_install_dirs" | "find_model_by_hash" | "hash_model_file" | "read_modelspec" => {
-            Err(format!(
-                "Command '{}' not yet available in browser mode",
-                command
-            ))
+        // --- Model info (server has filesystem access to models) ---
+        "get_model_install_dirs" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let config = state.config.read().await;
+            let comfyui_path = config.comfyui_path.clone();
+            let extra_model_paths = config.extra_model_paths.clone();
+            drop(config);
+
+            let mut dirs: Vec<serde_json::Value> = Vec::new();
+            if !comfyui_path.is_empty() {
+                let primary = std::path::Path::new(&comfyui_path)
+                    .join("models")
+                    .join(&category);
+                let label = std::path::Path::new(&comfyui_path)
+                    .file_name()
+                    .map(|n| format!("App ({})", n.to_string_lossy()))
+                    .unwrap_or_else(|| "App".to_string());
+                dirs.push(serde_json::json!({ "path": primary.to_string_lossy(), "label": label }));
+            }
+            if let Some(extra) = extra_model_paths {
+                for line in extra.lines().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                    let extra_dir = std::path::Path::new(line).join(&category);
+                    if extra_dir.exists() {
+                        let label = std::path::Path::new(line)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| line.to_string());
+                        dirs.push(serde_json::json!({ "path": extra_dir.to_string_lossy(), "label": label }));
+                    }
+                }
+            }
+            serde_json::to_value(dirs).map_err(|e| e.to_string())
+        }
+        "find_model_by_hash" => {
+            let hash = args["hash"].as_str().ok_or("Missing hash")?.to_string();
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let config = state.config.read().await;
+            if config.comfyui_path.is_empty() {
+                return Err("ComfyUI path not configured".into());
+            }
+            let models_dir = std::path::Path::new(&config.comfyui_path)
+                .join("models")
+                .join(&category);
+            drop(config);
+
+            if !models_dir.exists() {
+                return Ok(serde_json::json!(null));
+            }
+            let needle = hash.to_uppercase();
+            let is_autov2 = needle.len() == 10;
+            let result = tokio::task::spawn_blocking(move || {
+                let entries = std::fs::read_dir(&models_dir).map_err(|e| e.to_string())?;
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let name = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    if !(name.ends_with(".safetensors") || name.ends_with(".ckpt")) {
+                        continue;
+                    }
+                    if let Ok(h) = crate::commands::api::full_sha256(&path) {
+                        let matches = if is_autov2 {
+                            crate::commands::api::autov2_hash(&h) == needle
+                        } else {
+                            h == needle
+                        };
+                        if matches {
+                            return Ok(Some(name));
+                        }
+                    }
+                }
+                Ok::<_, String>(None)
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e: String| e)?;
+            Ok(serde_json::json!(result))
+        }
+        "hash_model_file" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            let config = state.config.read().await;
+            if config.comfyui_path.is_empty() {
+                return Err("ComfyUI path not configured".into());
+            }
+            let path = std::path::Path::new(&config.comfyui_path)
+                .join("models")
+                .join(&category)
+                .join(&filename);
+            drop(config);
+
+            if !path.exists() {
+                return Err(format!("File not found: {}", filename));
+            }
+            let result = tokio::task::spawn_blocking(move || {
+                let sha256 = crate::commands::api::full_sha256(&path).map_err(|e| e.to_string())?;
+                let autov2 = crate::commands::api::autov2_hash(&sha256);
+                Ok::<_, String>(serde_json::json!({ "sha256": sha256, "autov2": autov2 }))
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e: String| e)?;
+            Ok(result)
+        }
+        "read_modelspec" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            let config = state.config.read().await;
+            if config.comfyui_path.is_empty() {
+                return Err("ComfyUI path not configured".into());
+            }
+            let path = std::path::Path::new(&config.comfyui_path)
+                .join("models")
+                .join(&category)
+                .join(&filename);
+            drop(config);
+
+            if !path.exists() {
+                return Err(format!("File not found: {}", filename));
+            }
+            if !filename.ends_with(".safetensors") {
+                return Ok(serde_json::json!(null));
+            }
+            let result = tokio::task::spawn_blocking(move || {
+                crate::commands::api::read_safetensors_modelspec(&path).map_err(|e| e.to_string())
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e: String| e)?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
         }
 
         // --- CivitAI ---
@@ -1766,12 +1974,198 @@ async fn dispatch_command(
             Ok(val)
         }
         "get_lora_civitai_info" | "get_checkpoint_civitai_info" => {
-            // These are complex — need config values and hash computation.
-            // Deferred to future implementation.
-            Err(format!(
-                "Command '{}' not yet available in browser mode",
-                command
-            ))
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            let (comfyui_path, extra_model_paths, civitai_api_key) = {
+                let config = state.config.read().await;
+                if config.comfyui_path.is_empty() {
+                    return Err("ComfyUI path not configured".into());
+                }
+                (
+                    config.comfyui_path.clone(),
+                    config.extra_model_paths.clone(),
+                    config.civitai_api_key.clone(),
+                )
+            };
+            let category = if command == "get_lora_civitai_info" {
+                "loras"
+            } else {
+                "checkpoints"
+            };
+            let path = crate::commands::api::resolve_model_path(
+                &comfyui_path,
+                extra_model_paths.as_deref(),
+                category,
+                &filename,
+            )
+            .ok_or_else(|| format!("Model file not found: {}", filename))?;
+
+            // Read modelspec (safetensors only)
+            let modelspec = if filename.ends_with(".safetensors") {
+                let p = path.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::commands::api::read_safetensors_modelspec(&p)
+                        .ok()
+                        .flatten()
+                })
+                .await
+                .unwrap_or(None)
+            } else {
+                None
+            };
+
+            // Hash in blocking task
+            let path_clone = path.clone();
+            let sha256 =
+                tokio::task::spawn_blocking(move || crate::commands::api::full_sha256(&path_clone))
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_string())?;
+            let autov2 = crate::commands::api::autov2_hash(&sha256);
+
+            // CivitAI lookup by hash
+            let civitai_url = format!(
+                "https://civitai.com/api/v1/model-versions/by-hash/{}",
+                autov2
+            );
+            let mut civitai_req = state
+                .http_client
+                .get(&civitai_url)
+                .header("User-Agent", "MooshieUI/0.7");
+            if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
+                civitai_req = civitai_req.bearer_auth(key);
+            }
+            let civitai_data = match civitai_req.send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    resp.json::<serde_json::Value>().await.ok()
+                }
+                _ => None,
+            };
+
+            // Build result
+            let mut result = serde_json::json!({
+                "filename": filename,
+                "hash": autov2,
+                "modelspec_title": modelspec.as_ref().and_then(|m| m.get("title")),
+                "modelspec_author": modelspec.as_ref().and_then(|m| m.get("author")),
+                "modelspec_architecture": modelspec.as_ref().and_then(|m| m.get("architecture")),
+                "modelspec_description": modelspec.as_ref().and_then(|m| m.get("description")),
+                "modelspec_tags": modelspec.as_ref().and_then(|m| m.get("tags")),
+            });
+
+            if command == "get_lora_civitai_info" {
+                result["modelspec_trigger_phrase"] =
+                    serde_json::json!(modelspec.as_ref().and_then(|m| m.get("trigger_phrase")));
+            }
+
+            // Sidecar thumbnail for checkpoints
+            if command == "get_checkpoint_civitai_info" {
+                if let (Some(model_dir), Some(stem)) =
+                    (path.parent(), path.file_stem().and_then(|s| s.to_str()))
+                {
+                    let candidates = [
+                        model_dir.join(format!("{}.png", stem)),
+                        model_dir.join(format!("{}.jpg", stem)),
+                        model_dir.join(format!("{}.jpeg", stem)),
+                        model_dir.join(format!("{}.preview.png", stem)),
+                        model_dir.join(format!("{}.preview.jpg", stem)),
+                    ];
+                    for candidate in &candidates {
+                        if candidate.exists() {
+                            if let Ok(bytes) = std::fs::read(candidate) {
+                                use base64::Engine as _;
+                                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                                let mime = match candidate
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("")
+                                {
+                                    "jpg" | "jpeg" => "image/jpeg",
+                                    _ => "image/png",
+                                };
+                                result["thumbnail_url"] =
+                                    serde_json::json!(format!("data:{};base64,{}", mime, b64));
+                            }
+                            break;
+                        }
+                    }
+                }
+                result["display_name"] =
+                    serde_json::json!(modelspec.as_ref().and_then(|m| m.get("title")));
+                result["base_model"] =
+                    serde_json::json!(modelspec.as_ref().and_then(|m| m.get("architecture")));
+            }
+
+            // Merge CivitAI data
+            if let Some(data) = civitai_data {
+                result["civitai_version_id"] =
+                    serde_json::json!(data.get("id").and_then(|v| v.as_u64()));
+                result["civitai_model_id"] =
+                    serde_json::json!(data.get("modelId").and_then(|v| v.as_u64()));
+                if let Some(bm) = data.get("baseModel").and_then(|v| v.as_str()) {
+                    if command == "get_checkpoint_civitai_info" {
+                        result["base_model"] = serde_json::json!(bm);
+                    }
+                    result["civitai_base_model"] = serde_json::json!(bm);
+                }
+                if let Some(model) = data.get("model") {
+                    if command == "get_checkpoint_civitai_info"
+                        && result
+                            .get("display_name")
+                            .and_then(|v| v.as_str())
+                            .is_none()
+                    {
+                        result["display_name"] =
+                            serde_json::json!(model.get("name").and_then(|v| v.as_str()));
+                    }
+                    result["civitai_name"] =
+                        serde_json::json!(model.get("name").and_then(|v| v.as_str()));
+                    result["civitai_description"] =
+                        serde_json::json!(model.get("description").and_then(|v| v.as_str()));
+                    result["civitai_creator"] = serde_json::json!(model
+                        .get("creator")
+                        .and_then(|c| c.get("username"))
+                        .or_else(|| model.get("user").and_then(|u| u.get("username")))
+                        .and_then(|v| v.as_str()));
+                }
+                if let Some(stats) = data.get("stats") {
+                    result["civitai_download_count"] =
+                        serde_json::json!(stats.get("downloadCount").and_then(|v| v.as_u64()));
+                    result["civitai_thumbs_up_count"] =
+                        serde_json::json!(stats.get("thumbsUpCount").and_then(|v| v.as_u64()));
+                }
+                if command == "get_lora_civitai_info" {
+                    if let Some(tw) = data.get("trainedWords").and_then(|v| v.as_array()) {
+                        result["civitai_trigger_words"] = serde_json::json!(tw
+                            .iter()
+                            .filter_map(|w| w.as_str())
+                            .collect::<Vec<_>>());
+                    }
+                }
+                if let Some(images) = data.get("images").and_then(|v| v.as_array()) {
+                    let imgs: Vec<serde_json::Value> = images.iter().filter_map(|img| {
+                        img.get("url").and_then(|u| u.as_str()).map(|url| {
+                            serde_json::json!({
+                                "url": url,
+                                "width": img.get("width").and_then(|w| w.as_u64()),
+                                "height": img.get("height").and_then(|h| h.as_u64()),
+                                "nsfw": img.get("nsfwLevel").and_then(|n| n.as_u64()).map(|n| if n <= 1 { "None" } else { &"Level" }),
+                            })
+                        })
+                    }).collect();
+                    result["civitai_images"] = serde_json::json!(imgs);
+                    if command == "get_checkpoint_civitai_info"
+                        && result.get("thumbnail_url").is_none()
+                    {
+                        result["thumbnail_url"] =
+                            serde_json::json!(imgs.first().and_then(|i| i.get("url")));
+                    }
+                }
+            }
+
+            Ok(result)
         }
         "fetch_cached_image" => {
             let url = args["url"].as_str().ok_or("Missing url")?.to_string();
@@ -1994,15 +2388,15 @@ async fn dispatch_command(
             Ok(serde_json::json!(null))
         }
 
-        // --- Interrogator (requires desktop feature: ONNX Runtime + model files) ---
+        // --- Interrogator (ONNX Runtime + model files) ---
         "interrogate_image" | "interrogate_image_path" | "interrogate_gallery_image" => {
-            #[cfg(not(feature = "desktop"))]
+            #[cfg(not(any(feature = "desktop", feature = "server")))]
             {
-                return Err("Interrogation is not available in headless server mode".to_string());
+                return Err("Interrogation is not available in this build".to_string());
             }
-            #[cfg(feature = "desktop")]
+            #[cfg(any(feature = "desktop", feature = "server"))]
             {
-                let image_bytes = match command {
+                let image_bytes: Vec<u8> = match command {
                     "interrogate_image" => {
                         let image_base64 = args["imageBase64"]
                             .as_str()
@@ -2141,7 +2535,7 @@ async fn dispatch_command(
 
 /// Run interrogation without AppHandle (browser mode).
 /// Emits progress via the broadcast channel instead of Tauri events.
-#[cfg(feature = "desktop")]
+#[cfg(any(feature = "desktop", feature = "server"))]
 async fn run_interrogation_headless(
     state: &Arc<AppState>,
     image_bytes: Vec<u8>,
@@ -2244,8 +2638,8 @@ async fn auth_register_handler(
     Json(req): Json<AuthRequest>,
 ) -> Response {
     let role = resolve_role(&state, &headers, &remote);
-    if role != UserRole::Admin {
-        return forbidden_response("Only the admin (localhost) can create accounts.");
+    if role != UserRole::Admin && role != UserRole::Moderator {
+        return forbidden_response("Only admins and moderators can create accounts.");
     }
     if req.username.trim().is_empty() || req.password.len() < 4 {
         return (
@@ -2297,15 +2691,15 @@ async fn auth_status_handler(
     }))
 }
 
-/// GET /internal-api/_auth/accounts — list all accounts with roles and online status. Admin only.
+/// GET /internal-api/_auth/accounts — list all accounts with roles and online status. Admin/Moderator.
 async fn auth_list_accounts_handler(
     AxumState(state): AxumState<SharedState>,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Response {
     let role = resolve_role(&state, &headers, &remote);
-    if role != UserRole::Admin {
-        return forbidden_response("Only the admin (localhost) can list accounts.");
+    if role != UserRole::Admin && role != UserRole::Moderator {
+        return forbidden_response("Only admins and moderators can list accounts.");
     }
     let online_threshold = std::time::Duration::from_secs(30);
     let accounts: Vec<serde_json::Value> = state
@@ -2329,7 +2723,7 @@ async fn auth_list_accounts_handler(
         .into_response()
 }
 
-/// POST /internal-api/_auth/delete — delete an account by username. Admin only.
+/// POST /internal-api/_auth/delete — delete an account by username. Admin/Moderator.
 /// Accepts optional `keep_data` boolean (default false). When false, the user's
 /// gallery directory is also removed. When true, data is preserved and will be
 /// restored if an account with the same username is re-created.
@@ -2340,8 +2734,8 @@ async fn auth_delete_account_handler(
     Json(req): Json<serde_json::Value>,
 ) -> Response {
     let role = resolve_role(&state, &headers, &remote);
-    if role != UserRole::Admin {
-        return forbidden_response("Only the admin (localhost) can delete accounts.");
+    if role != UserRole::Admin && role != UserRole::Moderator {
+        return forbidden_response("Only admins and moderators can delete accounts.");
     }
     let username = match req.get("username").and_then(|v| v.as_str()) {
         Some(u) => u,
@@ -2357,6 +2751,15 @@ async fn auth_delete_account_handler(
         .get("keep_data")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+
+    // Moderators cannot delete admin accounts
+    if role == UserRole::Moderator {
+        if let Some(target_role) = state.auth.get_account_role(username) {
+            if target_role == "admin" {
+                return forbidden_response("Moderators cannot delete admin accounts.");
+            }
+        }
+    }
 
     match state.auth.delete_account(username) {
         Ok(()) => {
@@ -2444,8 +2847,8 @@ async fn auth_reset_password_handler(
     Json(req): Json<serde_json::Value>,
 ) -> Response {
     let role = resolve_role(&state, &headers, &remote);
-    if role != UserRole::Admin {
-        return forbidden_response("Only the admin (localhost) can reset passwords.");
+    if role != UserRole::Admin && role != UserRole::Moderator {
+        return forbidden_response("Only admins and moderators can reset passwords.");
     }
 
     let username = match req.get("username").and_then(|v| v.as_str()) {
@@ -2479,7 +2882,7 @@ async fn auth_reset_password_handler(
     }
 }
 
-/// POST /internal-api/_auth/set_role — admin sets the role of an account.
+/// POST /internal-api/_auth/set_role — admin/moderator sets the role of an account.
 async fn auth_set_role_handler(
     AxumState(state): AxumState<SharedState>,
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
@@ -2487,8 +2890,8 @@ async fn auth_set_role_handler(
     Json(req): Json<serde_json::Value>,
 ) -> Response {
     let role = resolve_role(&state, &headers, &remote);
-    if role != UserRole::Admin {
-        return forbidden_response("Only the admin (localhost) can change user roles.");
+    if role != UserRole::Admin && role != UserRole::Moderator {
+        return forbidden_response("Only admins and moderators can change user roles.");
     }
     let username = match req.get("username").and_then(|v| v.as_str()) {
         Some(u) => u,
@@ -2510,6 +2913,10 @@ async fn auth_set_role_handler(
                 .into_response();
         }
     };
+    // Moderators cannot promote to admin — only admins can do that
+    if new_role == "admin" && role != UserRole::Admin {
+        return forbidden_response("Only admins can promote accounts to admin.");
+    }
     match state.auth.set_account_role(username, new_role) {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Err(e) => (
@@ -2631,6 +3038,229 @@ fn save_to_gallery_in_dir(
 
     std::fs::write(&path, &final_bytes).map_err(|e| e.to_string())?;
     Ok(gallery_filename)
+}
+
+// ---------------------------------------------------------------------------
+// Storage management — usage info, limits, and image expiry
+// ---------------------------------------------------------------------------
+
+/// Compute total size of files in a directory (non-recursive, images only).
+fn dir_usage_bytes(dir: &std::path::Path) -> u64 {
+    if !dir.exists() {
+        return 0;
+    }
+    std::fs::read_dir(dir)
+        .ok()
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().ok().map_or(false, |ft| ft.is_file()))
+                .filter_map(|e| e.metadata().ok().map(|m| m.len()))
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
+/// GET /internal-api/_storage/info — returns current user's storage usage,
+/// limit, and per-image expiry information.
+async fn storage_info_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username = resolve_username(&state, &headers, &remote);
+    let gallery_dir = match user_gallery_dir(username.as_deref()) {
+        Some(d) => d,
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Cannot resolve gallery directory" })),
+            )
+                .into_response();
+        }
+    };
+
+    let usage_bytes = dir_usage_bytes(&gallery_dir);
+
+    // For admins (localhost), storage is unlimited
+    let (limit_bytes, expiry_secs) = if role == UserRole::Admin && username.is_none() {
+        (0_u64, 0_u64) // 0 means unlimited
+    } else {
+        let name = username.as_deref().unwrap_or("admin");
+        let limit = state.auth.get_storage_limit(name);
+        (limit, crate::auth::DEFAULT_EXPIRY_SECS)
+    };
+
+    // Collect per-image age info (oldest first)
+    let now = std::time::SystemTime::now();
+    let mut images: Vec<serde_json::Value> = Vec::new();
+    if gallery_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&gallery_dir) {
+            for entry in entries.flatten() {
+                if entry.file_type().ok().map_or(true, |ft| !ft.is_file()) {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !(name.ends_with(".png")
+                    || name.ends_with(".jpg")
+                    || name.ends_with(".jpeg")
+                    || name.ends_with(".webp"))
+                {
+                    continue;
+                }
+                if let Ok(meta) = entry.metadata() {
+                    let modified = meta.modified().ok();
+                    let age_secs = modified
+                        .and_then(|m| now.duration_since(m).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let size = meta.len();
+                    images.push(serde_json::json!({
+                        "filename": name,
+                        "size_bytes": size,
+                        "age_secs": age_secs,
+                        "expires_in_secs": if expiry_secs > 0 { expiry_secs.saturating_sub(age_secs) } else { 0 },
+                    }));
+                }
+            }
+        }
+    }
+    images.sort_by(|a, b| {
+        let aa = a["age_secs"].as_u64().unwrap_or(0);
+        let ba = b["age_secs"].as_u64().unwrap_or(0);
+        ba.cmp(&aa) // oldest first
+    });
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "usage_bytes": usage_bytes,
+            "limit_bytes": limit_bytes,
+            "expiry_secs": expiry_secs,
+            "image_count": images.len(),
+            "images": images,
+        })),
+    )
+        .into_response()
+}
+
+/// POST /internal-api/_storage/set_limit — admin/mod sets a user's storage limit.
+/// Body: `{ "username": "...", "limit_bytes": 4294967296 }`
+async fn storage_set_limit_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role != UserRole::Admin && role != UserRole::Moderator {
+        return forbidden_response("Only admins and moderators can change storage limits.");
+    }
+
+    let username = match req.get("username").and_then(|v| v.as_str()) {
+        Some(u) => u,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing username" })),
+            )
+                .into_response();
+        }
+    };
+    let limit_bytes = match req.get("limit_bytes").and_then(|v| v.as_u64()) {
+        Some(l) => l,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing or invalid limit_bytes" })),
+            )
+                .into_response();
+        }
+    };
+
+    match state.auth.set_storage_limit(username, limit_bytes) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// Clean up expired images for all users. Images older than DEFAULT_EXPIRY_SECS
+/// are deleted. Admin (root gallery) images are never expired.
+fn cleanup_expired_images(auth: &AuthState) {
+    let base = match config::gallery_dir() {
+        Some(d) => d,
+        None => return,
+    };
+    let users_dir = base.join("users");
+    if !users_dir.exists() {
+        return;
+    }
+
+    let expiry = std::time::Duration::from_secs(crate::auth::DEFAULT_EXPIRY_SECS);
+    let now = std::time::SystemTime::now();
+    let _ = auth; // auth is available for future per-user expiry overrides
+
+    let user_dirs = match std::fs::read_dir(&users_dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    for dir_entry in user_dirs.flatten() {
+        if !dir_entry.file_type().ok().map_or(false, |ft| ft.is_dir()) {
+            continue;
+        }
+        let user_dir = dir_entry.path();
+        let files = match std::fs::read_dir(&user_dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        let mut expired_count = 0_u64;
+        let mut expired_bytes = 0_u64;
+        for file_entry in files.flatten() {
+            if file_entry.file_type().ok().map_or(true, |ft| !ft.is_file()) {
+                continue;
+            }
+            let name = file_entry.file_name().to_string_lossy().into_owned();
+            if !(name.ends_with(".png")
+                || name.ends_with(".jpg")
+                || name.ends_with(".jpeg")
+                || name.ends_with(".webp"))
+            {
+                continue;
+            }
+            if let Ok(meta) = file_entry.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    if let Ok(age) = now.duration_since(modified) {
+                        if age > expiry {
+                            let size = meta.len();
+                            if std::fs::remove_file(file_entry.path()).is_ok() {
+                                expired_count += 1;
+                                expired_bytes += size;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if expired_count > 0 {
+            log::info!(
+                "[storage] Cleaned up {} expired image(s) ({:.1} MB) from {}",
+                expired_count,
+                expired_bytes as f64 / 1_048_576.0,
+                user_dir.display(),
+            );
+        }
+    }
 }
 
 /// Start the heartbeat watchdog that shuts down the app when the browser

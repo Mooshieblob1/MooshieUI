@@ -1,5 +1,26 @@
 # Changelog
 
+## What's New in v0.7.4
+
+### Image Storage Limits & Expiry
+- **Per-user storage limit** — 2 GB default storage quota per user; admins and moderators can adjust limits per account via the API
+- **Automatic image expiry** — gallery images expire after 7 days and are cleaned up automatically every 30 minutes
+- **Expiry warning banners** — amber warning banners in the gallery and bottom panel remind users to download images before they expire, with a count of images expiring within 24 hours
+- **Storage usage display** — users see their current storage usage and limit in the gallery UI
+- **Admin exemption** — admin and localhost galleries are exempt from both expiry and storage limits
+
+### Server-Mode Bug Fixes
+- **Model commands in browser mode** — `hash_model_file`, `get_model_install_dirs`, `find_model_by_hash`, `read_modelspec`, and Civitai info commands now work correctly in headless server mode
+- **Interrogation in server mode** — WD14 tagger / interrogation feature now available in headless server mode (previously desktop-only)
+- **SSE connection stability** — reduced SSE keepalive interval from 30s to 15s to prevent Cloudflare Tunnel disconnects
+- **Expanded moderator permissions** — moderators can now manage accounts, view system info, and access model tools (with privilege escalation guards)
+- **YOLOv8m face model hash** — corrected the SHA256 hash for the face detection model used by FaceFix
+
+### i18n Updates
+- Added gallery expiry and storage translation keys across all 11 supported languages
+
+---
+
 ## What's New in v0.7.3
 
 ### Headless Server Mode + Docker/K8s Support

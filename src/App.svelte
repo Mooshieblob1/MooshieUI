@@ -1842,6 +1842,21 @@
           </div>
         {:else}
           <div class="space-y-4">
+            {#if gallery.hasExpiry}
+              <div class="px-4 py-3 rounded-xl bg-amber-900/30 border border-amber-700/50 text-amber-300 text-sm flex items-start gap-3">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <div>
+                  <p class="font-medium text-amber-200">{locale.t('gallery.expiry_warning')}</p>
+                  <p class="text-amber-400/80 text-xs mt-1">{locale.t('gallery.expiry_hint')}</p>
+                  {#if gallery.expiringWithin24h > 0}
+                    <p class="text-amber-200 text-xs mt-1 font-semibold">{locale.t('gallery.expiry_soon', { count: String(gallery.expiringWithin24h) })}</p>
+                  {/if}
+                  {#if gallery.storageInfo}
+                    <p class="text-amber-400/60 text-xs mt-1">{locale.t('gallery.storage_usage')}: {gallery.storageLabel}</p>
+                  {/if}
+                </div>
+              </div>
+            {/if}
             <div class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 space-y-3">
               <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 items-end">
                 <div class="lg:col-span-2">

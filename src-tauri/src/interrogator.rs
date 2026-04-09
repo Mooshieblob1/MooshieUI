@@ -3,10 +3,12 @@ use std::time::Instant;
 
 use ort::session::Session;
 use serde::Serialize;
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter};
 
 use crate::config;
 use crate::error::AppError;
+#[cfg(feature = "desktop")]
 use crate::setup::DownloadProgress;
 
 /// ONNX Runtime version matching ort-sys 2.0.0-rc.12 pre-built binaries.
@@ -87,6 +89,7 @@ impl InterrogatorState {
     }
 
     /// Download model files from HuggingFace if not already present.
+    #[cfg(feature = "desktop")]
     pub async fn ensure_model_downloaded(
         &self,
         app: &AppHandle,
@@ -106,6 +109,7 @@ impl InterrogatorState {
     }
 
     /// Download the ONNX Runtime shared library if not already present.
+    #[cfg(feature = "desktop")]
     pub async fn ensure_ort_library(
         &self,
         app: &AppHandle,
@@ -443,6 +447,7 @@ fn parse_tags_csv(path: &std::path::Path) -> Result<Vec<TagDef>, AppError> {
 }
 
 /// Download a file with progress events emitted to the frontend.
+#[cfg(feature = "desktop")]
 async fn download_with_progress(
     app: &AppHandle,
     client: &reqwest::Client,

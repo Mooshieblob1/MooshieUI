@@ -162,6 +162,21 @@
     {#if activeTab === "loras"}
       <LoraGallery cardSize={loraCardSize} onCardSizeChange={(s) => { loraCardSize = s; }} />    {:else if activeTab === "checkpoints"}
       <CheckpointGallery />    {:else if activeTab === "images"}
+      <!-- Storage expiry warning (browser mode) -->
+      {#if gallery.hasExpiry}
+        <div class="mx-2 mt-1.5 mb-1 px-3 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-300 text-[11px] flex items-center gap-2 shrink-0">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>
+            {locale.t('gallery.expiry_warning')}
+            {#if gallery.expiringWithin24h > 0}
+              <strong class="text-amber-200">{locale.t('gallery.expiry_soon', { count: String(gallery.expiringWithin24h) })}</strong>
+            {/if}
+            {#if gallery.storageInfo}
+              <span class="text-amber-400/70 ml-1">({gallery.storageLabel})</span>
+            {/if}
+          </span>
+        </div>
+      {/if}
       <!-- Session History -->
       {#if gallery.sessionImages.length === 0}
         <div class="flex items-center justify-center h-full text-neutral-500 text-xs">

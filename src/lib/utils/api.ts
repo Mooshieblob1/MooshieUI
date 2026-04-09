@@ -338,6 +338,50 @@ export async function getGalleryImagePath(filename: string): Promise<string> {
   return ipcInvoke("get_gallery_image_path", { filename });
 }
 
+// ---------------------------------------------------------------------------
+// Storage management (browser mode only — uses direct HTTP endpoints)
+// ---------------------------------------------------------------------------
+
+export interface StorageImageInfo {
+  filename: string;
+  size_bytes: number;
+  age_secs: number;
+  expires_in_secs: number;
+}
+
+export interface StorageInfo {
+  usage_bytes: number;
+  limit_bytes: number;
+  expiry_secs: number;
+  image_count: number;
+  images: StorageImageInfo[];
+}
+
+export async function getStorageInfo(): Promise<StorageInfo> {
+  const { isBrowserMode, authHeaders } = await import("./ipc.js");
+  if (!isBrowserMode) {
+    // Desktop mode: no storage limits
+    return { usage_bytes: 0, limit_bytes: 0, expiry_secs: 0, image_count: 0, images: [] };
+  }
+  const resp = await fetch("/internal-api/_storage/info", { headers: authHeaders() });
+  if (!resp.ok) throw new Error(`Storage info request failed: ${resp.status}`);
+  return resp.json();
+}
+
+export async function setStorageLimit(username: string, limitBytes: number): Promise<void> {
+  const { isBrowserMode, authHeaders } = await import("./ipc.js");
+  if (!isBrowserMode) return;
+  const resp = await fetch("/internal-api/_storage/set_limit", {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ username, limit_bytes: limitBytes }),
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to set storage limit: ${resp.status}`);
+  }
+}
+
 export interface ModelSpec {
   architecture?: string;
   title?: string;

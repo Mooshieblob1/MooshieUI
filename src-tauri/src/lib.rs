@@ -3,7 +3,7 @@ pub mod comfyui;
 pub mod commands;
 pub mod config;
 pub mod error;
-#[cfg(feature = "desktop")]
+#[cfg(any(feature = "desktop", feature = "server"))]
 pub mod interrogator;
 pub mod metadata;
 #[cfg(feature = "desktop")]

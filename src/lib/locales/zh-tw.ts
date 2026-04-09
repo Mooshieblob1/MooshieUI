@@ -735,6 +735,11 @@ const zhTw: Record<string, string> = {
   "gallery.toast.rescan_migrated": "中繼資料重新掃描：{count} 張影像已移轉",
   "gallery.toast.rescan_none": "重新掃描完成：無需移轉的舊版中繼資料",
   "gallery.toast.rescan_failed": "重新掃描失敗",
+  "gallery.expiry_warning": "Images expire after 7 days. Download any images you want to keep!",
+  "gallery.expiry_hint": "Right-click an image and choose Save, or use the download button to save images locally before they are automatically deleted.",
+  "gallery.expiry_soon": "{count} image(s) expiring within 24 hours!",
+  "gallery.storage_usage": "Storage used",
+  "gallery.storage_limit_exceeded": "Storage limit exceeded. Download and delete old images to free space.",
 
   // ── 模型中心（額外） ───────────────────────────────────
   "modelhub.civitai.description": "CivitAI 是選用的。您可以瀏覽 CivitAI，需要時使用 API 金鑰，或從直接 URL 安裝。",

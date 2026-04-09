@@ -735,6 +735,11 @@ const ru: Record<string, string> = {
   "gallery.toast.rescan_migrated": "Пересканирование метаданных: {count} изображений мигрировано",
   "gallery.toast.rescan_none": "Пересканирование завершено: нет устаревших метаданных для миграции",
   "gallery.toast.rescan_failed": "Пересканирование не удалось",
+  "gallery.expiry_warning": "Images expire after 7 days. Download any images you want to keep!",
+  "gallery.expiry_hint": "Right-click an image and choose Save, or use the download button to save images locally before they are automatically deleted.",
+  "gallery.expiry_soon": "{count} image(s) expiring within 24 hours!",
+  "gallery.storage_usage": "Storage used",
+  "gallery.storage_limit_exceeded": "Storage limit exceeded. Download and delete old images to free space.",
 
   // ── Хаб моделей (дополнительно) ─────────────────────────
   "modelhub.civitai.description": "CivitAI опционален. Вы можете просматривать CivitAI, использовать свой API-ключ при необходимости или устанавливать по прямым ссылкам.",

@@ -737,6 +737,11 @@ const de: Record<string, string> = {
   "gallery.toast.rescan_migrated": "Metadaten-Scan: {count} Bilder migriert",
   "gallery.toast.rescan_none": "Scan abgeschlossen: Keine Legacy-Metadaten zu migrieren",
   "gallery.toast.rescan_failed": "Scan fehlgeschlagen",
+  "gallery.expiry_warning": "Images expire after 7 days. Download any images you want to keep!",
+  "gallery.expiry_hint": "Right-click an image and choose Save, or use the download button to save images locally before they are automatically deleted.",
+  "gallery.expiry_soon": "{count} image(s) expiring within 24 hours!",
+  "gallery.storage_usage": "Storage used",
+  "gallery.storage_limit_exceeded": "Storage limit exceeded. Download and delete old images to free space.",
 
   // ── Modell-Hub (zusätzlich) ─────────────────────────────
   "modelhub.civitai.description": "CivitAI ist optional. Sie können CivitAI durchsuchen, bei Bedarf einen API-Schlüssel verwenden oder von direkten URLs installieren.",

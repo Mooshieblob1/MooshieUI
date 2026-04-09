@@ -15,7 +15,7 @@ use crate::state::AppState;
 /// Compute the full SHA256 hash of a file (uppercase hex).
 /// Compatible with CivitAI's hash database.
 /// For large model files (2-10 GB) this can take a few seconds.
-fn full_sha256(path: &std::path::Path) -> Result<String, AppError> {
+pub(crate) fn full_sha256(path: &std::path::Path) -> Result<String, AppError> {
     const BUF_SIZE: usize = 8 * 1024 * 1024; // 8 MB read buffer
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
@@ -33,7 +33,7 @@ fn full_sha256(path: &std::path::Path) -> Result<String, AppError> {
 
 /// Return the AutoV2 hash (first 10 chars of SHA256, uppercase).
 /// This is the standard format used by CivitAI, A1111, Forge, etc.
-fn autov2_hash(full_hash: &str) -> String {
+pub(crate) fn autov2_hash(full_hash: &str) -> String {
     full_hash[..10].to_string()
 }
 
@@ -1448,7 +1448,7 @@ pub async fn read_modelspec(
 }
 
 /// Parse the safetensors JSON header and extract modelspec.* fields.
-fn read_safetensors_modelspec(
+pub(crate) fn read_safetensors_modelspec(
     path: &std::path::Path,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
     let mut file = std::fs::File::open(path)?;
@@ -1547,7 +1547,7 @@ pub struct CheckpointCivitaiInfo {
 
 /// All known subdirectory names that map to a given ComfyUI model category.
 /// Must stay in sync with the YAML generated in `process.rs`.
-fn category_subdirs(category: &str) -> &'static [&'static str] {
+pub(crate) fn category_subdirs(category: &str) -> &'static [&'static str] {
     match category {
         "checkpoints" => &[
             "checkpoints",
@@ -1616,7 +1616,7 @@ fn category_subdirs(category: &str) -> &'static [&'static str] {
 /// For extra paths, tries all known subdirectory variants for the category
 /// (matching the YAML config given to ComfyUI) and also tries the file
 /// directly in the root (flat directory case).
-fn resolve_model_path(
+pub(crate) fn resolve_model_path(
     comfyui_path: &str,
     extra_model_paths: Option<&str>,
     category: &str,

@@ -12,6 +12,8 @@ import {
   copyImageToClipboard,
   copyBytesToClipboard,
   getGalleryImagePath,
+  getStorageInfo,
+  type StorageInfo,
 } from "../utils/api.js";
 import { isTauri, isBrowserMode, getAuthToken } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
@@ -80,6 +82,8 @@ class GalleryStore {
   toast = $state<{ message: string; type: "success" | "error" | "info" } | null>(null);
   boardAssignments = $state<Record<string, string>>({});
   customBoards = $state<string[]>([]);
+  /** Storage info from the server (browser mode only). */
+  storageInfo = $state<StorageInfo | null>(null);
   private _toastTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
@@ -267,6 +271,10 @@ class GalleryStore {
     }
     // Trigger reactivity so components re-render with newly assigned thumbnailUrls
     this.sessionImages = [...this.sessionImages];
+    // Refresh storage info after saving images
+    if (isBrowserMode) {
+      this.refreshStorageInfo();
+    }
   }
 
   /** Load previously saved gallery images from disk on startup (metadata only — no image bytes). */
@@ -328,6 +336,10 @@ class GalleryStore {
       console.error("Failed to list gallery images:", e);
     } finally {
       this.loading = false;
+    }
+    // Fetch storage info after loading gallery (browser mode)
+    if (isBrowserMode) {
+      this.refreshStorageInfo();
     }
   }
 
@@ -617,6 +629,50 @@ class GalleryStore {
     } catch (e) {
       console.error("Failed to re-scan gallery metadata:", e);
       this.showToast(locale.t("gallery.toast.rescan_failed"), "error");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Storage info & expiry
+  // ---------------------------------------------------------------------------
+
+  /** Whether images have an expiry policy (browser mode with limits). */
+  get hasExpiry(): boolean {
+    return !!this.storageInfo && this.storageInfo.expiry_secs > 0;
+  }
+
+  /** Storage usage as a percentage (0-100). 0 if unlimited. */
+  get storagePercent(): number {
+    if (!this.storageInfo || this.storageInfo.limit_bytes === 0) return 0;
+    return Math.min(100, (this.storageInfo.usage_bytes / this.storageInfo.limit_bytes) * 100);
+  }
+
+  /** Human-readable storage usage string, e.g., "1.2 GB / 2.0 GB". */
+  get storageLabel(): string {
+    if (!this.storageInfo) return "";
+    const fmt = (b: number) => {
+      if (b >= 1_073_741_824) return `${(b / 1_073_741_824).toFixed(1)} GB`;
+      if (b >= 1_048_576) return `${(b / 1_048_576).toFixed(0)} MB`;
+      return `${(b / 1024).toFixed(0)} KB`;
+    };
+    if (this.storageInfo.limit_bytes === 0) return fmt(this.storageInfo.usage_bytes);
+    return `${fmt(this.storageInfo.usage_bytes)} / ${fmt(this.storageInfo.limit_bytes)}`;
+  }
+
+  /** Number of images expiring within 24 hours. */
+  get expiringWithin24h(): number {
+    if (!this.storageInfo) return 0;
+    return this.storageInfo.images.filter(
+      (img) => img.expires_in_secs > 0 && img.expires_in_secs <= 86400,
+    ).length;
+  }
+
+  /** Fetch storage info from the server. Call after login and after saves. */
+  async refreshStorageInfo() {
+    try {
+      this.storageInfo = await getStorageInfo();
+    } catch (e) {
+      console.error("Failed to fetch storage info:", e);
     }
   }
 }

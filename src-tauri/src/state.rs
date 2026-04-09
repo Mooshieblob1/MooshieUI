@@ -6,7 +6,7 @@ use tokio::sync::{broadcast, Mutex, Notify, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::config::AppConfig;
-#[cfg(feature = "desktop")]
+#[cfg(any(feature = "desktop", feature = "server"))]
 use crate::interrogator::InterrogatorState;
 
 /// Stored Tauri AppHandle so the headless web server can control the window.
@@ -229,7 +229,7 @@ pub struct AppState {
     pub ws_handle: Mutex<Option<JoinHandle<()>>>,
     pub client_id: String,
     pub http_client: reqwest::Client,
-    #[cfg(feature = "desktop")]
+    #[cfg(any(feature = "desktop", feature = "server"))]
     pub interrogator: Arc<RwLock<InterrogatorState>>,
     /// Broadcast channel for SSE events in browser mode.
     pub event_tx: broadcast::Sender<BroadcastEvent>,
@@ -256,7 +256,7 @@ impl AppState {
             ws_handle: Mutex::new(None),
             client_id: uuid::Uuid::new_v4().to_string(),
             http_client: reqwest::Client::new(),
-            #[cfg(feature = "desktop")]
+            #[cfg(any(feature = "desktop", feature = "server"))]
             interrogator: Arc::new(RwLock::new(InterrogatorState::new())),
             event_tx,
             last_heartbeat: Mutex::new(std::time::Instant::now()),

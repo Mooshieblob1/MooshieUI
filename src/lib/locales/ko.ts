@@ -735,6 +735,11 @@ const ko: Record<string, string> = {
   "gallery.toast.rescan_migrated": "메타데이터 재스캔: {count}장의 이미지 마이그레이션됨",
   "gallery.toast.rescan_none": "재스캔 완료: 마이그레이션할 레거시 메타데이터 없음",
   "gallery.toast.rescan_failed": "재스캔 실패",
+  "gallery.expiry_warning": "Images expire after 7 days. Download any images you want to keep!",
+  "gallery.expiry_hint": "Right-click an image and choose Save, or use the download button to save images locally before they are automatically deleted.",
+  "gallery.expiry_soon": "{count} image(s) expiring within 24 hours!",
+  "gallery.storage_usage": "Storage used",
+  "gallery.storage_limit_exceeded": "Storage limit exceeded. Download and delete old images to free space.",
 
   // ── 모델 허브 (추가) ───────────────────────────────────
   "modelhub.civitai.description": "CivitAI는 선택 사항입니다. CivitAI를 탐색하거나, 필요 시 API 키를 사용하거나, 직접 URL에서 설치할 수 있습니다.",

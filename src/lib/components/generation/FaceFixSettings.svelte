@@ -21,7 +21,7 @@
       label: "YOLOv8m Face (Recommended)",
       filename: "face_yolov8m.pt",
       url: "https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8m.pt",
-      sha256: "caabb1f274e56d11d815195c849679aefa391e603190b6d24ce17f570827b2c9",
+      sha256: "717923c19b3f4bbf5250b728f1fa6b2cb72a33aed1d236ea9caf0e21ad943e5f",
     },
     {
       label: "YOLOv8n Face (Lightweight)",

@@ -12,6 +12,16 @@ use std::sync::RwLock;
 
 use crate::config;
 
+/// Default storage limit per user: 2 GB.
+const DEFAULT_STORAGE_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Default image expiry: 7 days in seconds.
+pub const DEFAULT_EXPIRY_SECS: u64 = 7 * 24 * 60 * 60;
+
+fn default_storage_limit() -> u64 {
+    DEFAULT_STORAGE_LIMIT
+}
+
 /// A stored user account.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
@@ -31,6 +41,9 @@ pub struct Account {
     /// ISO 8601 timestamp of the last time the user was active (persisted periodically).
     #[serde(default)]
     pub last_online: Option<String>,
+    /// Maximum gallery storage in bytes. Default 2 GB. Admins/mods can expand.
+    #[serde(default = "default_storage_limit")]
+    pub storage_limit_bytes: u64,
 }
 
 fn default_role() -> String {
@@ -91,6 +104,7 @@ impl AuthState {
             role: "user".to_string(),
             created_at: Utc::now().to_rfc3339(),
             last_online: None,
+            storage_limit_bytes: DEFAULT_STORAGE_LIMIT,
         });
         save_auth_db(&db)?;
         Ok(())
@@ -182,6 +196,29 @@ impl AuthState {
         // Also remove any active sessions for this user
         let mut sessions = self.sessions.write().unwrap();
         sessions.retain(|_, u| u != username);
+        Ok(())
+    }
+
+    /// Get the storage limit in bytes for a user.
+    pub fn get_storage_limit(&self, username: &str) -> u64 {
+        let db = self.db.read().unwrap();
+        db.accounts
+            .iter()
+            .find(|a| a.username == username)
+            .map(|a| a.storage_limit_bytes)
+            .unwrap_or(DEFAULT_STORAGE_LIMIT)
+    }
+
+    /// Set the storage limit in bytes for a user. Admin/moderator only.
+    pub fn set_storage_limit(&self, username: &str, limit_bytes: u64) -> Result<(), String> {
+        let mut db = self.db.write().unwrap();
+        let account = db
+            .accounts
+            .iter_mut()
+            .find(|a| a.username == username)
+            .ok_or("Account not found")?;
+        account.storage_limit_bytes = limit_bytes;
+        save_auth_db(&db)?;
         Ok(())
     }
 
