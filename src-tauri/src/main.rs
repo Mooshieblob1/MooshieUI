@@ -5,5 +5,7 @@ fn main() {
     comfyui_desktop_lib::run();
 
     #[cfg(not(feature = "desktop"))]
-    eprintln!("This binary requires the 'desktop' feature. Use mooshieui-server for headless mode.");
+    eprintln!(
+        "This binary requires the 'desktop' feature. Use mooshieui-server for headless mode."
+    );
 }

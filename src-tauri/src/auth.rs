@@ -154,10 +154,10 @@ impl AuthState {
             .map(|a| a.role.clone())
     }
 
-    /// Set the role of an account. Valid roles: "user", "moderator".
+    /// Set the role of an account. Valid roles: "user", "moderator", "admin".
     pub fn set_account_role(&self, username: &str, role: &str) -> Result<(), String> {
-        if role != "user" && role != "moderator" {
-            return Err("Invalid role. Must be 'user' or 'moderator'.".to_string());
+        if role != "user" && role != "moderator" && role != "admin" {
+            return Err("Invalid role. Must be 'user', 'moderator', or 'admin'.".to_string());
         }
         let mut db = self.db.write().unwrap();
         let account = db

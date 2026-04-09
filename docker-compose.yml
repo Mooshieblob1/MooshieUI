@@ -9,6 +9,8 @@ services:
       - ${MODELS_PATH:-./models}:/data/models
     environment:
       - MOOSHIEUI_DATA_DIR=/data
+      - MOOSHIEUI_ADMIN_USER=${MOOSHIEUI_ADMIN_USER:-admin}
+      - MOOSHIEUI_ADMIN_PASS=${MOOSHIEUI_ADMIN_PASS:?Set MOOSHIEUI_ADMIN_PASS in .env}
       - NVIDIA_VISIBLE_DEVICES=all
       - RUST_LOG=${RUST_LOG:-info}
     deploy:

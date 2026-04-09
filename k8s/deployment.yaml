@@ -27,6 +27,16 @@ spec:
           env:
             - name: MOOSHIEUI_DATA_DIR
               value: /data
+            - name: MOOSHIEUI_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mooshieui-admin
+                  key: username
+            - name: MOOSHIEUI_ADMIN_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: mooshieui-admin
+                  key: password
             - name: NVIDIA_VISIBLE_DEVICES
               value: all
             - name: RUST_LOG

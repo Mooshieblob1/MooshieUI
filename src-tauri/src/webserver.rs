@@ -75,15 +75,13 @@ fn resolve_role(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> U
     if !state.lan_enabled {
         return UserRole::Admin;
     }
-    // No accounts configured → allow as user (open access, warned in UI)
-    if !state.auth.has_accounts() {
-        return UserRole::User;
-    }
-    // Check bearer token
+    // Check bearer token — all remote users must authenticate
     if let Some(token) = extract_token(headers) {
         if let Some(username) = state.auth.validate_token(&token) {
-            // Check if the account has moderator role
             if let Some(role) = state.auth.get_account_role(&username) {
+                if role == "admin" {
+                    return UserRole::Admin;
+                }
                 if role == "moderator" {
                     return UserRole::Moderator;
                 }
@@ -121,12 +119,7 @@ const ADMIN_ONLY_COMMANDS: &[&str] = &[
 
 /// Commands that moderators (and admins) can execute.
 /// These involve server control and configuration but no filesystem access.
-const MODERATOR_COMMANDS: &[&str] = &[
-    "update_config",
-    "stop_comfyui",
-    "download_model",
-    "export_logs",
-];
+const MODERATOR_COMMANDS: &[&str] = &["update_config", "stop_comfyui", "export_logs"];
 
 /// Check command permission level.
 /// Returns the minimum role required to execute the command.
@@ -201,6 +194,8 @@ pub async fn start_server(
         .route("/internal-api/_auth/lan_info", get(auth_lan_info_handler))
         // Health check (unauthenticated, for K8s probes)
         .route("/health", get(health_handler))
+        // Update check (admin/moderator only)
+        .route("/internal-api/_check_update", get(check_update_handler))
         // SSE event stream
         .route("/internal-api/_events", get(sse_handler))
         // Heartbeat endpoints
@@ -453,15 +448,118 @@ async fn serve_static(dist_dir: PathBuf, req: axum::extract::Request) -> Respons
 
 /// Health check endpoint for K8s liveness/readiness probes.
 /// No authentication required.
-async fn health_handler(
-    AxumState(state): AxumState<SharedState>,
-) -> Json<serde_json::Value> {
+async fn health_handler(AxumState(state): AxumState<SharedState>) -> Json<serde_json::Value> {
     let comfyui_running = state.app.comfyui_process.lock().await.is_some();
     Json(serde_json::json!({
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
         "comfyui_running": comfyui_running,
     }))
+}
+
+/// GET /internal-api/_check_update — check GitHub for a newer release.
+/// Returns `{ "update_available": bool, "latest_version": "x.y.z", "current_version": "x.y.z" }`.
+/// Only accessible to admin/moderator; regular users get 403.
+async fn check_update_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role != UserRole::Admin && role != UserRole::Moderator {
+        return forbidden_response("Only admins and moderators can check for updates.");
+    }
+
+    let current = env!("CARGO_PKG_VERSION");
+    let url = "https://api.github.com/repos/Mooshieblob1/MooshieUI/releases/latest";
+
+    let resp = state
+        .app
+        .http_client
+        .get(url)
+        .header("User-Agent", format!("MooshieUI/{}", current))
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await;
+
+    match resp {
+        Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>().await {
+            Ok(release) => {
+                let tag = release["tag_name"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim_start_matches('v');
+                let update_available = version_newer_than(tag, current);
+                (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "update_available": update_available,
+                        "latest_version": tag,
+                        "current_version": current,
+                    })),
+                )
+                    .into_response()
+            }
+            Err(e) => {
+                log::warn!("Failed to parse GitHub release response: {}", e);
+                (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "update_available": false,
+                        "latest_version": current,
+                        "current_version": current,
+                        "error": "Failed to parse release info",
+                    })),
+                )
+                    .into_response()
+            }
+        },
+        Ok(r) => {
+            log::warn!("GitHub release check returned HTTP {}", r.status());
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "update_available": false,
+                    "latest_version": current,
+                    "current_version": current,
+                    "error": format!("GitHub API returned {}", r.status()),
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            log::warn!("Failed to check for updates: {}", e);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "update_available": false,
+                    "latest_version": current,
+                    "current_version": current,
+                    "error": "Network error checking for updates",
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Compare two semver-like version strings. Returns true if `latest` > `current`.
+fn version_newer_than(latest: &str, current: &str) -> bool {
+    let parse =
+        |s: &str| -> Vec<u32> { s.split('.').filter_map(|p| p.parse::<u32>().ok()).collect() };
+    let l = parse(latest);
+    let c = parse(current);
+    for i in 0..l.len().max(c.len()) {
+        let lv = l.get(i).copied().unwrap_or(0);
+        let cv = c.get(i).copied().unwrap_or(0);
+        if lv > cv {
+            return true;
+        }
+        if lv < cv {
+            return false;
+        }
+    }
+    false
 }
 
 /// SSE endpoint — streams backend events to browser clients.
@@ -845,15 +943,11 @@ async fn dispatch_command(
                         log::info!("switch_to_app_mode: reloaded and showed existing window");
                     } else {
                         log::error!("switch_to_app_mode: no 'main' window found");
-                        return Err(
-                            "No app window found — please restart the application".into()
-                        );
+                        return Err("No app window found — please restart the application".into());
                     }
                 } else {
                     log::error!("switch_to_app_mode: AppHandle not available");
-                    return Err(
-                        "AppHandle not available — please restart the application".into()
-                    );
+                    return Err("AppHandle not available — please restart the application".into());
                 }
 
                 Ok(serde_json::json!(null))
@@ -1350,8 +1444,7 @@ async fn dispatch_command(
         "read_image_metadata_path" => {
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
             let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-            let result =
-                crate::metadata::read_png_metadata(&bytes).map_err(|e| e.to_string())?;
+            let result = crate::metadata::read_png_metadata(&bytes).map_err(|e| e.to_string())?;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
         "embed_png_metadata_bytes" => {
@@ -1922,8 +2015,7 @@ async fn dispatch_command(
                     }
                     "interrogate_image_path" => {
                         let path = args["path"].as_str().ok_or("Missing path")?.to_string();
-                        std::fs::read(&path)
-                            .map_err(|e| format!("Failed to read image: {}", e))?
+                        std::fs::read(&path).map_err(|e| format!("Failed to read image: {}", e))?
                     }
                     "interrogate_gallery_image" => {
                         let filename = args["filename"]
@@ -1936,8 +2028,8 @@ async fn dispatch_command(
                         {
                             return Err("Invalid filename".to_string());
                         }
-                        let dir = crate::config::gallery_dir()
-                            .ok_or("Cannot find gallery directory")?;
+                        let dir =
+                            crate::config::gallery_dir().ok_or("Cannot find gallery directory")?;
                         let path = dir.join(&filename);
                         std::fs::read(&path).map_err(|e| e.to_string())?
                     }
@@ -2198,7 +2290,7 @@ async fn auth_status_handler(
         UserRole::Anonymous => "anonymous",
     };
     Json(serde_json::json!({
-        "auth_required": state.lan_enabled && state.auth.has_accounts(),
+        "auth_required": state.lan_enabled,
         "has_accounts": state.auth.has_accounts(),
         "role": role_str,
         "lan_enabled": state.lan_enabled,

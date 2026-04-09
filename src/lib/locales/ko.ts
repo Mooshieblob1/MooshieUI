@@ -614,6 +614,7 @@ const ko: Record<string, string> = {
   "updater.restart_now": "지금 재시작",
   "updater.error": "업데이트 실패: {error}",
   "updater.dismiss": "닫기",
+  "updater.server_available": "MooshieUI v{version} 사용 가능 — 업데이트하려면 다시 배포해 주세요!",
   "updater.version_mismatch": "업데이트가 올바르게 적용되지 않았을 수 있습니다. v{expected}를 기대했지만 v{current}가 실행 중입니다. 최신 버전을 수동으로 다운로드해 보세요.",
 
   // ── 갤러리 ──────────────────────────────────────────────

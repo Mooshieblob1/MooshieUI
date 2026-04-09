@@ -507,10 +507,11 @@ pub async fn wait_for_ready(state: &AppState, timeout_secs: u64) -> Result<(), A
                             if log.contains("Torch not compiled with CUDA enabled")
                                 || log.contains("CUDA not available")
                             {
-                                "PyTorch was installed without CUDA (GPU) support. \
-                                 Your system has an NVIDIA GPU but the CPU-only version of PyTorch was installed. \
+                                "PyTorch was installed without GPU support. \
+                                 The CPU-only version of PyTorch was installed instead of the GPU-accelerated version. \
                                  Go to Settings → Advanced → Reinstall PyTorch to fix this, \
-                                 or re-run setup and make sure 'NVIDIA' is selected as your GPU type."
+                                 or re-run setup and make sure the correct GPU type is selected. \
+                                 Note: AMD GPU acceleration (ROCm) is only available on Linux."
                                     .to_string()
                             } else {
                                 format!(

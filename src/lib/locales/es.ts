@@ -639,6 +639,7 @@ const es: Record<string, string> = {
   "updater.restart_now": "Reiniciar ahora",
   "updater.error": "Actualización fallida: {error}",
   "updater.dismiss": "Descartar",
+  "updater.server_available": "MooshieUI v{version} está disponible — ¡vuelve a desplegar para actualizar!",
   "updater.version_mismatch": "Es posible que la actualización no se haya aplicado correctamente. Se esperaba v{expected}, pero se ejecuta v{current}. Intenta descargar la versión más reciente manualmente.",
 
   // ── Galería ─────────────────────────────────────────────

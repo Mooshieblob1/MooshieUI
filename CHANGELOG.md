@@ -1,5 +1,28 @@
 # Changelog
 
+## What's New in v0.7.3
+
+### Headless Server Mode + Docker/K8s Support
+- **Headless server binary** — `mooshieui-server` runs without Tauri/webkit, serving the Svelte frontend via embedded axum. Designed for Docker and K8s deployments
+- **Dockerfile** — multi-stage build (Node → Rust → CUDA runtime) with ComfyUI + PyTorch pre-installed
+- **docker-compose.yml** — GPU passthrough, persistent volumes, optional Cloudflare Tunnel sidecar
+- **K8s manifests** — namespace, PVCs, configmap, secret, deployment + service with GPU resource limits and health probes
+- **Cargo feature gating** — all Tauri dependencies behind `desktop` feature flag; `server` feature for headless binary
+- **CI/CD** — release workflow builds server binary, publishes Docker image to GHCR with semver + latest tags
+
+### Auth Lockdown
+- **No open access** — remote users must authenticate; self-registration disabled (admin creates accounts)
+- **Stored admin role** — accounts can now have `"admin"` role for full remote access (account management, settings, filesystem operations)
+- **Env-var admin seeding** — `MOOSHIEUI_ADMIN_USER` + `MOOSHIEUI_ADMIN_PASS` environment variables seed the initial admin account on first boot
+- **Model downloads for users** — `download_model` command moved from moderator-only to user level
+
+### Server Update Notifications
+- **Update check endpoint** — `GET /internal-api/_check_update` queries GitHub Releases API for newer versions (admin/moderator only)
+- **Redeploy banner** — admin and moderator users in browser mode see a notification when a new version is available: "MooshieUI vX.Y.Z is available — please redeploy to update!"
+- **Desktop updater unchanged** — Tauri auto-updater continues to work as before for desktop users
+
+---
+
 ## What's New in v0.7.1
 
 ### Prompt Scheduling (FromTo)

@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use comfyui_desktop_lib::auth::AuthState;
 use comfyui_desktop_lib::comfyui::{process, websocket};
 use comfyui_desktop_lib::config::load_persisted_config;
 use comfyui_desktop_lib::state::AppState;
@@ -20,6 +21,30 @@ async fn main() {
     let port = config.ui_server_port;
     let auto_start = config.auto_start;
     let state = Arc::new(AppState::new(config));
+
+    // Seed admin account from env vars if provided and not already created.
+    // Usage: MOOSHIEUI_ADMIN_USER=blob MOOSHIEUI_ADMIN_PASS=secret
+    if let (Ok(user), Ok(pass)) = (
+        std::env::var("MOOSHIEUI_ADMIN_USER"),
+        std::env::var("MOOSHIEUI_ADMIN_PASS"),
+    ) {
+        if !user.trim().is_empty() && pass.len() >= 4 {
+            let auth = AuthState::new();
+            match auth.create_account(&user, &pass) {
+                Ok(()) => {
+                    // Promote to admin so they have full access remotely (account management, settings, etc.)
+                    let _ = auth.set_account_role(&user, "admin");
+                    log::info!("Created admin account '{}' from environment", user);
+                }
+                Err(e) if e.contains("already exists") => {
+                    log::debug!("Admin account '{}' already exists, skipping", user);
+                }
+                Err(e) => {
+                    log::error!("Failed to create admin account: {}", e);
+                }
+            }
+        }
+    }
 
     // Clean up and create temp image directory
     temp_images::init();
@@ -49,10 +74,7 @@ async fn main() {
                         {
                             log::error!("Failed to connect WebSocket: {}", e);
                         }
-                        state.broadcast(
-                            "comfyui:server_ready",
-                            serde_json::json!(null),
-                        );
+                        state.broadcast("comfyui:server_ready", serde_json::json!(null));
                     }
                     Err(e) => {
                         log::error!("ComfyUI failed to become ready: {}", e);

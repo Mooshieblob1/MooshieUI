@@ -614,6 +614,7 @@ const ru: Record<string, string> = {
   "updater.restart_now": "Перезапустить сейчас",
   "updater.error": "Обновление не удалось: {error}",
   "updater.dismiss": "Скрыть",
+  "updater.server_available": "MooshieUI v{version} доступна — выполните повторное развёртывание для обновления!",
   "updater.version_mismatch": "Обновление могло не примениться корректно. Ожидалась v{expected}, но запущена v{current}. Попробуйте загрузить последнюю версию вручную.",
 
   // ── Галерея ─────────────────────────────────────────────

@@ -681,9 +681,21 @@ async fn amd_pytorch_index_url() -> &'static str {
     "https://download.pytorch.org/whl/rocm6.2"
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 async fn amd_pytorch_index_url() -> &'static str {
-    "https://download.pytorch.org/whl/rocm6.2"
+    // ROCm wheels are Linux-only. On Windows there are no AMD GPU-accelerated
+    // PyTorch wheels, so we fall back to the CPU index.
+    log::warn!(
+        "AMD ROCm is not available on Windows — PyTorch will be installed without GPU acceleration"
+    );
+    "https://download.pytorch.org/whl/cpu"
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+async fn amd_pytorch_index_url() -> &'static str {
+    // ROCm wheels are Linux-only.
+    log::warn!("AMD ROCm is not available on this platform — PyTorch will be installed without GPU acceleration");
+    "https://download.pytorch.org/whl/cpu"
 }
 
 /// Pick the correct PyTorch CUDA wheel index for NVIDIA GPUs.
@@ -757,6 +769,13 @@ async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result
         "amd" => {
             let index_url = amd_pytorch_index_url().await;
             emit_log(app, &format!("Using PyTorch index: {}", index_url));
+            #[cfg(target_os = "windows")]
+            emit_log(
+                app,
+                "⚠ WARNING: AMD GPU acceleration (ROCm) is only available on Linux. \
+                 PyTorch will be installed in CPU-only mode on Windows. \
+                 For GPU acceleration with AMD on Windows, consider using Linux instead.",
+            );
             uv_pip(
                 app,
                 base,
@@ -1598,7 +1617,10 @@ pub async fn run_setup(
     };
     let label = match gpu.as_str() {
         "nvidia" => "NVIDIA CUDA",
+        #[cfg(target_os = "linux")]
         "amd" => "AMD ROCm",
+        #[cfg(not(target_os = "linux"))]
+        "amd" => "AMD (CPU-only — ROCm requires Linux)",
         "intel" => "Intel XPU",
         "mps" => "Apple Metal",
         _ => "CPU",

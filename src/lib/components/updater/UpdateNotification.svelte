@@ -1,13 +1,18 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { isTauri } from "../../utils/ipc.js";
+  import { isTauri, isBrowserMode, authHeaders } from "../../utils/ipc.js";
   import { stopComfyui } from "../../utils/api.js";
   import { locale } from "../../stores/locale.svelte.js";
 
   // @ts-ignore — injected by Vite at build time
   const currentVersion: string = __APP_VERSION__ ?? "dev";
 
-  type UpdateState = "idle" | "available" | "downloading" | "ready" | "error" | "version_mismatch";
+  interface Props {
+    userRole?: "admin" | "moderator" | "user" | "anonymous";
+  }
+  let { userRole = "user" }: Props = $props();
+
+  type UpdateState = "idle" | "available" | "server_available" | "downloading" | "ready" | "error" | "version_mismatch";
 
   let updateState: UpdateState = $state("idle");
   let version = $state("");
@@ -18,6 +23,9 @@
   let expectedVersion = $state("");
 
   let updateObj: any | null = null;
+
+  /** Only admin/moderator should see the server update banner. */
+  const canSeeUpdate = $derived(userRole === "admin" || userRole === "moderator");
 
   const progressPercent = $derived(
     totalSize > 0 ? Math.round((downloadProgress / totalSize) * 100) : 0
@@ -30,7 +38,7 @@
   }
 
   onMount(async () => {
-    // Check if a previous update didn't apply correctly
+    // Check if a previous update didn't apply correctly (desktop only)
     const pending = localStorage.getItem("mooshieui_pending_update");
     if (pending) {
       localStorage.removeItem("mooshieui_pending_update");
@@ -46,21 +54,44 @@
 
     // Delay so app startup isn't blocked
     await new Promise((r) => setTimeout(r, 3000));
-    if (!isTauri) return;
-    try {
-      console.log(`[Updater] Checking for updates (current: v${currentVersion})...`);
-      const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check();
-      if (update) {
-        updateObj = update;
-        version = update.version;
-        updateState = "available";
-        console.log(`[Updater] Update available: v${update.version} (current: v${currentVersion})`);
-      } else {
-        console.log("[Updater] No updates available");
+
+    if (isTauri) {
+      // Desktop: use Tauri updater plugin
+      try {
+        console.log(`[Updater] Checking for updates (current: v${currentVersion})...`);
+        const { check } = await import("@tauri-apps/plugin-updater");
+        const update = await check();
+        if (update) {
+          updateObj = update;
+          version = update.version;
+          updateState = "available";
+          console.log(`[Updater] Update available: v${update.version} (current: v${currentVersion})`);
+        } else {
+          console.log("[Updater] No updates available");
+        }
+      } catch (e) {
+        console.warn("[Updater] Update check failed:", e);
       }
-    } catch (e) {
-      console.warn("[Updater] Update check failed:", e);
+    } else if (isBrowserMode && canSeeUpdate) {
+      // Server/browser mode: check via backend endpoint (admin/mod only)
+      try {
+        console.log(`[Updater] Checking server for updates (current: v${currentVersion})...`);
+        const resp = await fetch("/internal-api/_check_update", {
+          headers: authHeaders(),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.update_available) {
+            version = data.latest_version;
+            updateState = "server_available";
+            console.log(`[Updater] Server update available: v${data.latest_version} (current: v${data.current_version})`);
+          } else {
+            console.log("[Updater] Server is up to date");
+          }
+        }
+      } catch (e) {
+        console.warn("[Updater] Server update check failed:", e);
+      }
     }
   });
 
@@ -126,6 +157,17 @@
         onclick={dismiss}
         class="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-neutral-300 rounded text-xs font-medium transition-colors cursor-pointer"
       >{locale.t('updater.later')}</button>
+
+    {:else if updateState === "server_available"}
+      <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+      </svg>
+      <span class="flex-1">{locale.t('updater.server_available', { version })}</span>
+      <button
+        onclick={dismiss}
+        class="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 text-neutral-300 rounded text-xs font-medium transition-colors cursor-pointer"
+      >{locale.t('updater.dismiss')}</button>
 
     {:else if updateState === "downloading"}
       <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0"></div>

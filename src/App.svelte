@@ -1797,7 +1797,7 @@
 
   <!-- Main content -->
   <main class="flex-1 overflow-hidden flex flex-col">
-    <UpdateNotification />
+    <UpdateNotification {userRole} />
     <DownloadBanner />
     {#if startupStatus && !connection.connected}
       <div class="flex items-center gap-2 px-4 py-2 bg-amber-900/30 border-b border-amber-800/50 text-amber-200 text-sm">

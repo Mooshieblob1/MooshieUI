@@ -614,6 +614,7 @@ const zhTw: Record<string, string> = {
   "updater.restart_now": "立即重啟",
   "updater.error": "更新失敗：{error}",
   "updater.dismiss": "關閉",
+  "updater.server_available": "MooshieUI v{version} 已可用 — 請重新部署以完成更新！",
   "updater.version_mismatch": "更新可能未正確套用。預期 v{expected}，但正在執行 v{current}。請嘗試手動下載最新版本。",
 
   // ── 圖庫 ────────────────────────────────────────────────
