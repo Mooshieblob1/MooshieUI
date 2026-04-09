@@ -255,6 +255,8 @@ const zhTw: Record<string, string> = {
   "generation.prompts.style_preset_tip": "自動注入提示詞修飾符的 Fooocus 風格預設。先選擇風格，然後編寫主題提示詞即可快速入門。",
   "generation.prompts.history": "提示詞歷史",
   "generation.prompts.history_tip": "最近的提示詞在生成時自動儲存。按一下重新載入，星號可置頂珍藏。",
+  "generation.prompts.scheduling": "提示詞排程",
+  "generation.prompts.scheduling_segments": "{count} 個片段",
   "generation.prompts.quality_applied": "品質提示已套用",
   "generation.prompts.anima_artist_tip": "提示：藝術家標籤以 @ 開頭（例如 @artist_name）",
 

@@ -270,6 +270,8 @@ const en: Record<string, string> = {
   "generation.prompts.style_preset_tip": "Fooocus-style presets that automatically inject prompt modifiers. Great for fast starts: pick a style first, then write your subject prompt.",
   "generation.prompts.history": "Prompt History",
   "generation.prompts.history_tip": "Recent prompts are auto-saved when you generate. Click to reload, star favorites to pin them to the top.",
+  "generation.prompts.scheduling": "Prompt Scheduling",
+  "generation.prompts.scheduling_segments": "{count} segment(s)",
   "generation.prompts.quality_applied": "Quality prompts applied",
   "generation.prompts.anima_artist_tip": "Tip: Start artist tags with @ (e.g. @artist_name)",
 

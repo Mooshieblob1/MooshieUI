@@ -255,6 +255,8 @@ const ko: Record<string, string> = {
   "generation.prompts.style_preset_tip": "프롬프트 수정자를 자동으로 주입하는 Fooocus 스타일 프리셋. 스타일을 먼저 선택한 다음 주제 프롬프트를 작성하면 빠르게 시작할 수 있습니다.",
   "generation.prompts.history": "프롬프트 기록",
   "generation.prompts.history_tip": "최근 프롬프트는 생성 시 자동 저장됩니다. 클릭하여 다시 로드, 별표로 즐겨찾기에 고정.",
+  "generation.prompts.scheduling": "프롬프트 스케줄링",
+  "generation.prompts.scheduling_segments": "{count}개 세그먼트",
   "generation.prompts.quality_applied": "품질 프롬프트 적용됨",
   "generation.prompts.anima_artist_tip": "팁: 아티스트 태그는 @로 시작하세요 (예: @artist_name)",
 

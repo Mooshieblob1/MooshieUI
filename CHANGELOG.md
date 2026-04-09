@@ -1,5 +1,23 @@
 # Changelog
 
+## What's New in v0.7.1
+
+### Prompt Scheduling (FromTo)
+- **Timestep-based prompt scheduling** — apply specific prompt tags only during certain portions of the denoising process, giving you fine-grained control over when concepts appear during generation
+- **MooshieUI syntax** — `<from:0.5>text</from>` (apply from 50% onward), `<to:0.8>text</to>` (apply up to 80%), `<range:0.2:0.8>text</range>` (apply between 20%–80%)
+- **SwarmUI syntax** — `<fromto[0.5]:cat, dog>` swaps between two phrases at the specified timestep, with `,`, `|`, and `||` separators supported
+- **Visual highlighting** — scheduling blocks glow with a gold border in the textarea so you can see at a glance which tags are scheduled
+- **Visual helper panel** — collapsible panel below the prompt shows each scheduled segment with a mini range bar and percentage labels
+- **Full autocomplete support** — tag autocomplete works normally inside scheduling blocks, preserving the wrapper syntax when accepting suggestions
+- **Clean metadata** — prompts in image metadata show all tags without scheduling syntax; scheduling info is stored in a separate `mooshie_prompt_schedule` field for round-trip clarity
+- **Zero overhead** — when no scheduling tags are used, the workflow is identical to before (no extra nodes)
+- **Backend support** — uses ComfyUI's built-in `ConditioningSetTimestepRange` + `ConditioningCombine` nodes; works with txt2img, img2img, and inpainting
+
+### i18n Updates
+- Added `generation.prompts.scheduling` and `generation.prompts.scheduling_segments` translations across all 11 supported languages
+
+---
+
 ## What's New in v0.7.0
 
 ### Enhanced Account Management

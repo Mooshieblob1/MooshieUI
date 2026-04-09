@@ -3,6 +3,7 @@
   import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { smoothScroll } from "../../utils/smoothScroll.js";
+  import { renderHighlightedPrompt, hasSchedulingTags } from "../../utils/promptSchedule.js";
 
   interface Props {
     value: string;
@@ -24,6 +25,7 @@
   }
 
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
+  let backdropEl = $state<HTMLDivElement | null>(null);
   let suggestions = $state<TagEntry[]>([]);
   let selectedIndex = $state(0);
   let showSuggestions = $state(false);
@@ -87,7 +89,16 @@
     }
 
     // Search based on text from tag start to cursor position (supports mid-prompt editing)
-    const searchFragment = value.substring(result.trimmedStart, pos).replace(/\s+$/, "");
+    let searchFragment = value.substring(result.trimmedStart, pos).replace(/\s+$/, "");
+
+    // Strip scheduling tag syntax so autocomplete works inside scheduling blocks
+    // MooshieUI: <from:0.2>tag</from>, <to:0.8>tag</to>, <range:0.2:0.8>tag</range>
+    // SwarmUI:   <fromto[0.5]:before, after>
+    searchFragment = searchFragment
+      .replace(/^<(?:from|to|range):[\d.]+(?::[\d.]+)?>/i, "")
+      .replace(/<\/(?:from|to|range)>$/i, "")
+      .replace(/^<fromto\[[\d.]+\]:/i, "")
+      .replace(/>$/i, "");
 
     if (searchFragment.length < 1) {
       showSuggestions = false;
@@ -134,7 +145,23 @@
     const leadingWhitespace = value.substring(result.start, result.trimmedStart);
     const trailingWhitespace = value.substring(result.trimmedEnd, result.end);
     const after = value.substring(result.end);
-    const tagText = formatTagForPrompt(tag.n);
+    const rawTagText = formatTagForPrompt(tag.n);
+
+    // Detect scheduling wrapper in the current fragment and preserve it
+    // MooshieUI XML syntax: <from:0.2>tag</from>
+    const schedPrefixMatch = result.fragment.match(/^(<(from|to|range):[\d.]+(?::[\d.]+)?>)/i);
+    const schedSuffixMatch = result.fragment.match(/(<\/(from|to|range)>)$/i);
+    const schedPrefix = schedPrefixMatch?.[1] ?? "";
+    const schedType = schedPrefixMatch?.[2] ?? "";
+    // Auto-close if there's an open tag but no closing tag yet
+    const schedSuffix = schedSuffixMatch?.[1] ?? (schedType ? `</${schedType}>` : "");
+    // SwarmUI syntax: <fromto[0.5]:tag — preserve the prefix (no closing tag needed)
+    const swarmPrefixMatch = !schedPrefix ? result.fragment.match(/^(<fromto\[[\d.]+\]:)/i) : null;
+    const swarmPrefix = swarmPrefixMatch?.[1] ?? "";
+    // Trailing > from SwarmUI second entry (e.g. "blue eyes>")
+    const swarmSuffix = !schedSuffix && result.fragment.match(/>$/) ? ">" : "";
+    const tagText = (schedPrefix || swarmPrefix) + rawTagText + (schedSuffix || swarmSuffix);
+
     const needsCommaSuffix = !/^\s*,/.test(after);
     const suffix = needsCommaSuffix ? ", " : "";
 
@@ -142,7 +169,7 @@
 
     showSuggestions = false;
 
-    // Set cursor position after the inserted tag
+    // Set cursor position after the inserted tag (before trailing suffix)
     const cursorPos = (before + leadingWhitespace + tagText + trailingWhitespace + suffix).length;
     requestAnimationFrame(() => {
       textareaEl?.focus();
@@ -308,6 +335,19 @@
     }, 200);
   }
 
+  // Reactive: detect if current value has scheduling tags
+  const showBackdrop = $derived(hasSchedulingTags(value));
+
+  // Reactive: render highlighted HTML for the backdrop overlay
+  const highlightedHtml = $derived(showBackdrop ? renderHighlightedPrompt(value) : "");
+
+  function syncScroll() {
+    if (textareaEl && backdropEl) {
+      backdropEl.scrollTop = textareaEl.scrollTop;
+      backdropEl.scrollLeft = textareaEl.scrollLeft;
+    }
+  }
+
   onDestroy(() => {
     if (suggestionTimer !== null) {
       window.clearTimeout(suggestionTimer);
@@ -316,17 +356,27 @@
 </script>
 
 <div class="relative">
+  {#if showBackdrop}
+    <div
+      bind:this={backdropEl}
+      class="absolute inset-0 pointer-events-none overflow-hidden rounded-lg px-3 py-2 text-sm whitespace-pre-wrap wrap-break-word border border-transparent"
+      style="color: transparent; z-index: 0;"
+    >{@html highlightedHtml}</div>
+  {/if}
+
   <textarea
     bind:this={textareaEl}
     bind:value
     {placeholder}
     {rows}
-    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors {minHeight}"
+    class="w-full border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors {minHeight} {showBackdrop ? 'bg-transparent' : 'bg-neutral-800'}"
+    style="position: relative; z-index: 1; {showBackdrop ? 'caret-color: #e5e5e5;' : ''}"
     use:smoothScroll={{ duration: 0.4, multiplier: 1.2 }}
     onkeydown={handleKeydown}
     oninput={handleInput}
     onclick={handleClick}
     onblur={handleBlur}
+    onscroll={syncScroll}
   ></textarea>
 
   {#if showSuggestions}

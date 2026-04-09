@@ -255,6 +255,8 @@ const de: Record<string, string> = {
   "generation.prompts.style_preset_tip": "Fooocus-Stil-Vorlagen, die automatisch Prompt-Modifikatoren einfügen. Wählen Sie zuerst einen Stil, dann schreiben Sie Ihren Motiv-Prompt für einen schnellen Einstieg.",
   "generation.prompts.history": "Prompt-Verlauf",
   "generation.prompts.history_tip": "Letzte Prompts werden automatisch bei der Erzeugung gespeichert. Klicken zum Wiederladen, mit Stern als Favorit merken.",
+  "generation.prompts.scheduling": "Prompt-Planung",
+  "generation.prompts.scheduling_segments": "{count} Segment(e)",
   "generation.prompts.quality_applied": "Qualitäts-Prompt angewendet",
   "generation.prompts.anima_artist_tip": "Tipp: Künstler-Tags beginnen mit @ (z.B. @artist_name)",
 

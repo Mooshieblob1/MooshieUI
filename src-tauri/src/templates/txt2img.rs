@@ -1,6 +1,9 @@
 use serde_json::json;
 
-use super::{insert_vae_decode, load_model_nodes, needs_sd3_latent, WorkflowResult};
+use super::{
+    build_scheduled_conditioning, insert_vae_decode, load_model_nodes, needs_sd3_latent,
+    WorkflowResult,
+};
 use crate::comfyui::types::GenerationParams;
 
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
@@ -14,33 +17,25 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let clip_source = ml.clip_source;
     let vae_source = ml.vae_source;
 
-    // Positive CLIP encode
-    let pos_id = next_id.to_string();
-    workflow.insert(
-        pos_id.clone(),
-        json!({
-            "class_type": "CLIPTextEncode",
-            "inputs": {
-                "clip": [clip_source.0, clip_source.1],
-                "text": params.positive_prompt
-            }
-        }),
+    // Positive conditioning (with optional timestep scheduling)
+    let (pos_source, nid) = build_scheduled_conditioning(
+        &mut workflow,
+        next_id,
+        &clip_source,
+        &params.positive_prompt,
+        &params.positive_segments,
     );
-    next_id += 1;
+    next_id = nid;
 
-    // Negative CLIP encode
-    let neg_id = next_id.to_string();
-    workflow.insert(
-        neg_id.clone(),
-        json!({
-            "class_type": "CLIPTextEncode",
-            "inputs": {
-                "clip": [clip_source.0, clip_source.1],
-                "text": params.negative_prompt
-            }
-        }),
+    // Negative conditioning (with optional timestep scheduling)
+    let (neg_source, nid) = build_scheduled_conditioning(
+        &mut workflow,
+        next_id,
+        &clip_source,
+        &params.negative_prompt,
+        &params.negative_segments,
     );
-    next_id += 1;
+    next_id = nid;
 
     // Empty latent image — use SD3 variant (16 channels) for SD3/Flux and Anima/WAN models
     let latent_id = next_id.to_string();
@@ -66,8 +61,8 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
             "class_type": "KSampler",
             "inputs": {
                 "model": [model_source.0.clone(), model_source.1],
-                "positive": [pos_id.clone(), 0],
-                "negative": [neg_id.clone(), 0],
+                "positive": [pos_source.0.clone(), pos_source.1],
+                "negative": [neg_source.0.clone(), neg_source.1],
                 "latent_image": [latent_id, 0],
                 "seed": seed,
                 "steps": params.steps,
@@ -90,8 +85,8 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
         image_output: (decode_id, 0),
         model_source,
         clip_source,
-        positive_source: (pos_id, 0),
-        negative_source: (neg_id, 0),
+        positive_source: pos_source,
+        negative_source: neg_source,
         vae_source,
         sampler_id,
     }

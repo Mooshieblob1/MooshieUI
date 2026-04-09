@@ -7,7 +7,7 @@ pub mod upscale;
 
 use serde_json::{json, Value};
 
-use crate::comfyui::types::GenerationParams;
+use crate::comfyui::types::{GenerationParams, PromptSegment};
 
 pub struct WorkflowResult {
     pub workflow: serde_json::Map<String, Value>,
@@ -398,6 +398,92 @@ pub fn insert_vae_decode(
         );
     }
     (decode_id, next_id + 1)
+}
+
+/// Build a conditioning output that combines a base prompt with optional timestep-scheduled segments.
+///
+/// When `segments` is empty, this creates a single `CLIPTextEncode` and returns its output —
+/// identical to the previous behavior with zero overhead.
+///
+/// When segments are present, each segment gets its own `CLIPTextEncode` → `ConditioningSetTimestepRange`,
+/// then all are chained together with `ConditioningCombine`.
+///
+/// Returns `(conditioning_source, next_id)`.
+pub fn build_scheduled_conditioning(
+    workflow: &mut serde_json::Map<String, Value>,
+    mut next_id: u32,
+    clip_source: &(String, u32),
+    base_prompt: &str,
+    segments: &[PromptSegment],
+) -> ((String, u32), u32) {
+    // Base prompt — always encoded (may be empty if user put everything in segments)
+    let base_id = next_id.to_string();
+    workflow.insert(
+        base_id.clone(),
+        json!({
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "clip": [clip_source.0, clip_source.1],
+                "text": base_prompt
+            }
+        }),
+    );
+    next_id += 1;
+
+    if segments.is_empty() {
+        return ((base_id, 0), next_id);
+    }
+
+    // Start the combine chain with the base conditioning
+    let mut combined_source = (base_id, 0u32);
+
+    for segment in segments {
+        // Encode segment text
+        let seg_clip_id = next_id.to_string();
+        workflow.insert(
+            seg_clip_id.clone(),
+            json!({
+                "class_type": "CLIPTextEncode",
+                "inputs": {
+                    "clip": [clip_source.0, clip_source.1],
+                    "text": segment.text
+                }
+            }),
+        );
+        next_id += 1;
+
+        // Set timestep range on the segment conditioning
+        let range_id = next_id.to_string();
+        workflow.insert(
+            range_id.clone(),
+            json!({
+                "class_type": "ConditioningSetTimestepRange",
+                "inputs": {
+                    "conditioning": [seg_clip_id, 0],
+                    "start": segment.start,
+                    "end": segment.end
+                }
+            }),
+        );
+        next_id += 1;
+
+        // Combine with running chain
+        let combine_id = next_id.to_string();
+        workflow.insert(
+            combine_id.clone(),
+            json!({
+                "class_type": "ConditioningCombine",
+                "inputs": {
+                    "conditioning_1": [combined_source.0, combined_source.1],
+                    "conditioning_2": [range_id, 0]
+                }
+            }),
+        );
+        combined_source = (combine_id, 0);
+        next_id += 1;
+    }
+
+    (combined_source, next_id)
 }
 
 /// Inject rectified flow scheduling for models that use it (SD3, Flux, AuraFlow, Mugen).

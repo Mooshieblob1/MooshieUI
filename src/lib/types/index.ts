@@ -22,10 +22,22 @@ export interface ControlNetPayload {
   end_percent: number;
 }
 
+export interface PromptSegment {
+  text: string;
+  start: number;
+  end: number;
+}
+
 export interface GenerationParams {
   mode: "txt2img" | "img2img" | "inpainting";
   positive_prompt: string;
   negative_prompt: string;
+  positive_segments: PromptSegment[];
+  negative_segments: PromptSegment[];
+  /** Raw prompt text with scheduling tags intact, for metadata embedding */
+  raw_positive_prompt: string;
+  /** Raw prompt text with scheduling tags intact, for metadata embedding */
+  raw_negative_prompt: string;
   checkpoint: string;
   vae: string | null;
   loras: LoraPayloadEntry[];

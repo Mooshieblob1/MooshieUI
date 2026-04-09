@@ -255,6 +255,8 @@ const pt: Record<string, string> = {
   "generation.prompts.style_preset_tip": "Presets no estilo Fooocus que injetam automaticamente modificadores de prompt. Ótimo para começar rápido: escolha um estilo primeiro, depois escreva seu prompt de assunto.",
   "generation.prompts.history": "Histórico de Prompts",
   "generation.prompts.history_tip": "Prompts recentes são salvos automaticamente ao gerar. Clique para recarregar, marque com estrela para fixar no topo.",
+  "generation.prompts.scheduling": "Agendamento de Prompt",
+  "generation.prompts.scheduling_segments": "{count} segmento(s)",
   "generation.prompts.quality_applied": "Prompts de qualidade aplicados",
   "generation.prompts.anima_artist_tip": "Dica: Tags de artista começam com @ (ex: @artist_name)",
 

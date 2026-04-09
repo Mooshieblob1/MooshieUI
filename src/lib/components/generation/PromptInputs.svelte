@@ -3,12 +3,20 @@
   import { locale } from "../../stores/locale.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
+  import { parseScheduledPrompt, hasSchedulingTags } from "../../utils/promptSchedule.js";
 
   interface Props {
     showHistory?: boolean;
   }
 
   let { showHistory = true }: Props = $props();
+
+  const hasPositiveSchedule = $derived(hasSchedulingTags(generation.positivePrompt));
+  const hasNegativeSchedule = $derived(hasSchedulingTags(generation.negativePrompt));
+  const hasAnySchedule = $derived(hasPositiveSchedule || hasNegativeSchedule);
+  const positiveSegments = $derived(hasPositiveSchedule ? parseScheduledPrompt(generation.positivePrompt).segments : []);
+  const negativeSegments = $derived(hasNegativeSchedule ? parseScheduledPrompt(generation.negativePrompt).segments : []);
+  let schedulePanelOpen = $state(true);
 
   const sortedPromptHistory = $derived(
     [...generation.promptHistory].sort((a, b) => {
@@ -72,6 +80,56 @@
       minHeight="min-h-18"
     />
   </div>
+
+  {#if hasAnySchedule}
+    <div class="rounded-lg border border-neutral-800 bg-neutral-900/50 p-2.5 space-y-2">
+      <button
+        class="w-full text-left flex items-center justify-between text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
+        onclick={() => (schedulePanelOpen = !schedulePanelOpen)}
+      >
+        <span class="flex items-center gap-1.5">
+          <span class="inline-block w-2 h-2 rounded-full bg-amber-400/60"></span>
+          {locale.t('generation.prompts.scheduling')}
+          <span class="text-[10px] text-neutral-500">({locale.t('generation.prompts.scheduling_segments', { count: String(positiveSegments.length + negativeSegments.length) })})</span>
+        </span>
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {schedulePanelOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      {#if schedulePanelOpen}
+        <div class="space-y-1.5">
+          {#each positiveSegments as seg, i}
+            <div class="flex items-center gap-2 rounded border border-amber-400/20 bg-amber-400/5 px-2 py-1.5">
+              <span class="text-[10px] text-amber-300 shrink-0">+{i + 1}</span>
+              <div class="flex-1 min-w-0">
+                <p class="text-[11px] text-neutral-200 truncate">{seg.text}</p>
+                <div class="mt-1 h-1.5 w-full rounded-full bg-neutral-800 overflow-hidden">
+                  <div
+                    class="h-full rounded-full bg-amber-400/50"
+                    style="margin-left: {seg.start * 100}%; width: {(seg.end - seg.start) * 100}%;"
+                  ></div>
+                </div>
+              </div>
+              <span class="text-[10px] text-neutral-500 shrink-0">{Math.round(seg.start * 100)}%–{Math.round(seg.end * 100)}%</span>
+            </div>
+          {/each}
+          {#each negativeSegments as seg, i}
+            <div class="flex items-center gap-2 rounded border border-amber-400/20 bg-amber-400/5 px-2 py-1.5">
+              <span class="text-[10px] text-amber-300 shrink-0">-{i + 1}</span>
+              <div class="flex-1 min-w-0">
+                <p class="text-[11px] text-neutral-200 truncate">{seg.text}</p>
+                <div class="mt-1 h-1.5 w-full rounded-full bg-neutral-800 overflow-hidden">
+                  <div
+                    class="h-full rounded-full bg-amber-400/50"
+                    style="margin-left: {seg.start * 100}%; width: {(seg.end - seg.start) * 100}%;"
+                  ></div>
+                </div>
+              </div>
+              <span class="text-[10px] text-neutral-500 shrink-0">{Math.round(seg.start * 100)}%–{Math.round(seg.end * 100)}%</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   {#if showHistory && sortedPromptHistory.length > 0}
     <div class="rounded-lg border border-neutral-800 bg-neutral-900/50 p-2.5 space-y-2">

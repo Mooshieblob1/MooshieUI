@@ -826,6 +826,18 @@
       metadata.mooshie_controlnet_strength = String(params.controlnet.strength);
     }
 
+    // Prompt scheduling — store as a separate metadata field, not inline in prompts
+    const schedParts: string[] = [];
+    for (const seg of params.positive_segments) {
+      schedParts.push(`+${seg.text} [${Math.round(seg.start * 100)}%-${Math.round(seg.end * 100)}%]`);
+    }
+    for (const seg of params.negative_segments) {
+      schedParts.push(`-${seg.text} [${Math.round(seg.start * 100)}%-${Math.round(seg.end * 100)}%]`);
+    }
+    if (schedParts.length > 0) {
+      metadata.mooshie_prompt_schedule = schedParts.join(", ");
+    }
+
     return metadata;
   }
 

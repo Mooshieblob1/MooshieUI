@@ -58,10 +58,21 @@ pub struct LoraParam {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptSegment {
+    pub text: String,
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerationParams {
     pub mode: String,
     pub positive_prompt: String,
     pub negative_prompt: String,
+    #[serde(default)]
+    pub positive_segments: Vec<PromptSegment>,
+    #[serde(default)]
+    pub negative_segments: Vec<PromptSegment>,
     pub checkpoint: String,
     pub vae: Option<String>,
     pub loras: Vec<LoraParam>,

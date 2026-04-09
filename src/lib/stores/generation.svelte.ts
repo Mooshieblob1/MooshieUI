@@ -1,4 +1,5 @@
 import { ipcStore } from "../utils/ipc.js";
+import { parseScheduledPrompt } from "../utils/promptSchedule.js";
 import type { LoraEntry } from "../types/index.js";
 import { autocomplete } from "./autocomplete.svelte.js";
 
@@ -819,10 +820,26 @@ class GenerationStore {
       }
     }
 
+    // Parse timestep scheduling tags from prompts before NAI weight translation
+    const parsedPositive = parseScheduledPrompt(positivePrompt);
+    const parsedNegative = parseScheduledPrompt(negativePrompt);
+
     return {
       mode: this.mode,
-      positive_prompt: translateNaiWeightSyntax(positivePrompt),
-      negative_prompt: translateNaiWeightSyntax(negativePrompt),
+      positive_prompt: translateNaiWeightSyntax(parsedPositive.baseText),
+      negative_prompt: translateNaiWeightSyntax(parsedNegative.baseText),
+      positive_segments: parsedPositive.segments.map((s) => ({
+        text: translateNaiWeightSyntax(s.text),
+        start: s.start,
+        end: s.end,
+      })),
+      negative_segments: parsedNegative.segments.map((s) => ({
+        text: translateNaiWeightSyntax(s.text),
+        start: s.start,
+        end: s.end,
+      })),
+      raw_positive_prompt: translateNaiWeightSyntax(positivePrompt),
+      raw_negative_prompt: translateNaiWeightSyntax(negativePrompt),
       checkpoint: this.checkpoint,
       vae: this.vae || null,
       loras: this.loras

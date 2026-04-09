@@ -265,6 +265,8 @@ const ja: Record<string, string> = {
   "generation.prompts.style_preset_tip": "プロンプト修飾子を自動的に挿入するFooocusスタイルのプリセット。スタイルを先に選択してから被写体のプロンプトを書くと速く始められます。",
   "generation.prompts.history": "プロンプト履歴",
   "generation.prompts.history_tip": "最近のプロンプトは生成時に自動保存されます。クリックで再読み込み、スターでお気に入りに固定。",
+  "generation.prompts.scheduling": "プロンプトスケジューリング",
+  "generation.prompts.scheduling_segments": "{count} セグメント",
   "generation.prompts.quality_applied": "品質プロンプト適用済み",
   "generation.prompts.anima_artist_tip": "ヒント：アーティストタグは@で始めてください（例：@artist_name）",
 

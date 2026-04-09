@@ -255,6 +255,8 @@ const ru: Record<string, string> = {
   "generation.prompts.style_preset_tip": "Пресеты в стиле Fooocus, которые автоматически добавляют модификаторы промпта. Отлично для быстрого старта: сначала выберите стиль, затем напишите промпт с объектом.",
   "generation.prompts.history": "История промптов",
   "generation.prompts.history_tip": "Недавние промпты автоматически сохраняются при генерации. Нажмите для загрузки, отметьте звёздочкой для закрепления наверху.",
+  "generation.prompts.scheduling": "Расписание промптов",
+  "generation.prompts.scheduling_segments": "{count} сегмент(ов)",
   "generation.prompts.quality_applied": "Теги качества применены",
   "generation.prompts.anima_artist_tip": "Совет: Теги художников начинаются с @ (напр. @artist_name)",
 
