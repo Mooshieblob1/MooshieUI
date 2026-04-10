@@ -655,3 +655,362 @@ async fn kill_process_on_port(port: u16) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Multi-GPU worker process management
+// ---------------------------------------------------------------------------
+
+use crate::comfyui::gpu_manager::{GpuWorker, WorkerStatus};
+use std::sync::Arc;
+
+/// Start a ComfyUI process for a specific GPU worker.
+/// Sets CUDA_VISIBLE_DEVICES to pin the process to the worker's GPU.
+pub async fn start_worker_process(
+    state: &AppState,
+    worker: &Arc<GpuWorker>,
+) -> Result<(), AppError> {
+    let config = state.config.read().await;
+
+    // Deploy custom nodes (same as single-process path)
+    if !config.comfyui_path.is_empty() {
+        let main_exists = std::path::Path::new(&config.comfyui_path)
+            .join("main.py")
+            .exists();
+        if main_exists {
+            super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
+                .map_err(AppError::ProcessSpawnFailed)?;
+        }
+    }
+
+    if config.server_mode != ServerMode::AutoLaunch {
+        return Ok(());
+    }
+
+    // Check if something is already listening on the worker's port
+    let health_url = format!("{}/system_stats", worker.base_url);
+    if state.http_client.get(&health_url).send().await.is_ok() {
+        log::info!(
+            "Worker {} (GPU {}): ComfyUI already running at {}",
+            worker.id,
+            worker.gpu_index,
+            worker.base_url,
+        );
+        {
+            let mut status = worker.status.write().await;
+            *status = WorkerStatus::Idle;
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    let python_path = format!("{}/Scripts/python.exe", config.venv_path);
+    #[cfg(not(target_os = "windows"))]
+    let python_path = format!("{}/bin/python", config.venv_path);
+    let main_path = format!("{}/main.py", config.comfyui_path);
+
+    if config.venv_path.is_empty() || !std::path::Path::new(&python_path).exists() {
+        return Err(AppError::ProcessSpawnFailed(format!(
+            "Python not found at '{}'. Run setup first.",
+            python_path
+        )));
+    }
+    if config.comfyui_path.is_empty() || !std::path::Path::new(&main_path).exists() {
+        return Err(AppError::ProcessSpawnFailed(format!(
+            "ComfyUI main.py not found at '{}'.",
+            main_path
+        )));
+    }
+
+    log::info!(
+        "Worker {} (GPU {}): Spawning ComfyUI on port {}",
+        worker.id,
+        worker.gpu_index,
+        worker.port,
+    );
+
+    {
+        let mut status = worker.status.write().await;
+        *status = WorkerStatus::Starting;
+    }
+
+    let mut cmd = tokio::process::Command::new(&python_path);
+    cmd.arg(&main_path)
+        .arg("--listen")
+        .arg("127.0.0.1")
+        .arg("--port")
+        .arg(worker.port.to_string());
+
+    cmd.arg("--preview-method").arg("auto");
+
+    // VRAM mode: worker-specific override > global config
+    let vram_mode = worker
+        .vram_mode
+        .as_deref()
+        .unwrap_or(config.vram_mode.as_str());
+    match vram_mode {
+        "high" => {
+            cmd.arg("--highvram");
+        }
+        "low" => {
+            cmd.arg("--lowvram");
+        }
+        "none" => {
+            cmd.arg("--novram");
+        }
+        _ => {}
+    }
+
+    // bf16 VAE for Blackwell
+    let has_vae_flag = config.extra_args.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "--bf16-vae" | "--fp16-vae" | "--fp32-vae" | "--cpu-vae"
+        )
+    });
+    if !has_vae_flag && has_blackwell_gpu() {
+        cmd.arg("--bf16-vae");
+    }
+
+    // Extra model paths (reuse the main YAML if the single-process path wrote it)
+    let main_yaml = std::env::temp_dir().join("mooshieui_extra_model_paths.yaml");
+    if main_yaml.exists() {
+        cmd.arg("--extra-model-paths-config").arg(&main_yaml);
+    }
+
+    for arg in &config.extra_args {
+        cmd.arg(arg);
+    }
+
+    // Pin to specific GPU
+    cmd.env("CUDA_VISIBLE_DEVICES", worker.gpu_index.to_string());
+
+    // AppImage cleanup on Linux
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var("APPIMAGE").is_ok() {
+            cmd.env_remove("LD_LIBRARY_PATH");
+            cmd.env_remove("LD_PRELOAD");
+            cmd.env_remove("PYTHONHOME");
+            cmd.env_remove("PYTHONPATH");
+            cmd.env_remove("PYTHONDONTWRITEBYTECODE");
+            cmd.env_remove("GDK_BACKEND");
+            if let Ok(path) = std::env::var("PATH") {
+                let filtered: Vec<&str> = path
+                    .split(':')
+                    .filter(|p| !p.contains("/tmp/.mount_"))
+                    .collect();
+                cmd.env("PATH", filtered.join(":"));
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        #[allow(unused_imports)]
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+
+    let log_path =
+        std::env::temp_dir().join(format!("comfyui-desktop-worker{}-stderr.log", worker.id));
+    let log_file = std::fs::File::create(&log_path).ok();
+    log::info!("Worker {} log: {}", worker.id, log_path.display());
+
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(match log_file {
+            Some(f) => std::process::Stdio::from(f),
+            None => std::process::Stdio::null(),
+        })
+        .kill_on_drop(!config.keep_alive);
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| AppError::ProcessSpawnFailed(e.to_string()))?;
+
+    *worker.process.lock().await = Some(child);
+    Ok(())
+}
+
+/// Wait for a worker's ComfyUI process to become ready.
+pub async fn wait_for_worker_ready(
+    state: &AppState,
+    worker: &Arc<GpuWorker>,
+    timeout_secs: u64,
+) -> Result<(), AppError> {
+    let url = format!("{}/system_stats", worker.base_url);
+    let iterations = timeout_secs * 2;
+
+    for i in 0..iterations {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        if state.http_client.get(&url).send().await.is_ok() {
+            let mut status = worker.status.write().await;
+            *status = WorkerStatus::Idle;
+            log::info!(
+                "Worker {} (GPU {}): ready on port {}",
+                worker.id,
+                worker.gpu_index,
+                worker.port
+            );
+            return Ok(());
+        }
+
+        // Check for crash
+        if i % 4 == 3 {
+            let mut process = worker.process.lock().await;
+            if let Some(ref mut child) = *process {
+                match child.try_wait() {
+                    Ok(Some(exit_status)) => {
+                        *process = None;
+                        let mut status = worker.status.write().await;
+                        *status = WorkerStatus::Error;
+                        let log_path = std::env::temp_dir()
+                            .join(format!("comfyui-desktop-worker{}-stderr.log", worker.id));
+                        let log_excerpt =
+                            std::fs::read_to_string(&log_path).ok().map(|content| {
+                                let lines: Vec<&str> = content.lines().collect();
+                                let start = lines.len().saturating_sub(20);
+                                lines[start..].join("\n")
+                            });
+                        let msg = match log_excerpt {
+                            Some(log) => format!(
+                                "Worker {} (GPU {}): process exited with {} — {}",
+                                worker.id, worker.gpu_index, exit_status, log
+                            ),
+                            None => format!(
+                                "Worker {} (GPU {}): process exited with {}",
+                                worker.id, worker.gpu_index, exit_status
+                            ),
+                        };
+                        return Err(AppError::ProcessSpawnFailed(msg));
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        log::warn!("Worker {}: Failed to check process: {}", worker.id, e);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut status = worker.status.write().await;
+    *status = WorkerStatus::Error;
+    Err(AppError::ConnectionFailed(format!(
+        "Worker {} (GPU {}): did not start within {} seconds",
+        worker.id, worker.gpu_index, timeout_secs
+    )))
+}
+
+/// Stop a specific worker's ComfyUI process.
+pub async fn stop_worker_process(worker: &Arc<GpuWorker>) -> Result<(), AppError> {
+    // Abort WebSocket task
+    {
+        let mut ws = worker.ws_handle.lock().await;
+        if let Some(h) = ws.take() {
+            h.abort();
+        }
+    }
+
+    // Kill child process
+    {
+        let mut process = worker.process.lock().await;
+        if let Some(ref mut child) = *process {
+            child.kill().await.ok();
+            let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+            *process = None;
+        }
+    }
+
+    // Kill anything lingering on the port
+    kill_process_on_port(worker.port).await;
+
+    let mut status = worker.status.write().await;
+    *status = WorkerStatus::Stopped;
+
+    log::info!("Worker {} (GPU {}): stopped", worker.id, worker.gpu_index);
+    Ok(())
+}
+
+/// Start all enabled workers.
+pub async fn start_all_workers(state: &AppState) -> Vec<(u32, Result<(), AppError>)> {
+    let mut results = Vec::new();
+    for worker in &state.gpu_manager.workers {
+        let status = *worker.status.read().await;
+        if status == WorkerStatus::Disabled {
+            continue;
+        }
+        let res = start_worker_process(state, worker).await;
+        results.push((worker.id, res));
+    }
+    results
+}
+
+/// Wait for all starting workers to become ready (in parallel).
+pub async fn wait_all_workers_ready(state: &AppState, timeout_secs: u64) {
+    let mut handles = Vec::new();
+
+    for worker in &state.gpu_manager.workers {
+        let status = *worker.status.read().await;
+        if status != WorkerStatus::Starting {
+            continue;
+        }
+
+        let w = Arc::clone(worker);
+        let http_client = state.http_client.clone();
+        let base_url = w.base_url.clone();
+        let worker_id = w.id;
+        let gpu_index = w.gpu_index;
+        let port = w.port;
+
+        let handle = tokio::spawn(async move {
+            let url = format!("{}/system_stats", base_url);
+            let iterations = timeout_secs * 2;
+            for i in 0..iterations {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if http_client.get(&url).send().await.is_ok() {
+                    let mut status = w.status.write().await;
+                    *status = WorkerStatus::Idle;
+                    log::info!(
+                        "Worker {} (GPU {}): ready on port {}",
+                        worker_id,
+                        gpu_index,
+                        port
+                    );
+                    return Ok(worker_id);
+                }
+                if i % 4 == 3 {
+                    let mut process = w.process.lock().await;
+                    if let Some(ref mut child) = *process {
+                        if let Ok(Some(_)) = child.try_wait() {
+                            *process = None;
+                            let mut status = w.status.write().await;
+                            *status = WorkerStatus::Error;
+                            return Err(worker_id);
+                        }
+                    }
+                }
+            }
+            let mut status = w.status.write().await;
+            *status = WorkerStatus::Error;
+            Err(worker_id)
+        });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        match handle.await {
+            Ok(Ok(id)) => log::info!("Worker {} is ready", id),
+            Ok(Err(id)) => log::error!("Worker {} failed to become ready", id),
+            Err(e) => log::error!("Worker ready-wait task panicked: {}", e),
+        }
+    }
+}
+
+/// Stop all workers.
+pub async fn stop_all_workers(state: &AppState) {
+    for worker in &state.gpu_manager.workers {
+        if let Err(e) = stop_worker_process(worker).await {
+            log::error!("Failed to stop worker {}: {}", worker.id, e);
+        }
+    }
+}

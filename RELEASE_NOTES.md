@@ -1,3 +1,24 @@
+## What's New in v0.7.9
+
+### Multi-GPU Worker Backend
+- **SwarmUI-style multi-GPU dispatch** — new `GpuManager` distributes generation prompts across multiple ComfyUI worker processes, each pinned to a specific GPU via `CUDA_VISIBLE_DEVICES`. Workers are selected using LRU (least-recently-used) scheduling with atomic reservation to prevent double-dispatch.
+- **Per-worker process lifecycle** — each GPU worker spawns its own ComfyUI subprocess on a dedicated port with independent health checks, WebSocket connections, and graceful shutdown.
+- **Auto-detection and configuration** — `detect_gpus()` queries `nvidia-smi` to discover available GPUs; `auto_configure_workers()` generates a default `gpu_workers` config array. Workers can be individually enabled/disabled with custom labels and VRAM modes.
+- **Transparent fallback** — when only one worker is configured, the system behaves identically to the previous single-process model with zero overhead.
+
+### GPU Status Panel (Settings)
+- **Live GPU monitoring** — new "GPU Workers" section in Settings displays real-time stats for every GPU: VRAM usage bar, GPU utilization %, temperature, power draw, and worker status badges (idle/running/starting/error).
+- **Visible to all users** — the GPU panel is not admin-gated, so every user can see system GPU health without needing `nvidia-smi` access.
+- **Auto-refresh** — stats poll every 5 seconds via `nvidia-smi` merged with internal worker status.
+- **Dual-mode support** — works in both Tauri desktop and browser/server mode via a dedicated `GET /internal-api/_gpu_stats` endpoint.
+
+### Backend Infrastructure
+- **Worker-aware prompt queue** — `PromptQueue` now tracks which worker is handling each prompt, enabling correct idle/error state transitions on completion.
+- **Configurable GPU workers** — `AppConfig` gains a `gpu_workers` array (`GpuWorkerConfig` structs) with `gpu_index`, `port`, `enabled`, `label`, and `vram_mode` per worker.
+- **Server mode multi-worker startup** — `mooshieui-server` starts all configured workers in parallel with health-check gates before accepting requests.
+
+---
+
 ## What's New in v0.7.8
 
 ### Model Hub Access Control

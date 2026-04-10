@@ -1,9 +1,10 @@
-import { ipcInvoke, isBrowserMode } from "./ipc.js";
+import { ipcInvoke, isBrowserMode, isTauri } from "./ipc.js";
 import { locale } from "../stores/locale.svelte.js";
 import type {
   AppConfig,
   GalleryImageEntry,
   GenerationParams,
+  GpuStats,
   InterrogationResult,
   OutputImage,
   QueueInfo,
@@ -573,4 +574,18 @@ export async function readClipboardImageSafe(): Promise<number[]> {
 
 export async function exportLogs(destination: string): Promise<void> {
   return ipcInvoke("export_logs", { destination });
+}
+
+export async function getGpuStats(): Promise<GpuStats[]> {
+  if (isTauri) {
+    return ipcInvoke("get_gpu_stats");
+  }
+  if (!isBrowserMode) return [];
+  const { getAuthToken } = await import("./ipc.js");
+  const headers: Record<string, string> = {};
+  const token = getAuthToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const resp = await fetch("/internal-api/_gpu_stats", { headers });
+  if (!resp.ok) throw new Error(await resp.text());
+  return resp.json();
 }

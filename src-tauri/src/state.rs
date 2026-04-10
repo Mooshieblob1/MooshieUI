@@ -5,6 +5,7 @@ use tokio::process::Child;
 use tokio::sync::{broadcast, Mutex, Notify, RwLock};
 use tokio::task::JoinHandle;
 
+use crate::comfyui::gpu_manager::GpuManager;
 use crate::config::AppConfig;
 #[cfg(any(feature = "desktop", feature = "server"))]
 use crate::interrogator::InterrogatorState;
@@ -39,6 +40,8 @@ pub struct HeldPrompt {
 pub struct PromptQueue {
     /// prompt_id → username (None = admin/local)
     owners: std::sync::RwLock<HashMap<String, Option<String>>>,
+    /// prompt_id → worker_id that is executing this prompt.
+    worker_map: std::sync::RwLock<HashMap<String, u32>>,
     /// Ordered list of (prompt_id, username) for queue position tracking
     pub(crate) queue: std::sync::RwLock<Vec<(String, Option<String>)>>,
     /// Prompts waiting to be submitted to ComfyUI (fair queue held prompts).
@@ -51,6 +54,7 @@ impl PromptQueue {
     pub fn new() -> Self {
         Self {
             owners: std::sync::RwLock::new(HashMap::new()),
+            worker_map: std::sync::RwLock::new(HashMap::new()),
             queue: std::sync::RwLock::new(Vec::new()),
             held: std::sync::Mutex::new(Vec::new()),
             drain_notify: Notify::new(),
@@ -133,21 +137,38 @@ impl PromptQueue {
 
     /// Remove a completed/errored prompt from the position queue.
     /// Keeps the ownership mapping so in-flight SSE events can still be filtered.
-    pub fn finish(&self, prompt_id: &str) {
+    /// Returns the worker_id that was handling this prompt (if tracked).
+    pub fn finish(&self, prompt_id: &str) -> Option<u32> {
+        let worker_id = self.worker_map.write().unwrap().remove(prompt_id);
         self.queue
             .write()
             .unwrap()
             .retain(|(id, _)| id != prompt_id);
+        worker_id
     }
 
     /// Remove a prompt entirely (position + ownership).
     /// Only used for explicit cancellation, not completion.
     pub fn remove(&self, prompt_id: &str) {
         self.owners.write().unwrap().remove(prompt_id);
+        self.worker_map.write().unwrap().remove(prompt_id);
         self.queue
             .write()
             .unwrap()
             .retain(|(id, _)| id != prompt_id);
+    }
+
+    /// Record which worker is handling a prompt.
+    pub fn set_worker(&self, prompt_id: &str, worker_id: u32) {
+        self.worker_map
+            .write()
+            .unwrap()
+            .insert(prompt_id.to_string(), worker_id);
+    }
+
+    /// Get the worker handling a prompt.
+    pub fn worker_of(&self, prompt_id: &str) -> Option<u32> {
+        self.worker_map.read().unwrap().get(prompt_id).copied()
     }
 
     /// Check if a prompt_id belongs to a specific user.
@@ -245,17 +266,21 @@ pub struct AppState {
     pub web_server_running: std::sync::atomic::AtomicBool,
     /// Multi-user generation queue — tracks prompt ownership and position.
     pub prompt_queue: PromptQueue,
+    /// Multi-GPU worker manager — distributes prompts across N GPU backends.
+    pub gpu_manager: GpuManager,
 }
 
 impl AppState {
     pub fn new(config: AppConfig) -> Self {
         let (event_tx, _) = broadcast::channel(1024);
+        let http_client = reqwest::Client::new();
+        let gpu_manager = GpuManager::new(&config, http_client.clone());
         Self {
             config: RwLock::new(config),
             comfyui_process: Mutex::new(None),
             ws_handle: Mutex::new(None),
             client_id: uuid::Uuid::new_v4().to_string(),
-            http_client: reqwest::Client::new(),
+            http_client,
             #[cfg(any(feature = "desktop", feature = "server"))]
             interrogator: Arc::new(RwLock::new(InterrogatorState::new())),
             event_tx,
@@ -265,6 +290,7 @@ impl AppState {
             app_mode_active: std::sync::atomic::AtomicBool::new(false),
             web_server_running: std::sync::atomic::AtomicBool::new(false),
             prompt_queue: PromptQueue::new(),
+            gpu_manager,
         }
     }
 

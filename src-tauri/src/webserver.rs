@@ -261,6 +261,8 @@ pub async fn start_server(
             "/internal-api/_embed_temp_metadata",
             post(embed_temp_metadata_handler),
         )
+        // GPU stats — available to all authenticated users
+        .route("/internal-api/_gpu_stats", get(gpu_stats_handler))
         // Generic IPC command proxy
         .route("/internal-api/{command}", post(command_handler))
         // Static file serving (frontend)
@@ -306,7 +308,10 @@ pub async fn start_server(
                                             &pid[..8.min(pid.len())],
                                             owner.as_deref().unwrap_or("admin"),
                                         );
-                                        cleanup_state.prompt_queue.finish(&pid);
+                                        // Release the GPU worker that handled this prompt
+                                        if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
+                                            cleanup_state.gpu_manager.mark_worker_idle(wid).await;
+                                        }
                                         cleanup_state.broadcast_queue_positions();
                                         // Signal the drain reactor to submit next held prompt
                                         cleanup_state.prompt_queue.drain_notify.notify_one();
@@ -321,7 +326,13 @@ pub async fn start_server(
                                         &pid[..8.min(pid.len())],
                                         owner.as_deref().unwrap_or("admin"),
                                     );
-                                    cleanup_state.prompt_queue.finish(&pid);
+                                    // Release the GPU worker (error is transient, mark idle)
+                                    if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
+                                        cleanup_state
+                                            .gpu_manager
+                                            .mark_worker_error_then_idle(wid)
+                                            .await;
+                                    }
                                     cleanup_state.broadcast_queue_positions();
                                     // Signal the drain reactor to submit next held prompt
                                     cleanup_state.prompt_queue.drain_notify.notify_one();
@@ -350,13 +361,16 @@ pub async fn start_server(
                 drain_state.prompt_queue.drain_notify.notified().await;
                 // Submit one held prompt per completion signal.
                 if let Some(hp) = drain_state.prompt_queue.take_next_held() {
+                    let timeout = std::time::Duration::from_secs(300);
                     let res = drain_state
-                        .queue_prompt_request(hp.workflow, &drain_state.client_id)
+                        .gpu_manager
+                        .submit_prompt(hp.workflow, &drain_state.client_id, timeout)
                         .await;
                     match res {
-                        Ok(response) => {
-                            // Signal the waiting handler with the result.
-                            // The handler will replace the placeholder in the queue.
+                        Ok((worker_id, response)) => {
+                            drain_state
+                                .prompt_queue
+                                .set_worker(&response.prompt_id, worker_id);
                             *hp.result.lock().await = Some(Ok((response.prompt_id, 0)));
                         }
                         Err(e) => {
@@ -952,6 +966,27 @@ async fn embed_temp_metadata_handler(
     }
 }
 
+/// GPU stats handler — returns nvidia-smi data merged with worker statuses.
+async fn gpu_stats_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return unauthorized_response("Authentication required");
+    }
+
+    match crate::commands::api::get_gpu_stats_inner(&state.app).await {
+        Ok(stats) => axum::Json(stats).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to get GPU stats: {}", e),
+        )
+            .into_response(),
+    }
+}
+
 /// Generic command handler — proxies IPC commands via HTTP POST.
 ///
 /// The frontend sends `POST /internal-api/{command}` with a JSON body
@@ -1413,12 +1448,17 @@ async fn dispatch_command(
                 }))
             } else {
                 // Direct submission (admin or user's first prompt)
-                let response = state
-                    .queue_prompt_request(workflow, &state.client_id)
+                let timeout = std::time::Duration::from_secs(300);
+                let (worker_id, response) = state
+                    .gpu_manager
+                    .submit_prompt(workflow, &state.client_id, timeout)
                     .await
                     .map_err(|e| e.to_string())?;
 
                 state.prompt_queue.insert(&response.prompt_id, user);
+                state
+                    .prompt_queue
+                    .set_worker(&response.prompt_id, worker_id);
 
                 state.broadcast_queue_positions();
 

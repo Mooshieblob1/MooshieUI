@@ -32,13 +32,20 @@ pub async fn generate(
             serde_json::to_string_pretty(&workflow).unwrap_or_default()
         );
     }
-    let response = state
-        .queue_prompt_request(workflow, &state.client_id)
+
+    // Route through GPU manager for multi-GPU distribution
+    let timeout = std::time::Duration::from_secs(300);
+    let (worker_id, response) = state
+        .gpu_manager
+        .submit_prompt(workflow, &state.client_id, timeout)
         .await?;
 
     // Track the Tauri (host) prompt in the shared queue so LAN users see
     // an accurate queue position.  None = admin / host user.
     state.prompt_queue.insert(&response.prompt_id, None);
+    state
+        .prompt_queue
+        .set_worker(&response.prompt_id, worker_id);
     state.broadcast_queue_positions();
 
     Ok(GenerateResponse {

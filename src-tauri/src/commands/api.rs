@@ -2641,3 +2641,110 @@ pub async fn read_clipboard_image(app: AppHandle) -> Result<Vec<u8>, AppError> {
 
     Ok(png_bytes)
 }
+
+// ---------------------------------------------------------------------------
+// GPU stats — live nvidia-smi data + worker status
+// ---------------------------------------------------------------------------
+
+/// Per-GPU stats returned to the frontend.
+#[derive(Debug, Clone, Serialize)]
+pub struct GpuStats {
+    /// GPU index (matches CUDA device order)
+    pub index: u32,
+    /// GPU name (e.g. "NVIDIA RTX 3090 Ti")
+    pub name: String,
+    /// VRAM used in MiB
+    pub vram_used_mb: u64,
+    /// VRAM total in MiB
+    pub vram_total_mb: u64,
+    /// GPU utilization percentage (0–100)
+    pub gpu_util: u32,
+    /// GPU temperature in Celsius
+    pub temperature: u32,
+    /// Power draw in watts
+    pub power_draw_w: u32,
+    /// Worker status (if a MooshieUI worker is assigned to this GPU)
+    pub worker: Option<GpuWorkerInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GpuWorkerInfo {
+    pub worker_id: u32,
+    pub port: u16,
+    pub status: String,
+    pub reserved: bool,
+    pub label: String,
+}
+
+/// Query live GPU stats from nvidia-smi.
+fn query_nvidia_smi_stats() -> Result<Vec<GpuStats>, AppError> {
+    let output = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .map_err(|e| AppError::Other(format!("nvidia-smi not found: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Other(format!("nvidia-smi failed: {}", stderr)));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut gpus = Vec::new();
+
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+        if parts.len() < 7 {
+            continue;
+        }
+        let index = parts[0].parse::<u32>().unwrap_or(0);
+        let name = parts[1].to_string();
+        let vram_used = parts[2].parse::<f64>().unwrap_or(0.0) as u64;
+        let vram_total = parts[3].parse::<f64>().unwrap_or(0.0) as u64;
+        let gpu_util = parts[4].parse::<u32>().unwrap_or(0);
+        let temperature = parts[5].parse::<u32>().unwrap_or(0);
+        let power_draw = parts[6].parse::<f64>().unwrap_or(0.0) as u32;
+
+        gpus.push(GpuStats {
+            index,
+            name,
+            vram_used_mb: vram_used,
+            vram_total_mb: vram_total,
+            gpu_util,
+            temperature,
+            power_draw_w: power_draw,
+            worker: None,
+        });
+    }
+
+    Ok(gpus)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn get_gpu_stats(state: State<'_, Arc<AppState>>) -> Result<Vec<GpuStats>, AppError> {
+    get_gpu_stats_inner(&state).await
+}
+
+/// Shared implementation used by both Tauri command and REST handler.
+pub async fn get_gpu_stats_inner(state: &AppState) -> Result<Vec<GpuStats>, AppError> {
+    let mut gpus = query_nvidia_smi_stats()?;
+
+    // Merge worker status info
+    let statuses = state.gpu_manager.worker_statuses().await;
+    for ws in &statuses {
+        if let Some(gpu) = gpus.iter_mut().find(|g| g.index == ws.gpu_index) {
+            gpu.worker = Some(GpuWorkerInfo {
+                worker_id: ws.id,
+                port: ws.port,
+                status: format!("{:?}", ws.status).to_lowercase(),
+                reserved: ws.reserved,
+                label: ws.label.clone(),
+            });
+        }
+    }
+
+    Ok(gpus)
+}

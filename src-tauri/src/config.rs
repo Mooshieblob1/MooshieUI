@@ -1,6 +1,26 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Per-GPU worker configuration for multi-GPU setups.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GpuWorkerConfig {
+    /// CUDA device index (maps to CUDA_VISIBLE_DEVICES).
+    pub gpu_index: u32,
+    /// Port for this worker's ComfyUI instance. Auto-assigned if None.
+    pub port: Option<u16>,
+    /// Whether this worker is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Human-readable label (e.g. "RTX 4090").
+    pub label: Option<String>,
+    /// VRAM mode override ("high", "normal", "low", "none"). Falls back to global.
+    pub vram_mode: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -44,6 +64,9 @@ pub struct AppConfig {
     pub ui_server_port: u16,
     /// Enable LAN access (bind to 0.0.0.0 instead of 127.0.0.1). Only effective in browser mode.
     pub lan_enabled: bool,
+    /// Multi-GPU worker configs. When empty, single-worker mode (backward compat).
+    #[serde(default)]
+    pub gpu_workers: Vec<GpuWorkerConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -85,6 +108,7 @@ impl Default for AppConfig {
             browser_mode: false,
             ui_server_port: 3200,
             lan_enabled: false,
+            gpu_workers: vec![],
         }
     }
 }

@@ -174,3 +174,22 @@ export interface InterrogationResult {
   copyright_tags: TagResult[];
   rating_tags: TagResult[];
 }
+
+export interface GpuWorkerInfo {
+  worker_id: number;
+  port: number;
+  status: string;
+  reserved: boolean;
+  label: string;
+}
+
+export interface GpuStats {
+  index: number;
+  name: string;
+  vram_used_mb: number;
+  vram_total_mb: number;
+  gpu_util: number;
+  temperature: number;
+  power_draw_w: number;
+  worker: GpuWorkerInfo | null;
+}

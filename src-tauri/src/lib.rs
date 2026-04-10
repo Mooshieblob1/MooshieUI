@@ -375,6 +375,7 @@ pub fn run() {
             commands::interrogator::interrogate_clipboard,
             commands::api::fetch_cached_image,
             commands::api::read_clipboard_image,
+            commands::api::get_gpu_stats,
             setup::check_setup,
             setup::detect_gpu,
             setup::run_setup,

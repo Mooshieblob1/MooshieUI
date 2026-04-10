@@ -84,37 +84,72 @@ async fn main() {
 
     // Auto-start ComfyUI if configured
     if auto_start {
-        log::info!("Auto-starting ComfyUI...");
-        match process::start_comfyui_process(&state).await {
-            Ok(result) => {
-                log::info!("ComfyUI start result: {:?}", result);
+        let multi_gpu = !state.gpu_manager.is_single_worker();
 
-                // Wait for ComfyUI to become ready
-                match process::wait_for_ready(&state, 120).await {
-                    Ok(()) => {
-                        log::info!("ComfyUI server is ready");
-                        let event_tx = state.event_tx.clone();
-                        if let Err(e) =
-                            websocket::connect_websocket_headless(&state, event_tx).await
-                        {
-                            log::error!("Failed to connect WebSocket: {}", e);
-                        }
-                        state.broadcast("comfyui:server_ready", serde_json::json!(null));
-                    }
-                    Err(e) => {
-                        log::error!("ComfyUI failed to become ready: {}", e);
-                        state.broadcast(
-                            "comfyui:server_error",
-                            serde_json::json!({
-                                "error": e.to_string(),
-                                "crashed": e.to_string().contains("exited with"),
-                            }),
-                        );
+        if multi_gpu {
+            // Multi-GPU mode: start all configured workers
+            log::info!(
+                "Auto-starting ComfyUI on {} GPU workers...",
+                state.gpu_manager.workers.len()
+            );
+            let results = process::start_all_workers(&state).await;
+            for (wid, res) in &results {
+                if let Err(e) = res {
+                    log::error!("Worker {} failed to start: {}", wid, e);
+                }
+            }
+
+            // Wait for all workers to become ready (in parallel)
+            process::wait_all_workers_ready(&state, 120).await;
+
+            // Connect WebSocket for each ready worker
+            for worker in &state.gpu_manager.workers {
+                let status = *worker.status.read().await;
+                if status == comfyui_desktop_lib::comfyui::gpu_manager::WorkerStatus::Idle {
+                    let event_tx = state.event_tx.clone();
+                    if let Err(e) =
+                        websocket::connect_websocket_for_worker(&state, worker, event_tx).await
+                    {
+                        log::error!("Worker {} WebSocket failed: {}", worker.id, e);
                     }
                 }
             }
-            Err(e) => {
-                log::error!("Failed to start ComfyUI: {}", e);
+
+            state.broadcast("comfyui:server_ready", serde_json::json!(null));
+        } else {
+            // Single-worker mode (backward compat)
+            log::info!("Auto-starting ComfyUI...");
+            match process::start_comfyui_process(&state).await {
+                Ok(result) => {
+                    log::info!("ComfyUI start result: {:?}", result);
+
+                    // Wait for ComfyUI to become ready
+                    match process::wait_for_ready(&state, 120).await {
+                        Ok(()) => {
+                            log::info!("ComfyUI server is ready");
+                            let event_tx = state.event_tx.clone();
+                            if let Err(e) =
+                                websocket::connect_websocket_headless(&state, event_tx).await
+                            {
+                                log::error!("Failed to connect WebSocket: {}", e);
+                            }
+                            state.broadcast("comfyui:server_ready", serde_json::json!(null));
+                        }
+                        Err(e) => {
+                            log::error!("ComfyUI failed to become ready: {}", e);
+                            state.broadcast(
+                                "comfyui:server_error",
+                                serde_json::json!({
+                                    "error": e.to_string(),
+                                    "crashed": e.to_string().contains("exited with"),
+                                }),
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to start ComfyUI: {}", e);
+                }
             }
         }
     }
@@ -125,12 +160,17 @@ async fn main() {
         .expect("Failed to listen for ctrl-c");
     log::info!("Shutdown signal received, cleaning up...");
 
-    // Kill ComfyUI process
-    let mut proc = state.comfyui_process.lock().await;
-    if let Some(ref mut child) = *proc {
-        log::info!("Shutting down ComfyUI process...");
-        let _ = child.start_kill();
-        *proc = None;
+    // Kill ComfyUI process(es)
+    if !state.gpu_manager.is_single_worker() {
+        log::info!("Shutting down all GPU workers...");
+        process::stop_all_workers(&state).await;
+    } else {
+        let mut proc = state.comfyui_process.lock().await;
+        if let Some(ref mut child) = *proc {
+            log::info!("Shutting down ComfyUI process...");
+            let _ = child.start_kill();
+            *proc = None;
+        }
     }
 
     server_handle.abort();
