@@ -51,6 +51,8 @@
     await Promise.race([Promise.allSettled(fetches), timeout]);
   }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
+  /** Timestamp of the most recent SSE event per prompt — prevents false reconciliation. */
+  let promptLastActivity = new Map<string, number>();
 
   // Lightbox zoom state — only scale needs reactivity (used in template conditionals)
   let lbScale = 1;
@@ -1365,6 +1367,7 @@
         // Filter by prompt_id — reject events for other users' prompts
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
         if (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId) return;
+        if (data.prompt_id) promptLastActivity.set(data.prompt_id, Date.now());
         if (data.prompt_id && !progress.activePromptId) {
           progress.setActivePrompt(data.prompt_id);
         }
@@ -1492,6 +1495,8 @@
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) {
           return;
         }
+        // Record activity so the reconciler knows this prompt is alive
+        if (data.prompt_id) promptLastActivity.set(data.prompt_id, Date.now());
         if (data.node === null) {
           if (!progress.isGenerating) return;
           const promptId = data.prompt_id;
@@ -1508,6 +1513,7 @@
           }
 
           const item = progress.completePrompt(promptId);
+          promptLastActivity.delete(promptId);
           if (item) {
             const images = pendingOutputImages.get(promptId) ?? [];
             pendingOutputImages.delete(promptId);
@@ -1534,12 +1540,14 @@
         if (data.prompt_id) {
           pendingOutputImages.delete(data.prompt_id);
           pendingOutputFetches.delete(data.prompt_id);
+          promptLastActivity.delete(data.prompt_id);
           progress.removePrompt(data.prompt_id);
           compare.clearGridBatch();
         } else {
           // No prompt_id — clear everything
           pendingOutputImages.clear();
           pendingOutputFetches.clear();
+          promptLastActivity.clear();
           progress.cancelAll();
           compare.clearGridBatch();
         }
@@ -1564,7 +1572,13 @@
             : (item as any)?.prompt_id;
           if (pid) allPromptIds.add(pid);
         }
+        const now = Date.now();
         for (const p of progress.pendingPrompts) {
+          // Skip prompts that received an SSE event within the last 30s —
+          // they're clearly still alive even if the queue query missed them.
+          const lastEvent = promptLastActivity.get(p.promptId) ?? 0;
+          if (now - lastEvent < 30_000) continue;
+
           if (!allPromptIds.has(p.promptId)) {
             console.warn(`[reconcile] Prompt ${p.promptId} no longer in ComfyUI queue — completing`);
             // Wait for any in-flight output_image fetches
@@ -1574,6 +1588,7 @@
               pendingOutputFetches.delete(p.promptId);
             }
             const item = progress.completePrompt(p.promptId);
+            promptLastActivity.delete(p.promptId);
             if (item) {
               const images = pendingOutputImages.get(p.promptId) ?? [];
               pendingOutputImages.delete(p.promptId);

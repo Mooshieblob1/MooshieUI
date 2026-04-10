@@ -1,5 +1,17 @@
 # Changelog
 
+## What's New in v0.8.1
+
+### Reconciler Alias Resolution Fix
+- **Queue query aggregates all GPU workers** — the `get_queue` handler now queries every GPU worker's ComfyUI queue instead of only the primary, ensuring prompts on any worker are visible to the frontend reconciler.
+- **Prompt ID alias resolution in queue responses** — real ComfyUI prompt IDs are now translated back to the `gen-*` placeholder IDs the frontend tracks, preventing the reconciler from falsely concluding a running prompt has vanished.
+
+### Activity-Guarded Reconciler
+- **30-second activity window** — prompts that received an SSE event (executing, progress) within the last 30 seconds are never reconciled, even if the queue query momentarily misses them. This prevents tab-switching within the app from killing in-progress generations.
+- **Proper cleanup** — the activity timestamp map is cleaned up on prompt completion and error, preventing unbounded memory growth.
+
+---
+
 ## What's New in v0.8.0
 
 ### Non-Blocking Generation (Cloudflare 524 Fix)

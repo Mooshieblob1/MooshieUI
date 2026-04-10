@@ -1326,8 +1326,44 @@ async fn dispatch_command(
             Ok(serde_json::json!(result))
         }
         "get_queue" => {
-            let result = state.get_queue_info().await.map_err(|e| e.to_string())?;
-            serde_json::to_value(result).map_err(|e| e.to_string())
+            // Aggregate queues from ALL GPU workers so the frontend reconciler
+            // can see prompts regardless of which worker is executing them.
+            let mut running: Vec<serde_json::Value> = Vec::new();
+            let mut pending: Vec<serde_json::Value> = Vec::new();
+            for worker in &state.gpu_manager.workers {
+                let url = format!("{}/queue", worker.base_url);
+                if let Ok(resp) = state.http_client.get(&url).send().await {
+                    if let Ok(val) = resp.json::<serde_json::Value>().await {
+                        if let Some(arr) = val.get("queue_running").and_then(|v| v.as_array()) {
+                            running.extend(arr.iter().cloned());
+                        }
+                        if let Some(arr) = val.get("queue_pending").and_then(|v| v.as_array()) {
+                            pending.extend(arr.iter().cloned());
+                        }
+                    }
+                }
+            }
+            // Resolve aliases: replace real ComfyUI prompt IDs with the
+            // placeholder gen-* IDs the frontend knows about.
+            let resolve = |entries: &mut Vec<serde_json::Value>| {
+                for entry in entries.iter_mut() {
+                    // ComfyUI queue entries are arrays: [index, prompt_id, ...]
+                    if let Some(arr) = entry.as_array_mut() {
+                        if let Some(pid) = arr.get(1).and_then(|v| v.as_str()) {
+                            let resolved = state.prompt_queue.resolve_alias(pid);
+                            if resolved != pid {
+                                arr[1] = serde_json::Value::String(resolved);
+                            }
+                        }
+                    }
+                }
+            };
+            resolve(&mut running);
+            resolve(&mut pending);
+            Ok(serde_json::json!({
+                "queue_running": running,
+                "queue_pending": pending,
+            }))
         }
         "get_history" => {
             let prompt_id = args["promptId"].as_str().ok_or("Missing promptId")?;
