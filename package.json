@@ -18,7 +18,7 @@
     "@tauri-apps/plugin-process": "^2",
     "@tauri-apps/plugin-shell": "^2",
     "@tauri-apps/plugin-store": "^2",
-    "@tauri-apps/plugin-updater": "^2.10.0",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "konva": "^10.2.3",
     "marked": "^18.0.0",
     "ntc-ts": "^0.0.8",
