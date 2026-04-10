@@ -30,6 +30,11 @@ const ru: Record<string, string> = {
   "common.close": "Закрыть",
   "common.or": "или",
   "common.on": "Вкл",
+  "common.off": "Выкл",
+  "common.collapse": "Свернуть {section}",
+  "common.expand": "Развернуть {section}",
+  "common.drop_to_import": "Перетащите для импорта {section}",
+  "common.no_clipboard_image": "Изображение не найдено в буфере обмена",
   "common.detected": "Обнаружено",
   "common.click_to_type": "Нажмите, чтобы ввести значение",
 
@@ -277,6 +282,7 @@ const ru: Record<string, string> = {
   "generation.dimensions.swap": "Поменять Ш/В",
   "generation.dimensions.result": "Результат",
   "generation.swap_panels": "Поменять левую/правую панели",
+  "generation.settings.title": "Настройки генерации",
 
   "generation.sampler.title": "Сэмплер",
   "generation.sampler.label": "Сэмплер",
@@ -457,6 +463,28 @@ const ru: Record<string, string> = {
   "generation.error_no_image": "Для инпейнтинга нужно входное изображение. Загрузите или используйте подготовленное.",
   "generation.error_no_mask": "Для инпейнтинга нужна маска. Нарисуйте маску в Холст-редакторе или загрузите.",
   "generation.downloading_facefix": "Скачивание модели коррекции лиц...",
+
+  // Session context menu
+  "generation.ctx.get_tags": "Получить теги изображения",
+  "generation.ctx.upscale": "Увеличить",
+  "generation.ctx.inpaint": "Инпейнт",
+  "generation.ctx.save_as": "Сохранить как",
+  "generation.ctx.copy": "Копировать",
+  "generation.ctx.delete": "Удалить",
+
+  // Session toast messages
+  "generation.toast.loaded_upscale": "Изображение загружено для увеличения",
+  "generation.toast.loaded_inpaint": "Изображение загружено для инпейнта",
+  "generation.toast.failed_load": "Не удалось загрузить изображение",
+  "generation.toast.failed_drop": "Не удалось прочитать перетащенное изображение",
+
+  // Panel collapse
+  "generation.panel.expand_left": "Развернуть левую панель",
+  "generation.panel.collapse_left": "Свернуть левую панель",
+  "generation.panel.expand_right": "Развернуть правую панель",
+  "generation.panel.collapse_right": "Свернуть правую панель",
+  "generation.panel.expand_bottom": "Развернуть нижнюю панель",
+  "generation.panel.collapse_bottom": "Свернуть нижнюю панель",
 
   "generation.interrogate.title": "Анализ изображения",
   "generation.interrogate.tip": "Анализирует изображение для извлечения тегов (персонаж, художник, общие). Перетащите изображение, выберите файл или вставьте из буфера обмена. Теги можно применить непосредственно к промпту.",
@@ -868,6 +896,16 @@ const ru: Record<string, string> = {
   "generation.controlnet.uploading": "Загрузка...",
   "generation.controlnet.start_percent_tip": "Когда ControlNet начинает влиять на генерацию (0% = с самого начала). Задержка начала добавляет больше вариаций.",
   "generation.controlnet.end_percent_tip": "Когда ControlNet прекращает влиять на генерацию (100% = до самого конца). Раннее завершение позволяет модели свободно дорабатывать детали.",
+  "generation.controlnet.download_failed": "Ошибка загрузки: {error}",
+  "generation.controlnet.install_starting": "Начало установки...",
+  "generation.controlnet.install_stopping": "Остановка ComfyUI...",
+  "generation.controlnet.install_starting_nodes": "Запуск ComfyUI с новыми узлами...",
+  "generation.controlnet.install_waiting_ready": "Ожидание готовности ComfyUI...",
+  "generation.controlnet.install_timeout": "ComfyUI не стал доступен в течение 120 секунд",
+  "generation.controlnet.install_start_failed": "Не удалось запустить ComfyUI",
+  "generation.controlnet.install_verifying": "Проверка узлов препроцессора...",
+  "generation.controlnet.install_failed": "Ошибка установки: {error}",
+  "generation.controlnet.control_image_alt": "Контрольное изображение",
   "generation.controlnet.preset_canny": "Canny края",
   "generation.controlnet.preset_canny_desc": "Обнаруживает края — лучше всего для сохранения структуры и композиции",
   "generation.controlnet.preset_depth": "Карта глубины",

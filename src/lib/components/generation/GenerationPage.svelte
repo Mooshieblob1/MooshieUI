@@ -19,7 +19,7 @@
   import CanvasEditor from "../canvas/CanvasEditor.svelte";
   import LayerPanel from "../canvas/layers/LayerPanel.svelte";
   import { canvas } from "../../stores/canvas.svelte.js";
-  import { uploadImage, uploadImageBytes, loadGalleryImage, getOutputImage, readClipboardImage } from "../../utils/api.js";
+  import { uploadImage, uploadImageBytes, loadGalleryImage, getOutputImage, readClipboardImageSafe } from "../../utils/api.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage, InterrogationResult } from "../../types/index.js";
@@ -571,7 +571,7 @@
 
   async function handleImagePaste() {
     try {
-      const bytes = await readClipboardImage();
+      const bytes = await readClipboardImageSafe();
       uploading = true;
       const normalized = await normalizeImageBytes(bytes, "pasted_image.png");
 
@@ -591,7 +591,7 @@
 
   async function handleMaskPaste() {
     try {
-      const bytes = await readClipboardImage();
+      const bytes = await readClipboardImageSafe();
       uploading = true;
       const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
       if (maskPreviewUrl) URL.revokeObjectURL(maskPreviewUrl);
@@ -637,10 +637,10 @@
       generation.inputImage = response.name;
       generation.mode = "img2img";
       generation.upscaleEnabled = true;
-      gallery.showToast("Image loaded for upscaling", "success");
+      gallery.showToast(locale.t('generation.toast.loaded_upscale'), "success");
     } catch (e) {
       console.error("Failed to set up upscale:", e);
-      gallery.showToast("Failed to load image", "error");
+      gallery.showToast(locale.t('generation.toast.failed_load'), "error");
     }
   }
 
@@ -669,10 +669,10 @@
         canvas.initCanvas(generation.width, generation.height);
       }
 
-      gallery.showToast("Image loaded for inpainting", "success");
+      gallery.showToast(locale.t('generation.toast.loaded_inpaint'), "success");
     } catch (e) {
       console.error("Failed to set up inpainting:", e);
-      gallery.showToast("Failed to load image", "error");
+      gallery.showToast(locale.t('generation.toast.failed_load'), "error");
     }
   }
 
@@ -700,15 +700,15 @@
     const image = ctxMenuImage;
     if (!image) return [];
     return [
-      { label: "Get Image Tags", action: () => interrogateSessionImage(image) },
+      { label: locale.t('generation.ctx.get_tags'), action: () => interrogateSessionImage(image) },
       { label: "", action: () => {}, separator: true },
-      { label: "Upscale", action: () => upscaleImage(image) },
-      { label: "Inpaint", action: () => inpaintImage(image) },
+      { label: locale.t('generation.ctx.upscale'), action: () => upscaleImage(image) },
+      { label: locale.t('generation.ctx.inpaint'), action: () => inpaintImage(image) },
       { label: "", action: () => {}, separator: true },
-      { label: "Save As", action: () => gallery.saveImageAs(image) },
-      { label: "Copy", action: () => gallery.copyToClipboard(image) },
+      { label: locale.t('generation.ctx.save_as'), action: () => gallery.saveImageAs(image) },
+      { label: locale.t('generation.ctx.copy'), action: () => gallery.copyToClipboard(image) },
       { label: "", action: () => {}, separator: true },
-      { label: "Delete", action: () => gallery.deleteImage(image), destructive: true },
+      { label: locale.t('generation.ctx.delete'), action: () => gallery.deleteImage(image), destructive: true },
     ];
   });
 
@@ -1093,7 +1093,7 @@
             await handleMetadataImportPath(imgPath, importTarget);
           } catch (err) {
             console.error("Tauri drag-drop metadata import failed:", err);
-            gallery.showToast("Failed to read dropped image", "error");
+            gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
           }
           return;
         }
@@ -1225,7 +1225,7 @@
         <button
           class="flex-1 flex items-center justify-between py-2 pr-3 text-xs text-neutral-300 hover:text-neutral-100 focus:outline-none"
           onclick={() => (dimensionsSectionOpen = !dimensionsSectionOpen)}
-          title={dimensionsSectionOpen ? "Collapse Dimensions" : "Expand Dimensions"}
+          title={dimensionsSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.dimensions.title') }) : locale.t('common.expand', { section: locale.t('generation.dimensions.title') })}
         >
           <span class="font-medium">{locale.t('generation.dimensions.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {dimensionsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1239,7 +1239,7 @@
       {#if metadataDropTarget === "dimensions"}
         <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
-            Drop to import dimensions
+            {locale.t('common.drop_to_import', { section: locale.t('generation.dimensions.title') })}
           </span>
         </div>
       {/if}
@@ -1258,7 +1258,7 @@
         <button
           class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (promptsSectionOpen = !promptsSectionOpen)}
-          title={promptsSectionOpen ? "Collapse Prompts" : "Expand Prompts"}
+          title={promptsSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.prompts.title') }) : locale.t('common.expand', { section: locale.t('generation.prompts.title') })}
         >
           <span class="font-medium">{locale.t('generation.prompts.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {promptsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1272,7 +1272,7 @@
       {#if metadataDropTarget === "prompts"}
         <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
-            Drop to import prompts
+            {locale.t('common.drop_to_import', { section: locale.t('generation.prompts.title') })}
           </span>
         </div>
       {/if}
@@ -1286,7 +1286,7 @@
         <button
           class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (interrogateSectionOpen = !interrogateSectionOpen)}
-          title={interrogateSectionOpen ? "Collapse Interrogate Image" : "Expand Interrogate Image"}
+          title={interrogateSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.interrogate.title') }) : locale.t('common.expand', { section: locale.t('generation.interrogate.title') })}
         >
           <span class="flex items-center gap-1.5 font-medium">
             <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -1310,7 +1310,7 @@
         <button
           class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (imageSectionOpen = !imageSectionOpen)}
-          title={imageSectionOpen ? "Collapse Image Inputs" : "Expand Image Inputs"}
+          title={imageSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.image.title') }) : locale.t('common.expand', { section: locale.t('generation.image.title') })}
         >
           <span class="font-medium">{locale.t('generation.image.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {imageSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1337,7 +1337,7 @@
               <div class="relative group">
                 <img
                   src={imagePreviewUrl}
-                  alt="Input"
+                  alt={locale.t('generation.image.input')}
                   class="w-full rounded-lg border border-neutral-700 object-contain max-h-40"
                 />
                 <button
@@ -1432,7 +1432,7 @@
                 <div class="relative group">
                   <img
                     src={maskPreviewUrl}
-                    alt="Mask"
+                    alt={locale.t('generation.inpaint.mask')}
                     class="w-full rounded-lg border border-neutral-700 object-contain max-h-40"
                   />
                   <button
@@ -1510,7 +1510,7 @@
         <button
           class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (layersSectionOpen = !layersSectionOpen)}
-          title={layersSectionOpen ? "Collapse Inpainting & Layers" : "Expand Inpainting & Layers"}
+          title={layersSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.inpaint.title') }) : locale.t('common.expand', { section: locale.t('generation.inpaint.title') })}
         >
           <span class="font-medium">{locale.t('generation.inpaint.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {layersSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1570,7 +1570,7 @@
         <button
           class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (controlsSectionOpen = !controlsSectionOpen)}
-          title={controlsSectionOpen ? "Collapse Generation Settings" : "Expand Generation Settings"}
+          title={controlsSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.settings.title') }) : locale.t('common.expand', { section: locale.t('generation.settings.title') })}
         >
           <span class="font-medium">{locale.t('generation.settings.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {controlsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1604,7 +1604,7 @@
         <button
           class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (modelSectionOpen = !modelSectionOpen)}
-          title={modelSectionOpen ? "Collapse Model" : "Expand Model"}
+          title={modelSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.model.title') }) : locale.t('common.expand', { section: locale.t('generation.model.title') })}
         >
           <span class="font-medium">{locale.t('generation.model.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {modelSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1618,7 +1618,7 @@
       {#if metadataDropTarget === "model"}
         <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
-            Drop to import model settings
+            {locale.t('common.drop_to_import', { section: locale.t('generation.model.title') })}
           </span>
         </div>
       {/if}
@@ -1637,7 +1637,7 @@
         <button
           class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (samplerSectionOpen = !samplerSectionOpen)}
-          title={samplerSectionOpen ? "Collapse Sampler" : "Expand Sampler"}
+          title={samplerSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.sampler.title') }) : locale.t('common.expand', { section: locale.t('generation.sampler.title') })}
         >
           <span class="font-medium">{locale.t('generation.sampler.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {samplerSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1651,7 +1651,7 @@
       {#if metadataDropTarget === "sampler"}
         <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
-            Drop to import sampler settings
+            {locale.t('common.drop_to_import', { section: locale.t('generation.sampler.title') })}
           </span>
         </div>
       {/if}
@@ -1665,7 +1665,7 @@
         <button
           class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (controlnetSectionOpen = !controlnetSectionOpen)}
-          title={controlnetSectionOpen ? "Collapse ControlNet" : "Expand ControlNet"}
+          title={controlnetSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.controlnet.title') }) : locale.t('common.expand', { section: locale.t('generation.controlnet.title') })}
         >
           <span class="font-medium">{locale.t('generation.controlnet.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {controlnetSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1691,7 +1691,7 @@
         <button
           class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (facefixSectionOpen = !facefixSectionOpen)}
-          title={facefixSectionOpen ? "Collapse Face Fix" : "Expand Face Fix"}
+          title={facefixSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.facefix.title') }) : locale.t('common.expand', { section: locale.t('generation.facefix.title') })}
         >
           <span class="font-medium">{locale.t('generation.facefix.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {facefixSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1705,7 +1705,7 @@
       {#if metadataDropTarget === "facefix"}
         <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
-            Drop to import face fix settings
+            {locale.t('common.drop_to_import', { section: locale.t('generation.facefix.title') })}
           </span>
         </div>
       {/if}
@@ -1724,7 +1724,7 @@
         <button
           class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
           onclick={() => (postSectionOpen = !postSectionOpen)}
-          title={postSectionOpen ? "Collapse Upscale" : "Expand Upscale"}
+          title={postSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.upscale.title') }) : locale.t('common.expand', { section: locale.t('generation.upscale.title') })}
         >
           <span class="font-medium">{locale.t('generation.upscale.title')}</span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {postSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1738,7 +1738,7 @@
       {#if metadataDropTarget === "upscaleHistory"}
         <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10 rounded-lg bg-indigo-500/10 border-2 border-dashed border-indigo-400/60">
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
-            Drop to import upscale settings
+            {locale.t('common.drop_to_import', { section: locale.t('generation.upscale.title') })}
           </span>
         </div>
       {/if}
@@ -1830,7 +1830,7 @@
                   {locale.t('generation.inpaint.canvas_editor')}
                 </span>
                 <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
-                  {canvas.isCanvasMode ? 'ON' : 'OFF'}
+                  {canvas.isCanvasMode ? locale.t('common.on') : locale.t('common.off')}
                 </span>
               </button>
             {/if}
@@ -1868,7 +1868,7 @@
           class="absolute top-1/2 -translate-y-1/2 left-0 z-20 w-6 h-12 flex items-center justify-center rounded-r border border-l-0 transition-colors {leftCollapsed
             ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
             : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
-          title={leftCollapsed ? "Expand left panel" : "Collapse left panel"}
+          title={leftCollapsed ? locale.t('generation.panel.expand_left') : locale.t('generation.panel.collapse_left')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {leftCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
@@ -1904,7 +1904,7 @@
             class="absolute left-1/2 -translate-x-1/2 bottom-0 z-20 h-6 w-12 flex items-center justify-center rounded-t border border-b-0 transition-colors {bottomCollapsed
               ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
               : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
-            title={bottomCollapsed ? "Expand bottom panel" : "Collapse bottom panel"}
+            title={bottomCollapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {bottomCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
@@ -1935,7 +1935,7 @@
           class="absolute top-1/2 -translate-y-1/2 right-0 z-20 w-6 h-12 flex items-center justify-center rounded-l border border-r-0 transition-colors {rightCollapsed
             ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
             : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
-          title={rightCollapsed ? "Expand right panel" : "Collapse right panel"}
+          title={rightCollapsed ? locale.t('generation.panel.expand_right') : locale.t('generation.panel.collapse_right')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {rightCollapsed ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
@@ -1993,7 +1993,7 @@
                   {locale.t('generation.inpaint.canvas_editor')}
                 </span>
                 <span class="text-[10px] {canvas.isCanvasMode ? 'text-indigo-400' : 'text-neutral-500'}">
-                  {canvas.isCanvasMode ? 'ON' : 'OFF'}
+                  {canvas.isCanvasMode ? locale.t('common.on') : locale.t('common.off')}
                 </span>
               </button>
             {/if}

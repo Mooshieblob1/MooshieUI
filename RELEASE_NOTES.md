@@ -1,3 +1,19 @@
+## What's New in v0.7.7
+
+### Full i18n Coverage
+- **40+ hardcoded English strings localized** — toast messages, context menu labels, panel collapse/expand titles, drop overlay texts, alt attributes, ON/OFF toggles, ControlNet install status messages, and clipboard errors are now all routed through the `locale.t()` system with translations for all 11 supported languages (English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Russian, Chinese, Traditional Chinese).
+
+### Browser-Mode Clipboard Improvements
+- **Interrogate from clipboard in browser mode** — the "Interrogate Clipboard" feature now works on headless servers by reading images directly via the Web Clipboard API instead of relying on the unavailable Tauri clipboard command.
+- **`readClipboardImageSafe` fallback** — new clipboard utility that automatically falls through from the native Tauri command to the browser Clipboard API, used by both ControlNet image paste and generation input paste.
+- **Simplified gallery clipboard flow** — removed redundant `navigator.clipboard?.write` feature-detection guard in favor of the unified `writeBlobToClipboard` helper, which already handles insecure-context fallback internally.
+
+### Bug Fixes
+- **Face fix model hash updated** — the YOLOv8n face detection model SHA-256 hash was corrected to match the current upstream file, preventing false integrity failures during download.
+- **Docker OpenCV fix** — added `opencv-python-headless` to the Docker build so ControlNet preprocessors that depend on OpenCV work out of the box.
+
+---
+
 ## What's New in v0.7.6
 
 ### Pip Install Fix

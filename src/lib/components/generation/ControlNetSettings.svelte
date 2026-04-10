@@ -7,7 +7,7 @@
     downloadModel,
     uploadImage,
     uploadImageBytes,
-    readClipboardImage,
+    readClipboardImageSafe,
     checkNodeAvailable,
     isCustomNodeInstalled,
     installCustomNode,
@@ -115,7 +115,7 @@
           await downloadModel(model.url, "controlnet", model.filename);
           await models.refresh();
         } catch (e) {
-          downloadError = `Download failed: ${e}`;
+          downloadError = locale.t('generation.controlnet.download_failed', { error: String(e) });
           generation.controlnetModel = null;
         } finally {
           downloading = null;
@@ -159,7 +159,7 @@
 
   async function handleImagePaste() {
     try {
-      const bytes = await readClipboardImage();
+      const bytes = await readClipboardImageSafe();
       uploadingImage = true;
       const result = await uploadImageBytes(bytes, "pasted_image.png");
       generation.controlnetImage = result.name;
@@ -216,7 +216,7 @@
     installing = true;
     installError = null;
     installStep = "clone";
-    installMessage = "Starting installation...";
+    installMessage = locale.t('generation.controlnet.install_starting');
     try {
       await installCustomNode(
         "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
@@ -225,18 +225,18 @@
 
       // Restart ComfyUI to load new nodes
       installStep = "restart";
-      installMessage = "Stopping ComfyUI...";
+      installMessage = locale.t('generation.controlnet.install_stopping');
       connection.connected = false;
       await stopComfyui();
 
-      installMessage = "Starting ComfyUI with new nodes...";
+      installMessage = locale.t('generation.controlnet.install_starting_nodes');
       await startComfyui();
 
       // Wait for the server to actually be ready via the event system
-      installMessage = "Waiting for ComfyUI to become ready...";
+      installMessage = locale.t('generation.controlnet.install_waiting_ready');
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error("ComfyUI did not become ready within 120 seconds"));
+          reject(new Error(locale.t('generation.controlnet.install_timeout')));
         }, 120_000);
 
         const unlistenReady = ipcListen("comfyui:server_ready", () => {
@@ -250,13 +250,13 @@
           clearTimeout(timeout);
           unlistenReady.then((fn) => fn());
           unlistenError.then((fn) => fn());
-          reject(new Error(event.payload?.error || "ComfyUI failed to start"));
+          reject(new Error(event.payload?.error || locale.t('generation.controlnet.install_start_failed')));
         });
       });
 
       // Server is ready — check if the node is now available
       installStep = "verify";
-      installMessage = "Verifying preprocessor nodes...";
+      installMessage = locale.t('generation.controlnet.install_verifying');
       try {
         preprocessorAvailable = await checkNodeAvailable("CannyEdgePreprocessor");
       } catch {
@@ -267,7 +267,7 @@
       installStep = "";
       installMessage = "";
     } catch (e) {
-      installError = `Install failed: ${e}`;
+      installError = locale.t('generation.controlnet.install_failed', { error: String(e) });
       installing = false;
       installStep = "";
       installMessage = "";
@@ -503,7 +503,7 @@
             <div class="relative rounded-lg overflow-hidden bg-neutral-800 border border-neutral-700">
               <img
                 src={imagePreviewUrl}
-                alt="Control image"
+                alt={locale.t('generation.controlnet.control_image_alt')}
                 class="w-full max-h-48 object-contain"
               />
               <div class="absolute top-1.5 right-1.5">

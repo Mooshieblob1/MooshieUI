@@ -1,4 +1,5 @@
-import { ipcInvoke } from "./ipc.js";
+import { ipcInvoke, isBrowserMode } from "./ipc.js";
+import { locale } from "../stores/locale.svelte.js";
 import type {
   AppConfig,
   GalleryImageEntry,
@@ -537,6 +538,29 @@ export async function interrogateClipboard(): Promise<InterrogationResult> {
 
 export async function readClipboardImage(): Promise<number[]> {
   return ipcInvoke("read_clipboard_image");
+}
+
+/**
+ * Read an image from the clipboard, with browser-mode fallback.
+ * In Tauri: uses the native clipboard command.
+ * In browser mode: uses the Web Clipboard API (navigator.clipboard.read()).
+ * Returns raw image bytes as a number array.
+ */
+export async function readClipboardImageSafe(): Promise<number[]> {
+  if (!isBrowserMode) {
+    return readClipboardImage();
+  }
+  const items = await navigator.clipboard.read();
+  for (const item of items) {
+    for (const type of item.types) {
+      if (type.startsWith("image/")) {
+        const blob = await item.getType(type);
+        const buffer = await blob.arrayBuffer();
+        return Array.from(new Uint8Array(buffer));
+      }
+    }
+  }
+  throw new Error(locale.t('common.no_clipboard_image'));
 }
 
 export async function exportLogs(destination: string): Promise<void> {

@@ -30,6 +30,11 @@ const en: Record<string, string> = {
   "common.close": "Close",
   "common.or": "or",
   "common.on": "ON",
+  "common.off": "OFF",
+  "common.collapse": "Collapse {section}",
+  "common.expand": "Expand {section}",
+  "common.drop_to_import": "Drop to import {section}",
+  "common.no_clipboard_image": "No image found in clipboard",
   "common.detected": "detected",
   "common.click_to_type": "Click to type a value",
 
@@ -294,6 +299,7 @@ const en: Record<string, string> = {
   "generation.dimensions.swap": "Swap W/H",
   "generation.dimensions.result": "Result",
   "generation.swap_panels": "Swap left/right panels",
+  "generation.settings.title": "Generation Settings",
 
   // Sampler
   "generation.sampler.title": "Sampler",
@@ -485,6 +491,28 @@ const en: Record<string, string> = {
   "generation.error_no_image": "Inpainting needs an input image. Upload one or use a staged image.",
   "generation.error_no_mask": "Inpainting needs a mask. Paint a mask in Canvas Editor or upload one.",
   "generation.downloading_facefix": "Downloading face fix model...",
+
+  // Session context menu
+  "generation.ctx.get_tags": "Get Image Tags",
+  "generation.ctx.upscale": "Upscale",
+  "generation.ctx.inpaint": "Inpaint",
+  "generation.ctx.save_as": "Save As",
+  "generation.ctx.copy": "Copy",
+  "generation.ctx.delete": "Delete",
+
+  // Session toast messages
+  "generation.toast.loaded_upscale": "Image loaded for upscaling",
+  "generation.toast.loaded_inpaint": "Image loaded for inpainting",
+  "generation.toast.failed_load": "Failed to load image",
+  "generation.toast.failed_drop": "Failed to read dropped image",
+
+  // Panel collapse
+  "generation.panel.expand_left": "Expand left panel",
+  "generation.panel.collapse_left": "Collapse left panel",
+  "generation.panel.expand_right": "Expand right panel",
+  "generation.panel.collapse_right": "Collapse right panel",
+  "generation.panel.expand_bottom": "Expand bottom panel",
+  "generation.panel.collapse_bottom": "Collapse bottom panel",
 
   // Interrogate modal
   "generation.interrogate.title": "Interrogate Image",
@@ -940,6 +968,16 @@ const en: Record<string, string> = {
   "generation.controlnet.uploading": "Uploading...",
   "generation.controlnet.start_percent_tip": "When ControlNet starts influencing the generation (0% = from the very beginning). Delaying the start can add more variation.",
   "generation.controlnet.end_percent_tip": "When ControlNet stops influencing the generation (100% = until the very end). Ending early lets the model refine details freely.",
+  "generation.controlnet.download_failed": "Download failed: {error}",
+  "generation.controlnet.install_starting": "Starting installation...",
+  "generation.controlnet.install_stopping": "Stopping ComfyUI...",
+  "generation.controlnet.install_starting_nodes": "Starting ComfyUI with new nodes...",
+  "generation.controlnet.install_waiting_ready": "Waiting for ComfyUI to become ready...",
+  "generation.controlnet.install_timeout": "ComfyUI did not become ready within 120 seconds",
+  "generation.controlnet.install_start_failed": "ComfyUI failed to start",
+  "generation.controlnet.install_verifying": "Verifying preprocessor nodes...",
+  "generation.controlnet.install_failed": "Install failed: {error}",
+  "generation.controlnet.control_image_alt": "Control image",
 
   "generation.controlnet.preset_canny": "Canny Edge",
   "generation.controlnet.preset_canny_desc": "Detects edges — best for preserving structure and composition",

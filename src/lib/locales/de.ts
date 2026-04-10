@@ -30,6 +30,11 @@ const de: Record<string, string> = {
   "common.close": "Schließen",
   "common.or": "oder",
   "common.on": "An",
+  "common.off": "AUS",
+  "common.collapse": "{section} einklappen",
+  "common.expand": "{section} ausklappen",
+  "common.drop_to_import": "Zum Importieren ablegen: {section}",
+  "common.no_clipboard_image": "Kein Bild in der Zwischenablage gefunden",
   "common.detected": "Erkannt",
   "common.click_to_type": "Klicken, um einen Wert einzugeben",
 
@@ -277,6 +282,7 @@ const de: Record<string, string> = {
   "generation.dimensions.swap": "Breite/Höhe tauschen",
   "generation.dimensions.result": "Ergebnis",
   "generation.swap_panels": "Linkes/rechtes Panel tauschen",
+  "generation.settings.title": "Generierungseinstellungen",
 
   "generation.sampler.title": "Sampler",
   "generation.sampler.label": "Sampler",
@@ -457,6 +463,28 @@ const de: Record<string, string> = {
   "generation.error_no_image": "Inpainting benötigt ein Eingabebild. Laden Sie eins hoch oder verwenden Sie ein bereitgestelltes Bild.",
   "generation.error_no_mask": "Inpainting benötigt eine Maske. Zeichnen Sie eine im Canvas-Editor oder laden Sie eine hoch.",
   "generation.downloading_facefix": "Gesichtskorrektur-Modell wird heruntergeladen...",
+
+  // Session context menu
+  "generation.ctx.get_tags": "Bild-Tags abrufen",
+  "generation.ctx.upscale": "Hochskalieren",
+  "generation.ctx.inpaint": "Inpainting",
+  "generation.ctx.save_as": "Speichern unter",
+  "generation.ctx.copy": "Kopieren",
+  "generation.ctx.delete": "Löschen",
+
+  // Session toast messages
+  "generation.toast.loaded_upscale": "Bild zum Hochskalieren geladen",
+  "generation.toast.loaded_inpaint": "Bild für Inpainting geladen",
+  "generation.toast.failed_load": "Bild konnte nicht geladen werden",
+  "generation.toast.failed_drop": "Abgelegtes Bild konnte nicht gelesen werden",
+
+  // Panel collapse
+  "generation.panel.expand_left": "Linkes Panel ausklappen",
+  "generation.panel.collapse_left": "Linkes Panel einklappen",
+  "generation.panel.expand_right": "Rechtes Panel ausklappen",
+  "generation.panel.collapse_right": "Rechtes Panel einklappen",
+  "generation.panel.expand_bottom": "Unteres Panel ausklappen",
+  "generation.panel.collapse_bottom": "Unteres Panel einklappen",
 
   "generation.interrogate.title": "Bildanalyse",
   "generation.interrogate.tip": "Analysiert ein Bild, um Tags (Charakter, Künstler, Allgemein) zu extrahieren. Bild ablegen, durchsuchen oder aus der Zwischenablage einfügen. Tags können direkt auf Prompts angewendet werden.",
@@ -870,6 +898,16 @@ const de: Record<string, string> = {
   "generation.controlnet.uploading": "Wird hochgeladen...",
   "generation.controlnet.start_percent_tip": "Wann ControlNet beginnt, die Generierung zu beeinflussen (0% = von Anfang an). Verzögerter Start fügt mehr Variation hinzu.",
   "generation.controlnet.end_percent_tip": "Wann ControlNet aufhört, die Generierung zu beeinflussen (100% = bis zum Ende). Frühes Beenden lässt das Modell Details frei verfeinern.",
+  "generation.controlnet.download_failed": "Download fehlgeschlagen: {error}",
+  "generation.controlnet.install_starting": "Installation wird gestartet...",
+  "generation.controlnet.install_stopping": "ComfyUI wird gestoppt...",
+  "generation.controlnet.install_starting_nodes": "ComfyUI mit neuen Knoten starten...",
+  "generation.controlnet.install_waiting_ready": "Warte auf Bereitschaft von ComfyUI...",
+  "generation.controlnet.install_timeout": "ComfyUI war innerhalb von 120 Sekunden nicht bereit",
+  "generation.controlnet.install_start_failed": "ComfyUI konnte nicht gestartet werden",
+  "generation.controlnet.install_verifying": "Präprozessor-Knoten werden überprüft...",
+  "generation.controlnet.install_failed": "Installation fehlgeschlagen: {error}",
+  "generation.controlnet.control_image_alt": "Kontrollbild",
   "generation.controlnet.preset_canny": "Canny-Kanten",
   "generation.controlnet.preset_canny_desc": "Erkennt Kanten — am besten zur Bewahrung von Struktur und Komposition",
   "generation.controlnet.preset_depth": "Tiefenkarte",

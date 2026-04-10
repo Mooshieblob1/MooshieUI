@@ -30,6 +30,11 @@ const zh: Record<string, string> = {
   "common.close": "关闭",
   "common.or": "或",
   "common.on": "开启",
+  "common.off": "关闭",
+  "common.collapse": "折叠{section}",
+  "common.expand": "展开{section}",
+  "common.drop_to_import": "拖放以导入{section}",
+  "common.no_clipboard_image": "剪贴板中未找到图片",
   "common.detected": "检测到",
   "common.click_to_type": "点击输入值",
 
@@ -277,6 +282,7 @@ const zh: Record<string, string> = {
   "generation.dimensions.swap": "交换宽高",
   "generation.dimensions.result": "结果",
   "generation.swap_panels": "切换左右面板",
+  "generation.settings.title": "生成设置",
 
   "generation.sampler.title": "采样器",
   "generation.sampler.label": "采样器",
@@ -457,6 +463,28 @@ const zh: Record<string, string> = {
   "generation.error_no_image": "局部重绘需要输入图像。请上传或使用暂存图像。",
   "generation.error_no_mask": "局部重绘需要蒙版。请在画布编辑器中绘制或上传蒙版。",
   "generation.downloading_facefix": "正在下载面部修复模型...",
+
+  // Session context menu
+  "generation.ctx.get_tags": "获取图片标签",
+  "generation.ctx.upscale": "放大",
+  "generation.ctx.inpaint": "修复",
+  "generation.ctx.save_as": "另存为",
+  "generation.ctx.copy": "复制",
+  "generation.ctx.delete": "删除",
+
+  // Session toast messages
+  "generation.toast.loaded_upscale": "已加载图片用于放大",
+  "generation.toast.loaded_inpaint": "已加载图片用于修复",
+  "generation.toast.failed_load": "加载图片失败",
+  "generation.toast.failed_drop": "读取拖放的图片失败",
+
+  // Panel collapse
+  "generation.panel.expand_left": "展开左侧面板",
+  "generation.panel.collapse_left": "折叠左侧面板",
+  "generation.panel.expand_right": "展开右侧面板",
+  "generation.panel.collapse_right": "折叠右侧面板",
+  "generation.panel.expand_bottom": "展开底部面板",
+  "generation.panel.collapse_bottom": "折叠底部面板",
 
   "generation.interrogate.title": "图像分析",
   "generation.interrogate.tip": "分析图像以提取标签（角色、艺术家、通用）。拖放图像、浏览文件或从剪贴板粘贴。标签可直接应用到提示词。",
@@ -868,6 +896,16 @@ const zh: Record<string, string> = {
   "generation.controlnet.uploading": "上传中...",
   "generation.controlnet.start_percent_tip": "ControlNet 开始影响生成的时机（0% = 从一开始）。延迟开始可以增加更多变化。",
   "generation.controlnet.end_percent_tip": "ControlNet 停止影响生成的时机（100% = 直到最后）。提前结束让模型自由地细化细节。",
+  "generation.controlnet.download_failed": "下载失败：{error}",
+  "generation.controlnet.install_starting": "正在开始安装...",
+  "generation.controlnet.install_stopping": "正在停止 ComfyUI...",
+  "generation.controlnet.install_starting_nodes": "正在使用新节点启动 ComfyUI...",
+  "generation.controlnet.install_waiting_ready": "等待 ComfyUI 就绪...",
+  "generation.controlnet.install_timeout": "ComfyUI 未在 120 秒内就绪",
+  "generation.controlnet.install_start_failed": "ComfyUI 启动失败",
+  "generation.controlnet.install_verifying": "正在验证预处理器节点...",
+  "generation.controlnet.install_failed": "安装失败：{error}",
+  "generation.controlnet.control_image_alt": "控制图像",
   "generation.controlnet.preset_canny": "Canny 边缘",
   "generation.controlnet.preset_canny_desc": "检测边缘 — 最适合保留结构和构图",
   "generation.controlnet.preset_depth": "深度图",

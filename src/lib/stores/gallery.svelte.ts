@@ -515,21 +515,17 @@ class GalleryStore {
             // Server-side clipboard unavailable — fall through to browser API
           }
         }
-        // Step 2: Try browser Clipboard API with gallery URL or fullImageUrl.
+        // Step 2: Try browser Clipboard API, with server-side fallback for insecure (HTTP) contexts.
         const fetchUrl = image.fullImageUrl || image.url;
-        if (fetchUrl && navigator.clipboard?.write) {
-          try {
-            const resp = await fetch(fetchUrl);
-            const blob = await resp.blob();
-            const pngBlob = blob.type.startsWith("image/") ? blob : new Blob([blob], { type: "image/png" });
-            await navigator.clipboard.write([new ClipboardItem({ [pngBlob.type]: pngBlob })]);
-            this.showToast(locale.t("gallery.toast.copied"), "success");
-            return;
-          } catch {
-            // Clipboard API blocked (insecure context) — fall through
-          }
+        if (fetchUrl) {
+          const resp = await fetch(fetchUrl);
+          const blob = await resp.blob();
+          const pngBlob = blob.type.startsWith("image/") ? blob : new Blob([blob], { type: "image/png" });
+          await this.writeBlobToClipboard(pngBlob);
+          this.showToast(locale.t("gallery.toast.copied"), "success");
+          return;
         }
-        // Step 3: Image not saved yet.
+        // Step 3: Image genuinely not available yet (no URL or gallery file).
         this.showToast(locale.t("gallery.toast.not_saved_yet"), "info");
         return;
       }

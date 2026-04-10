@@ -4,7 +4,7 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import InterrogateModal from "./InterrogateModal.svelte";
   import { interrogateImage, interrogateImagePath, interrogateClipboard } from "../../utils/api.js";
-  import { ipcListen, isTauri } from "../../utils/ipc.js";
+  import { ipcListen, isTauri, isBrowserMode } from "../../utils/ipc.js";
   import type { InterrogationResult } from "../../types/index.js";
 
   // Interrogation state
@@ -108,6 +108,43 @@
   }
 
   async function interrogateFromClipboard() {
+    // In browser mode, use the Web Clipboard API to read the image client-side,
+    // then send via interrogate_image (base64). The Tauri clipboard command is
+    // not available without the native shell.
+    if (isBrowserMode) {
+      try {
+        const items = await navigator.clipboard.read();
+        let imageBlob: Blob | null = null;
+        for (const item of items) {
+          for (const type of item.types) {
+            if (type.startsWith("image/")) {
+              imageBlob = await item.getType(type);
+              break;
+            }
+          }
+          if (imageBlob) break;
+        }
+        if (!imageBlob) {
+          showInterrogateModal = true;
+          interrogateError = locale.t('common.no_clipboard_image');
+          return;
+        }
+        const previewUrl = URL.createObjectURL(imageBlob);
+        const buffer = await imageBlob.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        await interrogateBytes(btoa(binary), previewUrl);
+        return;
+      } catch (e) {
+        showInterrogateModal = true;
+        interrogateError = e instanceof Error ? e.message : String(e);
+        return;
+      }
+    }
+
     showInterrogateModal = true;
     interrogateLoading = true;
     interrogateResult = null;

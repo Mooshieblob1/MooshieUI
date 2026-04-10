@@ -30,6 +30,11 @@ const ja: Record<string, string> = {
   "common.close": "閉じる",
   "common.or": "または",
   "common.on": "オン",
+  "common.off": "オフ",
+  "common.collapse": "{section}を折りたたむ",
+  "common.expand": "{section}を展開",
+  "common.drop_to_import": "ドロップして{section}をインポート",
+  "common.no_clipboard_image": "クリップボードに画像が見つかりません",
   "common.detected": "検出済み",
   "common.click_to_type": "クリックして値を入力",
 
@@ -289,6 +294,7 @@ const ja: Record<string, string> = {
   "generation.dimensions.swap": "幅と高さを入れ替え",
   "generation.dimensions.result": "結果",
   "generation.swap_panels": "左右パネルを入れ替える",
+  "generation.settings.title": "生成設定",
 
   // サンプラー
   "generation.sampler.title": "サンプラー",
@@ -478,6 +484,28 @@ const ja: Record<string, string> = {
   "generation.error_no_image": "インペインティングには入力画像が必要です。アップロードするかステージング画像を使用してください。",
   "generation.error_no_mask": "インペインティングにはマスクが必要です。キャンバスエディターでマスクを描くかアップロードしてください。",
   "generation.downloading_facefix": "顔修正モデルをダウンロード中...",
+
+  // Session context menu
+  "generation.ctx.get_tags": "画像タグを取得",
+  "generation.ctx.upscale": "アップスケール",
+  "generation.ctx.inpaint": "インペイント",
+  "generation.ctx.save_as": "名前を付けて保存",
+  "generation.ctx.copy": "コピー",
+  "generation.ctx.delete": "削除",
+
+  // Session toast messages
+  "generation.toast.loaded_upscale": "アップスケール用に画像を読み込みました",
+  "generation.toast.loaded_inpaint": "インペイント用に画像を読み込みました",
+  "generation.toast.failed_load": "画像の読み込みに失敗しました",
+  "generation.toast.failed_drop": "ドロップした画像の読み取りに失敗しました",
+
+  // Panel collapse
+  "generation.panel.expand_left": "左パネルを展開",
+  "generation.panel.collapse_left": "左パネルを折りたたむ",
+  "generation.panel.expand_right": "右パネルを展開",
+  "generation.panel.collapse_right": "右パネルを折りたたむ",
+  "generation.panel.expand_bottom": "下パネルを展開",
+  "generation.panel.collapse_bottom": "下パネルを折りたたむ",
 
   // 画像解析モーダル
   "generation.interrogate.title": "画像を解析",
@@ -893,6 +921,16 @@ const ja: Record<string, string> = {
   "generation.controlnet.uploading": "アップロード中...",
   "generation.controlnet.start_percent_tip": "ControlNetが生成に影響を与え始めるタイミング（0% = 最初から）。開始を遅らせるとバリエーションが増えます。",
   "generation.controlnet.end_percent_tip": "ControlNetが生成への影響を停止するタイミング（100% = 最後まで）。早く終了するとモデルが自由にディテールを調整できます。",
+  "generation.controlnet.download_failed": "ダウンロード失敗: {error}",
+  "generation.controlnet.install_starting": "インストールを開始中...",
+  "generation.controlnet.install_stopping": "ComfyUIを停止中...",
+  "generation.controlnet.install_starting_nodes": "新しいノードでComfyUIを起動中...",
+  "generation.controlnet.install_waiting_ready": "ComfyUIの準備を待機中...",
+  "generation.controlnet.install_timeout": "ComfyUIが120秒以内に準備できませんでした",
+  "generation.controlnet.install_start_failed": "ComfyUIの起動に失敗しました",
+  "generation.controlnet.install_verifying": "プリプロセッサノードを検証中...",
+  "generation.controlnet.install_failed": "インストール失敗: {error}",
+  "generation.controlnet.control_image_alt": "制御画像",
   "generation.controlnet.preset_canny": "Cannyエッジ",
   "generation.controlnet.preset_canny_desc": "エッジを検出 — 構造と構図の保持に最適",
   "generation.controlnet.preset_depth": "深度マップ",

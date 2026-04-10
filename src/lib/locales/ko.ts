@@ -30,6 +30,11 @@ const ko: Record<string, string> = {
   "common.close": "닫기",
   "common.or": "또는",
   "common.on": "켜짐",
+  "common.off": "꺼짐",
+  "common.collapse": "{section} 접기",
+  "common.expand": "{section} 펼치기",
+  "common.drop_to_import": "{section} 가져오려면 놓기",
+  "common.no_clipboard_image": "클립보드에서 이미지를 찾을 수 없습니다",
   "common.detected": "감지됨",
   "common.click_to_type": "클릭하여 값 입력",
 
@@ -277,6 +282,7 @@ const ko: Record<string, string> = {
   "generation.dimensions.swap": "가로/세로 전환",
   "generation.dimensions.result": "결과",
   "generation.swap_panels": "왼쪽/오른쪽 패널 전환",
+  "generation.settings.title": "생성 설정",
 
   "generation.sampler.title": "샘플러",
   "generation.sampler.label": "샘플러",
@@ -457,6 +463,28 @@ const ko: Record<string, string> = {
   "generation.error_no_image": "인페인팅에는 입력 이미지가 필요합니다. 업로드하거나 스테이지 이미지를 사용하세요.",
   "generation.error_no_mask": "인페인팅에는 마스크가 필요합니다. 캔버스 에디터에서 마스크를 그리거나 업로드하세요.",
   "generation.downloading_facefix": "얼굴 보정 모델 다운로드 중...",
+
+  // Session context menu
+  "generation.ctx.get_tags": "이미지 태그 가져오기",
+  "generation.ctx.upscale": "업스케일",
+  "generation.ctx.inpaint": "인페인트",
+  "generation.ctx.save_as": "다른 이름으로 저장",
+  "generation.ctx.copy": "복사",
+  "generation.ctx.delete": "삭제",
+
+  // Session toast messages
+  "generation.toast.loaded_upscale": "업스케일용 이미지 로드됨",
+  "generation.toast.loaded_inpaint": "인페인트용 이미지 로드됨",
+  "generation.toast.failed_load": "이미지 로드 실패",
+  "generation.toast.failed_drop": "드롭된 이미지 읽기 실패",
+
+  // Panel collapse
+  "generation.panel.expand_left": "왼쪽 패널 펼치기",
+  "generation.panel.collapse_left": "왼쪽 패널 접기",
+  "generation.panel.expand_right": "오른쪽 패널 펼치기",
+  "generation.panel.collapse_right": "오른쪽 패널 접기",
+  "generation.panel.expand_bottom": "하단 패널 펼치기",
+  "generation.panel.collapse_bottom": "하단 패널 접기",
 
   "generation.interrogate.title": "이미지 분석",
   "generation.interrogate.tip": "이미지를 분석하여 태그(캐릭터, 아티스트, 일반)를 추출합니다. 이미지를 드롭하거나 파일을 찾거나 클립보드에서 붙여넣기하세요. 태그를 프롬프트에 직접 적용할 수 있습니다.",
@@ -868,6 +896,16 @@ const ko: Record<string, string> = {
   "generation.controlnet.uploading": "업로드 중...",
   "generation.controlnet.start_percent_tip": "ControlNet이 생성에 영향을 미치기 시작하는 시점 (0% = 처음부터). 시작을 늦추면 변화가 더 많아집니다.",
   "generation.controlnet.end_percent_tip": "ControlNet이 생성에 영향을 중단하는 시점 (100% = 끝까지). 일찍 종료하면 모델이 자유롭게 디테일을 조정합니다.",
+  "generation.controlnet.download_failed": "다운로드 실패: {error}",
+  "generation.controlnet.install_starting": "설치 시작 중...",
+  "generation.controlnet.install_stopping": "ComfyUI 중지 중...",
+  "generation.controlnet.install_starting_nodes": "새 노드로 ComfyUI 시작 중...",
+  "generation.controlnet.install_waiting_ready": "ComfyUI 준비 대기 중...",
+  "generation.controlnet.install_timeout": "ComfyUI가 120초 내에 준비되지 않았습니다",
+  "generation.controlnet.install_start_failed": "ComfyUI 시작 실패",
+  "generation.controlnet.install_verifying": "전처리기 노드 확인 중...",
+  "generation.controlnet.install_failed": "설치 실패: {error}",
+  "generation.controlnet.control_image_alt": "제어 이미지",
   "generation.controlnet.preset_canny": "Canny 엣지",
   "generation.controlnet.preset_canny_desc": "엣지 감지 — 구조와 구도 보존에 최적",
   "generation.controlnet.preset_depth": "깊이 맵",

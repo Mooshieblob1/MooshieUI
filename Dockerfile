@@ -86,6 +86,7 @@ RUN uv venv ${COMFYUI_PATH}/.venv --python python3.12 && \
     uv pip install torch==${TORCH_VERSION} torchvision torchaudio \
         --index-url https://download.pytorch.org/whl/cu126 && \
     uv pip install -r ${COMFYUI_PATH}/requirements.txt && \
+    uv pip install opencv-python-headless && \
     uv pip install ultralytics==8.4.34
 
 # Copy custom nodes (auto-deployed by the binary on startup, but also

@@ -30,6 +30,11 @@ const pt: Record<string, string> = {
   "common.close": "Fechar",
   "common.or": "ou",
   "common.on": "Ligado",
+  "common.off": "DESLIGADO",
+  "common.collapse": "Recolher {section}",
+  "common.expand": "Expandir {section}",
+  "common.drop_to_import": "Soltar para importar {section}",
+  "common.no_clipboard_image": "Nenhuma imagem encontrada na área de transferência",
   "common.detected": "Detectado",
   "common.click_to_type": "Clique para digitar um valor",
 
@@ -277,6 +282,7 @@ const pt: Record<string, string> = {
   "generation.dimensions.swap": "Trocar L/A",
   "generation.dimensions.result": "Resultado",
   "generation.swap_panels": "Trocar painéis esquerdo/direito",
+  "generation.settings.title": "Configurações de geração",
 
   "generation.sampler.title": "Sampler",
   "generation.sampler.label": "Sampler",
@@ -457,6 +463,28 @@ const pt: Record<string, string> = {
   "generation.error_no_image": "Inpainting precisa de uma imagem de entrada. Envie uma ou use uma imagem preparada.",
   "generation.error_no_mask": "Inpainting precisa de uma máscara. Pinte uma no Editor de Canvas ou envie uma.",
   "generation.downloading_facefix": "Baixando modelo de correção facial...",
+
+  // Session context menu
+  "generation.ctx.get_tags": "Obter tags da imagem",
+  "generation.ctx.upscale": "Ampliar",
+  "generation.ctx.inpaint": "Inpainting",
+  "generation.ctx.save_as": "Salvar como",
+  "generation.ctx.copy": "Copiar",
+  "generation.ctx.delete": "Excluir",
+
+  // Session toast messages
+  "generation.toast.loaded_upscale": "Imagem carregada para ampliação",
+  "generation.toast.loaded_inpaint": "Imagem carregada para inpainting",
+  "generation.toast.failed_load": "Falha ao carregar imagem",
+  "generation.toast.failed_drop": "Falha ao ler imagem solta",
+
+  // Panel collapse
+  "generation.panel.expand_left": "Expandir painel esquerdo",
+  "generation.panel.collapse_left": "Recolher painel esquerdo",
+  "generation.panel.expand_right": "Expandir painel direito",
+  "generation.panel.collapse_right": "Recolher painel direito",
+  "generation.panel.expand_bottom": "Expandir painel inferior",
+  "generation.panel.collapse_bottom": "Recolher painel inferior",
 
   "generation.interrogate.title": "Interrogar Imagem",
   "generation.interrogate.tip": "Analisa uma imagem para extrair tags (personagem, artista, geral). Solte uma imagem, procure nos seus arquivos ou cole da área de transferência. Tags podem ser aplicadas diretamente ao seu prompt.",
@@ -870,6 +898,16 @@ const pt: Record<string, string> = {
   "generation.controlnet.uploading": "Enviando...",
   "generation.controlnet.start_percent_tip": "Quando o ControlNet começa a influenciar a geração (0% = desde o início). Atrasar o início adiciona mais variação.",
   "generation.controlnet.end_percent_tip": "Quando o ControlNet para de influenciar a geração (100% = até o final). Terminar cedo permite que o modelo refine detalhes livremente.",
+  "generation.controlnet.download_failed": "Falha no download: {error}",
+  "generation.controlnet.install_starting": "Iniciando instalação...",
+  "generation.controlnet.install_stopping": "Parando ComfyUI...",
+  "generation.controlnet.install_starting_nodes": "Iniciando ComfyUI com novos nós...",
+  "generation.controlnet.install_waiting_ready": "Aguardando ComfyUI ficar pronto...",
+  "generation.controlnet.install_timeout": "ComfyUI não ficou pronto em 120 segundos",
+  "generation.controlnet.install_start_failed": "ComfyUI falhou ao iniciar",
+  "generation.controlnet.install_verifying": "Verificando nós do pré-processador...",
+  "generation.controlnet.install_failed": "Falha na instalação: {error}",
+  "generation.controlnet.control_image_alt": "Imagem de controle",
   "generation.controlnet.preset_canny": "Bordas Canny",
   "generation.controlnet.preset_canny_desc": "Detecta bordas — ideal para preservar estrutura e composição",
   "generation.controlnet.preset_depth": "Mapa de profundidade",
