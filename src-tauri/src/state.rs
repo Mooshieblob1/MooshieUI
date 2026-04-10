@@ -21,14 +21,16 @@ pub struct BroadcastEvent {
     pub payload: serde_json::Value,
 }
 
-/// Result slot for a held prompt: (prompt_id, seed) or error message.
-pub type HeldPromptResult = Arc<Mutex<Option<Result<(String, i64), String>>>>;
+/// Result slot for a held prompt: (prompt_id, worker_id) or error message.
+pub type HeldPromptResult = Arc<Mutex<Option<Result<(String, u32), String>>>>;
 
 /// A prompt held locally, waiting to be submitted to ComfyUI.
 /// Used for fair queuing — only one prompt per user is submitted at a time.
 pub struct HeldPrompt {
     pub workflow: serde_json::Value,
     pub username: Option<String>,
+    /// The placeholder prompt_id returned to the client (for alias binding).
+    pub placeholder_id: String,
     /// Signalled when this prompt is submitted to ComfyUI.
     pub submitted: Arc<Notify>,
     /// Filled in by the submission reactor after `queue_prompt`.
@@ -48,6 +50,9 @@ pub struct PromptQueue {
     pub(crate) held: std::sync::Mutex<Vec<HeldPrompt>>,
     /// Notified when a held prompt should be submitted (after a completion).
     pub(crate) drain_notify: Notify,
+    /// Maps ComfyUI's real prompt_id → our placeholder prompt_id.
+    /// Used to translate WebSocket events so the frontend sees consistent IDs.
+    aliases: std::sync::RwLock<HashMap<String, String>>,
 }
 
 impl PromptQueue {
@@ -58,6 +63,7 @@ impl PromptQueue {
             queue: std::sync::RwLock::new(Vec::new()),
             held: std::sync::Mutex::new(Vec::new()),
             drain_notify: Notify::new(),
+            aliases: std::sync::RwLock::new(HashMap::new()),
         }
     }
 
@@ -171,6 +177,11 @@ impl PromptQueue {
         self.worker_map.read().unwrap().get(prompt_id).copied()
     }
 
+    /// Snapshot of the worker_map (prompt_id → worker_id) for read-only inspection.
+    pub fn worker_map_snapshot(&self) -> HashMap<String, u32> {
+        self.worker_map.read().unwrap().clone()
+    }
+
     /// Check if a prompt_id belongs to a specific user.
     /// Returns true if:
     /// - The prompt is untracked (submitted before queue tracking started)
@@ -241,6 +252,45 @@ impl PromptQueue {
         }
         // Just take the first held prompt — the insert order already ensures fairness.
         Some(held.remove(0))
+    }
+
+    /// Bind an alias: map ComfyUI's real prompt_id → our placeholder_id.
+    /// Also registers ownership for the real_id so SSE filtering works if
+    /// an event arrives before alias resolution.
+    pub fn bind_alias(&self, placeholder_id: &str, comfyui_id: &str) {
+        self.aliases
+            .write()
+            .unwrap()
+            .insert(comfyui_id.to_string(), placeholder_id.to_string());
+        // Copy ownership so is_owned_by works for the real id too
+        let username = self
+            .owners
+            .read()
+            .unwrap()
+            .get(placeholder_id)
+            .cloned()
+            .flatten();
+        self.owners
+            .write()
+            .unwrap()
+            .insert(comfyui_id.to_string(), username);
+    }
+
+    /// Resolve a prompt_id: if it's a ComfyUI real_id with a bound alias,
+    /// return the placeholder_id. Otherwise return the original id.
+    pub fn resolve_alias(&self, prompt_id: &str) -> String {
+        self.aliases
+            .read()
+            .unwrap()
+            .get(prompt_id)
+            .cloned()
+            .unwrap_or_else(|| prompt_id.to_string())
+    }
+
+    /// Clean up alias entries for a finished prompt.
+    pub fn cleanup_alias(&self, placeholder_id: &str) {
+        let mut aliases = self.aliases.write().unwrap();
+        aliases.retain(|_, v| v != placeholder_id);
     }
 }
 

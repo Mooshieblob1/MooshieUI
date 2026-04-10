@@ -291,11 +291,12 @@ pub async fn start_server(
             loop {
                 match cleanup_rx.recv().await {
                     Ok(evt) => {
+                        // Resolve alias: translate ComfyUI's real prompt_id to our placeholder
                         let prompt_id = evt
                             .payload
                             .get("prompt_id")
                             .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                            .map(|s| cleanup_state.prompt_queue.resolve_alias(s));
 
                         match evt.event.as_str() {
                             "comfyui:executing" => {
@@ -312,6 +313,7 @@ pub async fn start_server(
                                         if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
                                             cleanup_state.gpu_manager.mark_worker_idle(wid).await;
                                         }
+                                        cleanup_state.prompt_queue.cleanup_alias(&pid);
                                         cleanup_state.broadcast_queue_positions();
                                         // Signal the drain reactor to submit next held prompt
                                         cleanup_state.prompt_queue.drain_notify.notify_one();
@@ -333,6 +335,7 @@ pub async fn start_server(
                                             .mark_worker_error_then_idle(wid)
                                             .await;
                                     }
+                                    cleanup_state.prompt_queue.cleanup_alias(&pid);
                                     cleanup_state.broadcast_queue_positions();
                                     // Signal the drain reactor to submit next held prompt
                                     cleanup_state.prompt_queue.drain_notify.notify_one();
@@ -368,10 +371,14 @@ pub async fn start_server(
                         .await;
                     match res {
                         Ok((worker_id, response)) => {
+                            // Bind alias immediately to prevent race with WebSocket events
                             drain_state
                                 .prompt_queue
-                                .set_worker(&response.prompt_id, worker_id);
-                            *hp.result.lock().await = Some(Ok((response.prompt_id, 0)));
+                                .bind_alias(&hp.placeholder_id, &response.prompt_id);
+                            drain_state
+                                .prompt_queue
+                                .set_worker(&hp.placeholder_id, worker_id);
+                            *hp.result.lock().await = Some(Ok((response.prompt_id, worker_id)));
                         }
                         Err(e) => {
                             *hp.result.lock().await =
@@ -392,6 +399,57 @@ pub async fn start_server(
             loop {
                 interval.tick().await;
                 flush_auth.flush_last_online();
+            }
+        });
+    }
+
+    // Stuck-worker watchdog — every 60s, check for workers that have been
+    // reserved (running) for longer than 10 minutes without a corresponding
+    // queue entry. This catches cases where the WebSocket completion event
+    // was missed, leaving a worker permanently stuck.
+    {
+        let watchdog_state = web_state.app.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            let max_stuck_secs = 600u64; // 10 minutes
+            loop {
+                interval.tick().await;
+                for worker in &watchdog_state.gpu_manager.workers {
+                    let status = *worker.status.read().await;
+                    let reserved = worker.reserved.load(std::sync::atomic::Ordering::Acquire);
+                    if status == crate::comfyui::gpu_manager::WorkerStatus::Running && reserved {
+                        // Check if any prompt in the queue is assigned to this worker
+                        let has_active_prompt = {
+                            let wmap = watchdog_state.prompt_queue.worker_map_snapshot();
+                            wmap.values().any(|&wid| wid == worker.id)
+                        };
+                        if !has_active_prompt {
+                            // Worker is reserved but has no tracked prompt — check how long
+                            let last_released = worker
+                                .last_released
+                                .load(std::sync::atomic::Ordering::Acquire);
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as u64;
+                            // If last_released is 0, worker was never released (started stuck)
+                            let stuck_secs = if last_released == 0 {
+                                now_ms / 1000
+                            } else {
+                                (now_ms.saturating_sub(last_released)) / 1000
+                            };
+                            if stuck_secs > max_stuck_secs {
+                                log::warn!(
+                                    "[watchdog] Releasing stuck worker {} (GPU {}, stuck {}s, no queue entry)",
+                                    worker.id,
+                                    worker.gpu_index,
+                                    stuck_secs,
+                                );
+                                watchdog_state.gpu_manager.mark_worker_idle(worker.id).await;
+                            }
+                        }
+                    }
+                }
             }
         });
     }
@@ -664,23 +722,41 @@ async fn sse_handler(
         let prompt_queue = prompt_queue.clone();
         match result {
             Ok(evt) => {
-                // System events (no prompt_id) pass through to everyone
-                // Prompt-specific events are filtered by ownership
-                let prompt_id = evt
+                // Resolve alias: translate ComfyUI's real prompt_id to our placeholder
+                let raw_prompt_id = evt
                     .payload
                     .get("prompt_id")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
+                let resolved_id = raw_prompt_id
+                    .as_deref()
+                    .map(|pid| prompt_queue.prompt_queue.resolve_alias(pid));
 
-                if let Some(ref pid) = prompt_id {
+                // Filter by ownership using the resolved (placeholder) id
+                if let Some(ref pid) = resolved_id {
                     if !prompt_queue.prompt_queue.is_owned_by(pid, &sse_username) {
                         return None; // Not this user's prompt — skip
                     }
                 }
 
+                // Replace prompt_id in payload with resolved placeholder so the
+                // frontend sees the same ID it received from the generate response.
+                let payload =
+                    if let (Some(ref resolved), Some(ref raw)) = (&resolved_id, &raw_prompt_id) {
+                        if resolved != raw {
+                            let mut p = evt.payload.clone();
+                            p["prompt_id"] = serde_json::Value::String(resolved.clone());
+                            p
+                        } else {
+                            evt.payload
+                        }
+                    } else {
+                        evt.payload
+                    };
+
                 let json = serde_json::json!({
                     "event": evt.event,
-                    "payload": evt.payload,
+                    "payload": payload,
                 });
                 Some(Ok::<_, std::convert::Infallible>(
                     Event::default().data(json.to_string()),
@@ -1397,78 +1473,112 @@ async fn dispatch_command(
                 params.steps,
             );
 
-            // Fair queue: LAN users are throttled to one active prompt at a time.
-            // If user already has an active prompt, hold this one until a slot opens.
+            // Check needs_hold BEFORE inserting the placeholder
             let needs_hold = user.is_some() && state.prompt_queue.active_count_for_user(&user) > 0;
 
-            if needs_hold {
-                // Hold the prompt locally — it will be submitted by the drain reactor.
-                let submitted = Arc::new(tokio::sync::Notify::new());
-                let result_slot: crate::state::HeldPromptResult =
-                    Arc::new(tokio::sync::Mutex::new(None));
+            // Generate a placeholder prompt_id and insert it immediately.
+            // This allows us to return to the client right away (avoids Cloudflare 524 timeouts).
+            let placeholder_id = format!("gen-{}", uuid::Uuid::new_v4());
+            state.prompt_queue.insert(&placeholder_id, user.clone());
+            state.broadcast_queue_positions();
 
-                let held = crate::state::HeldPrompt {
-                    workflow,
-                    username: user.clone(),
-                    submitted: submitted.clone(),
-                    result: result_slot.clone(),
-                };
+            let queue_pos = state.prompt_queue.len().saturating_sub(1);
+            let queue_total = state.prompt_queue.len();
 
-                // Add to held queue and also insert a placeholder into the display queue
-                // so the user sees their position immediately.
-                let placeholder_id = format!("held-{}", uuid::Uuid::new_v4());
-                state.prompt_queue.insert(&placeholder_id, user.clone());
-                {
-                    let mut held_queue = state.prompt_queue.held.lock().unwrap();
-                    held_queue.push(held);
+            // Spawn background task to do the actual ComfyUI submission.
+            let bg_state = Arc::clone(&state);
+            let bg_placeholder = placeholder_id.clone();
+            tokio::spawn(async move {
+                if needs_hold {
+                    // Fair queue: hold this prompt until a slot opens for this user.
+                    let submitted = Arc::new(tokio::sync::Notify::new());
+                    let result_slot: crate::state::HeldPromptResult =
+                        Arc::new(tokio::sync::Mutex::new(None));
+
+                    let held = crate::state::HeldPrompt {
+                        workflow,
+                        username: user.clone(),
+                        placeholder_id: bg_placeholder.clone(),
+                        submitted: submitted.clone(),
+                        result: result_slot.clone(),
+                    };
+
+                    {
+                        let mut held_queue = bg_state.prompt_queue.held.lock().unwrap();
+                        held_queue.push(held);
+                    }
+                    bg_state.broadcast_queue_positions();
+
+                    // Wait until the drain reactor submits this prompt
+                    submitted.notified().await;
+
+                    // Retrieve the result — alias is already bound by the drain reactor
+                    let res = result_slot
+                        .lock()
+                        .await
+                        .take()
+                        .unwrap_or_else(|| Err("Held prompt was never submitted".into()));
+
+                    match res {
+                        Ok(_) => {
+                            bg_state.broadcast_queue_positions();
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "[gen] held submission failed for {}: {}",
+                                bg_placeholder,
+                                e
+                            );
+                            bg_state.prompt_queue.finish(&bg_placeholder);
+                            bg_state.prompt_queue.cleanup_alias(&bg_placeholder);
+                            bg_state.broadcast_queue_positions();
+                            let _ = bg_state.event_tx.send(crate::state::BroadcastEvent {
+                                event: "comfyui:execution_error".to_string(),
+                                payload: serde_json::json!({
+                                    "prompt_id": bg_placeholder,
+                                    "error": e,
+                                }),
+                            });
+                        }
+                    }
+                } else {
+                    // Direct submission (admin or user's first prompt)
+                    let timeout = std::time::Duration::from_secs(300);
+                    match bg_state
+                        .gpu_manager
+                        .submit_prompt(workflow, &bg_state.client_id, timeout)
+                        .await
+                    {
+                        Ok((worker_id, response)) => {
+                            bg_state
+                                .prompt_queue
+                                .bind_alias(&bg_placeholder, &response.prompt_id);
+                            bg_state.prompt_queue.set_worker(&bg_placeholder, worker_id);
+                            bg_state.broadcast_queue_positions();
+                        }
+                        Err(e) => {
+                            log::error!("[gen] submission failed for {}: {}", bg_placeholder, e);
+                            bg_state.prompt_queue.finish(&bg_placeholder);
+                            bg_state.broadcast_queue_positions();
+                            let _ = bg_state.event_tx.send(crate::state::BroadcastEvent {
+                                event: "comfyui:execution_error".to_string(),
+                                payload: serde_json::json!({
+                                    "prompt_id": bg_placeholder,
+                                    "error": e.to_string(),
+                                }),
+                            });
+                        }
+                    }
                 }
-                state.broadcast_queue_positions();
+            });
 
-                // Wait until the drain reactor submits this prompt
-                submitted.notified().await;
-
-                // Retrieve the result
-                let res = result_slot
-                    .lock()
-                    .await
-                    .take()
-                    .unwrap_or_else(|| Err("Held prompt was never submitted".into()));
-                let (prompt_id, _) = res.map_err(|e| e)?;
-
-                // Remove placeholder and insert the real prompt_id
-                state.prompt_queue.finish(&placeholder_id);
-                state.prompt_queue.insert(&prompt_id, user);
-                state.broadcast_queue_positions();
-
-                Ok(serde_json::json!({
-                    "prompt_id": prompt_id,
-                    "seed": seed,
-                    "queue_position": state.prompt_queue.len() - 1,
-                    "queue_total": state.prompt_queue.len(),
-                }))
-            } else {
-                // Direct submission (admin or user's first prompt)
-                let timeout = std::time::Duration::from_secs(300);
-                let (worker_id, response) = state
-                    .gpu_manager
-                    .submit_prompt(workflow, &state.client_id, timeout)
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                state.prompt_queue.insert(&response.prompt_id, user);
-                state
-                    .prompt_queue
-                    .set_worker(&response.prompt_id, worker_id);
-
-                state.broadcast_queue_positions();
-
-                Ok(serde_json::json!({
-                    "prompt_id": response.prompt_id,
-                    "seed": seed,
-                    "queue_position": state.prompt_queue.len() - 1,
-                    "queue_total": state.prompt_queue.len(),
-                }))
-            }
+            // Return immediately — the frontend tracks progress via SSE/WebSocket events
+            Ok(serde_json::json!({
+                "prompt_id": placeholder_id,
+                "seed": seed,
+                "queue_position": queue_pos,
+                "queue_total": queue_total,
+            }))
         }
         "delete_queue_item" => {
             let prompt_id = args["promptId"].as_str().ok_or("Missing promptId")?;

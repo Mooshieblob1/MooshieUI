@@ -517,18 +517,27 @@ class GalleryStore {
           }
         }
         // Step 2: Try browser Clipboard API, with server-side fallback for insecure (HTTP) contexts.
-        const fetchUrl = image.fullImageUrl || image.url;
+        // Prefer the server-served gallery URL over blob URLs (blob: URLs fail through Cloudflare proxy).
+        let fetchUrl = image.fullImageUrl;
+        if (!fetchUrl && galleryFilename) {
+          fetchUrl = await fullImageUrl(galleryFilename);
+        }
+        if (!fetchUrl) fetchUrl = image.url;
         if (fetchUrl) {
-          const resp = await fetch(fetchUrl);
-          if (!resp.ok) {
-            this.showToast(locale.t("gallery.toast.copy_failed") || "Failed to copy image", "error");
+          try {
+            const resp = await fetch(fetchUrl);
+            if (!resp.ok) {
+              this.showToast(locale.t("gallery.toast.copy_failed") || "Failed to copy image", "error");
+              return;
+            }
+            const blob = await resp.blob();
+            const pngBlob = blob.type.startsWith("image/") ? blob : new Blob([blob], { type: "image/png" });
+            await this.writeBlobToClipboard(pngBlob);
+            this.showToast(locale.t("gallery.toast.copied"), "success");
             return;
+          } catch {
+            // Blob URL fetch can fail with SecurityError through Cloudflare — fall through
           }
-          const blob = await resp.blob();
-          const pngBlob = blob.type.startsWith("image/") ? blob : new Blob([blob], { type: "image/png" });
-          await this.writeBlobToClipboard(pngBlob);
-          this.showToast(locale.t("gallery.toast.copied"), "success");
-          return;
         }
         // Step 3: Image genuinely not available yet (no URL or gallery file).
         this.showToast(locale.t("gallery.toast.not_saved_yet"), "info");

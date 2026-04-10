@@ -1,5 +1,24 @@
 # Changelog
 
+## What's New in v0.8.0
+
+### Non-Blocking Generation (Cloudflare 524 Fix)
+- **Instant HTTP response** — the `generate` command now returns a placeholder prompt ID immediately and submits to ComfyUI workers in the background. Previously the request blocked for up to 300 seconds waiting for a GPU worker, which caused Cloudflare 524 timeout errors on LAN/cloud deployments.
+- **Prompt ID alias system** — an alias layer maps ComfyUI's real prompt IDs back to the placeholder IDs the frontend received, so all SSE events (progress, preview, completion) are transparently rewritten. No frontend changes required.
+- **Background error handling** — if submission fails after the response was already sent, an `execution_error` event is emitted so the frontend clears the stuck generation state.
+
+### Stuck-Worker Watchdog
+- **Automatic recovery** — a periodic watchdog (every 60 seconds) detects GPU workers that have been reserved for longer than 10 minutes with no corresponding queue entry, and forcibly releases them back to idle. This prevents the "generate button does nothing" bug caused by missed WebSocket completion events.
+
+### Clipboard Copy Fix (Browser Mode)
+- **Server URL preferred over blob URLs** — the copy-to-clipboard flow now constructs a proper `/internal-api/_gallery/` URL when the image's `fullImageUrl` hasn't been set yet, instead of falling back to a blob URL that fails with `SecurityError` through Cloudflare's proxy.
+- **Graceful fetch fallback** — blob URL fetch errors are now caught and handled instead of throwing to the user.
+
+### Tauri Plugin Version Sync
+- **`@tauri-apps/plugin-fs` bumped to 2.5.0** — syncs the npm package with the Rust crate (Dependabot had bumped only the Rust side), fixing the CI build failure in v0.7.9.
+
+---
+
 ## What's New in v0.7.9
 
 ### Multi-GPU Worker Backend

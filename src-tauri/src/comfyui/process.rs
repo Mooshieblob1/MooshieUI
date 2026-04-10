@@ -866,12 +866,11 @@ pub async fn wait_for_worker_ready(
                         *status = WorkerStatus::Error;
                         let log_path = std::env::temp_dir()
                             .join(format!("comfyui-desktop-worker{}-stderr.log", worker.id));
-                        let log_excerpt =
-                            std::fs::read_to_string(&log_path).ok().map(|content| {
-                                let lines: Vec<&str> = content.lines().collect();
-                                let start = lines.len().saturating_sub(20);
-                                lines[start..].join("\n")
-                            });
+                        let log_excerpt = std::fs::read_to_string(&log_path).ok().map(|content| {
+                            let lines: Vec<&str> = content.lines().collect();
+                            let start = lines.len().saturating_sub(20);
+                            lines[start..].join("\n")
+                        });
                         let msg = match log_excerpt {
                             Some(log) => format!(
                                 "Worker {} (GPU {}): process exited with {} — {}",
