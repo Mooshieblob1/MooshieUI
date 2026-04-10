@@ -62,6 +62,25 @@
     const pos = textareaEl.selectionStart;
     const text = value;
 
+    // Check if cursor is inside a <fromto[...]...> block — if so, use block
+    // boundaries instead of comma-splitting (commas are part of fromto syntax).
+    const fromtoRe = /<fromto\[[^\]]*\]:[^>]*>/g;
+    let ftMatch: RegExpExecArray | null;
+    while ((ftMatch = fromtoRe.exec(text)) !== null) {
+      const ftStart = ftMatch.index;
+      const ftEnd = ftStart + ftMatch[0].length;
+      if (pos > ftStart && pos <= ftEnd) {
+        // Cursor is inside this fromto block — use the whole block as the fragment
+        const token = text.substring(ftStart, ftEnd);
+        const leadingWhitespace = token.match(/^\s*/)?.[0].length ?? 0;
+        const trailingWhitespace = token.match(/\s*$/)?.[0].length ?? 0;
+        const trimmedStart = ftStart + leadingWhitespace;
+        const trimmedEnd = Math.max(trimmedStart, ftEnd - trailingWhitespace);
+        const fragment = text.substring(trimmedStart, trimmedEnd);
+        return { fragment, start: ftStart, end: ftEnd, trimmedStart, trimmedEnd };
+      }
+    }
+
     // Find the start of the current tag (after the last comma before cursor)
     let start = text.lastIndexOf(",", pos - 1) + 1;
     // Find the end of the current tag (next comma after cursor, or end of string)
@@ -359,7 +378,7 @@
   {#if showBackdrop}
     <div
       bind:this={backdropEl}
-      class="absolute inset-0 pointer-events-none overflow-hidden rounded-lg px-3 py-2 text-sm whitespace-pre-wrap wrap-break-word border border-transparent"
+      class="absolute inset-0 pointer-events-none overflow-hidden rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words border border-transparent"
       style="color: transparent; z-index: 0;"
     >{@html highlightedHtml}</div>
   {/if}

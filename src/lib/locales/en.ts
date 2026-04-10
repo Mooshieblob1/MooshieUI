@@ -35,6 +35,7 @@ const en: Record<string, string> = {
   "common.expand": "Expand {section}",
   "common.drop_to_import": "Drop to import {section}",
   "common.no_clipboard_image": "No image found in clipboard",
+  "common.clipboard_unavailable": "Clipboard API is not available (requires HTTPS)",
   "common.detected": "detected",
   "common.click_to_type": "Click to type a value",
 

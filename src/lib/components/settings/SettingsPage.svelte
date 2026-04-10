@@ -60,7 +60,7 @@
   let switchingMode = $state(false);
 
   // LAN auth state
-  let lanAccounts = $state<{ username: string; role: string; online: boolean; created_at: string; last_online: string | null; storage_limit_bytes: number }[]>([]);
+  let lanAccounts = $state<{ username: string; role: string; online: boolean; created_at: string; last_online: string | null; storage_limit_bytes: number; can_use_modelhub: boolean }[]>([]);
   let lanNewUser = $state("");
   let lanNewPass = $state("");
   let lanAuthError = $state<string | null>(null);
@@ -75,6 +75,10 @@
   let showDeleteModal = $state(false);
   let deleteTargetUser = $state("");
   let deleteKeepData = $state(true);
+
+  // Account actions modal (per-user)
+  let showAccountActionsModal = $state(false);
+  let actionsTargetAccount = $state<{ username: string; role: string; online: boolean; created_at: string; last_online: string | null; storage_limit_bytes: number; can_use_modelhub: boolean } | null>(null);
 
   // Storage limit modal
   let showStorageModal = $state(false);
@@ -308,6 +312,28 @@
       if (!resp.ok) {
         const data = await resp.json();
         lanAuthError = data.error ?? "Failed to update role.";
+      } else {
+        await loadLanAccounts();
+      }
+    } catch (e) {
+      lanAuthError = String(e);
+    } finally {
+      lanAuthBusy = false;
+    }
+  }
+
+  async function toggleModelhubAccess(username: string, currentValue: boolean) {
+    lanAuthBusy = true;
+    lanAuthError = null;
+    try {
+      const resp = await fetch("/internal-api/_auth/set_modelhub_access", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ username, allowed: !currentValue }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json();
+        lanAuthError = data.error ?? "Failed to update Model Hub access.";
       } else {
         await loadLanAccounts();
       }
@@ -989,28 +1015,13 @@
                                 </span>
                               {/if}
                             </div>
-                            <div class="flex items-center gap-2 shrink-0 ml-2">
-                              <button
-                                class="text-xs cursor-pointer {account.role === 'moderator' ? 'text-indigo-400 hover:text-indigo-300' : 'text-neutral-400 hover:text-neutral-300'}"
-                                disabled={lanAuthBusy}
-                                onclick={() => toggleAccountRole(account.username, account.role)}
-                              >{account.role === "moderator" ? "Revoke Mod" : "Make Mod"}</button>
-                              <button
-                                class="text-xs text-cyan-400 hover:text-cyan-300 cursor-pointer"
-                                disabled={lanAuthBusy}
-                                onclick={() => { storageTargetUser = account.username; storageInputGB = (account.storage_limit_bytes / (1024 * 1024 * 1024)).toFixed(1); storageError = null; showStorageModal = true; }}
-                              >Storage</button>
-                              <button
-                                class="text-xs text-amber-400 hover:text-amber-300 cursor-pointer"
-                                disabled={lanAuthBusy}
-                                onclick={() => { resetTargetUser = account.username; resetTempPass = ''; resetError = null; resetSuccess = false; showResetPasswordModal = true; }}
-                              >Reset Password</button>
-                              <button
-                                class="text-xs text-red-400 hover:text-red-300 cursor-pointer"
-                                disabled={lanAuthBusy}
-                                onclick={() => { deleteTargetUser = account.username; deleteKeepData = true; showDeleteModal = true; }}
-                              >Remove</button>
-                            </div>
+                            <button
+                              class="shrink-0 ml-2 p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
+                              title="Manage {account.username}"
+                              onclick={() => { actionsTargetAccount = account; showAccountActionsModal = true; }}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
+                            </button>
                           </div>
                         {/each}
                       </div>
@@ -1086,25 +1097,14 @@
                           </span>
                         {/if}
                       </div>
-                      <!-- Mods can only manage regular users — not admins or other mods -->
                       {#if account.role === "user"}
-                        <div class="flex items-center gap-2 shrink-0 ml-2">
-                          <button
-                            class="text-xs text-cyan-400 hover:text-cyan-300 cursor-pointer"
-                            disabled={lanAuthBusy}
-                            onclick={() => { storageTargetUser = account.username; storageInputGB = (account.storage_limit_bytes / (1024 * 1024 * 1024)).toFixed(1); storageError = null; showStorageModal = true; }}
-                          >Storage</button>
-                          <button
-                            class="text-xs text-amber-400 hover:text-amber-300 cursor-pointer"
-                            disabled={lanAuthBusy}
-                            onclick={() => { resetTargetUser = account.username; resetTempPass = ''; resetError = null; resetSuccess = false; showResetPasswordModal = true; }}
-                          >Reset Password</button>
-                          <button
-                            class="text-xs text-red-400 hover:text-red-300 cursor-pointer"
-                            disabled={lanAuthBusy}
-                            onclick={() => { deleteTargetUser = account.username; deleteKeepData = true; showDeleteModal = true; }}
-                          >Remove</button>
-                        </div>
+                        <button
+                          class="shrink-0 ml-2 p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
+                          title="Manage {account.username}"
+                          onclick={() => { actionsTargetAccount = account; showAccountActionsModal = true; }}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
+                        </button>
                       {/if}
                     </div>
                   {/each}
@@ -2392,10 +2392,11 @@
   onkeydown={(e) => { if (e.key === 'Escape') showAddAccountModal = false; }}
   role="dialog"
   aria-modal="true"
+  aria-labelledby="add-account-title"
   tabindex="-1"
 >
   <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-    <h3 class="text-sm font-medium text-neutral-100">Add LAN Account</h3>
+    <h3 id="add-account-title" class="text-sm font-medium text-neutral-100">Add LAN Account</h3>
     <div class="space-y-3">
       <div>
         <label class="block text-xs text-neutral-400 mb-1">Username</label>
@@ -2442,10 +2443,11 @@
   onkeydown={(e) => { if (e.key === 'Escape') showResetPasswordModal = false; }}
   role="dialog"
   aria-modal="true"
+  aria-labelledby="reset-password-title"
   tabindex="-1"
 >
   <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-    <h3 class="text-sm font-medium text-neutral-100">Reset Password</h3>
+    <h3 id="reset-password-title" class="text-sm font-medium text-neutral-100">Reset Password</h3>
     <p class="text-xs text-neutral-400">Set a temporary password for <span class="text-neutral-200 font-medium">{resetTargetUser}</span>. They will be asked to choose a new password on their next login.</p>
     <div>
       <label class="block text-xs text-neutral-400 mb-1">Temporary Password</label>
@@ -2488,10 +2490,11 @@
   onkeydown={(e) => { if (e.key === 'Escape') showDeleteModal = false; }}
   role="dialog"
   aria-modal="true"
+  aria-labelledby="delete-account-title"
   tabindex="-1"
 >
   <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-    <h3 class="text-sm font-medium text-neutral-100">Delete Account</h3>
+    <h3 id="delete-account-title" class="text-sm font-medium text-neutral-100">Delete Account</h3>
     <p class="text-xs text-neutral-400">Are you sure you want to delete <span class="text-neutral-200 font-medium">{deleteTargetUser}</span>?</p>
 
     <label class="flex items-start gap-2 cursor-pointer">
@@ -2559,6 +2562,65 @@
         disabled={storageBusy}
         onclick={applyStorageLimit}
       >Save</button>
+    </div>
+  </div>
+</div>
+{/if}
+
+<!-- Account Actions Modal -->
+{#if showAccountActionsModal && actionsTargetAccount}
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+  onclick={(e) => { if (e.target === e.currentTarget) showAccountActionsModal = false; }}
+  onkeydown={(e) => { if (e.key === 'Escape') showAccountActionsModal = false; }}
+  role="dialog"
+  aria-modal="true"
+  tabindex="-1"
+>
+  <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-xs p-5 space-y-3">
+    <div class="flex items-center gap-2">
+      <span class="inline-block w-2 h-2 rounded-full shrink-0 {actionsTargetAccount.online ? 'bg-green-500' : 'bg-neutral-600'}"></span>
+      <h3 class="text-sm font-medium text-neutral-100 truncate">{actionsTargetAccount.username}</h3>
+      {#if actionsTargetAccount.role === "moderator"}
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">Mod</span>
+      {/if}
+    </div>
+    <div class="flex flex-col gap-2">
+      {#if isAdmin}
+        <button
+          class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left {actionsTargetAccount.role === 'moderator' ? 'bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
+          disabled={lanAuthBusy}
+          onclick={() => { toggleAccountRole(actionsTargetAccount!.username, actionsTargetAccount!.role); showAccountActionsModal = false; }}
+        >{actionsTargetAccount.role === "moderator" ? "Revoke Moderator" : "Make Moderator"}</button>
+      {/if}
+      <button
+        class="w-full px-3 py-2 rounded-lg text-xs font-medium bg-neutral-800 text-cyan-400 hover:bg-neutral-700 transition-colors cursor-pointer text-left"
+        disabled={lanAuthBusy}
+        onclick={() => { storageTargetUser = actionsTargetAccount!.username; storageInputGB = (actionsTargetAccount!.storage_limit_bytes / (1024 * 1024 * 1024)).toFixed(1); storageError = null; showAccountActionsModal = false; showStorageModal = true; }}
+      >Storage Limit — {formatBytes(actionsTargetAccount.storage_limit_bytes)}</button>
+      {#if actionsTargetAccount.role === 'user'}
+      <button
+        class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left {actionsTargetAccount.can_use_modelhub ? 'bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
+        disabled={lanAuthBusy}
+        onclick={() => { toggleModelhubAccess(actionsTargetAccount!.username, actionsTargetAccount!.can_use_modelhub); showAccountActionsModal = false; }}
+      >{actionsTargetAccount.can_use_modelhub ? "Revoke Model Hub Access" : "Grant Model Hub Access"}</button>
+      {/if}
+      <button
+        class="w-full px-3 py-2 rounded-lg text-xs font-medium bg-neutral-800 text-amber-400 hover:bg-neutral-700 transition-colors cursor-pointer text-left"
+        disabled={lanAuthBusy}
+        onclick={() => { resetTargetUser = actionsTargetAccount!.username; resetTempPass = ''; resetError = null; resetSuccess = false; showAccountActionsModal = false; showResetPasswordModal = true; }}
+      >Reset Password</button>
+      <button
+        class="w-full px-3 py-2 rounded-lg text-xs font-medium bg-neutral-800 text-red-400 hover:bg-neutral-700 transition-colors cursor-pointer text-left"
+        disabled={lanAuthBusy}
+        onclick={() => { deleteTargetUser = actionsTargetAccount!.username; deleteKeepData = true; showAccountActionsModal = false; showDeleteModal = true; }}
+      >Remove Account</button>
+    </div>
+    <div class="flex justify-end pt-1">
+      <button
+        class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
+        onclick={() => { showAccountActionsModal = false; }}
+      >Close</button>
     </div>
   </div>
 </div>

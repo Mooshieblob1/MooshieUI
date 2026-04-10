@@ -13,17 +13,18 @@ import type { PromptSegment } from "../types/index.js";
  *   Separators: comma, | or ||
  */
 const SCHEDULE_REGEX =
-  /<(from|to|range):([\d.]+)(?::([\d.]+))?>([\s\S]*?)<\/\1>/g;
+  /<(from|to|range):(\d+(?:\.\d+)?)(?::(\d+(?:\.\d+)?))?>([ \s\S]*?)<\/\1>/g;
 
 const SWARM_FROMTO_REGEX =
-  /<fromto\[([\d.]+)\]:([^>]+)>/g;
+  /<fromto\[(\d+(?:\.\d+)?)\]:([^>]+)>/g;
 
 /**
  * Combined regex matching both syntaxes.
  * Used for highlight rendering and tag detection (single-pass over text).
+ * Numeric values must be valid decimals (e.g. 0.5, 1) — not malformed like 1.2.3.
  */
 const COMBINED_REGEX =
-  /<(?:(from|to|range):([\d.]+)(?::([\d.]+))?>([\s\S]*?)<\/\1>|fromto\[([\d.]+)\]:([^>]+)>)/g;
+  /<(?:(from|to|range):(\d+(?:\.\d+)?)(?::(\d+(?:\.\d+)?))?>([ \s\S]*?)<\/\1>|fromto\[(\d+(?:\.\d+)?)\]:([^>]+)>)/g;
 
 export interface ParsedPrompt {
   baseText: string;
@@ -104,7 +105,7 @@ export function parseScheduledPrompt(raw: string): ParsedPrompt {
       }
 
       segments.push({ text, start, end });
-      baseText += innerText;
+      // Do NOT add innerText to baseText — it should only apply during [start, end]
     } else if (match[5]) {
       // SwarmUI fromto syntax: groups 5-6
       const timestepStr = match[5];

@@ -288,7 +288,7 @@ class MooshieSaveImage:
                 # the browser gets an image with an alpha layer.
                 h, w, c = img_np.shape
                 rgba = np.full((h, w, 4), 255, dtype=np.uint8)
-                rgba[:, :, :3] = img_np
+                rgba[:, :, :3] = img_np[:, :, :3]
                 img = Image.fromarray(rgba, "RGBA")
                 buf = io.BytesIO()
                 img.save(buf, format="PNG")

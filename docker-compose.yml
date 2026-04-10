@@ -10,7 +10,7 @@ services:
     environment:
       - MOOSHIEUI_DATA_DIR=/data
       - MOOSHIEUI_ADMIN_USER=${MOOSHIEUI_ADMIN_USER:-admin}
-      - MOOSHIEUI_ADMIN_PASS=${MOOSHIEUI_ADMIN_PASS:?Set MOOSHIEUI_ADMIN_PASS in .env}
+      - MOOSHIEUI_ADMIN_PASS=${MOOSHIEUI_ADMIN_PASS:-changeme}
       - NVIDIA_VISIBLE_DEVICES=all
       - RUST_LOG=${RUST_LOG:-info}
     deploy:

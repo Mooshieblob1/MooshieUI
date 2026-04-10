@@ -3,7 +3,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import InterrogateModal from "./InterrogateModal.svelte";
-  import { interrogateImage, interrogateImagePath, interrogateClipboard } from "../../utils/api.js";
+  import { interrogateImage, interrogateImagePath, interrogateClipboard, readClipboardImage } from "../../utils/api.js";
   import { ipcListen, isTauri, isBrowserMode } from "../../utils/ipc.js";
   import type { InterrogationResult } from "../../types/index.js";
 
@@ -70,6 +70,7 @@
         const { readFile } = await import("@tauri-apps/plugin-fs");
         const bytes = await readFile(path);
         const blob = new Blob([bytes]);
+        if (interrogateImageUrl?.startsWith("blob:")) URL.revokeObjectURL(interrogateImageUrl);
         interrogateImageUrl = URL.createObjectURL(blob);
       } catch {
         interrogateImageUrl = null;
@@ -108,35 +109,61 @@
   }
 
   async function interrogateFromClipboard() {
-    // In browser mode, use the Web Clipboard API to read the image client-side,
-    // then send via interrogate_image (base64). The Tauri clipboard command is
-    // not available without the native shell.
+    // In browser mode, try the Web Clipboard API first (requires HTTPS),
+    // then fall back to the server-side native clipboard read.
     if (isBrowserMode) {
-      try {
-        const items = await navigator.clipboard.read();
-        let imageBlob: Blob | null = null;
-        for (const item of items) {
-          for (const type of item.types) {
-            if (type.startsWith("image/")) {
-              imageBlob = await item.getType(type);
-              break;
+      let imageBlob: Blob | null = null;
+
+      // Try browser Clipboard API first
+      if (navigator.clipboard?.read) {
+        try {
+          const items = await navigator.clipboard.read();
+          for (const item of items) {
+            for (const type of item.types) {
+              if (type.startsWith("image/")) {
+                imageBlob = await item.getType(type);
+                break;
+              }
             }
+            if (imageBlob) break;
           }
-          if (imageBlob) break;
+        } catch {
+          // Clipboard API blocked — fall through to server fallback
         }
-        if (!imageBlob) {
+      }
+
+      // Fallback: ask server to read from host OS clipboard
+      if (!imageBlob) {
+        try {
+          const bytes = await readClipboardImage();
+          if (!bytes || bytes.length === 0) {
+            showInterrogateModal = true;
+            interrogateError = locale.t('common.no_clipboard_image');
+            return;
+          }
+          imageBlob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+        } catch (e) {
           showInterrogateModal = true;
-          interrogateError = locale.t('common.no_clipboard_image');
+          interrogateError = e instanceof Error ? e.message : String(e);
           return;
         }
+      }
+
+      try {
+        // Revoke previous blob URL to prevent memory leak
+        if (interrogateImageUrl?.startsWith("blob:")) URL.revokeObjectURL(interrogateImageUrl);
         const previewUrl = URL.createObjectURL(imageBlob);
-        const buffer = await imageBlob.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        let binary = "";
-        for (let i = 0; i < bytes.length; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        await interrogateBytes(btoa(binary), previewUrl);
+        // Use FileReader for efficient base64 conversion
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = reader.result as string;
+            resolve(dataUrl.split(",")[1]);
+          };
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(imageBlob!);
+        });
+        await interrogateBytes(base64, previewUrl);
         return;
       } catch (e) {
         showInterrogateModal = true;

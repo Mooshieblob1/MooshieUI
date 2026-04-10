@@ -1,6 +1,28 @@
 #!/bin/sh
 set -e
 
+# ── Admin password guard ──
+# Validate admin env vars and warn about the default password.
+if [ -n "$MOOSHIEUI_ADMIN_USER" ] || [ -n "$MOOSHIEUI_ADMIN_PASS" ]; then
+    if [ -z "$MOOSHIEUI_ADMIN_USER" ] || [ -z "$MOOSHIEUI_ADMIN_PASS" ]; then
+        echo "ERROR: Both MOOSHIEUI_ADMIN_USER and MOOSHIEUI_ADMIN_PASS must be set." >&2
+        exit 1
+    fi
+    if [ ${#MOOSHIEUI_ADMIN_PASS} -lt 4 ]; then
+        echo "ERROR: MOOSHIEUI_ADMIN_PASS is too short (minimum 4 characters)." >&2
+        exit 1
+    fi
+    if [ "$MOOSHIEUI_ADMIN_PASS" = "changeme" ]; then
+        echo "" >&2
+        echo "========================================================" >&2
+        echo "  WARNING: Using default admin password 'changeme'." >&2
+        echo "  Change MOOSHIEUI_ADMIN_PASS before exposing this" >&2
+        echo "  server to the network!" >&2
+        echo "========================================================" >&2
+        echo "" >&2
+    fi
+fi
+
 # Ensure the persistent models directory exists.
 mkdir -p /data/models
 

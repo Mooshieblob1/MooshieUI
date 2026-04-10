@@ -781,6 +781,128 @@ pub fn native_clipboard_write_pub(image_bytes: &[u8], mime_type: &str) -> Result
     native_clipboard_write(image_bytes, mime_type)
 }
 
+/// Read image data from the native OS clipboard as PNG bytes.
+/// Uses wl-paste/xclip on Linux, pbpaste on macOS, PowerShell on Windows.
+pub fn native_clipboard_read_pub() -> Result<Vec<u8>, AppError> {
+    native_clipboard_read()
+}
+
+fn native_clipboard_read() -> Result<Vec<u8>, AppError> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::{Command, Stdio};
+
+        let on_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+            || std::env::var("XDG_SESSION_TYPE")
+                .map(|v| v == "wayland")
+                .unwrap_or(false);
+
+        let try_read = |program: &str, args: &[&str]| -> Result<Vec<u8>, String> {
+            let output = Command::new(program)
+                .args(args)
+                .stdin(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+                .map_err(|e| format!("{} spawn failed: {}", program, e))?;
+
+            if output.status.success() && !output.stdout.is_empty() {
+                Ok(output.stdout)
+            } else {
+                Err(format!("{} failed or returned no data", program))
+            }
+        };
+
+        let (primary, primary_args, fallback, fallback_args): (&str, Vec<&str>, &str, Vec<&str>) =
+            if on_wayland {
+                (
+                    "wl-paste",
+                    vec!["--type", "image/png"],
+                    "xclip",
+                    vec!["-selection", "clipboard", "-t", "image/png", "-o"],
+                )
+            } else {
+                (
+                    "xclip",
+                    vec!["-selection", "clipboard", "-t", "image/png", "-o"],
+                    "wl-paste",
+                    vec!["--type", "image/png"],
+                )
+            };
+
+        match try_read(primary, &primary_args) {
+            Ok(bytes) => return Ok(bytes),
+            Err(primary_err) => match try_read(fallback, &fallback_args) {
+                Ok(bytes) => return Ok(bytes),
+                Err(fallback_err) => {
+                    return Err(AppError::Other(format!(
+                        "No image in clipboard ({}: {} | {}: {})",
+                        primary, primary_err, fallback, fallback_err
+                    )));
+                }
+            },
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::{Command, Stdio};
+
+        // Use osascript to check if clipboard has an image and write it to temp
+        let tmp_path = std::env::temp_dir().join("mooshie_clipboard_read.png");
+        let script = format!(
+            "set imgData to the clipboard as «class PNGf»\nset f to open for access POSIX file \"{}\" with write permission\nwrite imgData to f\nclose access f",
+            tmp_path.display()
+        );
+        let status = Command::new("osascript")
+            .args(["-e", &script])
+            .stdin(Stdio::null())
+            .stderr(Stdio::piped())
+            .status()
+            .map_err(|e| AppError::Other(format!("osascript failed: {}", e)))?;
+
+        if status.success() {
+            let bytes = std::fs::read(&tmp_path).map_err(|e| {
+                AppError::Other(format!("Failed to read temp clipboard file: {}", e))
+            })?;
+            let _ = std::fs::remove_file(&tmp_path);
+            if !bytes.is_empty() {
+                return Ok(bytes);
+            }
+        }
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(AppError::Other("No image in clipboard".into()));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::{Command, Stdio};
+
+        let tmp_path = std::env::temp_dir().join("mooshie_clipboard_read.png");
+        let script = format!(
+            "$img = Get-Clipboard -Format Image; if ($img) {{ $img.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png) }} else {{ exit 1 }}",
+            tmp_path.display()
+        );
+        let status = Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
+            .stdin(Stdio::null())
+            .stderr(Stdio::piped())
+            .status()
+            .map_err(|e| AppError::Other(format!("PowerShell clipboard read failed: {}", e)))?;
+
+        if status.success() {
+            let bytes = std::fs::read(&tmp_path).map_err(|e| {
+                AppError::Other(format!("Failed to read temp clipboard file: {}", e))
+            })?;
+            let _ = std::fs::remove_file(&tmp_path);
+            if !bytes.is_empty() {
+                return Ok(bytes);
+            }
+        }
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(AppError::Other("No image in clipboard".into()));
+    }
+}
+
 /// Public wrapper for `infer_image_mime` — used by the web server.
 pub fn infer_image_mime_pub(bytes: &[u8], ext_hint: Option<&str>) -> &'static str {
     infer_image_mime(bytes, ext_hint)
@@ -887,8 +1009,11 @@ pub async fn install_custom_node(
     git_url: String,
     node_name: String,
 ) -> Result<(), AppError> {
-    let config = state.config.read().await;
-    let custom_nodes_dir = std::path::Path::new(&config.comfyui_path).join("custom_nodes");
+    let (comfyui_path, venv_path) = {
+        let config = state.config.read().await;
+        (config.comfyui_path.clone(), config.venv_path.clone())
+    };
+    let custom_nodes_dir = std::path::Path::new(&comfyui_path).join("custom_nodes");
     let target_dir = custom_nodes_dir.join(&node_name);
 
     let emit_progress = |step: &str, message: &str, done: bool| {
@@ -963,18 +1088,18 @@ pub async fn install_custom_node(
     if req_file.exists() {
         emit_progress("pip", "Installing Python dependencies...", false);
 
-        let uv_path = resolve_uv_bin(&config.venv_path);
+        let uv_path = resolve_uv_bin(&venv_path);
 
         let mut pip_child = if uv_path.exists() {
             tokio::process::Command::new(&uv_path)
                 .args(["pip", "install", "-r", &req_file.to_string_lossy()])
-                .env("VIRTUAL_ENV", &config.venv_path)
+                .env("VIRTUAL_ENV", &venv_path)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .map_err(|e| AppError::Other(format!("uv pip install failed to start: {}", e)))?
         } else {
-            let venv_base = std::path::Path::new(&config.venv_path);
+            let venv_base = std::path::Path::new(&venv_path);
             #[cfg(target_os = "windows")]
             let pip_path = venv_base.join("Scripts").join("pip.exe");
             #[cfg(not(target_os = "windows"))]
@@ -1048,20 +1173,23 @@ pub async fn install_pip_package(
     state: State<'_, Arc<AppState>>,
     package: String,
 ) -> Result<(), AppError> {
-    let config = state.config.read().await;
+    let venv_path = {
+        let config = state.config.read().await;
+        config.venv_path.clone()
+    };
 
-    let uv_path = resolve_uv_bin(&config.venv_path);
+    let uv_path = resolve_uv_bin(&venv_path);
 
     let output = if uv_path.exists() {
         tokio::process::Command::new(&uv_path)
             .args(["pip", "install", &package])
-            .env("VIRTUAL_ENV", &config.venv_path)
+            .env("VIRTUAL_ENV", &venv_path)
             .output()
             .await
             .map_err(|e| AppError::Other(format!("uv pip install failed to start: {}", e)))?
     } else {
         // Fallback to venv pip
-        let venv_base = std::path::Path::new(&config.venv_path);
+        let venv_base = std::path::Path::new(&venv_path);
         #[cfg(target_os = "windows")]
         let pip_path = venv_base.join("Scripts").join("pip.exe");
         #[cfg(not(target_os = "windows"))]

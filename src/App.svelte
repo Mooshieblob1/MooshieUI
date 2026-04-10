@@ -44,6 +44,12 @@
   let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string }>>();
   /** In-flight output_image fetch promises per prompt_id (for SSE race-condition avoidance). */
   let pendingOutputFetches = new Map<string, Promise<void>[]>();
+  /** Wait for pending fetches with a hard time limit to prevent hanging. */
+  const FETCH_TIMEOUT_MS = 30_000;
+  async function awaitFetchesWithTimeout(fetches: Promise<void>[]): Promise<void> {
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, FETCH_TIMEOUT_MS));
+    await Promise.race([Promise.allSettled(fetches), timeout]);
+  }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
 
   // Lightbox zoom state — only scale needs reactivity (used in template conditionals)
@@ -410,6 +416,7 @@
   let authRequired = $state(false);
   let authChecked = $state(false);
   let userRole = $state<"admin" | "moderator" | "user" | "anonymous">("admin");
+  let canUseModelhub = $state(true);
   let loginUser = $state("");
   let loginPass = $state("");
   let loginError = $state<string | null>(null);
@@ -425,6 +432,7 @@
     if (!isBrowserMode) {
       authChecked = true;
       userRole = "admin";
+      canUseModelhub = true;
       return true;
     }
     try {
@@ -433,6 +441,7 @@
       });
       const data = await resp.json();
       userRole = data.role ?? "anonymous";
+      canUseModelhub = data.can_use_modelhub ?? false;
       if (data.role === "anonymous" && data.auth_required) {
         authRequired = true;
         authChecked = true;
@@ -470,6 +479,7 @@
       });
       const statusData = await statusResp.json();
       userRole = statusData.role ?? "user";
+      canUseModelhub = statusData.can_use_modelhub ?? false;
 
       // If the admin set a temporary password, force a change before proceeding
       if (data.must_change_password) {
@@ -1387,11 +1397,14 @@
             if (!resp.ok) return;
             const blob = await resp.blob();
             const url = URL.createObjectURL(blob);
+            // Revoke the previous preview blob URL to avoid memory leaks
+            if (progress.previewImage?.startsWith("blob:")) URL.revokeObjectURL(progress.previewImage);
             progress.previewImage = url;
           } catch (e) {
             console.warn("[preview] failed to fetch temp image:", e);
           }
         } else if (data.image) {
+          if (progress.previewImage?.startsWith("blob:")) URL.revokeObjectURL(progress.previewImage);
           progress.previewImage = `data:image/${data.format};base64,${data.image}`;
         }
       }),
@@ -1490,7 +1503,7 @@
           // so without this await the images map would be empty.
           const fetches = pendingOutputFetches.get(promptId);
           if (fetches && fetches.length > 0) {
-            await Promise.allSettled(fetches);
+            await awaitFetchesWithTimeout(fetches);
             pendingOutputFetches.delete(promptId);
           }
 
@@ -1557,7 +1570,7 @@
             // Wait for any in-flight output_image fetches
             const fetches = pendingOutputFetches.get(p.promptId);
             if (fetches && fetches.length > 0) {
-              await Promise.allSettled(fetches);
+              await awaitFetchesWithTimeout(fetches);
               pendingOutputFetches.delete(p.promptId);
             }
             const item = progress.completePrompt(p.promptId);
@@ -1826,7 +1839,7 @@
         /></svg
       >
     </button>
-    {#if userRole === "admin" || userRole === "moderator"}
+    {#if canUseModelhub}
     <button
       class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
       'modelhub'

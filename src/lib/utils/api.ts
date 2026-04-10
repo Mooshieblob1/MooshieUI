@@ -550,17 +550,25 @@ export async function readClipboardImageSafe(): Promise<number[]> {
   if (!isBrowserMode) {
     return readClipboardImage();
   }
-  const items = await navigator.clipboard.read();
-  for (const item of items) {
-    for (const type of item.types) {
-      if (type.startsWith("image/")) {
-        const blob = await item.getType(type);
-        const buffer = await blob.arrayBuffer();
-        return Array.from(new Uint8Array(buffer));
+  // Try the browser Clipboard API first (requires HTTPS or localhost)
+  if (navigator.clipboard?.read) {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        for (const type of item.types) {
+          if (type.startsWith("image/")) {
+            const blob = await item.getType(type);
+            const buffer = await blob.arrayBuffer();
+            return [...new Uint8Array(buffer)];
+          }
+        }
       }
+    } catch {
+      // Clipboard API blocked — fall through to server fallback
     }
   }
-  throw new Error(locale.t('common.no_clipboard_image'));
+  // Fallback: ask the server to read from the host OS clipboard
+  return readClipboardImage();
 }
 
 export async function exportLogs(destination: string): Promise<void> {

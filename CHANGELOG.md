@@ -1,5 +1,35 @@
 # Changelog
 
+## What's New in v0.7.8
+
+### Model Hub Access Control
+- **Per-user Model Hub permission** — new `can_use_modelhub` field on account records lets admins toggle Model Hub access per user. Backend enforces gating on all model-hub commands; frontend hides the nav button when access is denied.
+- **Account actions modal** — admin and moderator account lists now surface action buttons (role change, delete, storage limit, Model Hub toggle) behind a cog-icon modal instead of inline buttons.
+
+### Upscaler Model Migration
+- **Safetensored upscaler models** — upscaler dropdown now recommends 7 models from the `AshtakaOOf/safetensored-upscalers` HuggingFace repo: SPAN 2×/4×, OmniSR 2×/3×/4×, and DAT 4×. Each entry includes a short description.
+- **Scale-factor regex updated** — `extractScaleFromModel` now handles prefix-style names (e.g., `2x_OmniSR`) in addition to suffix patterns.
+
+### Security Hardening
+- **Command ACL expansion** — `save_image_file` and `upload_image` added to `ADMIN_ONLY_COMMANDS`, preventing non-admin users from writing arbitrary files.
+- **Path traversal sanitization** — `save_to_gallery_in_dir` now strips directory separators, dots, and backslashes from `prompt_id` and extracts only the basename from filenames before joining paths.
+- **Mod privilege-escalation guard** — moderators can no longer set storage limits on admin accounts.
+- **Blob URL memory-leak fixes** — preview and lightbox blob URLs are now revoked when replaced or closed, preventing unbounded memory growth.
+- **Clipboard copy response check** — `copyBlobToClipboard` now verifies `resp.ok` before reading the blob.
+- **Prompt-schedule regex tightened** — weight patterns narrowed from `[\d.]+` to `\d+(?:\.\d+)?` to reject malformed values like `1.2.3`.
+- **Autocomplete `<fromto>` fix** — `getCurrentTagFragment` now detects `<fromto>` blocks and avoids splitting on commas inside them.
+
+### Clipboard Read for HTTP Contexts
+- **Native OS clipboard read** — when the browser Clipboard API is unavailable (HTTP, non-secure contexts), clipboard image reads fall back to server-side native tools (`wl-paste`/`xclip` on Linux, `osascript` on macOS, PowerShell on Windows).
+
+### Docker
+- **FaceDetailer libxcb fix** — added `libxcb1` to the Docker image so FaceDetailer's OpenCV dependency loads without missing-library errors.
+
+### Dependencies
+- Merged 7 Dependabot PRs — `@tauri-apps/plugin-updater` 2.10.1, `serde` 1.0.219, `serde_json` 1.0.140, `reqwest` 0.12.15, `tokio` 1.44.2, `uuid` 1.16.0, `tauri-plugin-updater` 2.7.0.
+
+---
+
 ## What's New in v0.7.7
 
 ### Full i18n Coverage

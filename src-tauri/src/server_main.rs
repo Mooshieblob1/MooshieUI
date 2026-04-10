@@ -24,16 +24,22 @@ async fn main() {
 
     // Seed admin account from env vars if provided and not already created.
     // Usage: MOOSHIEUI_ADMIN_USER=blob MOOSHIEUI_ADMIN_PASS=secret
-    if let (Ok(user), Ok(pass)) = (
-        std::env::var("MOOSHIEUI_ADMIN_USER"),
-        std::env::var("MOOSHIEUI_ADMIN_PASS"),
-    ) {
-        if !user.trim().is_empty() && pass.len() >= 4 {
+    let admin_user = std::env::var("MOOSHIEUI_ADMIN_USER").ok();
+    let admin_pass = std::env::var("MOOSHIEUI_ADMIN_PASS").ok();
+
+    match (&admin_user, &admin_pass) {
+        (Some(user), Some(pass)) if !user.trim().is_empty() && pass.len() >= 4 => {
+            if pass == "changeme" {
+                log::warn!("============================================================");
+                log::warn!("  Using default admin password 'changeme'.");
+                log::warn!("  Change MOOSHIEUI_ADMIN_PASS before exposing this server!");
+                log::warn!("============================================================");
+            }
             let auth = AuthState::new();
-            match auth.create_account(&user, &pass) {
+            match auth.create_account(user, pass) {
                 Ok(()) => {
                     // Promote to admin so they have full access remotely (account management, settings, etc.)
-                    let _ = auth.set_account_role(&user, "admin");
+                    let _ = auth.set_account_role(user, "admin");
                     log::info!("Created admin account '{}' from environment", user);
                 }
                 Err(e) if e.contains("already exists") => {
@@ -43,6 +49,25 @@ async fn main() {
                     log::error!("Failed to create admin account: {}", e);
                 }
             }
+        }
+        (Some(_), Some(pass)) if pass.len() < 4 => {
+            log::error!(
+                "MOOSHIEUI_ADMIN_PASS is set but too short ({} chars, minimum 4). \
+                 No admin account was created — you will be locked out!",
+                pass.len()
+            );
+            std::process::exit(1);
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            log::error!(
+                "Both MOOSHIEUI_ADMIN_USER and MOOSHIEUI_ADMIN_PASS must be set together. \
+                 No admin account was created — you will be locked out!"
+            );
+            std::process::exit(1);
+        }
+        _ => {
+            // Neither env var set — desktop mode or pre-existing accounts.
+            log::debug!("No admin env vars set, skipping admin seeding");
         }
     }
 

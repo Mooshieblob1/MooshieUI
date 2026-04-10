@@ -1,8 +1,13 @@
 //! Local account authentication for LAN mode.
 //!
-//! Stores accounts in `{app_data_dir}/auth.json` with bcrypt-hashed passwords.
+//! Stores accounts in `{app_data_dir}/auth.json` with Argon2id-hashed passwords.
 //! Sessions are tracked via random bearer tokens held in memory.
+//!
+//! Legacy SHA-256 hashes (64 hex chars) are accepted on login and
+//! transparently upgraded to Argon2id.
 
+use argon2::password_hash::SaltString;
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -18,6 +23,9 @@ const DEFAULT_STORAGE_LIMIT: u64 = 1024 * 1024 * 1024;
 /// Default image expiry: 7 days in seconds.
 pub const DEFAULT_EXPIRY_SECS: u64 = 7 * 24 * 60 * 60;
 
+/// Session TTL: 7 days.
+const SESSION_TTL_SECS: i64 = 7 * 24 * 60 * 60;
+
 fn default_storage_limit() -> u64 {
     DEFAULT_STORAGE_LIMIT
 }
@@ -26,8 +34,8 @@ fn default_storage_limit() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub username: String,
-    /// SHA-256 hash of the password (hex-encoded). Not bcrypt for simplicity
-    /// in MVP — upgrade to argon2 later.
+    /// Argon2id hash (PHC string). Legacy accounts may still hold a 64-char
+    /// hex SHA-256 hash — these are verified and upgraded on login.
     pub password_hash: String,
     /// When true the user must pick a new password on next login.
     #[serde(default)]
@@ -44,6 +52,10 @@ pub struct Account {
     /// Maximum gallery storage in bytes. Default 2 GB. Admins/mods can expand.
     #[serde(default = "default_storage_limit")]
     pub storage_limit_bytes: u64,
+    /// Whether this user can access the Model Hub (download models from CivitAI).
+    /// Admins and moderators always have access; this flag controls user-role accounts.
+    #[serde(default)]
+    pub can_use_modelhub: bool,
 }
 
 fn default_role() -> String {
@@ -56,12 +68,21 @@ pub struct AuthDatabase {
     pub accounts: Vec<Account>,
 }
 
+/// A persisted session entry with TTL metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionEntry {
+    pub username: String,
+    /// ISO 8601 timestamp when the session was created.
+    pub created_at: String,
+}
+
 /// Auth state with persistent sessions.
 pub struct AuthState {
     db: RwLock<AuthDatabase>,
-    /// Active session tokens → username. Persisted to disk so tokens survive
-    /// server restarts (enables "remember me").
-    sessions: RwLock<HashMap<String, String>>,
+    /// Active session tokens → session entry. Persisted to disk so tokens
+    /// survive server restarts (enables "remember me"). Expired entries are
+    /// pruned on load and periodically on validation.
+    sessions: RwLock<HashMap<String, SessionEntry>>,
     /// Per-user last activity timestamp (username → Instant).
     last_activity: RwLock<HashMap<String, std::time::Instant>>,
 }
@@ -73,7 +94,14 @@ impl AuthState {
         // Prune sessions for accounts that no longer exist
         let valid_usernames: std::collections::HashSet<&str> =
             db.accounts.iter().map(|a| a.username.as_str()).collect();
-        sessions.retain(|_, u| valid_usernames.contains(u.as_str()));
+        sessions.retain(|_, entry| valid_usernames.contains(entry.username.as_str()));
+        // Prune expired sessions
+        let now = Utc::now();
+        sessions.retain(|_, entry| {
+            chrono::DateTime::parse_from_rfc3339(&entry.created_at)
+                .map(|t| (now - t.with_timezone(&Utc)).num_seconds() < SESSION_TTL_SECS)
+                .unwrap_or(false) // drop entries with unparseable timestamps
+        });
         Self {
             db: RwLock::new(db),
             sessions: RwLock::new(sessions),
@@ -111,6 +139,7 @@ impl AuthState {
             created_at: Utc::now().to_rfc3339(),
             last_online: None,
             storage_limit_bytes: DEFAULT_STORAGE_LIMIT,
+            can_use_modelhub: false,
         });
         save_auth_db(&db)?;
         Ok(())
@@ -126,31 +155,70 @@ impl AuthState {
             .find(|a| a.username == username)
             .ok_or("Invalid username or password")?;
 
-        if account.password_hash != hash_password(password) {
+        if !verify_password(password, &account.password_hash) {
             return Err("Invalid username or password".to_string());
         }
 
         let must_change = account.must_change_password;
+
+        // Transparently upgrade legacy SHA-256 hash to Argon2id
+        if is_legacy_sha256(&account.password_hash) {
+            drop(db); // release read lock
+            let mut db = self.db.write().unwrap();
+            if let Some(acc) = db.accounts.iter_mut().find(|a| a.username == username) {
+                acc.password_hash = hash_password(password);
+                let _ = save_auth_db(&db);
+            }
+        }
+
         let token = generate_token();
         {
             let mut sessions = self.sessions.write().unwrap();
-            sessions.insert(token.clone(), username.to_string());
-            let _ = save_sessions(&sessions);
+            sessions.insert(
+                token.clone(),
+                SessionEntry {
+                    username: username.to_string(),
+                    created_at: Utc::now().to_rfc3339(),
+                },
+            );
+            if let Err(e) = save_sessions(&sessions) {
+                log::error!("Failed to persist sessions after login: {}", e);
+            }
         }
         Ok((token, must_change))
     }
 
-    /// Validate a session token. Returns the username if valid.
+    /// Validate a session token. Returns the username if valid and not expired.
     pub fn validate_token(&self, token: &str) -> Option<String> {
         let sessions = self.sessions.read().unwrap();
-        sessions.get(token).cloned()
+        if let Some(entry) = sessions.get(token) {
+            // Check TTL
+            let now = Utc::now();
+            let expired = chrono::DateTime::parse_from_rfc3339(&entry.created_at)
+                .map(|t| (now - t.with_timezone(&Utc)).num_seconds() >= SESSION_TTL_SECS)
+                .unwrap_or(true);
+            if expired {
+                drop(sessions);
+                let mut sessions = self.sessions.write().unwrap();
+                sessions.remove(token);
+                if let Err(e) = save_sessions(&sessions) {
+                    log::error!("Failed to persist sessions after TTL prune: {}", e);
+                }
+                return None;
+            }
+            Some(entry.username.clone())
+        } else {
+            None
+        }
     }
 
     /// Invalidate a session token.
     pub fn logout(&self, token: &str) {
         let mut sessions = self.sessions.write().unwrap();
         sessions.remove(token);
-        let _ = save_sessions(&sessions);
+        if let Err(e) = save_sessions(&sessions) {
+            log::error!("Failed to persist sessions after logout: {}", e);
+        }
     }
 
     /// List all account usernames.
@@ -193,6 +261,28 @@ impl AuthState {
         Ok(())
     }
 
+    /// Get the modelhub access flag for a user account.
+    pub fn get_modelhub_access(&self, username: &str) -> Option<bool> {
+        let db = self.db.read().unwrap();
+        db.accounts
+            .iter()
+            .find(|a| a.username == username)
+            .map(|a| a.can_use_modelhub)
+    }
+
+    /// Set the modelhub access flag for a user account.
+    pub fn set_modelhub_access(&self, username: &str, allowed: bool) -> Result<(), String> {
+        let mut db = self.db.write().unwrap();
+        let account = db
+            .accounts
+            .iter_mut()
+            .find(|a| a.username == username)
+            .ok_or("Account not found")?;
+        account.can_use_modelhub = allowed;
+        save_auth_db(&db)?;
+        Ok(())
+    }
+
     /// Delete an account by username.
     pub fn delete_account(&self, username: &str) -> Result<(), String> {
         let mut db = self.db.write().unwrap();
@@ -204,8 +294,10 @@ impl AuthState {
         save_auth_db(&db)?;
         // Also remove any active sessions for this user
         let mut sessions = self.sessions.write().unwrap();
-        sessions.retain(|_, u| u != username);
-        let _ = save_sessions(&sessions);
+        sessions.retain(|_, entry| entry.username != username);
+        if let Err(e) = save_sessions(&sessions) {
+            log::error!("Failed to persist sessions after account deletion: {}", e);
+        }
         Ok(())
     }
 
@@ -250,7 +342,7 @@ impl AuthState {
             .find(|a| a.username == username)
             .ok_or("Account not found")?;
 
-        if account.password_hash != hash_password(current_password) {
+        if !verify_password(current_password, &account.password_hash) {
             return Err("Current password is incorrect".to_string());
         }
         account.password_hash = hash_password(new_password);
@@ -277,8 +369,10 @@ impl AuthState {
         save_auth_db(&db)?;
         // Revoke existing sessions for this user so they must re-login
         let mut sessions = self.sessions.write().unwrap();
-        sessions.retain(|_, u| u != username);
-        let _ = save_sessions(&sessions);
+        sessions.retain(|_, entry| entry.username != username);
+        if let Err(e) = save_sessions(&sessions) {
+            log::error!("Failed to persist sessions after password reset: {}", e);
+        }
         Ok(())
     }
 
@@ -312,12 +406,12 @@ impl AuthState {
         }
     }
 
-    /// List all users with their role, online/offline status, timestamps, and storage limit.
+    /// List all users with their role, online/offline status, timestamps, storage limit, and modelhub access.
     /// A user is "online" if their last activity was within `threshold`.
     pub fn list_users_status(
         &self,
         threshold: std::time::Duration,
-    ) -> Vec<(String, String, bool, String, Option<String>, u64)> {
+    ) -> Vec<(String, String, bool, String, Option<String>, u64, bool)> {
         let db = self.db.read().unwrap();
         let activity = self.last_activity.read().unwrap();
         db.accounts
@@ -333,16 +427,46 @@ impl AuthState {
                     a.created_at.clone(),
                     a.last_online.clone(),
                     a.storage_limit_bytes,
+                    a.can_use_modelhub,
                 )
             })
             .collect()
     }
 }
 
+/// Returns true if the stored hash is a legacy 64-character hex SHA-256 string.
+fn is_legacy_sha256(hash: &str) -> bool {
+    hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Hash a password with Argon2id (returns a PHC-format string including salt).
 fn hash_password(password: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(password.as_bytes());
-    format!("{:x}", hasher.finalize())
+    let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+    let argon2 = Argon2::default();
+    argon2
+        .hash_password(password.as_bytes(), &salt)
+        .expect("Argon2 hashing should not fail")
+        .to_string()
+}
+
+/// Verify a password against a stored hash.
+/// Supports both Argon2id (PHC string) and legacy SHA-256 (64 hex chars).
+fn verify_password(password: &str, stored_hash: &str) -> bool {
+    if is_legacy_sha256(stored_hash) {
+        // Legacy path: plain SHA-256 comparison
+        let mut hasher = Sha256::new();
+        hasher.update(password.as_bytes());
+        let computed = format!("{:x}", hasher.finalize());
+        computed == stored_hash
+    } else {
+        // Argon2id verification
+        match PasswordHash::new(stored_hash) {
+            Ok(parsed) => Argon2::default()
+                .verify_password(password.as_bytes(), &parsed)
+                .is_ok(),
+            Err(_) => false,
+        }
+    }
 }
 
 fn generate_token() -> String {
@@ -381,16 +505,37 @@ fn sessions_db_path() -> Option<PathBuf> {
     config::app_data_dir().map(|d| d.join("sessions.json"))
 }
 
-fn load_sessions() -> Result<HashMap<String, String>, String> {
+fn load_sessions() -> Result<HashMap<String, SessionEntry>, String> {
     let path = sessions_db_path().ok_or("No app data dir")?;
     if !path.exists() {
         return Ok(HashMap::new());
     }
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&content).map_err(|e| e.to_string())
+    // Try new format first (token → SessionEntry)
+    if let Ok(entries) = serde_json::from_str::<HashMap<String, SessionEntry>>(&content) {
+        return Ok(entries);
+    }
+    // Fall back to legacy format (token → username string) — migrate on load
+    if let Ok(legacy) = serde_json::from_str::<HashMap<String, String>>(&content) {
+        let now = Utc::now().to_rfc3339();
+        let migrated: HashMap<String, SessionEntry> = legacy
+            .into_iter()
+            .map(|(token, username)| {
+                (
+                    token,
+                    SessionEntry {
+                        username,
+                        created_at: now.clone(),
+                    },
+                )
+            })
+            .collect();
+        return Ok(migrated);
+    }
+    Err("Failed to parse sessions.json".to_string())
 }
 
-fn save_sessions(sessions: &HashMap<String, String>) -> Result<(), String> {
+fn save_sessions(sessions: &HashMap<String, SessionEntry>) -> Result<(), String> {
     let path = sessions_db_path().ok_or("No app data dir")?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;

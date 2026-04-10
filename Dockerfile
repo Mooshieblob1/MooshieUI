@@ -58,7 +58,7 @@ RUN touch src-tauri/src/lib.rs src-tauri/src/server_main.rs src-tauri/src/main.r
 FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
 
 ARG COMFYUI_VERSION=master
-ARG TORCH_VERSION=2.7.1
+ARG TORCH_VERSION=2.11.0
 
 ENV DEBIAN_FRONTEND=noninteractive \
     MOOSHIEUI_DATA_DIR=/data \
@@ -70,6 +70,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 python3.12-venv python3-pip \
     git curl ca-certificates \
+    libxcb1 libglib2.0-0 libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (fast Python package manager)
@@ -86,8 +87,8 @@ RUN uv venv ${COMFYUI_PATH}/.venv --python python3.12 && \
     uv pip install torch==${TORCH_VERSION} torchvision torchaudio \
         --index-url https://download.pytorch.org/whl/cu126 && \
     uv pip install -r ${COMFYUI_PATH}/requirements.txt && \
-    uv pip install opencv-python-headless && \
-    uv pip install ultralytics==8.4.34
+    uv pip install ultralytics==8.4.34 && \
+    uv pip install --force-reinstall --no-deps opencv-python-headless
 
 # Copy custom nodes (auto-deployed by the binary on startup, but also
 # pre-copy them so they're available even if the binary doesn't run the

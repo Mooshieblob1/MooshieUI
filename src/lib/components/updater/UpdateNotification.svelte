@@ -37,6 +37,38 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
+  // Track whether we've already checked for server updates (browser mode).
+  // The role may resolve after mount, so we use $effect to react to canSeeUpdate.
+  let serverCheckDone = false;
+  $effect(() => {
+    if (isBrowserMode && canSeeUpdate && !serverCheckDone) {
+      serverCheckDone = true;
+      checkServerUpdate();
+    }
+  });
+
+  async function checkServerUpdate() {
+    await new Promise((r) => setTimeout(r, 3000));
+    try {
+      console.log(`[Updater] Checking server for updates (current: v${currentVersion})...`);
+      const resp = await fetch("/internal-api/_check_update", {
+        headers: authHeaders(),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.update_available) {
+          version = data.latest_version;
+          updateState = "server_available";
+          console.log(`[Updater] Server update available: v${data.latest_version} (current: v${data.current_version})`);
+        } else {
+          console.log("[Updater] Server is up to date");
+        }
+      }
+    } catch (e) {
+      console.warn("[Updater] Server update check failed:", e);
+    }
+  }
+
   onMount(async () => {
     // Check if a previous update didn't apply correctly (desktop only)
     const pending = localStorage.getItem("mooshieui_pending_update");
@@ -71,26 +103,6 @@
         }
       } catch (e) {
         console.warn("[Updater] Update check failed:", e);
-      }
-    } else if (isBrowserMode && canSeeUpdate) {
-      // Server/browser mode: check via backend endpoint (admin/mod only)
-      try {
-        console.log(`[Updater] Checking server for updates (current: v${currentVersion})...`);
-        const resp = await fetch("/internal-api/_check_update", {
-          headers: authHeaders(),
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.update_available) {
-            version = data.latest_version;
-            updateState = "server_available";
-            console.log(`[Updater] Server update available: v${data.latest_version} (current: v${data.current_version})`);
-          } else {
-            console.log("[Updater] Server is up to date");
-          }
-        }
-      } catch (e) {
-        console.warn("[Updater] Server update check failed:", e);
       }
     }
   });

@@ -202,7 +202,7 @@ class GalleryStore {
       const pending = this._persistPromises.get(key);
       if (pending) {
         const galleryFilename = await pending;
-        if (galleryFilename && this.lightboxOpen && this._imageKey(this.selectedImage!) === key) {
+        if (galleryFilename && this.lightboxOpen && this.selectedImage && this._imageKey(this.selectedImage) === key) {
           this.lightboxUrl = await fullImageUrl(galleryFilename);
         }
       }
@@ -229,6 +229,7 @@ class GalleryStore {
   }
 
   closeLightbox() {
+    if (this.lightboxUrl?.startsWith("blob:")) URL.revokeObjectURL(this.lightboxUrl);
     this.lightboxOpen = false;
     this.selectedImage = null;
     this.lightboxUrl = null;
@@ -519,6 +520,10 @@ class GalleryStore {
         const fetchUrl = image.fullImageUrl || image.url;
         if (fetchUrl) {
           const resp = await fetch(fetchUrl);
+          if (!resp.ok) {
+            this.showToast(locale.t("gallery.toast.copy_failed") || "Failed to copy image", "error");
+            return;
+          }
           const blob = await resp.blob();
           const pngBlob = blob.type.startsWith("image/") ? blob : new Blob([blob], { type: "image/png" });
           await this.writeBlobToClipboard(pngBlob);
@@ -577,6 +582,7 @@ class GalleryStore {
     this.showToast(locale.t("gallery.toast.copying"), "info", true);
     try {
       const response = await fetch(blobUrl);
+      if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
       const blob = await response.blob();
       const arrayBuf = await blob.arrayBuffer();
       let bytes = Array.from(new Uint8Array(arrayBuf));

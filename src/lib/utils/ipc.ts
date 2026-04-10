@@ -55,12 +55,18 @@ export function setAuthToken(token: string, rememberMe = false) {
 export function clearAuthToken() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_REMEMBER_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
   sessionStorage.removeItem(AUTH_TOKEN_KEY);
+  sessionStorage.removeItem(AUTH_USER_KEY);
 }
 
 /** Store the currently logged-in username (for per-user localStorage isolation). */
 export function setAuthUser(username: string) {
-  authStorage().setItem(AUTH_USER_KEY, username);
+  const storage = authStorage();
+  storage.setItem(AUTH_USER_KEY, username);
+  // Clear from the other backend to prevent stale cross-user reads
+  const other = storage === localStorage ? sessionStorage : localStorage;
+  other.removeItem(AUTH_USER_KEY);
 }
 
 export function getAuthUser(): string | null {

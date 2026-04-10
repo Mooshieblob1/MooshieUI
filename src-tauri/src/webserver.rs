@@ -99,7 +99,13 @@ fn resolve_username(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) 
         return None; // admin — uses root gallery
     }
     if let Some(token) = extract_token(headers) {
-        return state.auth.validate_token(&token);
+        if let Some(username) = state.auth.validate_token(&token) {
+            // Authenticated admin accounts use the shared gallery, same as localhost
+            if state.auth.get_account_role(&username).as_deref() == Some("admin") {
+                return None;
+            }
+            return Some(username);
+        }
     }
     None
 }
@@ -114,6 +120,8 @@ const ADMIN_ONLY_COMMANDS: &[&str] = &[
     "open_directory",
     "move_installation",
     "read_image_metadata_path",
+    "save_image_file",
+    "upload_image",
 ];
 
 /// Commands that moderators (and admins) can execute.
@@ -124,6 +132,21 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "export_logs",
     "install_pip_package",
 ];
+
+/// Model Hub commands that require explicit per-user access for regular users.
+const MODELHUB_COMMANDS: &[&str] = &[
+    "civitai_search_models",
+    "civitai_list_architectures",
+    "civitai_lookup_hash",
+    "download_model",
+    "get_model_install_dirs",
+    "get_lora_civitai_info",
+    "get_checkpoint_civitai_info",
+];
+
+fn is_modelhub_command(command: &str) -> bool {
+    MODELHUB_COMMANDS.contains(&command)
+}
 
 /// Check command permission level.
 /// Returns the minimum role required to execute the command.
@@ -195,6 +218,10 @@ pub async fn start_server(
             post(auth_reset_password_handler),
         )
         .route("/internal-api/_auth/set_role", post(auth_set_role_handler))
+        .route(
+            "/internal-api/_auth/set_modelhub_access",
+            post(auth_set_modelhub_access_handler),
+        )
         .route("/internal-api/_auth/lan_info", get(auth_lan_info_handler))
         // Storage management
         .route("/internal-api/_storage/info", get(storage_info_handler))
@@ -961,6 +988,17 @@ async fn command_handler(
     };
     if !allowed {
         return forbidden_response("You do not have permission for this action.");
+    }
+
+    // Model Hub commands require explicit access for regular users
+    if is_modelhub_command(&command) && role == UserRole::User {
+        let has_access = extract_token(&headers)
+            .and_then(|t| state.auth.validate_token(&t))
+            .and_then(|u| state.auth.get_modelhub_access(&u))
+            .unwrap_or(false);
+        if !has_access {
+            return forbidden_response("You do not have access to the Model Hub. Ask an admin or moderator to enable it for your account.");
+        }
     }
 
     // Resolve username for per-user gallery isolation
@@ -2633,7 +2671,11 @@ async fn dispatch_command(
             Ok(serde_json::json!(null))
         }
         "read_clipboard_image" => {
-            Err("read_clipboard_image is not yet available in browser mode".to_string())
+            let bytes =
+                crate::commands::api::native_clipboard_read_pub().map_err(|e| e.to_string())?;
+            let encoded: Vec<serde_json::Value> =
+                bytes.iter().map(|b| serde_json::json!(*b)).collect();
+            Ok(serde_json::Value::Array(encoded))
         }
 
         // For commands not yet mapped, return an error
@@ -2798,11 +2840,27 @@ async fn auth_status_handler(
         UserRole::User => "user",
         UserRole::Anonymous => "anonymous",
     };
+    // Admins/mods always have modelhub access; for users check the account flag
+    let can_use_modelhub = match role {
+        UserRole::Admin | UserRole::Moderator => true,
+        _ => {
+            if let Some(token) = extract_token(&headers) {
+                state
+                    .auth
+                    .validate_token(&token)
+                    .and_then(|u| state.auth.get_modelhub_access(&u))
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        }
+    };
     Json(serde_json::json!({
         "auth_required": state.lan_enabled,
         "has_accounts": state.auth.has_accounts(),
         "role": role_str,
         "lan_enabled": state.lan_enabled,
+        "can_use_modelhub": can_use_modelhub,
     }))
 }
 
@@ -2822,7 +2880,15 @@ async fn auth_list_accounts_handler(
         .list_users_status(online_threshold)
         .into_iter()
         .map(
-            |(username, role, online, created_at, last_online, storage_limit_bytes)| {
+            |(
+                username,
+                role,
+                online,
+                created_at,
+                last_online,
+                storage_limit_bytes,
+                can_use_modelhub,
+            )| {
                 serde_json::json!({
                     "username": username,
                     "role": role,
@@ -2830,6 +2896,7 @@ async fn auth_list_accounts_handler(
                     "created_at": created_at,
                     "last_online": last_online,
                     "storage_limit_bytes": storage_limit_bytes,
+                    "can_use_modelhub": can_use_modelhub,
                 })
             },
         )
@@ -3055,6 +3122,41 @@ async fn auth_set_role_handler(
     }
 }
 
+/// POST /internal-api/_auth/set_modelhub_access — admin/moderator toggles Model Hub access for a user.
+async fn auth_set_modelhub_access_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role != UserRole::Admin && role != UserRole::Moderator {
+        return forbidden_response("Only admins and moderators can change Model Hub access.");
+    }
+    let username = match req.get("username").and_then(|v| v.as_str()) {
+        Some(u) => u,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing username" })),
+            )
+                .into_response();
+        }
+    };
+    let allowed = req
+        .get("allowed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    match state.auth.set_modelhub_access(username, allowed) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
 /// GET /internal-api/_auth/lan_info — return the machine's LAN IPs and port. Admin only.
 async fn auth_lan_info_handler(
     AxumState(state): AxumState<SharedState>,
@@ -3132,6 +3234,18 @@ fn save_to_gallery_in_dir(
 ) -> Result<String, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
 
+    // Sanitize client-controlled values to prevent path traversal
+    let safe_filename = std::path::Path::new(filename)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let safe_prompt_id = prompt_id.replace(['/', '\\', '.'], "_");
+
+    if safe_filename.is_empty() {
+        return Err("Invalid filename".to_string());
+    }
+
     let normalized_mode = match mode {
         Some("txt2img") => "txt2img",
         Some("img2img") => "img2img",
@@ -3139,7 +3253,7 @@ fn save_to_gallery_in_dir(
         _ => "unknown",
     };
 
-    let gallery_filename = format!("{}__{}__{}", prompt_id, normalized_mode, filename);
+    let gallery_filename = format!("{}__{}__{}", safe_prompt_id, normalized_mode, safe_filename);
     let path = dir.join(&gallery_filename);
 
     let raw_mode = metadata_mode.unwrap_or("text_chunk");
@@ -3300,6 +3414,16 @@ async fn storage_set_limit_handler(
                 .into_response();
         }
     };
+
+    // Moderators cannot change storage limits for admin accounts
+    if role == UserRole::Moderator {
+        if let Some(target_role) = state.auth.get_account_role(username) {
+            if target_role == "admin" {
+                return forbidden_response("Moderators cannot modify admin storage limits.");
+            }
+        }
+    }
+
     let limit_bytes = match req.get("limit_bytes").and_then(|v| v.as_u64()) {
         Some(l) => l,
         None => {

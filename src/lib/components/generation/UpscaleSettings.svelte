@@ -13,18 +13,50 @@
     label: string;
     filename: string;
     url: string;
+    description: string;
   }
 
+  const HF_BASE = "https://huggingface.co/AshtakaOOf/safetensored-upscalers/resolve/main";
+
   const recommendedModels: RecommendedModel[] = [
+    // SPAN — fast, sharp, excellent general-purpose upscaler
     {
-      label: "Omni 2x (Recommended)",
-      filename: "OmniSR_X2_DIV2K.safetensors",
-      url: "https://huggingface.co/Acly/Omni-SR/resolve/main/OmniSR_X2_DIV2K.safetensors",
+      label: "SPAN 2x — Spanimation",
+      filename: "2x_ModernSpanimationV1.safetensors",
+      url: `${HF_BASE}/span/2x_ModernSpanimationV1.safetensors`,
+      description: "Fast 2x with clean lines and vivid colours. Great for anime and illustration.",
     },
     {
-      label: "Omni 4x (Recommended)",
+      label: "SPAN 4x — NomosUni",
+      filename: "4xNomosUni_span_multijpg.safetensors",
+      url: `${HF_BASE}/span/4xNomosUni_span_multijpg.safetensors`,
+      description: "Fast 4x all-rounder. Handles photos, art, and JPEG artifacts well.",
+    },
+    // OmniSR — lightweight, reliable, good balance of speed and quality
+    {
+      label: "OmniSR 2x",
+      filename: "OmniSR_X2_DIV2K.safetensors",
+      url: `${HF_BASE}/omnisr/OmniSR_X2_DIV2K.safetensors`,
+      description: "Tiny model (~1.6 MB). Quick and artifact-free 2x upscale.",
+    },
+    {
+      label: "OmniSR 3x",
+      filename: "OmniSR_X3_DIV2K.safetensors",
+      url: `${HF_BASE}/omnisr/OmniSR_X3_DIV2K.safetensors`,
+      description: "Tiny model (~1.7 MB). Balanced 3x upscale when 2x isn't enough and 4x is too much.",
+    },
+    {
+      label: "OmniSR 4x",
       filename: "OmniSR_X4_DIV2K.safetensors",
-      url: "https://huggingface.co/Acly/Omni-SR/resolve/main/OmniSR_X4_DIV2K.safetensors",
+      url: `${HF_BASE}/omnisr/OmniSR_X4_DIV2K.safetensors`,
+      description: "Tiny model (~1.7 MB). Quick 4x upscale with solid detail for its size.",
+    },
+    // DAT — slow but highest quality, best for final output
+    {
+      label: "DAT 4x — IllustrationJaNai",
+      filename: "4x_IllustrationJaNai_V1_DAT2_190k.safetensors",
+      url: `${HF_BASE}/dat/4x_IllustrationJaNai_V1_DAT2_190k.safetensors`,
+      description: "Slow but excellent quality. Best for illustrations and anime final prints (~140 MB).",
     },
   ];
 
@@ -41,9 +73,12 @@
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 
-  /** Extract scale factor from upscaler model names (e.g., "OmniSR_X4_DIV2K" → 4) */
+  /** Extract scale factor from upscaler model names (e.g., "OmniSR_X4_DIV2K" → 4, "2x_Modern..." → 2) */
   function extractScaleFromModel(filename: string): number | null {
-    const match = filename.match(/_X(\d+)[_\.]/i) || filename.match(/[_-](\d+)x[_\.]/i);
+    const match =
+      filename.match(/_X(\d+)[_.]/i) ||
+      filename.match(/[_-](\d+)x[_.]/i) ||
+      filename.match(/^(\d+)x[_A-Z]/i);
     return match ? parseInt(match[1], 10) : null;
   }
 
@@ -188,6 +223,9 @@
             <option value={opt.value}>{opt.label}</option>
           {/each}
         </select>
+        {#if generation.upscaleModel && recommendedModels.find(r => r.filename === generation.upscaleModel)?.description}
+          <p class="text-[11px] text-neutral-500 mt-1">{recommendedModels.find(r => r.filename === generation.upscaleModel)!.description}</p>
+        {/if}
         {#if downloading}
           <div class="mt-2 bg-neutral-800/80 rounded-lg px-3 py-2">
             <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
