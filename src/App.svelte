@@ -1117,7 +1117,15 @@
         gallery.lightboxUrl = newUrl;
       }
 
-      if (oldUrl) URL.revokeObjectURL(oldUrl);
+      // Update progress store references so PreviewImage doesn't try to
+      // load the revoked blob URL via displayImage / lastOutputImage.
+      if (oldUrl) {
+        progress.replaceOutputUrl(oldUrl, newUrl);
+        URL.revokeObjectURL(oldUrl);
+      }
+
+      // Trigger Svelte reactivity so lazyThumbnail actions pick up the new URL
+      gallery.sessionImages = [...gallery.sessionImages];
     } catch (e) {
       // Non-critical — the image is still visible, just without embedded metadata
       console.warn("[embedTempMetadata] failed:", e);

@@ -1,3 +1,13 @@
+## What's New in v0.8.3
+
+### Bug Fixes
+
+- **Fix image not displaying after generation (browser mode)** — two related bugs caused `ERR_FILE_NOT_FOUND` for generated images when running through Cloudflare/browser mode:
+  1. **Backend alias race condition** — the cleanup reactor removed the prompt ID alias mapping before SSE streams could resolve it for the `node: null` completion event. The frontend received the raw ComfyUI prompt_id, rejected it, and relied on the 15-second reconciler fallback. Alias cleanup is now deferred by 5 seconds so all SSE streams forward the correct `gen-*` placeholder ID.
+  2. **Stale blob URL in PreviewImage** — `embedTempMetadata` replaced and revoked the output image's blob URL without updating `progress.lastOutputImage` or `modeLastOutput`. The `PreviewImage` component's `$derived` then attempted to load the revoked URL. Now updates all progress store references before revoking, and triggers `sessionImages` reactivity so gallery thumbnails also pick up the new URL.
+
+---
+
 ## What's New in v0.8.2
 
 ### Bug Fixes

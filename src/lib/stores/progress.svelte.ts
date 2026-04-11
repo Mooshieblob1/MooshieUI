@@ -120,6 +120,23 @@ class ProgressStore {
     this.lastOutputImage = image;
   }
 
+  /** Replace a blob URL in lastOutputImage/modeLastOutput (used by embedTempMetadata). */
+  replaceOutputUrl(oldUrl: string, newUrl: string) {
+    if (this.lastOutputImage === oldUrl) {
+      this.lastOutputImage = newUrl;
+    }
+    let changed = false;
+    for (const [mode, url] of Object.entries(this.modeLastOutput)) {
+      if (url === oldUrl) {
+        (this.modeLastOutput as Record<string, string | null>)[mode] = newUrl;
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.modeLastOutput = { ...this.modeLastOutput };
+    }
+  }
+
   /** Called when a progress event arrives — detects pass transitions */
   updateProgress(step: number, max: number, node: string | null) {
     if (node && node !== this._lastProgressNode) {

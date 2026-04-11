@@ -313,7 +313,18 @@ pub async fn start_server(
                                         if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
                                             cleanup_state.gpu_manager.mark_worker_idle(wid).await;
                                         }
-                                        cleanup_state.prompt_queue.cleanup_alias(&pid);
+                                        // Delay alias cleanup so SSE streams have time to
+                                        // resolve the alias for this same event.  Without the
+                                        // delay, the SSE filter_map can race with this reactor
+                                        // and forward the raw ComfyUI prompt_id instead of the
+                                        // gen-* placeholder the frontend expects.
+                                        let alias_pid = pid.clone();
+                                        let alias_state = cleanup_state.clone();
+                                        tokio::spawn(async move {
+                                            tokio::time::sleep(std::time::Duration::from_secs(5))
+                                                .await;
+                                            alias_state.prompt_queue.cleanup_alias(&alias_pid);
+                                        });
                                         cleanup_state.broadcast_queue_positions();
                                         // Signal the drain reactor to submit next held prompt
                                         cleanup_state.prompt_queue.drain_notify.notify_one();
@@ -335,7 +346,12 @@ pub async fn start_server(
                                             .mark_worker_error_then_idle(wid)
                                             .await;
                                     }
-                                    cleanup_state.prompt_queue.cleanup_alias(&pid);
+                                    let alias_pid = pid.clone();
+                                    let alias_state = cleanup_state.clone();
+                                    tokio::spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                        alias_state.prompt_queue.cleanup_alias(&alias_pid);
+                                    });
                                     cleanup_state.broadcast_queue_positions();
                                     // Signal the drain reactor to submit next held prompt
                                     cleanup_state.prompt_queue.drain_notify.notify_one();
