@@ -1,5 +1,14 @@
 # Changelog
 
+## What's New in v0.8.2
+
+### Bug Fixes
+
+- **Fix upscale method label** — the upscale method dropdown was showing a raw locale key (`generation.upscale.method_label`) instead of the translated label. Corrected to use the existing `generation.upscale.method` key.
+- **Fix lightbox blob URL crash on metadata rescan** — `rescanMetadata()` now closes the lightbox before revoking session blob URLs, preventing `ERR_FILE_NOT_FOUND` errors when the lightbox was displaying a blob-backed image during a gallery rescan.
+
+---
+
 ## What's New in v0.8.1
 
 ### Reconciler Alias Resolution Fix

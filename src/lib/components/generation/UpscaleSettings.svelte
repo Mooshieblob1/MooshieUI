@@ -180,7 +180,7 @@
   {#if generation.upscaleEnabled}
     <!-- Method -->
     <div>
-      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.upscale.method_label')}<InfoTip text={locale.t('generation.upscale.method_tip')} /></label>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.upscale.method')}<InfoTip text={locale.t('generation.upscale.method_tip')} /></label>
       <select
         bind:value={generation.upscaleMethod}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"

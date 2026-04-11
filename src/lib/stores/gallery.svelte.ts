@@ -673,6 +673,9 @@ class GalleryStore {
       }
 
       if (migrated > 0) {
+        // Close lightbox before revoking blob URLs — the lightbox may be
+        // displaying one of these blobs, which would cause ERR_FILE_NOT_FOUND.
+        if (this.lightboxOpen) this.closeLightbox();
         for (const image of this.images) {
           if (image.url) URL.revokeObjectURL(image.url);
         }
