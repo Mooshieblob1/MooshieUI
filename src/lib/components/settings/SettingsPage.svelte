@@ -701,7 +701,8 @@
   const sections = [
     { key: "connection", label: "Connection", keywords: "server mode url port remote autolaunch" },
     { key: "appearance", label: "Appearance", keywords: "theme dark light font scale size style presets fooocus" },
-    { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close quality tags auto" },
+    { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close" },
+    { key: "quality", label: "Quality Tags", keywords: "quality tags auto masterpiece best quality anima illustrious noobai pony nanosaur positive negative prompt" },
     { key: "gpu", label: "GPU Workers", keywords: "gpu vram worker backend multi status utilization temperature power nvidia" },
     { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
     { key: "gallery", label: "Gallery", keywords: "import images output directory swarmui comfyui external folder manual save mode save directory" },
@@ -1362,6 +1363,24 @@
             </div>
           </div>
 
+          </div>
+          {/if}
+        </section>
+        {/if}
+
+        <!-- Quality Tags (visible to all users) -->
+        {#if sectionVisible("quality")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.quality = !collapsed.quality)}
+          >
+            {locale.t('settings.performance.auto_quality_tags')}
+            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.quality ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.quality}
+          <div class="px-5 pb-5 space-y-4">
           <div class="flex items-start gap-3">
             <input
               type="checkbox"

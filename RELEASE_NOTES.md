@@ -1,3 +1,11 @@
+## What's New in v0.8.4
+
+### Quality Tags for All Users
+
+- **Quality tags settings accessible to all users** — the auto quality tags controls (toggle, customization, per-model tag editing for Anima/Illustrious/Nanosaur) were previously hidden inside the admin-only Performance section. They are now in their own standalone "Quality Tags" section visible to all users, regardless of role.
+
+---
+
 ## What's New in v0.8.3
 
 ### Bug Fixes
