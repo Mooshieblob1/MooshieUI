@@ -1,3 +1,11 @@
+## What's New in v0.8.2
+
+### Bug Fixes
+- **Fix lightbox images breaking after tab switch** — images in the modal view (lightbox) and bottom panel gallery would fail to load with `ERR_FILE_NOT_FOUND` after switching browser tabs, because the in-memory blob URLs became stale. The lightbox now always loads persisted images fresh from disk, with the session blob shown as an instant placeholder. Blob URLs created for lightbox display are properly tracked and revoked on close, eliminating memory leaks.
+- **Fix upscale method label showing raw locale key** — the upscale settings "Method" dropdown displayed the raw key `generation.upscale.method_label` instead of the translated label. Corrected to use the existing `generation.upscale.method` locale key.
+
+---
+
 ## What's New in v0.6.9 — The "Nice" Update
 
 ### Compare Grid Fixes

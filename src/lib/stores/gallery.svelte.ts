@@ -35,6 +35,8 @@ class GalleryStore {
   boardAssignments = $state<Record<string, string>>({});
   customBoards = $state<string[]>([]);
   private _toastTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Blob URL created by loadFullImage for the current lightbox — revoked on close/replace. */
+  private _loadedLightboxUrl: string | null = null;
 
   constructor() {
     this.loadBoardAssignments();
@@ -124,24 +126,33 @@ class GalleryStore {
   }
 
   async openLightbox(image: OutputImage) {
+    // Revoke any blob URL we created in a previous loadFullImage call
+    if (this._loadedLightboxUrl) {
+      URL.revokeObjectURL(this._loadedLightboxUrl);
+      this._loadedLightboxUrl = null;
+    }
     this.selectedImage = image;
     this.lightboxOpen = true;
-    if (image.url) {
-      // Session images already have a full-res blob URL
-      this.lightboxUrl = image.url;
-      this.lightboxLoading = false;
-    } else if (image.gallery_filename) {
-      // Persisted images — load full-res from disk
-      this.lightboxUrl = null;
+    if (image.gallery_filename) {
+      // Persisted images — always load full-res from disk so we never rely on a
+      // potentially-stale session blob URL (which can be revoked by rescan, etc.).
+      // Show the session blob URL immediately as a low-latency placeholder.
+      this.lightboxUrl = image.url ?? null;
       this.lightboxLoading = true;
       try {
         const fullUrl = await this.loadFullImage(image.gallery_filename);
+        this._loadedLightboxUrl = fullUrl;
         this.lightboxUrl = fullUrl;
       } catch (e) {
         console.error("Failed to load full image:", e);
+        // Keep image.url as fallback if disk load fails
       } finally {
         this.lightboxLoading = false;
       }
+    } else if (image.url) {
+      // Pure session image not yet persisted — use the in-memory blob URL directly
+      this.lightboxUrl = image.url;
+      this.lightboxLoading = false;
     }
   }
 
@@ -153,6 +164,10 @@ class GalleryStore {
   }
 
   closeLightbox() {
+    if (this._loadedLightboxUrl) {
+      URL.revokeObjectURL(this._loadedLightboxUrl);
+      this._loadedLightboxUrl = null;
+    }
     this.lightboxOpen = false;
     this.selectedImage = null;
     this.lightboxUrl = null;
@@ -460,6 +475,8 @@ class GalleryStore {
       }
 
       if (migrated > 0) {
+        // Close the lightbox before revoking blobs to avoid showing broken blob URLs
+        this.closeLightbox();
         for (const image of this.images) {
           if (image.url) URL.revokeObjectURL(image.url);
         }
