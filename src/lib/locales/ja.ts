@@ -224,6 +224,8 @@ const ja: Record<string, string> = {
   "settings.interrogator.general_threshold": "一般タグ閾値",
   "settings.interrogator.character_threshold": "キャラクタータグ閾値",
 
+  "settings.account.logout": "ログアウト",
+
   // このアプリについて
   "settings.about.title": "このアプリについて",
   "settings.about.version": "バージョン",

@@ -224,6 +224,8 @@ const fr: Record<string, string> = {
   "settings.interrogator.general_threshold": "Seuil des tags généraux",
   "settings.interrogator.character_threshold": "Seuil des tags de personnage",
 
+  "settings.account.logout": "Se déconnecter",
+
   // Section À propos
   "settings.about.title": "À propos",
   "settings.about.version": "Version",

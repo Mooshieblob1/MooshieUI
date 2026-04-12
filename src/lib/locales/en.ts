@@ -230,6 +230,9 @@ const en: Record<string, string> = {
   "settings.interrogator.general_threshold": "General Tag Threshold",
   "settings.interrogator.character_threshold": "Character Tag Threshold",
 
+  // Account
+  "settings.account.logout": "Log Out",
+
   // About section
   "settings.about.title": "About",
   "settings.about.version": "Version",

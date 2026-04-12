@@ -217,6 +217,8 @@ const ru: Record<string, string> = {
   "settings.interrogator.general_threshold": "Порог общих тегов",
   "settings.interrogator.character_threshold": "Порог тегов персонажей",
 
+  "settings.account.logout": "Выйти",
+
   "settings.about.title": "О программе",
   "settings.about.version": "Версия",
   "settings.about.check_updates": "Проверить обновления",

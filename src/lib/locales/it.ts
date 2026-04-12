@@ -217,6 +217,8 @@ const it: Record<string, string> = {
   "settings.interrogator.general_threshold": "Soglia tag generali",
   "settings.interrogator.character_threshold": "Soglia tag personaggi",
 
+  "settings.account.logout": "Esci",
+
   "settings.about.title": "Informazioni",
   "settings.about.version": "Versione",
   "settings.about.check_updates": "Controlla aggiornamenti",

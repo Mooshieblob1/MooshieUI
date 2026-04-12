@@ -224,6 +224,8 @@ const es: Record<string, string> = {
   "settings.interrogator.general_threshold": "Umbral de etiquetas generales",
   "settings.interrogator.character_threshold": "Umbral de etiquetas de personaje",
 
+  "settings.account.logout": "Cerrar sesión",
+
   // Acerca de
   "settings.about.title": "Acerca de",
   "settings.about.version": "Versión",

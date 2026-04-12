@@ -11,7 +11,7 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import OpenModelFolders from "./OpenModelFolders.svelte";
   import GpuStatusPanel from "./GpuStatusPanel.svelte";
-  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders } from "../../utils/ipc.js";
+  import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
   import { onMount } from "svelte";
   import { marked } from "marked";
 
@@ -2195,6 +2195,17 @@
                 {cpBusy ? "Saving..." : "Change Password"}
               </button>
             </div>
+            <hr class="border-neutral-800" />
+            <button
+              class="w-full py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-800/50"
+              onclick={async () => {
+                try { await fetch("/internal-api/_auth/logout", { method: "POST", headers: authHeaders() }); } catch {}
+                clearAuthToken();
+                window.location.reload();
+              }}
+            >
+              {locale.t('settings.account.logout')}
+            </button>
           </div>
         </section>
         {/if}

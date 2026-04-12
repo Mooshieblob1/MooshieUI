@@ -3,6 +3,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { downloadModel, installPipPackage } from "../../utils/api.js";
+  import { isBrowserMode } from "../../utils/ipc.js";
   import { ipcListen } from "../../utils/ipc.js";
   import { onMount } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
@@ -95,7 +96,9 @@
       try {
         await downloadModel(rec.url, "ultralytics", rec.filename, undefined, rec.sha256);
         // Ensure ultralytics Python package is installed (required by MooshieFaceDetailer)
-        await installPipPackage("ultralytics==8.4.34");
+        if (!isBrowserMode) {
+          await installPipPackage("ultralytics==8.4.34");
+        }
         await models.refresh();
       } catch (e) {
         downloadError = `Download failed: ${e}`;

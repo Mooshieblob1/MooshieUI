@@ -1,3 +1,16 @@
+## What's New in v0.8.7
+
+### Logout Button
+
+- **Logout in Settings** — browser-mode users now have a "Log Out" button in the Account section of Settings. Clicking it invalidates the server-side session token and returns to the login screen. Localized in all 11 languages.
+- **Backend logout endpoint** — new `POST /internal-api/_auth/logout` route properly invalidates the session token on the server, not just the browser.
+
+### Bug Fix
+
+- **Face Detailer pip install error in browser mode** — `FaceFixSettings.svelte` no longer attempts to run `installPipPackage()` in browser mode, which previously failed with "No such file or directory" because `pip`/`uv` don't exist on the web server. The `isBrowserMode` guard already existed in `GenerateButton.svelte` but was missing from the settings component.
+
+---
+
 ## What's New in v0.8.6
 
 ### Bot Review Fixes (from v0.8.5 PR feedback)

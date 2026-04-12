@@ -222,6 +222,7 @@ pub async fn start_server(
             "/internal-api/_auth/set_modelhub_access",
             post(auth_set_modelhub_access_handler),
         )
+        .route("/internal-api/_auth/logout", post(auth_logout_handler))
         .route("/internal-api/_auth/lan_info", get(auth_lan_info_handler))
         // Storage management
         .route("/internal-api/_storage/info", get(storage_info_handler))
@@ -2965,6 +2966,17 @@ async fn run_interrogation_headless(
 struct AuthRequest {
     username: String,
     password: String,
+}
+
+/// POST /internal-api/_auth/logout — invalidate the current session token.
+async fn auth_logout_handler(
+    AxumState(state): AxumState<SharedState>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(token) = extract_token(&headers) {
+        state.auth.logout(&token);
+    }
+    (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
 }
 
 /// POST /internal-api/_auth/login — authenticate and return a session token.

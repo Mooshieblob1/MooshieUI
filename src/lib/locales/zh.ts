@@ -217,6 +217,8 @@ const zh: Record<string, string> = {
   "settings.interrogator.general_threshold": "通用标签阈值",
   "settings.interrogator.character_threshold": "角色标签阈值",
 
+  "settings.account.logout": "退出登录",
+
   "settings.about.title": "关于",
   "settings.about.version": "版本",
   "settings.about.check_updates": "检查更新",

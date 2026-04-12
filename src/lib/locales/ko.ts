@@ -217,6 +217,8 @@ const ko: Record<string, string> = {
   "settings.interrogator.general_threshold": "일반 태그 임계값",
   "settings.interrogator.character_threshold": "캐릭터 태그 임계값",
 
+  "settings.account.logout": "로그아웃",
+
   "settings.about.title": "정보",
   "settings.about.version": "버전",
   "settings.about.check_updates": "업데이트 확인",

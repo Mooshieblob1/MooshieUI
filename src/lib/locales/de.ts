@@ -217,6 +217,8 @@ const de: Record<string, string> = {
   "settings.interrogator.general_threshold": "Allgemeiner Tag-Schwellwert",
   "settings.interrogator.character_threshold": "Charakter-Tag-Schwellwert",
 
+  "settings.account.logout": "Abmelden",
+
   "settings.about.title": "Über",
   "settings.about.version": "Version",
   "settings.about.check_updates": "Nach Updates suchen",
