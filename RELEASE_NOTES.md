@@ -1,3 +1,26 @@
+## What's New in v0.8.5
+
+### UI Terminology & Tips Improvements
+
+- **"Upscale" renamed to "Refiner"** in all UI labels across 11 languages — buttons, tooltips, history panel, and context menus now consistently say "Refiner" to better reflect what the feature does (re-denoising at higher resolution, not simple upscaling). Internal variable names and API keys are unchanged.
+- **"Face Fix" renamed to "Face Detailer"** in all UI labels across 11 languages — aligns with the community-standard "ADetailer" terminology. The feature title, tooltips, downloading messages, and settings paths all use the new name.
+- **Tip #4 (CFG) rewritten** — replaced the misleading "7-10 is best" advice with architecture-aware guidance: "CFG depends on model architecture and sampler. Start with the model's recommended range — higher isn't always better."
+- **Tip #5 (Sampler) rewritten** — replaced the inaccurate "DDIM fast, Euler stable, DPM++ flexible" ranking with correct advice: "Sampler choice rarely matters — the Euler family works well with most models. Only change if the model architecture requires it (e.g. Turbo, LCM)."
+- **Tip #8 updated** — wording now references "refiner" instead of "upscale" for consistency with the renamed UI.
+
+### Face Detection Model Upgrade
+
+- **Default face detector changed to Anzhc YOLO11n Face Seg** — replaces YOLOv8m as the recommended model. The new model uses YOLO11 architecture with face segmentation (not just bounding boxes), producing cleaner masks for the face detailer pipeline. Commit-pinned to a specific HuggingFace revision with SHA256 verification.
+- **YOLOv8n kept as lightweight fallback** — users who prefer a smaller/faster model can still select it from the dropdown.
+- **Download URL handling updated** — the generate button now uses a URL lookup map for models from different HuggingFace repos, instead of assuming all detectors come from `Bingsu/adetailer`.
+
+### Bug Fixes
+
+- **Fix interrupt generation 500 error (browser mode)** — `api_post()` in both the single-client and multi-GPU code paths unconditionally called `resp.json()`, but ComfyUI's `/interrupt` and `/free` endpoints return empty bodies. This caused a deserialization error surfaced as HTTP 500. Now reads response as text first and returns `null` for empty bodies.
+- **Fix clipboard copy SecurityError through Cloudflare** — `fetch()` on `blob:` URLs is blocked by CSP policies injected by Cloudflare proxies. Added an `<img>` + canvas fallback that bypasses `connect-src` restrictions by using the `img-src` CSP directive instead. Both `copyBlobToClipboard` and the browser-mode `copyToClipboard` path now gracefully fall back when `fetch` fails on blob URLs.
+
+---
+
 ## What's New in v0.8.4
 
 ### Quality Tags for All Users

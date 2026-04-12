@@ -176,7 +176,7 @@ const ja: Record<string, string> = {
   "settings.paths.open_folder.loras": "LoRAs",
   "settings.paths.open_folder.vae": "VAE",
   "settings.paths.open_folder.upscale": "アップスケーラー",
-  "settings.paths.open_folder.facefix": "Face Fix",
+  "settings.paths.open_folder.facefix": "Face Detailer",
   "settings.paths.open_folder.embeddings": "Embeddings",
   "settings.paths.open_folder.controlnet": "ControlNet",
   "settings.paths.open_folder.clip": "CLIP/T.Enc",
@@ -422,12 +422,12 @@ const ja: Record<string, string> = {
   "generation.controlnet.strength_tip": "ControlNetが生成をどれだけ強くガイドするか。値が高いほど制御画像に忠実になりますが、創造性が低下する可能性があります。",
   "generation.controlnet.select_model": "モデルを選択...",
 
-  // 顔修正
-  "generation.facefix.title": "顔修正",
-  "generation.facefix.tip": "YOLOv8を使用して生成画像の顔を検出し、各顔領域を再デノイズしてディテールを改善します。生成後（アップスケール有効時はアップスケール後）に実行されます。",
+  // Face Detailer
+  "generation.facefix.title": "Face Detailer",
+  "generation.facefix.tip": "生成画像の顔を検出し、各顔領域を再デノイズしてディテールを改善します。生成後（リファイナー有効時はリファイナー後）に実行されます。",
   "generation.facefix.detector": "検出モデル",
-  "generation.facefix.detector_tip": "顔検出に使用するYOLOv8モデル。'yolov8m'はより正確、'yolov8n'はより高速で軽量。モデルは初回使用時に自動ダウンロードされます。",
-  "generation.facefix.yolov8m": "YOLOv8m 顔（推奨）",
+  "generation.facefix.detector_tip": "顔検出に使用するYOLOモデル。'YOLO11n Face Seg'は推奨の高品質オプション、'YOLOv8n'はより高速で軽量。モデルは初回使用時に自動ダウンロードされます。",
+  "generation.facefix.yolov8m": "YOLO11n Face Seg（推奨）",
   "generation.facefix.yolov8n": "YOLOv8n 顔（軽量）",
   "generation.facefix.denoise": "デノイズ",
   "generation.facefix.denoise_tip": "検出された各顔をAIがどれだけ描き直すか。低い値（0.2-0.4）は元の顔を忠実に保持、高い値はディテールを追加するが顔の特徴が変わる可能性あり。",
@@ -440,15 +440,15 @@ const ja: Record<string, string> = {
   "generation.facefix.download_failed": "ダウンロード失敗：{error}",
   "generation.facefix.select_model": "モデルを選択...",
 
-  // アップスケール
-  "generation.upscale.title": "アップスケール",
+  // リファイナー
+  "generation.upscale.title": "リファイナー",
   "generation.upscale.tip": "コンテンツを変更せずに高解像度で出力を再生成します。ディテールの改良に便利です。",
   "generation.upscale.scale": "スケール",
   "generation.upscale.denoise": "デノイズ",
   "generation.upscale.denoise_tip": "どれだけディテールを描き直すか。低い値（0.2-0.4）はスタイルを忠実に保持、高い値（0.5-0.7）はより多くのディテールを追加。",
   "generation.upscale.steps": "ステップ",
-  "generation.upscale.steps_tip": "アップスケール用のデノイズステップ数。通常10-15で十分です。",
-  "generation.upscale.model": "アップスケールモデル",
+  "generation.upscale.steps_tip": "リファイナー用のデノイズステップ数。通常10-15で十分です。",
+  "generation.upscale.model": "アップスケーラーモデル",
   "generation.upscale.method": "方法",
   "generation.upscale.method_algorithmic": "アルゴリズム",
   "generation.upscale.method_model": "モデル",
@@ -457,7 +457,7 @@ const ja: Record<string, string> = {
   "generation.upscale.method_tip": "「モデル」は拡大時にリアルなディテールを追加するよう訓練されたAIアップスケーラーを使用。「アルゴリズム」は従来のLanczosスケーリング — 高速だが新しいディテールは追加しません。",
   "generation.upscale.scale_tip": "画像をどれだけ拡大するか。2xは各次元の解像度を2倍（ピクセル数は4倍）にします。スケールが大きいほど時間がかかりVRAM使用量も増加。",
   "generation.upscale.model_tip": "画像のアップスケールに使用するAIモデル。Omni 2xは解像度を2倍、Omni 4xは4倍にします。推奨モデルは初回使用時に自動ダウンロードされます。",
-  "generation.upscale.tiling_tip": "一度にすべてではなく、小さな重なり合うタイルでアップスケール画像を処理します。VRAM使用量を大幅に削減 — クラッシュする可能性のある大きな画像に不可欠。",
+  "generation.upscale.tiling_tip": "一度にすべてではなく、小さな重なり合うタイルでリファイン画像を処理します。VRAM使用量を大幅に削減 — クラッシュする可能性のある大きな画像に不可欠。",
   "generation.upscale.tiling_forced_tip": "Animaの5D潜在フォーマットを処理するためにタイル拡散が必要です。画像は重なり合うタイルに分割され、それぞれ独立して改良された後、シームレスに統合されます。",
   "generation.upscale.tile_size_tip": "タイル拡散使用時の各タイルのサイズ。大きいタイル = 一貫性が高いがVRAM使用量も増加。1024pxが良いデフォルト。メモリ不足の場合は512-768に減らしてください。",
   "generation.upscale.method_model_option": "モデル（アップスケーラー）",
@@ -467,14 +467,14 @@ const ja: Record<string, string> = {
   "generation.upscale.tiling_forced_label": "タイル拡散（Animaでは常時オン）",
   "generation.upscale.select_model": "モデルを選択...",
   "generation.upscale.soft_guidance_label": "ソフトガイダンス",
-  "generation.upscale.soft_guidance_tip": "タイルアップスケール時に品質タグが幻覚（余分な手や物体）を引き起こすのを防ぎます。ガイダンス強度を穏やかに再スケーリングします。推奨：オンのまま。",
+  "generation.upscale.soft_guidance_tip": "タイルリファイン時に品質タグが幻覚（余分な手や物体）を引き起こすのを防ぎます。ガイダンス強度を穏やかに再スケーリングします。推奨：オンのまま。",
   "generation.upscale.soft_guidance_multiplier": "ガイダンス強度",
-  "generation.upscale.soft_guidance_multiplier_tip": "CFGの再スケーリング量。低い = より穏やかなガイダンス、幻覚が少ない。アップスケールには0.4、一般用途には0.7を推奨。0で効果を無効化。",
+  "generation.upscale.soft_guidance_multiplier_tip": "CFGの再スケーリング量。低い = より穏やかなガイダンス、幻覚が少ない。リファインには0.4、一般用途には0.7を推奨。0で効果を無効化。",
   "generation.sampler.smart_guidance_label": "スマートガイダンス",
   "generation.sampler.smart_guidance_tip": "ポジティブ寄りの適応型ガイダンス — ネガティブを避けるだけでなく、プロンプトにより忠実にモデルが従います。すべての生成ステップに適用。調整不要。",
 
-  // アップスケール履歴
-  "generation.upscale_history.title": "アップスケール履歴",
+  // リファイナー履歴
+  "generation.upscale_history.title": "リファイナー履歴",
 
   // 生成ボタン
   "generation.generate": "生成",
@@ -483,11 +483,11 @@ const ja: Record<string, string> = {
   "generation.error_no_checkpoint": "先にチェックポイントを選択してください",
   "generation.error_no_image": "インペインティングには入力画像が必要です。アップロードするかステージング画像を使用してください。",
   "generation.error_no_mask": "インペインティングにはマスクが必要です。キャンバスエディターでマスクを描くかアップロードしてください。",
-  "generation.downloading_facefix": "顔修正モデルをダウンロード中...",
+  "generation.downloading_facefix": "Face Detailerモデルをダウンロード中...",
 
   // Session context menu
   "generation.ctx.get_tags": "画像タグを取得",
-  "generation.ctx.upscale": "アップスケール",
+  "generation.ctx.upscale": "リファイン",
   "generation.ctx.inpaint": "インペイント",
   "generation.ctx.save_as": "名前を付けて保存",
   "generation.ctx.copy": "コピー",
@@ -534,7 +534,7 @@ const ja: Record<string, string> = {
   // ── 進捗 / プレビュー ──────────────────────────────────
   "progress.generating": "生成中...",
 
-  "preview.upscale": "アップスケール",
+  "preview.upscale": "リファイン",
   "preview.save": "保存",
   "preview.save_as": "名前を付けて保存",
   "preview.copy": "コピー",
@@ -551,11 +551,11 @@ const ja: Record<string, string> = {
   "preview.tip.prompt_clear": "明確で具体的なプロンプトは長いものより効果的です。モデルは繰り返しなしでコンテキストを理解します。",
   "preview.tip.prompt_reuse": "成功した画像のメタデータからプロンプトを再利用しましょう。一貫性は再発明に勝ります。",
   "preview.tip.prompt_refine": "結果に満足できない場合、パラメータを調整する前にまずプロンプトを改良してください。",
-  "preview.tip.cfg": "ほとんどのモデルはCFG 7-10で最適に動作します。高い値 = 良い品質とは限りません。",
-  "preview.tip.sampler": "サンプラーは重要：DDIMは高速、Eulerは安定、DPM++は柔軟。モデルごとに試してみてください。",
+  "preview.tip.cfg": "CFGはモデルアーキテクチャとサンプラーに依存します。モデルの推奨範囲から始めましょう — 高ければ良いとは限りません。",
+  "preview.tip.sampler": "サンプラーの選択はほとんど影響しません — Eulerファミリーがほとんどのモデルで優秀です。モデルアーキテクチャが要求する場合のみ変更してください（例: Turbo, LCM）。",
   "preview.tip.seed": "シードで反復できます。同じシードでCFGやステップの小さな変更を試してみてください。",
   "preview.tip.hover": "任意の設定にホバーすると説明が表示されます。覚える必要はありません。",
-  "preview.tip.lower_res": "まず低解像度で生成し、その後アップスケールしましょう。時間を節約し結果を改良できます。",
+  "preview.tip.lower_res": "まず低解像度で生成し、その後リファイナーを使いましょう。時間を節約し結果を反復改善できます。",
   "preview.tip.saved": "生成設定は保存されています。次回もここにあります。",
   "preview.tip.simple": "迷ったら、シンプルに。良いプロンプト1つ + デフォルト設定は複雑さに勝ります。",
   "preview.tip.drag": "メタデータ付きの画像を任意のセクションにドラッグして設定をインポートするか、ここにドロップしてすべてのパラメータを適用します。Ctrl+Vも使えます！",
@@ -634,7 +634,7 @@ const ja: Record<string, string> = {
   "bottom_panel.tab.prompts": "プロンプト",
   "bottom_panel.no_images": "このセッションで生成された画像はありません",
   "bottom_panel.no_prompts": "生成後にプロンプト履歴がここに表示されます",
-  "bottom_panel.upscale": "アップスケール",
+  "bottom_panel.upscale": "リファイン",
   "bottom_panel.inpaint": "インペイント",
   "bottom_panel.save_as": "名前を付けて保存",
   "bottom_panel.copy": "コピー",

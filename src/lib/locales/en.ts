@@ -177,7 +177,7 @@ const en: Record<string, string> = {
   "settings.paths.open_folder.loras": "LoRAs",
   "settings.paths.open_folder.vae": "VAE",
   "settings.paths.open_folder.upscale": "Upscalers",
-  "settings.paths.open_folder.facefix": "Face Fix",
+  "settings.paths.open_folder.facefix": "Face Detailer",
   "settings.paths.open_folder.embeddings": "Embeddings",
   "settings.paths.open_folder.controlnet": "ControlNet",
   "settings.paths.open_folder.clip": "CLIP/T.Enc",
@@ -429,12 +429,12 @@ const en: Record<string, string> = {
   "generation.controlnet.strength_tip": "How strongly the ControlNet guides the generation. Higher values follow the control image more closely but may reduce creativity.",
   "generation.controlnet.select_model": "Select model...",
 
-  // Face Fix
-  "generation.facefix.title": "Face Fix",
-  "generation.facefix.tip": "Detects faces in the generated image using YOLOv8 and re-denoises each face region for better detail. Runs after generation (and after upscale if enabled).",
+  // Face Detailer
+  "generation.facefix.title": "Face Detailer",
+  "generation.facefix.tip": "Detects faces in the generated image and re-denoises each face region for better detail. Runs after generation (and after the refiner if enabled).",
   "generation.facefix.detector": "Detector Model",
-  "generation.facefix.detector_tip": "The YOLOv8 model used to detect faces. 'yolov8m' is more accurate, 'yolov8n' is faster and lighter. Models are downloaded automatically on first use.",
-  "generation.facefix.yolov8m": "YOLOv8m Face (Recommended)",
+  "generation.facefix.detector_tip": "The YOLO model used to detect faces. 'YOLO11n Face Seg' is the recommended high-quality option, 'YOLOv8n' is faster and lighter. Models are downloaded automatically on first use.",
+  "generation.facefix.yolov8m": "YOLO11n Face Seg (Recommended)",
   "generation.facefix.yolov8n": "YOLOv8n Face (Lightweight)",
   "generation.facefix.denoise": "Denoise",
   "generation.facefix.denoise_tip": "How much the AI re-draws each detected face. Lower values (0.2-0.4) preserve the original face closely, higher values add more detail but may change facial features.",
@@ -447,15 +447,15 @@ const en: Record<string, string> = {
   "generation.facefix.download_failed": "Download failed: {error}",
   "generation.facefix.select_model": "Select model...",
 
-  // Upscale
-  "generation.upscale.title": "Upscale",
+  // Refiner
+  "generation.upscale.title": "Refiner",
   "generation.upscale.tip": "Re-generate the output at higher resolution without changing content. Useful for detail refinement.",
   "generation.upscale.scale": "Scale",
   "generation.upscale.denoise": "Denoise",
   "generation.upscale.denoise_tip": "How much detail to re-draw. Lower values (0.2-0.4) preserve style closely, higher values (0.5-0.7) add more detail.",
   "generation.upscale.steps": "Steps",
-  "generation.upscale.steps_tip": "Denoising steps for upscaling. 10-15 is usually enough.",
-  "generation.upscale.model": "Upscale Model",
+  "generation.upscale.steps_tip": "Denoising steps for refining. 10-15 is usually enough.",
+  "generation.upscale.model": "Upscaler Model",
   "generation.upscale.method": "Method",
   "generation.upscale.method_algorithmic": "Algorithmic",
   "generation.upscale.method_model": "Model",
@@ -465,7 +465,7 @@ const en: Record<string, string> = {
   "generation.upscale.method_tip": "'Model' uses an AI upscaler trained to add realistic detail when enlarging. 'Algorithmic' uses traditional Lanczos scaling — faster but won't add new detail.",
   "generation.upscale.scale_tip": "How much to enlarge the image. 2x doubles the resolution in each dimension (4x the pixels). Higher scales take longer and use more VRAM.",
   "generation.upscale.model_tip": "The AI model used to upscale your image. Omni 2x doubles resolution, Omni 4x quadruples it. Recommended models will be downloaded automatically on first use.",
-  "generation.upscale.tiling_tip": "Processes the upscaled image in smaller overlapping tiles instead of all at once. Uses much less VRAM — essential for large images that would otherwise crash.",
+  "generation.upscale.tiling_tip": "Processes the refined image in smaller overlapping tiles instead of all at once. Uses much less VRAM — essential for large images that would otherwise crash.",
   "generation.upscale.tiling_forced_tip": "Tiled diffusion is required for Anima to handle its 5D latent format. The image is split into overlapping tiles, each refined independently, then blended back together seamlessly.",
   "generation.upscale.tile_size_tip": "The size of each tile when using tiled diffusion. Larger tiles = better coherence but more VRAM. 1024px is a good default. Reduce to 512-768 if you run out of memory.",
   "generation.upscale.method_model_option": "Model (Upscaler)",
@@ -475,14 +475,14 @@ const en: Record<string, string> = {
   "generation.upscale.tiling_forced_label": "Tiled diffusion (always on for Anima)",
   "generation.upscale.select_model": "Select model...",
   "generation.upscale.soft_guidance_label": "Soft Guidance",
-  "generation.upscale.soft_guidance_tip": "Prevents quality tags from causing hallucinations (extra hands, objects) during tiled upscaling by gently rescaling the guidance strength. Recommended: keep ON.",
+  "generation.upscale.soft_guidance_tip": "Prevents quality tags from causing hallucinations (extra hands, objects) during tiled refining by gently rescaling the guidance strength. Recommended: keep ON.",
   "generation.upscale.soft_guidance_multiplier": "Guidance Strength",
-  "generation.upscale.soft_guidance_multiplier_tip": "How much to rescale CFG. Lower = gentler guidance, less hallucination. 0.4 is recommended for upscaling, 0.7 for general use. 0 disables the effect.",
+  "generation.upscale.soft_guidance_multiplier_tip": "How much to rescale CFG. Lower = gentler guidance, less hallucination. 0.4 is recommended for refining, 0.7 for general use. 0 disables the effect.",
   "generation.sampler.smart_guidance_label": "Smart Guidance",
   "generation.sampler.smart_guidance_tip": "Positive-biased adaptive guidance — makes the model follow your prompt more closely instead of just avoiding the negative. Applies to all generation steps. No tuning needed.",
 
-  // Upscale History
-  "generation.upscale_history.title": "Upscale History",
+  // Refiner History
+  "generation.upscale_history.title": "Refiner History",
 
   // Generate button
   "generation.generate": "Generate",
@@ -491,11 +491,11 @@ const en: Record<string, string> = {
   "generation.error_no_checkpoint": "Select a checkpoint first",
   "generation.error_no_image": "Inpainting needs an input image. Upload one or use a staged image.",
   "generation.error_no_mask": "Inpainting needs a mask. Paint a mask in Canvas Editor or upload one.",
-  "generation.downloading_facefix": "Downloading face fix model...",
+  "generation.downloading_facefix": "Downloading face detailer model...",
 
   // Session context menu
   "generation.ctx.get_tags": "Get Image Tags",
-  "generation.ctx.upscale": "Upscale",
+  "generation.ctx.upscale": "Refine",
   "generation.ctx.inpaint": "Inpaint",
   "generation.ctx.save_as": "Save As",
   "generation.ctx.copy": "Copy",
@@ -542,7 +542,7 @@ const en: Record<string, string> = {
   // ── Progress / Preview ──────────────────────────────────
   "progress.generating": "Generating...",
 
-  "preview.upscale": "Upscale",
+  "preview.upscale": "Refine",
   "preview.save": "Save",
   "preview.save_as": "Save As",
   "preview.copy": "Copy",
@@ -559,11 +559,11 @@ const en: Record<string, string> = {
   "preview.tip.prompt_clear": "Clear, specific prompts work better than long ones. Models understand context without repetition.",
   "preview.tip.prompt_reuse": "Try reusing prompts from successful images metadata. Consistency beats reinvention.",
   "preview.tip.prompt_refine": "When results disappoint, refine your prompt first before adjusting parameters.",
-  "preview.tip.cfg": "Most models work best with CFG 7-10. Higher doesn't mean better — it can degrade quality.",
-  "preview.tip.sampler": "The sampler matters: DDIM is fast, Euler is stable, DPM++ is flexible. Experiment by model.",
+  "preview.tip.cfg": "CFG depends on model architecture and sampler. Start with the model's recommended range — higher doesn't always mean better.",
+  "preview.tip.sampler": "Sampler choice rarely matters — the Euler family works great for most models. Only switch if your model architecture requires it (e.g. Turbo, LCM).",
   "preview.tip.seed": "Seed lets you iterate. Try small CFG or step changes with the same seed for refinement.",
   "preview.tip.hover": "Hover over any setting for explanations. No need to memorize what each does.",
-  "preview.tip.lower_res": "Generate at lower resolution first, then upscale. Saves time and lets you refine results.",
+  "preview.tip.lower_res": "Generate at lower resolution first, then use the refiner. Saves time and lets you iterate on results.",
   "preview.tip.saved": "Your generation settings are saved. They'll be here next time you return.",
   "preview.tip.simple": "If confused, start simple: one good prompt + default settings beats complexity.",
   "preview.tip.drag": "Drag an image with metadata onto any section to import its settings, or drop it here to apply all parameters. Ctrl+V works too!",
@@ -647,7 +647,7 @@ const en: Record<string, string> = {
   "bottom_panel.tab.prompts": "Prompts",
   "bottom_panel.no_images": "No images generated this session",
   "bottom_panel.no_prompts": "Prompt history will appear here after generating",
-  "bottom_panel.upscale": "Upscale",
+  "bottom_panel.upscale": "Refine",
   "bottom_panel.inpaint": "Inpaint",
   "bottom_panel.save_as": "Save As",
   "bottom_panel.copy": "Copy",

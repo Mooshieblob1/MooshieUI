@@ -20,7 +20,7 @@ pub fn append_facefix_chain(
     let detector_model = params
         .facefix_detector
         .as_deref()
-        .unwrap_or("face_yolov8m.pt");
+        .unwrap_or("Anzhc Face seg 640 v4 y11n.pt");
 
     let detailer_id = next_id.to_string();
     workflow.insert(

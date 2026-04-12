@@ -45,7 +45,11 @@ impl AppState {
                 message: resp.text().await.unwrap_or_default(),
             });
         }
-        Ok(resp.json().await?)
+        let text = resp.text().await.unwrap_or_default();
+        if text.is_empty() {
+            return Ok(Value::Null);
+        }
+        Ok(serde_json::from_str(&text)?)
     }
 
     pub async fn get_models_list(&self, category: &str) -> Result<Vec<String>, AppError> {

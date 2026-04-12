@@ -536,7 +536,19 @@ class GalleryStore {
             this.showToast(locale.t("gallery.toast.copied"), "success");
             return;
           } catch {
-            // Blob URL fetch can fail with SecurityError through Cloudflare — fall through
+            // fetch on blob: URLs can be blocked by CSP (e.g. Cloudflare proxy).
+            // Fall back to <img> + canvas approach for blob URLs.
+            if (fetchUrl.startsWith("blob:")) {
+              try {
+                const bytes = await this._blobUrlToPngBytes(fetchUrl);
+                const pngBlob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+                await this.writeBlobToClipboard(pngBlob);
+                this.showToast(locale.t("gallery.toast.copied"), "success");
+                return;
+              } catch {
+                // Canvas fallback also failed — fall through
+              }
+            }
           }
         }
         // Step 3: Image genuinely not available yet (no URL or gallery file).
@@ -590,11 +602,20 @@ class GalleryStore {
   async copyBlobToClipboard(blobUrl: string, metadata?: Record<string, string>) {
     this.showToast(locale.t("gallery.toast.copying"), "info", true);
     try {
-      const response = await fetch(blobUrl);
-      if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
-      const blob = await response.blob();
-      const arrayBuf = await blob.arrayBuffer();
-      let bytes = Array.from(new Uint8Array(arrayBuf));
+      let bytes: number[];
+      let mimeType = "image/png";
+      try {
+        const response = await fetch(blobUrl);
+        if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
+        const blob = await response.blob();
+        mimeType = blob.type || "image/png";
+        const arrayBuf = await blob.arrayBuffer();
+        bytes = Array.from(new Uint8Array(arrayBuf));
+      } catch {
+        // fetch on blob: URLs can be blocked by CSP (e.g. Cloudflare proxy).
+        // Fall back to drawing through <img> + canvas to extract PNG bytes.
+        bytes = await this._blobUrlToPngBytes(blobUrl);
+      }
 
       if (metadata) {
         bytes = await embedPngMetadataBytes(bytes, metadata);
@@ -604,8 +625,8 @@ class GalleryStore {
         const pngBlob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
         await this.writeBlobToClipboard(pngBlob);
       } else {
-        const ext = blob.type === "image/jpeg" ? "jpg"
-          : blob.type === "image/webp" ? "webp"
+        const ext = mimeType === "image/jpeg" ? "jpg"
+          : mimeType === "image/webp" ? "webp"
           : "png";
         await copyBytesToClipboard(bytes, ext);
       }
@@ -614,6 +635,30 @@ class GalleryStore {
       console.error("Failed to copy blob to clipboard:", e);
       this.showToast(locale.t("gallery.toast.failed_copy"), "error");
     }
+  }
+
+  /** Convert a blob URL to PNG bytes via <img> + canvas (CSP-safe). */
+  private _blobUrlToPngBytes(blobUrl: string): Promise<number[]> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { reject(new Error("Canvas 2D context unavailable")); return; }
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob((blob) => {
+          if (!blob) { reject(new Error("Canvas toBlob failed")); return; }
+          blob.arrayBuffer().then(
+            (buf) => resolve(Array.from(new Uint8Array(buf))),
+            reject,
+          );
+        }, "image/png");
+      };
+      img.onerror = () => reject(new Error("Failed to load blob URL as image"));
+      img.src = blobUrl;
+    });
   }
 
   /** Delete an image from the gallery. */

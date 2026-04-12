@@ -55,11 +55,15 @@
 
       // Ensure face fix dependencies are ready when enabled
       if (generation.facefixEnabled) {
-        const detector = generation.facefixDetector || "face_yolov8m.pt";
+        const detector = generation.facefixDetector || "Anzhc Face seg 640 v4 y11n.pt";
         if (!models.ultralyticsModels.includes(detector)) {
           gallery.showToast(locale.t('generation.downloading_facefix'), "info");
+          const detectorUrls: Record<string, string> = {
+            "Anzhc Face seg 640 v4 y11n.pt": "https://huggingface.co/Anzhc/Anzhcs_YOLOs/resolve/0319daeae9ae40752c2fb3904069cb35cc61d2ec/Anzhc%20Face%20seg%20640%20v4%20y11n.pt",
+          };
+          const url = detectorUrls[detector] ?? `https://huggingface.co/Bingsu/adetailer/resolve/main/${detector}`;
           await downloadModel(
-            `https://huggingface.co/Bingsu/adetailer/resolve/main/${detector}`,
+            url,
             "ultralytics",
             detector,
           );
