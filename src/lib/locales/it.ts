@@ -462,7 +462,7 @@ const it: Record<string, string> = {
   "generation.error_no_checkpoint": "Seleziona prima un checkpoint",
   "generation.error_no_image": "L'inpainting richiede un'immagine di input. Caricane una o usa un'immagine preparata.",
   "generation.error_no_mask": "L'inpainting richiede una maschera. Disegna una maschera nel Canvas Editor o caricane una.",
-  "generation.downloading_facefix": "Download modello face detailer...",
+  "generation.downloading_facefix": "Download modello Face Detailer...",
 
   // Session context menu
   "generation.ctx.get_tags": "Ottieni tag immagine",

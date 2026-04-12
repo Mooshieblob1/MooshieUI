@@ -491,7 +491,7 @@ const en: Record<string, string> = {
   "generation.error_no_checkpoint": "Select a checkpoint first",
   "generation.error_no_image": "Inpainting needs an input image. Upload one or use a staged image.",
   "generation.error_no_mask": "Inpainting needs a mask. Paint a mask in Canvas Editor or upload one.",
-  "generation.downloading_facefix": "Downloading face detailer model...",
+  "generation.downloading_facefix": "Downloading Face Detailer model...",
 
   // Session context menu
   "generation.ctx.get_tags": "Get Image Tags",

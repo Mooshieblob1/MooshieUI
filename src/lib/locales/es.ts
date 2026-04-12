@@ -484,7 +484,7 @@ const es: Record<string, string> = {
   "generation.error_no_checkpoint": "Selecciona un checkpoint primero",
   "generation.error_no_image": "El inpainting necesita una imagen de entrada. Sube una o usa una imagen preparada.",
   "generation.error_no_mask": "El inpainting necesita una máscara. Pinta una máscara en el Editor de lienzo o sube una.",
-  "generation.downloading_facefix": "Descargando modelo face detailer...",
+  "generation.downloading_facefix": "Descargando modelo Face Detailer...",
 
   // Session context menu
   "generation.ctx.get_tags": "Obtener etiquetas",

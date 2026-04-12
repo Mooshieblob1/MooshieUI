@@ -379,8 +379,8 @@ impl GpuManager {
                 message: resp.text().await.unwrap_or_default(),
             });
         }
-        let text = resp.text().await.unwrap_or_default();
-        if text.is_empty() {
+        let text = resp.text().await?;
+        if text.trim().is_empty() {
             return Ok(serde_json::Value::Null);
         }
         Ok(serde_json::from_str(&text)?)

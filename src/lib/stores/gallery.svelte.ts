@@ -615,6 +615,7 @@ class GalleryStore {
         // fetch on blob: URLs can be blocked by CSP (e.g. Cloudflare proxy).
         // Fall back to drawing through <img> + canvas to extract PNG bytes.
         bytes = await this._blobUrlToPngBytes(blobUrl);
+        mimeType = "image/png";
       }
 
       if (metadata) {

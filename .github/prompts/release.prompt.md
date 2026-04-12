@@ -102,16 +102,42 @@ npm run build
 
 3. **Wait for CI** — poll `github-pull-request_pullRequestStatusChecks` until the "GlassWorm Infection Audit" check shows `state: "success"`. Wait 30 seconds between polls. Timeout after 5 minutes.
 
-4. **Merge the PR** using `mcp_github_merge_pull_request` with `merge_method: "squash"`.
+4. **Triage and address bot review comments** — after CI passes, wait 60 seconds for automated reviewers (`gemini-code-assist[bot]`, `copilot-pull-request-reviewer[bot]`) to post, then fetch all review comments with `mcp_github_pull_request_read` (`method: "get_review_comments"`).
 
-5. **Sync local main:**
+   **Assessment — do NOT blindly trust bot suggestions.** For each comment, classify it:
+
+   | Category | Action | Examples |
+   |----------|--------|---------|
+   | **Correctness / Safety** | Fix it | Error propagation bugs, MIME type mismatches, missing integrity checks, silent data loss |
+   | **Consistency** | Fix it | Title-case inconsistency in user-visible strings, naming convention violations |
+   | **Defensive hardening** | Fix if trivial | `.trim().is_empty()` instead of `.is_empty()`, edge-case guards |
+   | **Premature abstraction** | Skip | "Centralize X into a shared config" when only 2 call-sites exist |
+   | **Stylistic / informational** | Skip | Praise, nitpicks, suggestions that don't improve correctness or safety |
+   | **Factually wrong** | Skip and note why | Bot misunderstands the API contract, browser Clipboard API constraints, etc. |
+
+   **Workflow:**
+   - Read each comment, read the referenced file to verify the bot's claim is accurate
+   - Present a summary table to the user: comment, file, verdict (fix / skip), and one-line rationale
+   - Apply only the fixes classified as Fix
+   - If any fixes were made, commit and push:
+     ```powershell
+     git add -A
+     git -c core.hooksPath=/dev/null commit -m "address bot review feedback"
+     git -c core.hooksPath=/dev/null push origin release/vX.Y.Z
+     ```
+   - Wait for CI to pass again (same polling as step 3) before proceeding to merge
+   - If there are no actionable comments, proceed directly to merge
+
+5. **Merge the PR** using `mcp_github_merge_pull_request` with `merge_method: "squash"`.
+
+6. **Sync local main:**
    ```powershell
    git checkout main
    git fetch origin main
    git reset --hard origin/main
    ```
 
-### 6. Tag and push
+### 7. Tag and push
 
 > **CRITICAL**: Tag protection rules prevent deleting or force-updating tags once pushed. Only push the tag after the PR is merged and main is synced.
 
@@ -125,11 +151,11 @@ The `v*` tag triggers the **Build & Release** GitHub Actions workflow which:
 2. Generates `latest.json` updater manifest with signatures
 3. Creates a **GitHub Release** with download table + only the current version's section from `RELEASE_NOTES.md`
 
-### 7. Verify CI started
+### 8. Verify CI started
 
 After pushing the tag, confirm the release workflow started by checking with the GitHub API or telling the user to check `https://github.com/Mooshieblob1/MooshieUI/actions`.
 
-### 8. Fallback: workflow_dispatch
+### 9. Fallback: workflow_dispatch
 
 If the tag push is rejected (e.g. tag already exists due to a previous attempt), or if the tag-triggered workflow fails, use **workflow_dispatch** as a fallback:
 
@@ -144,7 +170,7 @@ Invoke-RestMethod -Uri "https://api.github.com/repos/Mooshieblob1/MooshieUI/acti
 
 This triggers the same Build & Release workflow from the current `main` HEAD.
 
-### 9. Clean up
+### 10. Clean up
 
 Delete the release branch (remote only):
 ```powershell

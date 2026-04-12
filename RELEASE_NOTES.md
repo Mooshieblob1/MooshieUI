@@ -1,3 +1,19 @@
+## What's New in v0.8.6
+
+### Bot Review Fixes (from v0.8.5 PR feedback)
+
+- **Rust API error propagation** — `api_post()` in both `client.rs` and `gpu_manager.rs` now uses `?` instead of `unwrap_or_default()` when reading response text, so transport/body-read errors properly propagate instead of being silently swallowed as empty responses.
+- **Whitespace-tolerant empty body check** — `text.trim().is_empty()` replaces `text.is_empty()` so whitespace-only responses from ComfyUI endpoints (e.g. `/interrupt`, `/free`) are correctly treated as empty rather than failing JSON parse.
+- **Clipboard MIME type consistency** — Canvas fallback in `copyBlobToClipboard()` now explicitly resets `mimeType` to `"image/png"` so the clipboard item's declared type always matches the actual PNG bytes produced by the canvas.
+- **Face detector SHA256 verification** — `GenerateButton.svelte` now passes the expected SHA256 hash when downloading the default Anzhc YOLO11n Face Seg model, matching the integrity verification already used in `FaceFixSettings.svelte`.
+- **Title case fix** — "face detailer" → "Face Detailer" in the downloading message across 5 locale files (en, fr, it, pt, es) for consistency with the rest of the UI.
+
+### Release Workflow Improvement
+
+- **Bot review triage step** — The `/release` prompt now includes a structured assessment framework for bot review comments (gemini-code-assist, Copilot) with classification categories, rather than blindly trusting all suggestions.
+
+---
+
 ## What's New in v0.8.5
 
 ### UI Terminology & Tips Improvements
