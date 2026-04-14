@@ -1,3 +1,14 @@
+## What's New in v0.9.0
+
+### Fix: Flashing Console Window on Windows
+- **Eliminated the flickering window** that appeared every 5 seconds while the GPU Status panel was open. `nvidia-smi.exe` was being spawned without the `CREATE_NO_WINDOW` flag, causing Windows to briefly show a console window each cycle.
+- Applied `CREATE_NO_WINDOW` to all subprocess spawns in the Windows build: `nvidia-smi`, `detect_compute_capability`, export-logs diagnostics (python/nvidia-smi), and the PowerShell clipboard reader.
+
+### ComfyUI No Longer Opens a Browser Window
+- Added `--disable-auto-launch` to every ComfyUI process spawn (single-GPU and multi-GPU worker paths). ComfyUI previously attempted to open a browser tab on startup; MooshieUI is the frontend so this was unnecessary.
+
+---
+
 ## What's New in v0.8.9
 
 ### Attention Backend Selection

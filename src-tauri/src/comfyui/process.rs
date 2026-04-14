@@ -254,7 +254,8 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         .arg("--listen")
         .arg("127.0.0.1")
         .arg("--port")
-        .arg(config.server_port.to_string());
+        .arg(config.server_port.to_string())
+        .arg("--disable-auto-launch"); // MooshieUI is the frontend — no browser needed
 
     // Enable latent previews over WebSocket
     cmd.arg("--preview-method").arg("auto");
@@ -750,7 +751,8 @@ pub async fn start_worker_process(
         .arg("--listen")
         .arg("127.0.0.1")
         .arg("--port")
-        .arg(worker.port.to_string());
+        .arg(worker.port.to_string())
+        .arg("--disable-auto-launch"); // MooshieUI is the frontend — no browser needed
 
     cmd.arg("--preview-method").arg("auto");
 

@@ -875,6 +875,7 @@ fn native_clipboard_read() -> Result<Vec<u8>, AppError> {
 
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         use std::process::{Command, Stdio};
 
         let tmp_path = std::env::temp_dir().join("mooshie_clipboard_read.png");
@@ -886,6 +887,7 @@ fn native_clipboard_read() -> Result<Vec<u8>, AppError> {
             .args(["-NoProfile", "-Command", &script])
             .stdin(Stdio::null())
             .stderr(Stdio::piped())
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .status()
             .map_err(|e| AppError::Other(format!("PowerShell clipboard read failed: {}", e)))?;
 
@@ -2536,13 +2538,20 @@ pub async fn export_logs(
 
     // GPU info (NVIDIA)
     let _ = writeln!(output, "=== GPU Info ===");
-    match std::process::Command::new("nvidia-smi")
-        .args([
+    let nvidia_smi_out = {
+        let mut cmd = std::process::Command::new("nvidia-smi");
+        cmd.args([
             "--query-gpu=name,driver_version,memory.total,compute_cap",
             "--format=csv,noheader",
-        ])
-        .output()
-    {
+        ]);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        cmd.output()
+    };
+    match nvidia_smi_out {
         Ok(o) if o.status.success() => {
             let _ = write!(output, "{}", String::from_utf8_lossy(&o.stdout));
         }
@@ -2566,20 +2575,31 @@ pub async fn export_logs(
                 }
             };
             if python_path.exists() {
-                if let Ok(o) = std::process::Command::new(&python_path)
-                    .args(["--version"])
-                    .output()
+                #[cfg(target_os = "windows")]
+                let hide: u32 = 0x08000000; // CREATE_NO_WINDOW
+
+                let mut py_ver_cmd = std::process::Command::new(&python_path);
+                py_ver_cmd.args(["--version"]);
+                #[cfg(target_os = "windows")]
                 {
+                    use std::os::windows::process::CommandExt;
+                    py_ver_cmd.creation_flags(hide);
+                }
+                if let Ok(o) = py_ver_cmd.output() {
                     let _ = write!(output, "Python: {}", String::from_utf8_lossy(&o.stdout));
                     if !o.stderr.is_empty() {
                         let _ = write!(output, "{}", String::from_utf8_lossy(&o.stderr));
                     }
                 }
                 // Get torch version
-                if let Ok(o) = std::process::Command::new(&python_path)
-                    .args(["-c", "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}') if torch.cuda.is_available() else None"])
-                    .output()
+                let mut torch_cmd = std::process::Command::new(&python_path);
+                torch_cmd.args(["-c", "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}') if torch.cuda.is_available() else None"]);
+                #[cfg(target_os = "windows")]
                 {
+                    use std::os::windows::process::CommandExt;
+                    torch_cmd.creation_flags(hide);
+                }
+                if let Ok(o) = torch_cmd.output() {
                     if o.status.success() {
                         let _ = write!(output, "{}", String::from_utf8_lossy(&o.stdout));
                     }
@@ -2779,11 +2799,17 @@ pub struct GpuWorkerInfo {
 
 /// Query live GPU stats from nvidia-smi.
 fn query_nvidia_smi_stats() -> Result<Vec<GpuStats>, AppError> {
-    let output = std::process::Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw",
-            "--format=csv,noheader,nounits",
-        ])
+    let mut cmd = std::process::Command::new("nvidia-smi");
+    cmd.args([
+        "--query-gpu=index,name,memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw",
+        "--format=csv,noheader,nounits",
+    ]);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let output = cmd
         .output()
         .map_err(|e| AppError::Other(format!("nvidia-smi not found: {}", e)))?;
 
@@ -2920,10 +2946,14 @@ pub async fn check_attention_backend(
 
 /// Detect the highest NVIDIA GPU compute capability (e.g. 8.6 for RTX 3080).
 fn detect_compute_capability() -> Option<f32> {
-    let output = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"])
-        .output()
-        .ok()?;
+    let mut cmd = std::process::Command::new("nvidia-smi");
+    cmd.args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"]);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let output = cmd.output().ok()?;
 
     if !output.status.success() {
         return None;
