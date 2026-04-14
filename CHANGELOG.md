@@ -1,5 +1,15 @@
 # Changelog
 
+## What's New in v0.8.8
+
+### Case-Insensitive Usernames
+
+- **Usernames are now case-insensitive** — logging in as "Alice", "alice", or "ALICE" all resolve to the same account. New accounts are stored in lowercase.
+- **Automatic migration on startup** — existing accounts, sessions, and gallery directories are normalized to lowercase on first launch. Duplicate accounts that collapse to the same name are deduplicated (first occurrence wins).
+- **Gallery directory rename** — mixed-case per-user gallery folders (e.g., `users/Alice`) are automatically renamed to lowercase (`users/alice`) so images remain accessible after the migration.
+
+---
+
 ## What's New in v0.8.7
 
 ### Logout Button

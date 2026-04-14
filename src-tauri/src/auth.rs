@@ -89,8 +89,90 @@ pub struct AuthState {
 
 impl AuthState {
     pub fn new() -> Self {
-        let db = load_auth_db().unwrap_or_default();
+        let mut db = load_auth_db().unwrap_or_default();
+
+        // One-time migration: normalise all stored usernames to lowercase
+        let mut db_changed = false;
+        for account in &mut db.accounts {
+            let lower = account.username.to_ascii_lowercase();
+            if account.username != lower {
+                log::info!(
+                    "Migrating account username '{}' → '{}'",
+                    account.username,
+                    lower
+                );
+                account.username = lower;
+                db_changed = true;
+            }
+        }
+        // Deduplicate after lowering (keep the first occurrence)
+        {
+            let mut seen = std::collections::HashSet::new();
+            let before = db.accounts.len();
+            db.accounts.retain(|a| seen.insert(a.username.clone()));
+            if db.accounts.len() != before {
+                log::warn!(
+                    "Removed {} duplicate accounts after case-normalisation",
+                    before - db.accounts.len()
+                );
+                db_changed = true;
+            }
+        }
+        if db_changed {
+            if let Err(e) = save_auth_db(&db) {
+                log::error!("Failed to persist auth DB after username migration: {}", e);
+            }
+        }
+
         let mut sessions = load_sessions().unwrap_or_default();
+
+        // Normalise session usernames to lowercase
+        let mut sessions_changed = false;
+        for entry in sessions.values_mut() {
+            let lower = entry.username.to_ascii_lowercase();
+            if entry.username != lower {
+                entry.username = lower;
+                sessions_changed = true;
+            }
+        }
+
+        // Rename mixed-case gallery directories to lowercase
+        if let Some(gallery_base) = config::gallery_dir() {
+            let users_dir = gallery_base.join("users");
+            if users_dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&users_dir) {
+                    for entry in entries.flatten() {
+                        if let Some(name) = entry.file_name().to_str() {
+                            let lower = name.to_ascii_lowercase();
+                            if name != lower && entry.path().is_dir() {
+                                let target = users_dir.join(&lower);
+                                if target.exists() {
+                                    log::warn!(
+                                        "Cannot rename gallery '{}' → '{}': target already exists",
+                                        name,
+                                        lower
+                                    );
+                                } else {
+                                    log::info!(
+                                        "Renaming gallery directory '{}' → '{}'",
+                                        name,
+                                        lower
+                                    );
+                                    if let Err(e) = std::fs::rename(entry.path(), &target) {
+                                        log::error!(
+                                            "Failed to rename gallery dir '{}': {}",
+                                            name,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Prune sessions for accounts that no longer exist
         let valid_usernames: std::collections::HashSet<&str> =
             db.accounts.iter().map(|a| a.username.as_str()).collect();
@@ -102,6 +184,13 @@ impl AuthState {
                 .map(|t| (now - t.with_timezone(&Utc)).num_seconds() < SESSION_TTL_SECS)
                 .unwrap_or(false) // drop entries with unparseable timestamps
         });
+
+        if sessions_changed {
+            if let Err(e) = save_sessions(&sessions) {
+                log::error!("Failed to persist sessions after username migration: {}", e);
+            }
+        }
+
         Self {
             db: RwLock::new(db),
             sessions: RwLock::new(sessions),
@@ -127,12 +216,17 @@ impl AuthState {
         password: &str,
         temp: bool,
     ) -> Result<(), String> {
+        let username = username.to_ascii_lowercase();
         let mut db = self.db.write().unwrap();
-        if db.accounts.iter().any(|a| a.username == username) {
+        if db
+            .accounts
+            .iter()
+            .any(|a| a.username.eq_ignore_ascii_case(&username))
+        {
             return Err("Username already exists".to_string());
         }
         db.accounts.push(Account {
-            username: username.to_string(),
+            username: username.clone(),
             password_hash: hash_password(password),
             must_change_password: temp,
             role: "user".to_string(),
@@ -148,11 +242,12 @@ impl AuthState {
     /// Authenticate and return a session token plus whether a password change
     /// is required.
     pub fn login(&self, username: &str, password: &str) -> Result<(String, bool), String> {
+        let username = username.to_ascii_lowercase();
         let db = self.db.read().unwrap();
         let account = db
             .accounts
             .iter()
-            .find(|a| a.username == username)
+            .find(|a| a.username.eq_ignore_ascii_case(&username))
             .ok_or("Invalid username or password")?;
 
         if !verify_password(password, &account.password_hash) {
@@ -165,7 +260,11 @@ impl AuthState {
         if is_legacy_sha256(&account.password_hash) {
             drop(db); // release read lock
             let mut db = self.db.write().unwrap();
-            if let Some(acc) = db.accounts.iter_mut().find(|a| a.username == username) {
+            if let Some(acc) = db
+                .accounts
+                .iter_mut()
+                .find(|a| a.username.eq_ignore_ascii_case(&username))
+            {
                 acc.password_hash = hash_password(password);
                 let _ = save_auth_db(&db);
             }
@@ -241,7 +340,7 @@ impl AuthState {
         let db = self.db.read().unwrap();
         db.accounts
             .iter()
-            .find(|a| a.username == username)
+            .find(|a| a.username.eq_ignore_ascii_case(username))
             .map(|a| a.role.clone())
     }
 
@@ -254,7 +353,7 @@ impl AuthState {
         let account = db
             .accounts
             .iter_mut()
-            .find(|a| a.username == username)
+            .find(|a| a.username.eq_ignore_ascii_case(username))
             .ok_or("Account not found")?;
         account.role = role.to_string();
         save_auth_db(&db)?;
@@ -266,7 +365,7 @@ impl AuthState {
         let db = self.db.read().unwrap();
         db.accounts
             .iter()
-            .find(|a| a.username == username)
+            .find(|a| a.username.eq_ignore_ascii_case(username))
             .map(|a| a.can_use_modelhub)
     }
 
@@ -276,7 +375,7 @@ impl AuthState {
         let account = db
             .accounts
             .iter_mut()
-            .find(|a| a.username == username)
+            .find(|a| a.username.eq_ignore_ascii_case(username))
             .ok_or("Account not found")?;
         account.can_use_modelhub = allowed;
         save_auth_db(&db)?;
@@ -287,14 +386,15 @@ impl AuthState {
     pub fn delete_account(&self, username: &str) -> Result<(), String> {
         let mut db = self.db.write().unwrap();
         let before = db.accounts.len();
-        db.accounts.retain(|a| a.username != username);
+        db.accounts
+            .retain(|a| !a.username.eq_ignore_ascii_case(username));
         if db.accounts.len() == before {
             return Err("Account not found".to_string());
         }
         save_auth_db(&db)?;
         // Also remove any active sessions for this user
         let mut sessions = self.sessions.write().unwrap();
-        sessions.retain(|_, entry| entry.username != username);
+        sessions.retain(|_, entry| !entry.username.eq_ignore_ascii_case(username));
         if let Err(e) = save_sessions(&sessions) {
             log::error!("Failed to persist sessions after account deletion: {}", e);
         }
@@ -306,7 +406,7 @@ impl AuthState {
         let db = self.db.read().unwrap();
         db.accounts
             .iter()
-            .find(|a| a.username == username)
+            .find(|a| a.username.eq_ignore_ascii_case(username))
             .map(|a| a.storage_limit_bytes)
             .unwrap_or(DEFAULT_STORAGE_LIMIT)
     }
@@ -317,7 +417,7 @@ impl AuthState {
         let account = db
             .accounts
             .iter_mut()
-            .find(|a| a.username == username)
+            .find(|a| a.username.eq_ignore_ascii_case(username))
             .ok_or("Account not found")?;
         account.storage_limit_bytes = limit_bytes;
         save_auth_db(&db)?;
@@ -339,7 +439,7 @@ impl AuthState {
         let account = db
             .accounts
             .iter_mut()
-            .find(|a| a.username == username)
+            .find(|a| a.username.eq_ignore_ascii_case(username))
             .ok_or("Account not found")?;
 
         if !verify_password(current_password, &account.password_hash) {
@@ -361,7 +461,7 @@ impl AuthState {
         let account = db
             .accounts
             .iter_mut()
-            .find(|a| a.username == username)
+            .find(|a| a.username.eq_ignore_ascii_case(username))
             .ok_or("Account not found")?;
 
         account.password_hash = hash_password(temp_password);
@@ -369,7 +469,7 @@ impl AuthState {
         save_auth_db(&db)?;
         // Revoke existing sessions for this user so they must re-login
         let mut sessions = self.sessions.write().unwrap();
-        sessions.retain(|_, entry| entry.username != username);
+        sessions.retain(|_, entry| !entry.username.eq_ignore_ascii_case(username));
         if let Err(e) = save_sessions(&sessions) {
             log::error!("Failed to persist sessions after password reset: {}", e);
         }
@@ -379,7 +479,7 @@ impl AuthState {
     /// Update the last-activity timestamp for a user.
     pub fn touch_activity(&self, username: &str) {
         let mut map = self.last_activity.write().unwrap();
-        map.insert(username.to_string(), std::time::Instant::now());
+        map.insert(username.to_ascii_lowercase(), std::time::Instant::now());
     }
 
     /// Persist all accumulated `last_online` timestamps to the auth database.
@@ -393,7 +493,7 @@ impl AuthState {
         let mut db = self.db.write().unwrap();
         let mut changed = false;
         for account in &mut db.accounts {
-            if activity.contains_key(&account.username) {
+            if activity.contains_key(&account.username.to_ascii_lowercase()) {
                 let ts = now.to_rfc3339();
                 if account.last_online.as_deref() != Some(&ts) {
                     account.last_online = Some(ts);
@@ -418,8 +518,8 @@ impl AuthState {
             .iter()
             .map(|a| {
                 let online = activity
-                    .get(&a.username)
-                    .map_or(false, |t| t.elapsed() < threshold);
+                    .get(&a.username.to_ascii_lowercase())
+                    .is_some_and(|t| t.elapsed() < threshold);
                 (
                     a.username.clone(),
                     a.role.clone(),

@@ -3428,7 +3428,7 @@ fn user_gallery_dir(username: Option<&str>) -> Option<std::path::PathBuf> {
     match username {
         Some(name) => {
             // Sanitise the username to prevent path traversal
-            let safe = name.replace(['/', '\\', '.'], "_");
+            let safe = name.to_ascii_lowercase().replace(['/', '\\', '.'], "_");
             Some(base.join("users").join(safe))
         }
         None => Some(base),
