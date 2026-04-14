@@ -274,6 +274,18 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         _ => {}
     }
 
+    // Attention backend flag (mutually exclusive in ComfyUI)
+    match config.attention_backend.as_str() {
+        "sage_v1" | "sage_v2" => {
+            cmd.arg("--use-sage-attention");
+        }
+        "flash_v1" | "flash_v2" => {
+            cmd.arg("--use-flash-attention");
+        }
+        // "default" → PyTorch SDPA, no flag needed
+        _ => {}
+    }
+
     // Auto-apply --bf16-vae for Blackwell GPUs to prevent NaN/black images
     // from fp16 VAE overflow, unless the user has already set a VAE precision flag.
     let has_vae_flag = config.extra_args.iter().any(|a| {

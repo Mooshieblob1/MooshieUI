@@ -1555,8 +1555,9 @@ pub async fn civitai_list_architectures(
 }
 
 /// Read the ModelSpec metadata from a safetensors file header.
-/// Returns a map of modelspec fields (without the "modelspec." prefix) if present,
-/// or null if the file has no ModelSpec metadata.
+/// Returns a map of modelspec fields (without the "modelspec." prefix) if present.
+/// When no `modelspec.architecture` is found, infers it from tensor key patterns.
+/// Also computes the AutoV2 hash and includes it as "hash".
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn read_modelspec(
@@ -1582,7 +1583,20 @@ pub async fn read_modelspec(
         return Ok(None);
     }
 
-    read_safetensors_modelspec(&path)
+    let hash_path = path.clone();
+    let mut result = read_safetensors_modelspec(&path)?.unwrap_or_default();
+
+    // Compute hash in a blocking task (can take seconds for large files)
+    let hash = tokio::task::spawn_blocking(move || full_sha256(&hash_path))
+        .await
+        .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
+    result.insert("hash".to_string(), autov2_hash(&hash));
+
+    if result.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(result))
+    }
 }
 
 /// Parse the safetensors JSON header and extract modelspec.* fields.
@@ -1609,7 +1623,7 @@ pub(crate) fn read_safetensors_modelspec(
 
     let metadata = match header.get("__metadata__") {
         Some(Value::Object(m)) => m,
-        _ => return Ok(None),
+        _ => &serde_json::Map::new(),
     };
 
     let mut result = std::collections::HashMap::new();
@@ -1621,11 +1635,98 @@ pub(crate) fn read_safetensors_modelspec(
         }
     }
 
+    // If no modelspec.architecture, infer from tensor key patterns in the header
+    if !result.contains_key("architecture") {
+        if let Some(Value::Object(top)) = Some(&header) {
+            if let Some(arch) = infer_architecture_from_keys(top) {
+                result.insert("architecture".to_string(), arch);
+            }
+        }
+    }
+
     if result.is_empty() {
         Ok(None)
     } else {
         Ok(Some(result))
     }
+}
+
+/// Infer model architecture by examining tensor key name patterns in the safetensors header.
+fn infer_architecture_from_keys(header: &serde_json::Map<String, Value>) -> Option<String> {
+    let keys: Vec<&String> = header.keys().collect();
+
+    // Flux: uses double_blocks / single_blocks (DiT architecture)
+    let has_double_blocks = keys.iter().any(|k| k.starts_with("double_blocks."));
+    let has_single_blocks = keys.iter().any(|k| k.starts_with("single_blocks."));
+    if has_double_blocks && has_single_blocks {
+        return Some("flux".to_string());
+    }
+
+    // SD3 / SD3.5: uses joint_blocks (MMDiT architecture)
+    if keys.iter().any(|k| k.starts_with("joint_blocks.")) {
+        return Some("stable-diffusion-3-medium".to_string());
+    }
+
+    // AuraFlow: has single_transformer_blocks + double_transformer_blocks
+    if keys
+        .iter()
+        .any(|k| k.starts_with("double_transformer_blocks."))
+        && keys
+            .iter()
+            .any(|k| k.starts_with("single_transformer_blocks."))
+    {
+        return Some("auraflow".to_string());
+    }
+
+    // HunyuanDiT: mlp_t5 + pooler patterns
+    if keys.iter().any(|k| k.contains("mlp_t5")) {
+        return Some("hunyuandit".to_string());
+    }
+
+    // Stable Cascade: has "down_blocks" + "up_blocks" with "clip_txt_mapper"
+    if keys.iter().any(|k| k.contains("clip_txt_mapper")) {
+        return Some("stable_cascade".to_string());
+    }
+
+    // PixArt: has blocks with cross_attn (PixArt-alpha/sigma architecture)
+    if keys.iter().any(|k| k.starts_with("adaln_single.")) {
+        return Some("pixart".to_string());
+    }
+
+    // Kolors: ChatGLM-based text encoder
+    if keys.iter().any(|k| k.contains("chatglm")) {
+        return Some("kolors".to_string());
+    }
+
+    // Check for UNet-based architectures (SD 1.5 / SDXL)
+    let has_unet = keys
+        .iter()
+        .any(|k| k.starts_with("model.diffusion_model.") || k.starts_with("diffusion_model."));
+
+    if has_unet {
+        // SDXL check: has label_emb (y-embedding for SDXL's 2816-dim vector)
+        // or conditioner.embedders.1 (dual text encoder in full checkpoint)
+        let is_sdxl = keys.iter().any(|k| k.contains("label_emb"))
+            || keys
+                .iter()
+                .any(|k| k.starts_with("conditioner.embedders.1."));
+        if is_sdxl {
+            return Some("stable-diffusion-xl-v1-base".to_string());
+        }
+        return Some("stable-diffusion-v1-5".to_string());
+    }
+
+    // Diffusion-only models (unet/dit without the model. prefix)
+    let has_input_blocks = keys.iter().any(|k| k.starts_with("input_blocks."));
+    if has_input_blocks {
+        let is_sdxl = keys.iter().any(|k| k.contains("label_emb"));
+        if is_sdxl {
+            return Some("stable-diffusion-xl-v1-base".to_string());
+        }
+        return Some("stable-diffusion-v1-5".to_string());
+    }
+
+    None
 }
 
 /// Combined LoRA information from ModelSpec + CivitAI.
@@ -2747,4 +2848,238 @@ pub async fn get_gpu_stats_inner(state: &AppState) -> Result<Vec<GpuStats>, AppE
     }
 
     Ok(gpus)
+}
+
+// ─── Attention Backend Commands ─────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AttentionBackendStatus {
+    pub current: String,
+    pub venv_packages: Vec<String>,
+    pub compute_capability: Option<f32>,
+}
+
+/// Check which attention backend packages are installed in the venv and detect GPU compute capability.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn check_attention_backend(
+    state: State<'_, Arc<AppState>>,
+) -> Result<AttentionBackendStatus, AppError> {
+    let (venv_path, current) = {
+        let config = state.config.read().await;
+        (config.venv_path.clone(), config.attention_backend.clone())
+    };
+
+    let uv = resolve_uv_bin(&venv_path);
+
+    // List installed packages in the venv
+    let mut venv_packages = Vec::new();
+    let venv_python = {
+        #[cfg(target_os = "windows")]
+        {
+            std::path::Path::new(&venv_path)
+                .join("Scripts")
+                .join("python.exe")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::path::Path::new(&venv_path).join("bin").join("python")
+        }
+    };
+
+    if uv.exists() {
+        let output = tokio::process::Command::new(&uv)
+            .args(["pip", "list", "--python", &venv_python.to_string_lossy()])
+            .output()
+            .await
+            .ok();
+
+        if let Some(o) = output {
+            if o.status.success() {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                let known = ["sageattention", "flash-attn", "triton"];
+                for line in stdout.lines() {
+                    let pkg = line.split_whitespace().next().unwrap_or("").to_lowercase();
+                    if known.iter().any(|k| pkg == *k) {
+                        venv_packages.push(pkg);
+                    }
+                }
+            }
+        }
+    }
+
+    // Detect GPU compute capability
+    let compute_capability = detect_compute_capability();
+
+    Ok(AttentionBackendStatus {
+        current,
+        venv_packages,
+        compute_capability,
+    })
+}
+
+/// Detect the highest NVIDIA GPU compute capability (e.g. 8.6 for RTX 3080).
+fn detect_compute_capability() -> Option<f32> {
+    let output = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .filter_map(|line| line.trim().parse::<f32>().ok())
+        .reduce(f32::max)
+}
+
+/// Install (or uninstall) an attention backend package in the venv.
+/// Accepts: "default", "sage_v1", "sage_v2", "flash_v1", "flash_v2".
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn install_attention_backend(
+    state: State<'_, Arc<AppState>>,
+    app_handle: AppHandle,
+    backend: String,
+) -> Result<(), AppError> {
+    let valid = ["default", "sage_v1", "sage_v2", "flash_v1", "flash_v2"];
+    if !valid.contains(&backend.as_str()) {
+        return Err(AppError::Other(format!(
+            "Invalid attention backend: '{}'. Valid: {:?}",
+            backend, valid
+        )));
+    }
+
+    let venv_path = {
+        let config = state.config.read().await;
+        config.venv_path.clone()
+    };
+
+    let uv = resolve_uv_bin(&venv_path);
+    if !uv.exists() {
+        return Err(AppError::Other("uv not found. Run setup first.".into()));
+    }
+
+    let venv_python = {
+        #[cfg(target_os = "windows")]
+        {
+            std::path::Path::new(&venv_path)
+                .join("Scripts")
+                .join("python.exe")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::path::Path::new(&venv_path).join("bin").join("python")
+        }
+    };
+    let python_str = venv_python.to_string_lossy().to_string();
+
+    // Step 1: Uninstall any existing attention packages (ignore errors)
+    app_handle
+        .emit(
+            "attention:install_progress",
+            "Removing old attention packages...",
+        )
+        .ok();
+    let _ = tokio::process::Command::new(&uv)
+        .args([
+            "pip",
+            "uninstall",
+            "--python",
+            &python_str,
+            "sageattention",
+            "flash-attn",
+        ])
+        .output()
+        .await;
+
+    // Step 2: Install the requested backend
+    if backend != "default" {
+        let install_args: Vec<&str> = match backend.as_str() {
+            "sage_v1" => {
+                app_handle
+                    .emit(
+                        "attention:install_progress",
+                        "Installing SageAttention v1 (pure Triton)...",
+                    )
+                    .ok();
+                vec![
+                    "pip",
+                    "install",
+                    "--python",
+                    &python_str,
+                    "sageattention==1.0.6",
+                ]
+            }
+            "sage_v2" => {
+                app_handle
+                    .emit(
+                        "attention:install_progress",
+                        "Installing SageAttention v2 (CUDA kernels — may take a few minutes)...",
+                    )
+                    .ok();
+                vec![
+                    "pip",
+                    "install",
+                    "--python",
+                    &python_str,
+                    "sageattention>=2.0.0,<3.0.0",
+                    "--no-build-isolation",
+                ]
+            }
+            "flash_v1" => {
+                app_handle
+                    .emit(
+                        "attention:install_progress",
+                        "Installing FlashAttention v1...",
+                    )
+                    .ok();
+                vec!["pip", "install", "--python", &python_str, "flash-attn<2.0"]
+            }
+            "flash_v2" => {
+                app_handle
+                    .emit(
+                        "attention:install_progress",
+                        "Installing FlashAttention v2 (may compile from source — this can take 10+ minutes)...",
+                    )
+                    .ok();
+                vec!["pip", "install", "--python", &python_str, "flash-attn"]
+            }
+            _ => unreachable!(),
+        };
+
+        let output = tokio::process::Command::new(&uv)
+            .args(&install_args)
+            .output()
+            .await
+            .map_err(|e| AppError::Other(format!("Failed to run uv: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AppError::Other(format!(
+                "Failed to install {} attention backend: {}",
+                backend, stderr
+            )));
+        }
+    }
+
+    // Step 3: Update config
+    {
+        let mut config = state.config.write().await;
+        config.attention_backend = backend.clone();
+        crate::config::save_config(&config)
+            .map_err(|e| AppError::Other(format!("Failed to save config: {}", e)))?;
+    }
+
+    app_handle
+        .emit(
+            "attention:install_progress",
+            "Attention backend updated. Restart ComfyUI to apply.",
+        )
+        .ok();
+    log::info!("Attention backend set to: {}", backend);
+    Ok(())
 }

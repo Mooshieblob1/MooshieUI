@@ -35,6 +35,30 @@ export const LOCALE_OPTIONS: { value: Locale; label: string }[] = [
 
 class LocaleStore {
   current = $state<Locale>("en");
+  private hasStoredPreference = false;
+
+  /** Detect system language and set locale if we support it, otherwise keep English.
+   *  Only applies when no user preference has been saved yet. */
+  detectSystemLocale(): void {
+    if (this.hasStoredPreference) return;
+    const nav = globalThis.navigator;
+    if (!nav?.languages && !nav?.language) return;
+    const candidates = nav.languages ? [...nav.languages] : [nav.language];
+    for (const tag of candidates) {
+      const lower = tag.toLowerCase();
+      // Exact match (e.g. "zh-tw")
+      if (lower in translations) {
+        this.current = lower as Locale;
+        return;
+      }
+      // Base language match (e.g. "zh-CN" → "zh", "pt-BR" → "pt")
+      const base = lower.split("-")[0];
+      if (base in translations) {
+        this.current = base as Locale;
+        return;
+      }
+    }
+  }
 
   /** Look up a translation key, with optional {var} interpolation. */
   t(key: string, vars?: Record<string, string | number>): string {
@@ -52,6 +76,7 @@ class LocaleStore {
       const data = await ipcStore.get<{ locale?: Locale }>(STORE_KEY);
       if (data?.locale && translations[data.locale]) {
         this.current = data.locale;
+        this.hasStoredPreference = true;
       }
     } catch {
       // First launch — no persisted locale yet.

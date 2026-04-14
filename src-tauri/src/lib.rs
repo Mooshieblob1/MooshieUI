@@ -376,6 +376,8 @@ pub fn run() {
             commands::api::fetch_cached_image,
             commands::api::read_clipboard_image,
             commands::api::get_gpu_stats,
+            commands::api::check_attention_backend,
+            commands::api::install_attention_backend,
             setup::check_setup,
             setup::detect_gpu,
             setup::run_setup,

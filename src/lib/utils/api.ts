@@ -505,6 +505,20 @@ export async function installPipPackage(packageName: string): Promise<void> {
   return ipcInvoke("install_pip_package", { package: packageName });
 }
 
+export interface AttentionBackendStatus {
+  current: string;
+  venv_packages: string[];
+  compute_capability: number | null;
+}
+
+export async function checkAttentionBackend(): Promise<AttentionBackendStatus> {
+  return ipcInvoke("check_attention_backend");
+}
+
+export async function installAttentionBackend(backend: string): Promise<void> {
+  return ipcInvoke("install_attention_backend", { backend });
+}
+
 export async function getConfig(): Promise<AppConfig> {
   return ipcInvoke("get_config");
 }

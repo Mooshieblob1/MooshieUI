@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { AppConfig } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit } from "../../utils/api.js";
-  import type { ReleaseNote, ImportResult } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend } from "../../utils/api.js";
+  import type { ReleaseNote, ImportResult, AttentionBackendStatus } from "../../utils/api.js";
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
@@ -46,6 +46,10 @@
   let tagFileLoading = $state(false);
   let showQualityTagsWarning = $state(false);
   let showCustomQualityTags = $state(false);
+
+  // Attention backend state
+  let attentionInstalling = $state(false);
+  let attentionError = $state<string | null>(null);
 
   // Gallery import state
   let importBusy = $state(false);
@@ -701,7 +705,7 @@
   const sections = [
     { key: "connection", label: "Connection", keywords: "server mode url port remote autolaunch" },
     { key: "appearance", label: "Appearance", keywords: "theme dark light font scale size style presets fooocus" },
-    { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close" },
+    { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close attention backend sage flash" },
     { key: "quality", label: "Quality Tags", keywords: "quality tags auto masterpiece best quality anima illustrious noobai pony nanosaur positive negative prompt" },
     { key: "gpu", label: "GPU Workers", keywords: "gpu vram worker backend multi status utilization temperature power nvidia" },
     { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
@@ -725,6 +729,7 @@
   let originalPort = 0;
   let originalMode = "";
   let originalVramMode = "";
+  let originalAttentionBackend = "";
   let originalExtraArgs = "";
   let originalModelPaths = "";
 
@@ -772,6 +777,7 @@
     originalPort = config.server_port;
     originalMode = config.server_mode;
     originalVramMode = config.vram_mode;
+    originalAttentionBackend = config.attention_backend;
     originalExtraArgs = config.extra_args.join(" ");
     originalModelPaths = config.extra_model_paths ?? "";
   }
@@ -783,6 +789,7 @@
       config.server_port !== originalPort ||
       config.server_mode !== originalMode ||
       config.vram_mode !== originalVramMode ||
+      config.attention_backend !== originalAttentionBackend ||
       config.extra_args.join(" ") !== originalExtraArgs ||
       (config.extra_model_paths ?? "") !== originalModelPaths;
   }
@@ -795,6 +802,24 @@
       await updateConfig(config);
     } catch (e) {
       error = `Failed to save: ${e}`;
+    }
+  }
+
+  /** Install a different attention backend and update config. */
+  async function handleAttentionChange(backend: string) {
+    if (!config || attentionInstalling) return;
+    const previousBackend = config.attention_backend;
+    attentionError = null;
+    attentionInstalling = true;
+    try {
+      await installAttentionBackend(backend);
+      config.attention_backend = backend;
+      checkRestartNeeded();
+    } catch (e: any) {
+      attentionError = typeof e === "string" ? e : e.message || "Installation failed";
+      config.attention_backend = previousBackend;
+    } finally {
+      attentionInstalling = false;
     }
   }
 
@@ -1347,6 +1372,32 @@
               <option value="none">{locale.t('settings.performance.vram_none')}</option>
             </select>
             <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.performance.vram_note')}</p>
+          </div>
+
+          <div>
+            <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.performance.attention_backend')}<span class="text-amber-400">*</span></label>
+            <select
+              value={config.attention_backend}
+              onchange={(e) => { handleAttentionChange((e.target as HTMLSelectElement).value); }}
+              disabled={attentionInstalling}
+              class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
+            >
+              <option value="default">{locale.t('settings.performance.attention_default')}</option>
+              <option value="sage_v1">{locale.t('settings.performance.attention_sage_v1')}</option>
+              <option value="sage_v2">{locale.t('settings.performance.attention_sage_v2')}</option>
+              <option value="flash_v1">{locale.t('settings.performance.attention_flash_v1')}</option>
+              <option value="flash_v2">{locale.t('settings.performance.attention_flash_v2')}</option>
+            </select>
+            {#if attentionInstalling}
+              <p class="text-[10px] text-indigo-400 mt-0.5 flex items-center gap-1">
+                <span class="inline-block w-3 h-3 border border-indigo-400 border-t-transparent rounded-full animate-spin"></span>
+                {locale.t('settings.performance.attention_installing')}
+              </p>
+            {:else if attentionError}
+              <p class="text-[10px] text-red-400 mt-0.5">{attentionError}</p>
+            {:else}
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.performance.attention_note')}</p>
+            {/if}
           </div>
 
           <div class="flex items-start gap-3">

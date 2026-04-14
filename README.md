@@ -415,8 +415,8 @@ Custom ComfyUI nodes for the **Nanosaur** 1.2B DiT architecture:
 - [ ] **Video generation** — AnimateDiff / COSMOS video workflows
 - [ ] **Training UI** — LoRA training from within the app
 - [ ] **Plugin system** — extend MooshieUI with custom panels and features
-- [ ] **Cloud rendering** — option to offload generation to remote GPUs
-- [ ] **PWA Support** — allowing users to host their own instances of MooshieUI to present as a webapp
+- [x] **Cloud rendering** — the LAN/browser mode allows any device on the network to submit generations to the host GPU; combined with Docker deployment, this effectively enables remote/cloud GPU offloading without a dedicated cloud rendering backend
+- [x] **PWA Support** — MooshieUI ships a built-in web server with full browser-mode support; users can self-host via Docker (`docker-compose.yml` included) and access the UI from any browser, functioning as a hosted web app with multi-user accounts and per-user galleries
 
 ---
 

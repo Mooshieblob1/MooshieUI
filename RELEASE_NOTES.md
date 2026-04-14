@@ -1,3 +1,27 @@
+## What's New in v0.8.9
+
+### Attention Backend Selection
+- **Configurable attention backends** — choose between SageAttention v1/v2 and FlashAttention v1/v2 for faster inference on NVIDIA GPUs (Ampere+).
+- **Setup wizard integration** — optional Advanced Options section during first-run install lets you pick an attention backend before installation.
+- **Settings page control** — switch attention backends at any time from Settings → Performance. Packages are installed/uninstalled automatically.
+
+### Setup Wizard Language Selector
+- **Language picker on first page** — a globe-icon dropdown at the top of the setup wizard lets you choose your language before installation begins.
+- **Automatic system language detection** — on first launch, the wizard detects your OS language and selects it if supported (11 languages available). Falls back to English otherwise.
+
+### Model Architecture Detection
+- **Tensor-based architecture inference** — models without ModelSpec metadata now get their architecture detected from safetensors tensor key patterns (Flux, SDXL, SD 1.5, SD3, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, Kolors).
+- **No more "unknown" architecture** — the vast majority of safetensors models will now show correct architecture automatically.
+
+### Model Hashes
+- **AutoV2 hash display** — the model info panel now shows the CivitAI-compatible AutoV2 hash (first 10 chars of SHA256) with a copy-to-clipboard button.
+- **Computed on model load** — hash is calculated when you select a checkpoint and displayed alongside other model metadata.
+
+### i18n
+- All new features fully localized across all 11 supported languages.
+
+---
+
 ## What's New in v0.8.8
 
 ### Case-Insensitive Usernames
