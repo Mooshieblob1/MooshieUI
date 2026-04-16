@@ -5,6 +5,7 @@
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
   import ModelHubPage from "./lib/components/modelhub/ModelHubPage.svelte";
+  import { ArtistGalleryPage } from "./lib/artist-gallery/index.js";
   import { connection } from "./lib/stores/connection.svelte.js";
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
@@ -410,7 +411,7 @@
   }
 
   let setupComplete = $state<boolean | null>(null); // null = loading
-  let currentPage = $state<"generate" | "gallery" | "modelhub" | "settings">(
+  let currentPage = $state<"generate" | "gallery" | "modelhub" | "artists" | "settings">(
     "generate"
   );
 
@@ -1884,6 +1885,26 @@
       >
     </button>
     {/if}
+    <button
+      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
+      'artists'
+        ? 'bg-indigo-600 text-white'
+        : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
+      onclick={() => (currentPage = "artists")}
+      title="Artist Gallery"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        class="w-4.5 h-4.5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        ><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 4-7 8-7s8 3 8 7" /></svg
+      >
+    </button>
 
     <div class="flex-1"></div>
 
@@ -2204,6 +2225,19 @@
       </div>
     {:else if currentPage === "modelhub"}
       <ModelHubPage />
+    {:else if currentPage === "artists"}
+      <ArtistGalleryPage
+        manifestUrl={connection.artistGalleryManifestUrl}
+        oninsertTag={(tag) => {
+          const cleaned = tag.replace(/^@/, "");
+          const existing = generation.positivePrompt.trim();
+          generation.positivePrompt = existing
+            ? `${existing}, ${cleaned}`
+            : cleaned;
+          generation.saveSettings();
+          currentPage = "generate";
+        }}
+      />
     {:else if currentPage === "settings"}
       <SettingsPage {userRole} />
     {/if}

@@ -2,6 +2,8 @@
   import { onDestroy } from "svelte";
   import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { connection } from "../../stores/connection.svelte.js";
+  import ArtistHoverPreview from "../../artist-gallery/components/ArtistHoverPreview.svelte";
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import { renderHighlightedPrompt, hasSchedulingTags } from "../../utils/promptSchedule.js";
 
@@ -417,5 +419,16 @@
         </button>
       {/each}
     </div>
+    {#if suggestions[selectedIndex]?.c === 1 && connection.artistGalleryManifestUrl}
+      <div
+        class="fixed z-50 pointer-events-none"
+        style="top: {dropdownTop}px; left: {dropdownLeft + 328}px;"
+      >
+        <ArtistHoverPreview
+          manifestUrl={connection.artistGalleryManifestUrl}
+          slugOrTag={suggestions[selectedIndex].n}
+        />
+      </div>
+    {/if}
   {/if}
 </div>
