@@ -410,6 +410,21 @@
     await gallery.rescanMetadata();
   }
 
+  async function sortGalleryByArtist() {
+    const result = await gallery.autoSortByArtist(connection.artistGalleryManifestUrl);
+    if (result.sorted === 0 && result.scanned > 0) {
+      gallery.showToast(locale.t("gallery.sort_by_artist_none"), "info");
+    } else if (result.sorted > 0) {
+      gallery.showToast(
+        locale.t("gallery.sort_by_artist_done", {
+          sorted: String(result.sorted),
+          boards: String(result.boards.length),
+        }),
+        "success",
+      );
+    }
+  }
+
   let setupComplete = $state<boolean | null>(null); // null = loading
   let currentPage = $state<"generate" | "gallery" | "modelhub" | "artists" | "settings">(
     "generate"
@@ -1686,6 +1701,10 @@
 
     // Load persisted gallery images from disk (independent of server status)
     gallery.loadFromDisk();
+
+    // Warm the artist-tag detection index in the background so thumbnail
+    // badges and "Sort by artist" work without an explicit fetch later.
+    void gallery.loadArtistIndex(connection.artistGalleryManifestUrl);
   }
 
   $effect(() => {
@@ -2146,6 +2165,14 @@
                   <button onclick={rescanGalleryMetadata} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200" title={locale.t("gallery.rescan_tooltip")}>
                     {locale.t("gallery.rescan_metadata")}
                   </button>
+                  <button
+                    onclick={sortGalleryByArtist}
+                    disabled={gallery.autoSorting}
+                    class="px-3 py-1.5 text-xs rounded border transition-colors border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={locale.t("gallery.sort_by_artist_tooltip")}
+                  >
+                    {gallery.autoSorting ? locale.t("gallery.sort_by_artist_running") : locale.t("gallery.sort_by_artist")}
+                  </button>
                 </div>
               </div>
             </div>
@@ -2223,6 +2250,17 @@
                         <div class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200 pointer-events-none">
                           {boardLabel(image)}
                         </div>
+                        {#if galleryView !== 'small'}
+                          {@const artist = gallery.primaryArtist(image)}
+                          {#if artist}
+                            <div
+                              class="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-red-900/80 text-[10px] text-red-200 pointer-events-none truncate max-w-[60%]"
+                              title={locale.t("gallery.artist_detected", { tag: artist.tag })}
+                            >
+                              @{artist.slug}
+                            </div>
+                          {/if}
+                        {/if}
                         {#if viewColumns(galleryView) <= 5}
                           <div class="absolute bottom-0 inset-x-0 flex justify-center items-center gap-1 px-1.5 pb-1.5 pt-6 opacity-0 group-hover:opacity-100 transition-opacity bg-linear-to-t from-black/80 to-transparent pointer-events-none">
                             <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black text-[11px] font-bold shadow pointer-events-auto shrink-0" title={locale.t('gallery.img2img')} onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>

@@ -1,3 +1,16 @@
+## What's New in v0.9.3
+
+### Artist Gallery — Image Caching, Auto-Sort by Artist & Tag Detection
+- **Persistent image cache** — artist preview images are now stored in the browser's Cache API so they load instantly on every subsequent visit without re-fetching from the CDN. Works in both the Tauri desktop app and browser mode.
+- **Auto-sort gallery by artist** — the gallery can now automatically sort images by the detected artist from generation metadata, grouping your outputs by creator.
+- **Improved artist tag detection** — backslash-escaped parentheses in prompts (`@artist \(tag\)`) are now correctly unescaped and matched against the artist index. A secondary slug-form lookup catches additional variants.
+- **Clear artist cache** — a new "Artist preview cache" button in Settings → Gallery lets you see how many images are cached and clear them on demand.
+
+### Webserver
+- LAN access toggle: the embedded web server now binds to `0.0.0.0` when LAN mode is enabled, and `127.0.0.1` otherwise.
+
+---
+
 ## What's New in v0.9.2
 
 ### Artist Gallery — Persistent Favourites, Categories & Backup

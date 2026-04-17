@@ -14,6 +14,7 @@
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
   import { onMount } from "svelte";
   import { marked } from "marked";
+  import { clearArtistImageCache, getArtistImageCacheCount } from "../../artist-gallery/imageCache.js";
 
   let { userRole = "admin" }: { userRole?: string } = $props();
   const isAdmin = $derived(userRole === "admin");
@@ -471,6 +472,29 @@
   let releaseNotesLoading = $state(false);
   let releaseNotesError = $state<string | null>(null);
 
+  // Artist image cache
+  let cacheClearBusy = $state(false);
+  let cacheClearDone = $state(false);
+  let cacheClearCount = $state<number | null>(null);
+
+  async function loadCacheCount() {
+    const n = await getArtistImageCacheCount();
+    cacheClearCount = n >= 0 ? n : null;
+  }
+
+  async function handleClearArtistCache() {
+    cacheClearBusy = true;
+    cacheClearDone = false;
+    try {
+      await clearArtistImageCache();
+      cacheClearCount = 0;
+      cacheClearDone = true;
+      setTimeout(() => (cacheClearDone = false), 3000);
+    } finally {
+      cacheClearBusy = false;
+    }
+  }
+
   async function loadReleaseNotes() {
     if (releaseNotes.length > 0 || releaseNotesLoading) return;
     releaseNotesLoading = true;
@@ -709,7 +733,7 @@
     { key: "quality", label: "Quality Tags", keywords: "quality tags auto masterpiece best quality anima illustrious noobai pony nanosaur positive negative prompt" },
     { key: "gpu", label: "GPU Workers", keywords: "gpu vram worker backend multi status utilization temperature power nvidia" },
     { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
-    { key: "gallery", label: "Gallery", keywords: "import images output directory swarmui comfyui external folder manual save mode save directory" },
+    { key: "gallery", label: "Gallery", keywords: "import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview" },
     { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", label: "Interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
     { key: "civitai", label: "CivitAI", keywords: "civitai api key metadata model hub image fetch download authentication" },
@@ -758,6 +782,7 @@
     }
     loadInstallPath();
     getGalleryPath().then(p => { galleryPathDisplay = p; }).catch(() => {});
+    void loadCacheCount();
     if (isBrowserMode) {
       loadLanAccounts();
       loadLanInfo();
@@ -1970,6 +1995,31 @@
               </p>
             </div>
             {/if}
+
+            <!-- Artist image cache (visible to all users) -->
+            <div>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.gallery.artist_cache_label')}</label>
+              <p class="text-[10px] text-neutral-500 mb-2">{locale.t('settings.gallery.artist_cache_desc')}</p>
+              <div class="flex items-center gap-3">
+                <button
+                  class="px-3 py-1.5 text-xs rounded-lg border transition-colors {cacheClearBusy ? 'border-neutral-700 text-neutral-500 cursor-not-allowed' : 'border-red-800/60 text-red-400 hover:border-red-600 hover:text-red-300'}"
+                  disabled={cacheClearBusy}
+                  onclick={handleClearArtistCache}
+                >
+                  {cacheClearBusy ? locale.t('settings.gallery.artist_cache_clearing') : locale.t('settings.gallery.artist_cache_clear')}
+                </button>
+                {#if cacheClearCount !== null}
+                  <span class="text-[10px] text-neutral-500">
+                    {cacheClearCount === 0
+                      ? locale.t('settings.gallery.artist_cache_empty')
+                      : locale.t('settings.gallery.artist_cache_count', { count: String(cacheClearCount) })}
+                  </span>
+                {/if}
+                {#if cacheClearDone}
+                  <span class="text-[10px] text-green-400">{locale.t('settings.gallery.artist_cache_cleared')}</span>
+                {/if}
+              </div>
+            </div>
           </div>
           {/if}
         </section>

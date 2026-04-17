@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ArtistEntry } from "../types.js";
+  import { cachedSrc } from "../imageCache.js";
 
   interface Props {
     entry: ArtistEntry;
@@ -76,6 +77,7 @@
     {/if}
     {#if entry.hasImage && entry.imageUrl}
       <img
+        use:cachedSrc={entry.imageUrl}
         src={entry.imageUrl}
         alt={entry.tag}
         class="max-h-[80vh] max-w-[92vw] w-auto rounded-lg border border-neutral-800 object-contain shadow-2xl"

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createArtistGalleryStore } from "../store.svelte.js";
   import type { ArtistEntry } from "../types.js";
+  import { cachedSrc } from "../imageCache.js";
 
   interface Props {
     manifestUrl: string;
@@ -47,6 +48,7 @@
     <div class="h-full w-full animate-pulse bg-neutral-800"></div>
   {:else if entry && entry.imageUrl && !failed}
     <img
+      use:cachedSrc={entry.imageUrl}
       src={entry.imageUrl}
       alt={entry.tag}
       loading="eager"

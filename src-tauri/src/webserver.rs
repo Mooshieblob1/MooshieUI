@@ -177,12 +177,18 @@ fn forbidden_response(msg: &str) -> Response {
 }
 
 /// Start the embedded web server.
-/// Returns the `JoinHandle` for the server task.
+///
+/// Attempts to bind to `port`; if that port is already in use, tries the
+/// next 9 sequential ports (e.g. 3200 → 3201 → … → 3209).  Returns a tuple
+/// of `(actual_bound_port, JoinHandle)` so callers can open the correct
+/// browser URL even when fallback ports were used.
+///
+/// Panics if none of the candidate ports can be bound.
 pub async fn start_server(
     state: Arc<AppState>,
     port: u16,
     lan_enabled: bool,
-) -> tokio::task::JoinHandle<()> {
+) -> (u16, tokio::task::JoinHandle<()>) {
     let dist_dir = resolve_dist_dir();
 
     // Mark web server as running before moving state into the router
@@ -275,11 +281,51 @@ pub async fn start_server(
         .layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024))
         .with_state(web_state.clone());
 
-    let bind_addr: SocketAddr = if lan_enabled {
-        SocketAddr::from(([0, 0, 0, 0], port))
+    let host: [u8; 4] = if lan_enabled {
+        [0, 0, 0, 0]
     } else {
-        SocketAddr::from(([127, 0, 0, 1], port))
+        [127, 0, 0, 1]
     };
+
+    // Probe upward from the configured port until we find a free one.  This
+    // keeps development smooth when 3200 is held by a crashed webview or
+    // another tool — we just move to 3201, 3202, ... automatically.
+    const MAX_PORT_ATTEMPTS: u16 = 10;
+    let mut listener: Option<tokio::net::TcpListener> = None;
+    let mut bound_addr: Option<SocketAddr> = None;
+    for offset in 0..MAX_PORT_ATTEMPTS {
+        let candidate = SocketAddr::from((host, port.saturating_add(offset)));
+        match tokio::net::TcpListener::bind(candidate).await {
+            Ok(l) => {
+                if offset > 0 {
+                    log::warn!(
+                        "UI web server port {} in use; falling back to {}",
+                        port,
+                        candidate.port(),
+                    );
+                }
+                listener = Some(l);
+                bound_addr = Some(candidate);
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                log::debug!("Port {} in use, trying next", candidate.port());
+                continue;
+            }
+            Err(e) => {
+                panic!("Failed to bind UI web server on {}: {}", candidate, e);
+            }
+        }
+    }
+
+    let listener = listener.unwrap_or_else(|| {
+        panic!(
+            "Failed to bind UI web server: no free port in range {}..{}",
+            port,
+            port.saturating_add(MAX_PORT_ATTEMPTS),
+        )
+    });
+    let bind_addr = bound_addr.expect("bound_addr set when listener is Some");
 
     log::info!("Starting UI web server on {}", bind_addr);
 
@@ -485,17 +531,16 @@ pub async fn start_server(
         });
     }
 
-    tokio::spawn(async move {
-        let listener = tokio::net::TcpListener::bind(bind_addr)
-            .await
-            .expect("Failed to bind UI web server");
+    let actual_port = bind_addr.port();
+    let handle = tokio::spawn(async move {
         axum::serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
         .expect("UI web server crashed");
-    })
+    });
+    (actual_port, handle)
 }
 
 /// Resolve the path to the frontend dist directory.

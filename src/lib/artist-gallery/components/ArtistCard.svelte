@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ArtistEntry } from "../types.js";
+  import { cachedSrc } from "../imageCache.js";
 
   interface Props {
     entry: ArtistEntry;
@@ -28,6 +29,7 @@
   <div class="relative aspect-3/4 w-full bg-neutral-800">
     {#if entry.hasImage && entry.imageUrl}
       <img
+        use:cachedSrc={entry.imageUrl}
         src={entry.imageUrl}
         alt={entry.tag}
         loading="lazy"
