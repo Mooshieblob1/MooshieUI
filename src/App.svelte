@@ -632,6 +632,45 @@
 
   // Interrogation state (for lightbox + context menu)
   let showInterrogateModal = $state(false);
+
+  // Artist tag insert state
+  type ArtistInsertPending = { tag: string; existingTags: string[]; duplicate: boolean };
+  let artistInsertPending = $state<ArtistInsertPending | null>(null);
+
+  function handleArtistTagInsert(tag: string) {
+    const withAt = "@" + tag.replace(/^@/, "");
+    const existing = generation.positivePrompt.trim();
+    const existingArtistTags = existing.split(",").map(s => s.trim()).filter(s => s.startsWith("@"));
+    // Check if this exact tag is already present
+    if (existingArtistTags.some(t => t.toLowerCase() === withAt.toLowerCase())) {
+      artistInsertPending = { tag: withAt, existingTags: existingArtistTags, duplicate: true };
+    } else if (existingArtistTags.length > 0) {
+      artistInsertPending = { tag: withAt, existingTags: existingArtistTags, duplicate: false };
+    } else {
+      applyArtistTag(withAt, "add");
+    }
+  }
+
+  function applyArtistTag(withAt: string, mode: "add" | "replace") {
+    const existing = generation.positivePrompt.trim();
+    let newPrompt: string;
+    if (mode === "replace") {
+      // Remove all existing @tags from the prompt, then prepend the new one
+      const stripped = existing
+        .split(",")
+        .map(s => s.trim())
+        .filter(s => !s.startsWith("@"))
+        .join(", ");
+      newPrompt = stripped ? `${withAt}, ${stripped}` : withAt;
+    } else {
+      // Add: prepend new tag before the rest
+      newPrompt = existing ? `${withAt}, ${existing}` : withAt;
+    }
+    generation.positivePrompt = newPrompt;
+    generation.saveSettings();
+    artistInsertPending = null;
+    currentPage = "generate";
+  }
   let interrogateResult = $state<InterrogationResult | null>(null);
   let interrogateLoading = $state(false);
   let interrogateStage = $state<string | null>(null);
@@ -2228,15 +2267,7 @@
     {:else if currentPage === "artists"}
       <ArtistGalleryPage
         manifestUrl={connection.artistGalleryManifestUrl}
-        oninsertTag={(tag) => {
-          const cleaned = tag.replace(/^@/, "");
-          const existing = generation.positivePrompt.trim();
-          generation.positivePrompt = existing
-            ? `${existing}, ${cleaned}`
-            : cleaned;
-          generation.saveSettings();
-          currentPage = "generate";
-        }}
+        oninsertTag={handleArtistTagInsert}
       />
     {:else if currentPage === "settings"}
       <SettingsPage {userRole} />
@@ -2534,6 +2565,68 @@
   visible={showContextMenu}
   onclose={() => { showContextMenu = false; }}
 />
+
+<!-- Interrogate modal (from gallery/lightbox) -->
+
+<!-- Artist tag conflict dialog -->
+{#if artistInsertPending}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
+    onclick={(e) => { if (e.target === e.currentTarget) artistInsertPending = null; }}
+    onkeydown={(e) => { if (e.key === 'Escape') artistInsertPending = null; }}
+  >
+    <div class="w-96 max-w-full rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
+      {#if artistInsertPending.duplicate}
+        <h2 class="mb-1 text-sm font-semibold text-neutral-100">Tag already in prompt</h2>
+        <p class="mb-3 text-xs text-neutral-400">
+          <span class="font-mono text-indigo-300">{artistInsertPending.tag}</span> is already in your prompt.
+        </p>
+        <div class="flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-neutral-500"
+            onclick={() => artistInsertPending = null}
+          >
+            OK
+          </button>
+        </div>
+      {:else}
+        <h2 class="mb-1 text-sm font-semibold text-neutral-100">Artist tag already in prompt</h2>
+        <p class="mb-3 text-xs text-neutral-400">
+          Your prompt already contains
+          {#each artistInsertPending.existingTags as t, i}
+            <span class="font-mono text-red-400">{t}</span>{i < artistInsertPending.existingTags.length - 1 ? ', ' : ''}
+          {/each}.
+          Add <span class="font-mono text-indigo-300">{artistInsertPending.tag}</span> alongside, or replace?
+        </p>
+        <div class="flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-neutral-500"
+            onclick={() => artistInsertPending = null}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-indigo-500"
+            onclick={() => applyArtistTag(artistInsertPending!.tag, 'add')}
+          >
+            Add alongside
+          </button>
+          <button
+            type="button"
+            class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-500"
+            onclick={() => applyArtistTag(artistInsertPending!.tag, 'replace')}
+          >
+            Replace
+          </button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 <!-- Interrogate modal (from gallery/lightbox) -->
 {#if showInterrogateModal}

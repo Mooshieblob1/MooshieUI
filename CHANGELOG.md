@@ -1,5 +1,25 @@
 # Changelog
 
+## What's New in v0.9.1
+
+### Artist Gallery
+A new full-screen gallery for browsing Anima-style artists, powered by a Cloudflare R2 CDN index.
+
+- **Paginated grid** — thumbnail cards auto-sized with a logarithmic size slider (100–400 px). Card count and layout adjust automatically.
+- **Live search** — typing in the search box filters the grid in real-time; results replace the normal paginated view without a dropdown.
+- **Sort modes** — sort by post count, alphabetical name, or **Uniqueness** (a log-normal hidden-gem score that surfaces artists with a distinctive style not yet overexposed). Uniqueness can be reshuffled with ↻ Rotate.
+- **Pagination controls** — Prev/Next buttons, a **⚄ Random** button to jump to a random page, and a direct page-number input (press Enter or ↵ to jump).
+- **Favourites** — heart (♡/♥) toggle on every card; a toolbar button filters the grid to show only favourited artists. Session-scoped.
+- **Copy on hover** — a **Copy** button appears on each card on hover; right-clicking also copies the tag. The card border flashes green on copy.
+- **Card slide-in animation** — cards animate in with a staggered slide-from-right effect whenever the sort, direction, or favourites filter changes.
+- **Lightbox** — click any card to open an instant full-screen preview (shown immediately from cached index data; aliases are patched in from the shard in the background).
+  - Click the image to zoom (1× → 1.5×, spring easing). **Zoom state persists** across lightbox close/reopen.
+  - Artist name links to Danbooru for quick tag lookup.
+  - Prev/Next navigation with keyboard arrow-key support.
+- **Generation parameters modal** — an ℹ gen params link in the gallery header shows the exact model stack, sampler settings, and prompt template used to generate the preview images.
+
+---
+
 ## What's New in v0.9.0
 
 ### Fix: Flashing Console Window on Windows
