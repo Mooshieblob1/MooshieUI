@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { createArtistGalleryStore } from "../store.svelte.js";
+  import { artistFavourites } from "../favourites.svelte.js";
   import type { ArtistEntry, ArtistSearchHit } from "../types.js";
   import ArtistLightbox from "./ArtistLightbox.svelte";
+  import FavouritesManager from "./FavouritesManager.svelte";
 
   interface Props {
     manifestUrl: string;
@@ -156,21 +158,50 @@
   // ---------------------------------------------------------------------------
   // Favourites + animation
   // ---------------------------------------------------------------------------
-  let favourites = $state<Set<string>>(new Set());
+  // Favourites (incl. categories) are persisted in the artistFavourites store.
+  // "All" = show every favourite, string = show only favourites in that category,
+  // "__uncat" = show only uncategorised favourites.
   let showOnlyFavourites = $state(false);
+  let favouriteCategoryFilter = $state<"all" | "__uncat" | string>("all");
+  let showFavouritesManager = $state(false);
   let showGenParams = $state(false);
   let animKey = $state(0);
 
+  // Per-card category picker popover (keyed by slug). null = closed.
+  let catPickerSlug = $state<string | null>(null);
+
   function toggleFavourite(slug: string, e: MouseEvent) {
     e.stopPropagation();
-    const next = new Set(favourites);
-    if (next.has(slug)) next.delete(slug);
-    else next.add(slug);
-    favourites = next;
+    artistFavourites.toggle(slug);
+  }
+
+  function openCategoryPicker(slug: string, e: MouseEvent) {
+    e.stopPropagation();
+    e.preventDefault();
+    // Auto-favourite if not already; picker always implies "favourite this".
+    if (!artistFavourites.isFavourite(slug)) {
+      artistFavourites.add(slug);
+    }
+    catPickerSlug = catPickerSlug === slug ? null : slug;
+  }
+
+  function assignCategory(slug: string, categoryId: string | null) {
+    artistFavourites.setCategory(slug, categoryId);
+    catPickerSlug = null;
   }
 
   function setShowOnlyFavourites(val: boolean) {
     showOnlyFavourites = val;
+    currentPage = 1;
+    animKey++;
+    requestAnimationFrame(() => {
+      scrollContainer?.scrollTo({ top: 0, behavior: "instant" });
+      scrollContainer?.dispatchEvent(new Event("scroll"));
+    });
+  }
+
+  function setFavouriteCategoryFilter(value: "all" | "__uncat" | string) {
+    favouriteCategoryFilter = value;
     currentPage = 1;
     animKey++;
     requestAnimationFrame(() => {
@@ -263,9 +294,17 @@
     );
   });
 
-  const filteredEntries = $derived(
-    showOnlyFavourites ? sortedEntries.filter(e => favourites.has(e.slug)) : sortedEntries
-  );
+  const filteredEntries = $derived.by(() => {
+    if (!showOnlyFavourites) return sortedEntries;
+    const favMap = artistFavourites.favourites;
+    return sortedEntries.filter((e) => {
+      const fav = favMap[e.slug];
+      if (!fav) return false;
+      if (favouriteCategoryFilter === "all") return true;
+      if (favouriteCategoryFilter === "__uncat") return fav.categoryId === null;
+      return fav.categoryId === favouriteCategoryFilter;
+    });
+  });
   const totalPages = $derived(Math.max(1, Math.ceil(filteredEntries.length / pageSize)));
   const safePage = $derived(Math.min(currentPage, totalPages));
   const pageEntries = $derived(
@@ -439,9 +478,51 @@
           onclick={() => setShowOnlyFavourites(!showOnlyFavourites)}
           title="Toggle favourites filter"
         >
-          {showOnlyFavourites ? '♥' : '♡'} Favourites{favourites.size > 0 ? ` (${favourites.size})` : ''}
+          {showOnlyFavourites ? '♥' : '♡'} Favourites{artistFavourites.count > 0 ? ` (${artistFavourites.count})` : ''}
+        </button>
+
+        <button
+          type="button"
+          class="rounded-lg border border-neutral-800 bg-neutral-900/50 px-2 py-1 text-xs text-neutral-400 transition-colors hover:text-neutral-200"
+          onclick={() => showFavouritesManager = true}
+          title="Manage categories, import/export favourites"
+        >
+          ⚙ Manage
         </button>
       </div>
+
+      {#if showOnlyFavourites}
+        {@const counts = artistFavourites.countsByCategory}
+        <div class="mt-2 flex flex-wrap items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-900/50 p-1">
+          <span class="px-1.5 text-xs text-neutral-500">Category:</span>
+          <button
+            type="button"
+            class="rounded px-2 py-0.5 text-xs transition-colors {favouriteCategoryFilter === 'all' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
+            onclick={() => setFavouriteCategoryFilter('all')}
+          >
+            All ({artistFavourites.count})
+          </button>
+          <button
+            type="button"
+            class="rounded px-2 py-0.5 text-xs transition-colors {favouriteCategoryFilter === '__uncat' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
+            onclick={() => setFavouriteCategoryFilter('__uncat')}
+          >
+            Uncategorised ({counts[''] ?? 0})
+          </button>
+          {#each artistFavourites.categories as cat (cat.id)}
+            <button
+              type="button"
+              class="flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors {favouriteCategoryFilter === cat.id ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
+              onclick={() => setFavouriteCategoryFilter(cat.id)}
+              title={cat.name}
+            >
+              <span class="h-2.5 w-2.5 rounded-full border border-neutral-700" style="background-color: {cat.color}" aria-hidden="true"></span>
+              <span class="max-w-36 truncate">{cat.name}</span>
+              <span class="text-neutral-500">({counts[cat.id] ?? 0})</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
     {/if}
   </header>
 
@@ -516,18 +597,19 @@
         {#each gridEntries as hit, i (hit.slug)}
           {@const url = thumbUrl(hit)}
           {@const rank = (safePage - 1) * pageSize + i + 1}
-          {@const isFav = favourites.has(hit.slug)}
+          {@const isFav = artistFavourites.isFavourite(hit.slug)}
+          {@const favCat = artistFavourites.categoryOf(hit.slug)}
           <div
             role="button"
             tabindex="0"
-            class="card-slide-in group flex flex-col items-stretch overflow-hidden rounded-lg border bg-neutral-900 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 {copiedSlug === hit.slug ? 'border-emerald-500' : 'border-neutral-800 hover:border-indigo-500'}"
+            class="card-slide-in group relative flex flex-col items-stretch rounded-lg border bg-neutral-900 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 {copiedSlug === hit.slug ? 'border-emerald-500' : 'border-neutral-800 hover:border-indigo-500'}"
             style="--card-delay: {Math.min(i * 30, 450)}ms"
             onclick={() => { void openHit(hit, i); }}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void openHit(hit, i); } }}
             oncontextmenu={(e) => { e.preventDefault(); void copyTag(hit.tag, hit.slug); }}
             title="{hit.tag} · Right-click to copy tag"
           >
-            <div class="relative aspect-3/4 w-full bg-neutral-800">
+            <div class="relative aspect-3/4 w-full overflow-hidden rounded-t-lg bg-neutral-800">
               {#if url}
                 <img
                   src={url}
@@ -562,16 +644,71 @@
             </div>
             <div class="flex items-center justify-between gap-1 px-2 py-1.5">
               <span class="min-w-0 truncate text-sm text-red-400">{displayTag(hit.tag)}</span>
-              <div class="flex shrink-0 items-center gap-1">
+              <div class="relative flex shrink-0 items-center gap-1">
                 <span class="text-xs text-neutral-500">{formatCount(hit.postCount)}</span>
+                {#if isFav}
+                  <button
+                    type="button"
+                    class="flex h-4 w-4 items-center justify-center rounded-full border border-neutral-700 transition-transform hover:scale-110"
+                    style={favCat ? `background-color: ${favCat.color}` : "background-color: transparent"}
+                    onclick={(e) => openCategoryPicker(hit.slug, e)}
+                    aria-label={favCat ? `Category: ${favCat.name}. Click to change.` : "Assign category"}
+                    title={favCat ? `Category: ${favCat.name}` : "Assign category"}
+                  ></button>
+                {/if}
                 <button
                   type="button"
                   class="text-sm leading-none transition-colors {isFav ? 'text-red-400' : 'text-neutral-600 hover:text-red-400'}"
                   onclick={(e) => toggleFavourite(hit.slug, e)}
+                  oncontextmenu={(e) => openCategoryPicker(hit.slug, e)}
                   aria-label={isFav ? 'Remove from favourites' : 'Add to favourites'}
+                  title={isFav ? 'Remove from favourites · right-click to categorise' : 'Add to favourites'}
                 >
                   {isFav ? '♥' : '♡'}
                 </button>
+                {#if catPickerSlug === hit.slug}
+                  <!-- Backdrop to dismiss -->
+                  <button
+                    type="button"
+                    class="fixed inset-0 z-40 cursor-default"
+                    aria-label="Close category picker"
+                    onclick={(e) => { e.stopPropagation(); catPickerSlug = null; }}
+                  ></button>
+                  <div
+                    class="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-neutral-700 bg-neutral-900 p-1 shadow-xl"
+                    role="menu"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-neutral-200 hover:bg-neutral-800"
+                      onclick={(e) => { e.stopPropagation(); assignCategory(hit.slug, null); }}
+                    >
+                      <span class="h-2.5 w-2.5 rounded-full border border-neutral-700" aria-hidden="true"></span>
+                      Uncategorised
+                    </button>
+                    {#each artistFavourites.categories as cat (cat.id)}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-neutral-200 hover:bg-neutral-800"
+                        onclick={(e) => { e.stopPropagation(); assignCategory(hit.slug, cat.id); }}
+                      >
+                        <span class="h-2.5 w-2.5 rounded-full border border-neutral-700" style="background-color: {cat.color}" aria-hidden="true"></span>
+                        <span class="truncate">{cat.name}</span>
+                      </button>
+                    {/each}
+                    <div class="my-1 border-t border-neutral-800"></div>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-indigo-300 hover:bg-neutral-800"
+                      onclick={(e) => { e.stopPropagation(); catPickerSlug = null; showFavouritesManager = true; }}
+                    >
+                      ＋ New category…
+                    </button>
+                  </div>
+                {/if}
               </div>
             </div>
           </div>
@@ -645,6 +782,10 @@
     onprev={activeIndex > 0 ? () => navigateTo(activeIndex - 1) : undefined}
     onnext={activeIndex >= 0 && activeIndex < gridEntries.length - 1 ? () => navigateTo(activeIndex + 1) : undefined}
   />
+{/if}
+
+{#if showFavouritesManager}
+  <FavouritesManager onclose={() => showFavouritesManager = false} />
 {/if}
 
 {#if showGenParams}

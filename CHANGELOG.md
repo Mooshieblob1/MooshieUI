@@ -1,5 +1,17 @@
 # Changelog
 
+## What's New in v0.9.2
+
+### Artist Gallery — Persistent Favourites, Categories & Backup
+- **Favourites now persist** across app restarts. Previously the heart button only affected the current session; favourited artists are now saved to disk and restored on launch.
+- **User-created categories** — group favourite artists into named categories with custom colours. A 10-colour palette plus a custom colour picker are provided.
+- **Per-card category assignment** — a coloured dot next to the heart opens a quick picker to assign/change the category for any favourite. Right-click the heart for the same shortcut.
+- **Category filter chips** — when the Favourites filter is active, a chip row lets you narrow to All, Uncategorised, or any specific category, each with its live count.
+- **Manage modal** — the new ⚙ Manage button opens a full editor for creating, renaming, recolouring, and deleting categories. Deleting a category keeps its favourites (marks them Uncategorised).
+- **Export / import** — back up your entire favourites library (artists + categories + metadata) to a `.json` file, and restore it later with Merge or Replace modes. Uses the native save/open dialog in the desktop app.
+
+---
+
 ## What's New in v0.9.1
 
 ### Artist Gallery
