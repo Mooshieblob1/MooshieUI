@@ -531,19 +531,15 @@ class GalleryStore {
 
   private async _runMetadataHydration(): Promise<void> {
     const BATCH = 12;
-    // Snapshot indices that need hydration so later additions don't confuse us
-    const pending: number[] = [];
-    for (let i = 0; i < this.images.length; i++) {
-      const img = this.images[i];
-      if (img && !img.metadata && img.gallery_filename) pending.push(i);
-    }
+    // Capture object references (not indices) so that later insertions into
+    // this.images cannot cause us to skip or mis-target images.
+    const pending = this.images.filter((img) => img && !img.metadata && img.gallery_filename);
     console.debug(`[artist] Hydrating metadata for ${pending.length} / ${this.images.length} images`);
     let hydrated = 0;
     for (let b = 0; b < pending.length; b += BATCH) {
       const slice = pending.slice(b, b + BATCH);
       await Promise.all(
-        slice.map(async (idx) => {
-          const img = this.images[idx];
+        slice.map(async (img) => {
           if (!img || img.metadata || !img.gallery_filename) return;
           try {
             const meta = await readImageMetadata(img.gallery_filename);
@@ -551,13 +547,10 @@ class GalleryStore {
               console.debug(`[artist] readImageMetadata returned null for ${img.gallery_filename}`);
               return;
             }
-            // Look up the current slot — the array may have been mutated
-            // (e.g. user deleted or received a new generation) since we started.
-            const current = this.images[idx];
-            if (current?.gallery_filename === img.gallery_filename && !current.metadata) {
+            if (!img.metadata) {
               // Direct property mutation — same pattern as App.svelte's lightbox
               // load path; Svelte 5's deep proxy tracks this correctly.
-              current.metadata = meta;
+              img.metadata = meta;
               hydrated++;
             }
           } catch (e) {
