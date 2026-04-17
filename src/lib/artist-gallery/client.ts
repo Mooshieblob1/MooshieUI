@@ -143,7 +143,7 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
       const slugLower = h.slug.toLowerCase();
       if (slugLower.startsWith(q)) {
         prefix.push(h);
-        if (prefix.length >= limit && contains.length === 0) break;
+        if (prefix.length >= limit) break;
       } else if (slugLower.includes(q) || h.tag.toLowerCase().includes(q)) {
         if (contains.length < limit) contains.push(h);
       }

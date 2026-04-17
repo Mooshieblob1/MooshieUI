@@ -29,7 +29,8 @@
 
   async function copyTag() {
     try {
-      await navigator.clipboard.writeText(entry.tag);
+      const formatted = "@" + entry.tag.replace(/^@/, "");
+      await navigator.clipboard.writeText(formatted);
     } catch {
       // no-op; clipboard may be unavailable in some webviews
     }
