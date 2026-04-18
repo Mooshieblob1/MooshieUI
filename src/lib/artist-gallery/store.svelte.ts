@@ -15,6 +15,10 @@ import type {
  *   store.setQuery("dairi");
  *   $derived.by(() => store.results);
  */
+export type ArtistSortField = "postCount" | "name" | "uniqueness";
+export type ArtistSortDir = "asc" | "desc";
+export type ArtistPageSize = 25 | 50 | 100;
+
 export class ArtistGalleryStore {
   readonly client: ArtistGalleryClient;
 
@@ -28,6 +32,31 @@ export class ArtistGalleryStore {
 
   activeArtist = $state<ArtistEntry | null>(null);
   activeLoading = $state(false);
+
+  // --- Persistent UI state (survives page unmount) ---------------------------
+  /** Flat search index loaded on first gallery page visit. */
+  allEntries = $state<ArtistSearchHit[]>([]);
+  allEntriesLoading = $state(false);
+  allEntriesError = $state<string | null>(null);
+  /** Per-entry jitter multipliers for uniqueness sort. */
+  uniquenessJitter = $state<Float32Array>(new Float32Array(0));
+
+  sortField = $state<ArtistSortField>("postCount");
+  sortDir = $state<ArtistSortDir>("desc");
+  pageSize = $state<ArtistPageSize>(50);
+  currentPage = $state(1);
+  queryInput = $state("");
+
+  showOnlyFavourites = $state(false);
+  favouriteCategoryFilter = $state<"all" | "__uncat" | string>("all");
+
+  /** Active lightbox entry, if any. */
+  lightboxEntry = $state<ArtistEntry | null>(null);
+  lightboxIndex = $state(-1);
+  lightboxZoomed = $state(false);
+
+  /** Last known scroll position of the gallery scroll container. */
+  scrollTop = $state(0);
 
   /** Guard so rapid typing doesn't race older search results into state. */
   private searchSeq = 0;

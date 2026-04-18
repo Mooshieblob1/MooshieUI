@@ -1,3 +1,20 @@
+## What's New in v0.9.4
+
+### Artist Gallery — State Persistence & Tag Display Fixes
+- **Gallery state now persists** — switching to the generation screen and back returns you to exactly where you were: same sort mode (including Uniqueness ranking and jitter), page, search query, category filter, and scroll position. If you had a lightbox open, that is also restored.
+- **Fixed tag display with escaped parens** — artists like `@mitsu \(mitsu art\)` now render as `mitsu (mitsu art)` in gallery cards, the bottom panel, and the prompt chips, instead of the raw slug form.
+- **Category picker z-order fix** — the "Assign category" dropdown no longer slides under the card below it in the grid.
+
+### Artist Favourites — Heart Chip in Generation Settings
+- **Heart chip on detected artist tags** — when the positive prompt contains a recognised artist tag (whether typed manually, accepted via autocomplete, or inserted from the gallery) a heart chip appears in the prompt header row. Click it to toggle the artist as a favourite without leaving the generation screen. The chip shows the artist's category colour dot when one is assigned.
+
+### Favourite Artists Quick-Access Tab
+- **New "Artists" tab in the bottom panel** — all your favourited artists are available as a scrollable thumbnail grid alongside LoRAs, checkpoints, and images. Click any card to apply the tag to your positive prompt, using the same replace/append confirmation modal as the gallery.
+- **Search and filter** — a search box and category filter chips let you find the right artist instantly.
+- **Card size slider** — resize the thumbnail grid independently from the gallery, persisted across sessions.
+
+---
+
 ## What's New in v0.9.3
 
 ### Artist Gallery — Image Caching, Auto-Sort by Artist & Tag Detection

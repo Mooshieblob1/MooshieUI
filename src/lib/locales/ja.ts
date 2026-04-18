@@ -1007,6 +1007,11 @@ const ja: Record<string, string> = {
 
   // ── Compare Grid ────────────────────────────────────────
   "bottom_panel.tab.compare": "比較",
+  "bottom_panel.tab.artists": "アーティスト",
+  "bottom_panel.no_favourite_artists": "ギャラリーでアーティストをお気に入りに追加するとここに表示されます",
+  "bottom_panel.no_artist_results": "検索に一致するお気に入りアーティストはいません",
+  "bottom_panel.artist_search_placeholder": "お気に入りアーティストを検索...",
+  "bottom_panel.apply_artist_tag": "{tag} をポジティブプロンプトに追加",
   "compare.enable": "比較グリッドを開始",
   "compare.disable": "無効化",
   "compare.add_cell": "セルを追加",

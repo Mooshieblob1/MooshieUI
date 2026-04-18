@@ -982,6 +982,11 @@ const zhTw: Record<string, string> = {
 
   // ── Compare Grid ────────────────────────────────────────
   "bottom_panel.tab.compare": "比較",
+  "bottom_panel.tab.artists": "藝術家",
+  "bottom_panel.no_favourite_artists": "在畫廊中將藝術家加入收藏，即可在此處查看",
+  "bottom_panel.no_artist_results": "沒有符合搜尋條件的收藏藝術家",
+  "bottom_panel.artist_search_placeholder": "搜尋收藏的藝術家...",
+  "bottom_panel.apply_artist_tag": "將 {tag} 加入正面提示詞",
   "compare.enable": "啟動比較網格",
   "compare.disable": "停用",
   "compare.add_cell": "新增儲存格",

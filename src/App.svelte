@@ -21,6 +21,7 @@
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
   import { downloads } from "./lib/stores/downloads.svelte.js";
   import { compare } from "./lib/stores/compare.svelte.js";
+  import { artistInsert } from "./lib/stores/artistInsert.svelte.js";
   import logoUrl from "./lib/assets/logo.png";
   import { smoothScroll } from "./lib/utils/smoothScroll.js";
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
@@ -648,42 +649,23 @@
   // Interrogation state (for lightbox + context menu)
   let showInterrogateModal = $state(false);
 
-  // Artist tag insert state
-  type ArtistInsertPending = { tag: string; existingTags: string[]; duplicate: boolean };
-  let artistInsertPending = $state<ArtistInsertPending | null>(null);
+  // Artist tag insert: the actual replace/append logic lives in the shared
+  // `artistInsert` store so the bottom-panel favourites tab can reuse the
+  // same modal flow. `artistInsertPending` just mirrors the store for the
+  // template below; `handleArtistTagInsert` bridges to the gallery page prop.
+  const artistInsertPending = $derived(artistInsert.pending);
 
   function handleArtistTagInsert(tag: string) {
-    const withAt = "@" + tag.replace(/^@/, "");
-    const existing = generation.positivePrompt.trim();
-    const existingArtistTags = existing.split(",").map(s => s.trim()).filter(s => s.startsWith("@"));
-    // Check if this exact tag is already present
-    if (existingArtistTags.some(t => t.toLowerCase() === withAt.toLowerCase())) {
-      artistInsertPending = { tag: withAt, existingTags: existingArtistTags, duplicate: true };
-    } else if (existingArtistTags.length > 0) {
-      artistInsertPending = { tag: withAt, existingTags: existingArtistTags, duplicate: false };
-    } else {
-      applyArtistTag(withAt, "add");
+    artistInsert.request(tag);
+    // Keep the existing UX where inserting from the gallery page snaps the
+    // user back to the generate view so they can see the prompt update.
+    if (!artistInsert.pending) {
+      currentPage = "generate";
     }
   }
 
   function applyArtistTag(withAt: string, mode: "add" | "replace") {
-    const existing = generation.positivePrompt.trim();
-    let newPrompt: string;
-    if (mode === "replace") {
-      // Remove all existing @tags from the prompt, then prepend the new one
-      const stripped = existing
-        .split(",")
-        .map(s => s.trim())
-        .filter(s => !s.startsWith("@"))
-        .join(", ");
-      newPrompt = stripped ? `${withAt}, ${stripped}` : withAt;
-    } else {
-      // Add: prepend new tag before the rest
-      newPrompt = existing ? `${withAt}, ${existing}` : withAt;
-    }
-    generation.positivePrompt = newPrompt;
-    generation.saveSettings();
-    artistInsertPending = null;
+    artistInsert.apply(withAt, mode);
     currentPage = "generate";
   }
   let interrogateResult = $state<InterrogationResult | null>(null);
@@ -2611,8 +2593,8 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
-    onclick={(e) => { if (e.target === e.currentTarget) artistInsertPending = null; }}
-    onkeydown={(e) => { if (e.key === 'Escape') artistInsertPending = null; }}
+    onclick={(e) => { if (e.target === e.currentTarget) artistInsert.dismiss(); }}
+    onkeydown={(e) => { if (e.key === 'Escape') artistInsert.dismiss(); }}
   >
     <div class="w-96 max-w-full rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
       {#if artistInsertPending.duplicate}
@@ -2624,7 +2606,7 @@
           <button
             type="button"
             class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-neutral-500"
-            onclick={() => artistInsertPending = null}
+            onclick={() => artistInsert.dismiss()}
           >
             OK
           </button>
@@ -2642,7 +2624,7 @@
           <button
             type="button"
             class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-neutral-500"
-            onclick={() => artistInsertPending = null}
+            onclick={() => artistInsert.dismiss()}
           >
             Cancel
           </button>

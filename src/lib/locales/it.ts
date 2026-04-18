@@ -982,6 +982,11 @@ const it: Record<string, string> = {
 
   // ── Compare Grid ────────────────────────────────────────
   "bottom_panel.tab.compare": "Confronta",
+  "bottom_panel.tab.artists": "Artisti",
+  "bottom_panel.no_favourite_artists": "Aggiungi un artista ai preferiti dalla galleria per vederlo qui",
+  "bottom_panel.no_artist_results": "Nessun artista preferito corrisponde alla ricerca",
+  "bottom_panel.artist_search_placeholder": "Cerca artisti preferiti...",
+  "bottom_panel.apply_artist_tag": "Applica {tag} al prompt positivo",
   "compare.enable": "Avvia griglia di confronto",
   "compare.disable": "Disattiva",
   "compare.add_cell": "Aggiungi cella",

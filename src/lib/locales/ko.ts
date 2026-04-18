@@ -982,6 +982,11 @@ const ko: Record<string, string> = {
 
   // ── Compare Grid ────────────────────────────────────────
   "bottom_panel.tab.compare": "비교",
+  "bottom_panel.tab.artists": "아티스트",
+  "bottom_panel.no_favourite_artists": "갤러리에서 아티스트를 즐겨찾기에 추가하면 여기에 표시됩니다",
+  "bottom_panel.no_artist_results": "검색에 일치하는 즐겨찾기 아티스트가 없습니다",
+  "bottom_panel.artist_search_placeholder": "즐겨찾기 아티스트 검색...",
+  "bottom_panel.apply_artist_tag": "{tag} 를 긍정 프롬프트에 추가",
   "compare.enable": "비교 그리드 시작",
   "compare.disable": "비활성화",
   "compare.add_cell": "셀 추가",

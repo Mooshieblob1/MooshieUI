@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { createArtistGalleryStore } from "../store.svelte.js";
+  import { onMount, tick } from "svelte";
+  import { createArtistGalleryStore, type ArtistSortField, type ArtistSortDir, type ArtistPageSize } from "../store.svelte.js";
   import { artistFavourites } from "../favourites.svelte.js";
-  import type { ArtistEntry, ArtistSearchHit } from "../types.js";
+  import type { ArtistSearchHit } from "../types.js";
   import ArtistLightbox from "./ArtistLightbox.svelte";
   import FavouritesManager from "./FavouritesManager.svelte";
 
@@ -16,9 +16,9 @@
 
   const store = createArtistGalleryStore(manifestUrl);
 
-  type SortField = "postCount" | "name" | "uniqueness";
-  type SortDir = "asc" | "desc";
-  type PageSize = 25 | 50 | 100;
+  type SortField = ArtistSortField;
+  type SortDir = ArtistSortDir;
+  type PageSize = ArtistPageSize;
 
   // ---------------------------------------------------------------------------
   // Uniqueness scoring
@@ -36,9 +36,8 @@
     return logNormalScore(postCount, 5.5, 1.8);
   }
 
-  /** Per-entry jitter multipliers (0.7 – 1.3). Re-generated on each rotate. */
-  let uniquenessJitter = $state<Float32Array>(new Float32Array(0));
-
+  /** Per-entry jitter multipliers (0.7 – 1.3). Stored on the singleton store
+   * so the current ranking survives navigating away and back. */
   function generateJitter(count: number): Float32Array {
     const arr = new Float32Array(count);
     for (let i = 0; i < count; i++) arr[i] = 0.7 + 0.6 * Math.random();
@@ -46,9 +45,9 @@
   }
 
   function rotateUniqueness() {
-    uniquenessJitter = generateJitter(allEntries.length);
-    sortField = "uniqueness";
-    currentPage = 1;
+    store.uniquenessJitter = generateJitter(store.allEntries.length);
+    store.sortField = "uniqueness";
+    store.currentPage = 1;
     animKey++;
     requestAnimationFrame(() => {
       scrollContainer?.scrollTo({ top: 0, behavior: "instant" });
@@ -56,38 +55,60 @@
     });
   }
 
-  let allEntries = $state<ArtistSearchHit[]>([]);
-  let allLoading = $state(false);
-  let allError = $state<string | null>(null);
+  let allEntries = $derived(store.allEntries);
+  let allLoading = $derived(store.allEntriesLoading);
+  let allError = $derived(store.allEntriesError);
 
-  let sortField = $state<SortField>("postCount");
-  let sortDir = $state<SortDir>("desc");
   const PAGE_SIZES: PageSize[] = [25, 50, 100];
-  let pageSize = $state<PageSize>(50);
-  let currentPage = $state(1);
 
-  let active = $state<ArtistEntry | null>(null);
-  let activeIndex = $state(-1);
-  let queryInput = $state("");
+  let active = $derived(store.lightboxEntry);
+  let activeIndex = $derived(store.lightboxIndex);
   let searchDebounce: number | null = null;
 
   onMount(() => {
     store.init().then(async () => {
-      allLoading = true;
-      allError = null;
-      try {
-        allEntries = await store.client.loadSearchIndex();
-        uniquenessJitter = generateJitter(allEntries.length);
-      } catch (err) {
-        allError = err instanceof Error ? err.message : String(err);
-      } finally {
-        allLoading = false;
+      // Load entries only once; subsequent mounts reuse cached data.
+      if (store.allEntries.length === 0 && !store.allEntriesLoading) {
+        store.allEntriesLoading = true;
+        store.allEntriesError = null;
+        try {
+          const entries = await store.client.loadSearchIndex();
+          store.allEntries = entries;
+          if (store.uniquenessJitter.length !== entries.length) {
+            store.uniquenessJitter = generateJitter(entries.length);
+          }
+        } catch (err) {
+          store.allEntriesError = err instanceof Error ? err.message : String(err);
+        } finally {
+          store.allEntriesLoading = false;
+        }
       }
+      // Sync the debounced search input into the store's live query so
+      // `store.results` is populated for the grid when returning to the page.
+      if (store.queryInput.trim()) {
+        void store.setQuery(store.queryInput);
+      }
+      // Restore scroll position on the next tick once the grid has rendered.
+      await tick();
+      requestAnimationFrame(() => {
+        scrollContainer?.scrollTo({ top: store.scrollTop, behavior: "instant" });
+      });
     });
+
+    const onScroll = () => {
+      if (scrollContainer) store.scrollTop = scrollContainer.scrollTop;
+    };
+    // Attach after mount; `scrollContainer` is bound via `bind:this` below.
+    requestAnimationFrame(() => {
+      scrollContainer?.addEventListener("scroll", onScroll, { passive: true });
+    });
+    return () => {
+      scrollContainer?.removeEventListener("scroll", onScroll);
+    };
   });
 
   function onSearchInput(value: string) {
-    queryInput = value;
+    store.queryInput = value;
     if (searchDebounce !== null) window.clearTimeout(searchDebounce);
     searchDebounce = window.setTimeout(() => {
       void store.setQuery(value);
@@ -100,11 +121,11 @@
     const imageUrl = store.manifest && hit.hasImage && hit.imageId
       ? `${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${hit.imageId}.webp`
       : "";
-    active = { tag: hit.tag, slug: hit.slug, imageId: hit.imageId, imageUrl, objectKey: "", postCount: hit.postCount, aliases: [], hasImage: hit.hasImage };
-    activeIndex = index;
+    store.lightboxEntry = { tag: hit.tag, slug: hit.slug, imageId: hit.imageId, imageUrl, objectKey: "", postCount: hit.postCount, aliases: [], hasImage: hit.hasImage };
+    store.lightboxIndex = index;
     // Background: fetch full shard entry to patch in aliases once loaded
     store.client.getArtist(hit.slug).then((full) => {
-      if (full && active?.slug === hit.slug) active = full;
+      if (full && store.lightboxEntry?.slug === hit.slug) store.lightboxEntry = full;
     }).catch(() => {});
   }
 
@@ -114,13 +135,14 @@
   }
 
   function closeLightbox() {
-    active = null;
-    activeIndex = -1;
+    store.lightboxEntry = null;
+    store.lightboxIndex = -1;
     store.closeArtist();
   }
 
-  // Zoom state lifted here so it persists across lightbox close/reopen
-  let lightboxZoomed = $state(false);
+  // Zoom state lifted to the singleton store so it persists across
+  // lightbox close/reopen and across page unmount/remount.
+  let lightboxZoomed = $derived(store.lightboxZoomed);
 
   // Page-jump controls
   let pageInputValue = $state("");
@@ -150,7 +172,7 @@
   }
 
   function displayTag(tag: string): string {
-    return tag.replace(/^@/, "").replace(/_/g, " ");
+    return tag.replace(/^@/, "").replace(/\\([()\[\]])/g, "$1").replace(/_/g, " ");
   }
 
   let copiedSlug = $state<string | null>(null);
@@ -161,11 +183,17 @@
   // Favourites (incl. categories) are persisted in the artistFavourites store.
   // "All" = show every favourite, string = show only favourites in that category,
   // "__uncat" = show only uncategorised favourites.
-  let showOnlyFavourites = $state(false);
-  let favouriteCategoryFilter = $state<"all" | "__uncat" | string>("all");
+  let showOnlyFavourites = $derived(store.showOnlyFavourites);
+  let favouriteCategoryFilter = $derived(store.favouriteCategoryFilter);
   let showFavouritesManager = $state(false);
   let showGenParams = $state(false);
   let animKey = $state(0);
+  let sortField = $derived(store.sortField);
+  let sortDir = $derived(store.sortDir);
+  let pageSize = $derived(store.pageSize);
+  let currentPage = $derived(store.currentPage);
+  let queryInput = $derived(store.queryInput);
+  let uniquenessJitter = $derived(store.uniquenessJitter);
 
   // Per-card category picker popover (keyed by slug). null = closed.
   let catPickerSlug = $state<string | null>(null);
@@ -191,8 +219,8 @@
   }
 
   function setShowOnlyFavourites(val: boolean) {
-    showOnlyFavourites = val;
-    currentPage = 1;
+    store.showOnlyFavourites = val;
+    store.currentPage = 1;
     animKey++;
     requestAnimationFrame(() => {
       scrollContainer?.scrollTo({ top: 0, behavior: "instant" });
@@ -201,8 +229,8 @@
   }
 
   function setFavouriteCategoryFilter(value: "all" | "__uncat" | string) {
-    favouriteCategoryFilter = value;
-    currentPage = 1;
+    store.favouriteCategoryFilter = value;
+    store.currentPage = 1;
     animKey++;
     requestAnimationFrame(() => {
       scrollContainer?.scrollTo({ top: 0, behavior: "instant" });
@@ -235,7 +263,7 @@
   let scrollContainer = $state<HTMLDivElement | null>(null);
 
   function goToPage(page: number) {
-    currentPage = page;
+    store.currentPage = page;
     // scrollTo then dispatch synthetic scroll so WebView2 re-evaluates
     // viewport intersection for eager images (known WebView2 overflow quirk)
     requestAnimationFrame(() => {
@@ -249,8 +277,8 @@
       rotateUniqueness();
       return;
     }
-    sortField = field;
-    currentPage = 1;
+    store.sortField = field;
+    store.currentPage = 1;
     animKey++;
     requestAnimationFrame(() => {
       scrollContainer?.scrollTo({ top: 0, behavior: "instant" });
@@ -259,8 +287,8 @@
   }
 
   function setDir(dir: SortDir) {
-    sortDir = dir;
-    currentPage = 1;
+    store.sortDir = dir;
+    store.currentPage = 1;
     animKey++;
     requestAnimationFrame(() => {
       scrollContainer?.scrollTo({ top: 0, behavior: "instant" });
@@ -271,8 +299,8 @@
   function setPageSize(size: PageSize) {
     // Maintain position: find which new page contains the first item currently visible
     const firstIndex = (safePage - 1) * pageSize;
-    pageSize = size;
-    currentPage = Math.max(1, Math.floor(firstIndex / size) + 1);
+    store.pageSize = size;
+    store.currentPage = Math.max(1, Math.floor(firstIndex / size) + 1);
     requestAnimationFrame(() => {
       scrollContainer?.dispatchEvent(new Event("scroll"));
     });
@@ -602,7 +630,7 @@
           <div
             role="button"
             tabindex="0"
-            class="card-slide-in group relative flex flex-col items-stretch rounded-lg border bg-neutral-900 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 {copiedSlug === hit.slug ? 'border-emerald-500' : 'border-neutral-800 hover:border-indigo-500'}"
+            class="card-slide-in group relative flex flex-col items-stretch rounded-lg border bg-neutral-900 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 {copiedSlug === hit.slug ? 'border-emerald-500' : 'border-neutral-800 hover:border-indigo-500'} {catPickerSlug === hit.slug ? 'z-50' : ''}"
             style="--card-delay: {Math.min(i * 30, 450)}ms"
             onclick={() => { void openHit(hit, i); }}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void openHit(hit, i); } }}
@@ -778,7 +806,7 @@
     onclose={closeLightbox}
     {oninsertTag}
     zoomed={lightboxZoomed}
-    ontogglezoom={() => lightboxZoomed = !lightboxZoomed}
+    ontogglezoom={() => store.lightboxZoomed = !store.lightboxZoomed}
     onprev={activeIndex > 0 ? () => navigateTo(activeIndex - 1) : undefined}
     onnext={activeIndex >= 0 && activeIndex < gridEntries.length - 1 ? () => navigateTo(activeIndex + 1) : undefined}
   />
