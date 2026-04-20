@@ -292,6 +292,14 @@ impl PromptQueue {
         let mut aliases = self.aliases.write().unwrap();
         aliases.retain(|_, v| v != placeholder_id);
     }
+
+    /// Clear all queue tracking state (owners, worker_map, queue).
+    /// Does NOT clear held or aliases — those are managed separately.
+    pub fn clear_all(&self) {
+        self.queue.write().unwrap().clear();
+        self.owners.write().unwrap().clear();
+        self.worker_map.write().unwrap().clear();
+    }
 }
 
 pub struct AppState {

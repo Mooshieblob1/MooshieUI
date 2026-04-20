@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AppConfig } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus } from "../../utils/api.js";
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import { connection } from "../../stores/connection.svelte.js";
@@ -61,6 +61,27 @@
   let exportingLogs = $state(false);
   let logExportDone = $state(false);
   let logExportError = $state<string | null>(null);
+
+  // Clear queue state (mod/admin only)
+  let clearQueueBusy = $state(false);
+  let clearQueueDone = $state(false);
+  let clearQueueError = $state<string | null>(null);
+  let showClearQueueConfirm = $state(false);
+
+  async function handleClearQueue() {
+    clearQueueBusy = true;
+    clearQueueError = null;
+    try {
+      await clearAllQueues();
+      clearQueueDone = true;
+      showClearQueueConfirm = false;
+      setTimeout(() => (clearQueueDone = false), 3000);
+    } catch (e: any) {
+      clearQueueError = e?.message ?? String(e);
+    } finally {
+      clearQueueBusy = false;
+    }
+  }
 
   // Mode switching state
   let switchingMode = $state(false);
@@ -166,6 +187,7 @@
   });
 
   // User self-service password change
+  let showChangePasswordForm = $state(false);
   let cpCurrentPass = $state("");
   let cpNewPass1 = $state("");
   let cpNewPass2 = $state("");
@@ -1176,6 +1198,41 @@
 
             {#if lanAuthError}
               <p class="text-xs text-red-400 mt-1">{lanAuthError}</p>
+            {/if}
+          </div>
+        </section>
+        {/if}
+
+        <!-- Queue Management (admin / moderator in browser mode) -->
+        {#if canManageServer && isBrowserMode}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <div class="p-5 space-y-3">
+            <h3 class="text-sm font-medium text-neutral-200">Queue Management</h3>
+            <p class="text-xs text-neutral-500">Clear all pending and active generations. This interrupts everyone's in-progress generation.</p>
+            {#if clearQueueError}
+              <p class="text-xs text-red-400">{clearQueueError}</p>
+            {/if}
+            {#if clearQueueDone}
+              <p class="text-xs text-green-400">Queue cleared.</p>
+            {/if}
+            {#if showClearQueueConfirm}
+              <p class="text-xs text-amber-300">This will interrupt all active and queued generations. Are you sure?</p>
+              <div class="flex gap-2">
+                <button
+                  class="flex-1 py-2 rounded-lg text-xs font-medium bg-neutral-700 hover:bg-neutral-600 text-neutral-300 transition-colors cursor-pointer"
+                  onclick={() => (showClearQueueConfirm = false)}
+                >Cancel</button>
+                <button
+                  class="flex-1 py-2 rounded-lg text-xs font-medium bg-red-600 hover:bg-red-500 text-white transition-colors cursor-pointer disabled:opacity-50"
+                  disabled={clearQueueBusy}
+                  onclick={handleClearQueue}
+                >{clearQueueBusy ? "Clearing…" : "Yes, Clear Queue"}</button>
+              </div>
+            {:else}
+              <button
+                class="w-full py-2 rounded-lg text-xs font-medium bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-800/50 transition-colors cursor-pointer"
+                onclick={() => { clearQueueError = null; showClearQueueConfirm = true; }}
+              >Clear Queue</button>
             {/if}
           </div>
         </section>
@@ -2261,7 +2318,17 @@
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <div class="p-5 space-y-3">
             <h3 class="text-sm font-medium text-neutral-200">Account</h3>
-            <p class="text-xs text-neutral-500">Change your password.</p>
+            <button
+              class="w-full py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700"
+              onclick={() => {
+                showChangePasswordForm = !showChangePasswordForm;
+                cpError = null;
+                cpSuccess = false;
+              }}
+            >
+              {showChangePasswordForm ? "Cancel" : "Change Password"}
+            </button>
+            {#if showChangePasswordForm}
             <div class="space-y-2">
               <input
                 type="password"
@@ -2293,9 +2360,10 @@
                 disabled={cpBusy}
                 onclick={changeOwnPassword}
               >
-                {cpBusy ? "Saving..." : "Change Password"}
+                {cpBusy ? "Saving..." : "Confirm Change"}
               </button>
             </div>
+            {/if}
             <hr class="border-neutral-800" />
             <button
               class="w-full py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-800/50"

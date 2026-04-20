@@ -1,5 +1,22 @@
 # Changelog
 
+## What's New in v0.9.5
+
+### Queue Management for Moderators & Admins
+- **Clear Queue button** — a new "Queue Management" card in Settings lets admins and moderators wipe the entire generation queue with a two-step confirmation. All held and pending prompts are cancelled, all running workers are interrupted, and every connected client receives a `mooshie:queue_cleared` event so their UI resets immediately.
+
+### Queue Reliability Fixes
+- **Faster stuck-job detection** — the reconciler that catches generations lost during SSE downtime now runs every 5 seconds (previously 15s) with a 10-second inactivity threshold (previously 30s). Missed completions are surfaced in roughly 15 seconds instead of up to 45.
+- **SSE reconnect sync** — when the SSE connection drops and reconnects, last-activity timestamps are reset so the reconciler picks up in-flight prompts immediately on the next tick rather than waiting for the next inactivity window.
+
+### UX: Password Change No Longer Shown Automatically
+- The "Change Password" form in the Account section is now collapsed by default. A single button reveals the three input fields on demand, preventing users from mistaking the always-visible form for a forced password-change prompt.
+
+### CDN CORS Fix (Browser Mode)
+- Artist gallery manifest and image index requests are now proxied through the MooshieUI server at `/internal-api/_cdn/…` instead of fetching directly from `cdn.mooshieblob.com`. This eliminates the CORS block that prevented the gallery from loading in browser mode.
+
+---
+
 ## What's New in v0.9.4
 
 ### Artist Gallery — State Persistence & Tag Display Fixes

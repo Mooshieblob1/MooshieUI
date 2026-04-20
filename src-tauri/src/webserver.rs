@@ -131,6 +131,7 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "stop_comfyui",
     "export_logs",
     "install_pip_package",
+    "clear_all_queues",
 ];
 
 /// Model Hub commands that require explicit per-user access for regular users.
@@ -270,6 +271,8 @@ pub async fn start_server(
         )
         // GPU stats — available to all authenticated users
         .route("/internal-api/_gpu_stats", get(gpu_stats_handler))
+        // CDN proxy — serves assets from cdn.mooshieblob.com to avoid CORS issues
+        .route("/internal-api/_cdn/{*path}", get(cdn_proxy_handler))
         // Generic IPC command proxy
         .route("/internal-api/{command}", post(command_handler))
         // Static file serving (frontend)
@@ -1125,6 +1128,41 @@ async fn gpu_stats_handler(
     }
 }
 
+/// CDN proxy handler — fetches assets from cdn.mooshieblob.com and forwards
+/// them to the browser with CORS headers so in-browser mode works correctly.
+/// Only proxies from the hardcoded CDN origin; this is NOT an open proxy.
+async fn cdn_proxy_handler(
+    AxumState(state): AxumState<SharedState>,
+    Path(path): Path<String>,
+) -> Response {
+    let target_url = format!("https://cdn.mooshieblob.com/{}", path);
+    match state.app.http_client.get(&target_url).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let content_type = resp
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .cloned();
+            let body = match resp.bytes().await {
+                Ok(b) => b,
+                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+            };
+            let mut response = (status, body).into_response();
+            response.headers_mut().insert(
+                axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                "*".parse().unwrap(),
+            );
+            if let Some(ct) = content_type {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::CONTENT_TYPE, ct);
+            }
+            response
+        }
+        Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+    }
+}
+
 /// Generic command handler — proxies IPC commands via HTTP POST.
 ///
 /// The frontend sends `POST /internal-api/{command}` with a JSON body
@@ -1437,6 +1475,62 @@ async fn dispatch_command(
         }
         "interrupt_generation" => {
             state.interrupt().await.map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
+        }
+        "clear_all_queues" => {
+            // 1. Drain held prompts and cancel them so their background tasks exit cleanly
+            let held_prompts: Vec<crate::state::HeldPrompt> = {
+                let mut held = state.prompt_queue.held.lock().unwrap();
+                held.drain(..).collect()
+            };
+            for hp in held_prompts {
+                let mut result = hp.result.lock().await;
+                *result = Some(Err("Queue cleared by admin".to_string()));
+                hp.submitted.notify_one();
+            }
+
+            // 2. Interrupt all currently running workers
+            let _ = state.gpu_manager.interrupt(None).await;
+
+            // 3. Delete all pending items from each ComfyUI worker queue
+            for worker in &state.gpu_manager.workers {
+                let queue_url = format!("{}/queue", worker.base_url);
+                if let Ok(resp) = state.http_client.get(&queue_url).send().await {
+                    if let Ok(val) = resp.json::<serde_json::Value>().await {
+                        let mut pending_ids: Vec<String> = Vec::new();
+                        if let Some(arr) = val.get("queue_pending").and_then(|v| v.as_array()) {
+                            for item in arr {
+                                if let Some(pid) = item
+                                    .as_array()
+                                    .and_then(|a| a.get(1))
+                                    .and_then(|v| v.as_str())
+                                {
+                                    pending_ids.push(pid.to_string());
+                                }
+                            }
+                        }
+                        if !pending_ids.is_empty() {
+                            let _ = state
+                                .http_client
+                                .post(&format!("{}/queue", worker.base_url))
+                                .json(&serde_json::json!({ "delete": pending_ids }))
+                                .send()
+                                .await;
+                        }
+                    }
+                }
+            }
+
+            // 4. Clear the internal queue tracking
+            state.prompt_queue.clear_all();
+
+            // 5. Wake the drain reactor so it sees the empty held list
+            state.prompt_queue.drain_notify.notify_one();
+
+            // 6. Broadcast empty queue state and a clear event to all clients
+            state.broadcast_queue_positions();
+            state.broadcast("mooshie:queue_cleared", serde_json::json!({}));
+
             Ok(serde_json::json!(null))
         }
         "get_client_id" => Ok(serde_json::json!(state.client_id)),

@@ -51,6 +51,10 @@ export async function deleteQueueItem(promptId: string): Promise<void> {
   return ipcInvoke("delete_queue_item", { promptId });
 }
 
+export async function clearAllQueues(): Promise<void> {
+  return ipcInvoke("clear_all_queues");
+}
+
 export async function uploadImage(imagePath: string): Promise<{
   name: string;
   subfolder: string;

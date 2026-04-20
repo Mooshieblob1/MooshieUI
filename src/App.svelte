@@ -53,6 +53,7 @@
     await Promise.race([Promise.allSettled(fetches), timeout]);
   }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
+  let sseReconnectHandler: (() => void) | null = null;
   /** Timestamp of the most recent SSE event per prompt — prevents false reconciliation. */
   let promptLastActivity = new Map<string, number>();
 
@@ -1429,6 +1430,11 @@
           progress.updateQueuePosition(data.prompt_id, data.position, data.total);
         }
       }),
+      ipcListen("mooshie:queue_cleared", (_event: any) => {
+        // Admin/mod cleared the queue — cancel all pending state on this client
+        progress.cancelAll();
+        compare.clearGridBatch();
+      }),
       ipcListen("comfyui:preview", async (event: any) => {
         const data = event.payload;
         if (!progress.isGenerating) return;
@@ -1622,7 +1628,7 @@
           // Skip prompts that received an SSE event within the last 30s —
           // they're clearly still alive even if the queue query missed them.
           const lastEvent = promptLastActivity.get(p.promptId) ?? 0;
-          if (now - lastEvent < 30_000) continue;
+          if (now - lastEvent < 10_000) continue;
 
           if (!allPromptIds.has(p.promptId)) {
             console.warn(`[reconcile] Prompt ${p.promptId} no longer in ComfyUI queue — completing`);
@@ -1646,7 +1652,22 @@
       } catch {
         // Queue check failed — not critical
       }
-    }, 15_000);
+    }, 5_000);
+
+    // On SSE reconnect, immediately trigger a reconcile check so missed
+    // completion events are caught within seconds rather than up to 15s later.
+    const handleSseReconnect = () => {
+      if (progress.isGenerating && connection.connected) {
+        // Reset last-activity timestamps so the reconciler doesn't skip prompts
+        for (const p of progress.pendingPrompts) {
+          if (!promptLastActivity.has(p.promptId)) {
+            promptLastActivity.set(p.promptId, 0);
+          }
+        }
+      }
+    };
+    sseReconnectHandler = handleSseReconnect;
+    window.addEventListener("mooshie:sse-reconnected", handleSseReconnect);
 
     // Start ComfyUI server — returns immediately, background task handles readiness
     // The backend will auto-connect WebSocket and emit comfyui:server_ready when done
@@ -1737,6 +1758,7 @@
 
   onDestroy(() => {
     if (reconcileIntervalId) clearInterval(reconcileIntervalId);
+    if (sseReconnectHandler) window.removeEventListener("mooshie:sse-reconnected", sseReconnectHandler);
   });
 </script>
 
