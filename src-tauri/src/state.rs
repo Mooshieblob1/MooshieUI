@@ -326,6 +326,10 @@ pub struct AppState {
     pub prompt_queue: PromptQueue,
     /// Multi-GPU worker manager — distributes prompts across N GPU backends.
     pub gpu_manager: GpuManager,
+    /// Tracks output temp filenames by placeholder prompt_id for recovery.
+    /// Populated by the cleanup reactor when `comfyui:output_image` fires;
+    /// consumed (and cleared) by `recover_prompt_outputs`.
+    pub output_image_cache: std::sync::RwLock<HashMap<String, Vec<String>>>,
 }
 
 impl AppState {
@@ -349,6 +353,7 @@ impl AppState {
             web_server_running: std::sync::atomic::AtomicBool::new(false),
             prompt_queue: PromptQueue::new(),
             gpu_manager,
+            output_image_cache: std::sync::RwLock::new(HashMap::new()),
         }
     }
 

@@ -363,6 +363,8 @@ pub async fn start_server(
                                         if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
                                             cleanup_state.gpu_manager.mark_worker_idle(wid).await;
                                         }
+                                        // Completed normally — no recovery needed; clear cache.
+                                        cleanup_state.output_image_cache.write().unwrap().remove(&pid);
                                         // Delay alias cleanup so SSE streams have time to
                                         // resolve the alias for this same event.  Without the
                                         // delay, the SSE filter_map can race with this reactor
@@ -396,6 +398,8 @@ pub async fn start_server(
                                             .mark_worker_error_then_idle(wid)
                                             .await;
                                     }
+                                    // Error — no output to recover; clear cache.
+                                    cleanup_state.output_image_cache.write().unwrap().remove(&pid);
                                     let alias_pid = pid.clone();
                                     let alias_state = cleanup_state.clone();
                                     tokio::spawn(async move {
@@ -405,6 +409,26 @@ pub async fn start_server(
                                     cleanup_state.broadcast_queue_positions();
                                     // Signal the drain reactor to submit next held prompt
                                     cleanup_state.prompt_queue.drain_notify.notify_one();
+                                }
+                            }
+                            "comfyui:output_image" => {
+                                // Cache temp_filename by placeholder_id so the reconciler
+                                // can recover images if the SSE event was dropped during
+                                // a client reconnect.
+                                if let Some(pid) = prompt_id {
+                                    if let Some(temp_fn) = evt
+                                        .payload
+                                        .get("temp_filename")
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        cleanup_state
+                                            .output_image_cache
+                                            .write()
+                                            .unwrap()
+                                            .entry(pid)
+                                            .or_default()
+                                            .push(temp_fn.to_string());
+                                    }
                                 }
                             }
                             _ => {}
@@ -1472,6 +1496,25 @@ async fn dispatch_command(
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(result)
+        }
+        "recover_prompt_outputs" => {
+            // Return cached output temp filenames for a prompt whose SSE events
+            // were dropped (e.g. during a client reconnect).  The cleanup reactor
+            // populates output_image_cache whenever it sees a comfyui:output_image
+            // broadcast — so even if the SSE client missed the event, the image
+            // temp file was already saved.
+            let placeholder_id = args["promptId"].as_str().ok_or("Missing promptId")?;
+            let cached = state
+                .output_image_cache
+                .write()
+                .unwrap()
+                .remove(placeholder_id)
+                .unwrap_or_default();
+            let images: Vec<serde_json::Value> = cached
+                .into_iter()
+                .map(|f| serde_json::json!({ "temp_filename": f }))
+                .collect();
+            Ok(serde_json::json!({ "images": images }))
         }
         "interrupt_generation" => {
             state.interrupt().await.map_err(|e| e.to_string())?;

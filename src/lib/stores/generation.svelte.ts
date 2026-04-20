@@ -922,6 +922,12 @@ class GenerationStore {
 
   /** Apply defaults if no checkpoint is selected yet (first run). */
   applyDefaultsIfNeeded(checkpoints: string[], vaes: string[]) {
+    // Always fix empty VAE for split-model users — VAELoader requires a real file.
+    // This covers existing users whose saved settings pre-date the VAE field.
+    if (this.useSplitModel && !this.vae && vaes.length > 0) {
+      this.vae = vaes.find((v) => v.includes("sdxl_vae")) ?? vaes[0];
+      this.saveSettings();
+    }
     if (this.checkpoint) return;
 
     // Look for the default SIH checkpoint

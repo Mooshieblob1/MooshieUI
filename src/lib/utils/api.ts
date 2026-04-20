@@ -39,6 +39,12 @@ export async function getHistory(promptId: string): Promise<Record<string, unkno
   return ipcInvoke("get_history", { promptId });
 }
 
+export async function recoverPromptOutputs(
+  promptId: string,
+): Promise<{ images: Array<{ temp_filename: string }> }> {
+  return ipcInvoke("recover_prompt_outputs", { promptId });
+}
+
 export async function getQueue(): Promise<QueueInfo> {
   return ipcInvoke("get_queue");
 }

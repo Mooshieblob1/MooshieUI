@@ -10,7 +10,7 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata, getQueue } from "./lib/utils/api.js";
+  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata, getQueue, recoverPromptOutputs } from "./lib/utils/api.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
@@ -1588,6 +1588,21 @@
       ipcListen("comfyui:execution_error", (event: any) => {
         console.error("Execution error:", event.payload);
         const data = event.payload;
+        // Build a user-visible error message from the raw error string
+        const rawErr = String(data.error ?? "");
+        let toastMsg = "Generation failed";
+        if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
+          toastMsg = "Generation failed — a model or VAE may not be configured correctly. Check your model settings.";
+        } else {
+          try {
+            const m = rawErr.match(/API error \(\d+\): ([\s\S]+)/);
+            if (m) {
+              const parsed = JSON.parse(m[1]);
+              if (parsed.error?.message) toastMsg = `Generation failed: ${parsed.error.message}`;
+            }
+          } catch { /* ignore parse errors */ }
+        }
+        gallery.showToast(toastMsg, "error");
         if (data.prompt_id) {
           pendingOutputImages.delete(data.prompt_id);
           pendingOutputFetches.delete(data.prompt_id);
@@ -1641,10 +1656,35 @@
             const item = progress.completePrompt(p.promptId);
             promptLastActivity.delete(p.promptId);
             if (item) {
-              const images = pendingOutputImages.get(p.promptId) ?? [];
+              let images = pendingOutputImages.get(p.promptId) ?? [];
               pendingOutputImages.delete(p.promptId);
+
+              if (images.length === 0) {
+                // SSE event was likely dropped during a reconnect — the image was
+                // saved to a temp file on the server and cached by the cleanup
+                // reactor.  Try to recover it before giving up.
+                try {
+                  const recovered = await recoverPromptOutputs(p.promptId);
+                  for (const imgRef of recovered.images) {
+                    try {
+                      const resp = await fetch(
+                        `/internal-api/_temp_image/${encodeURIComponent(imgRef.temp_filename)}`,
+                        { headers: authHeaders() },
+                      );
+                      if (resp.ok) {
+                        const blob = await resp.blob();
+                        const url = URL.createObjectURL(blob);
+                        images.push({ blob, url, tempFilename: imgRef.temp_filename });
+                      }
+                    } catch { /* individual image fetch failed */ }
+                  }
+                } catch { /* recovery command failed */ }
+              }
+
               if (images.length > 0) {
                 finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images);
+              } else {
+                gallery.showToast("A generation was lost due to a connection issue — please try again.", "error");
               }
             }
           }

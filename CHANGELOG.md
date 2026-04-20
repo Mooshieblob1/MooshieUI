@@ -1,5 +1,19 @@
 # Changelog
 
+## What's New in v0.9.6
+
+### Silent Generation Recovery After Reconnect
+- **Images are no longer silently lost on reconnect** — if the SSE connection dropped mid-generation, output images could vanish with no error and no toast. A server-side cache now preserves each output image's temp filename keyed by prompt ID. If the reconciler detects a completed generation with no locally tracked images, it automatically fetches the cached images from the server and finalises the output as normal.
+- **Error toast on total recovery failure** — if the server-side cache is also empty (e.g. the server restarted mid-generation), a clear error toast is shown: "A generation was lost due to a connection issue — please try again."
+
+### Error Feedback for Failed Generations
+- **Toast on `comfyui:execution_error`** — when ComfyUI reports a generation error (invalid VAE, missing model, validation failure), a descriptive error toast is now displayed rather than silently clearing the queue.
+
+### Auto-Fix for Empty VAE in Split-Model Configurations
+- Users with Anima / split-model checkpoints and an empty VAE setting now have the correct VAE automatically selected on next load, preventing the `vae_name: '' not in list` validation error.
+
+---
+
 ## What's New in v0.9.5
 
 ### Queue Management for Moderators & Admins
