@@ -131,6 +131,7 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "stop_comfyui",
     "export_logs",
     "install_pip_package",
+    "clear_all_queues",
 ];
 
 /// Model Hub commands that require explicit per-user access for regular users.
@@ -177,12 +178,18 @@ fn forbidden_response(msg: &str) -> Response {
 }
 
 /// Start the embedded web server.
-/// Returns the `JoinHandle` for the server task.
+///
+/// Attempts to bind to `port`; if that port is already in use, tries the
+/// next 9 sequential ports (e.g. 3200 → 3201 → … → 3209).  Returns a tuple
+/// of `(actual_bound_port, JoinHandle)` so callers can open the correct
+/// browser URL even when fallback ports were used.
+///
+/// Panics if none of the candidate ports can be bound.
 pub async fn start_server(
     state: Arc<AppState>,
     port: u16,
     lan_enabled: bool,
-) -> tokio::task::JoinHandle<()> {
+) -> (u16, tokio::task::JoinHandle<()>) {
     let dist_dir = resolve_dist_dir();
 
     // Mark web server as running before moving state into the router
@@ -264,6 +271,8 @@ pub async fn start_server(
         )
         // GPU stats — available to all authenticated users
         .route("/internal-api/_gpu_stats", get(gpu_stats_handler))
+        // CDN proxy — serves assets from cdn.mooshieblob.com to avoid CORS issues
+        .route("/internal-api/_cdn/{*path}", get(cdn_proxy_handler))
         // Generic IPC command proxy
         .route("/internal-api/{command}", post(command_handler))
         // Static file serving (frontend)
@@ -275,11 +284,51 @@ pub async fn start_server(
         .layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024))
         .with_state(web_state.clone());
 
-    let bind_addr: SocketAddr = if lan_enabled {
-        SocketAddr::from(([0, 0, 0, 0], port))
+    let host: [u8; 4] = if lan_enabled {
+        [0, 0, 0, 0]
     } else {
-        SocketAddr::from(([127, 0, 0, 1], port))
+        [127, 0, 0, 1]
     };
+
+    // Probe upward from the configured port until we find a free one.  This
+    // keeps development smooth when 3200 is held by a crashed webview or
+    // another tool — we just move to 3201, 3202, ... automatically.
+    const MAX_PORT_ATTEMPTS: u16 = 10;
+    let mut listener: Option<tokio::net::TcpListener> = None;
+    let mut bound_addr: Option<SocketAddr> = None;
+    for offset in 0..MAX_PORT_ATTEMPTS {
+        let candidate = SocketAddr::from((host, port.saturating_add(offset)));
+        match tokio::net::TcpListener::bind(candidate).await {
+            Ok(l) => {
+                if offset > 0 {
+                    log::warn!(
+                        "UI web server port {} in use; falling back to {}",
+                        port,
+                        candidate.port(),
+                    );
+                }
+                listener = Some(l);
+                bound_addr = Some(candidate);
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                log::debug!("Port {} in use, trying next", candidate.port());
+                continue;
+            }
+            Err(e) => {
+                panic!("Failed to bind UI web server on {}: {}", candidate, e);
+            }
+        }
+    }
+
+    let listener = listener.unwrap_or_else(|| {
+        panic!(
+            "Failed to bind UI web server: no free port in range {}..{}",
+            port,
+            port.saturating_add(MAX_PORT_ATTEMPTS),
+        )
+    });
+    let bind_addr = bound_addr.expect("bound_addr set when listener is Some");
 
     log::info!("Starting UI web server on {}", bind_addr);
 
@@ -314,6 +363,8 @@ pub async fn start_server(
                                         if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
                                             cleanup_state.gpu_manager.mark_worker_idle(wid).await;
                                         }
+                                        // Completed normally — no recovery needed; clear cache.
+                                        cleanup_state.output_image_cache.write().unwrap().remove(&pid);
                                         // Delay alias cleanup so SSE streams have time to
                                         // resolve the alias for this same event.  Without the
                                         // delay, the SSE filter_map can race with this reactor
@@ -347,6 +398,8 @@ pub async fn start_server(
                                             .mark_worker_error_then_idle(wid)
                                             .await;
                                     }
+                                    // Error — no output to recover; clear cache.
+                                    cleanup_state.output_image_cache.write().unwrap().remove(&pid);
                                     let alias_pid = pid.clone();
                                     let alias_state = cleanup_state.clone();
                                     tokio::spawn(async move {
@@ -356,6 +409,26 @@ pub async fn start_server(
                                     cleanup_state.broadcast_queue_positions();
                                     // Signal the drain reactor to submit next held prompt
                                     cleanup_state.prompt_queue.drain_notify.notify_one();
+                                }
+                            }
+                            "comfyui:output_image" => {
+                                // Cache temp_filename by placeholder_id so the reconciler
+                                // can recover images if the SSE event was dropped during
+                                // a client reconnect.
+                                if let Some(pid) = prompt_id {
+                                    if let Some(temp_fn) = evt
+                                        .payload
+                                        .get("temp_filename")
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        cleanup_state
+                                            .output_image_cache
+                                            .write()
+                                            .unwrap()
+                                            .entry(pid)
+                                            .or_default()
+                                            .push(temp_fn.to_string());
+                                    }
                                 }
                             }
                             _ => {}
@@ -485,17 +558,16 @@ pub async fn start_server(
         });
     }
 
-    tokio::spawn(async move {
-        let listener = tokio::net::TcpListener::bind(bind_addr)
-            .await
-            .expect("Failed to bind UI web server");
+    let actual_port = bind_addr.port();
+    let handle = tokio::spawn(async move {
         axum::serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
         .expect("UI web server crashed");
-    })
+    });
+    (actual_port, handle)
 }
 
 /// Resolve the path to the frontend dist directory.
@@ -1080,6 +1152,41 @@ async fn gpu_stats_handler(
     }
 }
 
+/// CDN proxy handler — fetches assets from cdn.mooshieblob.com and forwards
+/// them to the browser with CORS headers so in-browser mode works correctly.
+/// Only proxies from the hardcoded CDN origin; this is NOT an open proxy.
+async fn cdn_proxy_handler(
+    AxumState(state): AxumState<SharedState>,
+    Path(path): Path<String>,
+) -> Response {
+    let target_url = format!("https://cdn.mooshieblob.com/{}", path);
+    match state.app.http_client.get(&target_url).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let content_type = resp
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .cloned();
+            let body = match resp.bytes().await {
+                Ok(b) => b,
+                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+            };
+            let mut response = (status, body).into_response();
+            response.headers_mut().insert(
+                axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                "*".parse().unwrap(),
+            );
+            if let Some(ct) = content_type {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::CONTENT_TYPE, ct);
+            }
+            response
+        }
+        Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+    }
+}
+
 /// Generic command handler — proxies IPC commands via HTTP POST.
 ///
 /// The frontend sends `POST /internal-api/{command}` with a JSON body
@@ -1390,8 +1497,83 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             Ok(result)
         }
+        "recover_prompt_outputs" => {
+            // Return cached output temp filenames for a prompt whose SSE events
+            // were dropped (e.g. during a client reconnect).  The cleanup reactor
+            // populates output_image_cache whenever it sees a comfyui:output_image
+            // broadcast — so even if the SSE client missed the event, the image
+            // temp file was already saved.
+            let placeholder_id = args["promptId"].as_str().ok_or("Missing promptId")?;
+            let cached = state
+                .output_image_cache
+                .write()
+                .unwrap()
+                .remove(placeholder_id)
+                .unwrap_or_default();
+            let images: Vec<serde_json::Value> = cached
+                .into_iter()
+                .map(|f| serde_json::json!({ "temp_filename": f }))
+                .collect();
+            Ok(serde_json::json!({ "images": images }))
+        }
         "interrupt_generation" => {
             state.interrupt().await.map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
+        }
+        "clear_all_queues" => {
+            // 1. Drain held prompts and cancel them so their background tasks exit cleanly
+            let held_prompts: Vec<crate::state::HeldPrompt> = {
+                let mut held = state.prompt_queue.held.lock().unwrap();
+                held.drain(..).collect()
+            };
+            for hp in held_prompts {
+                let mut result = hp.result.lock().await;
+                *result = Some(Err("Queue cleared by admin".to_string()));
+                hp.submitted.notify_one();
+            }
+
+            // 2. Interrupt all currently running workers
+            let _ = state.gpu_manager.interrupt(None).await;
+
+            // 3. Delete all pending items from each ComfyUI worker queue
+            for worker in &state.gpu_manager.workers {
+                let queue_url = format!("{}/queue", worker.base_url);
+                if let Ok(resp) = state.http_client.get(&queue_url).send().await {
+                    if let Ok(val) = resp.json::<serde_json::Value>().await {
+                        let mut pending_ids: Vec<String> = Vec::new();
+                        if let Some(arr) = val.get("queue_pending").and_then(|v| v.as_array()) {
+                            for item in arr {
+                                if let Some(pid) = item
+                                    .as_array()
+                                    .and_then(|a| a.get(1))
+                                    .and_then(|v| v.as_str())
+                                {
+                                    pending_ids.push(pid.to_string());
+                                }
+                            }
+                        }
+                        if !pending_ids.is_empty() {
+                            let _ = state
+                                .http_client
+                                .post(&format!("{}/queue", worker.base_url))
+                                .json(&serde_json::json!({ "delete": pending_ids }))
+                                .send()
+                                .await;
+                        }
+                    }
+                }
+            }
+
+            // 4. Clear the internal queue tracking
+            state.prompt_queue.clear_all();
+
+            // 5. Wake the drain reactor so it sees the empty held list
+            state.prompt_queue.drain_notify.notify_one();
+
+            // 6. Broadcast empty queue state and a clear event to all clients
+            state.broadcast_queue_positions();
+            state.broadcast("mooshie:queue_cleared", serde_json::json!({}));
+
             Ok(serde_json::json!(null))
         }
         "get_client_id" => Ok(serde_json::json!(state.client_id)),
@@ -3428,7 +3610,7 @@ fn user_gallery_dir(username: Option<&str>) -> Option<std::path::PathBuf> {
     match username {
         Some(name) => {
             // Sanitise the username to prevent path traversal
-            let safe = name.replace(['/', '\\', '.'], "_");
+            let safe = name.to_ascii_lowercase().replace(['/', '\\', '.'], "_");
             Some(base.join("users").join(safe))
         }
         None => Some(base),

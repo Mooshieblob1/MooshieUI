@@ -14,11 +14,20 @@ import {
   copyBytesToClipboard,
   getGalleryImagePath,
   getStorageInfo,
+  readImageMetadata,
   type StorageInfo,
 } from "../utils/api.js";
 import { isTauri, isBrowserMode, getAuthToken } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
 import { generation } from "./generation.svelte.js";
+import { createArtistGalleryClient } from "../artist-gallery/client.js";
+import {
+  buildArtistTagIndex,
+  detectArtistsInPrompt,
+  artistBoardName,
+  type ArtistTagIndex,
+} from "../artist-gallery/detection.js";
+import type { ArtistSearchHit } from "../artist-gallery/types.js";
 
 /** Convert a gallery filename to a thumbnail URL. In Tauri, uses the custom protocol; in browser, uses the HTTP server. */
 async function thumbnailUrl(filename: string): Promise<string> {
@@ -85,6 +94,12 @@ class GalleryStore {
   customBoards = $state<string[]>([]);
   /** Storage info from the server (browser mode only). */
   storageInfo = $state<StorageInfo | null>(null);
+  /** Lookup map for artist-tag detection.  Populated by loadArtistIndex(). */
+  artistTagIndex = $state<ArtistTagIndex>(new Map());
+  /** True once the artist index has been fetched at least once. */
+  artistIndexReady = $state(false);
+  /** True while autoSortByArtist is running. */
+  autoSorting = $state(false);
   private _toastTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * Per-image persist promises.  Resolves with the gallery filename once
@@ -178,6 +193,108 @@ class GalleryStore {
       [key]: value,
     };
     this.saveBoardAssignments();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Artist tag detection
+  // ---------------------------------------------------------------------------
+
+  private _artistIndexPromise: Promise<void> | null = null;
+
+  /** Fetch and cache the artist search index from the given manifest URL. */
+  async loadArtistIndex(manifestUrl: string): Promise<void> {
+    if (this.artistIndexReady) return;
+    if (this._artistIndexPromise) return this._artistIndexPromise;
+    this._artistIndexPromise = (async () => {
+      try {
+        const client = createArtistGalleryClient({ manifestUrl });
+        const hits = await client.loadSearchIndex();
+        this.artistTagIndex = buildArtistTagIndex(hits);
+        this.artistIndexReady = true;
+        console.debug(`[artist] Index loaded: ${hits.length} entries, map size=${this.artistTagIndex.size}`);
+      } catch (e) {
+        console.error("Failed to load artist tag index:", e);
+        this._artistIndexPromise = null;
+      }
+    })();
+    return this._artistIndexPromise;
+  }
+
+  /** Detect artist tags present in an image's positive prompt. */
+  detectedArtists(image: OutputImage): ArtistSearchHit[] {
+    if (!this.artistIndexReady || this.artistTagIndex.size === 0) {
+      console.debug(`[artist] detectedArtists: index not ready (ready=${this.artistIndexReady}, size=${this.artistTagIndex.size})`);
+      return [];
+    }
+    const prompt = image.metadata?.positive_prompt;
+    if (!prompt) {
+      console.debug(`[artist] detectedArtists: no prompt for ${image.gallery_filename} (metadata=${JSON.stringify(image.metadata)})`);
+      return [];
+    }
+    const hits = detectArtistsInPrompt(prompt, this.artistTagIndex);
+    console.debug(`[artist] detectedArtists for ${image.gallery_filename}: prompt snippet="${prompt.slice(0, 80)}", hits=${hits.map(h => h.slug).join(",") || "none"}`);
+    return hits;
+  }
+
+  /** The primary (first-ranked) artist tag detected in an image, or null. */
+  primaryArtist(image: OutputImage): ArtistSearchHit | null {
+    const hits = this.detectedArtists(image);
+    return hits[0] ?? null;
+  }
+
+  /**
+   * Scan every gallery image and assign it to a board named `@artist` based
+   * on the primary detected artist tag.  Images with no detectable artist
+   * tag are left untouched (existing board assignments preserved).  Returns
+   * a summary of how many images were sorted.
+   */
+  async autoSortByArtist(
+    manifestUrl: string,
+    options: { overwriteExisting?: boolean } = {},
+  ): Promise<{ sorted: number; scanned: number; boards: string[] }> {
+    this.autoSorting = true;
+    try {
+      await this.loadArtistIndex(manifestUrl);
+      if (!this.artistIndexReady) {
+        this.showToast("Artist index unavailable — check your connection.", "error");
+        return { sorted: 0, scanned: 0, boards: [] };
+      }
+      // Make sure every image has its metadata loaded before scanning so we
+      // don't miss images whose prompts haven't been hydrated yet.
+      await this.hydrateMetadataInBackground();
+      const overwrite = options.overwriteExisting ?? false;
+      const newBoards = new Set<string>();
+      const nextAssignments = { ...this.boardAssignments };
+      let sorted = 0;
+      let scanned = 0;
+      for (const image of this.images) {
+        scanned++;
+        const key = image.gallery_filename ?? `${image.prompt_id}::${image.filename}`;
+        if (!overwrite) {
+          const existing = this.boardAssignments[key];
+          if (existing && existing !== "Unsorted") continue;
+        }
+        const primary = this.primaryArtist(image);
+        if (!primary) continue;
+        const boardName = artistBoardName(primary.slug);
+        nextAssignments[key] = boardName;
+        newBoards.add(boardName);
+        sorted++;
+      }
+      if (newBoards.size > 0) {
+        const merged = new Set<string>(this.customBoards);
+        for (const b of newBoards) merged.add(b);
+        this.customBoards = [...merged].sort((a, b) =>
+          a.localeCompare(b, undefined, { sensitivity: "base" }),
+        );
+        this.saveCustomBoards();
+      }
+      this.boardAssignments = nextAssignments;
+      this.saveBoardAssignments();
+      return { sorted, scanned, boards: [...newBoards] };
+    } finally {
+      this.autoSorting = false;
+    }
   }
 
   addImages(newImages: OutputImage[]) {
@@ -393,6 +510,59 @@ class GalleryStore {
     if (isBrowserMode) {
       this.refreshStorageInfo();
     }
+    // Background: populate metadata for thumbnails so artist-tag detection
+    // and other prompt-based UI work without needing the lightbox.
+    void this.hydrateMetadataInBackground();
+  }
+
+  /** Null until hydration starts; resolves when ALL pending images have metadata. */
+  private _metadataHydrationPromise: Promise<void> | null = null;
+
+  /**
+   * Walk the gallery and lazily read PNG metadata for any image that doesn't
+   * have it yet.  Runs in small batches with yields so the UI stays smooth.
+   * Safe to call more than once — the second caller awaits the first run.
+   */
+  async hydrateMetadataInBackground(): Promise<void> {
+    if (this._metadataHydrationPromise) return this._metadataHydrationPromise;
+    this._metadataHydrationPromise = this._runMetadataHydration();
+    return this._metadataHydrationPromise;
+  }
+
+  private async _runMetadataHydration(): Promise<void> {
+    const BATCH = 12;
+    // Capture object references (not indices) so that later insertions into
+    // this.images cannot cause us to skip or mis-target images.
+    const pending = this.images.filter((img) => img && !img.metadata && img.gallery_filename);
+    console.debug(`[artist] Hydrating metadata for ${pending.length} / ${this.images.length} images`);
+    let hydrated = 0;
+    for (let b = 0; b < pending.length; b += BATCH) {
+      const slice = pending.slice(b, b + BATCH);
+      await Promise.all(
+        slice.map(async (img) => {
+          if (!img || img.metadata || !img.gallery_filename) return;
+          try {
+            const meta = await readImageMetadata(img.gallery_filename);
+            if (!meta) {
+              console.debug(`[artist] readImageMetadata returned null for ${img.gallery_filename}`);
+              return;
+            }
+            if (!img.metadata) {
+              // Direct property mutation — same pattern as App.svelte's lightbox
+              // load path; Svelte 5's deep proxy tracks this correctly.
+              img.metadata = meta;
+              hydrated++;
+            }
+          } catch (e) {
+            // Non-fatal — just means this image won't get artist badges.
+            console.debug("[artist] Metadata hydration failed for", img.gallery_filename, e);
+          }
+        }),
+      );
+      // Yield to keep the UI responsive between batches
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    console.debug(`[artist] Hydration complete: ${hydrated} images loaded`);
   }
 
   /** Load full-resolution image data on demand. Returns the blob URL. */

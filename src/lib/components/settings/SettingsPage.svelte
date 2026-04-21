@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { AppConfig } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit } from "../../utils/api.js";
-  import type { ReleaseNote, ImportResult } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues } from "../../utils/api.js";
+  import type { ReleaseNote, ImportResult, AttentionBackendStatus } from "../../utils/api.js";
   import { smoothScroll } from "../../utils/smoothScroll.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
@@ -14,6 +14,7 @@
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
   import { onMount } from "svelte";
   import { marked } from "marked";
+  import { clearArtistImageCache, getArtistImageCacheCount } from "../../artist-gallery/imageCache.js";
 
   let { userRole = "admin" }: { userRole?: string } = $props();
   const isAdmin = $derived(userRole === "admin");
@@ -47,6 +48,10 @@
   let showQualityTagsWarning = $state(false);
   let showCustomQualityTags = $state(false);
 
+  // Attention backend state
+  let attentionInstalling = $state(false);
+  let attentionError = $state<string | null>(null);
+
   // Gallery import state
   let importBusy = $state(false);
   let importResult = $state<ImportResult | null>(null);
@@ -56,6 +61,27 @@
   let exportingLogs = $state(false);
   let logExportDone = $state(false);
   let logExportError = $state<string | null>(null);
+
+  // Clear queue state (mod/admin only)
+  let clearQueueBusy = $state(false);
+  let clearQueueDone = $state(false);
+  let clearQueueError = $state<string | null>(null);
+  let showClearQueueConfirm = $state(false);
+
+  async function handleClearQueue() {
+    clearQueueBusy = true;
+    clearQueueError = null;
+    try {
+      await clearAllQueues();
+      clearQueueDone = true;
+      showClearQueueConfirm = false;
+      setTimeout(() => (clearQueueDone = false), 3000);
+    } catch (e: any) {
+      clearQueueError = e?.message ?? String(e);
+    } finally {
+      clearQueueBusy = false;
+    }
+  }
 
   // Mode switching state
   let switchingMode = $state(false);
@@ -161,6 +187,7 @@
   });
 
   // User self-service password change
+  let showChangePasswordForm = $state(false);
   let cpCurrentPass = $state("");
   let cpNewPass1 = $state("");
   let cpNewPass2 = $state("");
@@ -467,6 +494,29 @@
   let releaseNotesLoading = $state(false);
   let releaseNotesError = $state<string | null>(null);
 
+  // Artist image cache
+  let cacheClearBusy = $state(false);
+  let cacheClearDone = $state(false);
+  let cacheClearCount = $state<number | null>(null);
+
+  async function loadCacheCount() {
+    const n = await getArtistImageCacheCount();
+    cacheClearCount = n >= 0 ? n : null;
+  }
+
+  async function handleClearArtistCache() {
+    cacheClearBusy = true;
+    cacheClearDone = false;
+    try {
+      await clearArtistImageCache();
+      cacheClearCount = 0;
+      cacheClearDone = true;
+      setTimeout(() => (cacheClearDone = false), 3000);
+    } finally {
+      cacheClearBusy = false;
+    }
+  }
+
   async function loadReleaseNotes() {
     if (releaseNotes.length > 0 || releaseNotesLoading) return;
     releaseNotesLoading = true;
@@ -701,11 +751,11 @@
   const sections = [
     { key: "connection", label: "Connection", keywords: "server mode url port remote autolaunch" },
     { key: "appearance", label: "Appearance", keywords: "theme dark light font scale size style presets fooocus" },
-    { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close" },
+    { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close attention backend sage flash" },
     { key: "quality", label: "Quality Tags", keywords: "quality tags auto masterpiece best quality anima illustrious noobai pony nanosaur positive negative prompt" },
     { key: "gpu", label: "GPU Workers", keywords: "gpu vram worker backend multi status utilization temperature power nvidia" },
     { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
-    { key: "gallery", label: "Gallery", keywords: "import images output directory swarmui comfyui external folder manual save mode save directory" },
+    { key: "gallery", label: "Gallery", keywords: "import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview" },
     { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", label: "Interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
     { key: "civitai", label: "CivitAI", keywords: "civitai api key metadata model hub image fetch download authentication" },
@@ -725,6 +775,7 @@
   let originalPort = 0;
   let originalMode = "";
   let originalVramMode = "";
+  let originalAttentionBackend = "";
   let originalExtraArgs = "";
   let originalModelPaths = "";
 
@@ -753,6 +804,7 @@
     }
     loadInstallPath();
     getGalleryPath().then(p => { galleryPathDisplay = p; }).catch(() => {});
+    void loadCacheCount();
     if (isBrowserMode) {
       loadLanAccounts();
       loadLanInfo();
@@ -772,6 +824,7 @@
     originalPort = config.server_port;
     originalMode = config.server_mode;
     originalVramMode = config.vram_mode;
+    originalAttentionBackend = config.attention_backend;
     originalExtraArgs = config.extra_args.join(" ");
     originalModelPaths = config.extra_model_paths ?? "";
   }
@@ -783,6 +836,7 @@
       config.server_port !== originalPort ||
       config.server_mode !== originalMode ||
       config.vram_mode !== originalVramMode ||
+      config.attention_backend !== originalAttentionBackend ||
       config.extra_args.join(" ") !== originalExtraArgs ||
       (config.extra_model_paths ?? "") !== originalModelPaths;
   }
@@ -795,6 +849,24 @@
       await updateConfig(config);
     } catch (e) {
       error = `Failed to save: ${e}`;
+    }
+  }
+
+  /** Install a different attention backend and update config. */
+  async function handleAttentionChange(backend: string) {
+    if (!config || attentionInstalling) return;
+    const previousBackend = config.attention_backend;
+    attentionError = null;
+    attentionInstalling = true;
+    try {
+      await installAttentionBackend(backend);
+      config.attention_backend = backend;
+      checkRestartNeeded();
+    } catch (e: any) {
+      attentionError = typeof e === "string" ? e : e.message || "Installation failed";
+      config.attention_backend = previousBackend;
+    } finally {
+      attentionInstalling = false;
     }
   }
 
@@ -1131,6 +1203,41 @@
         </section>
         {/if}
 
+        <!-- Queue Management (admin / moderator in browser mode) -->
+        {#if canManageServer && isBrowserMode}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <div class="p-5 space-y-3">
+            <h3 class="text-sm font-medium text-neutral-200">Queue Management</h3>
+            <p class="text-xs text-neutral-500">Clear all pending and active generations. This interrupts everyone's in-progress generation.</p>
+            {#if clearQueueError}
+              <p class="text-xs text-red-400">{clearQueueError}</p>
+            {/if}
+            {#if clearQueueDone}
+              <p class="text-xs text-green-400">Queue cleared.</p>
+            {/if}
+            {#if showClearQueueConfirm}
+              <p class="text-xs text-amber-300">This will interrupt all active and queued generations. Are you sure?</p>
+              <div class="flex gap-2">
+                <button
+                  class="flex-1 py-2 rounded-lg text-xs font-medium bg-neutral-700 hover:bg-neutral-600 text-neutral-300 transition-colors cursor-pointer"
+                  onclick={() => (showClearQueueConfirm = false)}
+                >Cancel</button>
+                <button
+                  class="flex-1 py-2 rounded-lg text-xs font-medium bg-red-600 hover:bg-red-500 text-white transition-colors cursor-pointer disabled:opacity-50"
+                  disabled={clearQueueBusy}
+                  onclick={handleClearQueue}
+                >{clearQueueBusy ? "Clearing…" : "Yes, Clear Queue"}</button>
+              </div>
+            {:else}
+              <button
+                class="w-full py-2 rounded-lg text-xs font-medium bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-800/50 transition-colors cursor-pointer"
+                onclick={() => { clearQueueError = null; showClearQueueConfirm = true; }}
+              >Clear Queue</button>
+            {/if}
+          </div>
+        </section>
+        {/if}
+
         <!-- Connection (admin / moderator) -->
         {#if isAdmin && sectionVisible("connection")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
@@ -1347,6 +1454,32 @@
               <option value="none">{locale.t('settings.performance.vram_none')}</option>
             </select>
             <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.performance.vram_note')}</p>
+          </div>
+
+          <div>
+            <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.performance.attention_backend')}<span class="text-amber-400">*</span></label>
+            <select
+              value={config.attention_backend}
+              onchange={(e) => { handleAttentionChange((e.target as HTMLSelectElement).value); }}
+              disabled={attentionInstalling}
+              class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
+            >
+              <option value="default">{locale.t('settings.performance.attention_default')}</option>
+              <option value="sage_v1">{locale.t('settings.performance.attention_sage_v1')}</option>
+              <option value="sage_v2">{locale.t('settings.performance.attention_sage_v2')}</option>
+              <option value="flash_v1">{locale.t('settings.performance.attention_flash_v1')}</option>
+              <option value="flash_v2">{locale.t('settings.performance.attention_flash_v2')}</option>
+            </select>
+            {#if attentionInstalling}
+              <p class="text-[10px] text-indigo-400 mt-0.5 flex items-center gap-1">
+                <span class="inline-block w-3 h-3 border border-indigo-400 border-t-transparent rounded-full animate-spin"></span>
+                {locale.t('settings.performance.attention_installing')}
+              </p>
+            {:else if attentionError}
+              <p class="text-[10px] text-red-400 mt-0.5">{attentionError}</p>
+            {:else}
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.performance.attention_note')}</p>
+            {/if}
           </div>
 
           <div class="flex items-start gap-3">
@@ -1919,6 +2052,31 @@
               </p>
             </div>
             {/if}
+
+            <!-- Artist image cache (visible to all users) -->
+            <div>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.gallery.artist_cache_label')}</label>
+              <p class="text-[10px] text-neutral-500 mb-2">{locale.t('settings.gallery.artist_cache_desc')}</p>
+              <div class="flex items-center gap-3">
+                <button
+                  class="px-3 py-1.5 text-xs rounded-lg border transition-colors {cacheClearBusy ? 'border-neutral-700 text-neutral-500 cursor-not-allowed' : 'border-red-800/60 text-red-400 hover:border-red-600 hover:text-red-300'}"
+                  disabled={cacheClearBusy}
+                  onclick={handleClearArtistCache}
+                >
+                  {cacheClearBusy ? locale.t('settings.gallery.artist_cache_clearing') : locale.t('settings.gallery.artist_cache_clear')}
+                </button>
+                {#if cacheClearCount !== null}
+                  <span class="text-[10px] text-neutral-500">
+                    {cacheClearCount === 0
+                      ? locale.t('settings.gallery.artist_cache_empty')
+                      : locale.t('settings.gallery.artist_cache_count', { count: String(cacheClearCount) })}
+                  </span>
+                {/if}
+                {#if cacheClearDone}
+                  <span class="text-[10px] text-green-400">{locale.t('settings.gallery.artist_cache_cleared')}</span>
+                {/if}
+              </div>
+            </div>
           </div>
           {/if}
         </section>
@@ -2160,7 +2318,17 @@
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <div class="p-5 space-y-3">
             <h3 class="text-sm font-medium text-neutral-200">Account</h3>
-            <p class="text-xs text-neutral-500">Change your password.</p>
+            <button
+              class="w-full py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700"
+              onclick={() => {
+                showChangePasswordForm = !showChangePasswordForm;
+                cpError = null;
+                cpSuccess = false;
+              }}
+            >
+              {showChangePasswordForm ? "Cancel" : "Change Password"}
+            </button>
+            {#if showChangePasswordForm}
             <div class="space-y-2">
               <input
                 type="password"
@@ -2192,9 +2360,10 @@
                 disabled={cpBusy}
                 onclick={changeOwnPassword}
               >
-                {cpBusy ? "Saving..." : "Change Password"}
+                {cpBusy ? "Saving..." : "Confirm Change"}
               </button>
             </div>
+            {/if}
             <hr class="border-neutral-800" />
             <button
               class="w-full py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-800/50"
