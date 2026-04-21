@@ -1,4 +1,7 @@
-## What's New in v0.9.7
+## What's New in v0.9.8
+
+### Build Fix
+- **Fixed `npm ci` lockfile mismatch** — `package-lock.json` was out of sync with `package.json` after the TypeScript 6.0.3 upgrade, causing the v0.9.7 release workflow to fail. The lockfile is now committed in sync.
 
 ### Dependency Updates
 - **rand 0.10.1** — soundness bug fix (rust-random/rand#1763); no API changes
