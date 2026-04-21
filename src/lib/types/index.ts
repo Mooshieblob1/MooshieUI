@@ -146,6 +146,7 @@ export interface AppConfig {
   browser_mode: boolean;
   ui_server_port: number;
   lan_enabled: boolean;
+  attention_backend: string;
 }
 
 export interface QueueInfo {

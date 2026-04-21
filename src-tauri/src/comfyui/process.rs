@@ -254,7 +254,8 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         .arg("--listen")
         .arg("127.0.0.1")
         .arg("--port")
-        .arg(config.server_port.to_string());
+        .arg(config.server_port.to_string())
+        .arg("--disable-auto-launch"); // MooshieUI is the frontend — no browser needed
 
     // Enable latent previews over WebSocket
     cmd.arg("--preview-method").arg("auto");
@@ -271,6 +272,18 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             cmd.arg("--novram");
         }
         // "normal" and "auto" use ComfyUI's default behavior
+        _ => {}
+    }
+
+    // Attention backend flag (mutually exclusive in ComfyUI)
+    match config.attention_backend.as_str() {
+        "sage_v1" | "sage_v2" => {
+            cmd.arg("--use-sage-attention");
+        }
+        "flash_v1" | "flash_v2" => {
+            cmd.arg("--use-flash-attention");
+        }
+        // "default" → PyTorch SDPA, no flag needed
         _ => {}
     }
 
@@ -738,7 +751,8 @@ pub async fn start_worker_process(
         .arg("--listen")
         .arg("127.0.0.1")
         .arg("--port")
-        .arg(worker.port.to_string());
+        .arg(worker.port.to_string())
+        .arg("--disable-auto-launch"); // MooshieUI is the frontend — no browser needed
 
     cmd.arg("--preview-method").arg("auto");
 

@@ -76,11 +76,9 @@ async fn main() {
 
     // Start the web server (always LAN-enabled in server mode)
     let server_state = state.clone();
-    let server_handle = tokio::spawn(async move {
-        webserver::start_server(server_state, port, true).await;
-    });
+    let (actual_port, server_handle) = webserver::start_server(server_state, port, true).await;
 
-    log::info!("Web server listening on 0.0.0.0:{}", port);
+    log::info!("Web server listening on 0.0.0.0:{}", actual_port);
 
     // Auto-start ComfyUI if configured
     if auto_start {

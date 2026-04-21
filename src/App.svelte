@@ -5,11 +5,12 @@
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
   import ModelHubPage from "./lib/components/modelhub/ModelHubPage.svelte";
+  import { ArtistGalleryPage } from "./lib/artist-gallery/index.js";
   import { connection } from "./lib/stores/connection.svelte.js";
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata, getQueue } from "./lib/utils/api.js";
+  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata, getQueue, recoverPromptOutputs } from "./lib/utils/api.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
@@ -20,6 +21,7 @@
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
   import { downloads } from "./lib/stores/downloads.svelte.js";
   import { compare } from "./lib/stores/compare.svelte.js";
+  import { artistInsert } from "./lib/stores/artistInsert.svelte.js";
   import logoUrl from "./lib/assets/logo.png";
   import { smoothScroll } from "./lib/utils/smoothScroll.js";
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
@@ -51,6 +53,7 @@
     await Promise.race([Promise.allSettled(fetches), timeout]);
   }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
+  let sseReconnectHandler: (() => void) | null = null;
   /** Timestamp of the most recent SSE event per prompt — prevents false reconciliation. */
   let promptLastActivity = new Map<string, number>();
 
@@ -409,8 +412,23 @@
     await gallery.rescanMetadata();
   }
 
+  async function sortGalleryByArtist() {
+    const result = await gallery.autoSortByArtist(connection.artistGalleryManifestUrl);
+    if (result.sorted === 0 && result.scanned > 0) {
+      gallery.showToast(locale.t("gallery.sort_by_artist_none"), "info");
+    } else if (result.sorted > 0) {
+      gallery.showToast(
+        locale.t("gallery.sort_by_artist_done", {
+          sorted: String(result.sorted),
+          boards: String(result.boards.length),
+        }),
+        "success",
+      );
+    }
+  }
+
   let setupComplete = $state<boolean | null>(null); // null = loading
-  let currentPage = $state<"generate" | "gallery" | "modelhub" | "settings">(
+  let currentPage = $state<"generate" | "gallery" | "modelhub" | "artists" | "settings">(
     "generate"
   );
 
@@ -631,6 +649,26 @@
 
   // Interrogation state (for lightbox + context menu)
   let showInterrogateModal = $state(false);
+
+  // Artist tag insert: the actual replace/append logic lives in the shared
+  // `artistInsert` store so the bottom-panel favourites tab can reuse the
+  // same modal flow. `artistInsertPending` just mirrors the store for the
+  // template below; `handleArtistTagInsert` bridges to the gallery page prop.
+  const artistInsertPending = $derived(artistInsert.pending);
+
+  function handleArtistTagInsert(tag: string) {
+    artistInsert.request(tag);
+    // Keep the existing UX where inserting from the gallery page snaps the
+    // user back to the generate view so they can see the prompt update.
+    if (!artistInsert.pending) {
+      currentPage = "generate";
+    }
+  }
+
+  function applyArtistTag(withAt: string, mode: "add" | "replace") {
+    artistInsert.apply(withAt, mode);
+    currentPage = "generate";
+  }
   let interrogateResult = $state<InterrogationResult | null>(null);
   let interrogateLoading = $state(false);
   let interrogateStage = $state<string | null>(null);
@@ -1392,6 +1430,11 @@
           progress.updateQueuePosition(data.prompt_id, data.position, data.total);
         }
       }),
+      ipcListen("mooshie:queue_cleared", (_event: any) => {
+        // Admin/mod cleared the queue — cancel all pending state on this client
+        progress.cancelAll();
+        compare.clearGridBatch();
+      }),
       ipcListen("comfyui:preview", async (event: any) => {
         const data = event.payload;
         if (!progress.isGenerating) return;
@@ -1545,6 +1588,21 @@
       ipcListen("comfyui:execution_error", (event: any) => {
         console.error("Execution error:", event.payload);
         const data = event.payload;
+        // Build a user-visible error message from the raw error string
+        const rawErr = String(data.error ?? "");
+        let toastMsg = "Generation failed";
+        if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
+          toastMsg = "Generation failed — a model or VAE may not be configured correctly. Check your model settings.";
+        } else {
+          try {
+            const m = rawErr.match(/API error \(\d+\): ([\s\S]+)/);
+            if (m) {
+              const parsed = JSON.parse(m[1]);
+              if (parsed.error?.message) toastMsg = `Generation failed: ${parsed.error.message}`;
+            }
+          } catch { /* ignore parse errors */ }
+        }
+        gallery.showToast(toastMsg, "error");
         if (data.prompt_id) {
           pendingOutputImages.delete(data.prompt_id);
           pendingOutputFetches.delete(data.prompt_id);
@@ -1585,7 +1643,7 @@
           // Skip prompts that received an SSE event within the last 30s —
           // they're clearly still alive even if the queue query missed them.
           const lastEvent = promptLastActivity.get(p.promptId) ?? 0;
-          if (now - lastEvent < 30_000) continue;
+          if (now - lastEvent < 10_000) continue;
 
           if (!allPromptIds.has(p.promptId)) {
             console.warn(`[reconcile] Prompt ${p.promptId} no longer in ComfyUI queue — completing`);
@@ -1598,10 +1656,35 @@
             const item = progress.completePrompt(p.promptId);
             promptLastActivity.delete(p.promptId);
             if (item) {
-              const images = pendingOutputImages.get(p.promptId) ?? [];
+              let images = pendingOutputImages.get(p.promptId) ?? [];
               pendingOutputImages.delete(p.promptId);
+
+              if (images.length === 0) {
+                // SSE event was likely dropped during a reconnect — the image was
+                // saved to a temp file on the server and cached by the cleanup
+                // reactor.  Try to recover it before giving up.
+                try {
+                  const recovered = await recoverPromptOutputs(p.promptId);
+                  for (const imgRef of recovered.images) {
+                    try {
+                      const resp = await fetch(
+                        `/internal-api/_temp_image/${encodeURIComponent(imgRef.temp_filename)}`,
+                        { headers: authHeaders() },
+                      );
+                      if (resp.ok) {
+                        const blob = await resp.blob();
+                        const url = URL.createObjectURL(blob);
+                        images.push({ blob, url, tempFilename: imgRef.temp_filename });
+                      }
+                    } catch { /* individual image fetch failed */ }
+                  }
+                } catch { /* recovery command failed */ }
+              }
+
               if (images.length > 0) {
                 finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images);
+              } else {
+                gallery.showToast("A generation was lost due to a connection issue — please try again.", "error");
               }
             }
           }
@@ -1609,7 +1692,22 @@
       } catch {
         // Queue check failed — not critical
       }
-    }, 15_000);
+    }, 5_000);
+
+    // On SSE reconnect, immediately trigger a reconcile check so missed
+    // completion events are caught within seconds rather than up to 15s later.
+    const handleSseReconnect = () => {
+      if (progress.isGenerating && connection.connected) {
+        // Reset last-activity timestamps so the reconciler doesn't skip prompts
+        for (const p of progress.pendingPrompts) {
+          if (!promptLastActivity.has(p.promptId)) {
+            promptLastActivity.set(p.promptId, 0);
+          }
+        }
+      }
+    };
+    sseReconnectHandler = handleSseReconnect;
+    window.addEventListener("mooshie:sse-reconnected", handleSseReconnect);
 
     // Start ComfyUI server — returns immediately, background task handles readiness
     // The backend will auto-connect WebSocket and emit comfyui:server_ready when done
@@ -1646,6 +1744,10 @@
 
     // Load persisted gallery images from disk (independent of server status)
     gallery.loadFromDisk();
+
+    // Warm the artist-tag detection index in the background so thumbnail
+    // badges and "Sort by artist" work without an explicit fetch later.
+    void gallery.loadArtistIndex(connection.artistGalleryManifestUrl);
   }
 
   $effect(() => {
@@ -1696,6 +1798,7 @@
 
   onDestroy(() => {
     if (reconcileIntervalId) clearInterval(reconcileIntervalId);
+    if (sseReconnectHandler) window.removeEventListener("mooshie:sse-reconnected", sseReconnectHandler);
   });
 </script>
 
@@ -1884,6 +1987,26 @@
       >
     </button>
     {/if}
+    <button
+      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
+      'artists'
+        ? 'bg-indigo-600 text-white'
+        : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
+      onclick={() => (currentPage = "artists")}
+      title="Artist Gallery"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        class="w-4.5 h-4.5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        ><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 4-7 8-7s8 3 8 7" /></svg
+      >
+    </button>
 
     <div class="flex-1"></div>
 
@@ -2086,6 +2209,14 @@
                   <button onclick={rescanGalleryMetadata} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200" title={locale.t("gallery.rescan_tooltip")}>
                     {locale.t("gallery.rescan_metadata")}
                   </button>
+                  <button
+                    onclick={sortGalleryByArtist}
+                    disabled={gallery.autoSorting}
+                    class="px-3 py-1.5 text-xs rounded border transition-colors border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={locale.t("gallery.sort_by_artist_tooltip")}
+                  >
+                    {gallery.autoSorting ? locale.t("gallery.sort_by_artist_running") : locale.t("gallery.sort_by_artist")}
+                  </button>
                 </div>
               </div>
             </div>
@@ -2163,6 +2294,17 @@
                         <div class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200 pointer-events-none">
                           {boardLabel(image)}
                         </div>
+                        {#if galleryView !== 'small'}
+                          {@const artist = gallery.primaryArtist(image)}
+                          {#if artist}
+                            <div
+                              class="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-red-900/80 text-[10px] text-red-200 pointer-events-none truncate max-w-[60%]"
+                              title={locale.t("gallery.artist_detected", { tag: artist.tag })}
+                            >
+                              @{artist.slug}
+                            </div>
+                          {/if}
+                        {/if}
                         {#if viewColumns(galleryView) <= 5}
                           <div class="absolute bottom-0 inset-x-0 flex justify-center items-center gap-1 px-1.5 pb-1.5 pt-6 opacity-0 group-hover:opacity-100 transition-opacity bg-linear-to-t from-black/80 to-transparent pointer-events-none">
                             <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black text-[11px] font-bold shadow pointer-events-auto shrink-0" title={locale.t('gallery.img2img')} onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
@@ -2204,6 +2346,11 @@
       </div>
     {:else if currentPage === "modelhub"}
       <ModelHubPage />
+    {:else if currentPage === "artists"}
+      <ArtistGalleryPage
+        manifestUrl={connection.artistGalleryManifestUrl}
+        oninsertTag={handleArtistTagInsert}
+      />
     {:else if currentPage === "settings"}
       <SettingsPage {userRole} />
     {/if}
@@ -2500,6 +2647,68 @@
   visible={showContextMenu}
   onclose={() => { showContextMenu = false; }}
 />
+
+<!-- Interrogate modal (from gallery/lightbox) -->
+
+<!-- Artist tag conflict dialog -->
+{#if artistInsertPending}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
+    onclick={(e) => { if (e.target === e.currentTarget) artistInsert.dismiss(); }}
+    onkeydown={(e) => { if (e.key === 'Escape') artistInsert.dismiss(); }}
+  >
+    <div class="w-96 max-w-full rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
+      {#if artistInsertPending.duplicate}
+        <h2 class="mb-1 text-sm font-semibold text-neutral-100">Tag already in prompt</h2>
+        <p class="mb-3 text-xs text-neutral-400">
+          <span class="font-mono text-indigo-300">{artistInsertPending.tag}</span> is already in your prompt.
+        </p>
+        <div class="flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-neutral-500"
+            onclick={() => artistInsert.dismiss()}
+          >
+            OK
+          </button>
+        </div>
+      {:else}
+        <h2 class="mb-1 text-sm font-semibold text-neutral-100">Artist tag already in prompt</h2>
+        <p class="mb-3 text-xs text-neutral-400">
+          Your prompt already contains
+          {#each artistInsertPending.existingTags as t, i}
+            <span class="font-mono text-red-400">{t}</span>{i < artistInsertPending.existingTags.length - 1 ? ', ' : ''}
+          {/each}.
+          Add <span class="font-mono text-indigo-300">{artistInsertPending.tag}</span> alongside, or replace?
+        </p>
+        <div class="flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-neutral-500"
+            onclick={() => artistInsert.dismiss()}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-indigo-500"
+            onclick={() => applyArtistTag(artistInsertPending!.tag, 'add')}
+          >
+            Add alongside
+          </button>
+          <button
+            type="button"
+            class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-500"
+            onclick={() => applyArtistTag(artistInsertPending!.tag, 'replace')}
+          >
+            Replace
+          </button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 <!-- Interrogate modal (from gallery/lightbox) -->
 {#if showInterrogateModal}

@@ -1,3 +1,141 @@
+## What's New in v0.9.6
+
+### Silent Generation Recovery After Reconnect
+- **Images are no longer silently lost on reconnect** — if the SSE connection dropped mid-generation, output images could vanish with no error and no toast. A server-side cache now preserves each output image's temp filename keyed by prompt ID. If the reconciler detects a completed generation with no locally tracked images, it automatically fetches the cached images from the server and finalises the output as normal.
+- **Error toast on total recovery failure** — if the server-side cache is also empty (e.g. the server restarted mid-generation), a clear error toast is shown: "A generation was lost due to a connection issue — please try again."
+
+### Error Feedback for Failed Generations
+- **Toast on `comfyui:execution_error`** — when ComfyUI reports a generation error (invalid VAE, missing model, validation failure), a descriptive error toast is now displayed rather than silently clearing the queue.
+
+### Auto-Fix for Empty VAE in Split-Model Configurations
+- Users with Anima / split-model checkpoints and an empty VAE setting now have the correct VAE automatically selected on next load, preventing the `vae_name: '' not in list` validation error.
+
+---
+
+## What's New in v0.9.5
+
+### Queue Management for Moderators & Admins
+- **Clear Queue button** — a new "Queue Management" card in Settings lets admins and moderators wipe the entire generation queue with a two-step confirmation. All held and pending prompts are cancelled, all running workers are interrupted, and every connected client receives a `mooshie:queue_cleared` event so their UI resets immediately.
+
+### Queue Reliability Fixes
+- **Faster stuck-job detection** — the reconciler that catches generations lost during SSE downtime now runs every 5 seconds (previously 15s) with a 10-second inactivity threshold (previously 30s). Missed completions are surfaced in roughly 15 seconds instead of up to 45.
+- **SSE reconnect sync** — when the SSE connection drops and reconnects, last-activity timestamps are reset so the reconciler picks up in-flight prompts immediately on the next tick rather than waiting for the next inactivity window.
+
+### UX: Password Change No Longer Shown Automatically
+- The "Change Password" form in the Account section is now collapsed by default. A single button reveals the three input fields on demand, preventing users from mistaking the always-visible form for a forced password-change prompt.
+
+### CDN CORS Fix (Browser Mode)
+- Artist gallery manifest and image index requests are now proxied through the MooshieUI server at `/internal-api/_cdn/…` instead of fetching directly from `cdn.mooshieblob.com`. This eliminates the CORS block that prevented the gallery from loading in browser mode.
+
+---
+
+## What's New in v0.9.4
+
+### Artist Gallery — State Persistence & Tag Display Fixes
+- **Gallery state now persists** — switching to the generation screen and back returns you to exactly where you were: same sort mode (including Uniqueness ranking and jitter), page, search query, category filter, and scroll position. If you had a lightbox open, that is also restored.
+- **Fixed tag display with escaped parens** — artists like `@mitsu \(mitsu art\)` now render as `mitsu (mitsu art)` in gallery cards, the bottom panel, and the prompt chips, instead of the raw slug form.
+- **Category picker z-order fix** — the "Assign category" dropdown no longer slides under the card below it in the grid.
+
+### Artist Favourites — Heart Chip in Generation Settings
+- **Heart chip on detected artist tags** — when the positive prompt contains a recognised artist tag (whether typed manually, accepted via autocomplete, or inserted from the gallery) a heart chip appears in the prompt header row. Click it to toggle the artist as a favourite without leaving the generation screen. The chip shows the artist's category colour dot when one is assigned.
+
+### Favourite Artists Quick-Access Tab
+- **New "Artists" tab in the bottom panel** — all your favourited artists are available as a scrollable thumbnail grid alongside LoRAs, checkpoints, and images. Click any card to apply the tag to your positive prompt, using the same replace/append confirmation modal as the gallery.
+- **Search and filter** — a search box and category filter chips let you find the right artist instantly.
+- **Card size slider** — resize the thumbnail grid independently from the gallery, persisted across sessions.
+
+---
+
+## What's New in v0.9.3
+
+### Artist Gallery — Image Caching, Auto-Sort by Artist & Tag Detection
+- **Persistent image cache** — artist preview images are now stored in the browser's Cache API so they load instantly on every subsequent visit without re-fetching from the CDN. Works in both the Tauri desktop app and browser mode.
+- **Auto-sort gallery by artist** — the gallery can now automatically sort images by the detected artist from generation metadata, grouping your outputs by creator.
+- **Improved artist tag detection** — backslash-escaped parentheses in prompts (`@artist \(tag\)`) are now correctly unescaped and matched against the artist index. A secondary slug-form lookup catches additional variants.
+- **Clear artist cache** — a new "Artist preview cache" button in Settings → Gallery lets you see how many images are cached and clear them on demand.
+
+### Webserver
+- LAN access toggle: the embedded web server now binds to `0.0.0.0` when LAN mode is enabled, and `127.0.0.1` otherwise.
+
+---
+
+## What's New in v0.9.2
+
+### Artist Gallery — Persistent Favourites, Categories & Backup
+- **Favourites now persist** across app restarts. Previously the heart button only affected the current session; favourited artists are now saved to disk and restored on launch.
+- **User-created categories** — group favourite artists into named categories with custom colours. A 10-colour palette plus a custom colour picker are provided.
+- **Per-card category assignment** — a coloured dot next to the heart opens a quick picker to assign/change the category for any favourite. Right-click the heart for the same shortcut.
+- **Category filter chips** — when the Favourites filter is active, a chip row lets you narrow to All, Uncategorised, or any specific category, each with its live count.
+- **Manage modal** — the new ⚙ Manage button opens a full editor for creating, renaming, recolouring, and deleting categories. Deleting a category keeps its favourites (marks them Uncategorised).
+- **Export / import** — back up your entire favourites library (artists + categories + metadata) to a `.json` file, and restore it later with Merge or Replace modes. Uses the native save/open dialog in the desktop app.
+
+---
+
+## What's New in v0.9.1
+
+### Artist Gallery
+A new full-screen gallery for browsing Anima-style artists, powered by a Cloudflare R2 CDN index.
+
+- **Paginated grid** — thumbnail cards auto-sized with a logarithmic size slider (100–400 px). Card count and layout adjust automatically.
+- **Live search** — typing in the search box filters the grid in real-time; results replace the normal paginated view without a dropdown.
+- **Sort modes** — sort by post count, alphabetical name, or **Uniqueness** (a log-normal hidden-gem score that surfaces artists with a distinctive style not yet overexposed). Uniqueness can be reshuffled with ↻ Rotate.
+- **Pagination controls** — Prev/Next buttons, a **⚄ Random** button to jump to a random page, and a direct page-number input (press Enter or ↵ to jump).
+- **Favourites** — heart (♡/♥) toggle on every card; a toolbar button filters the grid to show only favourited artists. Session-scoped.
+- **Copy on hover** — a **Copy** button appears on each card on hover; right-clicking also copies the tag. The card border flashes green on copy.
+- **Card slide-in animation** — cards animate in with a staggered slide-from-right effect whenever the sort, direction, or favourites filter changes.
+- **Lightbox** — click any card to open an instant full-screen preview (shown immediately from cached index data; aliases are patched in from the shard in the background).
+  - Click the image to zoom (1× → 1.5×, spring easing). **Zoom state persists** across lightbox close/reopen.
+  - Artist name links to Danbooru for quick tag lookup.
+  - Prev/Next navigation with keyboard arrow-key support.
+- **Generation parameters modal** — an ℹ gen params link in the gallery header shows the exact model stack, sampler settings, and prompt template used to generate the preview images.
+
+---
+
+## What's New in v0.9.0
+
+### Fix: Flashing Console Window on Windows
+- **Eliminated the flickering window** that appeared every 5 seconds while the GPU Status panel was open. `nvidia-smi.exe` was being spawned without the `CREATE_NO_WINDOW` flag, causing Windows to briefly show a console window each cycle.
+- Applied `CREATE_NO_WINDOW` to all subprocess spawns in the Windows build: `nvidia-smi`, `detect_compute_capability`, export-logs diagnostics (python/nvidia-smi), and the PowerShell clipboard reader.
+
+### ComfyUI No Longer Opens a Browser Window
+- Added `--disable-auto-launch` to every ComfyUI process spawn (single-GPU and multi-GPU worker paths). ComfyUI previously attempted to open a browser tab on startup; MooshieUI is the frontend so this was unnecessary.
+
+---
+
+## What's New in v0.8.9
+
+### Attention Backend Selection
+- **Configurable attention backends** — choose between SageAttention v1/v2 and FlashAttention v1/v2 for faster inference on NVIDIA GPUs (Ampere+).
+- **Setup wizard integration** — optional Advanced Options section during first-run install lets you pick an attention backend before installation.
+- **Settings page control** — switch attention backends at any time from Settings → Performance. Packages are installed/uninstalled automatically.
+
+### Setup Wizard Language Selector
+- **Language picker on first page** — a globe-icon dropdown at the top of the setup wizard lets you choose your language before installation begins.
+- **Automatic system language detection** — on first launch, the wizard detects your OS language and selects it if supported (11 languages available). Falls back to English otherwise.
+
+### Model Architecture Detection
+- **Tensor-based architecture inference** — models without ModelSpec metadata now get their architecture detected from safetensors tensor key patterns (Flux, SDXL, SD 1.5, SD3, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, Kolors).
+- **No more "unknown" architecture** — the vast majority of safetensors models will now show correct architecture automatically.
+
+### Model Hashes
+- **AutoV2 hash display** — the model info panel now shows the CivitAI-compatible AutoV2 hash (first 10 chars of SHA256) with a copy-to-clipboard button.
+- **Computed on model load** — hash is calculated when you select a checkpoint and displayed alongside other model metadata.
+
+### i18n
+- All new features fully localized across all 11 supported languages.
+
+---
+
+## What's New in v0.8.8
+
+### Case-Insensitive Usernames
+
+- **Usernames are now case-insensitive** — logging in as "Alice", "alice", or "ALICE" all resolve to the same account. New accounts are stored in lowercase.
+- **Automatic migration on startup** — existing accounts, sessions, and gallery directories are normalized to lowercase on first launch. Duplicate accounts that collapse to the same name are deduplicated (first occurrence wins).
+- **Gallery directory rename** — mixed-case per-user gallery folders (e.g., `users/Alice`) are automatically renamed to lowercase (`users/alice`) so images remain accessible after the migration.
+
+---
+
 ## What's New in v0.8.7
 
 ### Logout Button
