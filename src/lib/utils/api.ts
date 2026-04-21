@@ -39,6 +39,12 @@ export async function getHistory(promptId: string): Promise<Record<string, unkno
   return ipcInvoke("get_history", { promptId });
 }
 
+export async function recoverPromptOutputs(
+  promptId: string,
+): Promise<{ images: Array<{ temp_filename: string }> }> {
+  return ipcInvoke("recover_prompt_outputs", { promptId });
+}
+
 export async function getQueue(): Promise<QueueInfo> {
   return ipcInvoke("get_queue");
 }
@@ -49,6 +55,10 @@ export async function interruptGeneration(): Promise<void> {
 
 export async function deleteQueueItem(promptId: string): Promise<void> {
   return ipcInvoke("delete_queue_item", { promptId });
+}
+
+export async function clearAllQueues(): Promise<void> {
+  return ipcInvoke("clear_all_queues");
 }
 
 export async function uploadImage(imagePath: string): Promise<{
@@ -503,6 +513,20 @@ export async function installCustomNode(gitUrl: string, nodeName: string): Promi
 
 export async function installPipPackage(packageName: string): Promise<void> {
   return ipcInvoke("install_pip_package", { package: packageName });
+}
+
+export interface AttentionBackendStatus {
+  current: string;
+  venv_packages: string[];
+  compute_capability: number | null;
+}
+
+export async function checkAttentionBackend(): Promise<AttentionBackendStatus> {
+  return ipcInvoke("check_attention_backend");
+}
+
+export async function installAttentionBackend(backend: string): Promise<void> {
+  return ipcInvoke("install_attention_backend", { backend });
 }
 
 export async function getConfig(): Promise<AppConfig> {

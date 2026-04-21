@@ -139,8 +139,13 @@ pub fn run() {
                 let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
 
                 let state_for_server = shared_state.clone();
-                tauri::async_runtime::spawn(async move {
-                    webserver::start_server(state_for_server, ui_server_port, lan_enabled).await;
+                // Bind synchronously so we know the actual port (it may have
+                // fallen back from `ui_server_port` if that port was in use).
+                let actual_port = tauri::async_runtime::block_on(async move {
+                    let (p, _handle) =
+                        webserver::start_server(state_for_server, ui_server_port, lan_enabled)
+                            .await;
+                    p
                 });
                 // Only start heartbeat watchdog in single-user browser mode.
                 // With LAN access enabled, multiple users may connect and we
@@ -153,7 +158,7 @@ pub fn run() {
                 }
 
                 // Open the default browser
-                let url = format!("http://127.0.0.1:{}", ui_server_port);
+                let url = format!("http://127.0.0.1:{}", actual_port);
                 log::info!("Opening browser at {}", url);
                 let _ = open::that(&url);
             } else {
@@ -376,6 +381,8 @@ pub fn run() {
             commands::api::fetch_cached_image,
             commands::api::read_clipboard_image,
             commands::api::get_gpu_stats,
+            commands::api::check_attention_backend,
+            commands::api::install_attention_backend,
             setup::check_setup,
             setup::detect_gpu,
             setup::run_setup,

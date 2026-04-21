@@ -64,6 +64,8 @@ pub struct AppConfig {
     pub ui_server_port: u16,
     /// Enable LAN access (bind to 0.0.0.0 instead of 127.0.0.1). Only effective in browser mode.
     pub lan_enabled: bool,
+    /// Attention backend: "default", "sage_v1", "sage_v2", "flash_v1", "flash_v2"
+    pub attention_backend: String,
     /// Multi-GPU worker configs. When empty, single-worker mode (backward compat).
     #[serde(default)]
     pub gpu_workers: Vec<GpuWorkerConfig>,
@@ -108,6 +110,7 @@ impl Default for AppConfig {
             browser_mode: false,
             ui_server_port: 3200,
             lan_enabled: false,
+            attention_backend: "default".to_string(),
             gpu_workers: vec![],
         }
     }

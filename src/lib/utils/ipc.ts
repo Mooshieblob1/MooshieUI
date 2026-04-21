@@ -144,6 +144,10 @@ function ensureBrowserEventSource() {
       // ignore malformed messages
     }
   };
+  browserEventSource.onopen = () => {
+    // Notify the app that SSE reconnected so it can immediately re-sync state
+    window.dispatchEvent(new CustomEvent("mooshie:sse-reconnected"));
+  };
   browserEventSource.onerror = () => {
     // Reconnect after a short delay
     browserEventSource?.close();
