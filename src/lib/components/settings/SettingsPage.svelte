@@ -1,8 +1,7 @@
 <script lang="ts">
-  import type { AppConfig } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues } from "../../utils/api.js";
+  import type { AppConfig, QueueInfo } from "../../types/index.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus } from "../../utils/api.js";
-  import { smoothScroll } from "../../utils/smoothScroll.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation, DEFAULT_ANIMA_POSITIVE_QUALITY, DEFAULT_ANIMA_NEGATIVE_QUALITY, DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY, DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY, DEFAULT_NANOSAUR_POSITIVE_QUALITY, DEFAULT_NANOSAUR_NEGATIVE_QUALITY } from "../../stores/generation.svelte.js";
@@ -12,7 +11,7 @@
   import OpenModelFolders from "./OpenModelFolders.svelte";
   import GpuStatusPanel from "./GpuStatusPanel.svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { marked } from "marked";
   import { clearArtistImageCache, getArtistImageCacheCount } from "../../artist-gallery/imageCache.js";
 
@@ -86,7 +85,40 @@
   // Mode switching state
   let switchingMode = $state(false);
 
-  // LAN auth state
+  // Queue viewer state (live-polling when settings page is open)
+  let queueData = $state<QueueInfo | null>(null);
+  let queuePollInterval: ReturnType<typeof setInterval> | null = null;
+
+  async function refreshQueue() {
+    try {
+      queueData = await getQueue();
+    } catch {
+      // non-critical
+    }
+  }
+
+  function startQueuePolling() {
+    void refreshQueue();
+    queuePollInterval = setInterval(refreshQueue, 3000);
+  }
+
+  function stopQueuePolling() {
+    if (queuePollInterval !== null) {
+      clearInterval(queuePollInterval);
+      queuePollInterval = null;
+    }
+  }
+
+  /** Returns the set of prompt_ids currently in the running list. */
+  function runningIds(info: QueueInfo): Set<string> {
+    const ids = new Set<string>();
+    for (const entry of info.queue_running) {
+      const arr = entry as unknown[];
+      if (arr.length >= 2 && typeof arr[1] === "string") ids.add(arr[1]);
+    }
+    return ids;
+  }
+
   let lanAccounts = $state<{ username: string; role: string; online: boolean; created_at: string; last_online: string | null; storage_limit_bytes: number; can_use_modelhub: boolean }[]>([]);
   let lanNewUser = $state("");
   let lanNewPass = $state("");
@@ -249,6 +281,37 @@
     } finally {
       resetBusy = false;
     }
+  }
+
+  // About modal & issue report modal
+  let showAboutModal = $state(false);
+  let showReportModal = $state(false);
+  let reportName = $state("");
+  let reportEmail = $state("");
+  let reportMessage = $state("");
+
+  async function openExternalUrl(url: string) {
+    if (isTauri) {
+      const { open } = await import("@tauri-apps/plugin-shell");
+      await open(url);
+    } else {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  }
+
+  function openReportInMail() {
+    const subject = encodeURIComponent("MooshieUI Issue Report");
+    const bodyParts = [];
+    if (reportName.trim()) bodyParts.push(`Name: ${reportName.trim()}`);
+    if (reportEmail.trim()) bodyParts.push(`Email: ${reportEmail.trim()}`);
+    if (bodyParts.length) bodyParts.push("");
+    bodyParts.push(reportMessage.trim());
+    const mailtoUrl = `mailto:blob@mooshieblob.com?subject=${subject}&body=${encodeURIComponent(bodyParts.join("\n"))}`;
+    openExternalUrl(mailtoUrl);
+    showReportModal = false;
+    reportName = "";
+    reportEmail = "";
+    reportMessage = "";
   }
 
   async function loadLanAccounts() {
@@ -759,7 +822,8 @@
     { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", label: "Interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
     { key: "civitai", label: "CivitAI", keywords: "civitai api key metadata model hub image fetch download authentication" },
-    { key: "about", label: "About", keywords: "version update check updates about troubleshooting logs export diagnostic" },
+    { key: "queue", label: "Queue", keywords: "queue position pending running cancel clear jobs users order wait" },
+    { key: "about", label: "Help & Updates", keywords: "version update check updates about troubleshooting logs export diagnostic github report issue" },
   ];
 
   function sectionVisible(key: string): boolean {
@@ -809,6 +873,11 @@
       loadLanAccounts();
       loadLanInfo();
     }
+    startQueuePolling();
+  });
+
+  onDestroy(() => {
+    stopQueuePolling();
   });
 
   // Poll account list every 10s to refresh online/offline indicators (admin/mod).
@@ -972,7 +1041,7 @@
   {/if}
 
   <!-- Scrollable content -->
-  <div class="flex-1 overflow-y-auto p-6" use:smoothScroll>
+  <div class="flex-1 overflow-y-auto p-6">
     <div class="columns-1 lg:columns-2 xl:columns-3 gap-4">
       {#if loading}
         <div class="flex items-center justify-center py-12 text-neutral-500">
@@ -1203,36 +1272,118 @@
         </section>
         {/if}
 
-        <!-- Queue Management (admin / moderator in browser mode) -->
-        {#if canManageServer && isBrowserMode}
+        <!-- Queue (all users — always shown when section visible) -->
+        {#if sectionVisible("queue")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.queue = !collapsed.queue)}
+          >
+            {locale.t('settings.queue.title')}
+            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.queue ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          {#if !collapsed.queue}
+          <div class="px-5 pb-5 space-y-3">
+            {#if queueData === null}
+              <p class="text-xs text-neutral-500">{locale.t('settings.queue.loading')}</p>
+            {:else}
+              {@const rIds = runningIds(queueData)}
+              {@const positions = queueData.queue_positions ?? []}
+              {#if positions.length === 0}
+                <p class="text-xs text-neutral-500">{locale.t('settings.queue.empty')}</p>
+              {:else}
+                <div class="space-y-1.5">
+                  {#each positions as entry (entry.prompt_id)}
+                    {@const isRunning = rIds.has(entry.prompt_id)}
+                    <div class="flex items-center gap-2 rounded-lg px-3 py-2 text-xs
+                      {isRunning ? 'bg-indigo-900/40 border border-indigo-700/50' : 'bg-neutral-800'}">
+                      <span class="w-5 text-center font-bold shrink-0
+                        {isRunning ? 'text-indigo-300' : 'text-neutral-400'}">
+                        {isRunning ? '▶' : `#${entry.position + 1}`}
+                      </span>
+                      <span class="flex-1 font-mono text-neutral-300 truncate" title={entry.prompt_id}>
+                        {entry.prompt_id.slice(0, 20)}{entry.prompt_id.length > 20 ? '…' : ''}
+                      </span>
+                      {#if canManageServer}
+                        <span class="shrink-0 text-neutral-400 italic">
+                          {entry.username ?? 'admin'}
+                        </span>
+                      {/if}
+                      <span class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium
+                        {isRunning ? 'bg-indigo-600 text-white' : 'bg-neutral-700 text-neutral-400'}">
+                        {isRunning ? locale.t('settings.queue.status_running') : locale.t('settings.queue.status_pending')}
+                      </span>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+              <p class="text-[10px] text-neutral-600">{locale.t('settings.queue.auto_refresh')}</p>
+
+              {#if canManageServer}
+                <div class="pt-2 border-t border-neutral-800 space-y-2">
+                  {#if clearQueueError}
+                    <p class="text-xs text-red-400">{clearQueueError}</p>
+                  {/if}
+                  {#if clearQueueDone}
+                    <p class="text-xs text-green-400">{locale.t('settings.queue.cleared')}</p>
+                  {/if}
+                  {#if showClearQueueConfirm}
+                    <p class="text-xs text-amber-300">{locale.t('settings.queue.clear_confirm')}</p>
+                    <div class="flex gap-2">
+                      <button
+                        class="flex-1 py-2 rounded-lg text-xs font-medium bg-neutral-700 hover:bg-neutral-600 text-neutral-300 transition-colors cursor-pointer"
+                        onclick={() => (showClearQueueConfirm = false)}
+                      >{locale.t('common.cancel')}</button>
+                      <button
+                        class="flex-1 py-2 rounded-lg text-xs font-medium bg-red-600 hover:bg-red-500 text-white transition-colors cursor-pointer disabled:opacity-50"
+                        disabled={clearQueueBusy}
+                        onclick={handleClearQueue}
+                      >{clearQueueBusy ? locale.t('settings.queue.clearing') : locale.t('settings.queue.clear_confirm_yes')}</button>
+                    </div>
+                  {:else}
+                    <button
+                      class="w-full py-2 rounded-lg text-xs font-medium bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-800/50 transition-colors cursor-pointer"
+                      onclick={() => { clearQueueError = null; showClearQueueConfirm = true; }}
+                    >{locale.t('settings.queue.clear_button')}</button>
+                  {/if}
+                </div>
+              {/if}
+            {/if}
+          </div>
+          {/if}
+        </section>
+        {/if}
+
+        <!-- Queue Management (admin / moderator in browser mode — legacy clear button kept for non-queue-section visibility) -->
+        {#if canManageServer && isBrowserMode && !sectionVisible("queue")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <div class="p-5 space-y-3">
-            <h3 class="text-sm font-medium text-neutral-200">Queue Management</h3>
-            <p class="text-xs text-neutral-500">Clear all pending and active generations. This interrupts everyone's in-progress generation.</p>
+            <h3 class="text-sm font-medium text-neutral-200">{locale.t('settings.queue.management_title')}</h3>
+            <p class="text-xs text-neutral-500">{locale.t('settings.queue.management_desc')}</p>
             {#if clearQueueError}
               <p class="text-xs text-red-400">{clearQueueError}</p>
             {/if}
             {#if clearQueueDone}
-              <p class="text-xs text-green-400">Queue cleared.</p>
+              <p class="text-xs text-green-400">{locale.t('settings.queue.cleared')}</p>
             {/if}
             {#if showClearQueueConfirm}
-              <p class="text-xs text-amber-300">This will interrupt all active and queued generations. Are you sure?</p>
+              <p class="text-xs text-amber-300">{locale.t('settings.queue.clear_confirm')}</p>
               <div class="flex gap-2">
                 <button
                   class="flex-1 py-2 rounded-lg text-xs font-medium bg-neutral-700 hover:bg-neutral-600 text-neutral-300 transition-colors cursor-pointer"
                   onclick={() => (showClearQueueConfirm = false)}
-                >Cancel</button>
+                >{locale.t('common.cancel')}</button>
                 <button
                   class="flex-1 py-2 rounded-lg text-xs font-medium bg-red-600 hover:bg-red-500 text-white transition-colors cursor-pointer disabled:opacity-50"
                   disabled={clearQueueBusy}
                   onclick={handleClearQueue}
-                >{clearQueueBusy ? "Clearing…" : "Yes, Clear Queue"}</button>
+                >{clearQueueBusy ? locale.t('settings.queue.clearing') : locale.t('settings.queue.clear_confirm_yes')}</button>
               </div>
             {:else}
               <button
                 class="w-full py-2 rounded-lg text-xs font-medium bg-red-600/20 hover:bg-red-600/40 text-red-300 border border-red-800/50 transition-colors cursor-pointer"
                 onclick={() => { clearQueueError = null; showClearQueueConfirm = true; }}
-              >Clear Queue</button>
+              >{locale.t('settings.queue.clear_button')}</button>
             {/if}
           </div>
         </section>
@@ -2397,6 +2548,12 @@
                 <p class="text-sm text-neutral-200">MooshieUI</p>
                 <p class="text-xs text-neutral-500">{locale.t('settings.about.version')} {appVersion}</p>
               </div>
+              <button
+                onclick={() => (showAboutModal = true)}
+                class="px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg border border-neutral-700 transition-colors cursor-pointer"
+              >
+                {locale.t('settings.about.about_button')}
+              </button>
             </div>
 
             <!-- What's New -->
@@ -2575,6 +2732,141 @@
     </div>
   </div>
 </div>
+
+<!-- About MooshieUI Modal -->
+{#if showAboutModal}
+<div
+  class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+  onclick={(e) => { if (e.target === e.currentTarget) showAboutModal = false; }}
+  onkeydown={(e) => { if (e.key === 'Escape') showAboutModal = false; }}
+  role="dialog"
+  aria-modal="true"
+  tabindex="-1"
+>
+  <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-5">
+    <!-- Header -->
+    <div class="flex items-start justify-between">
+      <div>
+        <h3 class="text-base font-semibold text-neutral-100">{locale.t('settings.about.modal_title')}</h3>
+        <p class="text-xs text-neutral-500 mt-0.5">{locale.t('settings.about.version')} {appVersion}</p>
+      </div>
+      <button
+        onclick={() => (showAboutModal = false)}
+        class="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
+        aria-label={locale.t('common.close')}
+      >
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <p class="text-xs text-neutral-400">{locale.t('settings.about.modal_tagline')}</p>
+
+    <!-- Links -->
+    <div class="space-y-2">
+      <button
+        onclick={() => openExternalUrl('https://github.com/Mooshieblob1/MooshieUI')}
+        class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-sm transition-colors cursor-pointer text-left"
+      >
+        <svg class="w-4 h-4 shrink-0 text-neutral-400" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/></svg>
+        {locale.t('settings.about.github_button')}
+      </button>
+
+      <button
+        onclick={() => openExternalUrl('https://gpu.garden')}
+        class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-sm transition-colors cursor-pointer text-left"
+      >
+        <svg class="w-4 h-4 shrink-0 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        {locale.t('settings.about.gpu_garden_button')}
+      </button>
+
+      <button
+        onclick={() => { showAboutModal = false; showReportModal = true; }}
+        class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-sm transition-colors cursor-pointer text-left"
+      >
+        <svg class="w-4 h-4 shrink-0 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        {locale.t('settings.about.report_issue_button')}
+      </button>
+    </div>
+  </div>
+</div>
+{/if}
+
+<!-- Report an Issue Modal -->
+{#if showReportModal}
+<div
+  class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+  onclick={(e) => { if (e.target === e.currentTarget) showReportModal = false; }}
+  onkeydown={(e) => { if (e.key === 'Escape') showReportModal = false; }}
+  role="dialog"
+  aria-modal="true"
+  tabindex="-1"
+>
+  <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-md p-6 space-y-4">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+      <h3 class="text-base font-semibold text-neutral-100">{locale.t('settings.about.report_title')}</h3>
+      <button
+        onclick={() => showReportModal = false}
+        class="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
+        aria-label={locale.t('common.close')}
+      >
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="space-y-3">
+      <!-- Name -->
+      <div>
+        <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.about.report_name_label')}</label>
+        <input
+          type="text"
+          bind:value={reportName}
+          placeholder={locale.t('settings.about.report_name_placeholder')}
+          class="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-indigo-500 transition-colors"
+        />
+      </div>
+
+      <!-- Email -->
+      <div>
+        <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.about.report_email_label')}</label>
+        <input
+          type="email"
+          bind:value={reportEmail}
+          placeholder={locale.t('settings.about.report_email_placeholder')}
+          class="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-indigo-500 transition-colors"
+        />
+      </div>
+
+      <!-- Message -->
+      <div>
+        <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.about.report_message_label')}</label>
+        <textarea
+          bind:value={reportMessage}
+          placeholder={locale.t('settings.about.report_message_placeholder')}
+          rows="5"
+          class="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-lg text-sm text-neutral-100 placeholder-neutral-600 focus:outline-none focus:border-indigo-500 transition-colors resize-y"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="flex gap-3 justify-end pt-1">
+      <button
+        onclick={() => showReportModal = false}
+        class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg text-sm transition-colors cursor-pointer"
+      >
+        {locale.t('common.cancel')}
+      </button>
+      <button
+        onclick={openReportInMail}
+        disabled={!reportMessage.trim()}
+        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {locale.t('settings.about.report_send')}
+      </button>
+    </div>
+  </div>
+</div>
+{/if}
 
 {#if showQualityTagsWarning}
 <div class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" role="dialog">

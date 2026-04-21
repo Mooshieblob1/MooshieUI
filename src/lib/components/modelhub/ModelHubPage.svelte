@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { ipcListen } from "../../utils/ipc.js";
-  import { smoothScroll } from "../../utils/smoothScroll.js";
   import {
     downloadModel,
     getConfig,
@@ -806,7 +805,7 @@
   });
 </script>
 
-<div class="h-full overflow-y-auto p-6" style="will-change: scroll-position;" bind:this={scrollHost} onscroll={handleScroll} use:smoothScroll>
+<div class="h-full overflow-y-auto p-6" style="will-change: scroll-position;" bind:this={scrollHost} onscroll={handleScroll}>
   <div class="mx-auto space-y-4">
     <div class="flex flex-col gap-1">
       <h2 class="text-lg font-semibold text-neutral-100">{locale.t("modelhub.title")}</h2>

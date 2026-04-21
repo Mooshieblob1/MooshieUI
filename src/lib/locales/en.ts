@@ -262,7 +262,7 @@ const en: Record<string, string> = {
   "settings.account.logout": "Log Out",
 
   // About section
-  "settings.about.title": "About",
+  "settings.about.title": "Help & Updates",
   "settings.about.version": "Version",
   "settings.about.check_updates": "Check for Updates",
   "settings.about.checking": "Checking...",
@@ -574,6 +574,7 @@ const en: Record<string, string> = {
 
   // ── Progress / Preview ──────────────────────────────────
   "progress.generating": "Generating...",
+  "progress.server_generating": "Server generating...",
 
   "preview.upscale": "Refine",
   "preview.save": "Save",
@@ -998,6 +999,21 @@ const en: Record<string, string> = {
   "settings.interrogator.more_tags": "More tags",
   "settings.interrogator.fewer_tags": "Fewer tags",
 
+  // Queue
+  "settings.queue.title": "Queue",
+  "settings.queue.loading": "Loading queue\u2026",
+  "settings.queue.empty": "Queue is empty \u2014 no active or pending generations.",
+  "settings.queue.status_running": "running",
+  "settings.queue.status_pending": "pending",
+  "settings.queue.auto_refresh": "Auto-refreshes every 3 seconds.",
+  "settings.queue.cleared": "Queue cleared.",
+  "settings.queue.clear_confirm": "This will interrupt all active and queued generations. Are you sure?",
+  "settings.queue.clearing": "Clearing\u2026",
+  "settings.queue.clear_confirm_yes": "Yes, Clear Queue",
+  "settings.queue.clear_button": "Clear Queue",
+  "settings.queue.management_title": "Queue Management",
+  "settings.queue.management_desc": "Clear all pending and active generations. This interrupts everyone's in-progress generation.",
+
   // ── CivitAI section ─────────────────────────────────────
   "settings.civitai.title": "CivitAI",
   "settings.civitai.api_key": "API Key",
@@ -1060,6 +1076,24 @@ const en: Record<string, string> = {
   "settings.about.try_again": "Try again",
   "settings.about.export_logs_desc": "Save ComfyUI logs, system info, and config to a file for sharing with support.",
   "settings.about.data_dir_hint": "To install on a different drive, set the MOOSHIEUI_DATA_DIR environment variable to your preferred path before launching.",
+
+  // About modal
+  "settings.about.about_button": "About MooshieUI",
+  "settings.about.modal_title": "About MooshieUI",
+  "settings.about.modal_tagline": "A friendly desktop interface for AI image generation.",
+  "settings.about.github_button": "GitHub Repository",
+  "settings.about.gpu_garden_button": "gpu.garden",
+  "settings.about.report_issue_button": "Report an Issue",
+
+  // Issue report form
+  "settings.about.report_title": "Report an Issue",
+  "settings.about.report_name_label": "Your Name",
+  "settings.about.report_name_placeholder": "Your name",
+  "settings.about.report_email_label": "Email Address",
+  "settings.about.report_email_placeholder": "your@email.com",
+  "settings.about.report_message_label": "Message",
+  "settings.about.report_message_placeholder": "Describe the issue, steps to reproduce, and any relevant details...",
+  "settings.about.report_send": "Open in Mail App",
   "settings.about.save_dialog_title": "Save Diagnostic Logs",
   "settings.gallery.import_dialog_title": "Select image output directory to import",
   "settings.paths.move_dialog_title": "Choose New Install Location",

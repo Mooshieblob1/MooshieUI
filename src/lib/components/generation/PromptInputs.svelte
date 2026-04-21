@@ -106,6 +106,7 @@
       placeholder={generation.isAnima ? "1girl, long hair, @artist_name, ..." : "A beautiful landscape, golden hour lighting, ..."}
       rows={4}
       minHeight="min-h-25"
+      storageKey="mooshieui.promptHeight.positive"
     />
   </div>
 
@@ -116,6 +117,7 @@
       placeholder={locale.t('generation.prompts.negative_placeholder')}
       rows={3}
       minHeight="min-h-18"
+      storageKey="mooshieui.promptHeight.negative"
     />
   </div>
 

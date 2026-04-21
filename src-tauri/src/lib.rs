@@ -153,7 +153,10 @@ pub fn run() {
                 if !lan_enabled {
                     let state_for_watchdog = shared_state.clone();
                     tauri::async_runtime::spawn(async move {
-                        webserver::start_heartbeat_watchdog(state_for_watchdog, 10);
+                        // 120s: browsers throttle background setInterval to ~1 min;
+                        // we need a timeout well above that to avoid killing the
+                        // process while generation is running in a background tab.
+                        webserver::start_heartbeat_watchdog(state_for_watchdog, 120);
                     });
                 }
 

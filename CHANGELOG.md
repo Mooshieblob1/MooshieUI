@@ -1,5 +1,24 @@
 # Changelog
 
+## What's New in v0.9.9
+
+### Server Mode: Live Progress for All Users
+- **Secondary server progress bar** — while another user is generating on a shared server, a violet progress bar now appears below your own bar so you can see the server is busy without needing to wait for a queue position
+- **Always-visible generation indicator** — a thin progress strip on the sidebar Generate button shows generation progress on any page, so you never lose track of an in-progress job while browsing the gallery or settings
+
+### Server Mode: Queue & Preview Persistence on Refresh
+- **Queue restored on reconnect** — refreshing the browser tab no longer loses your pending queue position; the server replays your queue entries immediately on SSE reconnect
+- **Preview frame retained** — the last live preview frame is cached server-side and sent back to reconnecting clients so the preview image reappears instantly after a page refresh
+
+### Bug Fixes
+- **Server mode queue counter no longer grows on failed generations** — fixed a race condition where a ComfyUI `execution_error` arriving before `bind_alias()` caused placeholder queue entries to leak
+
+### i18n
+- Added locale keys for Queue management panel and About / Report Issue modal (English fallback for all non-English locales pending community translation)
+- Hardcoded "Server generating..." label in progress bar is now fully translated
+
+---
+
 ## What's New in v0.9.8
 
 ### Build Fix

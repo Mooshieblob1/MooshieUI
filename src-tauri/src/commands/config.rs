@@ -134,7 +134,10 @@ pub async fn switch_to_browser_mode(
     // app_mode_active is set, so we need a fresh one for the new browser session.
     {
         let shared_state: Arc<AppState> = state.inner().clone();
-        webserver::start_heartbeat_watchdog(shared_state, 10);
+        // 120s: browsers throttle background setInterval to ~1 min;
+        // we need a timeout well above that to avoid killing the
+        // process while generation is running in a background tab.
+        webserver::start_heartbeat_watchdog(shared_state, 120);
     }
 
     // Open the browser

@@ -2,7 +2,6 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { compare } from "../../stores/compare.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { smoothScroll } from "../../utils/smoothScroll.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import PromptInputs from "./PromptInputs.svelte";
   import ModelSelector from "./ModelSelector.svelte";
@@ -1784,7 +1783,6 @@
           bind:this={leftColumnRef}
           class="overflow-y-auto overflow-x-hidden px-3 pt-2 flex flex-col gap-2 shrink-0 border-r {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
           style="width: {leftWidth}px{compare.enabled ? `; --compare-color: ${compare.activeColor}` : ''}"
-          use:smoothScroll
         >
         {#if controlsSide === "left"}
           <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-2 pt-2 pb-2">
@@ -1884,7 +1882,6 @@
         <!-- Preview area -->
         <div
           class="relative flex-1 min-h-0 p-6 flex flex-col gap-4 overflow-y-auto"
-          use:smoothScroll
         >
           <ProgressBar />
           <PreviewImage />
@@ -1947,7 +1944,6 @@
         bind:this={rightColumnRef}
         class="overflow-y-auto p-3 space-y-2 shrink-0 border-l {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
         style="width: {rightWidth}px{compare.enabled ? `; --compare-color: ${compare.activeColor}` : ''}"
-        use:smoothScroll
       >
         {#if controlsSide === "right"}
           <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-3 pt-3 pb-2">

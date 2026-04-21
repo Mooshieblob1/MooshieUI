@@ -1,5 +1,6 @@
 use base64::Engine;
 use futures_util::StreamExt;
+use std::sync::Arc;
 use std::time::Instant;
 #[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter};
@@ -11,7 +12,7 @@ use crate::state::AppState;
 #[cfg(feature = "desktop")]
 pub async fn connect_websocket(
     app_handle: AppHandle,
-    state: &AppState,
+    state: Arc<AppState>,
     event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
 ) -> Result<(), AppError> {
     // Disconnect existing
@@ -29,6 +30,8 @@ pub async fn connect_websocket(
 
     let app = app_handle.clone();
     let tx = event_tx.clone();
+    // Clone the Arc so the spawned task owns it (needed for queue cleanup).
+    let ws_state = Arc::clone(&state);
     let task = tokio::spawn(async move {
         // Helper to emit to both Tauri and SSE broadcast
         let emit = |event: &str, payload: serde_json::Value| {
@@ -82,9 +85,89 @@ pub async fn connect_websocket(
                                         if current_prompt_id.as_deref() == Some(prompt_id) {
                                             current_prompt_id = None;
                                         }
+                                        // Prompt completed — release GPU worker and clean up
+                                        // the internal queue. In browser mode this is done by
+                                        // the cleanup reactor in webserver.rs; in Tauri desktop
+                                        // mode we must do it here so the worker becomes available
+                                        // for the next generation.
+                                        let resolved =
+                                            ws_state.prompt_queue.resolve_alias(prompt_id);
+                                        let wid = ws_state.prompt_queue.finish(&resolved);
+                                        let alias_state = Arc::clone(&ws_state);
+                                        let alias_pid = resolved.clone();
+                                        tokio::spawn(async move {
+                                            tokio::time::sleep(
+                                                std::time::Duration::from_secs(5),
+                                            )
+                                            .await;
+                                            alias_state.prompt_queue.cleanup_alias(&alias_pid);
+                                        });
+                                        if let Some(worker_id) = wid {
+                                            ws_state
+                                                .gpu_manager
+                                                .mark_worker_idle(worker_id)
+                                                .await;
+                                        }
+                                        ws_state.prompt_queue.drain_notify.notify_one();
+                                        // Broadcast updated queue positions to the Tauri
+                                        // frontend. broadcast_queue_positions() uses event_tx
+                                        // (SSE-only); we must call app.emit() directly here.
+                                        let updates: Vec<serde_json::Value> = {
+                                            let queue =
+                                                ws_state.prompt_queue.queue.read().unwrap();
+                                            let total = queue.len();
+                                            queue
+                                                .iter()
+                                                .enumerate()
+                                                .map(|(pos, (pid, _))| {
+                                                    serde_json::json!({
+                                                        "prompt_id": pid,
+                                                        "position": pos,
+                                                        "total": total,
+                                                    })
+                                                })
+                                                .collect()
+                                        };
+                                        if updates.is_empty() {
+                                            emit(
+                                                "mooshie:queue_update",
+                                                serde_json::json!({ "total": 0_u32 }),
+                                            );
+                                        } else {
+                                            for payload in updates {
+                                                emit("mooshie:queue_update", payload);
+                                            }
+                                        }
                                     } else {
                                         current_prompt_id = Some(prompt_id.to_string());
                                     }
+                                }
+                                "execution_error" => {
+                                    // Prompt failed — release GPU worker so the next generation
+                                    // can proceed. Without this the worker stays in Running state
+                                    // and submit_prompt blocks for 300 s before timing out.
+                                    let resolved =
+                                        ws_state.prompt_queue.resolve_alias(prompt_id);
+                                    let wid = ws_state.prompt_queue.finish(&resolved);
+                                    let alias_state = Arc::clone(&ws_state);
+                                    let alias_pid = resolved.clone();
+                                    tokio::spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(5))
+                                            .await;
+                                        alias_state.prompt_queue.cleanup_alias(&alias_pid);
+                                    });
+                                    if let Some(worker_id) = wid {
+                                        ws_state
+                                            .gpu_manager
+                                            .mark_worker_error_then_idle(worker_id)
+                                            .await;
+                                    }
+                                    ws_state.prompt_queue.drain_notify.notify_one();
+                                    // Signal frontend that queue has been cleared.
+                                    emit(
+                                        "mooshie:queue_update",
+                                        serde_json::json!({ "total": 0_u32 }),
+                                    );
                                 }
                                 _ => {}
                             }

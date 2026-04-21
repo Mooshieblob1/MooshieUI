@@ -4,7 +4,6 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
   import ArtistHoverPreview from "../../artist-gallery/components/ArtistHoverPreview.svelte";
-  import { smoothScroll } from "../../utils/smoothScroll.js";
   import { renderHighlightedPrompt, hasSchedulingTags } from "../../utils/promptSchedule.js";
 
   interface Props {
@@ -12,9 +11,13 @@
     placeholder?: string;
     rows?: number;
     minHeight?: string;
+    storageKey?: string;
   }
 
-  let { value = $bindable(), placeholder = "", rows = 4, minHeight = "min-h-25" }: Props = $props();
+  let { value = $bindable(), placeholder = "", rows = 4, minHeight = "min-h-25", storageKey }: Props = $props();
+
+  // Restored height is applied as inline style (set in $effect on mount).
+  let resizeStyle = $state("");
 
   /** Format a tag name for insertion into the prompt. Escapes parentheses for models that take raw tags. */
   function formatTagForPrompt(name: string): string {
@@ -369,10 +372,34 @@
     }
   }
 
+  // Restore saved height and persist future resize changes via ResizeObserver.
+  let resizeObserver: ResizeObserver | null = null;
+  $effect(() => {
+    if (!textareaEl || !storageKey) return;
+    // Restore saved height on mount.
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      textareaEl.style.height = saved;
+      resizeStyle = `height: ${saved};`;
+    }
+    // Observe future user-driven resizes.
+    resizeObserver?.disconnect();
+    resizeObserver = new ResizeObserver(() => {
+      if (!textareaEl || !storageKey) return;
+      const h = textareaEl.style.height;
+      if (h && h !== "" && h !== "0px") {
+        localStorage.setItem(storageKey, h);
+        resizeStyle = `height: ${h};`;
+      }
+    });
+    resizeObserver.observe(textareaEl);
+  });
+
   onDestroy(() => {
     if (suggestionTimer !== null) {
       window.clearTimeout(suggestionTimer);
     }
+    resizeObserver?.disconnect();
   });
 </script>
 
@@ -391,8 +418,7 @@
     {placeholder}
     {rows}
     class="w-full border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors {minHeight} {showBackdrop ? 'bg-transparent' : 'bg-neutral-800'}"
-    style="position: relative; z-index: 1; {showBackdrop ? 'caret-color: #e5e5e5;' : ''}"
-    use:smoothScroll={{ duration: 0.4, multiplier: 1.2 }}
+    style="position: relative; z-index: 1; {resizeStyle}{showBackdrop ? 'caret-color: #e5e5e5;' : ''}"
     onkeydown={handleKeydown}
     oninput={handleInput}
     onclick={handleClick}

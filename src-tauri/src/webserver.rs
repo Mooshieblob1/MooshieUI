@@ -341,74 +341,163 @@ pub async fn start_server(
             loop {
                 match cleanup_rx.recv().await {
                     Ok(evt) => {
-                        // Resolve alias: translate ComfyUI's real prompt_id to our placeholder
-                        let prompt_id = evt
+                        // Resolve alias: translate ComfyUI's real prompt_id to our placeholder.
+                        // We keep the raw ID separately to detect the race where a completion
+                        // or error event arrives before bind_alias has been called.
+                        let raw_pid = evt
                             .payload
                             .get("prompt_id")
                             .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let prompt_id = raw_pid
+                            .as_deref()
                             .map(|s| cleanup_state.prompt_queue.resolve_alias(s));
+                        // alias_unbound is true when resolve_alias returned the same value —
+                        // meaning bind_alias hasn't run yet (race condition).
+                        // When true, `pid` == the raw ComfyUI ID and the placeholder is still
+                        // in the queue under its gen-* name.
+                        let alias_unbound = match (&prompt_id, &raw_pid) {
+                            (Some(pid), Some(raw)) => pid == raw,
+                            _ => false,
+                        };
 
                         match evt.event.as_str() {
                             "comfyui:executing" => {
                                 // node=null means execution finished for this prompt
                                 if evt.payload.get("node").map_or(false, |n| n.is_null()) {
                                     if let Some(pid) = prompt_id {
-                                        let owner = cleanup_state.prompt_queue.owner_of(&pid);
-                                        log::info!(
-                                            "[gen] completed prompt={} user={}",
-                                            &pid[..8.min(pid.len())],
-                                            owner.as_deref().unwrap_or("admin"),
-                                        );
-                                        // Release the GPU worker that handled this prompt
-                                        if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
-                                            cleanup_state.gpu_manager.mark_worker_idle(wid).await;
-                                        }
-                                        // Completed normally — no recovery needed; clear cache.
-                                        cleanup_state.output_image_cache.write().unwrap().remove(&pid);
-                                        // Delay alias cleanup so SSE streams have time to
-                                        // resolve the alias for this same event.  Without the
-                                        // delay, the SSE filter_map can race with this reactor
-                                        // and forward the raw ComfyUI prompt_id instead of the
-                                        // gen-* placeholder the frontend expects.
-                                        let alias_pid = pid.clone();
-                                        let alias_state = cleanup_state.clone();
-                                        tokio::spawn(async move {
-                                            tokio::time::sleep(std::time::Duration::from_secs(5))
+                                        if alias_unbound {
+                                            // Race: completion arrived before bind_alias.
+                                            // pid IS the raw ComfyUI ID here. Park it so
+                                            // bind_alias can finish the placeholder later.
+                                            cleanup_state
+                                                .prompt_queue
+                                                .park_deferred_finish(&pid);
+                                            log::warn!(
+                                                "[gen] deferred completion for unbound id={}",
+                                                &pid[..8.min(pid.len())],
+                                            );
+                                        } else {
+                                            let owner =
+                                                cleanup_state.prompt_queue.owner_of(&pid);
+                                            log::info!(
+                                                "[gen] completed prompt={} user={}",
+                                                &pid[..8.min(pid.len())],
+                                                owner.as_deref().unwrap_or("admin"),
+                                            );
+                                            // Release the GPU worker that handled this prompt
+                                            if let Some(wid) =
+                                                cleanup_state.prompt_queue.finish(&pid)
+                                            {
+                                                cleanup_state
+                                                    .gpu_manager
+                                                    .mark_worker_idle(wid)
+                                                    .await;
+                                            }
+                                            // Completed normally — no recovery needed; clear cache.
+                                            cleanup_state
+                                                .output_image_cache
+                                                .write()
+                                                .unwrap()
+                                                .remove(&pid);
+                                            // Delay alias cleanup so SSE streams have time to
+                                            // resolve the alias for this same event.  Without the
+                                            // delay, the SSE filter_map can race with this reactor
+                                            // and forward the raw ComfyUI prompt_id instead of the
+                                            // gen-* placeholder the frontend expects.
+                                            let alias_pid = pid.clone();
+                                            let alias_state = cleanup_state.clone();
+                                            tokio::spawn(async move {
+                                                tokio::time::sleep(
+                                                    std::time::Duration::from_secs(5),
+                                                )
                                                 .await;
-                                            alias_state.prompt_queue.cleanup_alias(&alias_pid);
-                                        });
-                                        cleanup_state.broadcast_queue_positions();
-                                        // Signal the drain reactor to submit next held prompt
-                                        cleanup_state.prompt_queue.drain_notify.notify_one();
+                                                alias_state
+                                                    .prompt_queue
+                                                    .cleanup_alias(&alias_pid);
+                                            });
+                                            // Clear cached preview — generation is done
+                                            cleanup_state
+                                                .last_preview_by_prompt
+                                                .write()
+                                                .unwrap()
+                                                .remove(&pid);
+                                            // Tell all clients the server is idle
+                                            if cleanup_state.prompt_queue.is_empty() {
+                                                cleanup_state.broadcast(
+                                                    "mooshie:server_progress",
+                                                    serde_json::json!({ "value": 0, "max": 0, "active": false }),
+                                                );
+                                            }
+                                            cleanup_state.broadcast_queue_positions();
+                                            // Signal the drain reactor to submit next held prompt
+                                            cleanup_state.prompt_queue.drain_notify.notify_one();
+                                        }
                                     }
                                 }
                             }
                             "comfyui:execution_error" => {
                                 if let Some(pid) = prompt_id {
-                                    let owner = cleanup_state.prompt_queue.owner_of(&pid);
-                                    log::warn!(
-                                        "[gen] error prompt={} user={}",
-                                        &pid[..8.min(pid.len())],
-                                        owner.as_deref().unwrap_or("admin"),
-                                    );
-                                    // Release the GPU worker (error is transient, mark idle)
-                                    if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
+                                    if alias_unbound {
+                                        // Race: error arrived before bind_alias.
+                                        // pid IS the raw ComfyUI ID here. Park it so
+                                        // bind_alias can finish the placeholder and the
+                                        // background task can release the GPU worker.
                                         cleanup_state
-                                            .gpu_manager
-                                            .mark_worker_error_then_idle(wid)
+                                            .prompt_queue
+                                            .park_deferred_finish(&pid);
+                                        log::warn!(
+                                            "[gen] deferred error for unbound id={}",
+                                            &pid[..8.min(pid.len())],
+                                        );
+                                    } else {
+                                        let owner = cleanup_state.prompt_queue.owner_of(&pid);
+                                        log::warn!(
+                                            "[gen] error prompt={} user={}",
+                                            &pid[..8.min(pid.len())],
+                                            owner.as_deref().unwrap_or("admin"),
+                                        );
+                                        // Release the GPU worker (error is transient, mark idle)
+                                        if let Some(wid) =
+                                            cleanup_state.prompt_queue.finish(&pid)
+                                        {
+                                            cleanup_state
+                                                .gpu_manager
+                                                .mark_worker_error_then_idle(wid)
+                                                .await;
+                                        }
+                                        // Error — no output to recover; clear cache.
+                                        cleanup_state
+                                            .output_image_cache
+                                            .write()
+                                            .unwrap()
+                                            .remove(&pid);
+                                        let alias_pid = pid.clone();
+                                        let alias_state = cleanup_state.clone();
+                                        tokio::spawn(async move {
+                                            tokio::time::sleep(std::time::Duration::from_secs(
+                                                5,
+                                            ))
                                             .await;
+                                            alias_state.prompt_queue.cleanup_alias(&alias_pid);
+                                        });
+                                        // Clear cached preview — generation errored
+                                        cleanup_state
+                                            .last_preview_by_prompt
+                                            .write()
+                                            .unwrap()
+                                            .remove(&pid);
+                                        // Tell all clients the server is idle
+                                        if cleanup_state.prompt_queue.is_empty() {
+                                            cleanup_state.broadcast(
+                                                "mooshie:server_progress",
+                                                serde_json::json!({ "value": 0, "max": 0, "active": false }),
+                                            );
+                                        }
+                                        cleanup_state.broadcast_queue_positions();
+                                        // Signal the drain reactor to submit next held prompt
+                                        cleanup_state.prompt_queue.drain_notify.notify_one();
                                     }
-                                    // Error — no output to recover; clear cache.
-                                    cleanup_state.output_image_cache.write().unwrap().remove(&pid);
-                                    let alias_pid = pid.clone();
-                                    let alias_state = cleanup_state.clone();
-                                    tokio::spawn(async move {
-                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                        alias_state.prompt_queue.cleanup_alias(&alias_pid);
-                                    });
-                                    cleanup_state.broadcast_queue_positions();
-                                    // Signal the drain reactor to submit next held prompt
-                                    cleanup_state.prompt_queue.drain_notify.notify_one();
                                 }
                             }
                             "comfyui:output_image" => {
@@ -429,6 +518,37 @@ pub async fn start_server(
                                             .or_default()
                                             .push(temp_fn.to_string());
                                     }
+                                }
+                            }
+                            "comfyui:preview" => {
+                                // Cache the latest preview temp_filename per placeholder_id
+                                // so clients that reconnect mid-generation receive the most
+                                // recent frame in the SSE initial burst.
+                                if let Some(pid) = prompt_id {
+                                    if let Some(temp_fn) = evt
+                                        .payload
+                                        .get("temp_filename")
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        cleanup_state
+                                            .last_preview_by_prompt
+                                            .write()
+                                            .unwrap()
+                                            .insert(pid, temp_fn.to_string());
+                                    }
+                                }
+                            }
+                            "comfyui:progress" => {
+                                // Re-broadcast without a prompt_id so ALL connected clients
+                                // see the server-wide generation activity as a secondary bar.
+                                if let (Some(value), Some(max)) = (
+                                    evt.payload.get("value").and_then(|v| v.as_f64()),
+                                    evt.payload.get("max").and_then(|v| v.as_f64()),
+                                ) {
+                                    cleanup_state.broadcast(
+                                        "mooshie:server_progress",
+                                        serde_json::json!({ "value": value, "max": max, "active": true }),
+                                    );
                                 }
                             }
                             _ => {}
@@ -462,13 +582,25 @@ pub async fn start_server(
                     match res {
                         Ok((worker_id, response)) => {
                             // Bind alias immediately to prevent race with WebSocket events
-                            drain_state
+                            let was_deferred = drain_state
                                 .prompt_queue
                                 .bind_alias(&hp.placeholder_id, &response.prompt_id);
-                            drain_state
-                                .prompt_queue
-                                .set_worker(&hp.placeholder_id, worker_id);
-                            *hp.result.lock().await = Some(Ok((response.prompt_id, worker_id)));
+                            if was_deferred {
+                                // Completion/error arrived before bind_alias; release worker.
+                                drain_state
+                                    .gpu_manager
+                                    .mark_worker_error_then_idle(worker_id)
+                                    .await;
+                                *hp.result.lock().await =
+                                    Some(Err("execution completed before alias bind".to_string()));
+                                drain_state.prompt_queue.drain_notify.notify_one();
+                            } else {
+                                drain_state
+                                    .prompt_queue
+                                    .set_worker(&hp.placeholder_id, worker_id);
+                                *hp.result.lock().await =
+                                    Some(Ok((response.prompt_id, worker_id)));
+                            }
                         }
                         Err(e) => {
                             *hp.result.lock().await =
@@ -805,6 +937,41 @@ async fn sse_handler(
     let sse_username = resolve_username(&state, &hdrs, &remote);
     let prompt_queue = state.app.clone();
 
+    // Build the initial burst — queue positions + last preview frame for any
+    // prompt this user already has in flight (handles page refresh mid-gen).
+    let initial_events: Vec<Result<Event, std::convert::Infallible>> = {
+        let app = state.app.clone();
+        let queue = app.prompt_queue.queue.read().unwrap();
+        let total = queue.len();
+        let mut evts = Vec::new();
+        for (pos, (pid, _owner)) in queue.iter().enumerate() {
+            if app.prompt_queue.is_owned_by(pid, &sse_username) {
+                let json = serde_json::json!({
+                    "event": "mooshie:queue_update",
+                    "payload": { "prompt_id": pid, "position": pos, "total": total }
+                });
+                evts.push(Ok(Event::default().data(json.to_string())));
+
+                // Re-send last preview frame so the user sees the latest frame
+                // immediately without waiting for the next ComfyUI preview tick.
+                if let Some(temp_fn) = app
+                    .last_preview_by_prompt
+                    .read()
+                    .unwrap()
+                    .get(pid.as_str())
+                    .cloned()
+                {
+                    let preview_json = serde_json::json!({
+                        "event": "comfyui:preview",
+                        "payload": { "temp_filename": temp_fn, "format": "jpeg", "prompt_id": pid }
+                    });
+                    evts.push(Ok(Event::default().data(preview_json.to_string())));
+                }
+            }
+        }
+        evts
+    };
+
     let rx = state.app.event_tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(move |result| {
         let sse_username = sse_username.clone();
@@ -862,7 +1029,7 @@ async fn sse_handler(
         }
     });
 
-    Sse::new(stream)
+    Sse::new(tokio_stream::iter(initial_events).chain(stream))
         .keep_alive(
             KeepAlive::new()
                 .interval(Duration::from_secs(15))
@@ -888,6 +1055,9 @@ async fn heartbeat_stop_handler(AxumState(state): AxumState<SharedState>) -> Sta
     {
         return StatusCode::OK;
     }
+    // Cancel any in-progress generation before the watchdog fires and exits.
+    // Best-effort: ignore errors (ComfyUI may not be running).
+    let _ = state.app.gpu_manager.interrupt(None).await;
     // Set heartbeat to epoch so the watchdog triggers immediately
     let mut hb = state.app.last_heartbeat.lock().await;
     *hb = std::time::Instant::now() - Duration::from_secs(3600);
@@ -1484,9 +1654,42 @@ async fn dispatch_command(
             };
             resolve(&mut running);
             resolve(&mut pending);
+            // Check if caller is privileged (admin or moderator) — can see usernames.
+            // username=None means localhost (always admin).
+            let is_privileged = match username {
+                None => true,
+                Some(u) => matches!(
+                    auth.get_account_role(u).as_deref(),
+                    Some("admin") | Some("moderator")
+                ),
+            };
+            // Build ordered queue positions from our internal fair-queue tracker.
+            // This is separate from ComfyUI's queue and reflects round-robin ordering.
+            let queue_positions: Vec<serde_json::Value> = {
+                let queue = state.prompt_queue.queue.read().unwrap();
+                queue
+                    .iter()
+                    .enumerate()
+                    .map(|(pos, (id, owner))| {
+                        if is_privileged {
+                            serde_json::json!({
+                                "prompt_id": id,
+                                "position": pos,
+                                "username": owner,
+                            })
+                        } else {
+                            serde_json::json!({
+                                "prompt_id": id,
+                                "position": pos,
+                            })
+                        }
+                    })
+                    .collect()
+            };
             Ok(serde_json::json!({
                 "queue_running": running,
                 "queue_pending": pending,
+                "queue_positions": queue_positions,
             }))
         }
         "get_history" => {
@@ -1785,11 +1988,37 @@ async fn dispatch_command(
                         .await
                     {
                         Ok((worker_id, response)) => {
-                            bg_state
+                            let was_deferred = bg_state
                                 .prompt_queue
                                 .bind_alias(&bg_placeholder, &response.prompt_id);
-                            bg_state.prompt_queue.set_worker(&bg_placeholder, worker_id);
-                            bg_state.broadcast_queue_positions();
+                            if was_deferred {
+                                // Completion/error arrived in the window before bind_alias.
+                                // Placeholder is already removed from the queue; release worker.
+                                log::warn!(
+                                    "[gen] deferred cleanup on bind: placeholder={}",
+                                    &bg_placeholder[..8.min(bg_placeholder.len())],
+                                );
+                                bg_state
+                                    .gpu_manager
+                                    .mark_worker_error_then_idle(worker_id)
+                                    .await;
+                                bg_state
+                                    .output_image_cache
+                                    .write()
+                                    .unwrap()
+                                    .remove(&bg_placeholder);
+                                let alias_state = bg_state.clone();
+                                let alias_pid = bg_placeholder.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                    alias_state.prompt_queue.cleanup_alias(&alias_pid);
+                                });
+                                bg_state.broadcast_queue_positions();
+                                bg_state.prompt_queue.drain_notify.notify_one();
+                            } else {
+                                bg_state.prompt_queue.set_worker(&bg_placeholder, worker_id);
+                                bg_state.broadcast_queue_positions();
+                            }
                         }
                         Err(e) => {
                             log::error!("[gen] submission failed for {}: {}", bg_placeholder, e);
@@ -3938,7 +4167,9 @@ pub fn start_heartbeat_watchdog(state: Arc<AppState>, timeout_secs: u64) {
                     "No heartbeat for {:?}, shutting down (browser tab likely closed)",
                     elapsed
                 );
-                // Trigger app exit
+                // Cancel any in-progress generation before exiting so the
+                // ComfyUI queue doesn't keep running after the tab closes.
+                let _ = state.gpu_manager.interrupt(None).await;
                 std::process::exit(0);
             }
         }

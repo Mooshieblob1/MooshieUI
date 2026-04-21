@@ -23,7 +23,7 @@
   import { compare } from "./lib/stores/compare.svelte.js";
   import { artistInsert } from "./lib/stores/artistInsert.svelte.js";
   import logoUrl from "./lib/assets/logo.png";
-  import { smoothScroll } from "./lib/utils/smoothScroll.js";
+
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
   import ContextMenu from "./lib/components/ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
@@ -1423,11 +1423,24 @@
       ipcListen("mooshie:queue_update", (event: any) => {
         const data = event.payload;
         if (data.prompt_id && data.position != null && data.total != null) {
+          // Restore the prompt to pendingPrompts if this is an initial burst after
+          // a page refresh (the in-memory queue was lost but the server still has it).
+          if (!progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) {
+            progress.restoreFromSnapshot([data.prompt_id]);
+          }
           // Reset before each new batch (detected by total changing or position 0)
           if (data.position === 0 || data.total !== progress.queueTotal) {
             progress.resetQueuePosition();
           }
           progress.updateQueuePosition(data.prompt_id, data.position, data.total);
+        }
+      }),
+      ipcListen("mooshie:server_progress", (event: any) => {
+        const data = event.payload;
+        if (data.active && data.max > 0) {
+          progress.updateServerProgress(data.value, data.max);
+        } else {
+          progress.clearServerProgress();
         }
       }),
       ipcListen("mooshie:queue_cleared", (_event: any) => {
@@ -1913,28 +1926,51 @@
   <nav
     class="flex flex-col w-14 bg-neutral-900 border-r border-neutral-800 items-stretch px-1.5 py-3 gap-1.5"
   >
-    <button
-      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
-      'generate'
-        ? 'bg-indigo-600 text-white'
-        : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
-      onclick={() => (currentPage = "generate")}
-      title={locale.t('nav.generate')}
-    >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        class="w-4.5 h-4.5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        ><path d="M12 19l7-7 3 3-7 7-3-3z" /><path
-          d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"
-        /><path d="M2 2l7.586 7.586" /><circle cx="11" cy="11" r="2" /></svg
+    <div class="relative mx-auto">
+      <button
+        class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
+        'generate'
+          ? 'bg-indigo-600 text-white'
+          : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+        onclick={() => (currentPage = "generate")}
+        title={locale.t('nav.generate')}
       >
-    </button>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class="w-4.5 h-4.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          ><path d="M12 19l7-7 3 3-7 7-3-3z" /><path
+            d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"
+          /><path d="M2 2l7.586 7.586" /><circle cx="11" cy="11" r="2" /></svg
+        >
+      </button>
+      {#if progress.isGenerating}
+        <div
+          class="absolute -top-1 -right-1 min-w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center px-0.5 pointer-events-none
+            {progress.queuePosition !== null && progress.queuePosition > 0 ? 'bg-amber-500 text-black' : 'bg-indigo-400 text-white animate-pulse'}"
+          title={progress.phaseLabel}
+        >
+          {#if progress.queuePosition !== null && progress.queuePosition > 0}
+            #{progress.queuePosition + 1}
+          {:else}
+            ●
+          {/if}
+        </div>
+      {/if}
+      {#if progress.isGenerating && progress.totalSteps > 0 && currentPage !== "generate"}
+        <div class="absolute bottom-0 left-0.5 right-0.5 h-0.5 bg-neutral-700 rounded-full overflow-hidden pointer-events-none">
+          <div
+            class="h-full rounded-full transition-[width] duration-200 {progress.wasUpscaled && progress.samplingPass >= 2 ? 'bg-emerald-400' : 'bg-indigo-400'}"
+            style="width: {progress.percentage}%"
+          ></div>
+        </div>
+      {/if}
+    </div>
     <button
       class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
       'gallery'
@@ -2098,7 +2134,7 @@
     {#if currentPage === "generate"}
       <GenerationPage />
     {:else if currentPage === "gallery"}
-      <div class="p-6 h-full overflow-y-auto will-change-scroll" use:smoothScroll>
+      <div class="p-6 h-full overflow-y-auto will-change-scroll">
         {#if gallery.loading}
           <div class="flex items-center justify-center h-full text-neutral-500">
             {locale.t("gallery.loading")}
@@ -2376,7 +2412,7 @@
     {#if gallery.selectedImage}
       <div class="h-full flex shrink-0" style="width: {metadataPanelCollapsed ? 36 : metadataPanelWidth}px;">
         {#if !metadataPanelCollapsed}
-          <div class="flex-1 h-full overflow-y-auto bg-neutral-900/95 p-4 text-xs text-neutral-200 select-text" style="min-width: 0;" use:smoothScroll>
+          <div class="flex-1 h-full overflow-y-auto bg-neutral-900/95 p-4 text-xs text-neutral-200 select-text" style="min-width: 0;">
             <div class="flex items-center justify-between gap-2 mb-3">
               <span class="font-semibold text-sm text-neutral-100">{locale.t("gallery.image_info")}</span>
               <div class="flex items-center gap-1">

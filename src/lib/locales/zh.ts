@@ -1001,6 +1001,39 @@ const zh: Record<string, string> = {
   "compare.cell_default_vae": "默认 VAE",
   "compare.cell_neg_prefix": "反向: ",
   "compare.grid_cells_failed": "单元格 {cells} 失败 — 请检查检查点/模型可用性",
+  // Queue management (added v0.9.9 — awaiting translation)
+  "settings.queue.title": "Queue",
+  "settings.queue.loading": "Loading queue2026",
+  "settings.queue.empty": "Queue is empty 2014 no active or pending generations.",
+  "settings.queue.status_running": "running",
+  "settings.queue.status_pending": "pending",
+  "settings.queue.auto_refresh": "Auto-refreshes every 3 seconds.",
+  "settings.queue.cleared": "Queue cleared.",
+  "settings.queue.clear_confirm": "This will interrupt all active and queued generations. Are you sure?",
+  "settings.queue.clearing": "Clearing2026",
+  "settings.queue.clear_confirm_yes": "Yes, Clear Queue",
+  "settings.queue.clear_button": "Clear Queue",
+  "settings.queue.management_title": "Queue Management",
+  "settings.queue.management_desc": "Clear all pending and active generations. This interrupts everyone's in-progress generation.",
+
+  // About / issue report (added v0.9.9 — awaiting translation)
+  "settings.about.about_button": "About MooshieUI",
+  "settings.about.modal_title": "About MooshieUI",
+  "settings.about.modal_tagline": "A friendly desktop interface for AI image generation.",
+  "settings.about.github_button": "GitHub Repository",
+  "settings.about.gpu_garden_button": "gpu.garden",
+  "settings.about.report_issue_button": "Report an Issue",
+  "settings.about.report_title": "Report an Issue",
+  "settings.about.report_name_label": "Your Name",
+  "settings.about.report_name_placeholder": "Your name",
+  "settings.about.report_email_label": "Email Address",
+  "settings.about.report_email_placeholder": "your@email.com",
+  "settings.about.report_message_label": "Message",
+  "settings.about.report_message_placeholder": "Describe the issue, steps to reproduce, and any relevant details...",
+  "settings.about.report_send": "Open in Mail App",
+
+  // Progress (added v0.9.9 — awaiting translation)
+  "progress.server_generating": "Server generating...",
 };
 
 export default zh;

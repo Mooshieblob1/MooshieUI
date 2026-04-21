@@ -53,6 +53,10 @@ pub struct PromptQueue {
     /// Maps ComfyUI's real prompt_id → our placeholder prompt_id.
     /// Used to translate WebSocket events so the frontend sees consistent IDs.
     aliases: std::sync::RwLock<HashMap<String, String>>,
+    /// Real ComfyUI prompt_ids whose completion/error arrived before `bind_alias`
+    /// was called (race condition in server mode). `bind_alias` checks this set
+    /// and immediately finishes the placeholder if the real_id is found here.
+    deferred_finishes: std::sync::RwLock<std::collections::HashSet<String>>,
 }
 
 impl PromptQueue {
@@ -64,6 +68,7 @@ impl PromptQueue {
             held: std::sync::Mutex::new(Vec::new()),
             drain_notify: Notify::new(),
             aliases: std::sync::RwLock::new(HashMap::new()),
+            deferred_finishes: std::sync::RwLock::new(std::collections::HashSet::new()),
         }
     }
 
@@ -257,7 +262,11 @@ impl PromptQueue {
     /// Bind an alias: map ComfyUI's real prompt_id → our placeholder_id.
     /// Also registers ownership for the real_id so SSE filtering works if
     /// an event arrives before alias resolution.
-    pub fn bind_alias(&self, placeholder_id: &str, comfyui_id: &str) {
+    ///
+    /// Returns `true` if a completion/error event arrived before this alias was
+    /// bound (race condition). In that case the placeholder has already been
+    /// removed from the queue and the caller **must** release the GPU worker.
+    pub fn bind_alias(&self, placeholder_id: &str, comfyui_id: &str) -> bool {
         self.aliases
             .write()
             .unwrap()
@@ -274,6 +283,31 @@ impl PromptQueue {
             .write()
             .unwrap()
             .insert(comfyui_id.to_string(), username);
+        // Check if completion/error arrived before this alias was bound.
+        let was_deferred = self
+            .deferred_finishes
+            .write()
+            .unwrap()
+            .remove(comfyui_id);
+        if was_deferred {
+            self.worker_map.write().unwrap().remove(placeholder_id);
+            self.queue
+                .write()
+                .unwrap()
+                .retain(|(id, _)| id != placeholder_id);
+            self.owners.write().unwrap().remove(placeholder_id);
+        }
+        was_deferred
+    }
+
+    /// Park a ComfyUI real prompt_id whose completion/error arrived before
+    /// `bind_alias` was called. The next `bind_alias` call for this id will
+    /// immediately finish the corresponding placeholder.
+    pub fn park_deferred_finish(&self, comfyui_id: &str) {
+        self.deferred_finishes
+            .write()
+            .unwrap()
+            .insert(comfyui_id.to_string());
     }
 
     /// Resolve a prompt_id: if it's a ComfyUI real_id with a bound alias,
@@ -330,6 +364,10 @@ pub struct AppState {
     /// Populated by the cleanup reactor when `comfyui:output_image` fires;
     /// consumed (and cleared) by `recover_prompt_outputs`.
     pub output_image_cache: std::sync::RwLock<HashMap<String, Vec<String>>>,
+    /// Tracks the last live-preview temp_filename per placeholder prompt_id.
+    /// Updated by the cleanup reactor on every `comfyui:preview` event.
+    /// Sent to clients that reconnect mid-generation via the SSE initial burst.
+    pub last_preview_by_prompt: std::sync::RwLock<HashMap<String, String>>,
 }
 
 impl AppState {
@@ -354,6 +392,7 @@ impl AppState {
             prompt_queue: PromptQueue::new(),
             gpu_manager,
             output_image_cache: std::sync::RwLock::new(HashMap::new()),
+            last_preview_by_prompt: std::sync::RwLock::new(HashMap::new()),
         }
     }
 

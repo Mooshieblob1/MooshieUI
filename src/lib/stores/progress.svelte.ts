@@ -45,6 +45,12 @@ class ProgressStore {
   /** Total prompts in the global queue across all users. */
   queueTotal = $state(0);
 
+  /**
+   * Server-wide generation activity broadcast to all users.
+   * null when the server is idle. Set from `mooshie:server_progress` events.
+   */
+  serverProgress = $state<{ value: number; max: number } | null>(null);
+
   // --- Derived getters ---
 
   get isGenerating(): boolean {
@@ -245,6 +251,35 @@ class ProgressStore {
     this._lastProgressNode = null;
     this.queuePosition = null;
     this.queueTotal = 0;
+  }
+
+  /** Update server-wide progress (from mooshie:server_progress events). */
+  updateServerProgress(value: number, max: number) {
+    if (max <= 0) {
+      this.serverProgress = null;
+    } else {
+      this.serverProgress = { value, max };
+    }
+  }
+
+  /** Clear server-wide progress indicator (server went idle). */
+  clearServerProgress() {
+    this.serverProgress = null;
+  }
+
+  /**
+   * Restore pending queue entries from a snapshot delivered on SSE reconnect.
+   * Only adds entries that aren't already tracked (idempotent).
+   */
+  restoreFromSnapshot(promptIds: string[]) {
+    for (const pid of promptIds) {
+      if (!this.pendingPrompts.some((p) => p.promptId === pid)) {
+        this.pendingPrompts = [
+          ...this.pendingPrompts,
+          { promptId: pid, mode: "txt2img", wasUpscaled: false, params: null as any },
+        ];
+      }
+    }
   }
 
   // --- Backward-compat aliases ---

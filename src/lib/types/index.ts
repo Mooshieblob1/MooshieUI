@@ -152,6 +152,13 @@ export interface AppConfig {
 export interface QueueInfo {
   queue_running: unknown[];
   queue_pending: unknown[];
+  /** Ordered queue positions from the server's fair-queue tracker. */
+  queue_positions?: Array<{
+    prompt_id: string;
+    position: number;
+    /** Only present for admin/moderator callers. */
+    username?: string | null;
+  }>;
 }
 
 export interface QueueDisplayItem {

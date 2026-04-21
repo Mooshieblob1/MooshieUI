@@ -35,6 +35,10 @@ pub struct DeviceInfo {
 pub struct QueueInfo {
     pub queue_running: Vec<serde_json::Value>,
     pub queue_pending: Vec<serde_json::Value>,
+    /// Ordered queue positions from the internal fair-queue tracker.
+    /// Empty when not populated (e.g. raw ComfyUI response).
+    #[serde(default)]
+    pub queue_positions: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

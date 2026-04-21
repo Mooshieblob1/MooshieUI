@@ -94,7 +94,26 @@ pub async fn get_embeddings(state: State<'_, Arc<AppState>>) -> Result<Vec<Strin
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_queue(state: State<'_, Arc<AppState>>) -> Result<QueueInfo, AppError> {
-    state.get_queue_info().await
+    let mut info = state.get_queue_info().await?;
+    // Augment with internal fair-queue positions so the Settings Queue section
+    // works in Tauri desktop mode (raw ComfyUI /queue has no queue_positions).
+    let queue_positions: Vec<serde_json::Value> = {
+        let queue = state.prompt_queue.queue.read().unwrap();
+        let total = queue.len();
+        queue
+            .iter()
+            .enumerate()
+            .map(|(pos, (id, _owner))| {
+                serde_json::json!({
+                    "prompt_id": id,
+                    "position": pos,
+                    "total": total,
+                })
+            })
+            .collect()
+    };
+    info.queue_positions = queue_positions;
+    Ok(info)
 }
 
 #[cfg(feature = "desktop")]

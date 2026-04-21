@@ -212,9 +212,9 @@ export function startHeartbeat() {
 
   // Also send heartbeat on page visibility changes
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") {
-      fetch("/internal-api/_heartbeat", { method: "POST" }).catch(() => {});
-    }
+    // Send on both hide and show: when hiding, reset the timestamp so the
+    // 120s watchdog clock starts fresh *before* browser throttling kicks in.
+    fetch("/internal-api/_heartbeat", { method: "POST" }).catch(() => {});
   });
 
   // Send heartbeat before unload to give a final ping
