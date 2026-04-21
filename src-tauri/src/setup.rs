@@ -874,6 +874,38 @@ fn step_install_custom_nodes(base: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Install an optional attention backend package into the venv.
+async fn step_install_attention_backend(
+    app: &AppHandle,
+    base: &Path,
+    backend: &str,
+) -> Result<(), String> {
+    match backend {
+        "sage_v1" => {
+            emit_log(app, "Installing SageAttention v1 (pure Triton)...");
+            uv_pip(app, base, &["sageattention==1.0.6"]).await
+        }
+        "sage_v2" => {
+            emit_log(app, "Installing SageAttention v2 (CUDA kernels)...");
+            uv_pip(
+                app,
+                base,
+                &["sageattention>=2.0.0,<3.0.0", "--no-build-isolation"],
+            )
+            .await
+        }
+        "flash_v1" => {
+            emit_log(app, "Installing FlashAttention v1...");
+            uv_pip(app, base, &["flash-attn<2.0"]).await
+        }
+        "flash_v2" => {
+            emit_log(app, "Installing FlashAttention v2...");
+            uv_pip(app, base, &["flash-attn"]).await
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Detect total GPU VRAM in megabytes. Returns 0 if detection fails.
 async fn detect_vram_mb() -> u64 {
     // NVIDIA: nvidia-smi reports MiB
@@ -1577,6 +1609,7 @@ pub async fn run_setup(
     state: tauri::State<'_, Arc<AppState>>,
     gpu_type: Option<String>,
     install_path: Option<String>,
+    attention_backend: Option<String>,
 ) -> Result<(), String> {
     // If user chose a custom install path, save it as the bootstrap pointer
     // before anything else so all subsequent path resolution uses it.
@@ -1641,8 +1674,33 @@ pub async fn run_setup(
     step_install_deps(&app, &base).await?;
 
     // 7. Custom nodes
-    emit(&app, "nodes", "Installing MooshieUI custom nodes...", 90);
+    emit(&app, "nodes", "Installing MooshieUI custom nodes...", 85);
     step_install_custom_nodes(&base)?;
+
+    // 7b. Optional attention backend (NVIDIA only)
+    let attention = attention_backend
+        .as_deref()
+        .unwrap_or("default")
+        .to_string();
+    if attention != "default" {
+        emit(
+            &app,
+            "attention",
+            &format!("Installing attention backend ({})...", attention),
+            88,
+        );
+        if let Err(e) = step_install_attention_backend(&app, &base, &attention).await {
+            // Non-fatal: log warning and fall back to default
+            log::warn!(
+                "Attention backend install failed, falling back to default: {}",
+                e
+            );
+            emit_log(
+                &app,
+                &format!("⚠ Attention backend install failed: {}. Using default.", e),
+            );
+        }
+    }
 
     // 8. Detect VRAM and persist config
     emit(
@@ -1663,6 +1721,7 @@ pub async fn run_setup(
         cfg.comfyui_path = base.join("comfyui").to_string_lossy().to_string();
         cfg.venv_path = base.join("venv").to_string_lossy().to_string();
         cfg.vram_mode = vram_mode.to_string();
+        cfg.attention_backend = attention;
         cfg.setup_complete = true;
         config::save_config(&cfg)?;
     }

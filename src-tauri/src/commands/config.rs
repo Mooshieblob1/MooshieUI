@@ -90,7 +90,7 @@ pub async fn switch_to_browser_mode(
     log::info!("switch_to_browser_mode: called");
 
     // Save browser_mode = true
-    let (port, lan_enabled) = {
+    let (mut port, lan_enabled) = {
         let mut cfg = state.config.write().await;
         cfg.browser_mode = true;
         save_config(&cfg).map_err(AppError::Other)?;
@@ -123,11 +123,11 @@ pub async fn switch_to_browser_mode(
     if !server_was_running {
         let shared_state: Arc<AppState> = state.inner().clone();
         let state_for_server = shared_state.clone();
-        tokio::spawn(async move {
+        // Bind synchronously so we can open the browser at the right port
+        // even when fallback ports were used.
+        let (actual_port, _handle) =
             webserver::start_server(state_for_server, port, lan_enabled).await;
-        });
-        // Give the server a moment to bind
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        port = actual_port;
     }
 
     // Always start a new heartbeat watchdog — the previous one exits when
