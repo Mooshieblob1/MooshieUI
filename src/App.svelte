@@ -67,7 +67,7 @@
   let lbPanStartY = 0;
   let lbPanStartOffsetX = 0;
   let lbPanStartOffsetY = 0;
-  let lbImgEl: HTMLImageElement | null = null;
+  let lbImgEl = $state<HTMLImageElement | null>(null);
   let lbRafId = 0;
 
   function applyLightboxTransform(smooth = false) {
@@ -1359,7 +1359,7 @@
     await initApp();
   }
 
-  let autoStartEnabled = true; // will be read from config
+  let autoStartEnabled = $state(true); // will be read from config
 
   async function initApp() {
     // Apply UI preferences (theme, font scale) immediately

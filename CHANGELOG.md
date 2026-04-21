@@ -1,5 +1,18 @@
 # Changelog
 
+## What's New in v0.9.7
+
+### Dependency Updates
+- **rand 0.10.1** — soundness bug fix (rust-random/rand#1763); no API changes
+- **axum 0.8.9**, **tokio 1.52.1**, **uuid 1.23.1** — latest patch releases for the Rust backend
+- **TypeScript 6.0.3** — major version bump; build and type-check both verified clean
+- **@sveltejs/vite-plugin-svelte 7.0.0** — Svelte plugin major version; build verified clean
+
+### Svelte 5 Reactivity Fixes
+- **`lbImgEl` and `autoStartEnabled`** in `App.svelte` were not declared with `$state()`, so `bind:this` on the lightbox image element and the auto-start toggle would not correctly trigger reactive updates. Both are now properly reactive.
+
+---
+
 ## What's New in v0.9.6
 
 ### Silent Generation Recovery After Reconnect
