@@ -1,6 +1,10 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
+  import { connection } from "../../stores/connection.svelte.js";
+  import { artistFavourites } from "../../artist-gallery/favourites.svelte.js";
+  import { detectArtistsInPrompt } from "../../artist-gallery/detection.js";
   import PromptTextarea from "./PromptTextarea.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { parseScheduledPrompt, hasSchedulingTags } from "../../utils/promptSchedule.js";
@@ -17,6 +21,20 @@
   const positiveSegments = $derived(hasPositiveSchedule ? parseScheduledPrompt(generation.positivePrompt).segments : []);
   const negativeSegments = $derived(hasNegativeSchedule ? parseScheduledPrompt(generation.negativePrompt).segments : []);
   let schedulePanelOpen = $state(true);
+
+  // Lazy-load the artist tag index so typing an artist in the prompt without
+  // ever opening the gallery still lights up the heart chip.
+  $effect(() => {
+    if (!gallery.artistIndexReady && connection.artistGalleryManifestUrl) {
+      void gallery.loadArtistIndex(connection.artistGalleryManifestUrl);
+    }
+  });
+
+  /** Artist tags detected in the current positive prompt. */
+  const detectedArtists = $derived.by(() => {
+    if (!gallery.artistIndexReady || gallery.artistTagIndex.size === 0) return [];
+    return detectArtistsInPrompt(generation.positivePrompt, gallery.artistTagIndex);
+  });
 
   const sortedPromptHistory = $derived(
     [...generation.promptHistory].sort((a, b) => {
@@ -52,13 +70,33 @@
   {/if}
 
   <div>
-    <div class="flex items-center justify-between mb-1">
-      <div class="flex items-center gap-1.5">
+    <div class="flex items-center justify-between gap-2 mb-1">
+      <div class="flex items-center gap-1.5 shrink-0">
         <label class="text-xs text-neutral-400">{locale.t('generation.prompts.positive')}<InfoTip text={locale.t('generation.prompts.positive_tip')} /></label>
       </div>
+      <div class="flex items-center justify-end gap-1.5 flex-wrap min-w-0">
       {#if generation.isAnima || generation.isIllustrious}
         <span class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">{locale.t('generation.prompts.quality_applied')}</span>
       {/if}
+      {#each detectedArtists as hit (hit.slug)}
+        {@const isFav = artistFavourites.isFavourite(hit.slug)}
+        {@const favCat = artistFavourites.categoryOf(hit.slug)}
+        {@const displayName = hit.tag.replace(/^@/, "").replace(/\\([()\[\]])/g, "$1")}
+        <button
+          type="button"
+          onclick={() => artistFavourites.toggle(hit.slug)}
+          class="shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-colors {isFav ? 'border-red-500/50 bg-red-500/10 text-red-300 hover:bg-red-500/20' : 'border-neutral-700 bg-neutral-800/60 text-neutral-400 hover:border-red-500/60 hover:text-red-300'}"
+          title={isFav ? `Unfavourite ${hit.tag}` : `Favourite ${hit.tag}`}
+          aria-label={isFav ? `Unfavourite artist ${displayName}` : `Favourite artist ${displayName}`}
+        >
+          {#if favCat}
+            <span class="h-2 w-2 rounded-full border border-black/20" style="background-color: {favCat.color}" aria-hidden="true"></span>
+          {/if}
+          <span class="leading-none">{isFav ? '♥' : '♡'}</span>
+          <span class="font-mono max-w-28 truncate">@{displayName}</span>
+        </button>
+      {/each}
+      </div>
     </div>
     {#if generation.isAnima}
       <div class="text-[10px] text-amber-400/80 mb-1">{locale.t('generation.prompts.anima_artist_tip')}</div>

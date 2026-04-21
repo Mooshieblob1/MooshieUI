@@ -2,7 +2,7 @@
   import { ipcInvoke, ipcListen, isTauri } from "../../utils/ipc.js";
   import { onMount } from "svelte";
   import logo from "../../assets/logo.png";
-  import { locale } from "../../stores/locale.svelte.js";
+  import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
 
   let {
     onSetupComplete,
@@ -16,6 +16,8 @@
   let chosenMode = $state<"app" | "browser">("app");
   let gpu = $state("cpu");
   let detectedGpu = $state("cpu");
+  let attentionBackend = $state("default");
+  let showAdvanced = $state(false);
   let gpuLabel = $derived(
     gpu === "nvidia"
       ? "NVIDIA GPU (CUDA)"
@@ -61,9 +63,15 @@
     { id: "venv", label: "Create virtual environment" },
     { id: "pytorch", label: "Install PyTorch" },
     { id: "deps", label: "Install dependencies" },
+    { id: "attention", label: "Install attention backend" },
     { id: "nodes", label: "Install custom nodes" },
     { id: "config", label: "Configure system" },
   ];
+  const visibleSteps = $derived(
+    attentionBackend !== "default" && gpu === "nvidia"
+      ? steps
+      : steps.filter((s) => s.id !== "attention")
+  );
   let currentStep = $state("");
   let completedSteps = $state<Set<string>>(new Set());
 
@@ -101,6 +109,9 @@
   );
 
   onMount(async () => {
+    // Detect system language if no saved preference
+    locale.detectSystemLocale();
+
     // Detect GPU and get default install path in parallel
     const [detectedGpuResult, installPathResult] = await Promise.allSettled([
       ipcInvoke<string>("detect_gpu"),
@@ -224,6 +235,7 @@
       await ipcInvoke("run_setup", {
         gpuType: gpu,
         installPath: installPath || null,
+        attentionBackend: gpu === "nvidia" && attentionBackend !== "default" ? attentionBackend : null,
       });
 
       // If user selected model directories, save them to config
@@ -299,6 +311,20 @@
           <p class="text-neutral-400 mt-4">{locale.t('setup.detecting_hardware')}</p>
         </div>
       {:else if phase === "ready"}
+        <!-- Language Selector -->
+        <div class="flex items-center justify-end gap-2 mb-4">
+          <svg class="w-4 h-4 text-neutral-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          <select
+            value={locale.current}
+            onchange={(e) => { locale.current = (e.target as HTMLSelectElement).value as any; locale.saveSettings(); }}
+            class="bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-neutral-300 cursor-pointer hover:border-neutral-600 transition-colors"
+          >
+            {#each LOCALE_OPTIONS as opt}
+              <option value={opt.value}>{opt.label}</option>
+            {/each}
+          </select>
+        </div>
+
         <h2 class="text-xl font-semibold mb-4">{locale.t('setup.welcome')}</h2>
         <p class="text-neutral-400 text-sm mb-6">
           MooshieUI will automatically install everything you need — ComfyUI,
@@ -348,6 +374,55 @@
             {/if}
           {/if}
         </div>
+
+        <!-- Advanced Options (NVIDIA only — attention backend selection) -->
+        {#if gpu === "nvidia"}
+        <div class="mb-6 rounded-lg border border-neutral-800 bg-neutral-950/50 overflow-hidden">
+          <button
+            type="button"
+            class="w-full flex items-center justify-between p-3 text-xs text-neutral-400 hover:text-neutral-300 transition-colors cursor-pointer"
+            onclick={() => showAdvanced = !showAdvanced}
+          >
+            <span>{locale.t('setup.advanced_options')}</span>
+            <svg class="w-3.5 h-3.5 transition-transform {showAdvanced ? '' : '-rotate-90'}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          {#if showAdvanced}
+          <div class="px-3 pb-3 space-y-2">
+            <p class="text-[10px] text-neutral-500">{locale.t('setup.attention_desc')}</p>
+            <div class="space-y-1">
+              {#each [
+                { value: "default", label: locale.t('setup.attention.default'), desc: locale.t('setup.attention.default_desc') },
+                { value: "sage_v1", label: locale.t('setup.attention.sage_v1'), desc: locale.t('setup.attention.sage_v1_desc') },
+                { value: "sage_v2", label: locale.t('setup.attention.sage_v2'), desc: locale.t('setup.attention.sage_v2_desc') },
+                { value: "flash_v1", label: locale.t('setup.attention.flash_v1'), desc: locale.t('setup.attention.flash_v1_desc') },
+                { value: "flash_v2", label: locale.t('setup.attention.flash_v2'), desc: locale.t('setup.attention.flash_v2_desc') },
+              ] as opt}
+                <button
+                  type="button"
+                  onclick={() => attentionBackend = opt.value}
+                  class="w-full flex items-start gap-2.5 rounded-lg p-2.5 text-left transition-colors cursor-pointer {attentionBackend === opt.value
+                    ? 'bg-indigo-600/15 border border-indigo-500/50'
+                    : 'bg-neutral-800/50 border border-neutral-700/50 hover:border-neutral-600'}"
+                >
+                  <div class="mt-0.5 w-3.5 h-3.5 rounded-full border shrink-0 flex items-center justify-center {attentionBackend === opt.value ? 'border-indigo-500 bg-indigo-600' : 'border-neutral-600'}">
+                    {#if attentionBackend === opt.value}
+                      <div class="w-1.5 h-1.5 rounded-full bg-white"></div>
+                    {/if}
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-xs font-medium {attentionBackend === opt.value ? 'text-indigo-300' : 'text-neutral-200'}">{opt.label}</p>
+                    <p class="text-[10px] text-neutral-500">{opt.desc}</p>
+                  </div>
+                </button>
+              {/each}
+            </div>
+            {#if attentionBackend === "sage_v2" || attentionBackend === "flash_v2"}
+              <p class="text-[10px] text-amber-400/80">{locale.t('setup.attention.compile_warning')}</p>
+            {/if}
+          </div>
+          {/if}
+        </div>
+        {/if}
 
         <!-- Install Location -->
         <div class="mb-6 rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2">
@@ -446,14 +521,14 @@
           onclick={startInstall}
           class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 rounded-lg font-semibold transition-colors cursor-pointer"
         >
-          Install & Get Started
+          {locale.t('setup.install_button')}
         </button>
       {:else if phase === "installing"}
         <h2 class="text-xl font-semibold mb-4">{locale.t('setup.progress_title')}</h2>
 
         <!-- Step checklist -->
         <div class="space-y-1.5 mb-5">
-          {#each steps as step}
+          {#each visibleSteps as step}
             {@const status = stepStatus(step.id)}
             <div class="flex items-center gap-2.5 text-xs">
               {#if status === "done"}
