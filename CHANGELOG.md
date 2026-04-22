@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v1.0.6
+
+### Build Fixes
+- **Docker image publish restored** — the `build-server` job (which produces the headless Linux server binary that the Docker image wraps) was failing because three `tauri::` references leaked into the server-only build path, which doesn't link the `tauri` crate. The `#[tauri::command]` attribute on `load_gallery_image_png` is now gated behind `#[cfg(feature = "desktop")]`, and the two `tauri::async_runtime::spawn` calls in the prompt-queue cleanup reactor and stuck-worker watchdog (in `webserver.rs`) have been swapped for `tokio::spawn`. No user-visible changes; the desktop installers are functionally identical to v1.0.5.
+
+---
+
 ## What's New in v1.0.5
 
 ### Bug Fixes

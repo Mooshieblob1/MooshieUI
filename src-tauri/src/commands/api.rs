@@ -629,6 +629,7 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
 /// Load a gallery image and encode as PNG. JXL files are decoded via jxl-oxide
 /// and re-encoded as PNG. Used when copying/saving/downloading — PNG is the
 /// portable export format that supports metadata embedding.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn load_gallery_image_png(filename: String) -> Result<Vec<u8>, AppError> {
     if filename.contains('/') || filename.contains('\\') || filename.contains("..") {

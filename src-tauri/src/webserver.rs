@@ -214,7 +214,7 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
 
     let cleanup_state = state;
     let mut cleanup_rx = cleanup_state.event_tx.subscribe();
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         loop {
             match cleanup_rx.recv().await {
                 Ok(evt) => {
@@ -294,7 +294,7 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
 /// app init which calls both).
 pub fn spawn_stuck_worker_watchdog(state: Arc<AppState>) {
     let watchdog_state = state;
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         let max_stuck_secs = 600u64;
         loop {
