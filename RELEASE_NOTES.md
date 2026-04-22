@@ -1,3 +1,10 @@
+## What's New in v1.0.3
+
+### Bug Fixes
+- **Visual double-queue on single generate fixed** — the queue counter no longer shows 2 when only 1 image is being generated. An SSE `queue_update` event could arrive before the HTTP response from `/prompt`, causing the same prompt_id to be inserted twice in the pending queue (once by `restoreFromSnapshot` and again by `enqueue`). `enqueue` is now idempotent by `promptId`: if an entry already exists (e.g. injected by the SSE snapshot), it's upgraded in place with the real params/mode instead of appending a duplicate.
+
+---
+
 ## What's New in v1.0.2
 
 ### Bug Fixes

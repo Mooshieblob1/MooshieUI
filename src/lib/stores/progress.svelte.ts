@@ -171,13 +171,33 @@ class ProgressStore {
     this.queueTotal = 0;
   }
 
-  /** Add a new prompt to the queue. */
+  /** Add a new prompt to the queue.
+   *
+   * Idempotent by promptId: if the prompt is already tracked (e.g. inserted by
+   * `restoreFromSnapshot` after an SSE `queue_update` event raced the HTTP
+   * response), the existing entry is upgraded with the real params/mode instead
+   * of appending a duplicate. Without this, the same prompt_id can appear twice
+   * in `pendingPrompts`, making the queue display show 2 when only 1 image is
+   * being generated.
+   */
   enqueue(
     promptId: string,
     wasUpscaled: boolean = false,
     mode: "txt2img" | "img2img" | "inpainting" = "txt2img",
     params: GenerationParams | null = null,
   ) {
+    const existingIdx = this.pendingPrompts.findIndex((p) => p.promptId === promptId);
+    if (existingIdx >= 0) {
+      const next = [...this.pendingPrompts];
+      next[existingIdx] = {
+        promptId,
+        mode,
+        wasUpscaled,
+        params: params!,
+      };
+      this.pendingPrompts = next;
+      return;
+    }
     this.pendingPrompts = [
       ...this.pendingPrompts,
       {
