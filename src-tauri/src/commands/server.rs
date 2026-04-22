@@ -33,7 +33,7 @@ pub async fn start_comfyui(
             tokio::spawn(async move {
                 let state = app.state::<Arc<AppState>>();
                 if let Err(e) =
-                    websocket::connect_websocket(app.clone(), &state, event_tx.clone()).await
+                    websocket::connect_websocket(app.clone(), Arc::clone(&state), event_tx.clone()).await
                 {
                     log::error!("Failed to connect WebSocket: {}", e);
                 }
@@ -55,7 +55,7 @@ pub async fn start_comfyui(
                     Ok(()) => {
                         log::info!("ComfyUI server is ready");
                         if let Err(e) =
-                            websocket::connect_websocket(app.clone(), &state, event_tx.clone())
+                            websocket::connect_websocket(app.clone(), Arc::clone(&state), event_tx.clone())
                                 .await
                         {
                             log::error!("Failed to connect WebSocket: {}", e);
@@ -90,7 +90,7 @@ pub async fn start_comfyui(
             tokio::spawn(async move {
                 let state = app.state::<Arc<AppState>>();
                 if let Err(e) =
-                    websocket::connect_websocket(app.clone(), &state, event_tx.clone()).await
+                    websocket::connect_websocket(app.clone(), Arc::clone(&state), event_tx.clone()).await
                 {
                     log::error!("Failed to connect WebSocket: {}", e);
                 }
