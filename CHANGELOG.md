@@ -1,5 +1,19 @@
 # Changelog
 
+## What's New in v1.0.4
+
+### Features
+- **JPEG XL (JXL) output support** — generated images can now be saved as `.jxl`, cutting file sizes roughly in half at visually-lossless quality compared to PNG while preserving full metadata. Available as a new format option alongside PNG/JPEG/WebP.
+- **Artist Gallery i18n** — the full Artist Gallery page, favourites manager, hover previews, and related prompts are now translated into every supported locale (de, es, fr, it, ja, ko, pt, ru, zh, zh-tw) instead of being English-only.
+- **Parallel multi-file model downloads** — when installing split-file models like Anima Preview 3, the diffusion model, text encoder, and VAE now download in parallel with a dedicated progress bar per file that stays visible (with a green ✓) until the whole batch completes. Previously the single shared progress bar blanked out between files, making it look like later downloads had been dropped.
+
+### Bug Fixes
+- **"Generation was lost" toast no longer misfires on long queues** — queuing 20+ images would sometimes raise `A Generation was lost due to a connection issue` for pending prompts that were still healthy. The reconciler was comparing activity timestamps against `undefined` (after `enqueue` upgraded an SSE-injected placeholder and dropped `enqueuedAt`), producing `NaN` time differences that bypassed the 30-second grace guard. Both `enqueue()` and `restoreFromSnapshot()` now preserve/stamp `enqueuedAt` correctly, and the reconciler falls back to `enqueuedAt` when no live activity has been recorded yet.
+- **Python install recovers from partial extracts** — the one-click setup wizard no longer fails with `failed to create file '...\Lib\EXTERNALLY-MANAGED': The system cannot find the path specified (os error 3)` when a previous run was interrupted mid-extract. The installer now pre-scans `python/cpython-*/` for a missing `python.exe`/`Lib` directory, purges partial extracts before retrying, and falls back to `uv python install --reinstall 3.11` if uv still refuses to re-extract.
+- **Artist favourite chips appear in app mode** — typing `@artist_name` in the prompt now surfaces the same favourite heart chips in the Tauri desktop app that already worked in server/browser mode. Direct `fetch` calls to `cdn.mooshieblob.com` were being blocked by the webview's CORS enforcement, so the artist-tag search index silently failed to load. Those JSON fetches are now proxied through a new `cdn_proxy_fetch` Tauri command that reuses the shared reqwest client (scoped to the Mooshieblob CDN origin only — not an open proxy).
+
+---
+
 ## What's New in v1.0.3
 
 ### Bug Fixes
