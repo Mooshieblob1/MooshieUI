@@ -274,6 +274,39 @@ pub async fn open_directory(path: String) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Proxy a GET request to the Mooshieblob CDN and return the response body as
+/// text. Used by the Tauri desktop app for JSON fetches (artist gallery
+/// manifest, shards, search index) that would otherwise be blocked by the
+/// webview's CORS enforcement. Only the hardcoded CDN origin is reachable —
+/// this is NOT an open proxy.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn cdn_proxy_fetch(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<String, AppError> {
+    // Strip any leading slashes to keep the joined URL well-formed.
+    let clean = path.trim_start_matches('/');
+    let url = format!("https://cdn.mooshieblob.com/{}", clean);
+    let resp = state
+        .http_client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| AppError::Other(format!("CDN fetch failed: {}", e)))?;
+    if !resp.status().is_success() {
+        return Err(AppError::ApiError {
+            status: resp.status().as_u16(),
+            message: format!("CDN returned {} for {}", resp.status(), clean),
+        });
+    }
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| AppError::Other(format!("CDN body read failed: {}", e)))?;
+    Ok(body)
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn download_model(

@@ -23,6 +23,7 @@ import { isTauri, isBrowserMode, getAuthToken } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
 import { generation } from "./generation.svelte.js";
 import { createArtistGalleryClient } from "../artist-gallery/client.js";
+import { cdnFetch } from "../utils/cdnFetch.js";
 import {
   buildArtistTagIndex,
   detectArtistsInPrompt,
@@ -209,7 +210,7 @@ class GalleryStore {
     if (this._artistIndexPromise) return this._artistIndexPromise;
     this._artistIndexPromise = (async () => {
       try {
-        const client = createArtistGalleryClient({ manifestUrl });
+        const client = createArtistGalleryClient({ manifestUrl, fetchImpl: cdnFetch });
         const hits = await client.loadSearchIndex();
         this.artistTagIndex = buildArtistTagIndex(hits);
         this.artistIndexReady = true;

@@ -1,4 +1,5 @@
 import { createArtistGalleryClient } from "./client.js";
+import { cdnFetch } from "../utils/cdnFetch.js";
 import type {
   ArtistEntry,
   ArtistGalleryClient,
@@ -62,7 +63,7 @@ export class ArtistGalleryStore {
   private searchSeq = 0;
 
   constructor(manifestUrl: string) {
-    this.client = createArtistGalleryClient({ manifestUrl });
+    this.client = createArtistGalleryClient({ manifestUrl, fetchImpl: cdnFetch });
   }
 
   async init(): Promise<void> {
