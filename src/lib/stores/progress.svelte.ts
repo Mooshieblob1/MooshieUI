@@ -207,7 +207,7 @@ class ProgressStore {
 
     if (item) {
       this._lastCompletedWasUpscaled = item.wasUpscaled;
-      if (item.params.seed != null && item.params.seed >= 0) {
+      if (item.params != null && item.params.seed != null && item.params.seed >= 0) {
         this.lastCompletedSeed = item.params.seed;
       }
     }

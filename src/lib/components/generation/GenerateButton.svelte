@@ -15,12 +15,16 @@
 
   let { canvasEditorRef }: Props = $props();
   let errorMsg = $state<string | null>(null);
+  let isSubmitting = $state(false);
 
   async function handleGenerate() {
+    if (isSubmitting) return;
+    isSubmitting = true;
     errorMsg = null;
 
     if (!generation.checkpoint) {
       errorMsg = locale.t('generation.error_no_checkpoint');
+      isSubmitting = false;
       return;
     }
 
@@ -102,6 +106,8 @@
     } catch (e) {
       console.error("Generation failed:", e);
       errorMsg = String(e);
+    } finally {
+      isSubmitting = false;
     }
   }
 

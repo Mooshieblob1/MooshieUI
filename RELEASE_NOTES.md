@@ -1,3 +1,12 @@
+## What's New in v1.0.2
+
+### Bug Fixes
+- **Double-queue on single generate fixed** — queuing one image no longer results in two generations. The Generate button now has an in-flight guard that prevents re-submission while a request is in progress, closing a race window between the button click and the server response.
+- **Crash in progress store fixed** — `completePrompt` no longer throws `TypeError: can't access property "seed", params is null` when a prompt was restored from the server queue snapshot after a page refresh. Restored prompts have `params: null` by design; the seed is now read safely.
+- **Reconciler no longer loops on null-params prompts** — the crash above prevented the restored prompt from being removed from the pending list, causing the reconciler to retry completion every 5 seconds indefinitely. Both issues are resolved together.
+
+---
+
 ## What's New in v1.0.0
 
 ### Bug Fixes
