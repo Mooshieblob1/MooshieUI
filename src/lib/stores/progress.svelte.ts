@@ -189,12 +189,17 @@ class ProgressStore {
   ) {
     const existingIdx = this.pendingPrompts.findIndex((p) => p.promptId === promptId);
     if (existingIdx >= 0) {
+      const existing = this.pendingPrompts[existingIdx];
       const next = [...this.pendingPrompts];
       next[existingIdx] = {
         promptId,
         mode,
         wasUpscaled,
         params: params!,
+        // Preserve enqueuedAt from the existing entry (set by restoreFromSnapshot
+        // or a prior enqueue). If unset, stamp it now so the reconciler's 30s
+        // activity guard has a valid baseline.
+        enqueuedAt: existing.enqueuedAt ?? Date.now(),
       };
       this.pendingPrompts = next;
       return;
@@ -294,11 +299,20 @@ class ProgressStore {
    * Only adds entries that aren't already tracked (idempotent).
    */
   restoreFromSnapshot(promptIds: string[]) {
+    const now = Date.now();
     for (const pid of promptIds) {
       if (!this.pendingPrompts.some((p) => p.promptId === pid)) {
         this.pendingPrompts = [
           ...this.pendingPrompts,
-          { promptId: pid, mode: "txt2img", wasUpscaled: false, params: null as any },
+          {
+            promptId: pid,
+            mode: "txt2img",
+            wasUpscaled: false,
+            params: null as any,
+            // Stamp enqueuedAt so the reconciler's 30s activity guard has a
+            // baseline for prompts restored from an SSE snapshot.
+            enqueuedAt: now,
+          },
         ];
       }
     }

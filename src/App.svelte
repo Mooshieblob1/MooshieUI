@@ -1743,7 +1743,9 @@
           // they're clearly still alive even if the queue query missed them.
           // Fall back to enqueuedAt so brand-new prompts (not yet in ComfyUI's
           // queue because submission is async) are also guarded for 30s.
-          const lastEvent = promptLastActivity.get(p.promptId) ?? p.enqueuedAt;
+          // If both are missing (shouldn't happen, but defensive), treat as
+          // just-enqueued so we don't immediately fire "generation lost".
+          const lastEvent = promptLastActivity.get(p.promptId) ?? p.enqueuedAt ?? now;
           if (now - lastEvent < 30_000) continue;
 
           if (!allPromptIds.has(p.promptId)) {
