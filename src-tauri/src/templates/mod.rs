@@ -232,13 +232,18 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
     };
 
     let save_id = result.next_id.to_string();
+    let output_format = match params.output_format.as_str() {
+        "jxl" => "jxl_raw",
+        _ => "png",
+    };
     result.workflow.insert(
         save_id,
         json!({
             "class_type": "MooshieSaveImage",
             "inputs": {
                 "images": [final_image.0, final_image.1],
-                "bit_depth": params.output_bit_depth
+                "bit_depth": params.output_bit_depth,
+                "output_format": output_format
             }
         }),
     );

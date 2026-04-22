@@ -59,6 +59,12 @@ pub struct PromptQueue {
     deferred_finishes: std::sync::RwLock<std::collections::HashSet<String>>,
 }
 
+impl Default for PromptQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PromptQueue {
     pub fn new() -> Self {
         Self {
@@ -356,6 +362,9 @@ pub struct AppState {
     pub app_mode_active: std::sync::atomic::AtomicBool,
     /// True once the embedded web server has been started (prevents double-bind).
     pub web_server_running: std::sync::atomic::AtomicBool,
+    /// True once the shared prompt cleanup/watchdog reactors have been spawned
+    /// (prevents duplicates when both desktop and browser mode start them).
+    pub cleanup_reactors_started: std::sync::atomic::AtomicBool,
     /// Multi-user generation queue — tracks prompt ownership and position.
     pub prompt_queue: PromptQueue,
     /// Multi-GPU worker manager — distributes prompts across N GPU backends.
@@ -389,6 +398,7 @@ impl AppState {
             app_handle: Mutex::new(None),
             app_mode_active: std::sync::atomic::AtomicBool::new(false),
             web_server_running: std::sync::atomic::AtomicBool::new(false),
+            cleanup_reactors_started: std::sync::atomic::AtomicBool::new(false),
             prompt_queue: PromptQueue::new(),
             gpu_manager,
             output_image_cache: std::sync::RwLock::new(HashMap::new()),

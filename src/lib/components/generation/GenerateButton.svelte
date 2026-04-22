@@ -94,6 +94,7 @@
       }
 
       const params = generation.toParams();
+      console.log("[generate] output_format:", params.output_format, "output_bit_depth:", params.output_bit_depth);
       generation.saveCurrentPromptToHistory();
       const result = await generate(params);
       params.seed = result.seed;

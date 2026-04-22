@@ -53,3 +53,9 @@ docs/superpowers/plans/2026-03-23-metadata-drag-drop.md
 temp_png_meta.ps1
 temp_png_chunks.ps1
 .github/instructions/mooshieui-pichan-support.instructions.md
+
+# Test artifacts
+src-tauri/test_out.txt
+src-tauri/test_output.txt
+add-locale-stubs.ps1
+new_keys.txt

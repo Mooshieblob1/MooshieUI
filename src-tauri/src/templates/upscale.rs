@@ -15,10 +15,7 @@ pub fn append_upscale_chain(
 
     // Determine effective method — fall back to algorithmic if no model specified
     let use_model = params.upscale_method == "model"
-        && params
-            .upscale_model
-            .as_ref()
-            .map_or(false, |m| !m.is_empty());
+        && params.upscale_model.as_ref().is_some_and(|m| !m.is_empty());
 
     // Step 1: Upscale image in pixel space
     let upscaled_image: (String, u32) = if use_model {

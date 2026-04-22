@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ArtistEntry } from "../types.js";
   import { cachedSrc } from "../imageCache.js";
+  import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
     entry: ArtistEntry;
@@ -38,7 +39,7 @@
       />
     {:else}
       <div class="flex h-full w-full items-center justify-center text-xs text-neutral-500">
-        no preview
+        {locale.t('artist_gallery.no_preview')}
       </div>
     {/if}
   </div>

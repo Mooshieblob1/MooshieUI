@@ -278,6 +278,23 @@
       </div>
     </div>
     <div>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.output_format')}<InfoTip text={locale.t('generation.sampler.output_format_tip')} /></label>
+      <div class="flex gap-1">
+        {#each ["png", "jxl"] as fmt}
+          <button
+            class="flex-1 py-1 text-[11px] rounded-lg border transition-colors {generation.outputFormat === fmt
+              ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
+              : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'}"
+            onclick={() => generation.outputFormat = fmt as "png" | "jxl"}
+          >
+            {fmt === "png" ? locale.t('generation.sampler.format_png') : locale.t('generation.sampler.format_jxl')}
+          </button>
+        {/each}
+      </div>
+    </div>
+  </div>
+  <div class="grid grid-cols-1 gap-2">
+    <div>
       <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.metadata')}<InfoTip text={locale.t('generation.sampler.metadata_tip')} /></label>
       <div class="flex gap-1">
         {#each [["text_chunk", locale.t('generation.sampler.metadata_text')], ["stealth", locale.t('generation.sampler.metadata_stealth')], ["both", locale.t('generation.sampler.metadata_both')]] as [value, label]}

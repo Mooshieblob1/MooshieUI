@@ -233,8 +233,10 @@ class MooshieSaveImage:
     MOOSHIE_EVENT_TYPE = 100  # custom binary WS event type
     # Format sub-types packed into the first 4 bytes after the event type header.
     # The Rust WebSocket handler reads this to tell the frontend what it received.
-    FMT_PNG_8 = 1   # 8-bit PNG  (uint8,  standard)
-    FMT_PNG_16 = 2  # 16-bit PNG (uint16, higher precision for post-processing)
+    FMT_PNG_8 = 1        # 8-bit PNG  (uint8,  standard)
+    FMT_PNG_16 = 2       # 16-bit PNG (uint16, higher precision for post-processing)
+    FMT_RAW_RGBA8 = 3    # 8-bit RGBA raw pixels  + 8-byte geometry header
+    FMT_RAW_RGBA16 = 4   # 16-bit RGBA raw pixels + 8-byte geometry header (native endian)
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -244,6 +246,7 @@ class MooshieSaveImage:
             },
             "optional": {
                 "bit_depth": (["8bit", "16bit"], {"default": "8bit"}),
+                "output_format": (["png", "jxl_raw"], {"default": "png"}),
             },
         }
 
@@ -253,14 +256,15 @@ class MooshieSaveImage:
     CATEGORY = "mooshie"
     DESCRIPTION = (
         "Sends images directly over WebSocket instead of writing to disk. "
-        "Supports 8-bit (standard) and 16-bit (high-precision) PNG output."
+        "Supports 8/16-bit PNG (default) and raw RGBA (encoded to JPEG XL "
+        "in the Tauri backend when output_format=jxl_raw)."
     )
 
-    def save_images(self, images, bit_depth="8bit"):
-        from PIL import Image
+    def save_images(self, images, bit_depth="8bit", output_format="png"):
         from server import PromptServer
 
         server = PromptServer.instance
+        want_raw = (output_format == "jxl_raw")
 
         for i in range(images.shape[0]):
             frame = images[i].cpu().numpy()
@@ -276,29 +280,72 @@ class MooshieSaveImage:
                       "This usually means VRAM was corrupted by rapid generation interrupts. "
                       "Try generating again — the models will be reloaded cleanly.")
 
-            if bit_depth == "16bit":
+            if want_raw:
+                fmt_tag, image_bytes = self._encode_raw(frame, bit_depth)
+            elif bit_depth == "16bit":
                 fmt_tag = self.FMT_PNG_16
-                png_bytes = self._encode_16bit(images[i])
+                image_bytes = self._encode_16bit(images[i])
             else:
                 fmt_tag = self.FMT_PNG_8
-                img_np = (255.0 * frame).clip(0, 255).astype(np.uint8)
-                # Output RGBA (alpha=255) so the PNG has an alpha channel.
-                # This lets the Rust metadata embedder write stealth-alpha
-                # data directly, and ensures right-click → Copy Image from
-                # the browser gets an image with an alpha layer.
-                h, w, c = img_np.shape
-                rgba = np.full((h, w, 4), 255, dtype=np.uint8)
-                rgba[:, :, :3] = img_np[:, :, :3]
-                img = Image.fromarray(rgba, "RGBA")
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                png_bytes = buf.getvalue()
+                image_bytes = self._encode_png_8bit(frame)
 
             # Payload: format_tag (4 bytes BE) + image data
-            payload = struct.pack(">I", fmt_tag) + png_bytes
+            payload = struct.pack(">I", fmt_tag) + image_bytes
             server.send_sync(self.MOOSHIE_EVENT_TYPE, payload)
 
         return {"ui": {"images": []}}
+
+    @staticmethod
+    def _encode_png_8bit(frame):
+        from PIL import Image
+
+        img_np = (255.0 * frame).clip(0, 255).astype(np.uint8)
+        # Output RGBA (alpha=255) so the PNG has an alpha channel.
+        h, w, _ = img_np.shape
+        rgba = np.full((h, w, 4), 255, dtype=np.uint8)
+        rgba[:, :, :3] = img_np[:, :, :3]
+        img = Image.fromarray(rgba, "RGBA")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    @classmethod
+    def _encode_raw(cls, frame, bit_depth):
+        """Pack raw RGBA pixels (no compression) for JXL encoding in Rust.
+
+        Header (8 bytes, big-endian fixed layout):
+            width   u16
+            height  u16
+            channels u8   (always 4 — RGBA)
+            depth    u8   (8 or 16)
+            reserved u16  (zero)
+
+        Payload: tightly packed RGBA bytes, row-major. 16-bit samples are
+        native-endian u16 pairs (matches `zune-jpegxl`'s expected layout).
+        """
+        h, w, _ = frame.shape
+        if w > 0xFFFF or h > 0xFFFF:
+            raise ValueError(
+                f"MooshieSaveImage raw path only supports <=65535 px per side, got {w}x{h}"
+            )
+
+        if bit_depth == "16bit":
+            fmt_tag = cls.FMT_RAW_RGBA16
+            rgb_u16 = (65535.0 * frame).clip(0, 65535).astype(np.uint16)
+            rgba = np.full((h, w, 4), 0xFFFF, dtype=np.uint16)
+            rgba[:, :, :3] = rgb_u16[:, :, :3]
+            depth = 16
+            pixels = rgba.tobytes()  # native endian, matches zune-jpegxl 16-bit input
+        else:
+            fmt_tag = cls.FMT_RAW_RGBA8
+            rgb_u8 = (255.0 * frame).clip(0, 255).astype(np.uint8)
+            rgba = np.full((h, w, 4), 255, dtype=np.uint8)
+            rgba[:, :, :3] = rgb_u8[:, :, :3]
+            depth = 8
+            pixels = rgba.tobytes()
+
+        header = struct.pack(">HHBBH", w, h, 4, depth, 0)
+        return fmt_tag, header + pixels
 
     @staticmethod
     def _encode_16bit(image_tensor):
@@ -351,7 +398,7 @@ class MooshieSaveImage:
         return buf.getvalue()
 
     @classmethod
-    def IS_CHANGED(cls, images, bit_depth="8bit"):
+    def IS_CHANGED(cls, images, bit_depth="8bit", output_format="png"):
         # Always re-execute — output nodes should never be cached.
         return float("nan")
 

@@ -185,6 +185,148 @@ fn forbidden_response(msg: &str) -> Response {
 /// browser URL even when fallback ports were used.
 ///
 /// Panics if none of the candidate ports can be bound.
+/// Spawn the prompt-queue cleanup reactor.  Listens on the shared broadcast
+/// channel for ComfyUI completion/error events and:
+///   * releases the GPU worker that handled the prompt
+///   * removes the prompt from the fair queue
+///   * notifies the held-prompt drain reactor
+///
+/// Idempotent — calling this more than once is a no-op.  Must be started in
+/// both desktop and browser modes, otherwise workers stay reserved forever
+/// after the first successful prompt and subsequent `submit_prompt` calls
+/// block for the full 300s timeout.
+pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
+    if state
+        .cleanup_reactors_started
+        .swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        return;
+    }
+
+    let cleanup_state = state;
+    let mut cleanup_rx = cleanup_state.event_tx.subscribe();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match cleanup_rx.recv().await {
+                Ok(evt) => {
+                    let prompt_id = evt
+                        .payload
+                        .get("prompt_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| cleanup_state.prompt_queue.resolve_alias(s));
+
+                    match evt.event.as_str() {
+                        "comfyui:executing" => {
+                            if evt.payload.get("node").is_some_and(|n| n.is_null()) {
+                                if let Some(pid) = prompt_id {
+                                    let owner = cleanup_state.prompt_queue.owner_of(&pid);
+                                    log::info!(
+                                        "[gen] completed prompt={} user={}",
+                                        &pid[..8.min(pid.len())],
+                                        owner.as_deref().unwrap_or("admin"),
+                                    );
+                                    if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
+                                        cleanup_state.gpu_manager.mark_worker_idle(wid).await;
+                                    }
+                                    let alias_pid = pid.clone();
+                                    let alias_state = cleanup_state.clone();
+                                    tokio::spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                        alias_state.prompt_queue.cleanup_alias(&alias_pid);
+                                    });
+                                    cleanup_state.broadcast_queue_positions();
+                                    cleanup_state.prompt_queue.drain_notify.notify_one();
+                                }
+                            }
+                        }
+                        "comfyui:execution_error" => {
+                            if let Some(pid) = prompt_id {
+                                let owner = cleanup_state.prompt_queue.owner_of(&pid);
+                                log::warn!(
+                                    "[gen] error prompt={} user={}",
+                                    &pid[..8.min(pid.len())],
+                                    owner.as_deref().unwrap_or("admin"),
+                                );
+                                if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
+                                    cleanup_state
+                                        .gpu_manager
+                                        .mark_worker_error_then_idle(wid)
+                                        .await;
+                                }
+                                let alias_pid = pid.clone();
+                                let alias_state = cleanup_state.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                    alias_state.prompt_queue.cleanup_alias(&alias_pid);
+                                });
+                                cleanup_state.broadcast_queue_positions();
+                                cleanup_state.prompt_queue.drain_notify.notify_one();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    log::warn!("Queue cleanup reactor lagged by {} events", n);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
+/// Spawn the stuck-worker watchdog.  Every 60s, checks for workers that have
+/// been reserved for longer than 10 minutes without a corresponding queue
+/// entry and force-releases them.  Catches cases where the WebSocket
+/// completion event was missed.
+///
+/// This uses the same idempotency flag as the cleanup reactor; call
+/// [`spawn_prompt_cleanup_reactor`] first (or rely on [`start_server`] /
+/// app init which calls both).
+pub fn spawn_stuck_worker_watchdog(state: Arc<AppState>) {
+    let watchdog_state = state;
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        let max_stuck_secs = 600u64;
+        loop {
+            interval.tick().await;
+            for worker in &watchdog_state.gpu_manager.workers {
+                let status = *worker.status.read().await;
+                let reserved = worker.reserved.load(std::sync::atomic::Ordering::Acquire);
+                if status == crate::comfyui::gpu_manager::WorkerStatus::Running && reserved {
+                    let has_active_prompt = {
+                        let wmap = watchdog_state.prompt_queue.worker_map_snapshot();
+                        wmap.values().any(|&wid| wid == worker.id)
+                    };
+                    if !has_active_prompt {
+                        let last_released = worker
+                            .last_released
+                            .load(std::sync::atomic::Ordering::Acquire);
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        let stuck_secs = if last_released == 0 {
+                            now_ms / 1000
+                        } else {
+                            (now_ms.saturating_sub(last_released)) / 1000
+                        };
+                        if stuck_secs > max_stuck_secs {
+                            log::warn!(
+                                "[watchdog] Releasing stuck worker {} (GPU {}, stuck {}s, no queue entry)",
+                                worker.id,
+                                worker.gpu_index,
+                                stuck_secs,
+                            );
+                            watchdog_state.gpu_manager.mark_worker_idle(worker.id).await;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
 pub async fn start_server(
     state: Arc<AppState>,
     port: u16,
@@ -332,238 +474,12 @@ pub async fn start_server(
 
     log::info!("Starting UI web server on {}", bind_addr);
 
-    // Spawn prompt queue cleanup reactor — listens for completion/error events
-    // and removes finished prompts from the queue, then broadcasts position updates.
-    {
-        let cleanup_state = web_state.app.clone();
-        let mut cleanup_rx = cleanup_state.event_tx.subscribe();
-        tokio::spawn(async move {
-            loop {
-                match cleanup_rx.recv().await {
-                    Ok(evt) => {
-                        // Resolve alias: translate ComfyUI's real prompt_id to our placeholder.
-                        // We keep the raw ID separately to detect the race where a completion
-                        // or error event arrives before bind_alias has been called.
-                        let raw_pid = evt
-                            .payload
-                            .get("prompt_id")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                        let prompt_id = raw_pid
-                            .as_deref()
-                            .map(|s| cleanup_state.prompt_queue.resolve_alias(s));
-                        // alias_unbound is true when resolve_alias returned the same value —
-                        // meaning bind_alias hasn't run yet (race condition).
-                        // When true, `pid` == the raw ComfyUI ID and the placeholder is still
-                        // in the queue under its gen-* name.
-                        let alias_unbound = match (&prompt_id, &raw_pid) {
-                            (Some(pid), Some(raw)) => pid == raw,
-                            _ => false,
-                        };
-
-                        match evt.event.as_str() {
-                            "comfyui:executing" => {
-                                // node=null means execution finished for this prompt
-                                if evt.payload.get("node").map_or(false, |n| n.is_null()) {
-                                    if let Some(pid) = prompt_id {
-                                        if alias_unbound {
-                                            // Race: completion arrived before bind_alias.
-                                            // pid IS the raw ComfyUI ID here. Park it so
-                                            // bind_alias can finish the placeholder later.
-                                            cleanup_state
-                                                .prompt_queue
-                                                .park_deferred_finish(&pid);
-                                            log::warn!(
-                                                "[gen] deferred completion for unbound id={}",
-                                                &pid[..8.min(pid.len())],
-                                            );
-                                        } else {
-                                            let owner =
-                                                cleanup_state.prompt_queue.owner_of(&pid);
-                                            log::info!(
-                                                "[gen] completed prompt={} user={}",
-                                                &pid[..8.min(pid.len())],
-                                                owner.as_deref().unwrap_or("admin"),
-                                            );
-                                            // Release the GPU worker that handled this prompt
-                                            if let Some(wid) =
-                                                cleanup_state.prompt_queue.finish(&pid)
-                                            {
-                                                cleanup_state
-                                                    .gpu_manager
-                                                    .mark_worker_idle(wid)
-                                                    .await;
-                                            }
-                                            // Completed normally — no recovery needed; clear cache.
-                                            cleanup_state
-                                                .output_image_cache
-                                                .write()
-                                                .unwrap()
-                                                .remove(&pid);
-                                            // Delay alias cleanup so SSE streams have time to
-                                            // resolve the alias for this same event.  Without the
-                                            // delay, the SSE filter_map can race with this reactor
-                                            // and forward the raw ComfyUI prompt_id instead of the
-                                            // gen-* placeholder the frontend expects.
-                                            let alias_pid = pid.clone();
-                                            let alias_state = cleanup_state.clone();
-                                            tokio::spawn(async move {
-                                                tokio::time::sleep(
-                                                    std::time::Duration::from_secs(5),
-                                                )
-                                                .await;
-                                                alias_state
-                                                    .prompt_queue
-                                                    .cleanup_alias(&alias_pid);
-                                            });
-                                            // Clear cached preview — generation is done
-                                            cleanup_state
-                                                .last_preview_by_prompt
-                                                .write()
-                                                .unwrap()
-                                                .remove(&pid);
-                                            // Tell all clients the server is idle
-                                            if cleanup_state.prompt_queue.is_empty() {
-                                                cleanup_state.broadcast(
-                                                    "mooshie:server_progress",
-                                                    serde_json::json!({ "value": 0, "max": 0, "active": false }),
-                                                );
-                                            }
-                                            cleanup_state.broadcast_queue_positions();
-                                            // Signal the drain reactor to submit next held prompt
-                                            cleanup_state.prompt_queue.drain_notify.notify_one();
-                                        }
-                                    }
-                                }
-                            }
-                            "comfyui:execution_error" => {
-                                if let Some(pid) = prompt_id {
-                                    if alias_unbound {
-                                        // Race: error arrived before bind_alias.
-                                        // pid IS the raw ComfyUI ID here. Park it so
-                                        // bind_alias can finish the placeholder and the
-                                        // background task can release the GPU worker.
-                                        cleanup_state
-                                            .prompt_queue
-                                            .park_deferred_finish(&pid);
-                                        log::warn!(
-                                            "[gen] deferred error for unbound id={}",
-                                            &pid[..8.min(pid.len())],
-                                        );
-                                    } else {
-                                        let owner = cleanup_state.prompt_queue.owner_of(&pid);
-                                        log::warn!(
-                                            "[gen] error prompt={} user={}",
-                                            &pid[..8.min(pid.len())],
-                                            owner.as_deref().unwrap_or("admin"),
-                                        );
-                                        // Release the GPU worker (error is transient, mark idle)
-                                        if let Some(wid) =
-                                            cleanup_state.prompt_queue.finish(&pid)
-                                        {
-                                            cleanup_state
-                                                .gpu_manager
-                                                .mark_worker_error_then_idle(wid)
-                                                .await;
-                                        }
-                                        // Error — no output to recover; clear cache.
-                                        cleanup_state
-                                            .output_image_cache
-                                            .write()
-                                            .unwrap()
-                                            .remove(&pid);
-                                        let alias_pid = pid.clone();
-                                        let alias_state = cleanup_state.clone();
-                                        tokio::spawn(async move {
-                                            tokio::time::sleep(std::time::Duration::from_secs(
-                                                5,
-                                            ))
-                                            .await;
-                                            alias_state.prompt_queue.cleanup_alias(&alias_pid);
-                                        });
-                                        // Clear cached preview — generation errored
-                                        cleanup_state
-                                            .last_preview_by_prompt
-                                            .write()
-                                            .unwrap()
-                                            .remove(&pid);
-                                        // Tell all clients the server is idle
-                                        if cleanup_state.prompt_queue.is_empty() {
-                                            cleanup_state.broadcast(
-                                                "mooshie:server_progress",
-                                                serde_json::json!({ "value": 0, "max": 0, "active": false }),
-                                            );
-                                        }
-                                        cleanup_state.broadcast_queue_positions();
-                                        // Signal the drain reactor to submit next held prompt
-                                        cleanup_state.prompt_queue.drain_notify.notify_one();
-                                    }
-                                }
-                            }
-                            "comfyui:output_image" => {
-                                // Cache temp_filename by placeholder_id so the reconciler
-                                // can recover images if the SSE event was dropped during
-                                // a client reconnect.
-                                if let Some(pid) = prompt_id {
-                                    if let Some(temp_fn) = evt
-                                        .payload
-                                        .get("temp_filename")
-                                        .and_then(|v| v.as_str())
-                                    {
-                                        cleanup_state
-                                            .output_image_cache
-                                            .write()
-                                            .unwrap()
-                                            .entry(pid)
-                                            .or_default()
-                                            .push(temp_fn.to_string());
-                                    }
-                                }
-                            }
-                            "comfyui:preview" => {
-                                // Cache the latest preview temp_filename per placeholder_id
-                                // so clients that reconnect mid-generation receive the most
-                                // recent frame in the SSE initial burst.
-                                if let Some(pid) = prompt_id {
-                                    if let Some(temp_fn) = evt
-                                        .payload
-                                        .get("temp_filename")
-                                        .and_then(|v| v.as_str())
-                                    {
-                                        cleanup_state
-                                            .last_preview_by_prompt
-                                            .write()
-                                            .unwrap()
-                                            .insert(pid, temp_fn.to_string());
-                                    }
-                                }
-                            }
-                            "comfyui:progress" => {
-                                // Re-broadcast without a prompt_id so ALL connected clients
-                                // see the server-wide generation activity as a secondary bar.
-                                if let (Some(value), Some(max)) = (
-                                    evt.payload.get("value").and_then(|v| v.as_f64()),
-                                    evt.payload.get("max").and_then(|v| v.as_f64()),
-                                ) {
-                                    cleanup_state.broadcast(
-                                        "mooshie:server_progress",
-                                        serde_json::json!({ "value": value, "max": max, "active": true }),
-                                    );
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        log::warn!("Queue cleanup reactor lagged by {} events", n);
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        break;
-                    }
-                }
-            }
-        });
-    }
+    // Start the shared prompt cleanup reactor + stuck-worker watchdog.
+    // These are idempotent (guarded by web_state.app.cleanup_reactors_started)
+    // so calling start_server multiple times (or from both desktop and browser
+    // modes) won't spawn duplicates.
+    spawn_prompt_cleanup_reactor(web_state.app.clone());
+    spawn_stuck_worker_watchdog(web_state.app.clone());
 
     // Spawn held-prompt drain reactor — when a prompt finishes, submits the next
     // held prompt to ComfyUI (one per user at a time, round-robin fair).
@@ -625,56 +541,8 @@ pub async fn start_server(
         });
     }
 
-    // Stuck-worker watchdog — every 60s, check for workers that have been
-    // reserved (running) for longer than 10 minutes without a corresponding
-    // queue entry. This catches cases where the WebSocket completion event
-    // was missed, leaving a worker permanently stuck.
-    {
-        let watchdog_state = web_state.app.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-            let max_stuck_secs = 600u64; // 10 minutes
-            loop {
-                interval.tick().await;
-                for worker in &watchdog_state.gpu_manager.workers {
-                    let status = *worker.status.read().await;
-                    let reserved = worker.reserved.load(std::sync::atomic::Ordering::Acquire);
-                    if status == crate::comfyui::gpu_manager::WorkerStatus::Running && reserved {
-                        // Check if any prompt in the queue is assigned to this worker
-                        let has_active_prompt = {
-                            let wmap = watchdog_state.prompt_queue.worker_map_snapshot();
-                            wmap.values().any(|&wid| wid == worker.id)
-                        };
-                        if !has_active_prompt {
-                            // Worker is reserved but has no tracked prompt — check how long
-                            let last_released = worker
-                                .last_released
-                                .load(std::sync::atomic::Ordering::Acquire);
-                            let now_ms = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis() as u64;
-                            // If last_released is 0, worker was never released (started stuck)
-                            let stuck_secs = if last_released == 0 {
-                                now_ms / 1000
-                            } else {
-                                (now_ms.saturating_sub(last_released)) / 1000
-                            };
-                            if stuck_secs > max_stuck_secs {
-                                log::warn!(
-                                    "[watchdog] Releasing stuck worker {} (GPU {}, stuck {}s, no queue entry)",
-                                    worker.id,
-                                    worker.gpu_index,
-                                    stuck_secs,
-                                );
-                                watchdog_state.gpu_manager.mark_worker_idle(worker.id).await;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-    }
+    // Stuck-worker watchdog is spawned by spawn_stuck_worker_watchdog() at
+    // the top of this function.
 
     // Periodic image expiry cleanup — delete images older than 7 days (every 30 min).
     {
@@ -1167,9 +1035,41 @@ async fn gallery_image_handler(
     let file_path = gallery_dir.join(&filename);
     match tokio::fs::read(&file_path).await {
         Ok(data) => {
-            let content_type = if filename.ends_with(".webp") {
+            let lower = filename.to_ascii_lowercase();
+            // JXL: decode and transcode to lossless WebP so WebView2 / Chromium
+            // (which don't ship with a JXL decoder) can still render the image.
+            // The canonical `.jxl` file on disk is untouched.
+            if lower.ends_with(".jxl") {
+                let transcode = tokio::task::spawn_blocking(move || {
+                    commands::api::transcode_jxl_to_webp(&data)
+                })
+                .await;
+                return match transcode {
+                    Ok(Ok(webp)) => (
+                        StatusCode::OK,
+                        [
+                            ("content-type", "image/webp".to_string()),
+                            ("cache-control", "no-cache".to_string()),
+                        ],
+                        webp,
+                    )
+                        .into_response(),
+                    Ok(Err(e)) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("JXL transcode failed: {}", e),
+                    )
+                        .into_response(),
+                    Err(e) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("JXL transcode task panicked: {}", e),
+                    )
+                        .into_response(),
+                };
+            }
+
+            let content_type = if lower.ends_with(".webp") {
                 "image/webp"
-            } else if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
+            } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
                 "image/jpeg"
             } else {
                 "image/png"
@@ -1219,10 +1119,51 @@ async fn temp_image_handler(
 
     match crate::temp_images::load(&filename) {
         Some(data) => {
-            let content_type = if filename.ends_with(".png") {
+            let lower = filename.to_ascii_lowercase();
+            let want_webp = query.split('&').any(|p| p == "format=webp");
+            let want_raw = query.split('&').any(|p| p == "raw=true");
+
+            // JXL has no native browser support on WebView2 / Chromium. Transcode
+            // on request (or unconditionally for JXL in all current browsers).
+            // Skip transcoding when ?raw=true is requested (for gallery save).
+            if !want_raw && (lower.ends_with(".jxl") || want_webp) {
+                let needs_transcode =
+                    lower.ends_with(".jxl") || (want_webp && !lower.ends_with(".webp"));
+                if needs_transcode {
+                    let transcode = tokio::task::spawn_blocking(move || {
+                        commands::api::transcode_jxl_to_webp(&data)
+                    })
+                    .await;
+                    return match transcode {
+                        Ok(Ok(webp)) => (
+                            StatusCode::OK,
+                            [
+                                ("content-type", "image/webp".to_string()),
+                                ("cache-control", "no-store".to_string()),
+                            ],
+                            webp,
+                        )
+                            .into_response(),
+                        Ok(Err(e)) => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("JXL transcode failed: {}", e),
+                        )
+                            .into_response(),
+                        Err(e) => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("JXL transcode task panicked: {}", e),
+                        )
+                            .into_response(),
+                    };
+                }
+            }
+
+            let content_type = if lower.ends_with(".png") {
                 "image/png"
-            } else if filename.ends_with(".webp") {
+            } else if lower.ends_with(".webp") {
                 "image/webp"
+            } else if lower.ends_with(".jxl") {
+                "image/jxl"
             } else {
                 "image/jpeg"
             };
@@ -1280,15 +1221,28 @@ async fn embed_temp_metadata_handler(
     };
 
     let embed_mode = crate::metadata::MetadataMode::from_str(metadata_mode);
-    let embedded = match crate::metadata::embed_png_metadata(&bytes, &metadata, embed_mode) {
-        Ok(b) => b,
-        Err(e) => {
-            log::warn!("embed_temp_metadata failed: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response();
+    let detected_format = crate::metadata::detect_format(&bytes);
+
+    let (embedded, out_ext) = match detected_format {
+        crate::metadata::ImageFormat::Jxl => {
+            match crate::metadata::embed_jxl_metadata(&bytes, &metadata) {
+                Ok(b) => (b, "jxl"),
+                Err(e) => {
+                    log::warn!("embed_temp_metadata (JXL) failed: {}", e);
+                    return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response();
+                }
+            }
         }
+        _ => match crate::metadata::embed_png_metadata(&bytes, &metadata, embed_mode) {
+            Ok(b) => (b, "png"),
+            Err(e) => {
+                log::warn!("embed_temp_metadata (PNG) failed: {}", e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response();
+            }
+        },
     };
 
-    match crate::temp_images::save(&embedded, "png") {
+    match crate::temp_images::save(&embedded, out_ext) {
         Some(new_filename) => {
             let json = serde_json::json!({ "tempFilename": new_filename });
             axum::Json(json).into_response()
@@ -1452,7 +1406,7 @@ async fn dispatch_command(
             let new_config: crate::config::AppConfig =
                 serde_json::from_value(args["config"].clone())
                     .map_err(|e| format!("Invalid config: {}", e))?;
-            config::save_config(&new_config).map_err(|e| e)?;
+            config::save_config(&new_config)?;
             let mut current = state.config.write().await;
             *current = new_config;
             Ok(serde_json::json!(null))
@@ -1467,7 +1421,7 @@ async fn dispatch_command(
                 // Step 1: Save config
                 let mut cfg = state.config.write().await;
                 cfg.browser_mode = false;
-                config::save_config(&cfg).map_err(|e| e)?;
+                config::save_config(&cfg)?;
                 drop(cfg);
 
                 // Step 2: Disarm heartbeat watchdog
@@ -1654,6 +1608,31 @@ async fn dispatch_command(
             };
             resolve(&mut running);
             resolve(&mut pending);
+            // Include tracked placeholders that haven't been submitted to a
+            // ComfyUI worker yet (background submission in flight, or held in
+            // the fair queue). Without this, the frontend reconciler falsely
+            // concludes these prompts have vanished and clears them
+            // immediately after the user clicks generate.
+            let known: std::collections::HashSet<String> = running
+                .iter()
+                .chain(pending.iter())
+                .filter_map(|e| {
+                    e.as_array()
+                        .and_then(|a| a.get(1))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+                .collect();
+            let tracked: Vec<String> = {
+                let q = state.prompt_queue.queue.read().unwrap();
+                q.iter().map(|(pid, _)| pid.clone()).collect()
+            };
+            for pid in tracked {
+                if !known.contains(&pid) {
+                    pending.push(serde_json::json!([0, pid, {}, {}, []]));
+                }
+            }
+
             // Check if caller is privileged (admin or moderator) — can see usernames.
             // username=None means localhost (always admin).
             let is_privileged = match username {
@@ -2923,7 +2902,7 @@ async fn dispatch_command(
                                 "url": url,
                                 "width": img.get("width").and_then(|w| w.as_u64()),
                                 "height": img.get("height").and_then(|h| h.as_u64()),
-                                "nsfw": img.get("nsfwLevel").and_then(|n| n.as_u64()).map(|n| if n <= 1 { "None" } else { &"Level" }),
+                                "nsfw": img.get("nsfwLevel").and_then(|n| n.as_u64()).map(|n| if n <= 1 { "None" } else { "Level" }),
                             })
                         })
                     }).collect();
@@ -2983,7 +2962,7 @@ async fn dispatch_command(
             let resolved = if trimmed.is_empty() {
                 let mut cfg = state.config.write().await;
                 cfg.gallery_path = None;
-                config::save_config(&cfg).map_err(|e| e)?;
+                config::save_config(&cfg)?;
                 let dir = config::app_data_dir()
                     .ok_or("Cannot find app data directory")?
                     .join("gallery");
@@ -2995,7 +2974,7 @@ async fn dispatch_command(
                     .map_err(|e| format!("Cannot create gallery directory: {}", e))?;
                 let mut cfg = state.config.write().await;
                 cfg.gallery_path = Some(trimmed.clone());
-                config::save_config(&cfg).map_err(|e| e)?;
+                config::save_config(&cfg)?;
                 trimmed
             };
             Ok(serde_json::json!(resolved))
@@ -3921,7 +3900,7 @@ fn dir_usage_bytes(dir: &std::path::Path) -> u64 {
         .map(|entries| {
             entries
                 .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().ok().map_or(false, |ft| ft.is_file()))
+                .filter(|e| e.file_type().ok().is_some_and(|ft| ft.is_file()))
                 .filter_map(|e| e.metadata().ok().map(|m| m.len()))
                 .sum()
         })
@@ -3969,7 +3948,7 @@ async fn storage_info_handler(
     if gallery_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(&gallery_dir) {
             for entry in entries.flatten() {
-                if entry.file_type().ok().map_or(true, |ft| !ft.is_file()) {
+                if entry.file_type().ok().is_none_or(|ft| !ft.is_file()) {
                     continue;
                 }
                 let name = entry.file_name().to_string_lossy().into_owned();
@@ -4092,7 +4071,7 @@ fn cleanup_expired_images(auth: &AuthState) {
     };
 
     for dir_entry in user_dirs.flatten() {
-        if !dir_entry.file_type().ok().map_or(false, |ft| ft.is_dir()) {
+        if !dir_entry.file_type().ok().is_some_and(|ft| ft.is_dir()) {
             continue;
         }
         let user_dir = dir_entry.path();
@@ -4104,7 +4083,7 @@ fn cleanup_expired_images(auth: &AuthState) {
         let mut expired_count = 0_u64;
         let mut expired_bytes = 0_u64;
         for file_entry in files.flatten() {
-            if file_entry.file_type().ok().map_or(true, |ft| !ft.is_file()) {
+            if file_entry.file_type().ok().is_none_or(|ft| !ft.is_file()) {
                 continue;
             }
             let name = file_entry.file_name().to_string_lossy().into_owned();

@@ -125,10 +125,13 @@
   }
 
   /** Prefer the real backend URL (supports right-click → Save with metadata)
-   *  once persistence completes — fall back to the blob URL for previews. */
+   *  once persistence completes — fall back to the blob URL for previews.
+   *  For JXL gallery files, always use the blob URL: WebView2 cannot natively
+   *  decode JXL so the gallery:// URL would render nothing. */
   const previewSrc = $derived.by(() => {
     const saved = getActiveSavedImage();
-    if (saved?.fullImageUrl) return saved.fullImageUrl;
+    const isJxlGallery = saved?.gallery_filename?.endsWith(".jxl") ?? false;
+    if (saved?.fullImageUrl && !isJxlGallery) return saved.fullImageUrl;
     return progress.displayImage;
   });
 

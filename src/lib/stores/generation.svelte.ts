@@ -164,6 +164,7 @@ class GenerationStore {
   facefixGuideSize = $state(512);
   facefixMaxFaces = $state(8);
   outputBitDepth = $state<"8bit" | "16bit">("8bit");
+  outputFormat = $state<"png" | "jxl">("png");
   metadataMode = $state<"text_chunk" | "stealth" | "both">("both");
   autoQualityTags = $state(true);
   customAnimaPositiveQuality = $state(DEFAULT_ANIMA_POSITIVE_QUALITY);
@@ -670,6 +671,7 @@ class GenerationStore {
         if (saved.facefixGuideSize !== undefined) this.facefixGuideSize = saved.facefixGuideSize;
         if (saved.facefixMaxFaces !== undefined) this.facefixMaxFaces = saved.facefixMaxFaces;
         if (saved.outputBitDepth) this.outputBitDepth = saved.outputBitDepth;
+        if (saved.outputFormat === "png" || saved.outputFormat === "jxl") this.outputFormat = saved.outputFormat;
         if (saved.metadataMode) this.metadataMode = saved.metadataMode;
         if (saved.autoQualityTags !== undefined) this.autoQualityTags = saved.autoQualityTags;
         if (saved.customAnimaPositiveQuality !== undefined) this.customAnimaPositiveQuality = saved.customAnimaPositiveQuality;
@@ -748,6 +750,7 @@ class GenerationStore {
         facefixGuideSize: this.facefixGuideSize,
         facefixMaxFaces: this.facefixMaxFaces,
         outputBitDepth: this.outputBitDepth,
+        outputFormat: this.outputFormat,
         metadataMode: this.metadataMode,
         autoQualityTags: this.autoQualityTags,
         customAnimaPositiveQuality: this.customAnimaPositiveQuality,
@@ -900,6 +903,7 @@ class GenerationStore {
       facefix_max_faces: this.facefixMaxFaces,
       model_architecture: this.detectedArchitecture,
       output_bit_depth: this.outputBitDepth,
+      output_format: this.outputFormat,
     };
   }
 

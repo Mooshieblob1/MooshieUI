@@ -361,6 +361,30 @@ pub async fn save_to_gallery_bytes(
     )
 }
 
+/// Save a temp image to the gallery (avoids re-serialising large byte arrays
+/// through the IPC bridge — the temp file is already on disk).
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn save_to_gallery_temp(
+    temp_filename: String,
+    filename: String,
+    prompt_id: String,
+    mode: Option<String>,
+    metadata: Option<std::collections::HashMap<String, String>>,
+    metadata_mode: Option<String>,
+) -> Result<String, AppError> {
+    let bytes = crate::temp_images::load(&temp_filename)
+        .ok_or_else(|| AppError::Other(format!("Temp image not found: {}", temp_filename)))?;
+    save_to_gallery_inner(
+        &bytes,
+        &filename,
+        &prompt_id,
+        mode.as_deref(),
+        metadata.as_ref(),
+        metadata_mode.as_deref(),
+    )
+}
+
 pub fn save_to_gallery_inner(
     bytes: &[u8],
     filename: &str,
@@ -380,13 +404,25 @@ pub fn save_to_gallery_inner(
         _ => "unknown",
     };
 
-    let gallery_filename = format!("{}__{}__{}", prompt_id, normalized_mode, filename);
+    // Gallery filename uses the detected container extension, not whatever
+    // the frontend guessed. This keeps PNG / JXL gallery files honest even if
+    // the caller passed a stale filename.
+    let detected_format = crate::metadata::detect_format(bytes);
+    let base = match filename.rsplit_once('.') {
+        Some((stem, _)) => stem,
+        None => filename,
+    };
+    let ext = match detected_format {
+        crate::metadata::ImageFormat::Jxl => "jxl",
+        _ => "png",
+    };
+    let gallery_filename = format!("{}__{}__{}.{}", prompt_id, normalized_mode, base, ext);
     let path = dir.join(&gallery_filename);
 
     let raw_mode = metadata_mode.unwrap_or("text_chunk");
     let mut embed_mode = crate::metadata::MetadataMode::from_str(raw_mode);
 
-    if filename.to_ascii_lowercase().ends_with(".png")
+    if matches!(detected_format, crate::metadata::ImageFormat::Png)
         && embed_mode == crate::metadata::MetadataMode::StealthAlpha
     {
         match crate::metadata::is_png_16bit(bytes) {
@@ -407,30 +443,42 @@ pub fn save_to_gallery_inner(
     }
 
     log::info!(
-        "save_to_gallery_inner: metadata_mode={:?}, effective_embed_mode={:?}, has_metadata={}",
+        "save_to_gallery_inner: format={:?}, metadata_mode={:?}, effective_embed_mode={:?}, has_metadata={}",
+        detected_format,
         raw_mode,
         embed_mode,
         metadata.is_some()
     );
 
-    // If metadata provided and file is PNG, embed it
+    // If metadata provided, embed it using the format-appropriate mechanism.
     let final_bytes = if let Some(meta) = metadata {
-        if filename.to_ascii_lowercase().ends_with(".png") {
-            match crate::metadata::embed_png_metadata(bytes, meta, embed_mode) {
-                Ok(embedded) => embedded,
-                Err(e) => {
-                    log::warn!("Failed to embed metadata: {}, saving without", e);
-                    bytes.to_vec()
+        match detected_format {
+            crate::metadata::ImageFormat::Png => {
+                match crate::metadata::embed_png_metadata(bytes, meta, embed_mode) {
+                    Ok(embedded) => embedded,
+                    Err(e) => {
+                        log::warn!("Failed to embed PNG metadata: {}, saving without", e);
+                        bytes.to_vec()
+                    }
                 }
             }
-        } else {
-            bytes.to_vec()
+            crate::metadata::ImageFormat::Jxl => {
+                match crate::metadata::embed_jxl_metadata(bytes, meta) {
+                    Ok(embedded) => embedded,
+                    Err(e) => {
+                        log::warn!("Failed to embed JXL metadata: {}, saving without", e);
+                        bytes.to_vec()
+                    }
+                }
+            }
+            crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {
         bytes.to_vec()
     };
 
     std::fs::write(&path, &final_bytes)?;
+    crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
     Ok(gallery_filename)
 }
 
@@ -443,7 +491,7 @@ pub async fn read_image_metadata(
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let path = dir.join(&filename);
     let bytes = std::fs::read(&path)?;
-    crate::metadata::read_png_metadata(&bytes).map_err(AppError::Other)
+    crate::metadata::read_image_metadata(&bytes).map_err(AppError::Other)
 }
 
 #[cfg(feature = "desktop")]
@@ -451,7 +499,7 @@ pub async fn read_image_metadata(
 pub async fn read_image_metadata_bytes(
     image_bytes: Vec<u8>,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
-    crate::metadata::read_png_metadata(&image_bytes).map_err(AppError::Other)
+    crate::metadata::read_image_metadata(&image_bytes).map_err(AppError::Other)
 }
 
 #[cfg(feature = "desktop")]
@@ -460,7 +508,7 @@ pub async fn read_image_metadata_path(
     path: String,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
     let bytes = std::fs::read(&path)?;
-    crate::metadata::read_png_metadata(&bytes).map_err(AppError::Other)
+    crate::metadata::read_image_metadata(&bytes).map_err(AppError::Other)
 }
 
 #[cfg(feature = "desktop")]
@@ -479,6 +527,7 @@ pub async fn list_gallery_images() -> Result<Vec<String>, AppError> {
                 || name.ends_with(".jpg")
                 || name.ends_with(".jpeg")
                 || name.ends_with(".webp")
+                || name.ends_with(".jxl")
             {
                 Some((entry.metadata().ok()?.modified().ok()?, name))
             } else {
@@ -506,7 +555,8 @@ pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppE
             if !(name.ends_with(".png")
                 || name.ends_with(".jpg")
                 || name.ends_with(".jpeg")
-                || name.ends_with(".webp"))
+                || name.ends_with(".webp")
+                || name.ends_with(".jxl"))
             {
                 return None;
             }
@@ -543,6 +593,70 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
     Ok(bytes)
 }
 
+/// Load a gallery image and encode as PNG. JXL files are decoded via jxl-oxide
+/// and re-encoded as PNG. Used when copying/saving/downloading — PNG is the
+/// portable export format that supports metadata embedding.
+#[tauri::command]
+pub async fn load_gallery_image_png(filename: String) -> Result<Vec<u8>, AppError> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(AppError::Other("Invalid filename".into()));
+    }
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    let path = dir.join(&filename);
+    let bytes = std::fs::read(&path)?;
+    if filename.ends_with(".jxl") {
+        let png = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+            let img = decode_gallery_image(&bytes)?;
+            let mut buf = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut buf, image::ImageFormat::Png)
+                .map_err(|e| format!("PNG encode failed: {}", e))?;
+            Ok(buf.into_inner())
+        })
+        .await
+        .map_err(|e| AppError::Other(format!("Task panicked: {}", e)))?
+        .map_err(AppError::Other)?;
+        Ok(png)
+    } else {
+        Ok(bytes)
+    }
+}
+
+/// Load a gallery image for display in the UI. JXL files are transcoded to WebP
+/// so WebView2 (which cannot decode JXL natively) can render them.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn load_gallery_image_display(filename: String) -> Result<Vec<u8>, AppError> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(AppError::Other("Invalid filename".into()));
+    }
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    let path = dir.join(&filename);
+    let bytes = std::fs::read(&path)?;
+    if filename.ends_with(".jxl") {
+        let webp = tokio::task::spawn_blocking(move || transcode_jxl_to_webp(&bytes))
+            .await
+            .map_err(|e| AppError::Other(format!("Task panicked: {}", e)))?
+            .map_err(AppError::Other)?;
+        Ok(webp)
+    } else {
+        Ok(bytes)
+    }
+}
+
+/// Read a file from the temp_images directory.  Used by Tauri desktop mode to
+/// fetch JXL and display-copy (WebP/PNG) bytes after generation — avoids
+/// embedding multi-MB base64 blobs in Tauri events, which silently drops large
+/// payloads.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn read_temp_image(filename: String) -> Result<Vec<u8>, AppError> {
+    // Reuse the same path-traversal guard from temp_images::load.
+    crate::temp_images::load(&filename)
+        .ok_or_else(|| AppError::Other(format!("Temp image not found: {}", filename)))
+}
+
 /// Generate a WebP thumbnail for a gallery image. Used by the `thumbnail://` protocol.
 pub fn generate_thumbnail(
     gallery_dir: &std::path::Path,
@@ -556,8 +670,7 @@ pub fn generate_thumbnail(
     let path = gallery_dir.join(filename);
     let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;
 
-    let img = image::load_from_memory(&bytes).map_err(|e| format!("Decode failed: {}", e))?;
-
+    let img = decode_gallery_image(&bytes)?;
     let thumb = img.thumbnail(max_size, max_size);
 
     let mut buf = std::io::Cursor::new(Vec::new());
@@ -565,6 +678,32 @@ pub fn generate_thumbnail(
         .write_to(&mut buf, image::ImageFormat::WebP)
         .map_err(|e| format!("Encode failed: {}", e))?;
 
+    Ok(buf.into_inner())
+}
+
+/// Decode a gallery image (PNG or JXL) into an in-memory `DynamicImage`.
+/// PNGs go through the `image` crate; JXL is decoded by `jxl-oxide` and
+/// promoted to RGBA8 before being wrapped as a `DynamicImage`.
+pub fn decode_gallery_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    match crate::metadata::detect_format(bytes) {
+        crate::metadata::ImageFormat::Jxl => {
+            let decoded =
+                crate::jxl::decode_to_rgba8(bytes).map_err(|e| format!("JXL decode: {}", e))?;
+            let buf = image::RgbaImage::from_raw(decoded.width, decoded.height, decoded.rgba)
+                .ok_or_else(|| "JXL decode produced mismatched buffer size".to_string())?;
+            Ok(image::DynamicImage::ImageRgba8(buf))
+        }
+        _ => image::load_from_memory(bytes).map_err(|e| format!("Decode failed: {}", e)),
+    }
+}
+
+/// Transcode JXL bytes to a lossless WebP suitable for serving to non-JXL
+/// browsers. Returns the WebP bytes.
+pub fn transcode_jxl_to_webp(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let img = decode_gallery_image(bytes)?;
+    let mut buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut buf, image::ImageFormat::WebP)
+        .map_err(|e| format!("WebP encode failed: {}", e))?;
     Ok(buf.into_inner())
 }
 
@@ -592,6 +731,7 @@ pub async fn delete_gallery_image(filename: String) -> Result<(), AppError> {
     if path.exists() {
         std::fs::remove_file(&path)?;
     }
+    crate::gallery_index::remove(&path);
     Ok(())
 }
 
@@ -920,7 +1060,7 @@ fn native_clipboard_read() -> Result<Vec<u8>, AppError> {
             }
         }
         let _ = std::fs::remove_file(&tmp_path);
-        return Err(AppError::Other("No image in clipboard".into()));
+        Err(AppError::Other("No image in clipboard".into()))
     }
 }
 
@@ -2451,7 +2591,7 @@ pub async fn import_image_directory(
         }
 
         // Emit progress every 50 files or on last file
-        if imported % 50 == 0 || i as u32 + 1 == total {
+        if imported.is_multiple_of(50) || i as u32 + 1 == total {
             let _ = app.emit(
                 "import_progress",
                 serde_json::json!({

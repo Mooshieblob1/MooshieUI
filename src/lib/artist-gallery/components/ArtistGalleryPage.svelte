@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { createArtistGalleryStore, type ArtistSortField, type ArtistSortDir, type ArtistPageSize } from "../store.svelte.js";
   import { artistFavourites } from "../favourites.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import type { ArtistSearchHit } from "../types.js";
   import ArtistLightbox from "./ArtistLightbox.svelte";
   import FavouritesManager from "./FavouritesManager.svelte";
@@ -389,16 +390,15 @@
   <header class="flex-none border-b border-neutral-800 bg-neutral-900/60 px-4 py-3">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h1 class="text-lg font-semibold">Artist Gallery</h1>
+        <h1 class="text-lg font-semibold">{locale.t('artist_gallery.title')}</h1>
         <p class="text-xs text-neutral-500">
           {#if store.manifest}
-            {store.manifest.artistsWithImage.toLocaleString()} artists ·
-            Anima preview · release {store.manifest.releasePrefix} ·
-            <button type="button" class="underline hover:text-neutral-300" onclick={() => showGenParams = true}>ℹ gen params</button>
+            {locale.t('artist_gallery.subtitle', { count: store.manifest.artistsWithImage.toLocaleString(), release: store.manifest.releasePrefix })}
+            <button type="button" class="underline hover:text-neutral-300" onclick={() => showGenParams = true}>{locale.t('artist_gallery.gen_params_btn')}</button>
           {:else if store.manifestError}
-            <span class="text-red-400">failed to load: {store.manifestError}</span>
+            <span class="text-red-400">{locale.t('artist_gallery.manifest_error', { error: store.manifestError })}</span>
           {:else}
-            loading manifest…
+            {locale.t('artist_gallery.loading_manifest')}
           {/if}
         </p>
       </div>
@@ -407,7 +407,7 @@
       <div class="relative w-full max-w-sm">
         <input
           type="search"
-          placeholder="Search artist tag…"
+          placeholder={locale.t('artist_gallery.search_placeholder')}
           value={queryInput}
           oninput={(e) => onSearchInput(e.currentTarget.value)}
           class="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
@@ -422,28 +422,28 @@
     {#if store.manifest}
       <div class="mt-3 flex flex-wrap items-center gap-2">
         <div class="flex items-center gap-0.5 rounded-lg border border-neutral-800 bg-neutral-900/50 p-1">
-          <span class="px-1.5 text-xs text-neutral-500">Sort:</span>
+          <span class="px-1.5 text-xs text-neutral-500">{locale.t('artist_gallery.sort_label')}</span>
           <button
             type="button"
             class="rounded px-2 py-0.5 text-xs transition-colors {sortField === 'postCount' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
             onclick={() => setSort('postCount')}
           >
-            Post Count
+            {locale.t('artist_gallery.sort_post_count')}
           </button>
           <button
             type="button"
             class="rounded px-2 py-0.5 text-xs transition-colors {sortField === 'name' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
             onclick={() => setSort('name')}
           >
-            Name
+            {locale.t('artist_gallery.sort_name')}
           </button>
           <button
             type="button"
             class="rounded px-2 py-0.5 text-xs transition-colors {sortField === 'uniqueness' ? 'bg-amber-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
             onclick={() => setSort('uniqueness')}
-            title="Surfaces hidden gems: artists with a distinctive style not yet overexposed"
+            title={locale.t('artist_gallery.sort_trending_title')}
           >
-            Unique
+            {locale.t('artist_gallery.sort_trending')}
           </button>
           <div class="mx-1 h-3 w-px shrink-0 bg-neutral-700"></div>
           {#if sortField === 'uniqueness'}
@@ -451,32 +451,32 @@
               type="button"
               class="rounded px-2 py-0.5 text-xs text-amber-400 transition-colors hover:text-amber-200"
               onclick={rotateUniqueness}
-              title="Reshuffle the uniqueness ranking to discover a fresh set of hidden gems"
+              title={locale.t('artist_gallery.sort_rotate_title')}
             >
-              ↻ Rotate
+              {locale.t('artist_gallery.sort_rotate')}
             </button>
           {:else}
             <button
               type="button"
               class="rounded px-2 py-0.5 text-xs transition-colors {sortDir === 'desc' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
               onclick={() => setDir('desc')}
-              title="Descending"
+              title={locale.t('artist_gallery.sort_desc_title')}
             >
-              ↓ Desc
+              {locale.t('artist_gallery.sort_desc')}
             </button>
             <button
               type="button"
               class="rounded px-2 py-0.5 text-xs transition-colors {sortDir === 'asc' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
               onclick={() => setDir('asc')}
-              title="Ascending"
+              title={locale.t('artist_gallery.sort_asc_title')}
             >
-              ↑ Asc
+              {locale.t('artist_gallery.sort_asc')}
             </button>
           {/if}
         </div>
 
         <div class="flex items-center gap-0.5 rounded-lg border border-neutral-800 bg-neutral-900/50 p-1">
-          <span class="px-1.5 text-xs text-neutral-500">Per page:</span>
+          <span class="px-1.5 text-xs text-neutral-500">{locale.t('artist_gallery.per_page_label')}</span>
           {#each PAGE_SIZES as size}
             <button
               type="button"
@@ -489,7 +489,7 @@
         </div>
 
         <div class="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900/50 px-2 py-1">
-          <span class="text-xs text-neutral-500">Size:</span>
+          <span class="text-xs text-neutral-500">{locale.t('artist_gallery.size_label')}</span>
           <input
             type="range"
             min="0"
@@ -504,38 +504,38 @@
           type="button"
           class="rounded-lg border px-2 py-1 text-xs transition-colors {showOnlyFavourites ? 'border-red-500 bg-red-950/50 text-red-300' : 'border-neutral-800 bg-neutral-900/50 text-neutral-400 hover:text-neutral-200'}"
           onclick={() => setShowOnlyFavourites(!showOnlyFavourites)}
-          title="Toggle favourites filter"
+          title={locale.t('artist_gallery.favourites_title')}
         >
-          {showOnlyFavourites ? '♥' : '♡'} Favourites{artistFavourites.count > 0 ? ` (${artistFavourites.count})` : ''}
+          {showOnlyFavourites ? '♥' : '♡'} {locale.t('artist_gallery.favourites_btn')}{artistFavourites.count > 0 ? ` (${artistFavourites.count})` : ''}
         </button>
 
         <button
           type="button"
           class="rounded-lg border border-neutral-800 bg-neutral-900/50 px-2 py-1 text-xs text-neutral-400 transition-colors hover:text-neutral-200"
           onclick={() => showFavouritesManager = true}
-          title="Manage categories, import/export favourites"
+          title={locale.t('artist_gallery.manage_title')}
         >
-          ⚙ Manage
+          {locale.t('artist_gallery.manage_btn')}
         </button>
       </div>
 
       {#if showOnlyFavourites}
         {@const counts = artistFavourites.countsByCategory}
         <div class="mt-2 flex flex-wrap items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-900/50 p-1">
-          <span class="px-1.5 text-xs text-neutral-500">Category:</span>
+          <span class="px-1.5 text-xs text-neutral-500">{locale.t('artist_gallery.category_label')}</span>
           <button
             type="button"
             class="rounded px-2 py-0.5 text-xs transition-colors {favouriteCategoryFilter === 'all' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
             onclick={() => setFavouriteCategoryFilter('all')}
           >
-            All ({artistFavourites.count})
+            {locale.t('artist_gallery.category_all', { count: artistFavourites.count })}
           </button>
           <button
             type="button"
             class="rounded px-2 py-0.5 text-xs transition-colors {favouriteCategoryFilter === '__uncat' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
             onclick={() => setFavouriteCategoryFilter('__uncat')}
           >
-            Uncategorised ({counts[''] ?? 0})
+            {locale.t('artist_gallery.category_uncat', { count: counts[''] ?? 0 })}
           </button>
           {#each artistFavourites.categories as cat (cat.id)}
             <button
@@ -557,16 +557,16 @@
   <div class="flex-1 overflow-y-auto" bind:this={scrollContainer}>
     {#if allError}
       <div class="p-8 text-center text-sm text-red-400">
-        Failed to load artists: {allError}
+        {locale.t('artist_gallery.load_error', { error: allError ?? '' })}
       </div>
     {:else if allLoading}
-      <div class="p-8 text-center text-sm text-neutral-500">loading artists…</div>
+      <div class="p-8 text-center text-sm text-neutral-500">{locale.t('artist_gallery.loading_artists')}</div>
     {:else}
       <p class="px-4 pt-2 text-xs text-neutral-500">
         {#if isSearching}
-          {store.searchLoading ? "Searching\u2026" : `${store.results.length.toLocaleString()} result${store.results.length === 1 ? '' : 's'} for "${queryInput}"`}
+          {store.searchLoading ? locale.t('artist_gallery.searching') : (store.results.length === 1 ? locale.t('artist_gallery.search_result_one', { query: queryInput }) : locale.t('artist_gallery.search_results', { count: store.results.length.toLocaleString(), query: queryInput }))}
         {:else}
-          Right-click a card or hover to copy its tag.
+          {locale.t('artist_gallery.hint_copy')}
         {/if}
       </p>
       {#if totalPages > 1 && !isSearching}
@@ -577,27 +577,27 @@
             disabled={safePage <= 1}
             onclick={() => goToPage(safePage - 1)}
           >
-            ← Prev
+            {locale.t('artist_gallery.prev')}
           </button>
           <button
             type="button"
             class="rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-300 transition-colors hover:border-amber-500"
             onclick={goToRandomPage}
-            title="Jump to a random page"
+            title={locale.t('artist_gallery.random_title')}
           >
-            ⚄ Random
+            {locale.t('artist_gallery.random')}
           </button>
           <span class="text-sm text-neutral-400">
-            Page {safePage} of {totalPages}
+            {locale.t('artist_gallery.page_of', { page: safePage, total: totalPages })}
             <span class="text-neutral-600">·</span>
-            {filteredEntries.length.toLocaleString()} artists
+            {locale.t('artist_gallery.artist_count', { count: filteredEntries.length.toLocaleString() })}
           </span>
           <div class="flex items-center gap-1">
             <input
               type="number"
               min="1"
               max={totalPages}
-              placeholder="pg #"
+              placeholder={locale.t('artist_gallery.page_placeholder')}
               value={pageInputValue}
               oninput={(e) => { pageInputValue = e.currentTarget.value; }}
               onkeydown={(e) => { if (e.key === 'Enter') commitPageInput(); }}
@@ -607,7 +607,7 @@
               type="button"
               class="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-300 transition-colors hover:border-indigo-500"
               onclick={commitPageInput}
-              title="Go to page"
+              title={locale.t('artist_gallery.go_to_page')}
             >↵</button>
           </div>
           <button
@@ -616,7 +616,7 @@
             disabled={safePage >= totalPages}
             onclick={() => goToPage(safePage + 1)}
           >
-            Next →
+            {locale.t('artist_gallery.next')}
           </button>
         </div>
       {/if}
@@ -635,7 +635,7 @@
             onclick={() => { void openHit(hit, i); }}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void openHit(hit, i); } }}
             oncontextmenu={(e) => { e.preventDefault(); void copyTag(hit.tag, hit.slug); }}
-            title="{hit.tag} · Right-click to copy tag"
+            title={locale.t('artist_gallery.card_title', { tag: hit.tag })}
           >
             <div class="relative aspect-3/4 w-full overflow-hidden rounded-t-lg bg-neutral-800">
               {#if url}
@@ -648,7 +648,7 @@
                 />
               {:else}
                 <div class="flex h-full w-full items-center justify-center text-xs text-neutral-500">
-                  no preview
+                  {locale.t('artist_gallery.no_preview')}
                 </div>
               {/if}
               {#if sortField === 'uniqueness'}
@@ -660,13 +660,13 @@
                 type="button"
                 class="absolute right-1 top-1 rounded border border-neutral-700 bg-neutral-900/90 px-1.5 py-0.5 text-[10px] text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100 hover:border-indigo-500"
                 onclick={(e) => { e.stopPropagation(); void copyTag(hit.tag, hit.slug); }}
-                aria-label="Copy tag"
+                aria-label={locale.t('artist_gallery.copy_tag_aria')}
               >
-                Copy
+                {locale.t('artist_gallery.copy_btn')}
               </button>
               {#if copiedSlug === hit.slug}
                 <div class="absolute inset-0 flex items-center justify-center bg-neutral-900/80">
-                  <span class="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-white">Copied!</span>
+                  <span class="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-white">{locale.t('artist_gallery.copied')}</span>
                 </div>
               {/if}
             </div>
@@ -680,8 +680,8 @@
                     class="flex h-4 w-4 items-center justify-center rounded-full border border-neutral-700 transition-transform hover:scale-110"
                     style={favCat ? `background-color: ${favCat.color}` : "background-color: transparent"}
                     onclick={(e) => openCategoryPicker(hit.slug, e)}
-                    aria-label={favCat ? `Category: ${favCat.name}. Click to change.` : "Assign category"}
-                    title={favCat ? `Category: ${favCat.name}` : "Assign category"}
+                    aria-label={favCat ? locale.t('artist_gallery.change_category_aria', { name: favCat.name }) : locale.t('artist_gallery.assign_category_aria')}
+                    title={favCat ? favCat.name : locale.t('artist_gallery.assign_category_aria')}
                   ></button>
                 {/if}
                 <button
@@ -689,8 +689,8 @@
                   class="text-sm leading-none transition-colors {isFav ? 'text-red-400' : 'text-neutral-600 hover:text-red-400'}"
                   onclick={(e) => toggleFavourite(hit.slug, e)}
                   oncontextmenu={(e) => openCategoryPicker(hit.slug, e)}
-                  aria-label={isFav ? 'Remove from favourites' : 'Add to favourites'}
-                  title={isFav ? 'Remove from favourites · right-click to categorise' : 'Add to favourites'}
+                  aria-label={isFav ? locale.t('artist_gallery.remove_fav_aria') : locale.t('artist_gallery.add_fav_aria')}
+                  title={isFav ? locale.t('artist_gallery.remove_fav_title') : locale.t('artist_gallery.add_fav_title')}
                 >
                   {isFav ? '♥' : '♡'}
                 </button>
@@ -699,7 +699,7 @@
                   <button
                     type="button"
                     class="fixed inset-0 z-40 cursor-default"
-                    aria-label="Close category picker"
+                    aria-label={locale.t('artist_gallery.close_cat_picker')}
                     onclick={(e) => { e.stopPropagation(); catPickerSlug = null; }}
                   ></button>
                   <div
@@ -713,7 +713,7 @@
                       onclick={(e) => { e.stopPropagation(); assignCategory(hit.slug, null); }}
                     >
                       <span class="h-2.5 w-2.5 rounded-full border border-neutral-700" aria-hidden="true"></span>
-                      Uncategorised
+                      {locale.t('artist_gallery.cat_uncategorised')}
                     </button>
                     {#each artistFavourites.categories as cat (cat.id)}
                       <button
@@ -733,7 +733,7 @@
                       class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-indigo-300 hover:bg-neutral-800"
                       onclick={(e) => { e.stopPropagation(); catPickerSlug = null; showFavouritesManager = true; }}
                     >
-                      ＋ New category…
+                      {locale.t('artist_gallery.cat_new')}
                     </button>
                   </div>
                 {/if}
@@ -753,27 +753,27 @@
             disabled={safePage <= 1}
             onclick={() => goToPage(safePage - 1)}
           >
-            ← Prev
+            {locale.t('artist_gallery.prev')}
           </button>
           <button
             type="button"
             class="rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-sm text-neutral-300 transition-colors hover:border-amber-500"
             onclick={goToRandomPage}
-            title="Jump to a random page"
+            title={locale.t('artist_gallery.random_title')}
           >
-            ⚄ Random
+            {locale.t('artist_gallery.random')}
           </button>
           <span class="text-sm text-neutral-400">
-            Page {safePage} of {totalPages}
+            {locale.t('artist_gallery.page_of', { page: safePage, total: totalPages })}
             <span class="text-neutral-600">·</span>
-            {filteredEntries.length.toLocaleString()} artists
+            {locale.t('artist_gallery.artist_count', { count: filteredEntries.length.toLocaleString() })}
           </span>
           <div class="flex items-center gap-1">
             <input
               type="number"
               min="1"
               max={totalPages}
-              placeholder="pg #"
+              placeholder={locale.t('artist_gallery.page_placeholder')}
               value={pageInputValue}
               oninput={(e) => { pageInputValue = e.currentTarget.value; }}
               onkeydown={(e) => { if (e.key === 'Enter') commitPageInput(); }}
@@ -783,7 +783,7 @@
               type="button"
               class="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-1 text-xs text-neutral-300 transition-colors hover:border-indigo-500"
               onclick={commitPageInput}
-              title="Go to page"
+              title={locale.t('artist_gallery.go_to_page')}
             >↵</button>
           </div>
           <button
@@ -792,7 +792,7 @@
             disabled={safePage >= totalPages}
             onclick={() => goToPage(safePage + 1)}
           >
-            Next →
+            {locale.t('artist_gallery.next')}
           </button>
         </div>
       {/if}
@@ -821,45 +821,45 @@
     class="fixed inset-0 z-200 flex items-center justify-center bg-black/80 backdrop-blur-sm"
     role="dialog"
     aria-modal="true"
-    aria-label="Generation parameters"
+    aria-label={locale.t('artist_gallery.gen_params.title')}
   >
-    <button type="button" class="absolute inset-0 h-full w-full cursor-default" aria-label="Close" onclick={() => showGenParams = false}></button>
+    <button type="button" class="absolute inset-0 h-full w-full cursor-default" aria-label={locale.t('artist_gallery.lightbox.close_aria')} onclick={() => showGenParams = false}></button>
     <div class="relative z-10 w-full max-w-lg rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
       <div class="mb-4 flex items-center justify-between">
-        <h2 class="text-sm font-semibold text-neutral-100">Preview Generation Parameters</h2>
-        <button type="button" class="text-neutral-500 hover:text-neutral-200 text-lg leading-none" onclick={() => showGenParams = false} aria-label="Close">✕</button>
+        <h2 class="text-sm font-semibold text-neutral-100">{locale.t('artist_gallery.gen_params.title')}</h2>
+        <button type="button" class="text-neutral-500 hover:text-neutral-200 text-lg leading-none" onclick={() => showGenParams = false} aria-label={locale.t('artist_gallery.lightbox.close_aria')}>✕</button>
       </div>
       <div class="space-y-3 text-xs text-neutral-400">
         <section>
-          <h3 class="mb-1 font-medium text-neutral-300">Model Stack</h3>
+          <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.model_stack')}</h3>
           <table class="w-full">
             <tbody>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">UNet</td><td class="text-neutral-200">Anima SDXL Base</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">Text Encoder</td><td class="text-neutral-200">CLIP-L + CLIP-G (SDXL dual)</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">VAE</td><td class="text-neutral-200">sdxl_vae.safetensors</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.unet')}</td><td class="text-neutral-200">Anima SDXL Base</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.text_encoder')}</td><td class="text-neutral-200">CLIP-L + CLIP-G (SDXL dual)</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.vae')}</td><td class="text-neutral-200">sdxl_vae.safetensors</td></tr>
             </tbody>
           </table>
         </section>
         <section>
-          <h3 class="mb-1 font-medium text-neutral-300">Sampler</h3>
+          <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.sampler_section')}</h3>
           <table class="w-full">
             <tbody>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">Sampler</td><td class="text-neutral-200">er_sde</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">Scheduler</td><td class="text-neutral-200">sgm_uniform</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">Steps</td><td class="text-neutral-200">30</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">CFG Scale</td><td class="text-neutral-200">4.0</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">Seed</td><td class="text-neutral-200">42</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">Resolution</td><td class="text-neutral-200">896 × 1152</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">Output</td><td class="text-neutral-200">WebP (lossy, q=85)</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.sampler')}</td><td class="text-neutral-200">er_sde</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.scheduler')}</td><td class="text-neutral-200">sgm_uniform</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.steps')}</td><td class="text-neutral-200">30</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.cfg_scale')}</td><td class="text-neutral-200">4.0</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.seed')}</td><td class="text-neutral-200">42</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.resolution')}</td><td class="text-neutral-200">896 × 1152</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.output')}</td><td class="text-neutral-200">WebP (lossy, q=85)</td></tr>
             </tbody>
           </table>
         </section>
         <section>
-          <h3 class="mb-1 font-medium text-neutral-300">Positive Prompt</h3>
+          <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.positive')}</h3>
           <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200">score_9, score_8_up, score_7_up, masterpiece, best quality, <span class="text-red-400">@artist_tag</span></p>
         </section>
         <section>
-          <h3 class="mb-1 font-medium text-neutral-300">Negative Prompt</h3>
+          <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.negative')}</h3>
           <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200">score_1, score_2, score_3, worst quality, low quality, blurry, watermark</p>
         </section>
       </div>

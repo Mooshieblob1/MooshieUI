@@ -154,10 +154,19 @@ pub struct GenerationParams {
     /// Output image bit depth — "8bit" (default) or "16bit"
     #[serde(default = "default_output_bit_depth")]
     pub output_bit_depth: String,
+    /// Storage format the Rust bridge will produce for this generation.
+    /// "png" (default, backward compatible) or "jxl" (raw pixels out of
+    /// ComfyUI, encoded to JPEG XL in the Tauri backend).
+    #[serde(default = "default_output_format")]
+    pub output_format: String,
 }
 
 fn default_output_bit_depth() -> String {
     "8bit".to_string()
+}
+
+fn default_output_format() -> String {
+    "png".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

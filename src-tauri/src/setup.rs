@@ -1461,16 +1461,13 @@ fn copy_dir_recursive_inner(
     skip_top_level: Option<&str>,
 ) -> std::io::Result<()> {
     if depth > MAX_COPY_DEPTH {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "Directory nesting exceeded {} levels — aborting to prevent infinite recursion. \
+        return Err(std::io::Error::other(format!(
+            "Directory nesting exceeded {} levels — aborting to prevent infinite recursion. \
                  Source '{}' may overlap with destination '{}'.",
-                MAX_COPY_DEPTH,
-                src.display(),
-                dst.display()
-            ),
-        ));
+            MAX_COPY_DEPTH,
+            src.display(),
+            dst.display()
+        )));
     }
     std::fs::create_dir_all(dst)?;
 

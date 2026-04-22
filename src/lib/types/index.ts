@@ -72,6 +72,8 @@ export interface GenerationParams {
   controlnet: ControlNetPayload | null;
   model_architecture: string;
   output_bit_depth: string;
+  /** Storage format for this generation: "png" (default) or "jxl". */
+  output_format: string;
 }
 
 export interface OutputImage {

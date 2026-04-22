@@ -5,6 +5,7 @@ export interface QueuedPrompt {
   mode: "txt2img" | "img2img" | "inpainting";
   wasUpscaled: boolean;
   params: GenerationParams;
+  enqueuedAt: number;
 }
 
 class ProgressStore {
@@ -205,6 +206,7 @@ class ProgressStore {
         mode,
         wasUpscaled,
         params: params!,
+        enqueuedAt: Date.now(),
       },
     ];
   }

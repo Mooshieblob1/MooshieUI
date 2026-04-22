@@ -9,6 +9,184 @@ use tokio_tungstenite::connect_async;
 use crate::error::AppError;
 use crate::state::AppState;
 
+/// Result of processing a MOOSHIE_OUTPUT_IMAGE (event_type 100) binary frame.
+struct ProcessedOutputImage {
+    format: &'static str, // "jxl" or "png"
+    ext: &'static str,    // file extension for the canonical image
+    bit_depth: u8,
+    image_bytes: Vec<u8>,           // encoded JXL or PNG bytes
+    display_bytes: Option<Vec<u8>>, // WebP or PNG display copy (for JXL only)
+    display_format: &'static str,   // "webp", "png", or "none"
+    encode_ms: u64,
+}
+
+/// Decode a MOOSHIE_OUTPUT_IMAGE binary frame (event_type 100) and, for raw RGBA
+/// payloads (format_tags 3/4), encode to JXL + a WebP/PNG display copy.
+/// Shared by the Tauri, headless, and multi-GPU WebSocket handlers.
+async fn process_output_image(data: &[u8]) -> Option<ProcessedOutputImage> {
+    if data.len() < 8 {
+        return None;
+    }
+    let format_tag = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+    let started = Instant::now();
+
+    let (out_format, out_ext, bit_depth, image_bytes, display_bytes, display_fmt): (
+        &'static str,
+        &'static str,
+        u8,
+        Vec<u8>,
+        Option<Vec<u8>>,
+        &'static str,
+    ) = match format_tag {
+        3 | 4 => {
+            // Raw RGBA pixels — encode to JXL + display copy
+            if data.len() < 16 {
+                log::warn!("MooshieSaveImage raw frame too small: len={}", data.len());
+                return None;
+            }
+            let width = u16::from_be_bytes([data[8], data[9]]) as u32;
+            let height = u16::from_be_bytes([data[10], data[11]]) as u32;
+            let channels = data[12];
+            let depth = data[13];
+            if channels != 4 || !(depth == 8 || depth == 16) {
+                log::warn!(
+                    "MooshieSaveImage raw header rejected: ch={} depth={}",
+                    channels,
+                    depth
+                );
+                return None;
+            }
+            let pixels = data[16..].to_vec();
+            let w = width;
+            let h = height;
+            let is_16 = depth == 16;
+            let result = tokio::task::spawn_blocking(move || {
+                let jxl = if is_16 {
+                    crate::jxl::encode_rgba16_lossless(&pixels, w, h)
+                } else {
+                    crate::jxl::encode_rgba8_lossless(&pixels, w, h)
+                };
+                let (display, display_fmt): (Option<Vec<u8>>, &'static str) =
+                    match crate::jxl::encode_rgba8_webp_from_raw(&pixels, w, h, is_16) {
+                        Ok(webp) => (Some(webp), "webp"),
+                        Err(e) => {
+                            log::warn!("WebP encode failed, falling back to PNG: {}", e);
+                            let png = if is_16 {
+                                crate::jxl::encode_rgba16_png(&pixels, w, h)
+                            } else {
+                                crate::jxl::encode_rgba8_png(&pixels, w, h)
+                            };
+                            match png {
+                                Ok(p) => (Some(p), "png"),
+                                Err(e2) => {
+                                    log::error!("PNG fallback also failed: {}", e2);
+                                    (None, "none")
+                                }
+                            }
+                        }
+                    };
+                jxl.map(|j| (j, display, display_fmt))
+            })
+            .await;
+            let (jxl_bytes, display_opt, disp_fmt) = match result {
+                Ok(Ok(triple)) => triple,
+                Ok(Err(e)) => {
+                    log::error!("JXL encode failed: {}", e);
+                    return None;
+                }
+                Err(e) => {
+                    log::error!("JXL encode task panicked: {}", e);
+                    return None;
+                }
+            };
+            (
+                "jxl",
+                "jxl",
+                if is_16 { 16 } else { 8 },
+                jxl_bytes,
+                display_opt,
+                disp_fmt,
+            )
+        }
+        2 => ("png", "png", 16, data[8..].to_vec(), None, "png"),
+        _ => ("png", "png", 8, data[8..].to_vec(), None, "png"),
+    };
+
+    let encode_ms = started.elapsed().as_millis() as u64;
+
+    if bit_depth == 16 && encode_ms > 500 {
+        log::warn!(
+            "Slow output WS payload processing: format={} encode_ms={} bytes={}",
+            out_format,
+            encode_ms,
+            image_bytes.len(),
+        );
+    }
+
+    Some(ProcessedOutputImage {
+        format: out_format,
+        ext: out_ext,
+        bit_depth,
+        image_bytes,
+        display_bytes,
+        display_format: display_fmt,
+        encode_ms,
+    })
+}
+
+/// Save the processed output image to temp files and build the SSE event payload.
+/// Shared by the headless and multi-GPU WebSocket handlers.
+fn build_sse_payload(img: &ProcessedOutputImage, prompt_id: &str) -> serde_json::Value {
+    let temp_filename = crate::temp_images::save(&img.image_bytes, img.ext);
+
+    // For JXL: save the pre-computed display copy (WebP/PNG) so the browser
+    // can show it directly without server-side transcoding.
+    let display_temp_filename: Option<String> = if img.format == "jxl" {
+        img.display_bytes.as_ref().and_then(|db| {
+            let ext = if img.display_format == "webp" {
+                "webp"
+            } else {
+                "png"
+            };
+            crate::temp_images::save(db, ext)
+        })
+    } else {
+        None
+    };
+
+    log::info!(
+        "output_image: format={} temp={:?} display_temp={:?} display_fmt={} bytes={} encode_ms={} prompt_id={}",
+        img.format, temp_filename, display_temp_filename, img.display_format,
+        img.image_bytes.len(), img.encode_ms, prompt_id,
+    );
+
+    if let Some(name) = temp_filename {
+        let mut payload = serde_json::json!({
+            "temp_filename": name,
+            "format": img.format,
+            "bit_depth": img.bit_depth,
+            "image_bytes": img.image_bytes.len(),
+            "encode_ms": img.encode_ms,
+            "prompt_id": prompt_id,
+        });
+        if let Some(ref disp) = display_temp_filename {
+            payload["display_temp_filename"] = serde_json::json!(disp);
+            payload["display_format"] = serde_json::json!(img.display_format);
+        }
+        payload
+    } else {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&img.image_bytes);
+        serde_json::json!({
+            "image": b64,
+            "format": img.format,
+            "bit_depth": img.bit_depth,
+            "image_bytes": img.image_bytes.len(),
+            "encode_ms": img.encode_ms,
+            "prompt_id": prompt_id,
+        })
+    }
+}
+
 #[cfg(feature = "desktop")]
 pub async fn connect_websocket(
     app_handle: AppHandle,
@@ -247,48 +425,102 @@ pub async fn connect_websocket(
                             }
                         }
                         100 => {
-                            // MOOSHIE_OUTPUT_IMAGE — full-res PNG from MooshieSaveImage
-                            // Layout: event_type(4) + format_tag(4) + image_data
-                            //   format_tag: 1 = 8-bit PNG, 2 = 16-bit PNG
-                            if data.len() < 8 {
-                                continue;
-                            }
-                            let format_tag =
-                                u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                            let started = Instant::now();
-                            let bit_depth = if format_tag == 2 { 16 } else { 8 };
-                            let image_data = &data[8..];
-                            let b64 = base64::engine::general_purpose::STANDARD.encode(image_data);
-                            let encode_ms = started.elapsed().as_millis() as u64;
+                            // MOOSHIE_OUTPUT_IMAGE — use shared processing function
                             let prompt_id_str = current_prompt_id.as_deref().unwrap();
+                            let img = match process_output_image(&data).await {
+                                Some(img) => img,
+                                None => continue,
+                            };
 
-                            if bit_depth == 16 && encode_ms > 250 {
-                                log::warn!(
-                                    "Slow 16-bit output WS payload processing: encode_ms={} bytes={} prompt_id={}",
-                                    encode_ms,
-                                    image_data.len(),
-                                    prompt_id_str,
-                                );
-                            }
+                            // Save canonical image to temp dir.
+                            let temp_filename = crate::temp_images::save(&img.image_bytes, img.ext);
 
-                            // Tauri: inline base64 (in-process, reliable)
-                            let tauri_payload = serde_json::json!({
-                                "image": b64,
-                                "bit_depth": bit_depth,
-                                "image_bytes": image_data.len(),
-                                "encode_ms": encode_ms,
-                                "prompt_id": prompt_id_str,
-                            });
+                            // For JXL: save the display copy (WebP/PNG) as a second temp file.
+                            let display_temp_filename: Option<String> = if img.format == "jxl" {
+                                img.display_bytes.as_ref().and_then(|db| {
+                                    let ext = if img.display_format == "webp" {
+                                        "webp"
+                                    } else {
+                                        "png"
+                                    };
+                                    crate::temp_images::save(db, ext)
+                                })
+                            } else {
+                                None
+                            };
 
-                            // SSE: save to temp file (avoids multi-MB SSE payload)
-                            let sse_payload = if let Some(temp_filename) =
-                                crate::temp_images::save(image_data, "png")
-                            {
+                            log::info!(
+                                "output_image: format={} jxl_temp={:?} display_temp={:?} display_fmt={} bytes={} display_bytes={}",
+                                img.format, temp_filename, display_temp_filename, img.display_format,
+                                img.image_bytes.len(),
+                                img.display_bytes.as_ref().map(|d| d.len()).unwrap_or(0),
+                            );
+
+                            // Tauri desktop: reference temp files only (no inline base64).
+                            // app.emit() silently drops events exceeding ~1-2 MB.
+                            let tauri_payload = if img.format == "jxl" {
+                                match (temp_filename.as_ref(), display_temp_filename.as_ref()) {
+                                    (Some(jxl_f), Some(disp_f)) => serde_json::json!({
+                                        "temp_filename": jxl_f,
+                                        "display_temp_filename": disp_f,
+                                        "format": "jxl",
+                                        "display_format": img.display_format,
+                                        "bit_depth": img.bit_depth,
+                                        "image_bytes": img.image_bytes.len(),
+                                        "encode_ms": img.encode_ms,
+                                        "prompt_id": prompt_id_str,
+                                    }),
+                                    (Some(jxl_f), None) => serde_json::json!({
+                                        "temp_filename": jxl_f,
+                                        "format": "jxl",
+                                        "bit_depth": img.bit_depth,
+                                        "image_bytes": img.image_bytes.len(),
+                                        "encode_ms": img.encode_ms,
+                                        "prompt_id": prompt_id_str,
+                                    }),
+                                    _ => {
+                                        let b64 = base64::engine::general_purpose::STANDARD
+                                            .encode(&img.image_bytes);
+                                        serde_json::json!({
+                                            "jxl_image": b64,
+                                            "format": "jxl",
+                                            "bit_depth": img.bit_depth,
+                                            "image_bytes": img.image_bytes.len(),
+                                            "encode_ms": img.encode_ms,
+                                            "prompt_id": prompt_id_str,
+                                        })
+                                    }
+                                }
+                            } else if let Some(ref tf) = temp_filename {
                                 serde_json::json!({
-                                    "temp_filename": temp_filename,
-                                    "bit_depth": bit_depth,
-                                    "image_bytes": image_data.len(),
-                                    "encode_ms": encode_ms,
+                                    "temp_filename": tf,
+                                    "format": img.format,
+                                    "bit_depth": img.bit_depth,
+                                    "image_bytes": img.image_bytes.len(),
+                                    "encode_ms": img.encode_ms,
+                                    "prompt_id": prompt_id_str,
+                                })
+                            } else {
+                                let b64 = base64::engine::general_purpose::STANDARD
+                                    .encode(&img.image_bytes);
+                                serde_json::json!({
+                                    "image": b64,
+                                    "format": img.format,
+                                    "bit_depth": img.bit_depth,
+                                    "image_bytes": img.image_bytes.len(),
+                                    "encode_ms": img.encode_ms,
+                                    "prompt_id": prompt_id_str,
+                                })
+                            };
+
+                            // SSE payload: always use temp filename
+                            let sse_payload = if let Some(name) = temp_filename {
+                                serde_json::json!({
+                                    "temp_filename": name,
+                                    "format": img.format,
+                                    "bit_depth": img.bit_depth,
+                                    "image_bytes": img.image_bytes.len(),
+                                    "encode_ms": img.encode_ms,
                                     "prompt_id": prompt_id_str,
                                 })
                             } else {
@@ -457,48 +689,12 @@ pub async fn connect_websocket_headless(
                             }
                         }
                         100 => {
-                            if data.len() < 8 {
-                                continue;
-                            }
-                            let format_tag =
-                                u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                            let started = Instant::now();
-                            let bit_depth = if format_tag == 2 { 16 } else { 8 };
-                            let image_data = &data[8..];
-                            let encode_ms = started.elapsed().as_millis() as u64;
                             let prompt_id_str = current_prompt_id.as_deref().unwrap();
-
-                            if bit_depth == 16 && encode_ms > 250 {
-                                log::warn!(
-                                    "Slow 16-bit output WS payload processing (headless): encode_ms={} bytes={} prompt_id={}",
-                                    encode_ms,
-                                    image_data.len(),
-                                    prompt_id_str,
-                                );
-                            }
-
-                            // Headless: always save to temp file (SSE-only path)
-                            let payload = if let Some(temp_filename) =
-                                crate::temp_images::save(image_data, "png")
-                            {
-                                serde_json::json!({
-                                    "temp_filename": temp_filename,
-                                    "bit_depth": bit_depth,
-                                    "image_bytes": image_data.len(),
-                                    "encode_ms": encode_ms,
-                                    "prompt_id": prompt_id_str,
-                                })
-                            } else {
-                                let b64 =
-                                    base64::engine::general_purpose::STANDARD.encode(image_data);
-                                serde_json::json!({
-                                    "image": b64,
-                                    "bit_depth": bit_depth,
-                                    "image_bytes": image_data.len(),
-                                    "encode_ms": encode_ms,
-                                    "prompt_id": prompt_id_str,
-                                })
+                            let img = match process_output_image(&data).await {
+                                Some(img) => img,
+                                None => continue,
                             };
+                            let payload = build_sse_payload(&img, prompt_id_str);
                             emit("comfyui:output_image", payload);
                         }
                         _ => {}
@@ -674,38 +870,12 @@ pub async fn connect_websocket_for_worker(
                             }
                         }
                         100 => {
-                            if data.len() < 8 {
-                                continue;
-                            }
-                            let format_tag =
-                                u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                            let started = Instant::now();
-                            let bit_depth = if format_tag == 2 { 16 } else { 8 };
-                            let image_data = &data[8..];
-                            let encode_ms = started.elapsed().as_millis() as u64;
                             let prompt_id_str = current_prompt_id.as_deref().unwrap();
-
-                            let payload = if let Some(temp_filename) =
-                                crate::temp_images::save(image_data, "png")
-                            {
-                                serde_json::json!({
-                                    "temp_filename": temp_filename,
-                                    "bit_depth": bit_depth,
-                                    "image_bytes": image_data.len(),
-                                    "encode_ms": encode_ms,
-                                    "prompt_id": prompt_id_str,
-                                })
-                            } else {
-                                let b64 =
-                                    base64::engine::general_purpose::STANDARD.encode(image_data);
-                                serde_json::json!({
-                                    "image": b64,
-                                    "bit_depth": bit_depth,
-                                    "image_bytes": image_data.len(),
-                                    "encode_ms": encode_ms,
-                                    "prompt_id": prompt_id_str,
-                                })
+                            let img = match process_output_image(&data).await {
+                                Some(img) => img,
+                                None => continue,
                             };
+                            let payload = build_sse_payload(&img, prompt_id_str);
                             emit("comfyui:output_image", payload);
                         }
                         _ => {}

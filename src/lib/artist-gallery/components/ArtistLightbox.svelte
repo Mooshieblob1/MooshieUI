@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ArtistEntry } from "../types.js";
   import { cachedSrc } from "../imageCache.js";
+  import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
     entry: ArtistEntry;
@@ -44,12 +45,12 @@
   class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
   role="dialog"
   aria-modal="true"
-  aria-label={`Artist preview: ${entry.tag}`}
+  aria-label={locale.t('artist_gallery.lightbox.aria', { tag: entry.tag })}
 >
   <button
     type="button"
     class="absolute inset-0 h-full w-full cursor-default"
-    aria-label="Close"
+    aria-label={locale.t('artist_gallery.lightbox.close_aria')}
     onclick={onclose}
   ></button>
 
@@ -60,7 +61,7 @@
         type="button"
         onclick={onprev}
         class="absolute -left-12 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/90 text-neutral-200 transition-colors hover:border-indigo-500 hover:text-white focus:outline-none"
-        aria-label="Previous artist"
+        aria-label={locale.t('artist_gallery.lightbox.prev_aria')}
       >
         ←
       </button>
@@ -70,7 +71,7 @@
         type="button"
         onclick={onnext}
         class="absolute -right-12 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/90 text-neutral-200 transition-colors hover:border-indigo-500 hover:text-white focus:outline-none"
-        aria-label="Next artist"
+        aria-label={locale.t('artist_gallery.lightbox.next_aria')}
       >
         →
       </button>
@@ -88,7 +89,7 @@
       <div
         class="flex aspect-3/4 w-[60vh] max-w-[92vw] items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900 text-sm text-neutral-500"
       >
-        no preview available
+        {locale.t('artist_gallery.lightbox.no_preview')}
       </div>
     {/if}
 
@@ -105,9 +106,9 @@
           {displayTag(entry.tag)}
         </a>
         <div class="mt-0.5 text-xs text-neutral-500">
-          {entry.postCount.toLocaleString()} posts
+          {locale.t('artist_gallery.lightbox.posts', { count: entry.postCount.toLocaleString() })}
           {#if entry.aliases.length > 0}
-            · aliases: {entry.aliases.map((a) => a.replace(/^@/, "")).join(", ")}
+            {locale.t('artist_gallery.lightbox.aliases', { list: entry.aliases.map((a) => a.replace(/^@/, "")).join(", ") })}
           {/if}
         </div>
       </div>
@@ -117,7 +118,7 @@
           class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-indigo-500 hover:bg-neutral-700"
           onclick={copyTag}
         >
-          Copy tag
+          {locale.t('artist_gallery.lightbox.copy_tag')}
         </button>
         {#if oninsertTag}
           <button
@@ -125,7 +126,7 @@
             class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-500"
             onclick={() => oninsertTag?.("@" + entry.tag.replace(/^@/, ""))}
           >
-            Insert into prompt
+            {locale.t('artist_gallery.lightbox.insert')}
           </button>
         {/if}
         <button
@@ -133,7 +134,7 @@
           class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-neutral-500"
           onclick={onclose}
         >
-          Close
+          {locale.t('artist_gallery.lightbox.close')}
         </button>
       </div>
     </div>

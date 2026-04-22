@@ -19,6 +19,11 @@ pub async fn generate(
     state: State<'_, Arc<AppState>>,
     params: GenerationParams,
 ) -> Result<GenerateResponse, AppError> {
+    // Clean up temp images from previous generations (> 5 min old).
+    // temp_images::init() already wipes the dir on startup; this handles
+    // accumulation within a long session.
+    crate::temp_images::cleanup(300);
+
     let seed = if params.seed < 0 {
         (rand::random::<u64>() >> 1) as i64
     } else {
@@ -26,7 +31,13 @@ pub async fn generate(
     };
 
     let workflow = templates::build_workflow(&params, seed);
-    if params.controlnet.as_ref().map_or(false, |cn| cn.enabled) || params.facefix_enabled {
+    log::info!(
+        "generate: output_format={}, output_bit_depth={}, mode={}",
+        params.output_format,
+        params.output_bit_depth,
+        params.mode,
+    );
+    if params.controlnet.as_ref().is_some_and(|cn| cn.enabled) || params.facefix_enabled {
         log::info!(
             "Workflow JSON: {}",
             serde_json::to_string_pretty(&workflow).unwrap_or_default()

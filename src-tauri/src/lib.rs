@@ -3,8 +3,10 @@ pub mod comfyui;
 pub mod commands;
 pub mod config;
 pub mod error;
+pub mod gallery_index;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod interrogator;
+pub mod jxl;
 pub mod metadata;
 #[cfg(feature = "desktop")]
 pub mod setup;
@@ -89,6 +91,12 @@ fn fix_wayland_appimage_env() {
 pub fn run() {
     use tauri::{Manager, RunEvent};
 
+    // Enable Rust log output in desktop mode (env_logger was only initialised
+    // in server_main.rs, so all log::info!/warn!/error! were no-ops here).
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
+
     // Fix WebKitGTK scroll jank and rendering glitches on NVIDIA + Wayland.
     // The DMA-BUF renderer is broken with NVIDIA proprietary drivers.
     #[cfg(target_os = "linux")]
@@ -118,6 +126,15 @@ pub fn run() {
         .setup(move |_app| {
             // Clean up and create temp image directory
             temp_images::init();
+
+            // Start the shared cleanup reactors unconditionally so workers
+            // get released after each prompt completes, even in pure Tauri
+            // desktop mode where the embedded web server is not started.
+            {
+                let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
+                webserver::spawn_prompt_cleanup_reactor(shared_state.clone());
+                webserver::spawn_stuck_worker_watchdog(shared_state);
+            }
 
             // Store the AppHandle so the web server can show/hide the window later.
             {
@@ -343,9 +360,13 @@ pub fn run() {
             commands::api::embed_png_metadata_bytes,
             commands::api::save_to_gallery,
             commands::api::save_to_gallery_bytes,
+            commands::api::save_to_gallery_temp,
             commands::api::list_gallery_images,
             commands::api::list_gallery_image_entries,
             commands::api::load_gallery_image,
+            commands::api::load_gallery_image_display,
+            commands::api::load_gallery_image_png,
+            commands::api::read_temp_image,
             commands::api::get_gallery_image_path,
             commands::api::delete_gallery_image,
             commands::api::rename_gallery_image,

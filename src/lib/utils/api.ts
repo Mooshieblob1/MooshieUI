@@ -340,6 +340,21 @@ export async function loadGalleryImage(filename: string): Promise<number[]> {
   return ipcInvoke("load_gallery_image", { filename });
 }
 
+/** Load a gallery image transcoded to WebP for display (JXL → WebP in Rust). */
+export async function loadGalleryImageDisplay(filename: string): Promise<number[]> {
+  return ipcInvoke("load_gallery_image_display", { filename });
+}
+
+/** Load a gallery image encoded as PNG (JXL → PNG in Rust). Used for copy/save/download. */
+export async function loadGalleryImagePng(filename: string): Promise<number[]> {
+  return ipcInvoke("load_gallery_image_png", { filename });
+}
+
+/** Read a file from the temp_images directory by filename (no path traversal). */
+export async function readTempImage(filename: string): Promise<number[]> {
+  return ipcInvoke("read_temp_image", { filename });
+}
+
 
 export async function deleteGalleryImage(filename: string): Promise<void> {
   return ipcInvoke("delete_gallery_image", { filename });

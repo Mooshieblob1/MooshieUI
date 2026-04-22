@@ -10,7 +10,7 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata, getQueue, recoverPromptOutputs } from "./lib/utils/api.js";
+  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
@@ -1072,17 +1072,20 @@
   ) {
     if (images.length === 0) return;
 
-    const newImages: OutputImage[] = images.map((img, i) => ({
-      filename: `${promptId}_${i}.png`,
-      subfolder: "",
-      type: "output",
-      prompt_id: promptId,
-      generation_mode: mode,
-      is_upscaled: wasUpscaled,
-      url: img.url,
-      file_size_bytes: img.blob.size,
-      generated_at_ms: Date.now(),
-    }));
+    const newImages: OutputImage[] = images.map((img, i) => {
+      const ext = img.blob.type === "image/jxl" ? "jxl" : "png";
+      return {
+        filename: `${promptId}_${i}.${ext}`,
+        subfolder: "",
+        type: "output",
+        prompt_id: promptId,
+        generation_mode: mode,
+        is_upscaled: wasUpscaled,
+        url: img.url,
+        file_size_bytes: img.blob.size,
+        generated_at_ms: Date.now(),
+      };
+    });
 
     gallery.addImages(newImages);
     progress.setLastOutputForMode(mode, newImages[0]?.url ?? null);
@@ -1109,6 +1112,7 @@
     // Pass blobs and temp filenames so persistImages can use the most efficient path
     const blobs = images.map((img) => img.blob);
     const tempFilenames = images.map((img) => img.tempFilename);
+    console.log("[finalizeOutputImages] images:", newImages.length, "blob[0].type:", blobs[0]?.type, "blob[0].size:", blobs[0]?.size, "filename[0]:", newImages[0]?.filename);
     gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
   }
 
@@ -1482,6 +1486,7 @@
         // must register the promise *synchronously* so that the executing
         // node=null handler can await it before consuming pendingOutputImages.
         const data = event.payload;
+        console.log("[output_image] event received — format:", data.format, "temp_filename:", data.temp_filename, "display_temp:", data.display_temp_filename, "jxl_image?:", !!data.jxl_image, "image?:", !!data.image, "isGenerating:", progress.isGenerating);
         if (!progress.isGenerating) return;
         // Filter by prompt_id — reject events for other users' prompts
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
@@ -1514,31 +1519,111 @@
           let blob: Blob;
           let url: string;
           let tempFilename: string | undefined;
+          const isJxl = data.format === "jxl";
 
           if (data.temp_filename) {
             tempFilename = data.temp_filename;
-            // SSE/browser path: fetch image from temp endpoint (avoids multi-MB SSE payloads)
             try {
-              const resp = await fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`, {
-                headers: authHeaders(),
-              });
-              if (!resp.ok) {
-                console.error("[output_image] failed to fetch temp image:", resp.status);
-                return;
+              if (isTauri) {
+                // Tauri desktop: no HTTP server — read temp files via invoke().
+                // For JXL the event also carries display_temp_filename (WebP/PNG copy).
+                if (isJxl) {
+                  const displayFilename = data.display_temp_filename as string | undefined;
+                  console.log("[output_image] JXL temp path — jxl:", data.temp_filename, "display:", displayFilename, "display_format:", data.display_format);
+                  const [jxlRaw, displayRaw] = await Promise.all([
+                    readTempImage(data.temp_filename),
+                    displayFilename ? readTempImage(displayFilename) : Promise.resolve(null as number[] | null),
+                  ]);
+                  console.log("[output_image] readTempImage done — jxlRaw:", jxlRaw?.length, "displayRaw:", displayRaw?.length ?? "null");
+                  blob = new Blob([new Uint8Array(jxlRaw)], { type: "image/jxl" });
+                  if (displayRaw && displayRaw.length > 0) {
+                    const displayMime = data.display_format === "webp" ? "image/webp" : "image/png";
+                    url = URL.createObjectURL(new Blob([new Uint8Array(displayRaw)], { type: displayMime }));
+                    console.log("[output_image] display blob URL created, mime:", displayMime, "size:", displayRaw.length);
+                  } else {
+                    // No display copy — reuse last preview frame for display
+                    url = progress.displayImage ?? "";
+                    console.log("[output_image] no display copy, using displayImage:", url ? "present" : "EMPTY");
+                  }
+                } else {
+                  const rawBytes = await readTempImage(data.temp_filename);
+                  blob = new Blob([new Uint8Array(rawBytes)], { type: "image/png" });
+                  url = URL.createObjectURL(blob);
+                }
+              } else {
+                // SSE/browser path: fetch image from temp endpoint (avoids multi-MB SSE payloads)
+                if (isJxl) {
+                  // Fetch raw JXL for gallery save (?raw=true skips transcoding)
+                  // and display copy (pre-built WebP/PNG from display_temp_filename,
+                  // or server-side transcode as fallback).
+                  const displayFilename = data.display_temp_filename as string | undefined;
+                  const displayUrl = displayFilename
+                    ? `/internal-api/_temp_image/${encodeURIComponent(displayFilename)}`
+                    : `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}?format=webp`;
+                  const [canonicalResp, displayResp] = await Promise.all([
+                    fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}?raw=true`, {
+                      headers: authHeaders(),
+                    }),
+                    fetch(displayUrl, { headers: authHeaders() }),
+                  ]);
+                  if (!canonicalResp.ok || !displayResp.ok) {
+                    console.error(
+                      "[output_image] JXL fetch failed:",
+                      canonicalResp.status,
+                      displayResp.status,
+                    );
+                    return;
+                  }
+                  blob = new Blob([await canonicalResp.arrayBuffer()], { type: "image/jxl" });
+                  const displayBlob = await displayResp.blob();
+                  url = URL.createObjectURL(displayBlob);
+                } else {
+                  const resp = await fetch(
+                    `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`,
+                    { headers: authHeaders() },
+                  );
+                  if (!resp.ok) {
+                    console.error("[output_image] failed to fetch temp image:", resp.status);
+                    return;
+                  }
+                  blob = await resp.blob();
+                  url = URL.createObjectURL(blob);
+                }
               }
-              blob = await resp.blob();
-              url = URL.createObjectURL(blob);
             } catch (e) {
-              console.error("[output_image] failed to fetch temp image:", e);
+              console.error("[output_image] failed to read temp image:", e);
               return;
             }
           } else if (data.image) {
-            // Tauri path: decode inline base64
+            // Tauri path: decode inline base64.
+            // For JXL output: `data.image` is the WebP display copy (WebView2
+            // can't decode JXL), and `data.jxl_image` is the canonical lossless
+            // JXL bytes for gallery saving. For PNG output: `data.image` is the PNG.
             const raw = atob(data.image);
             const bytes = new Uint8Array(raw.length);
             for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-            blob = new Blob([bytes], { type: "image/png" });
-            url = URL.createObjectURL(blob);
+            const displayMime = data.display_format === "webp" ? "image/webp" : "image/png";
+            const displayBlob = new Blob([bytes], { type: displayMime });
+            url = URL.createObjectURL(displayBlob);
+
+            if (isJxl && data.jxl_image) {
+              // Use the JXL bytes as the canonical save blob (lossless)
+              const jxlRaw = atob(data.jxl_image);
+              const jxlBytes = new Uint8Array(jxlRaw.length);
+              for (let i = 0; i < jxlRaw.length; i++) jxlBytes[i] = jxlRaw.charCodeAt(i);
+              blob = new Blob([jxlBytes], { type: "image/jxl" });
+            } else {
+              blob = displayBlob;
+            }
+          } else if (isJxl && data.jxl_image) {
+            // JXL-only fallback: no display copy (WebP/PNG encode both failed in Rust).
+            // Save the JXL to gallery anyway; preview stays on the last blurry frame.
+            console.warn("[output_image] JXL has no display copy — saving to gallery only");
+            const jxlRaw = atob(data.jxl_image);
+            const jxlBytes = new Uint8Array(jxlRaw.length);
+            for (let i = 0; i < jxlRaw.length; i++) jxlBytes[i] = jxlRaw.charCodeAt(i);
+            blob = new Blob([jxlBytes], { type: "image/jxl" });
+            url = progress.displayImage ?? "";
           } else {
             console.warn("[output_image] event has neither temp_filename nor image");
             return;
@@ -1656,8 +1741,10 @@
         for (const p of progress.pendingPrompts) {
           // Skip prompts that received an SSE event within the last 30s —
           // they're clearly still alive even if the queue query missed them.
-          const lastEvent = promptLastActivity.get(p.promptId) ?? 0;
-          if (now - lastEvent < 10_000) continue;
+          // Fall back to enqueuedAt so brand-new prompts (not yet in ComfyUI's
+          // queue because submission is async) are also guarded for 30s.
+          const lastEvent = promptLastActivity.get(p.promptId) ?? p.enqueuedAt;
+          if (now - lastEvent < 30_000) continue;
 
           if (!allPromptIds.has(p.promptId)) {
             console.warn(`[reconcile] Prompt ${p.promptId} no longer in ComfyUI queue — completing`);
