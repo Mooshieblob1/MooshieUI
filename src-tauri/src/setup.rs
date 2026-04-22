@@ -332,12 +332,54 @@ async fn step_install_python(app: &AppHandle, base: &Path) -> Result<(), String>
     let python_dir = base.join("python");
     std::fs::create_dir_all(&python_dir).map_err(|e| e.to_string())?;
 
+    // Detect and purge partial installs from a previous interrupted run.
+    // uv extracts the CPython standalone into `python/cpython-3.11.x-<triple>/`
+    // and then stamps `Lib/EXTERNALLY-MANAGED` at the end.  If the previous run
+    // was killed between extraction and stamping — or if AV quarantined files
+    // mid-extract — the top-level dir can exist without a proper `Lib/`,
+    // causing the next run to fail with "ERROR_PATH_NOT_FOUND" on that stamp.
+    // A partial install is detected by the absence of either `python.exe`
+    // (Windows) / `bin/python3` (Unix) or `Lib/` / `lib/`.
+    if let Ok(entries) = std::fs::read_dir(&python_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with("cpython-") {
+                continue;
+            }
+            #[cfg(target_os = "windows")]
+            let complete = path.join("python.exe").exists() && path.join("Lib").is_dir();
+            #[cfg(not(target_os = "windows"))]
+            let complete = path.join("bin").join("python3").exists() && path.join("lib").is_dir();
+            if !complete {
+                emit_log(
+                    app,
+                    &format!("Removing incomplete Python install at {}", path.display()),
+                );
+                let _ = std::fs::remove_dir_all(&path);
+            }
+        }
+    }
+
     let python_dir_str = python_dir.to_string_lossy().to_string();
+    let args = ["python", "install", "3.11"];
+    let env = [("UV_PYTHON_INSTALL_DIR", python_dir_str.as_str())];
+
+    // Try once; on failure, fall back to `--reinstall` which forces uv to
+    // purge and re-extract the CPython archive (handles the rarer case where
+    // our heuristic above didn't match but the install dir is still broken).
+    if run_logged(app, uv.to_str().unwrap(), &args, &env).await.is_ok() {
+        return Ok(());
+    }
+    emit_log(app, "Python install failed; retrying with --reinstall...");
     run_logged(
         app,
         uv.to_str().unwrap(),
-        &["python", "install", "3.11"],
-        &[("UV_PYTHON_INSTALL_DIR", &python_dir_str)],
+        &["python", "install", "--reinstall", "3.11"],
+        &env,
     )
     .await
     .map_err(|_| "Failed to install Python 3.11".to_string())
