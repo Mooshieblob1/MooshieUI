@@ -107,7 +107,9 @@
 
   /** Left-click: cancel the current generation only, let the queue continue. */
   async function handleCancelCurrent() {
+    const promptId = progress.activePromptId;
     await interruptGeneration();
+    if (promptId) progress.removePrompt(promptId);
   }
 
   /** Right-click: cancel current + clear the entire queue. */

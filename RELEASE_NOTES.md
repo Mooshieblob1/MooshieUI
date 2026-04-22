@@ -1,39 +1,12 @@
-## What's New in v0.9.9
-
-### Server Mode: Live Progress for All Users
-- **Secondary server progress bar** — while another user is generating on a shared server, a violet progress bar now appears below your own bar so you can see the server is busy without needing to wait for a queue position
-- **Always-visible generation indicator** — a thin progress strip on the sidebar Generate button shows generation progress on any page, so you never lose track of an in-progress job while browsing the gallery or settings
-
-### Server Mode: Queue & Preview Persistence on Refresh
-- **Queue restored on reconnect** — refreshing the browser tab no longer loses your pending queue position; the server replays your queue entries immediately on SSE reconnect
-- **Preview frame retained** — the last live preview frame is cached server-side and sent back to reconnecting clients so the preview image reappears instantly after a page refresh
+## What's New in v1.0.0
 
 ### Bug Fixes
-- **Server mode queue counter no longer grows on failed generations** — fixed a race condition where a ComfyUI `execution_error` arriving before `bind_alias()` caused placeholder queue entries to leak
-
-### i18n
-- Added locale keys for Queue management panel and About / Report Issue modal (English fallback for all non-English locales pending community translation)
-- Hardcoded "Server generating..." label in progress bar is now fully translated
+- **Cancel + requeue no longer triggers a false error** — cancelling the active generation (left-click Cancel) and immediately requeuing previously caused the reconciler to fire a spurious error toast and corrupt the progress state. The cancelled prompt is now removed from the pending queue immediately so the reconciler never acts on it.
+- **Admin queue-clear no longer leaves stale reconciler timestamps** — when a moderator or admin clears the queue via the Settings panel, `promptLastActivity` is now flushed alongside the pending prompt list, preventing ghost reconciler completions.
 
 ---
 
-## What's New in v0.9.8
-
-### Build Fix
-- **Fixed `npm ci` lockfile mismatch** — `package-lock.json` was out of sync with `package.json` after the TypeScript 6.0.3 upgrade, causing the v0.9.7 release workflow to fail. The lockfile is now committed in sync.
-
-### Dependency Updates
-- **rand 0.10.1** — soundness bug fix (rust-random/rand#1763); no API changes
-- **axum 0.8.9**, **tokio 1.52.1**, **uuid 1.23.1** — latest patch releases for the Rust backend
-- **TypeScript 6.0.3** — major version bump; build and type-check both verified clean
-- **@sveltejs/vite-plugin-svelte 7.0.0** — Svelte plugin major version; build verified clean
-
-### Svelte 5 Reactivity Fixes
-- **`lbImgEl` and `autoStartEnabled`** in `App.svelte` were not declared with `$state()`, so `bind:this` on the lightbox image element and the auto-start toggle would not correctly trigger reactive updates. Both are now properly reactive.
-
----
-
-## What's New in v0.9.6
+## What's New in v0.9.9
 
 ### Silent Generation Recovery After Reconnect
 - **Images are no longer silently lost on reconnect** — if the SSE connection dropped mid-generation, output images could vanish with no error and no toast. A server-side cache now preserves each output image's temp filename keyed by prompt ID. If the reconciler detects a completed generation with no locally tracked images, it automatically fetches the cached images from the server and finalises the output as normal.

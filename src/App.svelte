@@ -1445,6 +1445,7 @@
       }),
       ipcListen("mooshie:queue_cleared", (_event: any) => {
         // Admin/mod cleared the queue — cancel all pending state on this client
+        promptLastActivity.clear();
         progress.cancelAll();
         compare.clearGridBatch();
       }),
