@@ -7,6 +7,7 @@ pub mod gallery_index;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod interrogator;
 pub mod jxl;
+pub mod log_buffer;
 pub mod metadata;
 #[cfg(feature = "desktop")]
 pub mod setup;
@@ -91,11 +92,10 @@ fn fix_wayland_appimage_env() {
 pub fn run() {
     use tauri::{Manager, RunEvent};
 
-    // Enable Rust log output in desktop mode (env_logger was only initialised
-    // in server_main.rs, so all log::info!/warn!/error! were no-ops here).
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format_timestamp_millis()
-        .init();
+    // Enable Rust log output in desktop mode. A ring-buffer logger is used
+    // (instead of plain env_logger) so the diagnostics export can include
+    // recent Rust-side logs even when the user has no dev console access.
+    log_buffer::init();
 
     // Fix WebKitGTK scroll jank and rendering glitches on NVIDIA + Wayland.
     // The DMA-BUF renderer is broken with NVIDIA proprietary drivers.
@@ -387,6 +387,7 @@ pub fn run() {
             commands::api::fetch_release_notes,
             commands::api::import_image_directory,
             commands::api::export_logs,
+            commands::api::append_frontend_logs,
             commands::api::check_node_available,
             commands::api::is_custom_node_installed,
             commands::api::install_custom_node,

@@ -1,6 +1,6 @@
 [package]
 name = "comfyui-desktop"
-version = "1.0.4"
+version = "1.0.5"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 default-run = "comfyui-desktop"
@@ -76,6 +76,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 open = "5"
 hex = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
+rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "=2.0.2", optional = true }

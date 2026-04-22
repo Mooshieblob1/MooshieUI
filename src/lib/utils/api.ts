@@ -1,4 +1,5 @@
 import { ipcInvoke, isBrowserMode, isTauri } from "./ipc.js";
+import { getLogSnapshot } from "./log-buffer.js";
 import { locale } from "../stores/locale.svelte.js";
 import type {
   AppConfig,
@@ -612,7 +613,10 @@ export async function readClipboardImageSafe(): Promise<number[]> {
 }
 
 export async function exportLogs(destination: string): Promise<void> {
-  return ipcInvoke("export_logs", { destination });
+  return ipcInvoke("export_logs", {
+    destination,
+    frontendLogs: getLogSnapshot(),
+  });
 }
 
 export async function getGpuStats(): Promise<GpuStats[]> {

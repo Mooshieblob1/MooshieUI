@@ -274,25 +274,19 @@ pub async fn connect_websocket(
                                         let alias_state = Arc::clone(&ws_state);
                                         let alias_pid = resolved.clone();
                                         tokio::spawn(async move {
-                                            tokio::time::sleep(
-                                                std::time::Duration::from_secs(5),
-                                            )
-                                            .await;
+                                            tokio::time::sleep(std::time::Duration::from_secs(5))
+                                                .await;
                                             alias_state.prompt_queue.cleanup_alias(&alias_pid);
                                         });
                                         if let Some(worker_id) = wid {
-                                            ws_state
-                                                .gpu_manager
-                                                .mark_worker_idle(worker_id)
-                                                .await;
+                                            ws_state.gpu_manager.mark_worker_idle(worker_id).await;
                                         }
                                         ws_state.prompt_queue.drain_notify.notify_one();
                                         // Broadcast updated queue positions to the Tauri
                                         // frontend. broadcast_queue_positions() uses event_tx
                                         // (SSE-only); we must call app.emit() directly here.
                                         let updates: Vec<serde_json::Value> = {
-                                            let queue =
-                                                ws_state.prompt_queue.queue.read().unwrap();
+                                            let queue = ws_state.prompt_queue.queue.read().unwrap();
                                             let total = queue.len();
                                             queue
                                                 .iter()
@@ -324,14 +318,12 @@ pub async fn connect_websocket(
                                     // Prompt failed — release GPU worker so the next generation
                                     // can proceed. Without this the worker stays in Running state
                                     // and submit_prompt blocks for 300 s before timing out.
-                                    let resolved =
-                                        ws_state.prompt_queue.resolve_alias(prompt_id);
+                                    let resolved = ws_state.prompt_queue.resolve_alias(prompt_id);
                                     let wid = ws_state.prompt_queue.finish(&resolved);
                                     let alias_state = Arc::clone(&ws_state);
                                     let alias_pid = resolved.clone();
                                     tokio::spawn(async move {
-                                        tokio::time::sleep(std::time::Duration::from_secs(5))
-                                            .await;
+                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                                         alias_state.prompt_queue.cleanup_alias(&alias_pid);
                                     });
                                     if let Some(worker_id) = wid {

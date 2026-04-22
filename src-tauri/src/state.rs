@@ -290,11 +290,7 @@ impl PromptQueue {
             .unwrap()
             .insert(comfyui_id.to_string(), username);
         // Check if completion/error arrived before this alias was bound.
-        let was_deferred = self
-            .deferred_finishes
-            .write()
-            .unwrap()
-            .remove(comfyui_id);
+        let was_deferred = self.deferred_finishes.write().unwrap().remove(comfyui_id);
         if was_deferred {
             self.worker_map.write().unwrap().remove(placeholder_id);
             self.queue

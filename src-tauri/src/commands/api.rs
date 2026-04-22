@@ -2686,8 +2686,15 @@ fn collect_image_files_recursive(
 pub async fn export_logs(
     state: State<'_, Arc<AppState>>,
     destination: String,
+    frontend_logs: Option<Vec<String>>,
 ) -> Result<(), AppError> {
     use std::fmt::Write;
+
+    // Fold any newly-submitted frontend logs into the ring buffer so repeat
+    // exports include previous captures too.
+    if let Some(lines) = frontend_logs {
+        crate::log_buffer::push_frontend_lines(lines);
+    }
 
     let mut output = String::with_capacity(16 * 1024);
 
@@ -2820,8 +2827,42 @@ pub async fn export_logs(
         }
     }
 
+    // Rust-side log ring buffer (captured by log_buffer::RingLogger)
+    let rust_lines = crate::log_buffer::snapshot_rust();
+    if !rust_lines.is_empty() {
+        let _ = writeln!(output);
+        let _ = writeln!(output, "=== Rust Log (last {} lines) ===", rust_lines.len());
+        for line in &rust_lines {
+            let _ = writeln!(output, "{}", line);
+        }
+    }
+
+    // Frontend console ring buffer (captured by src/lib/utils/log-buffer.ts)
+    let frontend_lines = crate::log_buffer::snapshot_frontend();
+    if !frontend_lines.is_empty() {
+        let _ = writeln!(output);
+        let _ = writeln!(
+            output,
+            "=== Frontend Console (last {} lines) ===",
+            frontend_lines.len()
+        );
+        for line in &frontend_lines {
+            let _ = writeln!(output, "{}", line);
+        }
+    }
+
     // Write to destination
     std::fs::write(&destination, &output)?;
+    Ok(())
+}
+
+/// Append a batch of frontend console log lines to the in-memory diagnostics
+/// ring buffer. Called opportunistically by the UI so that exported logs
+/// include frontend state even when a crash prevents exporting normally.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn append_frontend_logs(lines: Vec<String>) -> Result<(), AppError> {
+    crate::log_buffer::push_frontend_lines(lines);
     Ok(())
 }
 

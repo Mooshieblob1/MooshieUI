@@ -371,7 +371,10 @@ async fn step_install_python(app: &AppHandle, base: &Path) -> Result<(), String>
     // Try once; on failure, fall back to `--reinstall` which forces uv to
     // purge and re-extract the CPython archive (handles the rarer case where
     // our heuristic above didn't match but the install dir is still broken).
-    if run_logged(app, uv.to_str().unwrap(), &args, &env).await.is_ok() {
+    if run_logged(app, uv.to_str().unwrap(), &args, &env)
+        .await
+        .is_ok()
+    {
         return Ok(());
     }
     emit_log(app, "Python install failed; retrying with --reinstall...");

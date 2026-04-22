@@ -1,5 +1,13 @@
 # Changelog
 
+## What's New in v1.0.5
+
+### Bug Fixes
+- **Browser mode no longer shows "Not found"** — production installs of MooshieUI couldn't serve the UI in browser mode because the frontend `dist/` directory isn't unpacked next to the installed binary. The embedded web server now falls back to assets compiled into the binary at build time (via `rust-embed`), so opening the browser-mode URL works on every install, not just dev checkouts.
+- **Diagnostic logs now include frontend + Rust state** — the "Export Diagnostic Logs" button in Settings previously only captured ComfyUI's stderr. Exported logs now also contain a bounded ring buffer of Rust-side `log::info!`/`warn!`/`error!` output plus a capture of the frontend console (including uncaught errors and unhandled promise rejections). This is critical for diagnosing "button does nothing" bug reports on Windows app mode where users can't open dev tools.
+
+---
+
 ## What's New in v1.0.4
 
 ### Features

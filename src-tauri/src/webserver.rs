@@ -24,6 +24,15 @@ use crate::commands;
 use crate::config;
 use crate::state::AppState;
 
+/// Frontend assets embedded at compile time from `../dist/`. Used as a
+/// fallback when the on-disk dist directory isn't found (e.g. installed
+/// production builds where the dist folder isn't unpacked next to the exe).
+/// In dev builds rust-embed reads from disk at runtime, so `npm run dev`
+/// output is picked up without rebuilding the Rust binary.
+#[derive(rust_embed::Embed)]
+#[folder = "$CARGO_MANIFEST_DIR/../dist/"]
+struct FrontendAssets;
+
 /// Shared state for axum handlers.
 pub struct WebState {
     pub app: Arc<AppState>,
@@ -514,8 +523,7 @@ pub async fn start_server(
                                 drain_state
                                     .prompt_queue
                                     .set_worker(&hp.placeholder_id, worker_id);
-                                *hp.result.lock().await =
-                                    Some(Ok((response.prompt_id, worker_id)));
+                                *hp.result.lock().await = Some(Ok((response.prompt_id, worker_id)));
                             }
                         }
                         Err(e) => {
@@ -605,62 +613,93 @@ fn resolve_dist_dir() -> PathBuf {
         }
     }
 
-    // Fallback — will 404 on requests but won't crash
-    log::warn!(
-        "Could not find frontend dist directory, tried: {:?}",
+    // No on-disk dist found — production builds rely on the compile-time
+    // embedded FrontendAssets instead, so this is not necessarily an error.
+    log::info!(
+        "No on-disk frontend dist directory; using embedded assets. Searched: {:?}",
         candidates
     );
     candidates[0].clone()
 }
 
-/// Serve static files from the dist directory.
+/// Serve static files from the dist directory, falling back to assets
+/// embedded into the binary at compile time.
+///
+/// Lookup order:
+///   1. File on disk under `dist_dir` (prefers freshly-built `npm run dev`
+///      / `npm run build` output for dev workflows).
+///   2. Embedded asset at the same relative path.
+///   3. Embedded `index.html` (SPA fallback).
+///
+/// Production installs typically hit path 2/3 because the Tauri bundle
+/// embeds the frontend into the binary via the asset protocol and does
+/// not copy `dist/` next to the exe. Before this fallback existed, every
+/// browser-mode request in a production install returned 404 ("Not Found").
 async fn serve_static(dist_dir: PathBuf, req: axum::extract::Request) -> Response {
-    let path = req.uri().path().trim_start_matches('/');
-    let file_path = if path.is_empty() {
-        dist_dir.join("index.html")
+    let raw_path = req.uri().path().trim_start_matches('/');
+    let rel_path = if raw_path.is_empty() {
+        "index.html"
     } else {
-        dist_dir.join(path)
+        raw_path
     };
 
-    // If the path doesn't exist, serve index.html (SPA fallback)
-    let file_path = if file_path.exists() && file_path.is_file() {
-        file_path
-    } else {
-        dist_dir.join("index.html")
-    };
-
-    match tokio::fs::read(&file_path).await {
-        Ok(contents) => {
-            let mime = mime_guess::from_path(&file_path)
-                .first_or_octet_stream()
-                .to_string();
-
-            // Inject browser-mode flag into HTML so the frontend IPC layer
-            // knows to use HTTP endpoints instead of Tauri IPC.
-            let contents = if mime == "text/html" {
-                let html = String::from_utf8_lossy(&contents);
-                let injected = html.replacen(
-                    "<head>",
-                    "<head><script>window.__MOOSHIE_BROWSER_MODE__=true;</script>",
-                    1,
-                );
-                injected.into_bytes()
-            } else {
-                contents
-            };
-
-            (
-                StatusCode::OK,
-                [
-                    ("content-type", mime),
-                    ("cache-control", "no-cache".to_string()),
-                ],
-                contents,
-            )
-                .into_response()
+    // 1. On-disk first so hot-reloaded dev builds override any stale
+    //    compile-time embed.
+    let disk_path = dist_dir.join(rel_path);
+    if disk_path.is_file() {
+        if let Ok(contents) = tokio::fs::read(&disk_path).await {
+            return build_asset_response(rel_path, contents);
         }
-        Err(_) => (StatusCode::NOT_FOUND, "Not Found").into_response(),
     }
+
+    // 2. Embedded fallback.
+    if let Some(file) = FrontendAssets::get(rel_path) {
+        return build_asset_response(rel_path, file.data.into_owned());
+    }
+
+    // 3. SPA fallback — serve index.html for unknown client-side routes.
+    let index_disk = dist_dir.join("index.html");
+    if index_disk.is_file() {
+        if let Ok(contents) = tokio::fs::read(&index_disk).await {
+            return build_asset_response("index.html", contents);
+        }
+    }
+    if let Some(file) = FrontendAssets::get("index.html") {
+        return build_asset_response("index.html", file.data.into_owned());
+    }
+
+    (StatusCode::NOT_FOUND, "Not Found").into_response()
+}
+
+/// Build an HTTP response for a static asset. Injects the browser-mode flag
+/// into HTML payloads so the frontend IPC layer routes through HTTP instead
+/// of Tauri.
+fn build_asset_response(rel_path: &str, contents: Vec<u8>) -> Response {
+    let mime = mime_guess::from_path(rel_path)
+        .first_or_octet_stream()
+        .to_string();
+
+    let contents = if mime == "text/html" {
+        let html = String::from_utf8_lossy(&contents);
+        let injected = html.replacen(
+            "<head>",
+            "<head><script>window.__MOOSHIE_BROWSER_MODE__=true;</script>",
+            1,
+        );
+        injected.into_bytes()
+    } else {
+        contents
+    };
+
+    (
+        StatusCode::OK,
+        [
+            ("content-type", mime),
+            ("cache-control", "no-cache".to_string()),
+        ],
+        contents,
+    )
+        .into_response()
 }
 
 /// Health check endpoint for K8s liveness/readiness probes.
@@ -2999,6 +3038,16 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing destination")?
                 .to_string();
+            // Fold any frontend logs from the payload into the shared ring
+            // buffer before exporting so this handler matches the desktop
+            // command's behaviour.
+            if let Some(lines) = args.get("frontendLogs").and_then(|v| v.as_array()) {
+                let strings: Vec<String> = lines
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
+                crate::log_buffer::push_frontend_lines(strings);
+            }
             // Simplified: just write config info to the destination
             let cfg = state.config.read().await;
             let info = format!("MooshieUI Log Export\nConfig: {:?}", *cfg);
