@@ -14,6 +14,10 @@
   import LoraGallery from "./LoraGallery.svelte";
   import CheckpointGallery from "./CheckpointGallery.svelte";
   import CompareGrid from "./CompareGrid.svelte";
+  import StyleManager from "./StyleManager.svelte";
+  import ScheduleBuilder from "./ScheduleBuilder.svelte";
+  import { styles as stylesStore } from "../../stores/styles.svelte.js";
+  import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import type { OutputImage } from "../../types/index.js";
 
   interface Props {
@@ -24,7 +28,7 @@
 
   let { onupscale, oninpaint, oncontextmenu }: Props = $props();
 
-  type TabId = "loras" | "checkpoints" | "images" | "prompts" | "compare" | "artists";
+  type TabId = "loras" | "checkpoints" | "images" | "prompts" | "compare" | "artists" | "styles" | "schedule";
 
   const TAB_KEY = "mooshieui.bottomPanel.activeTab.v1";
 
@@ -45,7 +49,7 @@
     try { localStorage.setItem(TAB_KEY, activeTab); } catch {}
   });
 
-  const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts", "artists", "compare"];
+  const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts", "artists", "styles", "schedule", "compare"];
   const visibleTabs = $derived(
     showCheckpointsTab ? allTabs : allTabs.filter((t) => t !== "checkpoints")
   );
@@ -56,6 +60,8 @@
     prompts: "bottom_panel.tab.prompts",
     compare: "bottom_panel.tab.compare",
     artists: "bottom_panel.tab.artists",
+    styles: "bottom_panel.tab.styles",
+    schedule: "bottom_panel.tab.schedule",
   };
 
   // Prompt history
@@ -263,6 +269,10 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
         {:else if tab === "artists"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+        {:else if tab === "styles"}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15 9 22 9.5 16.5 14.5 18.5 22 12 18 5.5 22 7.5 14.5 2 9.5 9 9 12 2"/></svg>
+        {:else if tab === "schedule"}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         {/if}
         {locale.t(tabLabelKeys[tab])}
         {#if tab === "loras" && activeLoraCount > 0}
@@ -275,6 +285,8 @@
           <span class="text-[9px] px-1 py-0 rounded-full bg-red-500/30 text-red-400 tabular-nums">{artistFavourites.count}</span>
         {:else if tab === "compare" && compare.enabled}
           <span class="text-[9px] px-1 py-0 rounded-full bg-indigo-600/30 text-indigo-400 tabular-nums">{compare.cellCount}</span>
+        {:else if tab === "styles" && (stylesStore.activeStyles.length > 0 || promptPresets.activeEntries.length > 0)}
+          <span class="text-[9px] px-1 py-0 rounded-full bg-indigo-600/30 text-indigo-400 tabular-nums">{stylesStore.activeStyles.length + promptPresets.activeEntries.length}</span>
         {/if}
       </button>
     {/each}
@@ -455,6 +467,10 @@
       {/if}
     {:else if activeTab === "compare"}
       <CompareGrid />
+    {:else if activeTab === "styles"}
+      <StyleManager />
+    {:else if activeTab === "schedule"}
+      <ScheduleBuilder />
     {:else if activeTab === "artists"}
       {#if artistFavourites.count === 0}
         <div class="flex items-center justify-center h-full text-neutral-500 text-xs px-4 text-center">

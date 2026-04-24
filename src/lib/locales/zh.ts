@@ -983,6 +983,8 @@ const zh: Record<string, string> = {
   // ── Compare Grid ────────────────────────────────────────
   "bottom_panel.tab.compare": "比较",
   "bottom_panel.tab.artists": "艺术家",
+  "bottom_panel.tab.styles": "风格",
+  "bottom_panel.tab.schedule": "调度",
   "bottom_panel.no_favourite_artists": "在画廊中收藏艺术家，即可在此处查看",
   "bottom_panel.no_artist_results": "没有符合搜索条件的收藏艺术家",
   "bottom_panel.artist_search_placeholder": "搜索收藏的艺术家...",

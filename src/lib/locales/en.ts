@@ -703,6 +703,8 @@ const en: Record<string, string> = {
   "bottom_panel.card_size": "Card size",
   "bottom_panel.tab.compare": "Compare",
   "bottom_panel.tab.artists": "Artists",
+  "bottom_panel.tab.styles": "Styles",
+  "bottom_panel.tab.schedule": "Schedule",
   "bottom_panel.no_favourite_artists": "Favourite an artist from the Artist Gallery or prompt and they'll appear here",
   "bottom_panel.no_artist_results": "No favourited artists match your search",
   "bottom_panel.artist_search_placeholder": "Search favourited artists...",

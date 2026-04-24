@@ -2,6 +2,8 @@ import { ipcStore } from "../utils/ipc.js";
 import { parseScheduledPrompt } from "../utils/promptSchedule.js";
 import type { LoraEntry } from "../types/index.js";
 import { autocomplete } from "./autocomplete.svelte.js";
+import { styles } from "./styles.svelte.js";
+import { promptPresets } from "./promptPresets.svelte.js";
 
 const STORE_KEY = "generation-settings";
 const PROMPT_HISTORY_KEY = "mooshieui.promptHistory.v1";
@@ -776,6 +778,25 @@ class GenerationStore {
 
     let positivePrompt = this.mergeTagPrompts(this.positivePrompt, style.positive);
     let negativePrompt = this.mergeTagPrompts(this.negativePrompt, style.negative);
+
+    // Inject tags contributed by any currently-active Artist Styles. These are
+    // not visible in the prompt textbox — they flow straight into the payload
+    // so the user sees badges in the UI instead.
+    const styleFragment = styles.buildPromptFragment();
+    if (styleFragment) {
+      positivePrompt = this.mergeTagPrompts(positivePrompt, styleFragment);
+    }
+
+    // Inject active Prompt Presets (prepend / append / wildcard). Wildcards
+    // pick a random choice per generation — mergeTagPrompts dedupes against
+    // whatever the user has already typed.
+    const preset = promptPresets.resolve();
+    if (preset.prepend) {
+      positivePrompt = this.mergeTagPrompts(preset.prepend, positivePrompt);
+    }
+    if (preset.append) {
+      positivePrompt = this.mergeTagPrompts(positivePrompt, preset.append);
+    }
 
     // Auto-apply quality tags for supported model families
     if (this.autoQualityTags) {

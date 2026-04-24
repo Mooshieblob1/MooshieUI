@@ -1,3 +1,20 @@
+## What's New in v1.0.8
+
+### New Features
+- **Artist Styles** — bundle one or more artist tags into a reusable style with per-tag weights and an overall multiplier, with optional thumbnails. Activate a style and its tags are folded into the positive prompt at generation time as a non-destructive fragment (your prompt textbox is never mutated). Styles can be duplicated, exported/imported as JSON, and show up as clickable indigo badges above the prompt — click the badge to deactivate.
+- **Prompt Presets** — a sibling system for non-artist prompt variables (e.g. quality boilerplate, negative chunks, scene vocab). Activating a preset opens a picker for **Prepend**, **Append**, or **Wildcard** mode; wildcard splits the preset content on commas/newlines and picks one entry per generation, so the same preset can drive A/B experimentation. Active presets appear as badges with ↑/↓/🎲 indicators.
+- **Styles tab in the bottom panel** — the full Styles + Prompt Presets manager now lives as a dedicated tab in the bottom panel (previously a floating modal), with a live active-count badge.
+- **Prompt Scheduling builder** — a new **Schedule** tab in the bottom panel provides a GUI for all four scheduling tag syntaxes (`<fromto[N]:A || B>`, `<from:N>...</from>`, `<to:N>...</to>`, `<range:A:B>...</range>`). Enter the text, drag a slider for the pivot/bounds, and the live preview shows the exact tag string plus a plain-English description of when it applies. One-click buttons append to the positive or negative prompt, or copy to clipboard. Includes a collapsible syntax cheat-sheet.
+
+### Autocomplete Improvements
+- **Anima-aware artist autocomplete in Style editor** — searching for artist tags inside the Style editor now queries the active model's tag list, so Anima-architecture models surface Anima artist tags and non-Anima models surface Danbooru artists. The `@` prefix is added or stripped automatically when inserting, matching each architecture's convention.
+- **Full autocomplete in the Preset editor** — preset content now uses the same `PromptTextarea` as the main prompt box, giving tag autocomplete, scheduling-tag highlighting, NAI brackets, and Ctrl+↑/↓ weight adjustments when authoring presets.
+
+### i18n
+- Added `bottom_panel.tab.styles` and `bottom_panel.tab.schedule` keys across all 11 supported locales.
+
+---
+
 ## What's New in v1.0.7
 
 ### Critical Fixes

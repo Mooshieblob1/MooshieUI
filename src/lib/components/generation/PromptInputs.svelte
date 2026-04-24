@@ -5,6 +5,8 @@
   import { connection } from "../../stores/connection.svelte.js";
   import { artistFavourites } from "../../artist-gallery/favourites.svelte.js";
   import { detectArtistsInPrompt } from "../../artist-gallery/detection.js";
+  import { styles } from "../../stores/styles.svelte.js";
+  import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { parseScheduledPrompt, hasSchedulingTags } from "../../utils/promptSchedule.js";
@@ -78,6 +80,38 @@
       {#if generation.isAnima || generation.isIllustrious}
         <span class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">{locale.t('generation.prompts.quality_applied')}</span>
       {/if}
+      {#each styles.activeStyles as activeStyle (activeStyle.id)}
+        <button
+          type="button"
+          onclick={() => styles.deactivate(activeStyle.id)}
+          class="shrink-0 inline-flex items-center gap-1 rounded-full border border-indigo-500/50 bg-indigo-500/10 text-indigo-200 hover:bg-red-500/15 hover:border-red-500/50 hover:text-red-200 px-2 py-0.5 text-[10px] transition-colors"
+          title={`Click to deactivate — ${activeStyle.artists.length} artists × ${activeStyle.overallWeight.toFixed(2)}`}
+          aria-label={`Deactivate style ${activeStyle.name}`}
+        >
+          {#if activeStyle.thumbnail}
+            <img src={activeStyle.thumbnail} alt="" class="h-3.5 w-3.5 rounded-sm object-cover" />
+          {:else}
+            <span class="inline-block h-1.5 w-1.5 rounded-full bg-indigo-400" aria-hidden="true"></span>
+          {/if}
+          <span class="leading-none">✦</span>
+          <span class="max-w-28 truncate">{activeStyle.name}</span>
+          <span class="font-mono text-[9px] text-indigo-300/80">×{activeStyle.overallWeight.toFixed(2)}</span>
+        </button>
+      {/each}
+      {#each promptPresets.activeEntries as entry (entry.preset.id)}
+        {@const icon = entry.mode === "prepend" ? "↑" : entry.mode === "append" ? "↓" : "🎲"}
+        <button
+          type="button"
+          onclick={() => promptPresets.deactivate(entry.preset.id)}
+          class="shrink-0 inline-flex items-center gap-1 rounded-full border border-indigo-500/50 bg-indigo-500/10 text-indigo-200 hover:bg-red-500/15 hover:border-red-500/50 hover:text-red-200 px-2 py-0.5 text-[10px] transition-colors"
+          title={`Click to deactivate — ${entry.mode}`}
+          aria-label={`Deactivate preset ${entry.preset.name}`}
+        >
+          <span class="leading-none">⚡</span>
+          <span class="max-w-28 truncate">{entry.preset.name}</span>
+          <span class="font-mono text-[9px] text-indigo-300/80">{icon}</span>
+        </button>
+      {/each}
       {#each detectedArtists as hit (hit.slug)}
         {@const isFav = artistFavourites.isFavourite(hit.slug)}
         {@const favCat = artistFavourites.categoryOf(hit.slug)}

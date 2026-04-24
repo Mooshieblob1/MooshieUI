@@ -983,6 +983,8 @@ const ru: Record<string, string> = {
   // ── Compare Grid ────────────────────────────────────────
   "bottom_panel.tab.compare": "Сравнение",
   "bottom_panel.tab.artists": "Художники",
+  "bottom_panel.tab.styles": "Стили",
+  "bottom_panel.tab.schedule": "Расписание",
   "bottom_panel.no_favourite_artists": "Добавьте художника в избранное в галерее, чтобы он появился здесь",
   "bottom_panel.no_artist_results": "Нет избранных художников, соответствующих поиску",
   "bottom_panel.artist_search_placeholder": "Поиск избранных художников...",

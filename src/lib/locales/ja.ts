@@ -1008,6 +1008,8 @@ const ja: Record<string, string> = {
   // ── Compare Grid ────────────────────────────────────────
   "bottom_panel.tab.compare": "比較",
   "bottom_panel.tab.artists": "アーティスト",
+  "bottom_panel.tab.styles": "スタイル",
+  "bottom_panel.tab.schedule": "スケジュール",
   "bottom_panel.no_favourite_artists": "ギャラリーでアーティストをお気に入りに追加するとここに表示されます",
   "bottom_panel.no_artist_results": "検索に一致するお気に入りアーティストはいません",
   "bottom_panel.artist_search_placeholder": "お気に入りアーティストを検索...",

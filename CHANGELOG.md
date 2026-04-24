@@ -1,5 +1,22 @@
 # Changelog
 
+## What's New in v1.0.8
+
+### New Features
+- **Artist Styles** — bundle artist tags (with per-tag weights + overall multiplier and optional thumbnails) into reusable styles. Activating a style injects its tags into the positive prompt non-destructively at generation time. Styles support duplicate, JSON export/import, and click-to-deactivate badges above the prompt.
+- **Prompt Presets** — non-artist prompt variables with three activation modes: **Prepend**, **Append**, and **Wildcard** (splits content on commas/newlines and picks one entry per generation). Active presets show as badges with ↑/↓/🎲 indicators.
+- **Styles tab in the bottom panel** — the Styles + Prompt Presets manager is now a dedicated bottom-panel tab with a live active-count badge, replacing the previous floating modal.
+- **Prompt Scheduling builder** — new **Schedule** tab in the bottom panel with a GUI for all four scheduling syntaxes (`<fromto[N]:A || B>`, `<from:N>...</from>`, `<to:N>...</to>`, `<range:A:B>...</range>`): text fields + sliders with a live preview and plain-English "applies from X% to Y%" description. Actions to append to positive/negative prompt or copy to clipboard, plus a collapsible syntax cheat-sheet.
+
+### Autocomplete Improvements
+- **Anima-aware artist autocomplete in Style editor** — artist search now uses the active model's tag list (Anima tags for Anima-architecture models, Danbooru for everything else) and adds/strips the `@` prefix to match each architecture's convention.
+- **Full autocomplete in Preset editor** — preset content uses the same `PromptTextarea` as the main prompt (tag autocomplete, scheduling highlight, NAI brackets, Ctrl+↑/↓ weights).
+
+### i18n
+- Added `bottom_panel.tab.styles` and `bottom_panel.tab.schedule` keys across all 11 supported locales.
+
+---
+
 ## What's New in v1.0.7
 
 ### Critical Fixes

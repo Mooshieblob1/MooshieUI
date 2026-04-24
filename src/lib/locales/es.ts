@@ -1012,6 +1012,8 @@ const es: Record<string, string> = {
   // ── Compare Grid ────────────────────────────────────────
   "bottom_panel.tab.compare": "Comparar",
   "bottom_panel.tab.artists": "Artistas",
+  "bottom_panel.tab.styles": "Estilos",
+  "bottom_panel.tab.schedule": "Programación",
   "bottom_panel.no_favourite_artists": "Marca un artista como favorito en la galería para verlo aquí",
   "bottom_panel.no_artist_results": "Ningún artista favorito coincide con la búsqueda",
   "bottom_panel.artist_search_placeholder": "Buscar artistas favoritos...",
