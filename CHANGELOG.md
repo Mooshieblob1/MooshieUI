@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v1.0.7
+
+### Critical Fixes
+- **Desktop app launches again (fixes #102, #124)** — v1.0.6 shipped a regression where the installed app closed instantly on Windows (and would have panicked on any desktop platform). The prompt-cleanup reactor and stuck-worker watchdog in `webserver.rs` were swapped from `tauri::async_runtime::spawn` to `tokio::spawn` to unblock the server-only Docker build, but those reactors are started from Tauri's synchronous `.setup()` hook, which runs *before* any Tokio runtime is entered on that thread — so `tokio::spawn` panicked with "there is no reactor running" and killed the process during startup. The spawns are now cfg-gated: desktop builds use `tauri::async_runtime::spawn` (Tauri's runtime handle, works outside a runtime context), while the headless server build (which always calls these from `#[tokio::main]`) keeps using `tokio::spawn`. No other behavioural changes.
+
+---
+
 ## What's New in v1.0.6
 
 ### Build Fixes

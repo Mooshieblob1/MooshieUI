@@ -1,3 +1,17 @@
+## What's New in v1.0.7
+
+### Critical Fixes
+- **Desktop app launches again (supersedes v1.0.6; fixes #102, #124)** — v1.0.6 shipped a regression that caused the installed app to exit immediately on startup (on Windows this looked like "the installer closes instantly"; existing installs simply wouldn't open). The prompt-cleanup reactor and stuck-worker watchdog in `webserver.rs` had been swapped from `tauri::async_runtime::spawn` to `tokio::spawn` to unblock the headless server/Docker build, but those two tasks are spawned from Tauri's synchronous `.setup()` hook — which runs on the main init thread before any Tokio runtime is entered on that thread — so `tokio::spawn` panicked with "there is no reactor running, must be called from the context of a Tokio 1.x runtime" and killed the process. The two spawns are now cfg-gated: desktop builds use `tauri::async_runtime::spawn` (safe to call outside a runtime context), while the headless server build (always invoked from `#[tokio::main]`) keeps `tokio::spawn`. v1.0.7 is functionally equivalent to v1.0.5 plus the Docker publish fix originally shipped in v1.0.6.
+
+---
+
+## What's New in v1.0.6
+
+### Build Fixes
+- **Docker image publish restored** — the `build-server` job (which produces the headless Linux server binary the Docker image wraps) was failing because three `tauri::` references leaked into the server-only build path, which doesn't link the `tauri` crate. The `#[tauri::command]` attribute on `load_gallery_image_png` is now gated behind `#[cfg(feature = "desktop")]`, and the two `tauri::async_runtime::spawn` calls in the prompt-queue cleanup reactor and stuck-worker watchdog (in `webserver.rs`) were swapped for `tokio::spawn`. **Note:** the latter change caused the desktop startup regression fixed in v1.0.7 — please upgrade straight to v1.0.7.
+
+---
+
 ## What's New in v1.0.5
 
 ### Bug Fixes

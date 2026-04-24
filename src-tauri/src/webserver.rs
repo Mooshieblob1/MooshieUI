@@ -214,7 +214,14 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
 
     let cleanup_state = state;
     let mut cleanup_rx = cleanup_state.event_tx.subscribe();
-    tokio::spawn(async move {
+    // NOTE: this function is invoked from Tauri's `.setup()` in the desktop
+    // build, which runs synchronously on the main init thread *before* any
+    // Tokio runtime is entered on that thread. Calling `tokio::spawn` there
+    // panics with "there is no reactor running..." (regression observed in
+    // v1.0.6 on Windows — installer/app exits immediately). The server build
+    // (`feature = "server"`) does not link `tauri` and always calls this
+    // from `#[tokio::main]`, so `tokio::spawn` is safe there.
+    let cleanup_fut = async move {
         loop {
             match cleanup_rx.recv().await {
                 Ok(evt) => {
@@ -281,7 +288,11 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
-    });
+    };
+    #[cfg(feature = "desktop")]
+    tauri::async_runtime::spawn(cleanup_fut);
+    #[cfg(not(feature = "desktop"))]
+    tokio::spawn(cleanup_fut);
 }
 
 /// Spawn the stuck-worker watchdog.  Every 60s, checks for workers that have
@@ -294,7 +305,10 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
 /// app init which calls both).
 pub fn spawn_stuck_worker_watchdog(state: Arc<AppState>) {
     let watchdog_state = state;
-    tokio::spawn(async move {
+    // See note in `spawn_prompt_cleanup_reactor` above — desktop init runs
+    // outside a Tokio runtime context, so we must use Tauri's runtime handle
+    // there. Server build has no tauri crate but is always inside tokio::main.
+    let watchdog_fut = async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         let max_stuck_secs = 600u64;
         loop {
@@ -333,7 +347,11 @@ pub fn spawn_stuck_worker_watchdog(state: Arc<AppState>) {
                 }
             }
         }
-    });
+    };
+    #[cfg(feature = "desktop")]
+    tauri::async_runtime::spawn(watchdog_fut);
+    #[cfg(not(feature = "desktop"))]
+    tokio::spawn(watchdog_fut);
 }
 
 pub async fn start_server(
