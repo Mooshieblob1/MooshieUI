@@ -48,9 +48,9 @@ class PrefsSyncStore {
   }
 
   /** Distribute a server snapshot to every participating store. */
-  applyAll(prefs: UserPrefsData): void {
+  async applyAll(prefs: UserPrefsData): Promise<void> {
     if (prefs.generation) {
-      generation.applyServerPrefs(prefs.generation as Record<string, any>).catch(() => {});
+      await generation.applyServerPrefs(prefs.generation as Record<string, any>).catch(() => {});
     }
     if (Array.isArray(prefs.prompt_history)) {
       generation.applyPromptHistory(prefs.prompt_history as any[]);
@@ -68,7 +68,7 @@ class PrefsSyncStore {
       gallery.applyServerPrefs(prefs.gallery_boards);
     }
     if (prefs.autocomplete) {
-      autocomplete.applyServerPrefs(prefs.autocomplete as Record<string, any>).catch(() => {});
+      await autocomplete.applyServerPrefs(prefs.autocomplete as Record<string, any>).catch(() => {});
     }
     if (prefs.accessibility) {
       accessibility.applyServerPrefs(prefs.accessibility);
@@ -86,7 +86,7 @@ class PrefsSyncStore {
     try {
       const prefs = await fetchServerPrefs();
       if (prefs) {
-        this.applyAll(prefs);
+        await this.applyAll(prefs);
       } else {
         // No snapshot on server yet — push current local state to seed it.
         await pushServerPrefs(this.collectAll());

@@ -61,19 +61,23 @@ fn prefs_path(username: &str) -> Option<PathBuf> {
 
 /// Load a user's prefs from disk.  Returns `None` if the file doesn't exist
 /// or cannot be parsed (treated as "no prefs yet").
-pub fn load(username: &str) -> Option<UserPrefs> {
+pub async fn load(username: &str) -> Option<UserPrefs> {
     let path = prefs_path(username)?;
-    let bytes = std::fs::read(&path).ok()?;
+    let bytes = tokio::fs::read(&path).await.ok()?;
     serde_json::from_slice(&bytes).ok()
 }
 
 /// Save a user's prefs to disk, creating parent directories as needed.
-pub fn save(username: &str, prefs: &UserPrefs) -> Result<(), String> {
+pub async fn save(username: &str, prefs: &UserPrefs) -> Result<(), String> {
     let path = prefs_path(username).ok_or_else(|| "Cannot resolve prefs path".to_string())?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| e.to_string())?;
     }
     let bytes = serde_json::to_vec_pretty(prefs).map_err(|e| e.to_string())?;
-    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    tokio::fs::write(&path, &bytes)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }

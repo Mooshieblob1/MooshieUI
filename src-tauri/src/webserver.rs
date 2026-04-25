@@ -4166,7 +4166,7 @@ async fn user_prefs_get_handler(
         return unauthorized_response("Authentication required.");
     }
     let username = resolve_prefs_username(&state, &headers, &remote);
-    match user_prefs::load(&username) {
+    match user_prefs::load(&username).await {
         Some(prefs) => (StatusCode::OK, Json(prefs)).into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
     }
@@ -4189,7 +4189,7 @@ async fn user_prefs_set_handler(
     let username = resolve_prefs_username(&state, &headers, &remote);
     // Stamp server-side timestamp so clients can detect stale data in the future.
     prefs.updated_at = Some(chrono::Utc::now().to_rfc3339());
-    match user_prefs::save(&username, &prefs) {
+    match user_prefs::save(&username, &prefs).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
