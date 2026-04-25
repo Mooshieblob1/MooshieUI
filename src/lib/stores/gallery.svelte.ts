@@ -20,6 +20,7 @@ import {
   type StorageInfo,
 } from "../utils/api.js";
 import { isTauri, isBrowserMode, getAuthToken } from "../utils/ipc.js";
+import { triggerSync } from "../utils/syncTrigger.js";
 import { locale } from "./locale.svelte.js";
 import { generation } from "./generation.svelte.js";
 import { createArtistGalleryClient } from "../artist-gallery/client.js";
@@ -136,6 +137,7 @@ class GalleryStore {
   private saveBoardAssignments() {
     try {
       localStorage.setItem(GALLERY_BOARDS_KEY, JSON.stringify(this.boardAssignments));
+      triggerSync();
     } catch (e) {
       console.error("Failed to save gallery boards:", e);
     }
@@ -156,6 +158,7 @@ class GalleryStore {
   private saveCustomBoards() {
     try {
       localStorage.setItem(GALLERY_BOARD_NAMES_KEY, JSON.stringify(this.customBoards));
+      triggerSync();
     } catch (e) {
       console.error("Failed to save custom boards:", e);
     }
@@ -1028,6 +1031,29 @@ class GalleryStore {
       this.storageInfo = await getStorageInfo();
     } catch (e) {
       console.error("Failed to fetch storage info:", e);
+    }
+  }
+  /** Collect gallery board state for server-side sync. */
+  collectPrefs(): unknown {
+    return {
+      assignments: this.boardAssignments,
+      boardNames: this.customBoards,
+    };
+  }
+
+  /** Apply gallery board state from the server. */
+  applyServerPrefs(data: any): void {
+    try {
+      if (data?.assignments && typeof data.assignments === "object") {
+        this.boardAssignments = data.assignments;
+        localStorage.setItem(GALLERY_BOARDS_KEY, JSON.stringify(data.assignments));
+      }
+      if (Array.isArray(data?.boardNames)) {
+        this.customBoards = data.boardNames.filter((n: any) => !!n && n !== "Unsorted");
+        localStorage.setItem(GALLERY_BOARD_NAMES_KEY, JSON.stringify(this.customBoards));
+      }
+    } catch (e) {
+      console.error("Failed to apply server prefs (gallery boards):", e);
     }
   }
 }

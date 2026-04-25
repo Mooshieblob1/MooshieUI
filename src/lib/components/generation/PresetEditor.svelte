@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { promptPresets } from "../../stores/promptPresets.svelte.js";
+  import { promptPresets, presetSlug } from "../../stores/promptPresets.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
 
   interface Props {
@@ -11,6 +11,8 @@
 
   const preset = $derived(promptPresets.getById(presetId));
   const choiceCount = $derived(promptPresets.countChoices(presetId));
+  const slug = $derived(preset ? presetSlug(preset.name) : "");
+  const inlineToken = $derived(slug ? `@preset:${slug}` : "");
 
   function setName(v: string) {
     if (!preset) return;
@@ -56,7 +58,7 @@
         <div>
           <h2 class="text-sm font-semibold text-neutral-100">Edit Prompt Preset</h2>
           <p class="text-[11px] text-neutral-500">
-            Store any prompt fragment as a reusable variable. Separate entries by comma or newline — used for the wildcard mode to pick one at random.
+            Store any prompt fragment as a reusable variable. Put each wildcard choice on its own line — commas within a line stay grouped (e.g. `1girl, solo` is picked as one block).
           </p>
         </div>
         <button
@@ -78,6 +80,17 @@
             placeholder="e.g. Cool hair colors"
             class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-sm text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
           />
+          {#if inlineToken}
+            <p class="mt-1 text-[10px] text-neutral-500">
+              Inline token: <button
+                type="button"
+                class="rounded border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-0.5 font-mono text-[10px] text-indigo-200 hover:border-indigo-400 hover:bg-indigo-500/20"
+                title="Click to copy"
+                onclick={() => navigator.clipboard?.writeText(inlineToken)}
+              >{inlineToken}</button>
+              — drop this anywhere in your prompt to splice the content in at that exact spot.
+            </p>
+          {/if}
         </div>
 
         <div>
@@ -94,7 +107,7 @@
           <p class="mt-1 text-[10px] text-neutral-500">
             <span class="text-indigo-300">Prepend / Append:</span> whole content is injected as-is.
             <br />
-            <span class="text-indigo-300">Wildcard:</span> one comma/newline-separated entry is picked at random per generation.
+            <span class="text-indigo-300">Wildcard:</span> one line is picked at random per generation; commas within a line stay grouped.
             <br />
             <span class="text-neutral-400">Tip:</span> autocomplete suggestions match the active model's tag list.
           </p>

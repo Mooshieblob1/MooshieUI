@@ -14,6 +14,7 @@ pub mod setup;
 pub mod state;
 pub mod temp_images;
 pub mod templates;
+pub mod user_prefs;
 pub mod webserver;
 
 use std::sync::Arc;
@@ -409,6 +410,7 @@ pub fn run() {
             commands::api::get_gpu_stats,
             commands::api::check_attention_backend,
             commands::api::install_attention_backend,
+            commands::api::get_compute_capability,
             setup::check_setup,
             setup::detect_gpu,
             setup::run_setup,

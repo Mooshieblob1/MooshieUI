@@ -1,6 +1,6 @@
 <script lang="ts">
   import { styles, type ArtistStyle } from "../../stores/styles.svelte.js";
-  import { promptPresets, type PromptPreset, type PresetMode } from "../../stores/promptPresets.svelte.js";
+  import { promptPresets, presetSlug, type PromptPreset, type PresetMode } from "../../stores/promptPresets.svelte.js";
   import StyleEditor from "./StyleEditor.svelte";
   import PresetEditor from "./PresetEditor.svelte";
   import PresetActivationModal from "./PresetActivationModal.svelte";
@@ -26,7 +26,6 @@
   // Shared import/export
   let importStatus = $state<string | null>(null);
   let importError = $state<string | null>(null);
-  let importMode = $state<"merge" | "replace">("merge");
   let fileInput: HTMLInputElement | null = $state(null);
 
   function createStyle() {
@@ -75,43 +74,53 @@
     return "";
   }
 
-  async function exportAll() {
+  async function exportStyle(id: string) {
     importStatus = null;
     importError = null;
-    const isStylesTab = activeTab === "styles";
-    const json = isStylesTab ? styles.exportJSON() : promptPresets.exportJSON();
-    const kind = isStylesTab ? "styles" : "presets";
-    const defaultName = `mooshieui-${kind}-${new Date().toISOString().slice(0, 10)}.json`;
+    const payload = styles.exportTxt(id);
+    if (!payload) return;
+    await saveTxt(payload.filename, payload.content);
+  }
+
+  async function exportPreset(id: string) {
+    importStatus = null;
+    importError = null;
+    const payload = promptPresets.exportTxt(id);
+    if (!payload) return;
+    await saveTxt(payload.filename, payload.content);
+  }
+
+  async function saveTxt(filename: string, content: string) {
     const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
     try {
       if (isTauri) {
         const { save } = await import("@tauri-apps/plugin-dialog");
         const { writeTextFile } = await import("@tauri-apps/plugin-fs");
         const path = await save({
-          defaultPath: defaultName,
-          filters: [{ name: "JSON", extensions: ["json"] }],
+          defaultPath: filename,
+          filters: [{ name: "Text", extensions: ["txt"] }],
         });
         if (!path) return;
-        await writeTextFile(path, json);
+        await writeTextFile(path, content);
         importStatus = `Exported to ${path}`;
       } else {
-        const blob = new Blob([json], { type: "application/json" });
+        const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = defaultName;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        importStatus = `Downloaded ${defaultName}`;
+        importStatus = `Downloaded ${filename}`;
       }
     } catch (e) {
       importError = e instanceof Error ? e.message : String(e);
     }
   }
 
-  async function importStyles() {
+  async function importTxt() {
     importStatus = null;
     importError = null;
     const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -120,12 +129,19 @@
         const { open } = await import("@tauri-apps/plugin-dialog");
         const { readTextFile } = await import("@tauri-apps/plugin-fs");
         const selected = await open({
-          multiple: false,
-          filters: [{ name: "JSON", extensions: ["json"] }],
+          multiple: true,
+          filters: [{ name: "Text", extensions: ["txt"] }],
         });
-        if (!selected || typeof selected !== "string") return;
-        const raw = await readTextFile(selected);
-        applyImport(raw);
+        if (!selected) return;
+        const paths = Array.isArray(selected) ? selected : [selected];
+        const files: Array<{ name: string; content: string }> = [];
+        for (const path of paths) {
+          if (typeof path !== "string") continue;
+          const content = await readTextFile(path);
+          const name = path.split(/[\\/]/).pop() ?? path;
+          files.push({ name, content });
+        }
+        applyFiles(files);
       } else {
         fileInput?.click();
       }
@@ -136,36 +152,46 @@
 
   async function onFilePicked(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
+    const picked = Array.from(input.files ?? []);
     input.value = "";
-    if (!file) return;
+    if (picked.length === 0) return;
     try {
-      const raw = await file.text();
-      applyImport(raw);
+      const files: Array<{ name: string; content: string }> = [];
+      for (const f of picked) {
+        files.push({ name: f.name, content: await f.text() });
+      }
+      applyFiles(files);
     } catch (err) {
       importError = err instanceof Error ? err.message : String(err);
     }
   }
 
-  function applyImport(raw: string) {
-    try {
-      // Try both kinds — the envelope's `kind` field disambiguates.
-      let result: { added: number; skipped: number } | null = null;
-      let label = "";
+  function applyFiles(files: Array<{ name: string; content: string }>) {
+    if (files.length === 0) return;
+    const isStylesTab = activeTab === "styles";
+    let imported = 0;
+    let renamed = 0;
+    for (const f of files) {
       try {
-        result = styles.importJSON(raw, importMode);
-        label = "style";
-      } catch {
-        result = promptPresets.importJSON(raw, importMode);
-        label = "preset";
+        if (isStylesTab) {
+          const { renamed: r } = styles.importTxt(f.name, f.content);
+          if (r) renamed++;
+        } else {
+          const { renamed: r } = promptPresets.importTxt(f.name, f.content);
+          if (r) renamed++;
+        }
+        imported++;
+      } catch (e) {
+        importError = e instanceof Error ? e.message : String(e);
       }
-      importStatus = `Imported ${result.added} ${label}${result.added === 1 ? "" : "s"}${
-        result.skipped > 0 ? ` (skipped ${result.skipped} duplicate${result.skipped === 1 ? "" : "s"})` : ""
-      }.`;
-      importError = null;
-    } catch (e) {
-      importError = e instanceof Error ? e.message : String(e);
     }
+    const kind = isStylesTab ? "style" : "preset";
+    importStatus =
+      imported > 0
+        ? `Imported ${imported} ${kind}${imported === 1 ? "" : "s"}${
+            renamed > 0 ? ` (${renamed} renamed to avoid duplicates)` : ""
+          }.`
+        : null;
   }
 </script>
 
@@ -273,6 +299,13 @@
                 >⧉</button>
                 <button
                   type="button"
+                  class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:text-indigo-200"
+                  onclick={() => exportStyle(style.id)}
+                  title="Export as .txt"
+                  aria-label={`Export ${style.name} as .txt`}
+                >↓</button>
+                <button
+                  type="button"
                   class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:bg-red-500/10 hover:text-red-300"
                   onclick={() => confirmDelete(style)}
                   title="Delete"
@@ -331,8 +364,14 @@
                   <p class="mt-0.5 truncate font-mono text-[11px] text-neutral-500">
                     {preset.content || "(empty)"}
                   </p>
-                  <p class="text-[10px] text-neutral-600">
-                    {choiceCount} wildcard option{choiceCount === 1 ? "" : "s"}
+                  <p class="flex items-center gap-2 text-[10px] text-neutral-600">
+                    <span>{choiceCount} wildcard option{choiceCount === 1 ? "" : "s"}</span>
+                    <button
+                      type="button"
+                      class="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 font-mono text-[10px] text-neutral-400 hover:border-indigo-500/40 hover:text-indigo-200"
+                      title="Inline token — click to copy"
+                      onclick={() => navigator.clipboard?.writeText(`@preset:${presetSlug(preset.name)}`)}
+                    >@preset:{presetSlug(preset.name)}</button>
                   </p>
                 </div>
                 <div class="flex shrink-0 items-center gap-1">
@@ -363,6 +402,13 @@
                   >⧉</button>
                   <button
                     type="button"
+                    class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:text-indigo-200"
+                    onclick={() => exportPreset(preset.id)}
+                    title="Export as .txt"
+                    aria-label={`Export ${preset.name} as .txt`}
+                  >↓</button>
+                  <button
+                    type="button"
                     class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:bg-red-500/10 hover:text-red-300"
                     onclick={() => confirmDeletePreset(preset)}
                     title="Delete"
@@ -386,31 +432,25 @@
         <button
           type="button"
           class="rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:border-indigo-500"
-          onclick={exportAll}
-          disabled={activeTab === "styles" ? styles.styles.length === 0 : promptPresets.presets.length === 0}
-        >Export all</button>
-        <button
-          type="button"
-          class="rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:border-indigo-500"
-          onclick={importStyles}
-        >Import…</button>
-        <label class="ml-2 inline-flex items-center gap-1 text-[11px] text-neutral-400">
-          <input type="radio" bind:group={importMode} value="merge" class="accent-indigo-500" />
-          Merge
-        </label>
-        <label class="inline-flex items-center gap-1 text-[11px] text-neutral-400">
-          <input type="radio" bind:group={importMode} value="replace" class="accent-indigo-500" />
-          Replace all
-        </label>
+          onclick={importTxt}
+        >Import .txt…</button>
         <input
           bind:this={fileInput}
           type="file"
-          accept="application/json,.json"
+          accept=".txt,text/plain"
+          multiple
           class="hidden"
           onchange={onFilePicked}
         />
       </div>
-      <p class="text-[10px] text-neutral-500">Import auto-detects whether the file contains styles or presets.</p>
+      <p class="text-[10px] text-neutral-500">
+        {#if activeTab === "styles"}
+          Plain text: one artist per line as <code class="font-mono">tag</code> or <code class="font-mono">tag:weight</code>. Lines starting with <code class="font-mono">#</code> are ignored. Filename becomes the style name.
+        {:else}
+          Plain text: filename becomes the preset name; file contents are used verbatim. For wildcard mode, one line per choice (commas within a line stay grouped).
+        {/if}
+        Use the <strong>Export</strong> button on each {activeTab === "styles" ? "style" : "preset"} to download it.
+      </p>
       {#if importStatus}
         <p class="text-[11px] text-emerald-400">{importStatus}</p>
       {/if}

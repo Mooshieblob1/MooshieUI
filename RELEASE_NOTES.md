@@ -1,3 +1,16 @@
+## What's New in v1.0.9
+
+### Account-Based Preference Sync
+- **Cross-device settings sync** — user preferences are now stored server-side per account, so switching OS or device with the same MooshieUI login yields the same configuration. Synced state includes: generation parameters, prompt history, prompt presets, artist styles, artist favourites, gallery boards, autocomplete settings, accessibility options, and locale.
+- **Seamless sync on login** — on startup or login, MooshieUI fetches the server snapshot and applies it to all stores. If no server snapshot exists yet, the current local state is seeded to the server.
+- **Debounced background push** — every settings save triggers a debounced 2-second sync push to the server, collapsing rapid consecutive saves into a single request.
+- **Desktop mode unaffected** — sync is only active in browser/LAN mode; the Tauri desktop app continues to use local-only persistence as before.
+
+### New Tauri Command
+- **`get_compute_capability`** — exposes the host GPU's CUDA compute capability as a float (e.g. `8.9` for RTX 4090), used for model compatibility hints in the UI.
+
+---
+
 ## What's New in v1.0.8
 
 ### New Features

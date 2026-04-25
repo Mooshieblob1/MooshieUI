@@ -1,4 +1,5 @@
 import { ipcStore } from "../utils/ipc.js";
+import { triggerSync } from "../utils/syncTrigger.js";
 import builtinTags from "../assets/danbooru-tags.json";
 import animaTags from "../assets/anima-tags.json";
 
@@ -132,6 +133,7 @@ class AutocompleteStore {
         sourceFileName: this.sourceFileName,
         customTags: this._customTags,
       });
+      triggerSync();
     } catch (e) {
       console.error("Failed to save autocomplete settings:", e);
     }
@@ -245,6 +247,27 @@ class AutocompleteStore {
   async setMaxResults(n: number) {
     this.maxResults = Math.max(1, Math.min(50, n));
     await this.saveSettings();
+  }
+
+  /** Collect autocomplete settings for server-side sync. */
+  collectPrefs(): Record<string, unknown> {
+    return {
+      maxResults: this.maxResults,
+      sourceMode: this.sourceMode,
+      sourceUrl: this.sourceUrl,
+      sourceFileName: this.sourceFileName,
+      customTags: this._customTags,
+    };
+  }
+
+  /** Apply autocomplete settings from the server. Writes to ipcStore and re-hydrates. */
+  async applyServerPrefs(data: Record<string, any>): Promise<void> {
+    try {
+      await ipcStore.set(STORE_KEY, data);
+      await this.loadSettings();
+    } catch (e) {
+      console.error("autocomplete: applyServerPrefs failed", e);
+    }
   }
 }
 

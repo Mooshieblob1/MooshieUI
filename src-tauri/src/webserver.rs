@@ -23,6 +23,7 @@ use crate::auth::AuthState;
 use crate::commands;
 use crate::config;
 use crate::state::AppState;
+use crate::user_prefs;
 
 /// Frontend assets embedded at compile time from `../dist/`. Used as a
 /// fallback when the on-disk dist directory isn't found (e.g. installed
@@ -405,6 +406,11 @@ pub async fn start_server(
         .route(
             "/internal-api/_storage/set_limit",
             post(storage_set_limit_handler),
+        )
+        // Per-user preferences (synced across devices/OS)
+        .route(
+            "/internal-api/_user/prefs",
+            get(user_prefs_get_handler).put(user_prefs_set_handler),
         )
         // Health check (unauthenticated, for K8s probes)
         .route("/health", get(health_handler))
@@ -3338,6 +3344,15 @@ async fn dispatch_command(
             Ok(serde_json::Value::Array(encoded))
         }
 
+        // --- GPU detection ---
+        // Mirrors the desktop `get_compute_capability` Tauri command. Used by
+        // the recommended-models dropdown to gate FP8-only entries to GPUs
+        // with native FP8 tensor cores (Ada / Blackwell).
+        "get_compute_capability" => {
+            let cap = crate::commands::api::detect_compute_capability_pub();
+            Ok(serde_json::json!(cap))
+        }
+
         // For commands not yet mapped, return an error
         _ => Err(format!(
             "Command '{}' not implemented in browser mode",
@@ -4110,6 +4125,74 @@ async fn storage_set_limit_handler(
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Err(e) => (
             StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-user preferences endpoints
+// ---------------------------------------------------------------------------
+
+/// Resolve the username key used for preferences storage.
+///
+/// Unlike gallery paths where admins share a root directory, every actor —
+/// including localhost admins — gets their own prefs file.  Localhost /
+/// single-user sessions use the reserved key `"_admin"`.
+fn resolve_prefs_username(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> String {
+    if is_localhost(remote) || !state.lan_enabled {
+        return "_admin".to_string();
+    }
+    if let Some(token) = extract_token(headers) {
+        if let Some(username) = state.auth.validate_token(&token) {
+            return username;
+        }
+    }
+    "_admin".to_string()
+}
+
+/// GET /internal-api/_user/prefs — fetch the caller's saved preferences.
+///
+/// Returns 200 + JSON body when prefs exist, 204 when none are saved yet.
+/// Anonymous callers receive 401.
+async fn user_prefs_get_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return unauthorized_response("Authentication required.");
+    }
+    let username = resolve_prefs_username(&state, &headers, &remote);
+    match user_prefs::load(&username) {
+        Some(prefs) => (StatusCode::OK, Json(prefs)).into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
+}
+
+/// PUT /internal-api/_user/prefs — save the caller's preferences.
+///
+/// The body is a full `UserPrefs` JSON object.  The server stamps
+/// `updated_at` before writing.  Anonymous callers receive 401.
+async fn user_prefs_set_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(mut prefs): Json<user_prefs::UserPrefs>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return unauthorized_response("Authentication required.");
+    }
+    let username = resolve_prefs_username(&state, &headers, &remote);
+    // Stamp server-side timestamp so clients can detect stale data in the future.
+    prefs.updated_at = Some(chrono::Utc::now().to_rfc3339());
+    match user_prefs::save(&username, &prefs) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e })),
         )
             .into_response(),

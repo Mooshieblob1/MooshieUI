@@ -1,4 +1,5 @@
 import { ipcStore } from "../utils/ipc.js";
+import { triggerSync } from "../utils/syncTrigger.js";
 import { parseScheduledPrompt } from "../utils/promptSchedule.js";
 import type { LoraEntry } from "../types/index.js";
 import { autocomplete } from "./autocomplete.svelte.js";
@@ -380,6 +381,7 @@ class GenerationStore {
   private savePromptHistory() {
     try {
       localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(this.promptHistory.slice(0, MAX_PROMPT_HISTORY)));
+      triggerSync();
     } catch (e) {
       console.error("Failed to save prompt history:", e);
     }
@@ -766,8 +768,104 @@ class GenerationStore {
         manualSaveMode: this.manualSaveMode,
         autoSaveDirs: this.autoSaveDirs,
       });
+      triggerSync();
     } catch (e) {
       console.error("Failed to save settings:", e);
+    }
+  }
+
+  /** Collect generation settings for server-side sync. */
+  collectPrefs(): Record<string, unknown> {
+    return {
+      mode: this.mode,
+      positivePrompt: this.positivePrompt,
+      negativePrompt: this.negativePrompt,
+      checkpoint: this.checkpoint,
+      vae: this.vae,
+      loras: this.loras,
+      samplerName: this.samplerName,
+      scheduler: this.scheduler,
+      steps: this.steps,
+      cfg: this.cfg,
+      seed: this.seed,
+      width: this.width,
+      height: this.height,
+      batchSize: this.batchSize,
+      denoise: this.denoise,
+      differentialDiffusion: this.differentialDiffusion,
+      upscaleEnabled: this.upscaleEnabled,
+      upscaleMethod: this.upscaleMethod,
+      upscaleModel: this.upscaleModel,
+      upscaleScale: this.upscaleScale,
+      upscaleDenoise: this.upscaleDenoise,
+      upscaleSteps: this.upscaleSteps,
+      upscaleTileSize: this.upscaleTileSize,
+      upscaleTiling: this.upscaleTiling,
+      upscaleSoftGuidance: this.upscaleSoftGuidance,
+      upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
+      smartGuidance: this.smartGuidance,
+      useSplitModel: this.useSplitModel,
+      diffusionModel: this.diffusionModel,
+      clipModel: this.clipModel,
+      clipType: this.clipType,
+      stylePreset: this.stylePreset,
+      stylePresetsEnabled: this.stylePresetsEnabled,
+      controlnetEnabled: this.controlnetEnabled,
+      controlnetMode: this.controlnetMode,
+      controlnetPreset: this.controlnetPreset,
+      controlnetModel: this.controlnetModel,
+      controlnetPreprocessor: this.controlnetPreprocessor,
+      controlnetStrength: this.controlnetStrength,
+      controlnetStartPercent: this.controlnetStartPercent,
+      controlnetEndPercent: this.controlnetEndPercent,
+      facefixEnabled: this.facefixEnabled,
+      facefixDetector: this.facefixDetector,
+      facefixDenoise: this.facefixDenoise,
+      facefixSteps: this.facefixSteps,
+      facefixGuideSize: this.facefixGuideSize,
+      facefixMaxFaces: this.facefixMaxFaces,
+      outputBitDepth: this.outputBitDepth,
+      outputFormat: this.outputFormat,
+      metadataMode: this.metadataMode,
+      autoQualityTags: this.autoQualityTags,
+      customAnimaPositiveQuality: this.customAnimaPositiveQuality,
+      customAnimaNegativeQuality: this.customAnimaNegativeQuality,
+      customIllustriousPositiveQuality: this.customIllustriousPositiveQuality,
+      customIllustriousNegativeQuality: this.customIllustriousNegativeQuality,
+      customPonyPositiveQuality: this.customPonyPositiveQuality,
+      customPonyNegativeQuality: this.customPonyNegativeQuality,
+      customNanosaurPositiveQuality: this.customNanosaurPositiveQuality,
+      customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
+      manualSaveMode: this.manualSaveMode,
+      autoSaveDirs: this.autoSaveDirs,
+    };
+  }
+
+  /** Collect prompt history for server-side sync. */
+  collectPromptHistory(): unknown[] {
+    return this.promptHistory.slice(0, MAX_PROMPT_HISTORY);
+  }
+
+  /** Apply generation settings from the server. Writes to ipcStore and re-hydrates. */
+  async applyServerPrefs(data: Record<string, any>): Promise<void> {
+    try {
+      await ipcStore.set(STORE_KEY, data);
+      await this.loadSettings();
+    } catch (e) {
+      console.error("generation: applyServerPrefs failed", e);
+    }
+  }
+
+  /** Apply prompt history from the server. */
+  applyPromptHistory(entries: any[]): void {
+    try {
+      const valid = entries
+        .filter((e) => !!e?.id)
+        .slice(0, MAX_PROMPT_HISTORY) as PromptHistoryEntry[];
+      localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(valid));
+      this.promptHistory = valid;
+    } catch (e) {
+      console.error("generation: applyPromptHistory failed", e);
     }
   }
 
@@ -776,8 +874,14 @@ class GenerationStore {
       ? (STYLE_PRESETS.find((preset) => preset.id === this.stylePreset) ?? STYLE_PRESETS[0])
       : STYLE_PRESETS[0];
 
-    let positivePrompt = this.mergeTagPrompts(this.positivePrompt, style.positive);
-    let negativePrompt = this.mergeTagPrompts(this.negativePrompt, style.negative);
+    // Expand inline `@preset:<slug>` directives in the user-typed prompts
+    // first, so wildcard rolls happen before any merging/dedup logic. Each
+    // occurrence rolls independently.
+    const inlinePositive = promptPresets.resolveInline(this.positivePrompt);
+    const inlineNegative = promptPresets.resolveInline(this.negativePrompt);
+
+    let positivePrompt = this.mergeTagPrompts(inlinePositive, style.positive);
+    let negativePrompt = this.mergeTagPrompts(inlineNegative, style.negative);
 
     // Inject tags contributed by any currently-active Artist Styles. These are
     // not visible in the prompt textbox — they flow straight into the payload

@@ -185,7 +185,7 @@ const TAG_COLORS: Record<string, { bg: string; border: string; glow: string }> =
  * Render prompt text as HTML with styled highlights for scheduling blocks.
  * Used by the backdrop overlay behind the textarea.
  */
-export function renderHighlightedPrompt(raw: string): string {
+export function renderHighlightedPrompt(raw: string, knownPresetSlugs?: ReadonlySet<string>): string {
   let html = "";
   let lastIndex = 0;
 
@@ -196,7 +196,7 @@ export function renderHighlightedPrompt(raw: string): string {
     const fullMatch = match[0];
     const matchStart = match.index;
 
-    html += escapeHtml(raw.slice(lastIndex, matchStart));
+    html += renderPresetSegment(raw.slice(lastIndex, matchStart), knownPresetSlugs);
     lastIndex = matchStart + fullMatch.length;
 
     let isValid = false;
@@ -232,7 +232,41 @@ export function renderHighlightedPrompt(raw: string): string {
     html += `</span>`;
   }
 
-  html += escapeHtml(raw.slice(lastIndex));
+  html += renderPresetSegment(raw.slice(lastIndex), knownPresetSlugs);
+  return html;
+}
+
+/** Match `@preset:<slug>` directives. Slug = lowercase alnum + underscore. */
+const PRESET_TOKEN_REGEX = /@preset:([a-z0-9_]+)/gi;
+
+/**
+ * Highlight `@preset:<slug>` tokens within an arbitrary plain-text segment.
+ * Indigo pill when the slug is known, red when unknown — gives users instant
+ * feedback for typos. Returns escaped HTML so it can be concatenated into the
+ * larger highlight string.
+ */
+function renderPresetSegment(text: string, knownPresetSlugs?: ReadonlySet<string>): string {
+  if (!text) return "";
+  if (!text.includes("@preset:")) return escapeHtml(text);
+  let html = "";
+  let lastIndex = 0;
+  PRESET_TOKEN_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PRESET_TOKEN_REGEX.exec(text)) !== null) {
+    html += escapeHtml(text.slice(lastIndex, match.index));
+    lastIndex = match.index + match[0].length;
+    const slug = match[1].toLowerCase();
+    const known = knownPresetSlugs?.has(slug) ?? false;
+    const bg = known ? "rgba(99, 102, 241, 0.18)" : "rgba(239, 68, 68, 0.16)";
+    const border = known ? "rgba(129, 140, 248, 0.55)" : "rgba(248, 113, 113, 0.55)";
+    const glow = known
+      ? "0 0 8px rgba(99, 102, 241, 0.30)"
+      : "0 0 6px rgba(239, 68, 68, 0.25)";
+    html += `<span style="display:inline;color:transparent;background:${bg};border:1px solid ${border};border-radius:4px;box-shadow:${glow};padding:1px 3px;margin:0 1px;">`;
+    html += escapeHtml(match[0]);
+    html += `</span>`;
+  }
+  html += escapeHtml(text.slice(lastIndex));
   return html;
 }
 
@@ -242,4 +276,14 @@ export function renderHighlightedPrompt(raw: string): string {
 export function hasSchedulingTags(raw: string): boolean {
   COMBINED_REGEX.lastIndex = 0;
   return COMBINED_REGEX.test(raw);
+}
+
+/**
+ * Check whether the prompt contains any `@preset:<slug>` directives. Cheap
+ * substring guard first so we don't allocate a regex match on every keystroke.
+ */
+export function hasPresetTokens(raw: string): boolean {
+  if (!raw || !raw.includes("@preset:")) return false;
+  PRESET_TOKEN_REGEX.lastIndex = 0;
+  return PRESET_TOKEN_REGEX.test(raw);
 }

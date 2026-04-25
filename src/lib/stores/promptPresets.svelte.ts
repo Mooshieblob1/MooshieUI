@@ -6,9 +6,12 @@
  * user picks a mode:
  *   - "prepend"  — injected at the start of the positive prompt
  *   - "append"   — injected at the end
- *   - "wildcard" — exactly ONE of the comma-separated tags inside `content`
- *                  is chosen at random for each generation (re-rolled every
- *                  time `resolve()` is called)
+ *   - "wildcard" — exactly ONE of the newline-separated tag groups inside
+ *                  `content` is chosen at random for each generation (re-rolled
+ *                  every time `resolve()` is called). Commas within a line
+ *                  keep tags grouped together, so `1girl, solo` on one line
+ *                  is picked as the whole block rather than "1girl" or "solo"
+ *                  in isolation.
  *
  * Like Artist Styles, presets live outside the prompt textbox — users see
  * badges, not tags — and survive reloads via localStorage.
@@ -19,12 +22,14 @@ const ACTIVE_KEY = "mooshieui.promptPresets.active.v1";
 const EXPORT_KIND = "mooshieui.prompt-presets";
 const EXPORT_VERSION = 1;
 
+import { triggerSync } from "../utils/syncTrigger.js";
+
 export type PresetMode = "prepend" | "append" | "wildcard";
 
 export interface PromptPreset {
   id: string;
   name: string;
-  /** Free-form prompt text. For wildcard mode, this is split on commas/newlines. */
+  /** Free-form prompt text. For wildcard mode, newlines split choices; commas keep tags grouped within a choice. */
   content: string;
   createdAt: number;
   updatedAt: number;
@@ -37,13 +42,6 @@ export interface ActivePreset {
 
 interface PersistedState {
   version: number;
-  presets: PromptPreset[];
-}
-
-export interface PresetsExport {
-  kind: typeof EXPORT_KIND;
-  version: number;
-  exportedAt: string;
   presets: PromptPreset[];
 }
 
@@ -63,13 +61,47 @@ function sanitizePreset(raw: any): PromptPreset | null {
   };
 }
 
-/** Split wildcard content into individual tag candidates. */
+/**
+ * Split wildcard content into individual choices. Newlines delimit choices;
+ * commas within a line are preserved so multi-tag groups (e.g. `1girl, solo`)
+ * are treated as a single wildcard block rather than as separate candidates.
+ */
 function splitWildcardChoices(content: string): string[] {
   return content
-    .split(/[,\n]/)
-    .map((s) => s.trim())
+    .split(/\r?\n/)
+    .map((s) => s.trim().replace(/^,+|,+$/g, "").trim())
     .filter((s) => s.length > 0);
 }
+
+/**
+ * Derive a URL/token-safe slug from a preset display name. Lowercased, with
+ * runs of non-alphanumeric chars collapsed to a single underscore. Used as
+ * the inline `@preset:<slug>` token form so users can drop a preset at any
+ * point in the prompt without worrying about case or punctuation.
+ */
+export function presetSlug(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "preset"
+  );
+}
+
+/**
+ * Reserved keywords that must NOT be treated as artist tags when they appear
+ * after `@`. Anything matching `@<keyword>:` is a MooshieUI directive, not
+ * an Anima artist reference. Kept tiny on purpose — easy to scan, easy to
+ * extend later (e.g. `style:`, `lora:`).
+ */
+export const RESERVED_AT_KEYWORDS: ReadonlySet<string> = new Set(["preset"]);
+
+/**
+ * Regex that matches inline preset directives: `@preset:<slug>`. The slug
+ * captures `[a-z0-9_]` only (matches `presetSlug()` output). Case-insensitive
+ * on the keyword for forgiveness; slug must already be lowercased.
+ */
+export const INLINE_PRESET_REGEX = /@preset:([a-z0-9_]+)/gi;
 
 class PromptPresetsStore {
   presets = $state<PromptPreset[]>([]);
@@ -119,6 +151,7 @@ class PromptPresetsStore {
     try {
       const payload: PersistedState = { version: EXPORT_VERSION, presets: this.presets };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      triggerSync();
     } catch (e) {
       console.error("prompt-presets: save failed", e);
     }
@@ -127,6 +160,7 @@ class PromptPresetsStore {
   private saveActive() {
     try {
       localStorage.setItem(ACTIVE_KEY, JSON.stringify(this.active));
+      triggerSync();
     } catch (e) {
       console.error("prompt-presets: save active failed", e);
     }
@@ -185,6 +219,62 @@ class PromptPresetsStore {
       prepend: prepends.join(", "),
       append: appends.join(", "),
     };
+  }
+
+  /**
+   * Map of slug → preset for inline `@preset:<slug>` lookups. Recomputed
+   * each access so it stays in sync with renames; the list is small enough
+   * that caching isn't worth the bookkeeping.
+   */
+  get bySlug(): Map<string, PromptPreset> {
+    const map = new Map<string, PromptPreset>();
+    for (const p of this.presets) {
+      const slug = presetSlug(p.name);
+      // First-write-wins on collisions — the renaming logic in importTxt and
+      // the natural uniqueness of display names means dupes are rare.
+      if (!map.has(slug)) map.set(slug, p);
+    }
+    return map;
+  }
+
+  /** Convenience getter: just the slug strings, for highlight rendering. */
+  get slugs(): Set<string> {
+    return new Set(this.bySlug.keys());
+  }
+
+  /**
+   * Resolve `@preset:<slug>` directives inline within a prompt string.
+   * - Single-line preset content is inserted verbatim (trimmed).
+   * - Multi-line preset content picks one random line per occurrence
+   *   (independent rolls — `@preset:foo, @preset:foo` rolls twice).
+   * - Empty presets resolve to an empty string; adjacent commas/whitespace
+   *   are tidied so the prompt doesn't end up with `, ,` artefacts.
+   * - Unknown slugs are left untouched (so typos are debuggable).
+   */
+  resolveInline(text: string): string {
+    if (!text || !text.includes("@preset:")) return text;
+    const lookup = this.bySlug;
+    let resolved = text.replace(INLINE_PRESET_REGEX, (full, slug: string) => {
+      const preset = lookup.get(slug.toLowerCase());
+      if (!preset) return full;
+      const choices = splitWildcardChoices(preset.content);
+      if (choices.length === 0) {
+        const verbatim = preset.content.trim();
+        return verbatim;
+      }
+      if (choices.length === 1) return choices[0];
+      return choices[Math.floor(Math.random() * choices.length)];
+    });
+    // Tidy up commas/whitespace left behind when a preset resolved to "".
+    resolved = resolved
+      .replace(/,\s*,/g, ",")
+      .replace(/\(\s*,/g, "(")
+      .replace(/,\s*\)/g, ")")
+      .replace(/^\s*,\s*/, "")
+      .replace(/\s*,\s*$/, "")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim();
+    return resolved;
   }
 
   // ---------------------------------------------------------------------------
@@ -283,55 +373,94 @@ class PromptPresetsStore {
   }
 
   // ---------------------------------------------------------------------------
-  // Export / import
+  // Export / import (.txt)
   // ---------------------------------------------------------------------------
 
-  exportJSON(ids?: string[]): string {
-    const selected = ids ? this.presets.filter((p) => ids.includes(p.id)) : this.presets;
-    const payload: PresetsExport = {
-      kind: EXPORT_KIND,
-      version: EXPORT_VERSION,
-      exportedAt: new Date().toISOString(),
-      presets: selected,
+  /** Render a preset as a .txt file (filename + contents). */
+  exportTxt(id: string): { filename: string; content: string } | null {
+    const p = this.getById(id);
+    if (!p) return null;
+    return {
+      filename: `${sanitizeFilename(p.name)}.txt`,
+      content: p.content,
     };
-    return JSON.stringify(payload, null, 2);
   }
 
-  importJSON(raw: string, mode: "merge" | "replace" = "merge"): { added: number; skipped: number } {
-    const parsed = JSON.parse(raw) as Partial<PresetsExport>;
-    if (!parsed || typeof parsed !== "object") throw new Error("Invalid JSON payload");
-    if (parsed.kind !== EXPORT_KIND) throw new Error("Not a MooshieUI prompt presets export");
-    const incoming = Array.isArray(parsed.presets)
-      ? (parsed.presets.map(sanitizePreset).filter(Boolean) as PromptPreset[])
-      : [];
+  /**
+   * Import a preset from a plain .txt file. Filename (minus extension) becomes
+   * the preset name; file contents become the `content` field verbatim.
+   *
+   * If a preset with the same name already exists, a numeric suffix is added
+   * (e.g. `cats (2)`). Returns the created preset and whether it was renamed.
+   */
+  importTxt(filename: string, content: string): { preset: PromptPreset; renamed: boolean } {
+    const baseName = stripExtension(filename).trim() || "Imported preset";
+    const { name, renamed } = this.uniqueName(baseName);
+    const preset = this.create(name);
+    this.update(preset.id, { content });
+    return { preset: this.getById(preset.id) ?? preset, renamed };
+  }
 
-    if (mode === "replace") {
-      this.presets = incoming;
-      this.saveSettings();
-      const ids = new Set(this.presets.map((p) => p.id));
-      this.active = this.active.filter((a) => ids.has(a.id));
-      this.saveActive();
-      return { added: incoming.length, skipped: 0 };
+  private uniqueName(base: string): { name: string; renamed: boolean } {
+    const existing = new Set(this.presets.map((p) => p.name));
+    if (!existing.has(base)) return { name: base, renamed: false };
+    for (let i = 2; i < 1000; i++) {
+      const candidate = `${base} (${i})`;
+      if (!existing.has(candidate)) return { name: candidate, renamed: true };
     }
+    return { name: `${base} (${Date.now()})`, renamed: true };
+  }
 
-    const existing = new Set(this.presets.map((p) => p.id));
-    let added = 0;
-    let skipped = 0;
-    const fresh: PromptPreset[] = [];
-    for (const p of incoming) {
-      if (existing.has(p.id)) {
-        skipped++;
-        continue;
+  /** Collect preset state for server-side sync. */
+  collectPrefs(): unknown {
+    return {
+      presets: this.presets,
+      active: this.active,
+    };
+  }
+
+  /** Apply prompt presets fetched from the server. Replaces local storage and re-hydrates. */
+  applyServerPrefs(data: any): void {
+    try {
+      if (Array.isArray(data?.presets)) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: EXPORT_VERSION, presets: data.presets }));
       }
-      fresh.push(p);
-      added++;
+      if (Array.isArray(data?.active)) {
+        localStorage.setItem(ACTIVE_KEY, JSON.stringify(data.active));
+      }
+      // Re-hydrate from the newly-written localStorage
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<PersistedState>;
+        if (Array.isArray(parsed?.presets)) {
+          this.presets = parsed.presets.map(sanitizePreset).filter(Boolean) as PromptPreset[];
+        }
+      }
+      const rawActive = localStorage.getItem(ACTIVE_KEY);
+      if (rawActive) {
+        const parsed = JSON.parse(rawActive) as ActivePreset[];
+        if (Array.isArray(parsed)) {
+          const ids = new Set(this.presets.map((p) => p.id));
+          this.active = parsed.filter(
+            (a): a is ActivePreset =>
+              !!a && typeof a.id === "string" && ids.has(a.id) &&
+              (a.mode === "prepend" || a.mode === "append" || a.mode === "wildcard"),
+          );
+        }
+      }
+    } catch (e) {
+      console.error("prompt-presets: applyServerPrefs failed", e);
     }
-    if (fresh.length > 0) {
-      this.presets = [...fresh, ...this.presets];
-      this.saveSettings();
-    }
-    return { added, skipped };
   }
+}
+
+function stripExtension(filename: string): string {
+  return filename.replace(/\.[^./\\]+$/, "");
+}
+
+function sanitizeFilename(name: string): string {
+  // Replace reserved chars across platforms with underscores; collapse runs.
+  return name.replace(/[\\/:*?"<>|\x00-\x1f]+/g, "_").replace(/_+/g, "_").trim() || "preset";
 }
 
 export const promptPresets = new PromptPresetsStore();

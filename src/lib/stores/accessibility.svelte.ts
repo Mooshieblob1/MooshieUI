@@ -1,3 +1,5 @@
+import { triggerSync } from "../utils/syncTrigger.js";
+
 const ACCESSIBILITY_SETTINGS_KEY = "mooshieui.accessibility.v1";
 
 export type VisionSimulatorMode = "none" | "protanopia" | "deuteranopia" | "tritanopia";
@@ -32,8 +34,26 @@ class AccessibilityStore {
         visionSimulatorMode: this.visionSimulatorMode,
         showInfoTips: this.showInfoTips
       }));
+      triggerSync();
     } catch (e) {
       console.error("Failed to save accessibility settings:", e);
+    }
+  }
+
+  collectPrefs(): unknown {
+    return {
+      visionSimulatorMode: this.visionSimulatorMode,
+      showInfoTips: this.showInfoTips,
+    };
+  }
+
+  applyServerPrefs(data: any): void {
+    try {
+      if (data?.visionSimulatorMode) this.visionSimulatorMode = data.visionSimulatorMode;
+      if (data?.showInfoTips !== undefined) this.showInfoTips = data.showInfoTips;
+      this.saveSettings();
+    } catch (e) {
+      console.error("Failed to apply server prefs (accessibility):", e);
     }
   }
 

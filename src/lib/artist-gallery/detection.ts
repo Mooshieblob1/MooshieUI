@@ -57,6 +57,10 @@ function tokenize(prompt: string): Array<{ token: string; hadAtPrefix: boolean }
     const hadAt = t.startsWith("@");
     if (hadAt) t = t.replace(/^@+/, "").trim();
     if (!t) continue;
+    // Skip MooshieUI directives like `@preset:foo` — those are inline preset
+    // expansions, not artist references. Only relevant when the token had an
+    // `@` prefix; a bare `preset:foo` would never reach here as a tag anyway.
+    if (hadAt && /^preset:/i.test(t)) continue;
     // Normalise: spaces → underscores, lowercase
     const normalized = t.toLowerCase().replace(/\s+/g, "_");
     if (normalized) out.push({ token: normalized, hadAtPrefix: hadAt });

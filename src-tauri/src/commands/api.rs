@@ -3200,6 +3200,24 @@ fn detect_compute_capability() -> Option<f32> {
         .reduce(f32::max)
 }
 
+/// Lightweight standalone command — returns just the compute capability of
+/// the highest-tier GPU detected via `nvidia-smi`, without the package-listing
+/// overhead of [`check_attention_backend`]. Used by the recommended-models
+/// dropdown to gate FP8-only entries (Ada/Blackwell). Returns `None` on
+/// non-NVIDIA systems or if `nvidia-smi` is unavailable.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn get_compute_capability() -> Result<Option<f32>, AppError> {
+    Ok(detect_compute_capability())
+}
+
+/// Public wrapper over [`detect_compute_capability`] so the server-mode
+/// webserver IPC bridge can reach it without depending on the
+/// `#[tauri::command]`-only `get_compute_capability` symbol.
+pub fn detect_compute_capability_pub() -> Option<f32> {
+    detect_compute_capability()
+}
+
 /// Install (or uninstall) an attention backend package in the venv.
 /// Accepts: "default", "sage_v1", "sage_v2", "flash_v1", "flash_v2".
 #[cfg(feature = "desktop")]

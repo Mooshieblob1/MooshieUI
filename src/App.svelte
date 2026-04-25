@@ -16,6 +16,7 @@
   import { canvas } from "./lib/stores/canvas.svelte.js";
   import { accessibility } from "./lib/stores/accessibility.svelte.js";
   import { locale } from "./lib/stores/locale.svelte.js";
+  import { prefsSync } from "./lib/stores/prefsSync.svelte.js";
   import type { GenerationParams, OutputImage, InterrogationResult } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
@@ -1378,6 +1379,8 @@
 
     // Load persisted settings
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
+    // Sync preferences from server (browser/LAN mode only — no-op in Tauri)
+    prefsSync.loadAndApply().catch(() => {});
 
     // Set up event listeners BEFORE starting so we don't miss events
     await Promise.all([

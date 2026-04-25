@@ -7,13 +7,16 @@
  * textbox — they are injected downstream in `generation.toParams()`.
  *
  * Storage: localStorage under `mooshieui.styles.v1`.
- * Export/import: JSON envelope with kind + version for forward-compat.
+ * Import/export: plain `.txt` files — filename (minus extension) becomes
+ * the style name. Each non-blank, non-comment line is one artist in
+ * `tag[:weight]` form (weight defaults to 1.0). `# ...` lines and blank
+ * lines are ignored. An optional `overall:NNN` line sets the overall weight.
  */
 
 const STORAGE_KEY = "mooshieui.styles.v1";
 const ACTIVE_KEY = "mooshieui.styles.active.v1";
-const EXPORT_KIND = "mooshieui.artist-styles";
-const EXPORT_VERSION = 1;
+
+import { triggerSync } from "../utils/syncTrigger.js";
 
 /** Max dimension (px) for thumbnails stored with the style. Keeps localStorage / exports small. */
 const THUMBNAIL_MAX_DIM = 384;
@@ -41,13 +44,6 @@ export interface ArtistStyle {
 
 interface PersistedState {
   version: number;
-  styles: ArtistStyle[];
-}
-
-export interface StylesExport {
-  kind: typeof EXPORT_KIND;
-  version: number;
-  exportedAt: string;
   styles: ArtistStyle[];
 }
 
@@ -175,6 +171,7 @@ class StylesStore {
     try {
       const payload: PersistedState = { version: EXPORT_VERSION, styles: this.styles };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      triggerSync();
     } catch (e) {
       console.error("styles: save failed", e);
     }
@@ -183,6 +180,7 @@ class StylesStore {
   private saveActive() {
     try {
       localStorage.setItem(ACTIVE_KEY, JSON.stringify(this.activeIds));
+      triggerSync();
     } catch (e) {
       console.error("styles: save active failed", e);
     }
@@ -366,63 +364,126 @@ class StylesStore {
   }
 
   // ---------------------------------------------------------------------------
-  // Export / import
+  // Export / import (.txt)
   // ---------------------------------------------------------------------------
 
-  exportJSON(styleIds?: string[]): string {
-    const selected = styleIds
-      ? this.styles.filter((s) => styleIds.includes(s.id))
-      : this.styles;
-    const payload: StylesExport = {
-      kind: EXPORT_KIND,
-      version: EXPORT_VERSION,
-      exportedAt: new Date().toISOString(),
-      styles: selected,
+  /**
+   * Render a style as a plain .txt file. Format:
+   *
+   *   # name (comment)
+   *   overall:1.20
+   *   dairi:1.2
+   *   greg rutkowski
+   *   @illu_no16:0.8
+   */
+  exportTxt(id: string): { filename: string; content: string } | null {
+    const style = this.getById(id);
+    if (!style) return null;
+    const lines: string[] = [];
+    lines.push(`# ${style.name}`);
+    if (style.overallWeight !== 1.0) {
+      lines.push(`overall:${style.overallWeight.toFixed(2)}`);
+    }
+    for (const a of style.artists) {
+      if (a.weight === 1.0) lines.push(a.tag);
+      else lines.push(`${a.tag}:${a.weight.toFixed(2)}`);
+    }
+    return {
+      filename: `${sanitizeFilename(style.name)}.txt`,
+      content: lines.join("\n") + "\n",
     };
-    return JSON.stringify(payload, null, 2);
   }
 
   /**
-   * Import styles from a JSON string.
-   * - "merge": new IDs are appended; existing IDs are skipped (use "replace-id" to overwrite).
-   * - "replace": wipes existing styles entirely and installs the imported set.
+   * Import a style from a plain .txt file. Filename (minus extension) becomes
+   * the style name. Format per line:
+   *
+   *   - blank or `# …` — ignored (comment)
+   *   - `overall:N`    — sets the overall weight
+   *   - `tag`          — artist with default weight 1.0
+   *   - `tag:weight`   — artist with explicit weight (e.g. `dairi:1.2`)
+   *
+   * Tag normalisation (`@` prefix handling for Anima models) happens in the
+   * editor UI, not here — the imported file's syntax is preserved.
+   *
+   * If a style with the same name already exists, a numeric suffix is added.
    */
-  importJSON(raw: string, mode: "merge" | "replace" = "merge"): { added: number; skipped: number } {
-    const parsed = JSON.parse(raw) as Partial<StylesExport>;
-    if (!parsed || typeof parsed !== "object") throw new Error("Invalid JSON payload");
-    if (parsed.kind !== EXPORT_KIND) throw new Error("Not a MooshieUI styles export");
-    const incoming = Array.isArray(parsed.styles)
-      ? (parsed.styles.map(sanitizeStyle).filter(Boolean) as ArtistStyle[])
-      : [];
-
-    if (mode === "replace") {
-      this.styles = incoming;
-      this.saveSettings();
-      // Purge active IDs that no longer exist.
-      const ids = new Set(this.styles.map((s) => s.id));
-      this.activeIds = this.activeIds.filter((id) => ids.has(id));
-      this.saveActive();
-      return { added: incoming.length, skipped: 0 };
-    }
-
-    const existing = new Set(this.styles.map((s) => s.id));
-    let added = 0;
-    let skipped = 0;
-    const fresh: ArtistStyle[] = [];
-    for (const s of incoming) {
-      if (existing.has(s.id)) {
-        skipped++;
+  importTxt(filename: string, content: string): { style: ArtistStyle; renamed: boolean } {
+    const baseName = stripExtension(filename).trim() || "Imported style";
+    const { name, renamed } = this.uniqueName(baseName);
+    let overallWeight = 1.0;
+    const artists: StyleArtist[] = [];
+    for (const rawLine of content.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#")) continue;
+      const overallMatch = line.match(/^overall\s*[:=]\s*([0-9]*\.?[0-9]+)\s*$/i);
+      if (overallMatch) {
+        overallWeight = clampWeight(overallMatch[1]);
         continue;
       }
-      fresh.push(s);
-      added++;
+      // Last colon splits tag:weight (so tags containing colons stay intact
+      // when their weight suffix is present, and tags without a numeric
+      // suffix retain the full text).
+      const colonIdx = line.lastIndexOf(":");
+      let tag = line;
+      let weight = 1.0;
+      if (colonIdx > 0 && colonIdx < line.length - 1) {
+        const tail = line.slice(colonIdx + 1).trim();
+        if (/^[0-9]*\.?[0-9]+$/.test(tail)) {
+          tag = line.slice(0, colonIdx).trim();
+          weight = clampWeight(tail);
+        }
+      }
+      if (!tag) continue;
+      artists.push({ tag, weight });
     }
-    if (fresh.length > 0) {
-      this.styles = [...fresh, ...this.styles];
-      this.saveSettings();
-    }
-    return { added, skipped };
+    const style = this.create(name, artists, overallWeight);
+    return { style, renamed };
   }
+
+  private uniqueName(base: string): { name: string; renamed: boolean } {
+    const existing = new Set(this.styles.map((s) => s.name));
+    if (!existing.has(base)) return { name: base, renamed: false };
+    for (let i = 2; i < 1000; i++) {
+      const candidate = `${base} (${i})`;
+      if (!existing.has(candidate)) return { name: candidate, renamed: true };
+    }
+    return { name: `${base} (${Date.now()})`, renamed: true };
+  }
+
+  /** Collect style state for server-side sync. */
+  collectPrefs(): unknown {
+    return {
+      styles: this.styles,
+      activeIds: this.activeIds,
+    };
+  }
+
+  /** Apply artist styles fetched from the server. Replaces local storage and re-hydrates. */
+  applyServerPrefs(data: any): void {
+    try {
+      if (Array.isArray(data?.styles)) {
+        const sanitized = data.styles.map(sanitizeStyle).filter(Boolean) as ArtistStyle[];
+        this.styles = sanitized;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, styles: sanitized }));
+      }
+      if (Array.isArray(data?.activeIds)) {
+        const ids = new Set(this.styles.map((s) => s.id));
+        this.activeIds = data.activeIds.filter((id: any) => typeof id === "string" && ids.has(id));
+        localStorage.setItem(ACTIVE_KEY, JSON.stringify(this.activeIds));
+      }
+    } catch (e) {
+      console.error("styles: applyServerPrefs failed", e);
+    }
+  }
+}
+
+function stripExtension(filename: string): string {
+  return filename.replace(/\.[^./\\]+$/, "");
+}
+
+function sanitizeFilename(name: string): string {
+  return name.replace(/[\\/:*?"<>|\x00-\x1f]+/g, "_").replace(/_+/g, "_").trim() || "style";
 }
 
 export const styles = new StylesStore();

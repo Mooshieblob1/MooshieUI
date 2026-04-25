@@ -3,7 +3,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { downloadModel, findModelByHash, hashModelFile, readModelSpec, type ModelSpec } from "../../utils/api.js";
+  import { downloadModel, findModelByHash, hashModelFile, readModelSpec, type ModelSpec, getComputeCapability } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
   import { onMount, onDestroy } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
@@ -40,7 +40,17 @@
       scheduler?: string;
       upscaleSteps?: number;
       upscaleDenoise?: number;
+      facefixSteps?: number;
     };
+    /**
+     * Minimum NVIDIA compute capability required (e.g. 8.9 for Ada / Blackwell
+     * FP8 native tensor cores). Hides the entry on lower-tier GPUs where the
+     * model would either fail to load or run dramatically slower than the
+     * non-quantised alternative. `null`/absent = available everywhere.
+     */
+    minComputeCapability?: number;
+    /** Hint shown next to the size in the dropdown to explain the gate. */
+    gateHint?: string;
   }
 
   const recommendedModels: RecommendedModel[] = [
@@ -71,6 +81,42 @@
         diffusionModel: {
           filename: "anima-preview3-base.safetensors",
           url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-preview3-base.safetensors",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_06b_base.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+          category: "text_encoders",
+          clipType: "wan",
+        },
+        vaeModel: {
+          filename: "qwen_image_vae.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 30,
+        cfg: 4,
+        samplerName: "er_sde",
+        upscaleSteps: 10,
+        upscaleDenoise: 0.3,
+        facefixSteps: 10,
+      },
+    },
+    {
+      label: "Anima Preview 3 (FP8)",
+      size: "~7 GB",
+      // FP8 native tensor-core compute lands on Ada Lovelace (8.9) and
+      // Blackwell (10.0+ datacenter / 12.0 consumer). Earlier GPUs would
+      // fall back to BF16 emulation and lose the speed/VRAM advantage that
+      // makes this build worthwhile, so we hide the entry on those tiers.
+      minComputeCapability: 8.9,
+      gateHint: "Ada / Blackwell only",
+      splitModel: {
+        diffusionModel: {
+          filename: "anima-preview3-base-fp8.safetensors",
+          url: "https://huggingface.co/Bedovyy/Anima-FP8/resolve/main/anima-preview3-base-fp8.safetensors",
           category: "diffusion_models",
         },
         clipModel: {
@@ -199,6 +245,15 @@
   let loraSearches = $state<Record<number, string>>({});
   let downloading = $state<string | null>(null);
   let downloadError = $state("");
+
+  /**
+   * Detected NVIDIA compute capability. `null` until probed; remains `null`
+   * on non-NVIDIA systems / when nvidia-smi is unavailable. We surface gated
+   * recommended models (e.g. FP8-only builds) only when this is known to
+   * meet or exceed the entry's `minComputeCapability` — never optimistically
+   * (so AMD/Intel/CPU users don't see entries they can't run).
+   */
+  let computeCapability = $state<number | null>(null);
 
   // Per-file download progress. Keyed by filename so parallel downloads of
   // different components (diffusion model / text encoder / VAE) each have
@@ -341,6 +396,17 @@
 
     // Resolve model hashes in background
     resolveModelHashes();
+
+    // Probe NVIDIA compute capability so we can gate FP8-only recommended
+    // entries. Cheap (single nvidia-smi shell-out) and fire-and-forget — a
+    // failure just leaves the gate closed, which is the safe default.
+    try {
+      computeCapability = await getComputeCapability();
+      console.debug("[ModelSelector] detected compute capability:", computeCapability);
+    } catch (err) {
+      console.warn("[ModelSelector] getComputeCapability failed:", err);
+      computeCapability = null;
+    }
   });
 
   onDestroy(() => {
@@ -423,10 +489,17 @@
   /** Combine installed checkpoints + recommended models into a single filtered list */
   const filteredItems = $derived(() => {
     const q = checkpointSearch.toLowerCase();
-    const items: { type: "checkpoint" | "recommended"; label: string; value: string; rec?: RecommendedModel; installed: boolean; size?: string }[] = [];
+    const items: { type: "checkpoint" | "recommended"; label: string; value: string; rec?: RecommendedModel; installed: boolean; size?: string; gateHint?: string }[] = [];
 
     // Add recommended models first
     for (const rec of recommendedModels) {
+      // Hide entries gated behind a compute-capability we haven't met (or
+      // haven't been able to detect). Pre-existing installed copies still
+      // surface from `models.checkpoints` further below if the user already
+      // downloaded them by other means.
+      if (rec.minComputeCapability !== undefined) {
+        if (computeCapability === null || computeCapability < rec.minComputeCapability) continue;
+      }
       const installed = isRecommendedInstalled(rec);
       if (!q || rec.label.toLowerCase().includes(q)) {
         items.push({
@@ -436,6 +509,7 @@
           rec,
           installed,
           size: rec.size,
+          gateHint: rec.gateHint,
         });
       }
     }
@@ -669,6 +743,9 @@
               >
                 <span class="text-sm truncate">
                   {item.label}
+                  {#if item.gateHint}
+                    <span class="ml-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1 py-0.5 align-middle text-[9px] uppercase tracking-wide text-emerald-300">{item.gateHint}</span>
+                  {/if}
                   {#if !item.installed}
                     <span class="text-[10px] text-neutral-500 ml-1">({locale.t('generation.model.auto_download')})</span>
                   {/if}

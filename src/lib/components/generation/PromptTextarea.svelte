@@ -3,8 +3,9 @@
   import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
+  import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import ArtistHoverPreview from "../../artist-gallery/components/ArtistHoverPreview.svelte";
-  import { renderHighlightedPrompt, hasSchedulingTags } from "../../utils/promptSchedule.js";
+  import { renderHighlightedPrompt, hasSchedulingTags, hasPresetTokens } from "../../utils/promptSchedule.js";
 
   interface Props {
     value: string;
@@ -359,11 +360,11 @@
     }, 200);
   }
 
-  // Reactive: detect if current value has scheduling tags
-  const showBackdrop = $derived(hasSchedulingTags(value));
+  // Reactive: detect if current value has scheduling tags or inline preset tokens
+  const showBackdrop = $derived(hasSchedulingTags(value) || hasPresetTokens(value));
 
   // Reactive: render highlighted HTML for the backdrop overlay
-  const highlightedHtml = $derived(showBackdrop ? renderHighlightedPrompt(value) : "");
+  const highlightedHtml = $derived(showBackdrop ? renderHighlightedPrompt(value, promptPresets.slugs) : "");
 
   function syncScroll() {
     if (textareaEl && backdropEl) {

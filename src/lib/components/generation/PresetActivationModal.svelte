@@ -95,7 +95,7 @@
             <span class="block text-sm font-medium text-neutral-100">Wildcard (random)</span>
             <span class="block text-[11px] text-neutral-500">
               {#if choiceCount === 0}
-                Add comma- or newline-separated options first.
+                Add entries on separate lines first.
               {:else if choiceCount === 1}
                 Only one option — will pick that every time.
               {:else}

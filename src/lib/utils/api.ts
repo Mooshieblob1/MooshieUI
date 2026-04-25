@@ -545,6 +545,16 @@ export async function installAttentionBackend(backend: string): Promise<void> {
   return ipcInvoke("install_attention_backend", { backend });
 }
 
+/**
+ * Highest NVIDIA GPU compute capability detected via `nvidia-smi` (e.g. 8.9
+ * for Ada Lovelace, 12.0 for consumer Blackwell). Returns `null` on
+ * non-NVIDIA systems or if `nvidia-smi` isn't available. Lightweight — does
+ * not enumerate venv packages, so safe to call on UI mount.
+ */
+export async function getComputeCapability(): Promise<number | null> {
+  return ipcInvoke("get_compute_capability");
+}
+
 export async function getConfig(): Promise<AppConfig> {
   return ipcInvoke("get_config");
 }
