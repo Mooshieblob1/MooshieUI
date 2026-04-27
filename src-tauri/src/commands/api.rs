@@ -2867,6 +2867,26 @@ pub async fn append_frontend_logs(lines: Vec<String>) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Return a snapshot of the in-memory log buffers for display in the UI
+/// terminal log panel.
+///
+/// `source` selects which buffer to read:
+///   - `"app"`     – Rust-side ring buffer (app internals, formatted with level + target)
+///   - `"comfyui"` – ComfyUI subprocess stderr log file from the OS temp dir
+///   - anything else / omitted → same as `"app"`
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn get_logs(source: Option<String>) -> Result<Vec<String>, AppError> {
+    match source.as_deref().unwrap_or("app") {
+        "comfyui" => {
+            let log_path = std::env::temp_dir().join("comfyui-desktop-stderr.log");
+            let content = std::fs::read_to_string(&log_path).unwrap_or_default();
+            Ok(content.lines().map(String::from).collect())
+        }
+        _ => Ok(crate::log_buffer::snapshot_rust()),
+    }
+}
+
 /// Detect the MIME type of image bytes from magic bytes.
 fn detect_image_mime(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(b"\x89PNG") {

@@ -30,6 +30,7 @@
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import { interrogateGalleryImage, interrogateImage } from "./lib/utils/api.js";
+  import TerminalLog from "./lib/components/ui/TerminalLog.svelte";
 
   declare const __APP_VERSION__: string;
   const appVersion = __APP_VERSION__ ?? "dev";
@@ -432,6 +433,7 @@
   let currentPage = $state<"generate" | "gallery" | "modelhub" | "artists" | "settings">(
     "generate"
   );
+  let showTerminalLog = $state(false);
 
   // Auth gate state (browser mode LAN access)
   let authRequired = $state(false);
@@ -2139,6 +2141,21 @@
 
     <div class="flex-1"></div>
 
+    <!-- Terminal log toggle (only visible when enabled in Developer settings) -->
+    {#if generation.showTerminalLog}
+    <button
+      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors mx-auto
+        {showTerminalLog ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+      onclick={() => (showTerminalLog = !showTerminalLog)}
+      title="Toggle terminal log"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+      </svg>
+    </button>
+    {/if}
+
     <button
       class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
       'settings'
@@ -2484,6 +2501,9 @@
       <SettingsPage {userRole} />
     {/if}
     </div>
+    {#if generation.showTerminalLog && showTerminalLog}
+      <TerminalLog onclose={() => (showTerminalLog = false)} />
+    {/if}
   </main>
 </div>
 {/if}

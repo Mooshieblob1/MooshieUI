@@ -188,6 +188,8 @@ class GenerationStore {
   devModeUnlocked = $state(false);
   /** Developer mode: bypasses checkpoint selector restrictions. Not persisted. */
   devMode = $state(false);
+  /** Show the terminal log panel in the sidebar. Not persisted. */
+  showTerminalLog = $state(false);
 
   /** Architecture detected from modelspec metadata, or null if not yet read. */
   modelspecArchitecture = $state<string | null>(null);

@@ -389,6 +389,7 @@ pub fn run() {
             commands::api::import_image_directory,
             commands::api::export_logs,
             commands::api::append_frontend_logs,
+            commands::api::get_logs,
             commands::api::check_node_available,
             commands::api::is_custom_node_installed,
             commands::api::install_custom_node,

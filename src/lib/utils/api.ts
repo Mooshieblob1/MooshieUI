@@ -642,3 +642,8 @@ export async function getGpuStats(): Promise<GpuStats[]> {
   if (!resp.ok) throw new Error(await resp.text());
   return resp.json();
 }
+
+export async function getLogs(source: "app" | "comfyui"): Promise<string[]> {
+  if (!isTauri) return [];
+  return ipcInvoke("get_logs", { source });
+}

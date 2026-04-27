@@ -2716,6 +2716,17 @@
                 <p class="text-[11px] text-neutral-500 mt-0.5">Shows the Checkpoints tab in the bottom panel even when fewer than 10 checkpoints are installed.</p>
               </div>
             </label>
+            <label class="flex items-center gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                class="w-4 h-4 rounded accent-amber-400"
+                bind:checked={generation.showTerminalLog}
+              />
+              <div>
+                <p class="text-xs font-medium text-neutral-200">Show terminal log panel</p>
+                <p class="text-[11px] text-neutral-500 mt-0.5">Adds a live log viewer to the sidebar showing ComfyUI output and app messages. Useful for diagnosing errors.</p>
+              </div>
+            </label>
           </div>
           {/if}
         </section>
