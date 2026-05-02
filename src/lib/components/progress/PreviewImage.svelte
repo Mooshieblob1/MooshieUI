@@ -3,7 +3,8 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { generate } from "../../utils/api.js";
+  import { generate, loadGalleryImage, uploadImageBytes } from "../../utils/api.js";
+  import type { GenerationParams } from "../../types/index.js";
 
   let currentTipIndex = $state(0);
   let progressPercent = $state(0);
@@ -96,18 +97,74 @@
   });
 
   async function upscaleImage() {
-    generation.upscaleEnabled = true;
-    if (progress.lastOutputImage) {
-      generation.inputImage = progress.lastOutputImage;
+    // The Refine button takes the most-recent output and runs it back through
+    // the upscale chain (MooshieUI's "refiner") at low denoise — analogous to
+    // SwarmUI's "Refine Image" button.
+    //
+    // The previous implementation set `generation.inputImage` directly to the
+    // preview URL (a blob: or http:// URL pointing at our local cache). The
+    // ComfyUI `LoadImage` node expects a real filename inside its `input/`
+    // folder, so the workflow failed validation with `value_not_in_list`,
+    // surfaced to the user as "a model or VAE may not be configured
+    // correctly". Fix: upload the bytes first, exactly like the gallery's
+    // upscale flow in App.svelte does.
+    const savedImage = getActiveSavedImage();
+    if (!savedImage && !progress.lastOutputImage) {
+      gallery.showToast(locale.t("preview.not_available"), "info");
+      return;
     }
-    const params = generation.toParams();
-    params.mode = "img2img";
+
     try {
+      let bytes: number[];
+      let uploadFilename: string;
+
+      // Prefer the gallery copy if it's already persisted — that file is
+      // stable. Otherwise fetch directly from the displayed preview URL,
+      // which is a blob: URL pointing at the in-memory PNG and is always
+      // available right after generation. Calling ComfyUI's /view (via
+      // getOutputImage) is unreliable here because the temp file gets
+      // cleaned up shortly after the executing-finished event fires.
+      if (savedImage?.gallery_filename) {
+        bytes = await loadGalleryImage(savedImage.gallery_filename);
+        uploadFilename = savedImage.filename || `refine_${Date.now()}.png`;
+      } else {
+        const sourceUrl = previewSrc ?? progress.lastOutputImage;
+        if (!sourceUrl) {
+          gallery.showToast(locale.t("preview.not_available"), "info");
+          return;
+        }
+        const resp = await fetch(sourceUrl);
+        if (!resp.ok) throw new Error(`fetch failed: ${resp.status}`);
+        const buf = await resp.arrayBuffer();
+        bytes = Array.from(new Uint8Array(buf));
+        uploadFilename = savedImage?.filename || `refine_${Date.now()}.png`;
+      }
+
+      const upload = await uploadImageBytes(bytes, uploadFilename);
+
+      const params = generation.toParams() as GenerationParams;
+      params.mode = "img2img";
+      params.input_image = upload.name;
+      // Force refine-only mode so we don't re-do the main img2img sampler —
+      // the upscale chain alone is the refiner pass.
+      params.refine_only = true;
+      params.upscale_enabled = true;
+      // ControlNet on a refine pass would re-condition the existing image
+      // against the original control input, which is rarely what the user
+      // wants. Disable it for this pass.
+      params.controlnet = null;
+
       const result = await generate(params);
       params.seed = result.seed;
       progress.enqueue(result.prompt_id, true, "img2img", params);
+
+      // Reflect the upload in the UI so a follow-up Generate also works.
+      generation.mode = "img2img";
+      generation.inputImage = upload.name;
+      generation.upscaleEnabled = true;
     } catch (e) {
-      console.error("Upscale failed:", e);
+      console.error("Refine failed:", e);
+      gallery.showToast(`${locale.t("preview.refine_failed")}: ${e}`, "error");
     }
   }
 

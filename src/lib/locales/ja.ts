@@ -572,6 +572,7 @@ const ja: Record<string, string> = {
   "preview.copy": "コピー",
   "preview.copy_clipboard": "クリップボードにコピー",
   "preview.not_available": "保存された画像はまだ利用できません",
+  "preview.refine_failed": "リファインに失敗しました",
   "preview.previous_tip": "前のヒント",
   "preview.next_tip": "次のヒント",
 

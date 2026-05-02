@@ -573,6 +573,7 @@ const es: Record<string, string> = {
   "preview.copy": "Copiar",
   "preview.copy_clipboard": "Copiar al portapapeles",
   "preview.not_available": "La imagen guardada aún no está disponible",
+  "preview.refine_failed": "Error al refinar",
   "preview.previous_tip": "Consejo anterior",
   "preview.next_tip": "Siguiente consejo",
 

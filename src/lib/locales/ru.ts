@@ -550,6 +550,7 @@ const ru: Record<string, string> = {
   "preview.copy": "Копировать",
   "preview.copy_clipboard": "Копировать в буфер обмена",
   "preview.not_available": "Сохранённое изображение пока недоступно",
+  "preview.refine_failed": "Ошибка рефайна",
   "preview.previous_tip": "Предыдущая подсказка",
   "preview.next_tip": "Следующая подсказка",
 

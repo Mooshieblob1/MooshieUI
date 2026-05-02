@@ -550,6 +550,7 @@ const zhTw: Record<string, string> = {
   "preview.copy": "複製",
   "preview.copy_clipboard": "複製到剪貼簿",
   "preview.not_available": "已儲存的影像尚不可用",
+  "preview.refine_failed": "精煉失敗",
   "preview.previous_tip": "上一則提示",
   "preview.next_tip": "下一則提示",
 

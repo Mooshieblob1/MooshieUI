@@ -75,7 +75,17 @@
   }
 
   function selectCheckpoint(filename: string) {
+    // Clear any previously-selected split-model state so the displayed
+    // checkpoint is actually what gets loaded. Without this, switching from
+    // a split model (e.g. Anima Preview 3) to a regular checkpoint would
+    // leave `useSplitModel = true` and the workflow would still load the
+    // old diffusion_model / clip_model / vae instead of `filename`.
+    generation.useSplitModel = false;
+    generation.diffusionModel = null;
+    generation.clipModel = null;
+    generation.clipType = null;
     generation.checkpoint = filename;
+    generation.applyModelSpecificPreset(filename);
     generation.saveSettings();
   }
 

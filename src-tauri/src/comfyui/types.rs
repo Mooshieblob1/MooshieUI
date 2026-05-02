@@ -102,6 +102,12 @@ pub struct GenerationParams {
     pub upscale_steps: u32,
     pub upscale_tile_size: u32,
     pub upscale_tiling: bool,
+    /// "Refine" mode — when true with mode="img2img", skip the main img2img
+    /// KSampler/VAE round-trip and feed the loaded input image directly into
+    /// the upscale chain. Mirrors SwarmUI's "Refine Image" button: a single
+    /// low-denoise second pass at higher resolution.
+    #[serde(default)]
+    pub refine_only: bool,
     /// Enable Soft Guidance (CFG rescaling) for upscale pass to prevent hallucination
     #[serde(default)]
     pub upscale_soft_guidance: bool,

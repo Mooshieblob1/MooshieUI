@@ -550,6 +550,7 @@ const it: Record<string, string> = {
   "preview.copy": "Copia",
   "preview.copy_clipboard": "Copia negli appunti",
   "preview.not_available": "Immagine salvata non ancora disponibile",
+  "preview.refine_failed": "Raffinamento fallito",
   "preview.previous_tip": "Suggerimento precedente",
   "preview.next_tip": "Suggerimento successivo",
 

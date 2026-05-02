@@ -572,6 +572,7 @@ const fr: Record<string, string> = {
   "preview.copy": "Copier",
   "preview.copy_clipboard": "Copier dans le presse-papiers",
   "preview.not_available": "L'image enregistrée n'est pas encore disponible",
+  "preview.refine_failed": "Échec du raffinement",
   "preview.previous_tip": "Astuce précédente",
   "preview.next_tip": "Astuce suivante",
 

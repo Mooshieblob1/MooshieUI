@@ -550,6 +550,7 @@ const zh: Record<string, string> = {
   "preview.copy": "复制",
   "preview.copy_clipboard": "复制到剪贴板",
   "preview.not_available": "已保存的图像尚不可用",
+  "preview.refine_failed": "精炼失败",
   "preview.previous_tip": "上一条提示",
   "preview.next_tip": "下一条提示",
 

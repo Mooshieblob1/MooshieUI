@@ -1,3 +1,20 @@
+## What's New in v1.1.0
+
+### Refine Button (SwarmUI-style)
+- **One-click image refinement** — the **Refine** button on the preview panel now runs a SwarmUI-style second pass over the generated image without regenerating it from scratch. The output is uploaded to ComfyUI, fed directly into the upscale chain, and processed at low denoise — sharpening detail and adding texture while preserving the original composition completely.
+- **No redundant sampling** — `refine_only` mode skips the main img2img KSampler/VAE round-trip; only the upscale chain (VAEEncodeTiled → optional TiledDiffusion / SoftGuidance → KSampler at `upscale_denoise` → VAEDecodeTiled) runs.
+- **Reliable image sourcing** — previously the button passed a blob/preview URL directly as `LoadImage` input, causing a `value_not_in_list` validation error (surfaced as "a model or VAE may not be configured correctly"). It now fetches the bytes from the displayed preview URL and uploads them to ComfyUI's `input/` folder before queuing — the same approach used by the gallery's upscale flow.
+- **Respects Refiner settings** — scale factor, denoise strength, step count, tiling, SoftGuidance multiplier, and quality-only prompts are all taken from the Refiner panel.
+- **ControlNet disabled for refine pass** — re-conditioning a refine pass against the original control input is rarely intended and is suppressed automatically.
+
+### Model Selection Consistency Fix
+- **Displayed model = loaded model** — switching from a split-model (e.g. Anima Preview 3) to a regular checkpoint in the Checkpoint Gallery now correctly clears `useSplitModel`, `diffusionModel`, `clipModel`, and `clipType`. Previously, selecting a checkpoint while a split model was active left those fields set, so the workflow loaded the old Anima diffusion/CLIP/VAE files while the UI showed the new checkpoint name.
+
+### Terminal Log Panel (Developer Mode)
+- **Live log viewer** — a scrollable terminal log panel is now available in the Settings page under Developer Mode (unlock with 10 taps on the version number). Streams the last N Rust log lines via `get_log_buffer` and a live `log:line` event subscription, with a copy-to-clipboard button. Gated behind developer mode so it doesn't surface in normal use.
+
+---
+
 ## What's New in v1.0.9
 
 ### Account-Based Preference Sync

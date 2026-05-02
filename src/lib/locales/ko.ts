@@ -550,6 +550,7 @@ const ko: Record<string, string> = {
   "preview.copy": "복사",
   "preview.copy_clipboard": "클립보드에 복사",
   "preview.not_available": "저장된 이미지를 아직 사용할 수 없습니다",
+  "preview.refine_failed": "리파인 실패",
   "preview.previous_tip": "이전 팁",
   "preview.next_tip": "다음 팁",
 

@@ -586,6 +586,7 @@ const en: Record<string, string> = {
   "preview.copy": "Copy",
   "preview.copy_clipboard": "Copy to clipboard",
   "preview.not_available": "Saved image not available yet",
+  "preview.refine_failed": "Refine failed",
   "preview.previous_tip": "Previous tip",
   "preview.next_tip": "Next tip",
 

@@ -550,6 +550,7 @@ const de: Record<string, string> = {
   "preview.copy": "Kopieren",
   "preview.copy_clipboard": "In Zwischenablage kopieren",
   "preview.not_available": "Gespeichertes Bild noch nicht verfügbar",
+  "preview.refine_failed": "Verfeinerung fehlgeschlagen",
   "preview.previous_tip": "Vorheriger Tipp",
   "preview.next_tip": "Nächster Tipp",
 
