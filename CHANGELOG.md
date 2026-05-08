@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v1.1.2
+
+### Bug Fixes
+- **img2img / inpainting input validation** — the backend now rejects generation requests for `img2img` and `inpainting` modes when no input image has been provided, returning a clear `Invalid workflow` error instead of letting ComfyUI fail deep in the graph with a confusing `[Errno 21] Is a directory` error from the `LoadImage` node.
+
+---
+
 ## What's New in v1.1.1
 
 ### Mobile Browser UI

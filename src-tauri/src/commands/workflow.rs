@@ -24,6 +24,24 @@ pub async fn generate(
     // accumulation within a long session.
     crate::temp_images::cleanup(300);
 
+    // Validate input image is present for modes that require it. Without this
+    // guard, ComfyUI's LoadImage node receives an empty filename and reports
+    // `[Errno 21] Is a directory: '<input_dir>/'`, which surfaces as a generic
+    // execution error far away from the actual cause.
+    if matches!(params.mode.as_str(), "img2img" | "inpainting")
+        && params
+            .input_image
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+    {
+        return Err(AppError::InvalidWorkflow(format!(
+            "{} mode requires an input image — please upload one before generating.",
+            params.mode
+        )));
+    }
+
     let seed = if params.seed < 0 {
         (rand::random::<u64>() >> 1) as i64
     } else {
