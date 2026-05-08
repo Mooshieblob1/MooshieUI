@@ -1,3 +1,20 @@
+## What's New in v1.1.1
+
+### Mobile Browser UI
+- **Touch-optimized shell** — when accessed through the embedded web server from a mobile device, MooshieUI now renders a native-feeling mobile layout with bottom tab navigation (Generate / Gallery / Model Hub / Artists / Settings) instead of the desktop side panels. Activation is automatic via user-agent detection and can be overridden from Settings.
+- **Mobile generate page** — vertical layout with a 3-segment pill mode switcher (txt2img / img2img / inpaint) in the top bar, large preview area, prompt history strip below the preview, and a floating bottom dock containing the generate button and a chevron to expand/collapse the parameters bottom sheet.
+- **Side rail extras panel** — LoRAs, Checkpoints, Session images, Styles, Schedule, and Compare are now reachable from a 48-px vertical icon rail on the generate page, each opening as a full-height bottom sheet.
+- **Mobile gallery & lightbox** — touch-friendly grid with a filters bottom sheet (board / sort), pinch-to-zoom lightbox, and an action sheet (Send to Generate / Use for Upscale / Copy / Download / Delete).
+- **Mobile settings page** — language picker, "Use desktop layout" pill toggle, generation defaults sliders (Steps, CFG), account sign-out, and About section.
+
+### Polish & Fixes
+- **Integer-only progress percentages** — generation progress no longer displays repeating decimals like `33.333%`; values are rounded to whole percent.
+- **Artist gallery error diagnostics** — `JSON.parse` failures now surface the URL, content-type, and a preview of the response body instead of an opaque parse error.
+- **Mobile artist gallery** — wired the missing `manifestUrl` prop so the artist tab loads correctly in browser mode.
+- **i18n coverage** — every new mobile UI string is routed through the locale system; 22 new keys added to `en.ts` with English-fallback stubs synced to all 11 other locales. Duplicate locale keys were removed from `it.ts`, `ja.ts`, `ko.ts`, `ru.ts`, `zh.ts`, and `zh-tw.ts` (translated values restored).
+
+---
+
 ## What's New in v1.1.0
 
 ### Refine Button (SwarmUI-style)

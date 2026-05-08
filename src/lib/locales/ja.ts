@@ -1,4 +1,4 @@
-﻿/** Japanese translations. */
+/** Japanese translations. */
 const ja: Record<string, string> = {
   // ── ナビゲーション ──────────────────────────────────────
   "nav.generate": "生成",
@@ -1077,9 +1077,8 @@ const ja: Record<string, string> = {
   "generation.sampler.output_format_tip": "PNG is the standard format with wide support. JPEG XL (JXL) is lossless, ~40% smaller than PNG, and embeds metadata in a SwarmUI-compatible XMP box. Gallery images are decoded on-demand for display.",
   "generation.sampler.format_png": "PNG",
   "generation.sampler.format_jxl": "JXL",
-  "bottom_panel.tab.checkpoints": "Checkpoints",
-  "bottom_panel.tab.images": "Images",
-  "gallery.toast.right_click_copy": "Right-click the image and select 'Copy Image'",
+
+"gallery.toast.right_click_copy": "Right-click the image and select 'Copy Image'",
   "modelhub.pick_dir.title": "Choose install directory",
   "modelhub.pick_dir.description": "Select which directory to install this model to.",
   "modelhub.pick_dir.cancel": "Cancel",
@@ -1197,6 +1196,32 @@ const ja: Record<string, string> = {
   "artist_gallery.fav_manager.import_result_cat_one": "Imported · {added} added, {updated} updated, {categories} new category.",
   "artist_gallery.fav_manager.import_result_cats": "Imported · {added} added, {updated} updated, {categories} new categories.",
   "artist_gallery.fav_manager.import_error": "Error: {error}",
+
+// -- Stubs (untranslated -- English fallback) --
+  "common.next": "Next",
+  "common.prev": "Previous",
+  "generation.params": "Parameters",
+  "generation.show_params": "Show parameters",
+  "generation.steps.title": "Steps",
+  "generation.mode.title": "Mode",
+  "gallery.filters": "Filters",
+  "gallery.send_to_generate": "Send to Generate",
+  "gallery.use": "Use",
+  "gallery.use_for_upscale": "Use for Upscale",
+  "bottom_panel.no_session_images": "No session images yet.",
+  "settings.about": "About",
+  "settings.account": "Account",
+  "settings.confirm_logout": "Sign out?",
+  "settings.display": "Display",
+  "settings.generation_defaults": "Generation defaults",
+  "settings.language": "Language",
+  "settings.logout": "Sign out",
+  "settings.use_desktop_layout": "Use desktop layout",
+  "settings.use_desktop_layout_hint": "Show the full desktop UI on this device. Reloads the app.",
+
+// -- Stubs (untranslated -- English fallback) --
+  "common.yes": "Yes",
+  "common.no": "No",
 
 };
 

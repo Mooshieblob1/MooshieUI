@@ -1223,6 +1223,30 @@ const en: Record<string, string> = {
   "artist_gallery.fav_manager.import_result_cat_one": "Imported · {added} added, {updated} updated, {categories} new category.",
   "artist_gallery.fav_manager.import_result_cats": "Imported · {added} added, {updated} updated, {categories} new categories.",
   "artist_gallery.fav_manager.import_error": "Error: {error}",
+
+  // ── Mobile UI ──────────────────────────────────────────
+  "common.next": "Next",
+  "common.prev": "Previous",
+  "common.yes": "Yes",
+  "common.no": "No",
+  "generation.params": "Parameters",
+  "generation.show_params": "Show parameters",
+  "generation.steps.title": "Steps",
+  "generation.mode.title": "Mode",
+  "gallery.filters": "Filters",
+  "gallery.send_to_generate": "Send to Generate",
+  "gallery.use": "Use",
+  "gallery.use_for_upscale": "Use for Upscale",
+  "bottom_panel.no_session_images": "No session images yet.",
+  "settings.about": "About",
+  "settings.account": "Account",
+  "settings.confirm_logout": "Sign out?",
+  "settings.display": "Display",
+  "settings.generation_defaults": "Generation defaults",
+  "settings.language": "Language",
+  "settings.logout": "Sign out",
+  "settings.use_desktop_layout": "Use desktop layout",
+  "settings.use_desktop_layout_hint": "Show the full desktop UI on this device. Reloads the app.",
 };
 
 export default en;

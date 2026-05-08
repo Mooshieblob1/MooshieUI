@@ -39,7 +39,15 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
     if (!res.ok) {
       throw new Error(`artist-gallery: ${url} returned ${res.status}`);
     }
-    return (await res.json()) as T;
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as T;
+    } catch (e) {
+      const preview = text.slice(0, 80).replace(/\s+/g, " ");
+      throw new Error(
+        `artist-gallery: ${url} returned non-JSON (${res.headers.get("content-type") ?? "no content-type"}): "${preview}…"`,
+      );
+    }
   }
 
   async function loadManifest(): Promise<ArtistManifest> {

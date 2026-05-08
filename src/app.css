@@ -363,3 +363,30 @@ html.light .lightbox-backdrop {
   animation: card-slide-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   animation-delay: var(--card-delay, 0ms);
 }
+
+
+/* ─── Mobile UI helpers ─── */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+  touch-action: manipulation;
+}
+.safe-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--safe-bottom-extra, 0px));
+}
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.bottom-sheet-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 9999px;
+  background-color: var(--color-neutral-600);
+  margin: 8px auto;
+}
+.no-scroll-chain {
+  overscroll-behavior: contain;
+}
+.tap-highlight-none {
+  -webkit-tap-highlight-color: transparent;
+}

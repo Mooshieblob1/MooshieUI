@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe } from "./lib/utils/ipc.js";
+  import { useMobileLayout } from "./lib/utils/device.js";
+  import MobileApp from "./lib/components/mobile/MobileApp.svelte";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
@@ -2000,6 +2002,8 @@
   </div>
 {:else if !setupComplete}
   <SetupWizard onSetupComplete={onSetupDone} />
+{:else if useMobileLayout}
+  <MobileApp canUseModelhub={canUseModelhub} />
 {:else}
 <div class="flex h-full bg-neutral-950 text-neutral-100 {visionSimClass}">
   <!-- SVG filters for color vision simulation -->
@@ -2508,7 +2512,8 @@
 </div>
 {/if}
 
-<!-- Lightbox overlay -->
+<!-- Lightbox overlay (desktop only) -->
+{#if !useMobileLayout}
 {#if gallery.lightboxOpen && (gallery.selectedImage || gallery.lightboxUrl)}
   <div
     class="lightbox-backdrop fixed inset-0 bg-black/90 z-50 flex {visionSimClass}"
@@ -2766,6 +2771,7 @@
       {/if}
     </div>
   </div>
+{/if}
 {/if}
 
 <!-- Toast notification -->
