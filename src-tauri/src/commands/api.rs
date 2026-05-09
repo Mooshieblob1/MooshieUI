@@ -1409,6 +1409,16 @@ pub async fn install_pip_package(
     Ok(())
 }
 
+/// Reject category/filename inputs containing path-traversal components.
+/// Returns true if the input is safe to join into a model path.
+fn is_safe_path_component(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains("..")
+        && !s.contains('/')
+        && !s.contains('\\')
+        && !s.starts_with('.')
+}
+
 /// Search for a model file by SHA256 hash (full or AutoV2) within a model category directory.
 /// Returns the filename if found, or null if no match.
 /// Note: this hashes each file in the directory, so it may take a while for large collections.
@@ -1419,6 +1429,11 @@ pub async fn find_model_by_hash(
     category: String,
     hash: String,
 ) -> Result<Option<String>, AppError> {
+    // Reject path-traversal attempts on the user-supplied category.
+    if !is_safe_path_component(&category) {
+        return Ok(None);
+    }
+
     let config = state.config.read().await;
     if config.comfyui_path.is_empty() {
         return Ok(None);
@@ -1487,6 +1502,11 @@ pub async fn hash_model_file(
     category: String,
     filename: String,
 ) -> Result<ModelHashResult, AppError> {
+    // Reject path-traversal attempts on user-supplied inputs.
+    if !is_safe_path_component(&category) || !is_safe_path_component(&filename) {
+        return Err(AppError::Other("Invalid category or filename".into()));
+    }
+
     let config = state.config.read().await;
     if config.comfyui_path.is_empty() {
         return Err(AppError::Other("ComfyUI path not configured".into()));
