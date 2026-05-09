@@ -65,6 +65,8 @@ export interface GenerationParams {
   upscale_soft_guidance: boolean;
   upscale_soft_guidance_multiplier: number;
   smart_guidance: boolean;
+  /** FluxGuidance value (Flux Dev / Flux 2 Klein only). Default 3.5. */
+  flux_guidance?: number;
   /** "Refine" mode: skip the main img2img sampler and feed the loaded image
    *  straight into the upscale chain. Mirrors SwarmUI's Refine button. */
   refine_only?: boolean;

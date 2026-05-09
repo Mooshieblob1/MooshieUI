@@ -42,6 +42,16 @@ pub async fn generate(
         )));
     }
 
+    // Same guard for ControlNet: an enabled ControlNet without a reference
+    // image hits the same `LoadImage` directory crash on the server side.
+    if let Some(cn) = params.controlnet.as_ref() {
+        if cn.enabled && cn.image.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            return Err(AppError::InvalidWorkflow(
+                "ControlNet is enabled but no reference image was provided — please upload one or disable ControlNet.".into(),
+            ));
+        }
+    }
+
     let seed = if params.seed < 0 {
         (rand::random::<u64>() >> 1) as i64
     } else {

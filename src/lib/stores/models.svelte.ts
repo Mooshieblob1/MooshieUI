@@ -18,7 +18,11 @@ class ModelsStore {
     this.loading = true;
     try {
       console.log("ModelsStore: fetching models...");
-      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, textEncoders, controlnetModels, ultralyticsModels] =
+      // Text encoders may live in either `text_encoders/` (modern split-file
+      // layout) or `clip/` (legacy ComfyUI / Forge layout). Fetch both and
+      // merge so the picker doesn't miss encoders in the legacy directory
+      // (e.g. `qwen_3_8b_fp4mixed.safetensors` placed under `clip/`).
+      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, textEncoders, clipEncoders, controlnetModels, ultralyticsModels] =
         await Promise.all([
           getModels("checkpoints"),
           getModels("vae"),
@@ -28,6 +32,7 @@ class ModelsStore {
           getModels("upscale_models"),
           getModels("diffusion_models").catch(() => [] as string[]),
           getModels("text_encoders").catch(() => [] as string[]),
+          getModels("clip").catch(() => [] as string[]),
           getModels("controlnet").catch(() => [] as string[]),
           getModels("ultralytics").catch(() => [] as string[]),
         ]);
@@ -43,7 +48,9 @@ class ModelsStore {
       this.embeddings = embeddings;
       this.upscaleModels = upscaleModels;
       this.diffusionModels = diffusionModels;
-      this.textEncoders = textEncoders;
+      // De-duplicate by basename — ComfyUI sometimes returns the same file under
+      // both `clip` and `text_encoders` when both directories are mapped.
+      this.textEncoders = Array.from(new Set([...textEncoders, ...clipEncoders]));
       this.controlnetModels = controlnetModels;
       this.ultralyticsModels = ultralyticsModels;
     } catch (e) {

@@ -301,6 +301,7 @@ const en: Record<string, string> = {
   "generation.prompts.positive_tip": "Describe what you want to see in the image. Use commas to separate concepts. More specific prompts give better results — include style, subject, lighting, and quality tags.",
   "generation.prompts.negative": "Negative Prompt",
   "generation.prompts.negative_tip": "Describe what you don't want to see. Common negatives: blurry, low quality, text, watermark. The model will try to avoid these concepts.",
+  "generation.prompts.negative_flux_disabled": "ignored by Flux models",
   "generation.prompts.positive_placeholder": "A beautiful sunset over the ocean...",
   "generation.prompts.negative_placeholder": "low quality, blurry...",
   "generation.prompts.style_preset": "Style Preset",
@@ -517,6 +518,8 @@ const en: Record<string, string> = {
   "generation.upscale.soft_guidance_multiplier_tip": "How much to rescale CFG. Lower = gentler guidance, less hallucination. 0.4 is recommended for refining, 0.7 for general use. 0 disables the effect.",
   "generation.sampler.smart_guidance_label": "Smart Guidance",
   "generation.sampler.smart_guidance_tip": "Positive-biased adaptive guidance — makes the model follow your prompt more closely instead of just avoiding the negative. Applies to all generation steps. No tuning needed.",
+  "generation.sampler.flux_guidance_label": "Flux Guidance",
+  "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
 
   // Refiner History
   "generation.upscale_history.title": "Refiner History",

@@ -870,6 +870,10 @@
       metadata.mooshie_smart_guidance = "true";
     }
 
+    if (typeof params.flux_guidance === "number") {
+      metadata.mooshie_flux_guidance = String(params.flux_guidance);
+    }
+
     if (params.differential_diffusion) {
       metadata.mooshie_differential_diffusion = "true";
     }
@@ -956,6 +960,10 @@
       // MooshieUI-exclusive params round-trip
       if (metadata.mooshie_smart_guidance !== undefined) {
         generation.smartGuidance = metadata.mooshie_smart_guidance === "true";
+      }
+      if (metadata.mooshie_flux_guidance !== undefined) {
+        const fg = parseFloat(metadata.mooshie_flux_guidance);
+        if (Number.isFinite(fg)) generation.fluxGuidance = fg;
       }
       if (metadata.mooshie_differential_diffusion !== undefined) {
         generation.differentialDiffusion = metadata.mooshie_differential_diffusion === "true";

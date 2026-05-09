@@ -1226,6 +1226,12 @@ const fr: Record<string, string> = {
   "common.yes": "Yes",
   "common.no": "No",
 
+
+  // -- Stubs (untranslated -- English fallback) --
+  "generation.prompts.negative_flux_disabled": "ignored by Flux models",
+  "generation.sampler.flux_guidance_label": "Flux Guidance",
+  "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
+
 };
 
 export default fr;

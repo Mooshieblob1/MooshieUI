@@ -144,6 +144,9 @@ pub struct GenerationParams {
     /// Enable Smart Guidance (positive-biased) — patches model for all generation passes
     #[serde(default)]
     pub smart_guidance: bool,
+    /// FluxGuidance value for Flux Dev / Flux 2 Klein family. Default 3.5.
+    #[serde(default = "default_flux_guidance")]
+    pub flux_guidance: f32,
     /// Face fix (FaceDetailer) — detect faces with YOLOv8 and re-denoise them
     #[serde(default)]
     pub facefix_enabled: bool,
@@ -200,6 +203,10 @@ fn default_end_percent() -> f64 {
 
 fn default_facefix_denoise() -> f64 {
     0.4
+}
+
+fn default_flux_guidance() -> f32 {
+    3.5
 }
 
 fn default_soft_guidance_multiplier() -> f64 {

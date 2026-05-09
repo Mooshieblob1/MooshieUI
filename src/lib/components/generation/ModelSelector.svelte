@@ -11,6 +11,7 @@
 
   interface ModelFile {
     filename: string;
+    /** Download URL. Empty string means detection-only — no download attempted. */
     url: string;
     category: string;
     /** AutoV2 hash (first 10 chars of full SHA256, uppercase) — CivitAI-compatible */
@@ -51,6 +52,12 @@
     minComputeCapability?: number;
     /** Hint shown next to the size in the dropdown to explain the gate. */
     gateHint?: string;
+    /**
+     * When true, the entry is shown only if all components are detected
+     * locally (by hash or filename). Used for models we can't redistribute
+     * but want to recognise / auto-pair when the user has them on disk.
+     */
+    detectionOnly?: boolean;
   }
 
   const recommendedModels: RecommendedModel[] = [
@@ -168,6 +175,46 @@
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
         facefixSteps: 10,
+      },
+    },
+    {
+      // Flux 2 Klein 9B (NVFP4) — detection-only entry. We can't redistribute
+      // BFL's weights, but if the user has dropped the three components into
+      // their ComfyUI models tree we recognise them and auto-wire the split
+      // model + Qwen 3 text encoder + Flux VAE. Resolution by hash via
+      // `findModelByHash` handles renamed files, and the unified text-encoder
+      // listing in `models.svelte.ts` picks up encoders living under the
+      // legacy `clip/` directory (where the user's `qwen_3_8b_fp4mixed`
+      // happens to live).
+      label: "Flux 2 Klein 9B (NVFP4)",
+      size: "Local",
+      detectionOnly: true,
+      splitModel: {
+        diffusionModel: {
+          filename: "flux-2-klein-9b-nvfp4.safetensors",
+          url: "",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_8b_fp4mixed.safetensors",
+          url: "",
+          // Listed under text_encoders so the picker resolves correctly;
+          // backend hash lookup also falls through to `clip/`.
+          category: "text_encoders",
+          // Flux 2 Klein ships with Qwen 3 as its text encoder.
+          clipType: "qwen_image",
+        },
+        vaeModel: {
+          filename: "flux-vae.safetensors",
+          url: "",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 20,
+        cfg: 1.0,
+        samplerName: "euler",
+        scheduler: "simple",
       },
     },
   ];
@@ -501,6 +548,10 @@
         if (computeCapability === null || computeCapability < rec.minComputeCapability) continue;
       }
       const installed = isRecommendedInstalled(rec);
+      // Detection-only entries (no download URLs) are hidden until every
+      // component is present on disk — otherwise the user would see an entry
+      // they can't action.
+      if (rec.detectionOnly && !installed) continue;
       if (!q || rec.label.toLowerCase().includes(q)) {
         items.push({
           type: "recommended",
@@ -565,6 +616,18 @@
     }
 
     if (missingFiles.length > 0) {
+      // Detection-only entries have no download URLs — surface a clear error
+      // rather than letting the empty URL hit the backend.
+      const undownloadable = missingFiles.filter((m) => !m.file.url);
+      if (undownloadable.length > 0) {
+        downloadError = `Missing local file(s): ${undownloadable.map((m) => m.file.filename).join(", ")}`;
+        downloading = rec.label;
+        setTimeout(() => {
+          downloading = null;
+          downloadError = "";
+        }, 4000);
+        return;
+      }
       downloading = rec.label;
       downloadError = "";
       // Seed a progress row for every file up-front so all three bars are
@@ -624,6 +687,19 @@
       generation.clipType = sm.clipModel.clipType;
       generation.vae = resolvedFilename(sm.vaeModel);
       generation.checkpoint = rec.label;
+
+      // For detection-only entries we never went through the download path,
+      // so cache hashes the first time the user activates the entry. This
+      // makes future detections survive renames / directory moves without
+      // requiring the user to relink.
+      if (rec.detectionOnly) {
+        // Fire-and-forget — hashing GBs of weights can take a while.
+        void Promise.all([
+          cacheHashAfterDownload({ ...sm.diffusionModel, filename: generation.diffusionModel! }),
+          cacheHashAfterDownload({ ...sm.clipModel, filename: generation.clipModel! }),
+          cacheHashAfterDownload({ ...sm.vaeModel, filename: generation.vae }),
+        ]).catch((e) => console.warn("[ModelSelector] hash caching failed:", e));
+      }
     } else if (rec.checkpoint) {
       generation.useSplitModel = false;
       generation.diffusionModel = null;

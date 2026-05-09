@@ -1,3 +1,16 @@
+## What's New in v1.1.3
+
+### Flux Model Support
+- **Flux Guidance slider** — when a Flux Dev or Flux 2 Klein checkpoint is selected, the Smart Guidance toggle is replaced with a dedicated Flux Guidance slider (range 0–10, default 3.5). The value is plumbed through to the `FluxGuidance` node in the workflow, replacing the previously hardcoded `3.5`. The setting is persisted alongside other generation defaults and round-trips through PNG metadata as `mooshie_flux_guidance`.
+- **Negative prompt is greyed out for Flux models** — Flux is guidance-distilled and ignores the negative conditioning, so the textarea is now visually disabled (40% opacity, no pointer interaction) with an inline "ignored by Flux models" hint when a Flux checkpoint is active.
+- **Flux 2 Klein 9B (NVFP4) detection** — the model selector now correctly detects `flux-2-klein-9b-nvfp4.safetensors` in `diffusion_models/`, its `qwen_3_8b_fp4mixed.safetensors` text encoder in either `clip/` or `text_encoders/`, and the `flux-vae.safetensors` VAE. Hashes are auto-cached on first activation so subsequent loads resolve instantly.
+
+### Bug Fixes
+- **ControlNet input validation** — the backend now rejects generation requests when ControlNet is enabled but no reference image has been uploaded, returning a clear `Invalid workflow` error instead of crashing the server with `[Errno 21] Is a directory` from the `LoadImage` node. Mirrors the existing img2img / inpainting guard.
+- **Text encoder discovery** — model lookup now searches both `clip/` and `text_encoders/` ComfyUI directories and falls back through both during hash resolution, fixing missing-encoder errors when ComfyUI installs split a model's CLIP across the two folders.
+
+---
+
 ## What's New in v1.1.2
 
 ### Bug Fixes

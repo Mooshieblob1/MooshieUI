@@ -145,6 +145,12 @@ class GenerationStore {
   upscaleSoftGuidance = $state(true);
   upscaleSoftGuidanceMultiplier = $state(0.4);
   smartGuidance = $state(false);
+  /**
+   * FluxGuidance value (used by Flux Dev / Flux 2 Klein family). Replaces
+   * CFG for those models since they're guidance-distilled and ignore CFG.
+   * Range: 0-10, sweet spot 2-4. Default matches ComfyUI's FluxGuidance node.
+   */
+  fluxGuidance = $state(3.5);
   useSplitModel = $state(false);
   diffusionModel = $state<string | null>(null);
   clipModel = $state<string | null>(null);
@@ -656,6 +662,7 @@ class GenerationStore {
         if (saved.upscaleSoftGuidance !== undefined) this.upscaleSoftGuidance = saved.upscaleSoftGuidance;
         if (saved.upscaleSoftGuidanceMultiplier !== undefined) this.upscaleSoftGuidanceMultiplier = saved.upscaleSoftGuidanceMultiplier;
         if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
+        if (saved.fluxGuidance !== undefined) this.fluxGuidance = saved.fluxGuidance;
         if (saved.useSplitModel !== undefined) this.useSplitModel = saved.useSplitModel;
         if (saved.diffusionModel !== undefined) this.diffusionModel = saved.diffusionModel;
         if (saved.clipModel !== undefined) this.clipModel = saved.clipModel;
@@ -735,6 +742,7 @@ class GenerationStore {
         upscaleSoftGuidance: this.upscaleSoftGuidance,
         upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
         smartGuidance: this.smartGuidance,
+        fluxGuidance: this.fluxGuidance,
         useSplitModel: this.useSplitModel,
         diffusionModel: this.diffusionModel,
         clipModel: this.clipModel,
@@ -806,6 +814,7 @@ class GenerationStore {
       upscaleSoftGuidance: this.upscaleSoftGuidance,
       upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
       smartGuidance: this.smartGuidance,
+      fluxGuidance: this.fluxGuidance,
       useSplitModel: this.useSplitModel,
       diffusionModel: this.diffusionModel,
       clipModel: this.clipModel,
@@ -1003,6 +1012,7 @@ class GenerationStore {
       upscale_soft_guidance: this.upscaleSoftGuidance,
       upscale_soft_guidance_multiplier: this.upscaleSoftGuidanceMultiplier,
       smart_guidance: this.smartGuidance,
+      flux_guidance: this.fluxGuidance,
       upscale_positive_prompt: upscalePositivePrompt,
       upscale_negative_prompt: upscaleNegativePrompt,
       use_split_model: this.useSplitModel,

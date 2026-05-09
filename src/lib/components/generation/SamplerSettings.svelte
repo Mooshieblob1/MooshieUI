@@ -316,17 +316,34 @@
     </p>
   {/if}
 
-  <!-- Smart Guidance toggle -->
-  <div class="flex items-center gap-2">
-    <input
-      type="checkbox"
-      id="smart-guidance"
-      bind:checked={generation.smartGuidance}
-      class="w-4 h-4 accent-indigo-500 rounded"
-    />
-    <label for="smart-guidance" class="text-xs text-neutral-400">
-      {locale.t('generation.sampler.smart_guidance_label')}<InfoTip text={locale.t('generation.sampler.smart_guidance_tip')} />
-    </label>
-  </div>
+  <!-- Smart Guidance toggle (hidden for Flux models which use FluxGuidance instead) -->
+  {#if generation.isFlux}
+    <div use:scrollCapture>
+      <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+        <span>{locale.t('generation.sampler.flux_guidance_label')}<InfoTip text={locale.t('generation.sampler.flux_guidance_tip')} /></span>
+        <EditableValue value={generation.fluxGuidance} min={0} max={10} step={0.1} decimals={1} onchange={(v) => generation.fluxGuidance = v} />
+      </label>
+      <input
+        type="range"
+        bind:value={generation.fluxGuidance}
+        min="0"
+        max="10"
+        step="0.1"
+        class="w-full accent-indigo-500"
+      />
+    </div>
+  {:else}
+    <div class="flex items-center gap-2">
+      <input
+        type="checkbox"
+        id="smart-guidance"
+        bind:checked={generation.smartGuidance}
+        class="w-4 h-4 accent-indigo-500 rounded"
+      />
+      <label for="smart-guidance" class="text-xs text-neutral-400">
+        {locale.t('generation.sampler.smart_guidance_label')}<InfoTip text={locale.t('generation.sampler.smart_guidance_tip')} />
+      </label>
+    </div>
+  {/if}
 
 </div>

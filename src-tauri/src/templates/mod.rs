@@ -669,7 +669,7 @@ fn inject_flux_guidance(result: &mut WorkflowResult, params: &GenerationParams) 
             "class_type": "FluxGuidance",
             "inputs": {
                 "conditioning": [result.positive_source.0.clone(), result.positive_source.1],
-                "guidance": 3.5
+                "guidance": params.flux_guidance
             }
         }),
     );

@@ -144,8 +144,13 @@
     />
   </div>
 
-  <div>
-    <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.prompts.negative')}<InfoTip text={locale.t('generation.prompts.negative_tip')} /></label>
+  <div class="transition-opacity {generation.isFlux ? 'opacity-40 pointer-events-none' : ''}">
+    <label class="block text-xs text-neutral-400 mb-1">
+      {locale.t('generation.prompts.negative')}<InfoTip text={locale.t('generation.prompts.negative_tip')} />
+      {#if generation.isFlux}
+        <span class="ml-1 text-[10px] text-amber-400">({locale.t('generation.prompts.negative_flux_disabled')})</span>
+      {/if}
+    </label>
     <PromptTextarea
       bind:value={generation.negativePrompt}
       placeholder={locale.t('generation.prompts.negative_placeholder')}
