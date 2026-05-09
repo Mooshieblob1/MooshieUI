@@ -9,6 +9,61 @@ use serde_json::{json, Value};
 
 use crate::comfyui::types::{GenerationParams, PromptSegment};
 
+/// Validate generation parameters before workflow construction.
+///
+/// Catches missing input images for modes that require them, and ControlNet
+/// configurations with no reference image. Without these guards the request
+/// reaches ComfyUI's `LoadImage` node with an empty filename, which it
+/// resolves to the input directory and crashes with `[Errno 21] Is a directory`.
+///
+/// Both the Tauri `generate` command and the LAN web server `generate` route
+/// must call this before `build_workflow`.
+pub fn validate_generation_params(params: &GenerationParams) -> Result<(), String> {
+    let needs_input_image =
+        matches!(params.mode.as_str(), "img2img" | "inpainting") || params.refine_only;
+
+    if needs_input_image
+        && params
+            .input_image
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+    {
+        return Err(format!(
+            "{} mode requires an input image — please upload one before generating.",
+            if params.refine_only {
+                "refine"
+            } else {
+                params.mode.as_str()
+            }
+        ));
+    }
+
+    if matches!(params.mode.as_str(), "inpainting")
+        && params
+            .mask_image
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+    {
+        return Err(
+            "Inpainting mode requires a mask image — please paint a mask before generating.".into(),
+        );
+    }
+
+    if let Some(cn) = params.controlnet.as_ref() {
+        if cn.enabled && cn.image.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            return Err(
+                "ControlNet is enabled but no reference image was provided — please upload one or disable ControlNet.".into(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 pub struct WorkflowResult {
     pub workflow: serde_json::Map<String, Value>,
     pub next_id: u32,

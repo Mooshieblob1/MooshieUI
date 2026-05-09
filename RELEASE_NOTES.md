@@ -1,3 +1,11 @@
+## What's New in v1.1.4
+
+### Bug Fixes
+- **LAN/web server input validation** — the input-image and ControlNet guards added in v1.1.2 / v1.1.3 only ran inside the Tauri `generate` command, so users connecting through the embedded web server (`mooshieui.gpu.garden` and other LAN deployments) still hit `[Errno 21] Is a directory` from ComfyUI's `LoadImage` node when generating without a required input image. The validation has been extracted into a shared `validate_generation_params` helper and is now called from both the Tauri command and the LAN web server's `generate` route.
+- **Refine without an image** — the validator now also rejects `refine_only` requests submitted without an input image, and rejects `inpainting` mode submitted without a mask.
+
+---
+
 ## What's New in v1.1.3
 
 ### Flux Model Support

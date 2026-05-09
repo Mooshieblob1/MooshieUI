@@ -1938,6 +1938,13 @@ async fn dispatch_command(
             let params: crate::comfyui::types::GenerationParams =
                 serde_json::from_value(args["params"].clone())
                     .map_err(|e| format!("Invalid params: {}", e))?;
+
+            // Validate inputs (e.g. img2img/inpainting/refine without an image,
+            // ControlNet enabled without a reference image). Returning the
+            // friendly error here avoids the cryptic `[Errno 21] Is a directory`
+            // crash when ComfyUI's LoadImage node receives an empty filename.
+            crate::templates::validate_generation_params(&params)?;
+
             let seed = if params.seed < 0 {
                 (rand::random::<u64>() >> 1) as i64
             } else {
