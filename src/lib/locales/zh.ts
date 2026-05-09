@@ -41,6 +41,7 @@ const zh: Record<string, string> = {
   // ── 安装向导 ────────────────────────────────────────────
   "setup.title": "MooshieUI",
   "setup.subtitle": "面向初学者的 AI 图像生成平台",
+  "setup.logo_alt": "MooshieUI 徽标",
   "setup.intro": "MooshieUI 将自动安装所有必需组件（ComfyUI、Python 以及适合您硬件的 AI 库）。无需手动配置。",
   "setup.gpu_section": "选择您的 GPU 类型：",
   "setup.gpu.nvidia": "NVIDIA GPU (CUDA)",

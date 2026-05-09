@@ -41,6 +41,7 @@ const ja: Record<string, string> = {
   // ── セットアップウィザード ──────────────────────────────
   "setup.title": "MooshieUI",
   "setup.subtitle": "初心者にやさしいAI画像生成",
+  "setup.logo_alt": "MooshieUI ロゴ",
   "setup.intro": "MooshieUIは必要なもの（ComfyUI、Python、お使いのハードウェアに最適なAIライブラリ）をすべて自動でインストールします。手動設定は不要です。",
   "setup.gpu_section": "GPUタイプを選択：",
   "setup.gpu.nvidia": "NVIDIA GPU (CUDA)",

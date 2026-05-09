@@ -41,6 +41,7 @@ const de: Record<string, string> = {
   // ── Einrichtungsassistent ───────────────────────────────
   "setup.title": "MooshieUI",
   "setup.subtitle": "KI-Bilderzeugung für Einsteiger",
+  "setup.logo_alt": "MooshieUI-Logo",
   "setup.intro": "MooshieUI installiert automatisch alles Nötige (ComfyUI, Python und die passenden KI-Bibliotheken für Ihre Hardware). Keine manuelle Konfiguration erforderlich.",
   "setup.gpu_section": "Wählen Sie Ihren GPU-Typ:",
   "setup.gpu.nvidia": "NVIDIA GPU (CUDA)",

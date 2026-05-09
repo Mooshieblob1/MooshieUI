@@ -42,6 +42,7 @@ const en: Record<string, string> = {
   // ── Setup Wizard ────────────────────────────────────────
   "setup.title": "MooshieUI",
   "setup.subtitle": "Beginner-friendly AI image generation",
+  "setup.logo_alt": "MooshieUI logo",
   "setup.intro": "MooshieUI will automatically install everything you need — ComfyUI, Python, and the right AI libraries for your hardware. No manual setup required.",
   "setup.gpu_section": "Select your GPU type:",
   "setup.gpu.nvidia": "NVIDIA GPU (CUDA)",

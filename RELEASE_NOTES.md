@@ -1,3 +1,15 @@
+## What's New in v1.1.5
+
+### Bug Fixes
+- **Cancel actually cancels in multi-GPU mode** — clicking cancel previously only interrupted the first ComfyUI worker, so on multi-GPU deployments (e.g. `mooshieui.gpu.garden`) other workers kept running and the UI appeared to "switch between" two simultaneous generations. Cancellation is now worker-aware: the active prompt's worker is interrupted, the prompt is removed from that worker's pending queue, and `/free` is issued to flush VRAM. Held prompts that never reached ComfyUI are cancelled locally without an HTTP roundtrip.
+- **Split-model VAE auto-correction** — when an Anima/Qwen/WAN/Flux/Klein diffusion model was selected with a stale SDXL VAE in the persisted settings, generation produced a channel-mismatch error. Defaults application now detects the diffusion model family and rewrites the VAE choice (Qwen VAE for Anima/Qwen/WAN, Flux VAE for Flux/Klein, otherwise SDXL VAE) before saving.
+- **Artist gallery thumbnails in browser mode** — manifest URLs pointing at `cdn.mooshieblob.com` were blocked by CORS when MooshieUI is served from a different origin. The artist-gallery store now rewrites `imageBaseUrl` to `/internal-api/_cdn` in browser mode so all `<img>` tags load through the existing CDN proxy.
+
+### Internationalisation
+- **Setup wizard logo, title, and tagline keyed for i18n** — the last three hardcoded English strings on the first-run setup screen now use `setup.logo_alt`, `setup.title`, and `setup.subtitle`. The new `setup.logo_alt` key has been translated into all 11 supported locales.
+
+---
+
 ## What's New in v1.1.4
 
 ### Bug Fixes

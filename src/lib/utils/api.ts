@@ -50,8 +50,8 @@ export async function getQueue(): Promise<QueueInfo> {
   return ipcInvoke("get_queue");
 }
 
-export async function interruptGeneration(): Promise<void> {
-  return ipcInvoke("interrupt_generation");
+export async function interruptGeneration(promptId?: string): Promise<void> {
+  return ipcInvoke("interrupt_generation", promptId ? { promptId } : {});
 }
 
 export async function deleteQueueItem(promptId: string): Promise<void> {

@@ -41,6 +41,7 @@ const ko: Record<string, string> = {
   // ── 설정 마법사 ─────────────────────────────────────────
   "setup.title": "MooshieUI",
   "setup.subtitle": "초보자를 위한 AI 이미지 생성",
+  "setup.logo_alt": "MooshieUI 로고",
   "setup.intro": "MooshieUI가 필요한 모든 것(ComfyUI, Python, 하드웨어에 맞는 AI 라이브러리)을 자동으로 설치합니다. 수동 설정이 필요 없습니다.",
   "setup.gpu_section": "GPU 유형을 선택하세요:",
   "setup.gpu.nvidia": "NVIDIA GPU (CUDA)",

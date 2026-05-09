@@ -1,5 +1,6 @@
 import { createArtistGalleryClient } from "./client.js";
 import { cdnFetch } from "../utils/cdnFetch.js";
+import { isBrowserMode } from "../utils/ipc.js";
 import type {
   ArtistEntry,
   ArtistGalleryClient,
@@ -71,7 +72,21 @@ export class ArtistGalleryStore {
     this.manifestLoading = true;
     this.manifestError = null;
     try {
-      this.manifest = await this.client.loadManifest();
+      const manifest = await this.client.loadManifest();
+      // In browser/server mode, rewrite the manifest's `imageBaseUrl` so that
+      // image URLs used by `<img src>` and `imageCache.fetch()` go through the
+      // server's `/internal-api/_cdn/...` proxy. Otherwise the CDN's missing
+      // CORS headers block every fetch from the gallery's origin (e.g.
+      // `mooshieui.gpu.garden`). In Tauri mode the CDN is hit directly because
+      // image element loads bypass CORS and JSON fetches are routed through
+      // the `cdn_proxy_fetch` command.
+      if (isBrowserMode && manifest.imageBaseUrl?.startsWith("https://cdn.mooshieblob.com")) {
+        manifest.imageBaseUrl = manifest.imageBaseUrl.replace(
+          "https://cdn.mooshieblob.com",
+          "/internal-api/_cdn",
+        );
+      }
+      this.manifest = manifest;
       // Kick off the search index fetch early; it drives typeahead and getArtist fallback.
       this.client.loadSearchIndex().catch((err) => {
         console.error("artist-gallery: search index load failed", err);

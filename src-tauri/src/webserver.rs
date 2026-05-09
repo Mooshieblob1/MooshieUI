@@ -1762,7 +1762,13 @@ async fn dispatch_command(
             Ok(serde_json::json!({ "images": images }))
         }
         "interrupt_generation" => {
-            state.interrupt().await.map_err(|e| e.to_string())?;
+            // Optional: a specific placeholder prompt_id to cancel. If absent,
+            // every running worker is interrupted (legacy behaviour).
+            let prompt_id = args.get("promptId").and_then(|v| v.as_str());
+            state
+                .interrupt_prompt(prompt_id)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
         }
         "clear_all_queues" => {

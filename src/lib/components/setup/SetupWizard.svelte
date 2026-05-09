@@ -291,14 +291,14 @@
     <div class="text-center mb-8">
       <img
         src={logo}
-        alt="MooshieUI logo"
+        alt={locale.t('setup.logo_alt')}
         class="w-16 h-16 object-contain mx-auto mb-3 rounded-xl border border-neutral-700 bg-neutral-800/40 p-1"
       />
       <h1 class="text-4xl font-bold bg-linear-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
-        MooshieUI
+        {locale.t('setup.title')}
       </h1>
       <p class="text-neutral-400 mt-2 text-sm">
-        Beginner-friendly AI image generation
+        {locale.t('setup.subtitle')}
       </p>
     </div>
 

@@ -115,7 +115,7 @@
   /** Left-click: cancel the current generation only, let the queue continue. */
   async function handleCancelCurrent() {
     const promptId = progress.activePromptId;
-    await interruptGeneration();
+    await interruptGeneration(promptId ?? undefined);
     if (promptId) progress.removePrompt(promptId);
   }
 
@@ -123,7 +123,8 @@
   async function handleCancelAll(e: MouseEvent) {
     e.preventDefault();
     const promptIds = progress.pendingPrompts.map((p) => p.promptId);
-    await interruptGeneration();
+    const activeId = progress.activePromptId;
+    await interruptGeneration(activeId ?? undefined);
     for (const pid of promptIds) {
       try { await deleteQueueItem(pid); } catch { /* already removed */ }
     }

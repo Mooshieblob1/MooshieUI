@@ -127,8 +127,11 @@ pub async fn get_history(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-pub async fn interrupt_generation(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
-    state.interrupt().await
+pub async fn interrupt_generation(
+    state: State<'_, Arc<AppState>>,
+    prompt_id: Option<String>,
+) -> Result<(), AppError> {
+    state.interrupt_prompt(prompt_id.as_deref()).await
 }
 
 #[cfg(feature = "desktop")]

@@ -407,6 +407,107 @@ impl AppState {
         config.server_url.clone()
     }
 
+    /// Cancel a generation in a worker-aware fashion.
+    ///
+    /// If `prompt_id` is `Some(id)`:
+    /// - Cancels the held prompt (if it never reached ComfyUI), OR
+    /// - Looks up which worker owns the prompt, interrupts that worker,
+    ///   and deletes the prompt from that worker's pending queue.
+    /// - Falls back to all-worker fanout if the prompt isn't tracked yet.
+    ///
+    /// If `prompt_id` is `None`, every running worker is interrupted.
+    /// In all cases, /free is issued on each affected worker to flush VRAM —
+    /// rapid interrupts on Blackwell GPUs with cudaMallocAsync can leave
+    /// VRAM in a corrupted state, producing all-black images on the next gen.
+    pub async fn interrupt_prompt(
+        &self,
+        prompt_id: Option<&str>,
+    ) -> Result<(), crate::error::AppError> {
+        // 1. If a specific prompt is being cancelled and it's still held
+        //    locally (never submitted to ComfyUI), cancel it there and stop.
+        if let Some(pid) = prompt_id {
+            let held_index = {
+                let held = self.prompt_queue.held.lock().unwrap();
+                held.iter().position(|hp| hp.placeholder_id == pid)
+            };
+            if let Some(idx) = held_index {
+                let hp = {
+                    let mut held = self.prompt_queue.held.lock().unwrap();
+                    held.remove(idx)
+                };
+                {
+                    let mut result = hp.result.lock().await;
+                    *result = Some(Err("Cancelled by user".to_string()));
+                }
+                hp.submitted.notify_one();
+                self.prompt_queue.remove(pid);
+                self.prompt_queue.drain_notify.notify_one();
+                self.broadcast_queue_positions();
+                return Ok(());
+            }
+        }
+
+        // 2. Decide which workers to hit.
+        //    - Specific prompt with a known worker → just that one.
+        //    - Otherwise → all running workers.
+        let target_worker_ids: Vec<u32> =
+            match prompt_id.and_then(|id| self.prompt_queue.worker_of(id)) {
+                Some(wid) => vec![wid],
+                None => self.gpu_manager.workers.iter().map(|w| w.id).collect(),
+            };
+
+        for wid in &target_worker_ids {
+            let _ = self.gpu_manager.interrupt(Some(*wid)).await;
+        }
+
+        // 3. Delete the specific prompt (and any aliases) from each targeted
+        //    worker's pending queue so it doesn't resume on requeue.
+        if let Some(pid) = prompt_id {
+            // Collect all known IDs for this prompt: the placeholder + any real
+            // ComfyUI ids aliased to it.
+            let mut ids_to_delete: Vec<String> = vec![pid.to_string()];
+            {
+                let aliases = self.prompt_queue.aliases.read().unwrap();
+                for (real_id, placeholder) in aliases.iter() {
+                    if placeholder == pid {
+                        ids_to_delete.push(real_id.clone());
+                    }
+                }
+            }
+
+            for wid in &target_worker_ids {
+                if let Some(worker) = self.gpu_manager.workers.get(*wid as usize) {
+                    let _ = self
+                        .http_client
+                        .post(format!("{}/queue", worker.base_url))
+                        .json(&serde_json::json!({ "delete": ids_to_delete }))
+                        .send()
+                        .await;
+                }
+            }
+
+            self.prompt_queue.remove(pid);
+            self.broadcast_queue_positions();
+        }
+
+        // 4. Flush VRAM on every targeted worker.
+        for wid in &target_worker_ids {
+            if let Some(worker) = self.gpu_manager.workers.get(*wid as usize) {
+                let _ = self
+                    .http_client
+                    .post(format!("{}/free", worker.base_url))
+                    .json(&serde_json::json!({
+                        "unload_models": true,
+                        "free_memory": true,
+                    }))
+                    .send()
+                    .await;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Broadcast an event to SSE clients.
     pub fn broadcast(&self, event: &str, payload: serde_json::Value) {
         let _ = self.event_tx.send(BroadcastEvent {

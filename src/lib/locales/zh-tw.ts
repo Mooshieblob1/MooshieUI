@@ -41,6 +41,7 @@ const zhTw: Record<string, string> = {
   // ── 安裝精靈 ────────────────────────────────────────────
   "setup.title": "MooshieUI",
   "setup.subtitle": "初學者專用 AI 影像生成",
+  "setup.logo_alt": "MooshieUI 標誌",
   "setup.intro": "MooshieUI 將自動安裝所有必要元件（ComfyUI、Python 以及適合您硬體的 AI 函式庫）。無需手動設定。",
   "setup.gpu_section": "選擇您的 GPU 類型：",
   "setup.gpu.nvidia": "NVIDIA GPU (CUDA)",

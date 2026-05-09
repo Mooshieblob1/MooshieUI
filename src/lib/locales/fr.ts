@@ -41,6 +41,7 @@ const fr: Record<string, string> = {
   // ── Assistant d'installation ────────────────────────────
   "setup.title": "MooshieUI",
   "setup.subtitle": "Génération d'images IA accessible à tous",
+  "setup.logo_alt": "Logo MooshieUI",
   "setup.intro": "MooshieUI installera automatiquement tout ce dont vous avez besoin — ComfyUI, Python et les bibliothèques IA adaptées à votre matériel. Aucune configuration manuelle requise.",
   "setup.gpu_section": "Sélectionnez votre type de GPU :",
   "setup.gpu.nvidia": "GPU NVIDIA (CUDA)",

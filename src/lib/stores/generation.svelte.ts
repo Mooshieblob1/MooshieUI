@@ -40,6 +40,31 @@ function translateNaiWeightSyntax(prompt: string): string {
   return prompt;
 }
 
+/**
+ * Pick the right VAE filename for a split-model setup based on the diffusion
+ * model name. Anima/Qwen produces 16-channel latents and needs `qwen_image_vae`;
+ * Flux 2 / Klein needs the Flux VAE. Falls back to SDXL VAE only as a last
+ * resort. Returning a wrong VAE here is what causes
+ * `expected input[…, 16, …] to have 4 channels` at decode time.
+ */
+function pickSplitModelVae(diffusionModel: string | null, vaes: string[]): string {
+  if (vaes.length === 0) return "";
+  const dm = (diffusionModel ?? "").toLowerCase();
+  const looksAnimaOrQwen =
+    dm.includes("anima") || dm.includes("qwen") || dm.includes("wan");
+  const looksFlux = dm.includes("flux") || dm.includes("klein");
+
+  if (looksAnimaOrQwen) {
+    const qwen = vaes.find((v) => v.toLowerCase().includes("qwen"));
+    if (qwen) return qwen;
+  }
+  if (looksFlux) {
+    const flux = vaes.find((v) => v.toLowerCase().includes("flux"));
+    if (flux) return flux;
+  }
+  return vaes.find((v) => v.toLowerCase().includes("sdxl_vae")) ?? vaes[0];
+}
+
 type StylePresetId = "none" | "anime" | "cinematic" | "photoreal" | "digital_art" | "line_art";
 
 interface StylePreset {
@@ -1065,9 +1090,29 @@ class GenerationStore {
   applyDefaultsIfNeeded(checkpoints: string[], vaes: string[]) {
     // Always fix empty VAE for split-model users — VAELoader requires a real file.
     // This covers existing users whose saved settings pre-date the VAE field.
-    if (this.useSplitModel && !this.vae && vaes.length > 0) {
-      this.vae = vaes.find((v) => v.includes("sdxl_vae")) ?? vaes[0];
-      this.saveSettings();
+    // Pick a VAE that matches the diffusion model's latent channel layout, NOT
+    // the SDXL 4-channel VAE (which would crash VAEDecode with a channel
+    // mismatch on Anima/Qwen/Flux split models that produce 16-channel latents).
+    if (this.useSplitModel && vaes.length > 0) {
+      const desired = pickSplitModelVae(this.diffusionModel, vaes);
+      // Auto-correct an obvious 4-ch ↔ 16-ch latent mismatch: an Anima/Qwen/Flux
+      // split model paired with sdxl_vae cannot decode (4-channel VAE vs
+      // 16-channel latent). Force the matching VAE so generation succeeds.
+      const dm = (this.diffusionModel ?? "").toLowerCase();
+      const needs16ch =
+        dm.includes("anima") ||
+        dm.includes("qwen") ||
+        dm.includes("wan") ||
+        dm.includes("flux") ||
+        dm.includes("klein");
+      const currentVae = (this.vae ?? "").toLowerCase();
+      const currentIsSdxl = currentVae.includes("sdxl_vae");
+      if (!this.vae || (needs16ch && currentIsSdxl)) {
+        if (desired && desired !== this.vae) {
+          this.vae = desired;
+          this.saveSettings();
+        }
+      }
     }
     if (this.checkpoint) return;
 

@@ -41,6 +41,7 @@ const ru: Record<string, string> = {
   // ── Мастер установки ────────────────────────────────────
   "setup.title": "MooshieUI",
   "setup.subtitle": "ИИ-генерация изображений для начинающих",
+  "setup.logo_alt": "Логотип MooshieUI",
   "setup.intro": "MooshieUI автоматически установит всё необходимое — ComfyUI, Python и нужные ИИ-библиотеки для вашего оборудования. Ручная настройка не требуется.",
   "setup.gpu_section": "Выберите тип вашей видеокарты:",
   "setup.gpu.nvidia": "NVIDIA GPU (CUDA)",
