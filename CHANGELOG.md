@@ -1,5 +1,10 @@
 # Changelog
 
+## What's New in v1.1.6
+
+### Bug Fixes
+- **Multi-GPU model/sampler/embedding queries no longer 500** — `AppState::api_get` and `api_post` previously hit the configured `server_url` (default `127.0.0.1:8188`), which in multi-GPU server-mode deployments doesn't host ComfyUI — workers run on per-GPU ports listed in `gpu_workers`. Read-only API calls now delegate to `GpuManager`, which dispatches to the first ready worker. This fixes the recurring `/internal-api/get_models` 500s and the `/object_info/*` lookups used by the dynamic node introspector.
+
 ## What's New in v1.1.5
 
 ### Bug Fixes

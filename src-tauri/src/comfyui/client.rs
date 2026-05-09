@@ -25,31 +25,17 @@ pub fn sha256_file(path: &std::path::Path) -> Result<String, AppError> {
 
 impl AppState {
     pub async fn api_get(&self, path: &str) -> Result<Value, AppError> {
-        let url = format!("{}{}", self.base_url().await, path);
-        let resp = self.http_client.get(&url).send().await?;
-        if !resp.status().is_success() {
-            return Err(AppError::ApiError {
-                status: resp.status().as_u16(),
-                message: resp.text().await.unwrap_or_default(),
-            });
-        }
-        Ok(resp.json().await?)
+        // Delegate to the GPU manager so the request is dispatched to a real
+        // worker port. The legacy single-`server_url` path was broken in
+        // multi-GPU server-mode deployments where `server_url` (default
+        // 127.0.0.1:8188) doesn't actually host ComfyUI — workers run on
+        // 8188, 8189, … per `gpu_workers` config — causing /models, /samplers
+        // and /embeddings to 500 with connection-refused.
+        self.gpu_manager.api_get(path).await
     }
 
     pub async fn api_post(&self, path: &str, body: &Value) -> Result<Value, AppError> {
-        let url = format!("{}{}", self.base_url().await, path);
-        let resp = self.http_client.post(&url).json(body).send().await?;
-        if !resp.status().is_success() {
-            return Err(AppError::ApiError {
-                status: resp.status().as_u16(),
-                message: resp.text().await.unwrap_or_default(),
-            });
-        }
-        let text = resp.text().await?;
-        if text.trim().is_empty() {
-            return Ok(Value::Null);
-        }
-        Ok(serde_json::from_str(&text)?)
+        self.gpu_manager.api_post(path, body).await
     }
 
     pub async fn get_models_list(&self, category: &str) -> Result<Vec<String>, AppError> {
