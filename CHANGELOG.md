@@ -1,5 +1,21 @@
 # Changelog
 
+## What's New in v1.1.8
+
+### Theme Customization
+- **Paired light and dark palettes** — MooshieUI now supports free, built-in Mooshie, Nord, Solarized, Gruvbox, and Catppuccin palettes, with matching light and dark variants.
+- **Theme controls on desktop and mobile** — the Settings pages now include persisted theme mode and palette selectors, with the palette label routed through the locale system.
+- **Dropdowns follow the active palette** — select boxes, option text, focus rings, and selected-option states now use the active theme colors instead of retaining the Mooshie yellow tint.
+
+### Browser Generation Reliability
+- **Server WebSocket reconnects are idempotent** — repeated browser startup calls now reuse an active ComfyUI WebSocket bridge instead of aborting it mid-generation, preventing lost final output frames.
+- **Final image recovery cache** — preview and final output temp files are cached by prompt ID so the browser UI can recover an image if the final SSE event is missed during a reconnect.
+
+### Model Loading Cleanup
+- **Optional model categories no longer log noisy 500s** — ComfyUI installs without optional `diffusion_models`, `text_encoders`, `clip`, `controlnet`, or `ultralytics` folders now return empty lists for those probes instead of surfacing server errors.
+
+---
+
 ## What's New in v1.1.7
 
 ### Generation Reliability

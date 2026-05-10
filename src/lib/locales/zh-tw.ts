@@ -122,6 +122,7 @@ const zhTw: Record<string, string> = {
   "settings.appearance.theme": "主題",
   "settings.appearance.theme_dark": "深色",
   "settings.appearance.theme_light": "淺色",
+  "settings.appearance.palette": "Palette",
   "settings.appearance.font_scale": "字型大小",
   "settings.appearance.color_vision": "色覺模擬器",
   "settings.appearance.sim_none": "無",

@@ -355,6 +355,42 @@ pub fn spawn_stuck_worker_watchdog(state: Arc<AppState>) {
     tokio::spawn(watchdog_fut);
 }
 
+async fn has_active_comfyui_ws_bridge(state: &Arc<AppState>) -> bool {
+    {
+        let mut handle = state.ws_handle.lock().await;
+        let finished = handle.as_ref().map(|h| h.is_finished()).unwrap_or(false);
+        if finished {
+            handle.take();
+        } else if handle.is_some() {
+            return true;
+        }
+    }
+
+    for worker in &state.gpu_manager.workers {
+        let mut handle = worker.ws_handle.lock().await;
+        let finished = handle.as_ref().map(|h| h.is_finished()).unwrap_or(false);
+        if finished {
+            handle.take();
+        } else if handle.is_some() {
+            return true;
+        }
+    }
+
+    false
+}
+
+async fn ensure_comfyui_ws_bridge(
+    state: &Arc<AppState>,
+    event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
+) -> Result<(), crate::error::AppError> {
+    if has_active_comfyui_ws_bridge(state).await {
+        log::debug!("ComfyUI WebSocket bridge already active; skipping reconnect");
+        return Ok(());
+    }
+
+    crate::comfyui::websocket::connect_websocket_headless(state, event_tx).await
+}
+
 pub async fn start_server(
     state: Arc<AppState>,
     port: u16,
@@ -1569,15 +1605,15 @@ async fn dispatch_command(
         }
         "start_comfyui" => {
             use crate::comfyui::process::{self, StartResult};
-            use crate::comfyui::websocket;
             let result = process::start_comfyui_process(&state)
                 .await
                 .map_err(|e| e.to_string())?;
             let event_tx = state.event_tx.clone();
             match result {
                 StartResult::AlreadyRunning => {
-                    // Connect websocket so progress events flow to SSE
-                    if let Err(e) = websocket::connect_websocket_headless(&state, event_tx).await {
+                    // Ensure progress events flow to SSE without disrupting an
+                    // existing bridge for an in-flight generation.
+                    if let Err(e) = ensure_comfyui_ws_bridge(&state, event_tx.clone()).await {
                         log::error!("Failed to connect WebSocket (headless): {}", e);
                     }
                     state.broadcast("comfyui:server_ready", serde_json::json!(null));
@@ -1589,12 +1625,10 @@ async fn dispatch_command(
                         match process::wait_for_ready(&state_clone, 120).await {
                             Ok(()) => {
                                 log::info!("ComfyUI server is ready (browser mode)");
-                                // Connect websocket so progress events flow to SSE
-                                if let Err(e) = websocket::connect_websocket_headless(
-                                    &state_clone,
-                                    event_tx.clone(),
-                                )
-                                .await
+                                // Ensure progress events flow to SSE without
+                                // replacing an existing bridge.
+                                if let Err(e) =
+                                    ensure_comfyui_ws_bridge(&state_clone, event_tx.clone()).await
                                 {
                                     log::error!("Failed to connect WebSocket (headless): {}", e);
                                 }
@@ -1619,8 +1653,8 @@ async fn dispatch_command(
                     Ok(serde_json::json!("spawned"))
                 }
                 StartResult::Skipped => {
-                    // Remote mode — connect websocket directly
-                    if let Err(e) = websocket::connect_websocket_headless(&state, event_tx).await {
+                    // Remote mode — connect websocket directly if no bridge is active.
+                    if let Err(e) = ensure_comfyui_ws_bridge(&state, event_tx.clone()).await {
                         log::error!("Failed to connect WebSocket (headless): {}", e);
                     }
                     state.broadcast("comfyui:server_ready", serde_json::json!(null));

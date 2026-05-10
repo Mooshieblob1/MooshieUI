@@ -43,8 +43,10 @@ pub struct AppConfig {
     pub keep_alive: bool,
     /// Automatically start ComfyUI when the app launches (default: true)
     pub auto_start: bool,
-    /// UI theme: "dark", "light"
+    /// UI theme mode: "dark", "light"
     pub theme: String,
+    /// UI color palette shared across dark and light modes.
+    pub theme_palette: String,
     /// UI font scale multiplier (1.0 = default)
     pub font_scale: f64,
     pub setup_complete: bool,
@@ -100,6 +102,7 @@ impl Default for AppConfig {
             keep_alive: false,
             auto_start: true,
             theme: "dark".to_string(),
+            theme_palette: "mooshie".to_string(),
             font_scale: 1.0,
             setup_complete: false,
             extra_model_paths: None,

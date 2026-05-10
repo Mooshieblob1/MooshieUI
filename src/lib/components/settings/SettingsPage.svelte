@@ -11,6 +11,7 @@
   import OpenModelFolders from "./OpenModelFolders.svelte";
   import GpuStatusPanel from "./GpuStatusPanel.svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
+  import { applyTheme, THEME_PALETTES } from "../../utils/theme.js";
   import { onMount, onDestroy } from "svelte";
   import { marked } from "marked";
   import { clearArtistImageCache, getArtistImageCacheCount } from "../../artist-gallery/imageCache.js";
@@ -957,10 +958,6 @@
     }
   }
 
-  function applyTheme(theme: string) {
-    document.documentElement.classList.toggle("light", theme === "light");
-  }
-
   function applyFontScale(scale: number) {
     document.documentElement.style.setProperty("--font-scale", String(scale));
   }
@@ -1474,14 +1471,31 @@
           <div class="px-5 pb-5 space-y-4">
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.appearance.theme')}</label>
+              <label for="theme-mode" class="block text-xs text-neutral-400 mb-1">{locale.t('settings.appearance.theme')}</label>
               <select
+                id="theme-mode"
+                name="theme-mode"
                 bind:value={config.theme}
-                onchange={() => { if (config) { applyTheme(config.theme); autoSave(); } }}
+                onchange={() => { if (config) { applyTheme(config.theme, config.theme_palette); autoSave(); } }}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
               >
                 <option value="dark">{locale.t('settings.appearance.theme_dark')}</option>
                 <option value="light">{locale.t('settings.appearance.theme_light')}</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="theme-palette" class="block text-xs text-neutral-400 mb-1">{locale.t('settings.appearance.palette')}</label>
+              <select
+                id="theme-palette"
+                name="theme-palette"
+                bind:value={config.theme_palette}
+                onchange={() => { if (config) { applyTheme(config.theme, config.theme_palette); autoSave(); } }}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+              >
+                {#each THEME_PALETTES as palette}
+                  <option value={palette.value}>{palette.label}</option>
+                {/each}
               </select>
             </div>
 

@@ -187,16 +187,51 @@ fn build_sse_payload(img: &ProcessedOutputImage, prompt_id: &str) -> serde_json:
     }
 }
 
+fn cache_temp_event(
+    state: &Arc<AppState>,
+    event: &str,
+    prompt_id: &str,
+    payload: &serde_json::Value,
+) {
+    let Some(temp_filename) = payload.get("temp_filename").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let ids = state.prompt_queue.related_ids(prompt_id);
+    match event {
+        "comfyui:preview" => {
+            let mut previews = state.last_preview_by_prompt.write().unwrap();
+            for id in ids {
+                previews.insert(id, temp_filename.to_string());
+            }
+        }
+        "comfyui:output_image" => {
+            let mut outputs = state.output_image_cache.write().unwrap();
+            for id in ids {
+                let entry = outputs.entry(id).or_default();
+                if !entry.iter().any(|existing| existing == temp_filename) {
+                    entry.push(temp_filename.to_string());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(feature = "desktop")]
 pub async fn connect_websocket(
     app_handle: AppHandle,
     state: Arc<AppState>,
     event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
 ) -> Result<(), AppError> {
-    // Disconnect existing
-    let mut handle = state.ws_handle.lock().await;
-    if let Some(h) = handle.take() {
-        h.abort();
+    {
+        let mut handle = state.ws_handle.lock().await;
+        if handle.as_ref().map(|h| !h.is_finished()).unwrap_or(false) {
+            log::debug!("ComfyUI WebSocket already connected; skipping reconnect");
+            return Ok(());
+        }
+        if let Some(h) = handle.take() {
+            h.abort();
+        }
     }
 
     let base_url = state.base_url().await;
@@ -222,6 +257,9 @@ pub async fn connect_websocket(
         // Split emit: send full payload to Tauri (in-process), lightweight to SSE
         let emit_split =
             |event: &str, tauri_payload: serde_json::Value, sse_payload: serde_json::Value| {
+                if let Some(prompt_id) = sse_payload.get("prompt_id").and_then(|v| v.as_str()) {
+                    cache_temp_event(&ws_state, event, prompt_id, &sse_payload);
+                }
                 let _ = app.emit(event, tauri_payload);
                 let _ = tx.send(crate::state::BroadcastEvent {
                     event: event.to_string(),
@@ -594,7 +632,7 @@ pub async fn connect_websocket(
         }
     });
 
-    *handle = Some(task);
+    *state.ws_handle.lock().await = Some(task);
     Ok(())
 }
 
@@ -605,10 +643,15 @@ pub async fn connect_websocket_headless(
     state: &Arc<AppState>,
     event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
 ) -> Result<(), AppError> {
-    // Disconnect existing
-    let mut handle = state.ws_handle.lock().await;
-    if let Some(h) = handle.take() {
-        h.abort();
+    {
+        let mut handle = state.ws_handle.lock().await;
+        if handle.as_ref().map(|h| !h.is_finished()).unwrap_or(false) {
+            log::debug!("ComfyUI WebSocket (headless) already connected; skipping reconnect");
+            return Ok(());
+        }
+        if let Some(h) = handle.take() {
+            h.abort();
+        }
     }
 
     let base_url = state.base_url().await;
@@ -623,6 +666,9 @@ pub async fn connect_websocket_headless(
 
     let task = tokio::spawn(async move {
         let emit = |event: &str, payload: serde_json::Value| {
+            if let Some(prompt_id) = payload.get("prompt_id").and_then(|v| v.as_str()) {
+                cache_temp_event(&ws_state, event, prompt_id, &payload);
+            }
             let _ = tx.send(crate::state::BroadcastEvent {
                 event: event.to_string(),
                 payload,
@@ -797,7 +843,7 @@ pub async fn connect_websocket_headless(
         }
     });
 
-    *handle = Some(task);
+    *state.ws_handle.lock().await = Some(task);
     Ok(())
 }
 
@@ -817,9 +863,15 @@ pub async fn connect_websocket_for_worker(
     worker: &std::sync::Arc<super::gpu_manager::GpuWorker>,
     event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
 ) -> Result<(), AppError> {
-    // Disconnect existing WS for this worker
     {
         let mut handle = worker.ws_handle.lock().await;
+        if handle.as_ref().map(|h| !h.is_finished()).unwrap_or(false) {
+            log::debug!(
+                "Worker {} WebSocket already connected; skipping reconnect",
+                worker.id
+            );
+            return Ok(());
+        }
         if let Some(h) = handle.take() {
             h.abort();
         }
@@ -837,6 +889,9 @@ pub async fn connect_websocket_for_worker(
 
     let task = tokio::spawn(async move {
         let emit = |event: &str, payload: serde_json::Value| {
+            if let Some(prompt_id) = payload.get("prompt_id").and_then(|v| v.as_str()) {
+                cache_temp_event(&ws_state, event, prompt_id, &payload);
+            }
             let _ = tx.send(crate::state::BroadcastEvent {
                 event: event.to_string(),
                 payload,

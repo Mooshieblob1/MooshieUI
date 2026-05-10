@@ -122,6 +122,7 @@ const pt: Record<string, string> = {
   "settings.appearance.theme": "Tema",
   "settings.appearance.theme_dark": "Escuro",
   "settings.appearance.theme_light": "Claro",
+  "settings.appearance.palette": "Palette",
   "settings.appearance.font_scale": "Tamanho da Fonte",
   "settings.appearance.color_vision": "Simulador de Visão de Cores",
   "settings.appearance.sim_none": "Nenhum",

@@ -122,6 +122,7 @@ const zh: Record<string, string> = {
   "settings.appearance.theme": "主题",
   "settings.appearance.theme_dark": "深夜模式",
   "settings.appearance.theme_light": "日间模式",
+  "settings.appearance.palette": "Palette",
   "settings.appearance.font_scale": "字体大小",
   "settings.appearance.color_vision": "色觉色差模拟模式(色盲模式)",
   "settings.appearance.sim_none": "无",

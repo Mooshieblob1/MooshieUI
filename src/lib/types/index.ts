@@ -143,6 +143,7 @@ export interface AppConfig {
   vram_mode: string;
   keep_alive: boolean;
   theme: string;
+  theme_palette: string;
   font_scale: number;
   setup_complete: boolean;
   extra_model_paths: string | null;

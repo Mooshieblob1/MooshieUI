@@ -2,7 +2,10 @@
   import { LOCALE_OPTIONS, locale, type Locale } from "../../stores/locale.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import type { AppConfig } from "../../types/index.js";
+  import { getConfig, updateConfig } from "../../utils/api.js";
   import { clearAuthToken } from "../../utils/ipc.js";
+  import { applyTheme, THEME_PALETTES } from "../../utils/theme.js";
   import {
     getForceDesktopOverride,
     setForceDesktopOverride,
@@ -13,6 +16,7 @@
   const appVersion = __APP_VERSION__ ?? "dev";
 
   let forceDesktop = $state(getForceDesktopOverride());
+  let config = $state<AppConfig | null>(null);
 
   function tt(key: string, fb: string) {
     const v = locale.t(key);
@@ -36,11 +40,31 @@
     window.location.reload();
   }
 
+  async function loadConfig() {
+    try {
+      config = await getConfig();
+    } catch {
+      config = null;
+    }
+  }
+
+  async function saveTheme() {
+    if (!config) return;
+    applyTheme(config.theme, config.theme_palette);
+    try {
+      await updateConfig(config);
+    } catch {}
+  }
+
   async function logout() {
     if (!confirm(tt("settings.confirm_logout", "Sign out?"))) return;
     clearAuthToken();
     window.location.reload();
   }
+
+  $effect(() => {
+    void loadConfig();
+  });
 </script>
 
 <div class="h-full flex flex-col bg-neutral-950">
@@ -65,6 +89,37 @@
           {/each}
         </select>
       </label>
+      {#if config}
+        <div class="grid grid-cols-2 gap-2">
+          <label for="mobile-theme-mode" class="block">
+            <span class="text-sm text-neutral-200">{tt("settings.appearance.theme", "Theme")}</span>
+            <select
+              id="mobile-theme-mode"
+              name="theme-mode"
+              bind:value={config.theme}
+              onchange={saveTheme}
+              class="mt-1 w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2.5 text-sm text-neutral-100"
+            >
+              <option value="dark">{tt("settings.appearance.theme_dark", "Dark")}</option>
+              <option value="light">{tt("settings.appearance.theme_light", "Light")}</option>
+            </select>
+          </label>
+          <label for="mobile-theme-palette" class="block">
+            <span class="text-sm text-neutral-200">{tt("settings.appearance.palette", "Palette")}</span>
+            <select
+              id="mobile-theme-palette"
+              name="theme-palette"
+              bind:value={config.theme_palette}
+              onchange={saveTheme}
+              class="mt-1 w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2.5 text-sm text-neutral-100"
+            >
+              {#each THEME_PALETTES as palette}
+                <option value={palette.value}>{palette.label}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+      {/if}
       <div class="flex items-center justify-between gap-3">
         <div class="flex-1">
           <p class="text-sm text-neutral-200">

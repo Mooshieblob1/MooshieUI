@@ -427,11 +427,11 @@ pub struct AppState {
     /// Multi-GPU worker manager — distributes prompts across N GPU backends.
     pub gpu_manager: GpuManager,
     /// Tracks output temp filenames by placeholder prompt_id for recovery.
-    /// Populated by the cleanup reactor when `comfyui:output_image` fires;
+    /// Populated by the WebSocket bridge when `comfyui:output_image` fires;
     /// consumed (and cleared) by `recover_prompt_outputs`.
     pub output_image_cache: std::sync::RwLock<HashMap<String, Vec<String>>>,
     /// Tracks the last live-preview temp_filename per placeholder prompt_id.
-    /// Updated by the cleanup reactor on every `comfyui:preview` event.
+    /// Updated by the WebSocket bridge on every `comfyui:preview` event.
     /// Sent to clients that reconnect mid-generation via the SSE initial burst.
     pub last_preview_by_prompt: std::sync::RwLock<HashMap<String, String>>,
 }

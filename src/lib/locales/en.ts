@@ -125,6 +125,7 @@ const en: Record<string, string> = {
   "settings.appearance.theme": "Theme",
   "settings.appearance.theme_dark": "Dark",
   "settings.appearance.theme_light": "Light",
+  "settings.appearance.palette": "Palette",
   "settings.appearance.font_scale": "Font Scale",
   "settings.appearance.color_vision": "Color Vision Simulator",
   "settings.appearance.sim_none": "None",

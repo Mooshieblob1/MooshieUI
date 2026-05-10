@@ -122,6 +122,7 @@ const ko: Record<string, string> = {
   "settings.appearance.theme": "테마",
   "settings.appearance.theme_dark": "다크",
   "settings.appearance.theme_light": "라이트",
+  "settings.appearance.palette": "Palette",
   "settings.appearance.font_scale": "글꼴 크기",
   "settings.appearance.color_vision": "색각 시뮬레이터",
   "settings.appearance.sim_none": "없음",

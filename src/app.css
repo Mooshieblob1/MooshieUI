@@ -3,39 +3,169 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --accent: #ffcc00;
-  --accent-hover: #e6b800;
+  --theme-accent-foreground: #111111;
 
-  /* Remap existing indigo/purple utility usage to the logo palette. */
-  --color-indigo-50: #fffdf0;
-  --color-indigo-100: #fff8d1;
-  --color-indigo-200: #ffef9e;
-  --color-indigo-300: #ffe680;
-  --color-indigo-400: #ffd54d;
-  --color-indigo-500: #ffcc00;
-  --color-indigo-600: #cc9900;
-  --color-indigo-700: #a37a00;
-  --color-indigo-800: #7a5c00;
-  --color-indigo-900: #5c4600;
-  --color-indigo-950: #3d2f00;
+  --color-neutral-50: #fafafa;
+  --color-neutral-100: #f5f5f5;
+  --color-neutral-200: #e5e5e5;
+  --color-neutral-300: #d4d4d4;
+  --color-neutral-400: #a3a3a3;
+  --color-neutral-500: #737373;
+  --color-neutral-600: #525252;
+  --color-neutral-700: #404040;
+  --color-neutral-800: #262626;
+  --color-neutral-900: #171717;
+  --color-neutral-950: #0a0a0a;
 
-  --color-purple-50: #fffdf0;
-  --color-purple-100: #fff8d1;
-  --color-purple-200: #ffef9e;
-  --color-purple-300: #ffe680;
-  --color-purple-400: #ffd54d;
-  --color-purple-500: #ffcc00;
-  --color-purple-600: #cc9900;
-  --color-purple-700: #a37a00;
-  --color-purple-800: #7a5c00;
-  --color-purple-900: #5c4600;
-  --color-purple-950: #3d2f00;
+  --theme-accent-50: #fffdf0;
+  --theme-accent-100: #fff8d1;
+  --theme-accent-200: #ffef9e;
+  --theme-accent-300: #ffe680;
+  --theme-accent-400: #ffd54d;
+  --theme-accent-500: #ffcc00;
+  --theme-accent-600: #cc9900;
+  --theme-accent-700: #a37a00;
+  --theme-accent-800: #7a5c00;
+  --theme-accent-900: #5c4600;
+  --theme-accent-950: #3d2f00;
+
+  --accent: var(--theme-accent-500);
+  --accent-hover: var(--theme-accent-400);
+
+  /* Remap existing indigo/purple utility usage to the active palette. */
+  --color-indigo-50: var(--theme-accent-50);
+  --color-indigo-100: var(--theme-accent-100);
+  --color-indigo-200: var(--theme-accent-200);
+  --color-indigo-300: var(--theme-accent-300);
+  --color-indigo-400: var(--theme-accent-400);
+  --color-indigo-500: var(--theme-accent-500);
+  --color-indigo-600: var(--theme-accent-600);
+  --color-indigo-700: var(--theme-accent-700);
+  --color-indigo-800: var(--theme-accent-800);
+  --color-indigo-900: var(--theme-accent-900);
+  --color-indigo-950: var(--theme-accent-950);
+
+  --color-purple-50: var(--theme-accent-50);
+  --color-purple-100: var(--theme-accent-100);
+  --color-purple-200: var(--theme-accent-200);
+  --color-purple-300: var(--theme-accent-300);
+  --color-purple-400: var(--theme-accent-400);
+  --color-purple-500: var(--theme-accent-500);
+  --color-purple-600: var(--theme-accent-600);
+  --color-purple-700: var(--theme-accent-700);
+  --color-purple-800: var(--theme-accent-800);
+  --color-purple-900: var(--theme-accent-900);
+  --color-purple-950: var(--theme-accent-950);
 }
 
-/* Improve contrast on yellow highlight surfaces that currently use text-white. */
+html[data-palette="nord"] {
+  --theme-accent-foreground: #f8fafc;
+  --color-neutral-50: #eceff4;
+  --color-neutral-100: #e5e9f0;
+  --color-neutral-200: #d8dee9;
+  --color-neutral-300: #cbd5e1;
+  --color-neutral-400: #94a3b8;
+  --color-neutral-500: #64748b;
+  --color-neutral-600: #4c566a;
+  --color-neutral-700: #434c5e;
+  --color-neutral-800: #3b4252;
+  --color-neutral-900: #2e3440;
+  --color-neutral-950: #1f2430;
+  --theme-accent-50: #eff6ff;
+  --theme-accent-100: #dbeafe;
+  --theme-accent-200: #bfdbfe;
+  --theme-accent-300: #93c5fd;
+  --theme-accent-400: #60a5fa;
+  --theme-accent-500: #5e81ac;
+  --theme-accent-600: #4c78a8;
+  --theme-accent-700: #3b638d;
+  --theme-accent-800: #2f4f70;
+  --theme-accent-900: #273f5a;
+  --theme-accent-950: #172554;
+}
+
+html[data-palette="solarized"] {
+  --theme-accent-foreground: #fdf6e3;
+  --color-neutral-50: #fdf6e3;
+  --color-neutral-100: #eee8d5;
+  --color-neutral-200: #d8d0b5;
+  --color-neutral-300: #93a1a1;
+  --color-neutral-400: #839496;
+  --color-neutral-500: #657b83;
+  --color-neutral-600: #586e75;
+  --color-neutral-700: #194652;
+  --color-neutral-800: #073642;
+  --color-neutral-900: #002f3a;
+  --color-neutral-950: #002b36;
+  --theme-accent-50: #e1f7fb;
+  --theme-accent-100: #c6edf5;
+  --theme-accent-200: #8bd8e8;
+  --theme-accent-300: #4fc3db;
+  --theme-accent-400: #2aaec8;
+  --theme-accent-500: #268bd2;
+  --theme-accent-600: #2176b3;
+  --theme-accent-700: #1c5f91;
+  --theme-accent-800: #17496f;
+  --theme-accent-900: #12374f;
+  --theme-accent-950: #0b2537;
+}
+
+html[data-palette="gruvbox"] {
+  --theme-accent-foreground: #1d2021;
+  --color-neutral-50: #fbf1c7;
+  --color-neutral-100: #ebdbb2;
+  --color-neutral-200: #d5c4a1;
+  --color-neutral-300: #bdae93;
+  --color-neutral-400: #a89984;
+  --color-neutral-500: #928374;
+  --color-neutral-600: #665c54;
+  --color-neutral-700: #504945;
+  --color-neutral-800: #3c3836;
+  --color-neutral-900: #282828;
+  --color-neutral-950: #1d2021;
+  --theme-accent-50: #fff4d6;
+  --theme-accent-100: #fbe5ad;
+  --theme-accent-200: #f4c982;
+  --theme-accent-300: #eeb05a;
+  --theme-accent-400: #e6983c;
+  --theme-accent-500: #d79921;
+  --theme-accent-600: #b57614;
+  --theme-accent-700: #925f12;
+  --theme-accent-800: #704a11;
+  --theme-accent-900: #56380d;
+  --theme-accent-950: #332008;
+}
+
+html[data-palette="catppuccin"] {
+  --theme-accent-foreground: #f5e0dc;
+  --color-neutral-50: #cdd6f4;
+  --color-neutral-100: #bac2de;
+  --color-neutral-200: #a6adc8;
+  --color-neutral-300: #9399b2;
+  --color-neutral-400: #7f849c;
+  --color-neutral-500: #6c7086;
+  --color-neutral-600: #585b70;
+  --color-neutral-700: #45475a;
+  --color-neutral-800: #313244;
+  --color-neutral-900: #1e1e2e;
+  --color-neutral-950: #11111b;
+  --theme-accent-50: #f5e0ff;
+  --theme-accent-100: #ead1ff;
+  --theme-accent-200: #dcbdfc;
+  --theme-accent-300: #cba6f7;
+  --theme-accent-400: #b794f4;
+  --theme-accent-500: #a78bfa;
+  --theme-accent-600: #8b6bd8;
+  --theme-accent-700: #7552bc;
+  --theme-accent-800: #5f3f98;
+  --theme-accent-900: #493176;
+  --theme-accent-950: #2f1f4d;
+}
+
+/* Improve contrast on accent highlight surfaces that currently use text-white. */
 [class*="bg-indigo-"][class*="text-white"],
 [class*="bg-purple-"][class*="text-white"] {
-  color: #111111 !important;
+  color: var(--theme-accent-foreground) !important;
 }
 
 html, body, #app {
@@ -77,10 +207,27 @@ html {
   color-scheme: dark;
 }
 
-select, option {
-  background-color: #262626 !important;
-  color: #f5f5f5 !important;
+select,
+option {
+  background-color: var(--color-neutral-800) !important;
+  color: var(--color-neutral-100) !important;
   color-scheme: dark;
+}
+
+select {
+  border-color: var(--color-neutral-700) !important;
+}
+
+select:focus,
+select:focus-visible {
+  border-color: var(--theme-accent-500) !important;
+  outline: 2px solid color-mix(in srgb, var(--theme-accent-500) 30%, transparent);
+  outline-offset: 0;
+}
+
+option:checked {
+  background-color: var(--theme-accent-600) !important;
+  color: var(--theme-accent-foreground) !important;
 }
 
 ::-webkit-scrollbar { width: 8px; }
@@ -143,6 +290,7 @@ input[type="range"]::-webkit-slider-thumb {
 /* ─── Light mode ─── */
 html.light {
   color-scheme: light;
+  --theme-accent-foreground: #111111;
   --color-neutral-950: #fafafa;
   --color-neutral-900: #f5f5f5;
   --color-neutral-800: #e5e5e5;
@@ -156,9 +304,113 @@ html.light {
   --color-neutral-50: #0a0a0a;
 }
 
+html.light[data-palette="nord"] {
+  --theme-accent-foreground: #f8fafc;
+  --color-neutral-950: #f8fafc;
+  --color-neutral-900: #eceff4;
+  --color-neutral-800: #e5e9f0;
+  --color-neutral-700: #d8dee9;
+  --color-neutral-600: #94a3b8;
+  --color-neutral-500: #64748b;
+  --color-neutral-400: #4c566a;
+  --color-neutral-300: #434c5e;
+  --color-neutral-200: #3b4252;
+  --color-neutral-100: #2e3440;
+  --color-neutral-50: #1f2430;
+  --theme-accent-50: #eff6ff;
+  --theme-accent-100: #dbeafe;
+  --theme-accent-200: #bfdbfe;
+  --theme-accent-300: #93c5fd;
+  --theme-accent-400: #60a5fa;
+  --theme-accent-500: #4c78a8;
+  --theme-accent-600: #3b638d;
+  --theme-accent-700: #2f4f70;
+  --theme-accent-800: #273f5a;
+  --theme-accent-900: #1e334a;
+  --theme-accent-950: #172554;
+}
+
+html.light[data-palette="solarized"] {
+  --theme-accent-foreground: #fdf6e3;
+  --color-neutral-950: #fdf6e3;
+  --color-neutral-900: #eee8d5;
+  --color-neutral-800: #e3dbc7;
+  --color-neutral-700: #d8d0b5;
+  --color-neutral-600: #93a1a1;
+  --color-neutral-500: #839496;
+  --color-neutral-400: #657b83;
+  --color-neutral-300: #586e75;
+  --color-neutral-200: #174652;
+  --color-neutral-100: #073642;
+  --color-neutral-50: #002b36;
+  --theme-accent-50: #e1f7fb;
+  --theme-accent-100: #c6edf5;
+  --theme-accent-200: #8bd8e8;
+  --theme-accent-300: #4fc3db;
+  --theme-accent-400: #2aaec8;
+  --theme-accent-500: #268bd2;
+  --theme-accent-600: #2176b3;
+  --theme-accent-700: #1c5f91;
+  --theme-accent-800: #17496f;
+  --theme-accent-900: #12374f;
+  --theme-accent-950: #0b2537;
+}
+
+html.light[data-palette="gruvbox"] {
+  --theme-accent-foreground: #1d2021;
+  --color-neutral-950: #fbf1c7;
+  --color-neutral-900: #ebdbb2;
+  --color-neutral-800: #d5c4a1;
+  --color-neutral-700: #bdae93;
+  --color-neutral-600: #a89984;
+  --color-neutral-500: #928374;
+  --color-neutral-400: #665c54;
+  --color-neutral-300: #504945;
+  --color-neutral-200: #3c3836;
+  --color-neutral-100: #282828;
+  --color-neutral-50: #1d2021;
+  --theme-accent-50: #fff4d6;
+  --theme-accent-100: #fbe5ad;
+  --theme-accent-200: #f4c982;
+  --theme-accent-300: #eeb05a;
+  --theme-accent-400: #e6983c;
+  --theme-accent-500: #d79921;
+  --theme-accent-600: #b57614;
+  --theme-accent-700: #925f12;
+  --theme-accent-800: #704a11;
+  --theme-accent-900: #56380d;
+  --theme-accent-950: #332008;
+}
+
+html.light[data-palette="catppuccin"] {
+  --theme-accent-foreground: #11111b;
+  --color-neutral-950: #eff1f5;
+  --color-neutral-900: #e6e9ef;
+  --color-neutral-800: #ccd0da;
+  --color-neutral-700: #bcc0cc;
+  --color-neutral-600: #9ca0b0;
+  --color-neutral-500: #7c7f93;
+  --color-neutral-400: #6c6f85;
+  --color-neutral-300: #5c5f77;
+  --color-neutral-200: #4c4f69;
+  --color-neutral-100: #313244;
+  --color-neutral-50: #1e1e2e;
+  --theme-accent-50: #f4e8ff;
+  --theme-accent-100: #ead6ff;
+  --theme-accent-200: #d9b8ff;
+  --theme-accent-300: #c6a0f6;
+  --theme-accent-400: #b18be6;
+  --theme-accent-500: #8839ef;
+  --theme-accent-600: #7c3aed;
+  --theme-accent-700: #6d28d9;
+  --theme-accent-800: #5b21b6;
+  --theme-accent-900: #4c1d95;
+  --theme-accent-950: #2e1065;
+}
+
 html.light select, html.light option {
-  background-color: #e5e5e5 !important;
-  color: #171717 !important;
+  background-color: var(--color-neutral-800) !important;
+  color: var(--color-neutral-100) !important;
   color-scheme: light;
 }
 
@@ -166,38 +418,37 @@ html.light ::-webkit-scrollbar-thumb { background: #d4d4d4; }
 html.light ::-webkit-scrollbar-thumb:hover { background: #a3a3a3; }
 
 html.light .accent-indigo-500 {
-  accent-color: #ffcf1f;
+  accent-color: var(--theme-accent-500);
 }
 
 /* Light-mode slider rails: keep unfilled area light and readable. */
 html.light input[type="range"] {
-  accent-color: #ffcf1f;
+  accent-color: var(--theme-accent-500);
 }
 
-/* Brighten yellow action buttons in light mode. */
 html.light .bg-indigo-600,
 html.light .bg-purple-600 {
-  background-color: #ffcf1f !important;
+  background-color: var(--theme-accent-600) !important;
 }
 
 html.light .bg-indigo-500,
 html.light .bg-purple-500 {
-  background-color: #ffd84d !important;
+  background-color: var(--theme-accent-500) !important;
 }
 
 html.light .bg-indigo-700,
 html.light .bg-purple-700 {
-  background-color: #f4bf00 !important;
+  background-color: var(--theme-accent-700) !important;
 }
 
 html.light .hover\:bg-indigo-500:hover,
 html.light .hover\:bg-purple-500:hover {
-  background-color: #ffe066 !important;
+  background-color: var(--theme-accent-500) !important;
 }
 
 html.light .hover\:bg-indigo-600:hover,
 html.light .hover\:bg-purple-600:hover {
-  background-color: #ffd84d !important;
+  background-color: var(--theme-accent-600) !important;
 }
 
 html.light .text-neutral-500 {
@@ -239,12 +490,11 @@ html.light [class*="text-red-"] {
   color: #991b1b !important;
 }
 
-/* Indigo text maps to yellow in this theme; darken it for light mode readability. */
 html.light .text-indigo-300,
 html.light .text-indigo-400,
 html.light .text-indigo-500,
 html.light [class*="text-indigo-"] {
-  color: #7a5c00 !important;
+  color: var(--theme-accent-700) !important;
 }
 
 /* Preserve legibility for the "Quality prompts applied" style chip in light mode. */

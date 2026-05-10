@@ -6,6 +6,13 @@ use crate::comfyui::types::*;
 use crate::error::AppError;
 use crate::state::AppState;
 
+fn is_optional_model_category(category: &str) -> bool {
+    matches!(
+        category,
+        "diffusion_models" | "text_encoders" | "clip" | "controlnet" | "ultralytics"
+    )
+}
+
 /// Compute SHA256 of a file. Returns lowercase hex. Used to verify downloaded model files.
 pub fn sha256_file(path: &std::path::Path) -> Result<String, AppError> {
     use std::io::Read;
@@ -39,7 +46,18 @@ impl AppState {
     }
 
     pub async fn get_models_list(&self, category: &str) -> Result<Vec<String>, AppError> {
-        let val = self.api_get(&format!("/models/{}", category)).await?;
+        let val = match self.api_get(&format!("/models/{}", category)).await {
+            Ok(value) => value,
+            Err(e) if is_optional_model_category(category) => {
+                log::debug!(
+                    "Optional ComfyUI model category '{}' unavailable: {}",
+                    category,
+                    e
+                );
+                return Ok(Vec::new());
+            }
+            Err(e) => return Err(e),
+        };
         let models: Vec<String> = serde_json::from_value(val)?;
 
         // ComfyUI may return models from wrong categories when external model

@@ -124,6 +124,7 @@ const ja: Record<string, string> = {
   "settings.appearance.theme": "テーマ",
   "settings.appearance.theme_dark": "ダーク",
   "settings.appearance.theme_light": "ライト",
+  "settings.appearance.palette": "Palette",
   "settings.appearance.font_scale": "フォントサイズ",
   "settings.appearance.color_vision": "色覚シミュレーター",
   "settings.appearance.sim_none": "なし",

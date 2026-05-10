@@ -28,6 +28,7 @@
   import logoUrl from "./lib/assets/logo.png";
 
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
+  import { applyTheme } from "./lib/utils/theme.js";
   import ContextMenu from "./lib/components/ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
@@ -46,8 +47,10 @@
   const MAX_INPUT_PIXELS = 1024 * 1024;
   let lastProgressEventAt = 0;
 
+  type PendingOutputImage = { blob: Blob; url: string; tempFilename?: string };
+
   /** Images received via WebSocket during generation, keyed by prompt_id. */
-  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string }>>();
+  let pendingOutputImages = new Map<string, PendingOutputImage[]>();
   /** In-flight output_image fetch promises per prompt_id (for SSE race-condition avoidance). */
   let pendingOutputFetches = new Map<string, Promise<void>[]>();
   /** Wait for pending fetches with a hard time limit to prevent hanging. */
@@ -55,6 +58,27 @@
   async function awaitFetchesWithTimeout(fetches: Promise<void>[]): Promise<void> {
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, FETCH_TIMEOUT_MS));
     await Promise.race([Promise.allSettled(fetches), timeout]);
+  }
+
+  async function recoverCachedOutputImages(promptId: string): Promise<PendingOutputImage[]> {
+    const images: PendingOutputImage[] = [];
+    try {
+      const recovered = await recoverPromptOutputs(promptId);
+      for (const imgRef of recovered.images) {
+        try {
+          const resp = await fetch(
+            `/internal-api/_temp_image/${encodeURIComponent(imgRef.temp_filename)}`,
+            { headers: authHeaders() },
+          );
+          if (resp.ok) {
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            images.push({ blob, url, tempFilename: imgRef.temp_filename });
+          }
+        } catch { /* individual image fetch failed */ }
+      }
+    } catch { /* recovery command failed */ }
+    return images;
   }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
   let sseReconnectHandler: (() => void) | null = null;
@@ -226,10 +250,6 @@
     };
     const tKey = keyMap[key];
     return tKey ? locale.t(tKey) : key;
-  }
-
-  function applyTheme(theme: string) {
-    document.documentElement.classList.toggle("light", theme === "light");
   }
 
   function applyFontScale(scale: number) {
@@ -1382,7 +1402,7 @@
     // Apply UI preferences (theme, font scale) immediately
     try {
       const cfg = await getConfig();
-      applyTheme(cfg.theme);
+      applyTheme(cfg.theme, cfg.theme_palette);
       applyFontScale(cfg.font_scale);
       autoStartEnabled = cfg.auto_start !== false;
     } catch {
@@ -1694,8 +1714,11 @@
           const item = progress.completePrompt(promptId);
           promptLastActivity.delete(promptId);
           if (item) {
-            const images = pendingOutputImages.get(promptId) ?? [];
+            let images = pendingOutputImages.get(promptId) ?? [];
             pendingOutputImages.delete(promptId);
+            if (images.length === 0) {
+              images = await recoverCachedOutputImages(promptId);
+            }
             finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images);
 
             // Track grid batch completion — stitch when all cells are done
@@ -1795,24 +1818,9 @@
 
               if (images.length === 0) {
                 // SSE event was likely dropped during a reconnect — the image was
-                // saved to a temp file on the server and cached by the cleanup
-                // reactor.  Try to recover it before giving up.
-                try {
-                  const recovered = await recoverPromptOutputs(p.promptId);
-                  for (const imgRef of recovered.images) {
-                    try {
-                      const resp = await fetch(
-                        `/internal-api/_temp_image/${encodeURIComponent(imgRef.temp_filename)}`,
-                        { headers: authHeaders() },
-                      );
-                      if (resp.ok) {
-                        const blob = await resp.blob();
-                        const url = URL.createObjectURL(blob);
-                        images.push({ blob, url, tempFilename: imgRef.temp_filename });
-                      }
-                    } catch { /* individual image fetch failed */ }
-                  }
-                } catch { /* recovery command failed */ }
+                // saved to a temp file on the server and cached by the
+                // WebSocket bridge.  Try to recover it before giving up.
+                images = await recoverCachedOutputImages(p.promptId);
               }
 
               if (images.length > 0) {

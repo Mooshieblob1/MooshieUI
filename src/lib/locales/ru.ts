@@ -122,6 +122,7 @@ const ru: Record<string, string> = {
   "settings.appearance.theme": "Тема",
   "settings.appearance.theme_dark": "Тёмная",
   "settings.appearance.theme_light": "Светлая",
+  "settings.appearance.palette": "Palette",
   "settings.appearance.font_scale": "Размер шрифта",
   "settings.appearance.color_vision": "Симулятор цветового зрения",
   "settings.appearance.sim_none": "Нет",
