@@ -189,8 +189,28 @@ impl AppState {
     }
 
     pub async fn delete_queue_items(&self, ids: Vec<String>) -> Result<(), AppError> {
-        self.api_post("/queue", &serde_json::json!({ "delete": ids }))
-            .await?;
+        let mut ids_to_delete: Vec<String> = Vec::new();
+        for id in ids {
+            for related_id in self.prompt_queue.cancel_and_remove(&id) {
+                if !ids_to_delete.iter().any(|existing| existing == &related_id) {
+                    ids_to_delete.push(related_id);
+                }
+            }
+        }
+
+        if !ids_to_delete.is_empty() {
+            for worker in &self.gpu_manager.workers {
+                let _ = self
+                    .http_client
+                    .post(format!("{}/queue", worker.base_url))
+                    .json(&serde_json::json!({ "delete": ids_to_delete }))
+                    .send()
+                    .await;
+            }
+        }
+
+        self.broadcast_queue_positions();
+        self.prompt_queue.drain_notify.notify_one();
         Ok(())
     }
 

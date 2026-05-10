@@ -495,6 +495,10 @@ const ru: Record<string, string> = {
   "generation.error_no_checkpoint": "Сначала выберите чекпоинт",
   "generation.error_no_image": "Для инпейнтинга нужно входное изображение. Загрузите или используйте подготовленное.",
   "generation.error_no_mask": "Для инпейнтинга нужна маска. Нарисуйте маску в Холст-редакторе или загрузите.",
+  "generation.error_failed": "Генерация не удалась",
+  "generation.error_model_config": "Генерация не удалась — модель или VAE могут быть настроены неправильно. Проверьте настройки модели.",
+  "generation.error_failed_message": "Генерация не удалась: {message}",
+  "generation.error_cancelled": "Генерация отменена",
   "generation.downloading_facefix": "Скачивание модели Face Detailer...",
 
   // Session context menu
@@ -639,10 +643,12 @@ const ru: Record<string, string> = {
   "lora.likes": "Нравится",
 
   // ── Нижняя панель ───────────────────────────────────────
-  "bottom_panel.tab.loras": "LoRA",  "bottom_panel.tab.checkpoints": "Чекпоинты",
+  "bottom_panel.tab.loras": "LoRA",
+  "bottom_panel.tab.checkpoints": "Чекпоинты",
   "checkpoint.search_placeholder": "Поиск чекпоинтов...",
   "checkpoint.no_results": "Чекпоинты не найдены",
-  "checkpoint.active": "Активен",  "bottom_panel.tab.images": "Изображения",
+  "checkpoint.active": "Активен",
+  "bottom_panel.tab.images": "Изображения",
   "bottom_panel.tab.prompts": "Промпты",
   "bottom_panel.no_images": "Изображения не сгенерированы в этой сессии",
   "bottom_panel.no_prompts": "История промптов появится здесь после генерации",
@@ -1204,9 +1210,6 @@ const ru: Record<string, string> = {
   "generation.prompts.negative_flux_disabled": "ignored by Flux models",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
-  "bottom_panel.tab.checkpoints": "Checkpoints",
-  "bottom_panel.tab.images": "Images",
-  "gallery.toast.right_click_copy": "Right-click the image and select 'Copy Image'",
 
 };
 

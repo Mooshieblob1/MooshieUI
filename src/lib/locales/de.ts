@@ -495,6 +495,10 @@ const de: Record<string, string> = {
   "generation.error_no_checkpoint": "Bitte wählen Sie zuerst einen Checkpoint",
   "generation.error_no_image": "Inpainting benötigt ein Eingabebild. Laden Sie eins hoch oder verwenden Sie ein bereitgestelltes Bild.",
   "generation.error_no_mask": "Inpainting benötigt eine Maske. Zeichnen Sie eine im Canvas-Editor oder laden Sie eine hoch.",
+  "generation.error_failed": "Generierung fehlgeschlagen",
+  "generation.error_model_config": "Generierung fehlgeschlagen — ein Modell oder VAE ist möglicherweise nicht richtig konfiguriert. Prüfen Sie die Modelleinstellungen.",
+  "generation.error_failed_message": "Generierung fehlgeschlagen: {message}",
+  "generation.error_cancelled": "Generierung abgebrochen",
   "generation.downloading_facefix": "Face-Detailer-Modell wird heruntergeladen...",
 
   // Session context menu

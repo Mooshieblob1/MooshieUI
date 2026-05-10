@@ -57,6 +57,9 @@ pub struct PromptQueue {
     /// was called (race condition in server mode). `bind_alias` checks this set
     /// and immediately finishes the placeholder if the real_id is found here.
     deferred_finishes: std::sync::RwLock<std::collections::HashSet<String>>,
+    /// Placeholder/real prompt ids explicitly canceled while submission may
+    /// still be racing. Submission tasks check this before binding aliases.
+    cancelled: std::sync::RwLock<std::collections::HashSet<String>>,
 }
 
 impl Default for PromptQueue {
@@ -75,6 +78,7 @@ impl PromptQueue {
             drain_notify: Notify::new(),
             aliases: std::sync::RwLock::new(HashMap::new()),
             deferred_finishes: std::sync::RwLock::new(std::collections::HashSet::new()),
+            cancelled: std::sync::RwLock::new(std::collections::HashSet::new()),
         }
     }
 
@@ -167,12 +171,67 @@ impl PromptQueue {
     /// Remove a prompt entirely (position + ownership).
     /// Only used for explicit cancellation, not completion.
     pub fn remove(&self, prompt_id: &str) {
-        self.owners.write().unwrap().remove(prompt_id);
-        self.worker_map.write().unwrap().remove(prompt_id);
+        self.cancel_and_remove(prompt_id);
+    }
+
+    /// Mark a prompt as canceled and remove its placeholder/aliases from
+    /// internal queue tracking. Returns ids that should be deleted from ComfyUI.
+    pub fn cancel_and_remove(&self, prompt_id: &str) -> Vec<String> {
+        let ids = self.related_ids(prompt_id);
+        {
+            let mut cancelled = self.cancelled.write().unwrap();
+            for id in &ids {
+                cancelled.insert(id.clone());
+            }
+        }
+        {
+            let mut owners = self.owners.write().unwrap();
+            for id in &ids {
+                owners.remove(id);
+            }
+        }
+        {
+            let mut worker_map = self.worker_map.write().unwrap();
+            for id in &ids {
+                worker_map.remove(id);
+            }
+        }
         self.queue
             .write()
             .unwrap()
-            .retain(|(id, _)| id != prompt_id);
+            .retain(|(id, _)| !ids.iter().any(|removed| removed == id));
+        self.aliases
+            .write()
+            .unwrap()
+            .retain(|real, placeholder| !ids.iter().any(|id| id == real || id == placeholder));
+        ids
+    }
+
+    /// Return a prompt id plus its placeholder/real-id aliases.
+    pub fn related_ids(&self, prompt_id: &str) -> Vec<String> {
+        let aliases = self.aliases.read().unwrap();
+        let placeholder = aliases
+            .get(prompt_id)
+            .cloned()
+            .unwrap_or_else(|| prompt_id.to_string());
+        let mut ids = vec![placeholder.clone()];
+        if prompt_id != placeholder {
+            ids.push(prompt_id.to_string());
+        }
+        for (real_id, alias_placeholder) in aliases.iter() {
+            if alias_placeholder == &placeholder && !ids.iter().any(|id| id == real_id) {
+                ids.push(real_id.clone());
+            }
+        }
+        ids
+    }
+
+    /// Whether a placeholder/real prompt id was explicitly canceled.
+    pub fn is_cancelled(&self, prompt_id: &str) -> bool {
+        let cancelled = self.cancelled.read().unwrap();
+        self.related_ids(prompt_id)
+            .iter()
+            .any(|id| cancelled.contains(id))
     }
 
     /// Record which worker is handling a prompt.
@@ -327,6 +386,7 @@ impl PromptQueue {
     pub fn cleanup_alias(&self, placeholder_id: &str) {
         let mut aliases = self.aliases.write().unwrap();
         aliases.retain(|_, v| v != placeholder_id);
+        self.cancelled.write().unwrap().remove(placeholder_id);
     }
 
     /// Clear all queue tracking state (owners, worker_map, queue).
@@ -335,6 +395,7 @@ impl PromptQueue {
         self.queue.write().unwrap().clear();
         self.owners.write().unwrap().clear();
         self.worker_map.write().unwrap().clear();
+        self.cancelled.write().unwrap().clear();
     }
 }
 
@@ -437,7 +498,7 @@ impl AppState {
                 };
                 {
                     let mut result = hp.result.lock().await;
-                    *result = Some(Err("Cancelled by user".to_string()));
+                    *result = Some(Err("generation.error_cancelled".to_string()));
                 }
                 hp.submitted.notify_one();
                 self.prompt_queue.remove(pid);
@@ -463,17 +524,7 @@ impl AppState {
         // 3. Delete the specific prompt (and any aliases) from each targeted
         //    worker's pending queue so it doesn't resume on requeue.
         if let Some(pid) = prompt_id {
-            // Collect all known IDs for this prompt: the placeholder + any real
-            // ComfyUI ids aliased to it.
-            let mut ids_to_delete: Vec<String> = vec![pid.to_string()];
-            {
-                let aliases = self.prompt_queue.aliases.read().unwrap();
-                for (real_id, placeholder) in aliases.iter() {
-                    if placeholder == pid {
-                        ids_to_delete.push(real_id.clone());
-                    }
-                }
-            }
+            let ids_to_delete = self.prompt_queue.cancel_and_remove(pid);
 
             for wid in &target_worker_ids {
                 if let Some(worker) = self.gpu_manager.workers.get(*wid as usize) {
@@ -485,8 +536,6 @@ impl AppState {
                         .await;
                 }
             }
-
-            self.prompt_queue.remove(pid);
             self.broadcast_queue_positions();
         }
 
@@ -505,6 +554,13 @@ impl AppState {
             }
         }
 
+        if prompt_id.is_some() {
+            for wid in &target_worker_ids {
+                self.gpu_manager.mark_worker_error_then_idle(*wid).await;
+            }
+            self.prompt_queue.drain_notify.notify_one();
+        }
+
         Ok(())
     }
 
@@ -520,6 +576,13 @@ impl AppState {
     pub fn broadcast_queue_positions(&self) {
         let queue = self.prompt_queue.queue.read().unwrap();
         let total = queue.len();
+        if total == 0 {
+            self.broadcast(
+                "mooshie:queue_update",
+                serde_json::json!({ "total": 0_u32 }),
+            );
+            return;
+        }
         for (pos, (prompt_id, _owner)) in queue.iter().enumerate() {
             self.broadcast(
                 "mooshie:queue_update",

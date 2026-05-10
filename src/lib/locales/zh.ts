@@ -495,6 +495,10 @@ const zh: Record<string, string> = {
   "generation.error_no_checkpoint": "请先选择一个检查点",
   "generation.error_no_image": "局部重绘需要输入图像。请上传或使用暂存图像。",
   "generation.error_no_mask": "局部重绘需要蒙版。请在画布编辑器中绘制或上传蒙版。",
+  "generation.error_failed": "生成失败",
+  "generation.error_model_config": "生成失败 — 模型或 VAE 可能配置不正确。请检查模型设置。",
+  "generation.error_failed_message": "生成失败：{message}",
+  "generation.error_cancelled": "生成已取消",
   "generation.downloading_facefix": "正在下载 Face Detailer 模型...",
 
   // Session context menu
@@ -639,10 +643,12 @@ const zh: Record<string, string> = {
   "lora.likes": "点赞",
 
   // ── 底部面板 ────────────────────────────────────────────
-  "bottom_panel.tab.loras": "LoRA",  "bottom_panel.tab.checkpoints": "检查点",
+  "bottom_panel.tab.loras": "LoRA",
+  "bottom_panel.tab.checkpoints": "检查点",
   "checkpoint.search_placeholder": "搜索检查点...",
   "checkpoint.no_results": "未找到检查点",
-  "checkpoint.active": "当前",  "bottom_panel.tab.images": "图像",
+  "checkpoint.active": "当前",
+  "bottom_panel.tab.images": "图像",
   "bottom_panel.tab.prompts": "提示词",
   "bottom_panel.no_images": "本次会话未生成图像",
   "bottom_panel.no_prompts": "生成后提示词历史将显示在这里",
@@ -1204,9 +1210,6 @@ const zh: Record<string, string> = {
   "generation.prompts.negative_flux_disabled": "ignored by Flux models",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
-  "bottom_panel.tab.checkpoints": "Checkpoints",
-  "bottom_panel.tab.images": "Images",
-  "gallery.toast.right_click_copy": "Right-click the image and select 'Copy Image'",
 
 };
 

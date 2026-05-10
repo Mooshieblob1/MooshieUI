@@ -114,7 +114,7 @@
 
   /** Left-click: cancel the current generation only, let the queue continue. */
   async function handleCancelCurrent() {
-    const promptId = progress.activePromptId;
+    const promptId = progress.activePromptId ?? progress.pendingPrompts[0]?.promptId;
     await interruptGeneration(promptId ?? undefined);
     if (promptId) progress.removePrompt(promptId);
   }

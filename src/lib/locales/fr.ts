@@ -516,6 +516,10 @@ const fr: Record<string, string> = {
   "generation.error_no_checkpoint": "Sélectionnez d'abord un checkpoint",
   "generation.error_no_image": "L'inpainting nécessite une image d'entrée. Téléversez-en une ou utilisez une image préparée.",
   "generation.error_no_mask": "L'inpainting nécessite un masque. Peignez un masque dans l'éditeur de canevas ou téléversez-en un.",
+  "generation.error_failed": "La génération a échoué",
+  "generation.error_model_config": "La génération a échoué — un modèle ou VAE est peut-être mal configuré. Vérifiez les réglages du modèle.",
+  "generation.error_failed_message": "La génération a échoué : {message}",
+  "generation.error_cancelled": "Génération annulée",
   "generation.downloading_facefix": "Téléchargement du modèle Face Detailer...",
 
   // Session context menu

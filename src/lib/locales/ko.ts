@@ -495,6 +495,10 @@ const ko: Record<string, string> = {
   "generation.error_no_checkpoint": "먼저 체크포인트를 선택하세요",
   "generation.error_no_image": "인페인팅에는 입력 이미지가 필요합니다. 업로드하거나 스테이지 이미지를 사용하세요.",
   "generation.error_no_mask": "인페인팅에는 마스크가 필요합니다. 캔버스 에디터에서 마스크를 그리거나 업로드하세요.",
+  "generation.error_failed": "생성 실패",
+  "generation.error_model_config": "생성 실패 — 모델 또는 VAE가 올바르게 설정되지 않았을 수 있습니다. 모델 설정을 확인하세요.",
+  "generation.error_failed_message": "생성 실패: {message}",
+  "generation.error_cancelled": "생성이 취소되었습니다",
   "generation.downloading_facefix": "Face Detailer 모델 다운로드 중...",
 
   // Session context menu
@@ -639,10 +643,12 @@ const ko: Record<string, string> = {
   "lora.likes": "좋아요",
 
   // ── 하단 패널 ──────────────────────────────────────────
-  "bottom_panel.tab.loras": "LoRA",  "bottom_panel.tab.checkpoints": "체크포인트",
+  "bottom_panel.tab.loras": "LoRA",
+  "bottom_panel.tab.checkpoints": "체크포인트",
   "checkpoint.search_placeholder": "체크포인트 검색...",
   "checkpoint.no_results": "체크포인트를 찾을 수 없습니다",
-  "checkpoint.active": "활성",  "bottom_panel.tab.images": "이미지",
+  "checkpoint.active": "활성",
+  "bottom_panel.tab.images": "이미지",
   "bottom_panel.tab.prompts": "프롬프트",
   "bottom_panel.no_images": "이 세션에서 생성된 이미지 없음",
   "bottom_panel.no_prompts": "생성 후 프롬프트 기록이 여기에 표시됩니다",
@@ -1204,9 +1210,6 @@ const ko: Record<string, string> = {
   "generation.prompts.negative_flux_disabled": "ignored by Flux models",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
-  "bottom_panel.tab.checkpoints": "Checkpoints",
-  "bottom_panel.tab.images": "Images",
-  "gallery.toast.right_click_copy": "Right-click the image and select 'Copy Image'",
 
 };
 

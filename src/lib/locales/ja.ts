@@ -516,6 +516,10 @@ const ja: Record<string, string> = {
   "generation.error_no_checkpoint": "先にチェックポイントを選択してください",
   "generation.error_no_image": "インペインティングには入力画像が必要です。アップロードするかステージング画像を使用してください。",
   "generation.error_no_mask": "インペインティングにはマスクが必要です。キャンバスエディターでマスクを描くかアップロードしてください。",
+  "generation.error_failed": "生成に失敗しました",
+  "generation.error_model_config": "生成に失敗しました — モデルまたはVAEが正しく設定されていない可能性があります。モデル設定を確認してください。",
+  "generation.error_failed_message": "生成に失敗しました: {message}",
+  "generation.error_cancelled": "生成をキャンセルしました",
   "generation.downloading_facefix": "Face Detailerモデルをダウンロード中...",
 
   // Session context menu
@@ -661,10 +665,12 @@ const ja: Record<string, string> = {
   "lora.likes": "いいね",
 
   // ── 下部パネル ──────────────────────────────────────────
-  "bottom_panel.tab.loras": "LoRA",  "bottom_panel.tab.checkpoints": "チェックポイント",
+  "bottom_panel.tab.loras": "LoRA",
+  "bottom_panel.tab.checkpoints": "チェックポイント",
   "checkpoint.search_placeholder": "チェックポイントを検索...",
   "checkpoint.no_results": "チェックポイントが見つかりません",
-  "checkpoint.active": "使用中",  "bottom_panel.tab.images": "画像",
+  "checkpoint.active": "使用中",
+  "bottom_panel.tab.images": "画像",
   "bottom_panel.tab.prompts": "プロンプト",
   "bottom_panel.no_images": "このセッションで生成された画像はありません",
   "bottom_panel.no_prompts": "生成後にプロンプト履歴がここに表示されます",
@@ -1229,9 +1235,6 @@ const ja: Record<string, string> = {
   "generation.prompts.negative_flux_disabled": "ignored by Flux models",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
-  "bottom_panel.tab.checkpoints": "Checkpoints",
-  "bottom_panel.tab.images": "Images",
-  "gallery.toast.right_click_copy": "Right-click the image and select 'Copy Image'",
 
 };
 

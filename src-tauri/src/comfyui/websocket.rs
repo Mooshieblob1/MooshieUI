@@ -228,46 +228,141 @@ pub async fn connect_websocket(
                     payload: sse_payload,
                 });
             };
-        let result = connect_async(&ws_url).await;
-        let (ws_stream, _) = match result {
-            Ok(s) => s,
-            Err(e) => {
-                log::error!("WebSocket connection failed: {}", e);
-                emit(
-                    "comfyui:connection",
-                    serde_json::json!({"connected": false}),
-                );
-                return;
-            }
-        };
-
-        emit("comfyui:connection", serde_json::json!({"connected": true}));
-
-        let (_, mut read) = ws_stream.split();
+        // Persist across reconnects so we can detect prompts that completed
+        // while the WebSocket was down and emit a synthetic completion event.
         let mut current_prompt_id: Option<String> = None;
+        let mut backoff_ms: u64 = 0;
 
-        while let Some(msg) = read.next().await {
-            match msg {
-                Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
-                        let event_type = parsed["type"].as_str().unwrap_or("unknown");
-                        let data = &parsed["data"];
+        'reconnect: loop {
+            if backoff_ms > 0 {
+                log::info!("WebSocket reconnecting in {} ms", backoff_ms);
+                tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
 
-                        if let Some(prompt_id) = data["prompt_id"].as_str() {
-                            match event_type {
-                                "execution_start" => {
-                                    current_prompt_id = Some(prompt_id.to_string());
-                                }
-                                "executing" => {
-                                    if data["node"].is_null() {
-                                        if current_prompt_id.as_deref() == Some(prompt_id) {
-                                            current_prompt_id = None;
+                // If a prompt was mid-execution when we disconnected, query
+                // /history/{prompt_id} — if it landed there, it completed
+                // during the gap and we lost the terminal `executing { node: null }`
+                // event. Emit a synthetic one so the frontend can finalize.
+                if let Some(pid) = current_prompt_id.clone() {
+                    match ws_state.get_history_for(&pid).await {
+                        Ok(history) => {
+                            let completed =
+                                history.get(&pid).map(|v| !v.is_null()).unwrap_or(false);
+                            if completed {
+                                log::warn!(
+                                    "Prompt {} completed during WS disconnect — emitting synthetic completion",
+                                    pid
+                                );
+                                emit(
+                                    "comfyui:executing",
+                                    serde_json::json!({"node": null, "prompt_id": pid}),
+                                );
+                                current_prompt_id = None;
+                            }
+                        }
+                        Err(e) => log::warn!("History query for {} failed: {}", pid, e),
+                    }
+                }
+            }
+
+            let result = connect_async(&ws_url).await;
+            let (ws_stream, _) = match result {
+                Ok(s) => {
+                    backoff_ms = 0;
+                    s
+                }
+                Err(e) => {
+                    log::error!("WebSocket connection failed: {}", e);
+                    emit(
+                        "comfyui:connection",
+                        serde_json::json!({"connected": false}),
+                    );
+                    backoff_ms = (backoff_ms.max(500) * 2).min(30_000);
+                    continue 'reconnect;
+                }
+            };
+
+            emit("comfyui:connection", serde_json::json!({"connected": true}));
+
+            let (_, mut read) = ws_stream.split();
+
+            while let Some(msg) = read.next().await {
+                match msg {
+                    Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                            let event_type = parsed["type"].as_str().unwrap_or("unknown");
+                            let data = &parsed["data"];
+
+                            if let Some(prompt_id) = data["prompt_id"].as_str() {
+                                match event_type {
+                                    "execution_start" => {
+                                        current_prompt_id = Some(prompt_id.to_string());
+                                    }
+                                    "executing" => {
+                                        if data["node"].is_null() {
+                                            if current_prompt_id.as_deref() == Some(prompt_id) {
+                                                current_prompt_id = None;
+                                            }
+                                            // Prompt completed — release GPU worker and clean up
+                                            // the internal queue. In browser mode this is done by
+                                            // the cleanup reactor in webserver.rs; in Tauri desktop
+                                            // mode we must do it here so the worker becomes available
+                                            // for the next generation.
+                                            let resolved =
+                                                ws_state.prompt_queue.resolve_alias(prompt_id);
+                                            let wid = ws_state.prompt_queue.finish(&resolved);
+                                            let alias_state = Arc::clone(&ws_state);
+                                            let alias_pid = resolved.clone();
+                                            tokio::spawn(async move {
+                                                tokio::time::sleep(std::time::Duration::from_secs(
+                                                    5,
+                                                ))
+                                                .await;
+                                                alias_state.prompt_queue.cleanup_alias(&alias_pid);
+                                            });
+                                            if let Some(worker_id) = wid {
+                                                ws_state
+                                                    .gpu_manager
+                                                    .mark_worker_idle(worker_id)
+                                                    .await;
+                                            }
+                                            ws_state.prompt_queue.drain_notify.notify_one();
+                                            // Broadcast updated queue positions to the Tauri
+                                            // frontend. broadcast_queue_positions() uses event_tx
+                                            // (SSE-only); we must call app.emit() directly here.
+                                            let updates: Vec<serde_json::Value> = {
+                                                let queue =
+                                                    ws_state.prompt_queue.queue.read().unwrap();
+                                                let total = queue.len();
+                                                queue
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(pos, (pid, _))| {
+                                                        serde_json::json!({
+                                                            "prompt_id": pid,
+                                                            "position": pos,
+                                                            "total": total,
+                                                        })
+                                                    })
+                                                    .collect()
+                                            };
+                                            if updates.is_empty() {
+                                                emit(
+                                                    "mooshie:queue_update",
+                                                    serde_json::json!({ "total": 0_u32 }),
+                                                );
+                                            } else {
+                                                for payload in updates {
+                                                    emit("mooshie:queue_update", payload);
+                                                }
+                                            }
+                                        } else {
+                                            current_prompt_id = Some(prompt_id.to_string());
                                         }
-                                        // Prompt completed — release GPU worker and clean up
-                                        // the internal queue. In browser mode this is done by
-                                        // the cleanup reactor in webserver.rs; in Tauri desktop
-                                        // mode we must do it here so the worker becomes available
-                                        // for the next generation.
+                                    }
+                                    "execution_error" => {
+                                        // Prompt failed — release GPU worker so the next generation
+                                        // can proceed. Without this the worker stays in Running state
+                                        // and submit_prompt blocks for 300 s before timing out.
                                         let resolved =
                                             ws_state.prompt_queue.resolve_alias(prompt_id);
                                         let wid = ws_state.prompt_queue.finish(&resolved);
@@ -279,268 +374,223 @@ pub async fn connect_websocket(
                                             alias_state.prompt_queue.cleanup_alias(&alias_pid);
                                         });
                                         if let Some(worker_id) = wid {
-                                            ws_state.gpu_manager.mark_worker_idle(worker_id).await;
+                                            ws_state
+                                                .gpu_manager
+                                                .mark_worker_error_then_idle(worker_id)
+                                                .await;
                                         }
                                         ws_state.prompt_queue.drain_notify.notify_one();
-                                        // Broadcast updated queue positions to the Tauri
-                                        // frontend. broadcast_queue_positions() uses event_tx
-                                        // (SSE-only); we must call app.emit() directly here.
-                                        let updates: Vec<serde_json::Value> = {
-                                            let queue = ws_state.prompt_queue.queue.read().unwrap();
-                                            let total = queue.len();
-                                            queue
-                                                .iter()
-                                                .enumerate()
-                                                .map(|(pos, (pid, _))| {
-                                                    serde_json::json!({
-                                                        "prompt_id": pid,
-                                                        "position": pos,
-                                                        "total": total,
-                                                    })
-                                                })
-                                                .collect()
-                                        };
-                                        if updates.is_empty() {
-                                            emit(
-                                                "mooshie:queue_update",
-                                                serde_json::json!({ "total": 0_u32 }),
-                                            );
-                                        } else {
-                                            for payload in updates {
-                                                emit("mooshie:queue_update", payload);
-                                            }
-                                        }
-                                    } else {
-                                        current_prompt_id = Some(prompt_id.to_string());
+                                        // Signal frontend that queue has been cleared.
+                                        emit(
+                                            "mooshie:queue_update",
+                                            serde_json::json!({ "total": 0_u32 }),
+                                        );
                                     }
+                                    _ => {}
                                 }
-                                "execution_error" => {
-                                    // Prompt failed — release GPU worker so the next generation
-                                    // can proceed. Without this the worker stays in Running state
-                                    // and submit_prompt blocks for 300 s before timing out.
-                                    let resolved = ws_state.prompt_queue.resolve_alias(prompt_id);
-                                    let wid = ws_state.prompt_queue.finish(&resolved);
-                                    let alias_state = Arc::clone(&ws_state);
-                                    let alias_pid = resolved.clone();
-                                    tokio::spawn(async move {
-                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                        alias_state.prompt_queue.cleanup_alias(&alias_pid);
-                                    });
-                                    if let Some(worker_id) = wid {
-                                        ws_state
-                                            .gpu_manager
-                                            .mark_worker_error_then_idle(worker_id)
-                                            .await;
-                                    }
-                                    ws_state.prompt_queue.drain_notify.notify_one();
-                                    // Signal frontend that queue has been cleared.
-                                    emit(
-                                        "mooshie:queue_update",
-                                        serde_json::json!({ "total": 0_u32 }),
-                                    );
-                                }
-                                _ => {}
                             }
+
+                            let event_name = format!("comfyui:{}", event_type);
+                            emit(&event_name, data.clone());
+                        }
+                    }
+                    Ok(tokio_tungstenite::tungstenite::Message::Binary(data)) => {
+                        if data.len() < 4 {
+                            continue;
+                        }
+                        let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+
+                        // Skip binary events if we don't know which prompt they belong to
+                        // (prevents cross-user event leaking via SSE)
+                        if current_prompt_id.is_none() && matches!(event_type, 1 | 2 | 4 | 100) {
+                            continue;
                         }
 
-                        let event_name = format!("comfyui:{}", event_type);
-                        emit(&event_name, data.clone());
-                    }
-                }
-                Ok(tokio_tungstenite::tungstenite::Message::Binary(data)) => {
-                    if data.len() < 4 {
-                        continue;
-                    }
-                    let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-
-                    // Skip binary events if we don't know which prompt they belong to
-                    // (prevents cross-user event leaking via SSE)
-                    if current_prompt_id.is_none() && matches!(event_type, 1 | 2 | 4 | 100) {
-                        continue;
-                    }
-
-                    match event_type {
-                        1 | 2 => {
-                            // PREVIEW_IMAGE or UNENCODED_PREVIEW_IMAGE
-                            // Bytes 4-7: image format (1=JPEG, 2=PNG)
-                            // Bytes 8+: image data
-                            if data.len() < 8 {
-                                continue;
-                            }
-                            let format_type =
-                                u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                            let format = if format_type == 2 { "png" } else { "jpeg" };
-                            let ext = if format_type == 2 { "png" } else { "jpg" };
-                            let image_data = &data[8..];
-                            let prompt_id_str = current_prompt_id.as_deref().unwrap();
-
-                            // Tauri: inline base64 (fast, in-process)
-                            let b64 = base64::engine::general_purpose::STANDARD.encode(image_data);
-                            let tauri_payload = serde_json::json!({ "image": b64, "format": format, "prompt_id": prompt_id_str });
-
-                            // SSE: save to temp file, send reference
-                            let sse_payload = if let Some(temp_filename) =
-                                crate::temp_images::save(image_data, ext)
-                            {
-                                serde_json::json!({ "temp_filename": temp_filename, "format": format, "prompt_id": prompt_id_str })
-                            } else {
-                                tauri_payload.clone() // fallback to inline
-                            };
-
-                            emit_split("comfyui:preview", tauri_payload, sse_payload);
-                        }
-                        4 => {
-                            // PREVIEW_IMAGE_WITH_METADATA
-                            if data.len() < 8 {
-                                continue;
-                            }
-                            let meta_len =
-                                u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
-                            let image_start = 8 + meta_len;
-                            if image_start < data.len() {
-                                let image_data = &data[image_start..];
+                        match event_type {
+                            1 | 2 => {
+                                // PREVIEW_IMAGE or UNENCODED_PREVIEW_IMAGE
+                                // Bytes 4-7: image format (1=JPEG, 2=PNG)
+                                // Bytes 8+: image data
+                                if data.len() < 8 {
+                                    continue;
+                                }
+                                let format_type =
+                                    u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+                                let format = if format_type == 2 { "png" } else { "jpeg" };
+                                let ext = if format_type == 2 { "png" } else { "jpg" };
+                                let image_data = &data[8..];
                                 let prompt_id_str = current_prompt_id.as_deref().unwrap();
 
+                                // Tauri: inline base64 (fast, in-process)
                                 let b64 =
                                     base64::engine::general_purpose::STANDARD.encode(image_data);
-                                let tauri_payload = serde_json::json!({ "image": b64, "format": "jpeg", "prompt_id": prompt_id_str });
+                                let tauri_payload = serde_json::json!({ "image": b64, "format": format, "prompt_id": prompt_id_str });
 
+                                // SSE: save to temp file, send reference
                                 let sse_payload = if let Some(temp_filename) =
-                                    crate::temp_images::save(image_data, "jpg")
+                                    crate::temp_images::save(image_data, ext)
                                 {
-                                    serde_json::json!({ "temp_filename": temp_filename, "format": "jpeg", "prompt_id": prompt_id_str })
+                                    serde_json::json!({ "temp_filename": temp_filename, "format": format, "prompt_id": prompt_id_str })
                                 } else {
-                                    tauri_payload.clone()
+                                    tauri_payload.clone() // fallback to inline
                                 };
 
                                 emit_split("comfyui:preview", tauri_payload, sse_payload);
                             }
-                        }
-                        100 => {
-                            // MOOSHIE_OUTPUT_IMAGE — use shared processing function
-                            let prompt_id_str = current_prompt_id.as_deref().unwrap();
-                            let img = match process_output_image(&data).await {
-                                Some(img) => img,
-                                None => continue,
-                            };
+                            4 => {
+                                // PREVIEW_IMAGE_WITH_METADATA
+                                if data.len() < 8 {
+                                    continue;
+                                }
+                                let meta_len =
+                                    u32::from_be_bytes([data[4], data[5], data[6], data[7]])
+                                        as usize;
+                                let image_start = 8 + meta_len;
+                                if image_start < data.len() {
+                                    let image_data = &data[image_start..];
+                                    let prompt_id_str = current_prompt_id.as_deref().unwrap();
 
-                            // Save canonical image to temp dir.
-                            let temp_filename = crate::temp_images::save(&img.image_bytes, img.ext);
+                                    let b64 = base64::engine::general_purpose::STANDARD
+                                        .encode(image_data);
+                                    let tauri_payload = serde_json::json!({ "image": b64, "format": "jpeg", "prompt_id": prompt_id_str });
 
-                            // For JXL: save the display copy (WebP/PNG) as a second temp file.
-                            let display_temp_filename: Option<String> = if img.format == "jxl" {
-                                img.display_bytes.as_ref().and_then(|db| {
-                                    let ext = if img.display_format == "webp" {
-                                        "webp"
+                                    let sse_payload = if let Some(temp_filename) =
+                                        crate::temp_images::save(image_data, "jpg")
+                                    {
+                                        serde_json::json!({ "temp_filename": temp_filename, "format": "jpeg", "prompt_id": prompt_id_str })
                                     } else {
-                                        "png"
+                                        tauri_payload.clone()
                                     };
-                                    crate::temp_images::save(db, ext)
-                                })
-                            } else {
-                                None
-                            };
 
-                            log::info!(
+                                    emit_split("comfyui:preview", tauri_payload, sse_payload);
+                                }
+                            }
+                            100 => {
+                                // MOOSHIE_OUTPUT_IMAGE — use shared processing function
+                                let prompt_id_str = current_prompt_id.as_deref().unwrap();
+                                let img = match process_output_image(&data).await {
+                                    Some(img) => img,
+                                    None => continue,
+                                };
+
+                                // Save canonical image to temp dir.
+                                let temp_filename =
+                                    crate::temp_images::save(&img.image_bytes, img.ext);
+
+                                // For JXL: save the display copy (WebP/PNG) as a second temp file.
+                                let display_temp_filename: Option<String> = if img.format == "jxl" {
+                                    img.display_bytes.as_ref().and_then(|db| {
+                                        let ext = if img.display_format == "webp" {
+                                            "webp"
+                                        } else {
+                                            "png"
+                                        };
+                                        crate::temp_images::save(db, ext)
+                                    })
+                                } else {
+                                    None
+                                };
+
+                                log::info!(
                                 "output_image: format={} jxl_temp={:?} display_temp={:?} display_fmt={} bytes={} display_bytes={}",
                                 img.format, temp_filename, display_temp_filename, img.display_format,
                                 img.image_bytes.len(),
                                 img.display_bytes.as_ref().map(|d| d.len()).unwrap_or(0),
                             );
 
-                            // Tauri desktop: reference temp files only (no inline base64).
-                            // app.emit() silently drops events exceeding ~1-2 MB.
-                            let tauri_payload = if img.format == "jxl" {
-                                match (temp_filename.as_ref(), display_temp_filename.as_ref()) {
-                                    (Some(jxl_f), Some(disp_f)) => serde_json::json!({
-                                        "temp_filename": jxl_f,
-                                        "display_temp_filename": disp_f,
-                                        "format": "jxl",
-                                        "display_format": img.display_format,
-                                        "bit_depth": img.bit_depth,
-                                        "image_bytes": img.image_bytes.len(),
-                                        "encode_ms": img.encode_ms,
-                                        "prompt_id": prompt_id_str,
-                                    }),
-                                    (Some(jxl_f), None) => serde_json::json!({
-                                        "temp_filename": jxl_f,
-                                        "format": "jxl",
-                                        "bit_depth": img.bit_depth,
-                                        "image_bytes": img.image_bytes.len(),
-                                        "encode_ms": img.encode_ms,
-                                        "prompt_id": prompt_id_str,
-                                    }),
-                                    _ => {
-                                        let b64 = base64::engine::general_purpose::STANDARD
-                                            .encode(&img.image_bytes);
-                                        serde_json::json!({
-                                            "jxl_image": b64,
+                                // Tauri desktop: reference temp files only (no inline base64).
+                                // app.emit() silently drops events exceeding ~1-2 MB.
+                                let tauri_payload = if img.format == "jxl" {
+                                    match (temp_filename.as_ref(), display_temp_filename.as_ref()) {
+                                        (Some(jxl_f), Some(disp_f)) => serde_json::json!({
+                                            "temp_filename": jxl_f,
+                                            "display_temp_filename": disp_f,
+                                            "format": "jxl",
+                                            "display_format": img.display_format,
+                                            "bit_depth": img.bit_depth,
+                                            "image_bytes": img.image_bytes.len(),
+                                            "encode_ms": img.encode_ms,
+                                            "prompt_id": prompt_id_str,
+                                        }),
+                                        (Some(jxl_f), None) => serde_json::json!({
+                                            "temp_filename": jxl_f,
                                             "format": "jxl",
                                             "bit_depth": img.bit_depth,
                                             "image_bytes": img.image_bytes.len(),
                                             "encode_ms": img.encode_ms,
                                             "prompt_id": prompt_id_str,
-                                        })
+                                        }),
+                                        _ => {
+                                            let b64 = base64::engine::general_purpose::STANDARD
+                                                .encode(&img.image_bytes);
+                                            serde_json::json!({
+                                                "jxl_image": b64,
+                                                "format": "jxl",
+                                                "bit_depth": img.bit_depth,
+                                                "image_bytes": img.image_bytes.len(),
+                                                "encode_ms": img.encode_ms,
+                                                "prompt_id": prompt_id_str,
+                                            })
+                                        }
                                     }
-                                }
-                            } else if let Some(ref tf) = temp_filename {
-                                serde_json::json!({
-                                    "temp_filename": tf,
-                                    "format": img.format,
-                                    "bit_depth": img.bit_depth,
-                                    "image_bytes": img.image_bytes.len(),
-                                    "encode_ms": img.encode_ms,
-                                    "prompt_id": prompt_id_str,
-                                })
-                            } else {
-                                let b64 = base64::engine::general_purpose::STANDARD
-                                    .encode(&img.image_bytes);
-                                serde_json::json!({
-                                    "image": b64,
-                                    "format": img.format,
-                                    "bit_depth": img.bit_depth,
-                                    "image_bytes": img.image_bytes.len(),
-                                    "encode_ms": img.encode_ms,
-                                    "prompt_id": prompt_id_str,
-                                })
-                            };
+                                } else if let Some(ref tf) = temp_filename {
+                                    serde_json::json!({
+                                        "temp_filename": tf,
+                                        "format": img.format,
+                                        "bit_depth": img.bit_depth,
+                                        "image_bytes": img.image_bytes.len(),
+                                        "encode_ms": img.encode_ms,
+                                        "prompt_id": prompt_id_str,
+                                    })
+                                } else {
+                                    let b64 = base64::engine::general_purpose::STANDARD
+                                        .encode(&img.image_bytes);
+                                    serde_json::json!({
+                                        "image": b64,
+                                        "format": img.format,
+                                        "bit_depth": img.bit_depth,
+                                        "image_bytes": img.image_bytes.len(),
+                                        "encode_ms": img.encode_ms,
+                                        "prompt_id": prompt_id_str,
+                                    })
+                                };
 
-                            // SSE payload: always use temp filename
-                            let sse_payload = if let Some(name) = temp_filename {
-                                serde_json::json!({
-                                    "temp_filename": name,
-                                    "format": img.format,
-                                    "bit_depth": img.bit_depth,
-                                    "image_bytes": img.image_bytes.len(),
-                                    "encode_ms": img.encode_ms,
-                                    "prompt_id": prompt_id_str,
-                                })
-                            } else {
-                                tauri_payload.clone()
-                            };
+                                // SSE payload: always use temp filename
+                                let sse_payload = if let Some(name) = temp_filename {
+                                    serde_json::json!({
+                                        "temp_filename": name,
+                                        "format": img.format,
+                                        "bit_depth": img.bit_depth,
+                                        "image_bytes": img.image_bytes.len(),
+                                        "encode_ms": img.encode_ms,
+                                        "prompt_id": prompt_id_str,
+                                    })
+                                } else {
+                                    tauri_payload.clone()
+                                };
 
-                            emit_split("comfyui:output_image", tauri_payload, sse_payload);
+                                emit_split("comfyui:output_image", tauri_payload, sse_payload);
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
+                    Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
+                        log::warn!("WebSocket closed by server — will reconnect");
+                        break;
+                    }
+                    Err(e) => {
+                        log::error!("WebSocket error: {} — will reconnect", e);
+                        break;
+                    }
+                    _ => {}
                 }
-                Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
-                    emit(
-                        "comfyui:connection",
-                        serde_json::json!({"connected": false}),
-                    );
-                    break;
-                }
-                Err(e) => {
-                    log::error!("WebSocket error: {}", e);
-                    emit(
-                        "comfyui:connection",
-                        serde_json::json!({"connected": false}),
-                    );
-                    break;
-                }
-                _ => {}
             }
+
+            emit(
+                "comfyui:connection",
+                serde_json::json!({"connected": false}),
+            );
+            backoff_ms = (backoff_ms.max(500) * 2).min(30_000);
         }
     });
 
@@ -552,7 +602,7 @@ pub async fn connect_websocket(
 /// Events are only sent to the broadcast channel (SSE clients).
 /// Handles prompt queue cleanup on completion/error for multi-user isolation.
 pub async fn connect_websocket_headless(
-    state: &AppState,
+    state: &Arc<AppState>,
     event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
 ) -> Result<(), AppError> {
     // Disconnect existing
@@ -569,6 +619,7 @@ pub async fn connect_websocket_headless(
     let ws_url = format!("{}/ws?clientId={}", ws_url, client_id);
 
     let tx = event_tx.clone();
+    let ws_state = Arc::clone(state);
 
     let task = tokio::spawn(async move {
         let emit = |event: &str, payload: serde_json::Value| {
@@ -577,138 +628,172 @@ pub async fn connect_websocket_headless(
                 payload,
             });
         };
-        let result = connect_async(&ws_url).await;
-        let (ws_stream, _) = match result {
-            Ok(s) => s,
-            Err(e) => {
-                log::error!("WebSocket connection failed (headless): {}", e);
-                emit(
-                    "comfyui:connection",
-                    serde_json::json!({"connected": false}),
-                );
-                return;
-            }
-        };
-
-        emit("comfyui:connection", serde_json::json!({"connected": true}));
-
-        let (_, mut read) = ws_stream.split();
         let mut current_prompt_id: Option<String> = None;
+        let mut backoff_ms: u64 = 0;
 
-        while let Some(msg) = read.next().await {
-            match msg {
-                Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
-                        let event_type = parsed["type"].as_str().unwrap_or("unknown");
-                        let data = &parsed["data"];
+        'reconnect: loop {
+            if backoff_ms > 0 {
+                log::info!("WebSocket (headless) reconnecting in {} ms", backoff_ms);
+                tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
 
-                        if let Some(prompt_id) = data["prompt_id"].as_str() {
-                            match event_type {
-                                "execution_start" => {
-                                    current_prompt_id = Some(prompt_id.to_string());
-                                }
-                                "executing" => {
-                                    if data["node"].is_null() {
-                                        if current_prompt_id.as_deref() == Some(prompt_id) {
-                                            current_prompt_id = None;
-                                        }
-                                    } else {
-                                        current_prompt_id = Some(prompt_id.to_string());
-                                    }
-                                }
-                                _ => {}
+                if let Some(pid) = current_prompt_id.clone() {
+                    match ws_state.get_history_for(&pid).await {
+                        Ok(history) => {
+                            let completed =
+                                history.get(&pid).map(|v| !v.is_null()).unwrap_or(false);
+                            if completed {
+                                log::warn!(
+                                    "Prompt {} completed during WS disconnect (headless) — emitting synthetic completion",
+                                    pid
+                                );
+                                emit(
+                                    "comfyui:executing",
+                                    serde_json::json!({"node": null, "prompt_id": pid}),
+                                );
+                                current_prompt_id = None;
                             }
                         }
-
-                        let event_name = format!("comfyui:{}", event_type);
-                        emit(&event_name, data.clone());
+                        Err(e) => log::warn!("History query for {} failed: {}", pid, e),
                     }
                 }
-                Ok(tokio_tungstenite::tungstenite::Message::Binary(data)) => {
-                    if data.len() < 4 {
-                        continue;
-                    }
-                    let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-                    // Skip binary events if we don't know which prompt they belong to
-                    if current_prompt_id.is_none() && matches!(event_type, 1 | 2 | 4 | 100) {
-                        continue;
-                    }
-                    match event_type {
-                        1 | 2 => {
-                            if data.len() < 8 {
-                                continue;
-                            }
-                            let format_type =
-                                u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                            let format = if format_type == 2 { "png" } else { "jpeg" };
-                            let ext = if format_type == 2 { "png" } else { "jpg" };
-                            let image_data = &data[8..];
-                            let prompt_id_str = current_prompt_id.as_deref().unwrap();
+            }
 
-                            // Headless: always save to temp file (SSE-only path)
-                            let payload = if let Some(temp_filename) =
-                                crate::temp_images::save(image_data, ext)
-                            {
-                                serde_json::json!({ "temp_filename": temp_filename, "format": format, "prompt_id": prompt_id_str })
-                            } else {
-                                let b64 =
-                                    base64::engine::general_purpose::STANDARD.encode(image_data);
-                                serde_json::json!({ "image": b64, "format": format, "prompt_id": prompt_id_str })
-                            };
-                            emit("comfyui:preview", payload);
-                        }
-                        4 => {
-                            if data.len() < 8 {
-                                continue;
+            let result = connect_async(&ws_url).await;
+            let (ws_stream, _) = match result {
+                Ok(s) => {
+                    backoff_ms = 0;
+                    s
+                }
+                Err(e) => {
+                    log::error!("WebSocket connection failed (headless): {}", e);
+                    emit(
+                        "comfyui:connection",
+                        serde_json::json!({"connected": false}),
+                    );
+                    backoff_ms = (backoff_ms.max(500) * 2).min(30_000);
+                    continue 'reconnect;
+                }
+            };
+
+            emit("comfyui:connection", serde_json::json!({"connected": true}));
+
+            let (_, mut read) = ws_stream.split();
+
+            while let Some(msg) = read.next().await {
+                match msg {
+                    Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                            let event_type = parsed["type"].as_str().unwrap_or("unknown");
+                            let data = &parsed["data"];
+
+                            if let Some(prompt_id) = data["prompt_id"].as_str() {
+                                match event_type {
+                                    "execution_start" => {
+                                        current_prompt_id = Some(prompt_id.to_string());
+                                    }
+                                    "executing" => {
+                                        if data["node"].is_null() {
+                                            if current_prompt_id.as_deref() == Some(prompt_id) {
+                                                current_prompt_id = None;
+                                            }
+                                        } else {
+                                            current_prompt_id = Some(prompt_id.to_string());
+                                        }
+                                    }
+                                    _ => {}
+                                }
                             }
-                            let meta_len =
-                                u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
-                            let image_start = 8 + meta_len;
-                            if image_start < data.len() {
-                                let image_data = &data[image_start..];
+
+                            let event_name = format!("comfyui:{}", event_type);
+                            emit(&event_name, data.clone());
+                        }
+                    }
+                    Ok(tokio_tungstenite::tungstenite::Message::Binary(data)) => {
+                        if data.len() < 4 {
+                            continue;
+                        }
+                        let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                        // Skip binary events if we don't know which prompt they belong to
+                        if current_prompt_id.is_none() && matches!(event_type, 1 | 2 | 4 | 100) {
+                            continue;
+                        }
+                        match event_type {
+                            1 | 2 => {
+                                if data.len() < 8 {
+                                    continue;
+                                }
+                                let format_type =
+                                    u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+                                let format = if format_type == 2 { "png" } else { "jpeg" };
+                                let ext = if format_type == 2 { "png" } else { "jpg" };
+                                let image_data = &data[8..];
                                 let prompt_id_str = current_prompt_id.as_deref().unwrap();
 
+                                // Headless: always save to temp file (SSE-only path)
                                 let payload = if let Some(temp_filename) =
-                                    crate::temp_images::save(image_data, "jpg")
+                                    crate::temp_images::save(image_data, ext)
                                 {
-                                    serde_json::json!({ "temp_filename": temp_filename, "format": "jpeg", "prompt_id": prompt_id_str })
+                                    serde_json::json!({ "temp_filename": temp_filename, "format": format, "prompt_id": prompt_id_str })
                                 } else {
                                     let b64 = base64::engine::general_purpose::STANDARD
                                         .encode(image_data);
-                                    serde_json::json!({ "image": b64, "format": "jpeg", "prompt_id": prompt_id_str })
+                                    serde_json::json!({ "image": b64, "format": format, "prompt_id": prompt_id_str })
                                 };
                                 emit("comfyui:preview", payload);
                             }
+                            4 => {
+                                if data.len() < 8 {
+                                    continue;
+                                }
+                                let meta_len =
+                                    u32::from_be_bytes([data[4], data[5], data[6], data[7]])
+                                        as usize;
+                                let image_start = 8 + meta_len;
+                                if image_start < data.len() {
+                                    let image_data = &data[image_start..];
+                                    let prompt_id_str = current_prompt_id.as_deref().unwrap();
+
+                                    let payload = if let Some(temp_filename) =
+                                        crate::temp_images::save(image_data, "jpg")
+                                    {
+                                        serde_json::json!({ "temp_filename": temp_filename, "format": "jpeg", "prompt_id": prompt_id_str })
+                                    } else {
+                                        let b64 = base64::engine::general_purpose::STANDARD
+                                            .encode(image_data);
+                                        serde_json::json!({ "image": b64, "format": "jpeg", "prompt_id": prompt_id_str })
+                                    };
+                                    emit("comfyui:preview", payload);
+                                }
+                            }
+                            100 => {
+                                let prompt_id_str = current_prompt_id.as_deref().unwrap();
+                                let img = match process_output_image(&data).await {
+                                    Some(img) => img,
+                                    None => continue,
+                                };
+                                let payload = build_sse_payload(&img, prompt_id_str);
+                                emit("comfyui:output_image", payload);
+                            }
+                            _ => {}
                         }
-                        100 => {
-                            let prompt_id_str = current_prompt_id.as_deref().unwrap();
-                            let img = match process_output_image(&data).await {
-                                Some(img) => img,
-                                None => continue,
-                            };
-                            let payload = build_sse_payload(&img, prompt_id_str);
-                            emit("comfyui:output_image", payload);
-                        }
-                        _ => {}
                     }
+                    Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
+                        log::warn!("WebSocket closed by server (headless) — will reconnect");
+                        break;
+                    }
+                    Err(e) => {
+                        log::error!("WebSocket error (headless): {} — will reconnect", e);
+                        break;
+                    }
+                    _ => {}
                 }
-                Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
-                    emit(
-                        "comfyui:connection",
-                        serde_json::json!({"connected": false}),
-                    );
-                    break;
-                }
-                Err(e) => {
-                    log::error!("WebSocket error (headless): {}", e);
-                    emit(
-                        "comfyui:connection",
-                        serde_json::json!({"connected": false}),
-                    );
-                    break;
-                }
-                _ => {}
             }
+
+            emit(
+                "comfyui:connection",
+                serde_json::json!({"connected": false}),
+            );
+            backoff_ms = (backoff_ms.max(500) * 2).min(30_000);
         }
     });
 
@@ -728,7 +813,7 @@ pub async fn disconnect_websocket(state: &AppState) -> Result<(), AppError> {
 /// Events are broadcast to the shared event_tx channel.
 /// The task handle is stored in the worker so it can be aborted on shutdown.
 pub async fn connect_websocket_for_worker(
-    state: &AppState,
+    state: &Arc<AppState>,
     worker: &std::sync::Arc<super::gpu_manager::GpuWorker>,
     event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
 ) -> Result<(), AppError> {
@@ -748,6 +833,7 @@ pub async fn connect_websocket_for_worker(
 
     let worker_id = worker.id;
     let tx = event_tx;
+    let ws_state = Arc::clone(state);
 
     let task = tokio::spawn(async move {
         let emit = |event: &str, payload: serde_json::Value| {
@@ -756,141 +842,182 @@ pub async fn connect_websocket_for_worker(
                 payload,
             });
         };
-        let result = connect_async(&ws_url).await;
-        let (ws_stream, _) = match result {
-            Ok(s) => s,
-            Err(e) => {
-                log::error!("Worker {} WebSocket connection failed: {}", worker_id, e);
-                emit(
-                    "comfyui:connection",
-                    serde_json::json!({"connected": false, "worker_id": worker_id}),
-                );
-                return;
-            }
-        };
-
-        log::info!("Worker {} WebSocket connected", worker_id);
-        emit(
-            "comfyui:connection",
-            serde_json::json!({"connected": true, "worker_id": worker_id}),
-        );
-
-        let (_, mut read) = ws_stream.split();
         let mut current_prompt_id: Option<String> = None;
+        let mut backoff_ms: u64 = 0;
 
-        while let Some(msg) = read.next().await {
-            match msg {
-                Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
-                        let event_type = parsed["type"].as_str().unwrap_or("unknown");
-                        let data = &parsed["data"];
+        'reconnect: loop {
+            if backoff_ms > 0 {
+                log::info!(
+                    "Worker {} WebSocket reconnecting in {} ms",
+                    worker_id,
+                    backoff_ms
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
 
-                        if let Some(prompt_id) = data["prompt_id"].as_str() {
-                            match event_type {
-                                "execution_start" => {
-                                    current_prompt_id = Some(prompt_id.to_string());
-                                }
-                                "executing" => {
-                                    if data["node"].is_null() {
-                                        if current_prompt_id.as_deref() == Some(prompt_id) {
-                                            current_prompt_id = None;
-                                        }
-                                    } else {
-                                        current_prompt_id = Some(prompt_id.to_string());
-                                    }
-                                }
-                                _ => {}
+                if let Some(pid) = current_prompt_id.clone() {
+                    match ws_state.get_history_for(&pid).await {
+                        Ok(history) => {
+                            let completed =
+                                history.get(&pid).map(|v| !v.is_null()).unwrap_or(false);
+                            if completed {
+                                log::warn!(
+                                    "Worker {}: prompt {} completed during WS disconnect — emitting synthetic completion",
+                                    worker_id, pid
+                                );
+                                emit(
+                                    "comfyui:executing",
+                                    serde_json::json!({"node": null, "prompt_id": pid}),
+                                );
+                                current_prompt_id = None;
                             }
                         }
-
-                        let event_name = format!("comfyui:{}", event_type);
-                        emit(&event_name, data.clone());
+                        Err(e) => log::warn!("History query for {} failed: {}", pid, e),
                     }
                 }
-                Ok(tokio_tungstenite::tungstenite::Message::Binary(data)) => {
-                    if data.len() < 4 {
-                        continue;
-                    }
-                    let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-                    if current_prompt_id.is_none() && matches!(event_type, 1 | 2 | 4 | 100) {
-                        continue;
-                    }
-                    match event_type {
-                        1 | 2 => {
-                            if data.len() < 8 {
-                                continue;
-                            }
-                            let format_type =
-                                u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                            let format = if format_type == 2 { "png" } else { "jpeg" };
-                            let ext = if format_type == 2 { "png" } else { "jpg" };
-                            let image_data = &data[8..];
-                            let prompt_id_str = current_prompt_id.as_deref().unwrap();
+            }
 
-                            let payload = if let Some(temp_filename) =
-                                crate::temp_images::save(image_data, ext)
-                            {
-                                serde_json::json!({ "temp_filename": temp_filename, "format": format, "prompt_id": prompt_id_str })
-                            } else {
-                                let b64 =
-                                    base64::engine::general_purpose::STANDARD.encode(image_data);
-                                serde_json::json!({ "image": b64, "format": format, "prompt_id": prompt_id_str })
-                            };
-                            emit("comfyui:preview", payload);
-                        }
-                        4 => {
-                            if data.len() < 8 {
-                                continue;
+            let result = connect_async(&ws_url).await;
+            let (ws_stream, _) = match result {
+                Ok(s) => {
+                    backoff_ms = 0;
+                    s
+                }
+                Err(e) => {
+                    log::error!("Worker {} WebSocket connection failed: {}", worker_id, e);
+                    emit(
+                        "comfyui:connection",
+                        serde_json::json!({"connected": false, "worker_id": worker_id}),
+                    );
+                    backoff_ms = (backoff_ms.max(500) * 2).min(30_000);
+                    continue 'reconnect;
+                }
+            };
+
+            log::info!("Worker {} WebSocket connected", worker_id);
+            emit(
+                "comfyui:connection",
+                serde_json::json!({"connected": true, "worker_id": worker_id}),
+            );
+
+            let (_, mut read) = ws_stream.split();
+
+            while let Some(msg) = read.next().await {
+                match msg {
+                    Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                            let event_type = parsed["type"].as_str().unwrap_or("unknown");
+                            let data = &parsed["data"];
+
+                            if let Some(prompt_id) = data["prompt_id"].as_str() {
+                                match event_type {
+                                    "execution_start" => {
+                                        current_prompt_id = Some(prompt_id.to_string());
+                                    }
+                                    "executing" => {
+                                        if data["node"].is_null() {
+                                            if current_prompt_id.as_deref() == Some(prompt_id) {
+                                                current_prompt_id = None;
+                                            }
+                                        } else {
+                                            current_prompt_id = Some(prompt_id.to_string());
+                                        }
+                                    }
+                                    _ => {}
+                                }
                             }
-                            let meta_len =
-                                u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
-                            let image_start = 8 + meta_len;
-                            if image_start < data.len() {
-                                let image_data = &data[image_start..];
+
+                            let event_name = format!("comfyui:{}", event_type);
+                            emit(&event_name, data.clone());
+                        }
+                    }
+                    Ok(tokio_tungstenite::tungstenite::Message::Binary(data)) => {
+                        if data.len() < 4 {
+                            continue;
+                        }
+                        let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                        if current_prompt_id.is_none() && matches!(event_type, 1 | 2 | 4 | 100) {
+                            continue;
+                        }
+                        match event_type {
+                            1 | 2 => {
+                                if data.len() < 8 {
+                                    continue;
+                                }
+                                let format_type =
+                                    u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+                                let format = if format_type == 2 { "png" } else { "jpeg" };
+                                let ext = if format_type == 2 { "png" } else { "jpg" };
+                                let image_data = &data[8..];
                                 let prompt_id_str = current_prompt_id.as_deref().unwrap();
 
                                 let payload = if let Some(temp_filename) =
-                                    crate::temp_images::save(image_data, "jpg")
+                                    crate::temp_images::save(image_data, ext)
                                 {
-                                    serde_json::json!({ "temp_filename": temp_filename, "format": "jpeg", "prompt_id": prompt_id_str })
+                                    serde_json::json!({ "temp_filename": temp_filename, "format": format, "prompt_id": prompt_id_str })
                                 } else {
                                     let b64 = base64::engine::general_purpose::STANDARD
                                         .encode(image_data);
-                                    serde_json::json!({ "image": b64, "format": "jpeg", "prompt_id": prompt_id_str })
+                                    serde_json::json!({ "image": b64, "format": format, "prompt_id": prompt_id_str })
                                 };
                                 emit("comfyui:preview", payload);
                             }
+                            4 => {
+                                if data.len() < 8 {
+                                    continue;
+                                }
+                                let meta_len =
+                                    u32::from_be_bytes([data[4], data[5], data[6], data[7]])
+                                        as usize;
+                                let image_start = 8 + meta_len;
+                                if image_start < data.len() {
+                                    let image_data = &data[image_start..];
+                                    let prompt_id_str = current_prompt_id.as_deref().unwrap();
+
+                                    let payload = if let Some(temp_filename) =
+                                        crate::temp_images::save(image_data, "jpg")
+                                    {
+                                        serde_json::json!({ "temp_filename": temp_filename, "format": "jpeg", "prompt_id": prompt_id_str })
+                                    } else {
+                                        let b64 = base64::engine::general_purpose::STANDARD
+                                            .encode(image_data);
+                                        serde_json::json!({ "image": b64, "format": "jpeg", "prompt_id": prompt_id_str })
+                                    };
+                                    emit("comfyui:preview", payload);
+                                }
+                            }
+                            100 => {
+                                let prompt_id_str = current_prompt_id.as_deref().unwrap();
+                                let img = match process_output_image(&data).await {
+                                    Some(img) => img,
+                                    None => continue,
+                                };
+                                let payload = build_sse_payload(&img, prompt_id_str);
+                                emit("comfyui:output_image", payload);
+                            }
+                            _ => {}
                         }
-                        100 => {
-                            let prompt_id_str = current_prompt_id.as_deref().unwrap();
-                            let img = match process_output_image(&data).await {
-                                Some(img) => img,
-                                None => continue,
-                            };
-                            let payload = build_sse_payload(&img, prompt_id_str);
-                            emit("comfyui:output_image", payload);
-                        }
-                        _ => {}
                     }
+                    Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
+                        log::warn!("Worker {} WebSocket closed — will reconnect", worker_id);
+                        break;
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Worker {} WebSocket error: {} — will reconnect",
+                            worker_id,
+                            e
+                        );
+                        break;
+                    }
+                    _ => {}
                 }
-                Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
-                    log::warn!("Worker {} WebSocket closed", worker_id);
-                    emit(
-                        "comfyui:connection",
-                        serde_json::json!({"connected": false, "worker_id": worker_id}),
-                    );
-                    break;
-                }
-                Err(e) => {
-                    log::error!("Worker {} WebSocket error: {}", worker_id, e);
-                    emit(
-                        "comfyui:connection",
-                        serde_json::json!({"connected": false, "worker_id": worker_id}),
-                    );
-                    break;
-                }
-                _ => {}
             }
+
+            emit(
+                "comfyui:connection",
+                serde_json::json!({"connected": false, "worker_id": worker_id}),
+            );
+            backoff_ms = (backoff_ms.max(500) * 2).min(30_000);
         }
     });
 

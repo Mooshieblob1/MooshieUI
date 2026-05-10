@@ -1398,12 +1398,22 @@
     await Promise.all([
       ipcListen("comfyui:connection", (event: any) => {
         console.log("Connection event:", event.payload);
+        const wasConnected = connection.connected;
         connection.connected = event.payload.connected;
         if (event.payload.connected) {
           startupStatus = "";
           models.refresh().then(() => {
             generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
           });
+          // If we just reconnected after a drop, kick the stuck-prompt
+          // reconciler immediately by clearing last-activity timestamps —
+          // the WS may have died mid-generation and we want to finalize
+          // any prompts that have already left ComfyUI's queue.
+          if (!wasConnected && progress.isGenerating) {
+            for (const p of progress.pendingPrompts) {
+              promptLastActivity.set(p.promptId, 0);
+            }
+          }
         }
       }),
       ipcListen("comfyui:server_ready", async () => {
@@ -1441,6 +1451,10 @@
       }),
       ipcListen("mooshie:queue_update", (event: any) => {
         const data = event.payload;
+        if (data.total === 0) {
+          progress.resetQueuePosition();
+          return;
+        }
         if (data.prompt_id && data.position != null && data.total != null) {
           // Restore the prompt to pendingPrompts if this is an initial burst after
           // a page refresh (the in-memory queue was lost but the server still has it).
@@ -1704,15 +1718,17 @@
         const data = event.payload;
         // Build a user-visible error message from the raw error string
         const rawErr = String(data.error ?? "");
-        let toastMsg = "Generation failed";
-        if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
-          toastMsg = "Generation failed — a model or VAE may not be configured correctly. Check your model settings.";
+        let toastMsg = locale.t("generation.error_failed");
+        if (rawErr === "generation.error_cancelled") {
+          toastMsg = locale.t("generation.error_cancelled");
+        } else if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
+          toastMsg = locale.t("generation.error_model_config");
         } else {
           try {
             const m = rawErr.match(/API error \(\d+\): ([\s\S]+)/);
             if (m) {
               const parsed = JSON.parse(m[1]);
-              if (parsed.error?.message) toastMsg = `Generation failed: ${parsed.error.message}`;
+              if (parsed.error?.message) toastMsg = locale.t("generation.error_failed_message", { message: parsed.error.message });
             }
           } catch { /* ignore parse errors */ }
         }
@@ -2817,7 +2833,7 @@
 {#if artistInsertPending}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
+    class="fixed inset-0 z-300 flex items-center justify-center bg-black/60"
     onclick={(e) => { if (e.target === e.currentTarget) artistInsert.dismiss(); }}
     onkeydown={(e) => { if (e.key === 'Escape') artistInsert.dismiss(); }}
   >
@@ -2890,7 +2906,7 @@
 {#if dirPickerImage}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="fixed inset-0 z-[200] flex items-center justify-center bg-black/60"
+    class="fixed inset-0 z-200 flex items-center justify-center bg-black/60"
     onclick={(e) => { if (e.target === e.currentTarget) dirPickerImage = null; }}
     onkeydown={(e) => { if (e.key === 'Escape') dirPickerImage = null; }}
   >

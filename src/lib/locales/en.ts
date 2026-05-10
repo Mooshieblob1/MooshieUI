@@ -532,6 +532,10 @@ const en: Record<string, string> = {
   "generation.error_no_checkpoint": "Select a checkpoint first",
   "generation.error_no_image": "Inpainting needs an input image. Upload one or use a staged image.",
   "generation.error_no_mask": "Inpainting needs a mask. Paint a mask in Canvas Editor or upload one.",
+  "generation.error_failed": "Generation failed",
+  "generation.error_model_config": "Generation failed — a model or VAE may not be configured correctly. Check your model settings.",
+  "generation.error_failed_message": "Generation failed: {message}",
+  "generation.error_cancelled": "Generation cancelled",
   "generation.downloading_facefix": "Downloading Face Detailer model...",
 
   // Session context menu

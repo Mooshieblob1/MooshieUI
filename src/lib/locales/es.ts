@@ -517,6 +517,10 @@ const es: Record<string, string> = {
   "generation.error_no_checkpoint": "Selecciona un checkpoint primero",
   "generation.error_no_image": "El inpainting necesita una imagen de entrada. Sube una o usa una imagen preparada.",
   "generation.error_no_mask": "El inpainting necesita una máscara. Pinta una máscara en el Editor de lienzo o sube una.",
+  "generation.error_failed": "La generación falló",
+  "generation.error_model_config": "La generación falló — puede que un modelo o VAE no esté configurado correctamente. Revisa la configuración del modelo.",
+  "generation.error_failed_message": "La generación falló: {message}",
+  "generation.error_cancelled": "Generación cancelada",
   "generation.downloading_facefix": "Descargando modelo Face Detailer...",
 
   // Session context menu

@@ -1,3 +1,18 @@
+## What's New in v1.1.7
+
+### Generation Reliability
+- **Recover from ComfyUI WebSocket drops** — the Tauri, browser/SSE, and per-worker WebSocket bridges now reconnect with backoff instead of exiting permanently. If a prompt finishes while the socket is down, MooshieUI checks ComfyUI history and emits a synthetic completion event so the UI can finalize the image instead of hanging.
+
+### Cancel & Queue Fixes
+- **Cancel releases multi-GPU workers cleanly** — cancelling a generation now removes the prompt from internal queue tracking, deletes placeholder and real ComfyUI prompt IDs from every worker queue, interrupts/frees the affected worker, and marks it idle so the next generation does not briefly sit behind a stale cancelled prompt.
+- **Cancel-before-active race fixed** — clicking cancel before ComfyUI reports an active prompt now targets the first pending prompt, covering the fast cancel-and-requeue path.
+
+### Internationalisation
+- **Generation error toasts use locale keys** — generation failure, model/VAE configuration, detailed error, and cancellation messages now route through the locale system across all supported languages.
+- **Locale duplicate-key cleanup** — duplicate bottom-panel/gallery locale stubs were removed while preserving translated bottom-panel tab labels.
+
+---
+
 ## What's New in v1.1.6
 
 ### Bug Fixes

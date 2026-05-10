@@ -530,6 +530,42 @@ pub async fn start_server(
                         .await;
                     match res {
                         Ok((worker_id, response)) => {
+                            if drain_state.prompt_queue.is_cancelled(&hp.placeholder_id) {
+                                if let Some(worker) =
+                                    drain_state.gpu_manager.workers.get(worker_id as usize)
+                                {
+                                    let _ = drain_state
+                                        .http_client
+                                        .post(format!("{}/queue", worker.base_url))
+                                        .json(
+                                            &serde_json::json!({ "delete": [response.prompt_id] }),
+                                        )
+                                        .send()
+                                        .await;
+                                    let _ =
+                                        drain_state.gpu_manager.interrupt(Some(worker_id)).await;
+                                    let _ = drain_state
+                                        .http_client
+                                        .post(format!("{}/free", worker.base_url))
+                                        .json(&serde_json::json!({
+                                            "unload_models": true,
+                                            "free_memory": true,
+                                        }))
+                                        .send()
+                                        .await;
+                                }
+                                drain_state
+                                    .gpu_manager
+                                    .mark_worker_error_then_idle(worker_id)
+                                    .await;
+                                *hp.result.lock().await =
+                                    Some(Err("generation.error_cancelled".to_string()));
+                                drain_state.broadcast_queue_positions();
+                                drain_state.prompt_queue.drain_notify.notify_one();
+                                hp.submitted.notify_one();
+                                continue;
+                            }
+
                             // Bind alias immediately to prevent race with WebSocket events
                             let was_deferred = drain_state
                                 .prompt_queue
@@ -2043,6 +2079,38 @@ async fn dispatch_command(
                         .await
                     {
                         Ok((worker_id, response)) => {
+                            if bg_state.prompt_queue.is_cancelled(&bg_placeholder) {
+                                if let Some(worker) =
+                                    bg_state.gpu_manager.workers.get(worker_id as usize)
+                                {
+                                    let _ = bg_state
+                                        .http_client
+                                        .post(format!("{}/queue", worker.base_url))
+                                        .json(
+                                            &serde_json::json!({ "delete": [response.prompt_id] }),
+                                        )
+                                        .send()
+                                        .await;
+                                    let _ = bg_state.gpu_manager.interrupt(Some(worker_id)).await;
+                                    let _ = bg_state
+                                        .http_client
+                                        .post(format!("{}/free", worker.base_url))
+                                        .json(&serde_json::json!({
+                                            "unload_models": true,
+                                            "free_memory": true,
+                                        }))
+                                        .send()
+                                        .await;
+                                }
+                                bg_state
+                                    .gpu_manager
+                                    .mark_worker_error_then_idle(worker_id)
+                                    .await;
+                                bg_state.broadcast_queue_positions();
+                                bg_state.prompt_queue.drain_notify.notify_one();
+                                return;
+                            }
+
                             let was_deferred = bg_state
                                 .prompt_queue
                                 .bind_alias(&bg_placeholder, &response.prompt_id);

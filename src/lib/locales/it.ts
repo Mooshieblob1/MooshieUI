@@ -495,6 +495,10 @@ const it: Record<string, string> = {
   "generation.error_no_checkpoint": "Seleziona prima un checkpoint",
   "generation.error_no_image": "L'inpainting richiede un'immagine di input. Caricane una o usa un'immagine preparata.",
   "generation.error_no_mask": "L'inpainting richiede una maschera. Disegna una maschera nel Canvas Editor o caricane una.",
+  "generation.error_failed": "Generazione non riuscita",
+  "generation.error_model_config": "Generazione non riuscita — un modello o VAE potrebbe non essere configurato correttamente. Controlla le impostazioni del modello.",
+  "generation.error_failed_message": "Generazione non riuscita: {message}",
+  "generation.error_cancelled": "Generazione annullata",
   "generation.downloading_facefix": "Download modello Face Detailer...",
 
   // Session context menu
@@ -639,10 +643,12 @@ const it: Record<string, string> = {
   "lora.likes": "Mi piace",
 
   // ── Pannello inferiore ──────────────────────────────────
-  "bottom_panel.tab.loras": "LoRA",  "bottom_panel.tab.checkpoints": "Checkpoint",
+  "bottom_panel.tab.loras": "LoRA",
+  "bottom_panel.tab.checkpoints": "Checkpoint",
   "checkpoint.search_placeholder": "Cerca checkpoint...",
   "checkpoint.no_results": "Nessun checkpoint trovato",
-  "checkpoint.active": "Attivo",  "bottom_panel.tab.images": "Immagini",
+  "checkpoint.active": "Attivo",
+  "bottom_panel.tab.images": "Immagini",
   "bottom_panel.tab.prompts": "Prompt",
   "bottom_panel.no_images": "Nessuna immagine generata in questa sessione",
   "bottom_panel.no_prompts": "La cronologia prompt apparirà qui dopo la generazione",
@@ -1204,9 +1210,6 @@ const it: Record<string, string> = {
   "generation.prompts.negative_flux_disabled": "ignored by Flux models",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
-  "bottom_panel.tab.checkpoints": "Checkpoints",
-  "bottom_panel.tab.images": "Images",
-  "gallery.toast.right_click_copy": "Right-click the image and select 'Copy Image'",
 
 };
 
