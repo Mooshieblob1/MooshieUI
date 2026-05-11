@@ -10,7 +10,7 @@ A modern, beginner-friendly desktop frontend for [ComfyUI](https://github.com/co
   <img src="src/lib/assets/logo.png" alt="Logo" width="200">
 </p>
 
-![MooshieUI Screenshot](screenshot.webp)
+![MooshieUI Screenshot](screenshot.avif)
 
 ---
 
