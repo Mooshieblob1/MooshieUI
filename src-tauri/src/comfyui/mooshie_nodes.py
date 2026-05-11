@@ -231,6 +231,7 @@ class MooshieSaveImage:
     """
 
     MOOSHIE_EVENT_TYPE = 100  # custom binary WS event type
+    MOOSHIE_CONTROLNET_PREPROCESSOR_EVENT_TYPE = 101
     # Format sub-types packed into the first 4 bytes after the event type header.
     # The Rust WebSocket handler reads this to tell the frontend what it received.
     FMT_PNG_8 = 1        # 8-bit PNG  (uint8,  standard)
@@ -247,6 +248,7 @@ class MooshieSaveImage:
             "optional": {
                 "bit_depth": (["8bit", "16bit"], {"default": "8bit"}),
                 "output_format": (["png", "jxl_raw"], {"default": "png"}),
+                "output_role": (["final", "controlnet_preprocessor"], {"default": "final"}),
             },
         }
 
@@ -260,11 +262,12 @@ class MooshieSaveImage:
         "in the Tauri backend when output_format=jxl_raw)."
     )
 
-    def save_images(self, images, bit_depth="8bit", output_format="png"):
+    def save_images(self, images, bit_depth="8bit", output_format="png", output_role="final"):
         from server import PromptServer
 
         server = PromptServer.instance
         want_raw = (output_format == "jxl_raw")
+        event_type = self.MOOSHIE_CONTROLNET_PREPROCESSOR_EVENT_TYPE if output_role == "controlnet_preprocessor" else self.MOOSHIE_EVENT_TYPE
 
         for i in range(images.shape[0]):
             frame = images[i].cpu().numpy()
@@ -291,7 +294,7 @@ class MooshieSaveImage:
 
             # Payload: format_tag (4 bytes BE) + image data
             payload = struct.pack(">I", fmt_tag) + image_bytes
-            server.send_sync(self.MOOSHIE_EVENT_TYPE, payload)
+            server.send_sync(event_type, payload)
 
         return {"ui": {"images": []}}
 
@@ -398,7 +401,7 @@ class MooshieSaveImage:
         return buf.getvalue()
 
     @classmethod
-    def IS_CHANGED(cls, images, bit_depth="8bit", output_format="png"):
+    def IS_CHANGED(cls, images, bit_depth="8bit", output_format="png", output_role="final"):
         # Always re-execute — output nodes should never be cached.
         return float("nan")
 

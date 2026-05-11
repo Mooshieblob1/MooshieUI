@@ -227,7 +227,7 @@ class GenerationStore {
 
   /** True when the selected model is an Anima variant (split diffusion model). */
   get isAnima(): boolean {
-    return this.useSplitModel && (this.diffusionModel?.includes("anima") ?? false);
+    return this.detectedArchitecture === "anima";
   }
 
   /** True when the selected model is an Illustrious/NoobAI family variant. */
@@ -302,7 +302,7 @@ class GenerationStore {
   }
 
   /** Detect the base model architecture from modelspec (authoritative) or filename (fallback). */
-  get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "sd3" | "flux" | "pony" | "auraflow" | "pixart" | "hunyuandit" | "cascade" | "kolors" | "mugen" | "nanosaur" | "unknown" {
+  get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "sd3" | "flux" | "pony" | "auraflow" | "pixart" | "hunyuandit" | "cascade" | "kolors" | "mugen" | "nanosaur" | "anima" | "unknown" {
     const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
 
     // 1. Use modelspec architecture if available (definitive)
@@ -310,6 +310,8 @@ class GenerationStore {
       const arch = this.modelspecArchitecture.toLowerCase();
       // Nanosaur (custom DiT — check before other heuristics)
       if (name.includes("nanosaur")) return "nanosaur";
+      // Anima (Wan2.1 fine-tune with AnimaLLLite)
+      if (name.includes("anima") || arch.includes("anima")) return "anima";
       // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
       if (name.includes("mugen")) return "mugen";
       // Illustrious/NoobAI family (they report as SDXL arch but need special ControlNets)
@@ -338,6 +340,8 @@ class GenerationStore {
     if (!name) return "unknown";
     // Nanosaur (custom DiT — check before other heuristics)
     if (name.includes("nanosaur")) return "nanosaur";
+    // Anima (Wan2.1 fine-tune with AnimaLLLite)
+    if (name.includes("anima")) return "anima";
     // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
     if (name.includes("mugen")) return "mugen";
     // Illustrious/NoobAI/vpred SDXL variants

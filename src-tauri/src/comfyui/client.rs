@@ -13,6 +13,37 @@ fn is_optional_model_category(category: &str) -> bool {
     )
 }
 
+fn is_huggingface_url(url: &str) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(|host| host.to_ascii_lowercase()))
+        .is_some_and(|host| host == "huggingface.co" || host.ends_with(".huggingface.co"))
+}
+
+pub fn huggingface_token_for_url(url: &str) -> Option<String> {
+    if !is_huggingface_url(url) {
+        return None;
+    }
+
+    ["HF_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HUGGINGFACE_TOKEN"]
+        .iter()
+        .find_map(|key| {
+            std::env::var(key)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+pub fn download_status_error_message(url: &str, status: reqwest::StatusCode) -> String {
+    if is_huggingface_url(url) && matches!(status.as_u16(), 401 | 403) {
+        format!(
+            "Failed to download {url}: HTTP {status}. This Hugging Face file requires access; set HF_TOKEN, HUGGINGFACE_HUB_TOKEN, or HUGGINGFACE_TOKEN, or install the file manually."
+        )
+    } else {
+        format!("Failed to download {url}: HTTP {status}")
+    }
+}
+
 /// Compute SHA256 of a file. Returns lowercase hex. Used to verify downloaded model files.
 pub fn sha256_file(path: &std::path::Path) -> Result<String, AppError> {
     use std::io::Read;
@@ -359,11 +390,16 @@ impl AppState {
             let _ = std::fs::remove_file(&dest);
         }
 
-        let resp = self.http_client.get(url).send().await?;
+        let mut req = self.http_client.get(url);
+        if let Some(token) = huggingface_token_for_url(url) {
+            req = req.bearer_auth(token);
+        }
+        let resp = req.send().await?;
         if !resp.status().is_success() {
+            let status = resp.status();
             return Err(AppError::ApiError {
-                status: resp.status().as_u16(),
-                message: format!("Failed to download {}", url),
+                status: status.as_u16(),
+                message: download_status_error_message(url, status),
             });
         }
 

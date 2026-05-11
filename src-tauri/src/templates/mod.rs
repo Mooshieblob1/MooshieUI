@@ -59,6 +59,19 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
                 "ControlNet is enabled but no reference image was provided — please upload one or disable ControlNet.".into(),
             );
         }
+        if cn.enabled
+            && cn.preset.as_deref().is_some_and(|p| p == "inpainting")
+            && params
+                .mask_image
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+        {
+            return Err(
+                "The Anima inpainting ControlNet preset requires a mask — please paint a mask before generating.".into(),
+            );
+        }
     }
 
     Ok(())
@@ -259,15 +272,20 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
     // Inject ControlNet if enabled
     if let Some(ref cn) = params.controlnet {
         if cn.enabled && cn.controlnet_model.is_some() && cn.image.is_some() {
-            controlnet::inject_controlnet(&mut result, cn);
+            if is_anima_architecture(params) {
+                let mask = params.mask_image.as_deref();
+                controlnet::inject_anima_lllite(&mut result, cn, mask);
+            } else {
+                controlnet::inject_controlnet(&mut result, cn);
 
-            // Rewire the primary KSampler to use ControlNet-conditioned positive/negative
-            if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
-                if let Some(inputs) = sampler_node.get_mut("inputs") {
-                    inputs["positive"] =
-                        json!([result.positive_source.0, result.positive_source.1]);
-                    inputs["negative"] =
-                        json!([result.negative_source.0, result.negative_source.1]);
+                // Rewire the primary KSampler to use ControlNet-conditioned positive/negative
+                if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+                    if let Some(inputs) = sampler_node.get_mut("inputs") {
+                        inputs["positive"] =
+                            json!([result.positive_source.0, result.positive_source.1]);
+                        inputs["negative"] =
+                            json!([result.negative_source.0, result.negative_source.1]);
+                    }
                 }
             }
         }
@@ -400,9 +418,19 @@ pub fn is_nanosaur_architecture(params: &GenerationParams) -> bool {
     model_name_lower(params).contains("nanosaur")
 }
 
+/// Returns true when the model is Anima (Wan2.1 fine-tune with AnimaLLLite ControlNet).
+pub fn is_anima_architecture(params: &GenerationParams) -> bool {
+    if params.model_architecture == "anima" {
+        return true;
+    }
+    let name = model_name_lower(params);
+    name.contains("anima")
+}
+
 /// Returns true when the model needs a 16-channel latent (SD3, Flux, Anima/WAN).
 pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
-    if is_sd3_architecture(params) || is_flux_architecture(params) {
+    if is_sd3_architecture(params) || is_flux_architecture(params) || is_anima_architecture(params)
+    {
         return true;
     }
     let name = model_name_lower(params);

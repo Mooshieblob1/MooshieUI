@@ -36,6 +36,13 @@ export async function generate(params: GenerationParams): Promise<GenerateRespon
   return ipcInvoke("generate", { params });
 }
 
+export async function generateControlnetPreprocessorPreview(
+  image: string,
+  preprocessor: string,
+): Promise<{ prompt_id: string }> {
+  return ipcInvoke("generate_controlnet_preprocessor_preview", { image, preprocessor });
+}
+
 export async function getHistory(promptId: string): Promise<Record<string, unknown>> {
   return ipcInvoke("get_history", { promptId });
 }

@@ -269,7 +269,6 @@
     if (section === "model") return generation.mode !== "inpainting";
     if (section === "sampler") return generation.mode !== "inpainting";
     if (section === "upscaleHistory") return generation.mode !== "inpainting";
-    if (section === "controlnet") return !generation.isAnima;
     if (section === "facefix") return generation.mode !== "inpainting";
     return true;
   }

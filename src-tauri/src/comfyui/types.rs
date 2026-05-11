@@ -182,6 +182,8 @@ fn default_output_format() -> String {
 pub struct ControlNetParam {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
+    pub preset: Option<String>,
     pub controlnet_model: Option<String>,
     pub image: Option<String>,
     pub preprocessor: Option<String>,

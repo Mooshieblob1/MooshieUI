@@ -440,7 +440,9 @@ pub async fn connect_websocket(
 
                         // Skip binary events if we don't know which prompt they belong to
                         // (prevents cross-user event leaking via SSE)
-                        if current_prompt_id.is_none() && matches!(event_type, 1 | 2 | 4 | 100) {
+                        if current_prompt_id.is_none()
+                            && matches!(event_type, 1 | 2 | 4 | 100 | 101)
+                        {
                             continue;
                         }
 
@@ -503,8 +505,13 @@ pub async fn connect_websocket(
                                     emit_split("comfyui:preview", tauri_payload, sse_payload);
                                 }
                             }
-                            100 => {
+                            100 | 101 => {
                                 // MOOSHIE_OUTPUT_IMAGE — use shared processing function
+                                let frontend_event = if event_type == 101 {
+                                    "comfyui:controlnet_preprocessor"
+                                } else {
+                                    "comfyui:output_image"
+                                };
                                 let prompt_id_str = current_prompt_id.as_deref().unwrap();
                                 let img = match process_output_image(&data).await {
                                     Some(img) => img,
@@ -607,7 +614,7 @@ pub async fn connect_websocket(
                                     tauri_payload.clone()
                                 };
 
-                                emit_split("comfyui:output_image", tauri_payload, sse_payload);
+                                emit_split(frontend_event, tauri_payload, sse_payload);
                             }
                             _ => {}
                         }
@@ -760,7 +767,9 @@ pub async fn connect_websocket_headless(
                         }
                         let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
                         // Skip binary events if we don't know which prompt they belong to
-                        if current_prompt_id.is_none() && matches!(event_type, 1 | 2 | 4 | 100) {
+                        if current_prompt_id.is_none()
+                            && matches!(event_type, 1 | 2 | 4 | 100 | 101)
+                        {
                             continue;
                         }
                         match event_type {
@@ -811,14 +820,19 @@ pub async fn connect_websocket_headless(
                                     emit("comfyui:preview", payload);
                                 }
                             }
-                            100 => {
+                            100 | 101 => {
                                 let prompt_id_str = current_prompt_id.as_deref().unwrap();
                                 let img = match process_output_image(&data).await {
                                     Some(img) => img,
                                     None => continue,
                                 };
                                 let payload = build_sse_payload(&img, prompt_id_str);
-                                emit("comfyui:output_image", payload);
+                                let frontend_event = if event_type == 101 {
+                                    "comfyui:controlnet_preprocessor"
+                                } else {
+                                    "comfyui:output_image"
+                                };
+                                emit(frontend_event, payload);
                             }
                             _ => {}
                         }
@@ -990,7 +1004,9 @@ pub async fn connect_websocket_for_worker(
                             continue;
                         }
                         let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-                        if current_prompt_id.is_none() && matches!(event_type, 1 | 2 | 4 | 100) {
+                        if current_prompt_id.is_none()
+                            && matches!(event_type, 1 | 2 | 4 | 100 | 101)
+                        {
                             continue;
                         }
                         match event_type {
@@ -1040,14 +1056,19 @@ pub async fn connect_websocket_for_worker(
                                     emit("comfyui:preview", payload);
                                 }
                             }
-                            100 => {
+                            100 | 101 => {
                                 let prompt_id_str = current_prompt_id.as_deref().unwrap();
                                 let img = match process_output_image(&data).await {
                                     Some(img) => img,
                                     None => continue,
                                 };
                                 let payload = build_sse_payload(&img, prompt_id_str);
-                                emit("comfyui:output_image", payload);
+                                let frontend_event = if event_type == 101 {
+                                    "comfyui:controlnet_preprocessor"
+                                } else {
+                                    "comfyui:output_image"
+                                };
+                                emit(frontend_event, payload);
                             }
                             _ => {}
                         }

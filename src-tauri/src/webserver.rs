@@ -2201,6 +2201,62 @@ async fn dispatch_command(
                 "queue_total": queue_total,
             }))
         }
+        "generate_controlnet_preprocessor_preview" => {
+            let image = args["image"].as_str().unwrap_or("").trim().to_string();
+            let preprocessor = args["preprocessor"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+
+            if image.is_empty() {
+                return Err("ControlNet preprocessor preview needs a control image.".into());
+            }
+            if preprocessor.is_empty() {
+                return Err("ControlNet preprocessor preview needs a preprocessor.".into());
+            }
+
+            let workflow = crate::templates::controlnet::build_preprocessor_preview_workflow(
+                &image,
+                &preprocessor,
+            );
+            let placeholder_id = format!("cnprev-{}", uuid::Uuid::new_v4());
+            state.prompt_queue.insert(&placeholder_id, None);
+            state.broadcast_queue_positions();
+
+            let bg_state = Arc::clone(&state);
+            let bg_placeholder = placeholder_id.clone();
+            tokio::spawn(async move {
+                let timeout = std::time::Duration::from_secs(120);
+                match bg_state
+                    .gpu_manager
+                    .submit_prompt(workflow, &bg_state.client_id, timeout)
+                    .await
+                {
+                    Ok((worker_id, response)) => {
+                        bg_state
+                            .prompt_queue
+                            .bind_alias(&bg_placeholder, &response.prompt_id);
+                        bg_state.prompt_queue.set_worker(&bg_placeholder, worker_id);
+                        bg_state.broadcast_queue_positions();
+                    }
+                    Err(e) => {
+                        log::error!("[cnprev] submission failed for {}: {}", bg_placeholder, e);
+                        bg_state.prompt_queue.finish(&bg_placeholder);
+                        bg_state.broadcast_queue_positions();
+                        let _ = bg_state.event_tx.send(crate::state::BroadcastEvent {
+                            event: "comfyui:execution_error".to_string(),
+                            payload: serde_json::json!({
+                                "prompt_id": bg_placeholder,
+                                "error": e.to_string(),
+                            }),
+                        });
+                    }
+                }
+            });
+
+            Ok(serde_json::json!({ "prompt_id": placeholder_id }))
+        }
         "delete_queue_item" => {
             let prompt_id = args["promptId"].as_str().ok_or("Missing promptId")?;
             state
@@ -3253,17 +3309,15 @@ async fn dispatch_command(
 
             // Download with progress broadcast
             let event_tx = state.event_tx.clone();
-            let resp = state
-                .http_client
-                .get(&url)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
+            let mut req = state.http_client.get(&url);
+            if let Some(token) = crate::comfyui::client::huggingface_token_for_url(&url) {
+                req = req.bearer_auth(token);
+            }
+            let resp = req.send().await.map_err(|e| e.to_string())?;
             if !resp.status().is_success() {
-                return Err(format!(
-                    "Failed to download {}: HTTP {}",
-                    url,
-                    resp.status()
+                return Err(crate::comfyui::client::download_status_error_message(
+                    &url,
+                    resp.status(),
                 ));
             }
             let total = resp.content_length().unwrap_or(0);

@@ -70,3 +70,48 @@ pub async fn generate(
         seed,
     })
 }
+
+#[derive(serde::Serialize)]
+pub struct ControlNetPreprocessorPreviewResponse {
+    pub prompt_id: String,
+}
+
+#[tauri::command]
+pub async fn generate_controlnet_preprocessor_preview(
+    state: State<'_, Arc<AppState>>,
+    image: String,
+    preprocessor: String,
+) -> Result<ControlNetPreprocessorPreviewResponse, AppError> {
+    crate::temp_images::cleanup(300);
+
+    if image.trim().is_empty() {
+        return Err(AppError::InvalidWorkflow(
+            "ControlNet preprocessor preview needs a control image.".into(),
+        ));
+    }
+    if preprocessor.trim().is_empty() {
+        return Err(AppError::InvalidWorkflow(
+            "ControlNet preprocessor preview needs a preprocessor.".into(),
+        ));
+    }
+
+    let workflow = templates::controlnet::build_preprocessor_preview_workflow(
+        image.trim(),
+        preprocessor.trim(),
+    );
+    let timeout = std::time::Duration::from_secs(120);
+    let (worker_id, response) = state
+        .gpu_manager
+        .submit_prompt(workflow, &state.client_id, timeout)
+        .await?;
+
+    state.prompt_queue.insert(&response.prompt_id, None);
+    state
+        .prompt_queue
+        .set_worker(&response.prompt_id, worker_id);
+    state.broadcast_queue_positions();
+
+    Ok(ControlNetPreprocessorPreviewResponse {
+        prompt_id: response.prompt_id,
+    })
+}

@@ -1,5 +1,26 @@
 # Changelog
 
+## What's New in v1.1.9
+
+### Anima LLLite ControlNet
+- **First-class Anima LLLite support** — Anima models now route through the new `AnimaLLLiteApply` node with a curated preset list (Depth Map + AnyTest v1 step 1000/2000 + inpainting), downloaded from the public `Mooshie/Anima-LLLite` Hugging Face mirror.
+- **Per-preset defaults** — strength, start %, and end % are tuned per Anima preset so depth and AnyTest work out of the box without manual tweaking.
+- **OpenPose / LineArt / Scribble hidden for Anima** — the LLLite weights for these tasks are intentionally weak per the model card, so they're no longer surfaced for Anima checkpoints.
+- **Wider strength slider for Anima** — the ControlNet strength slider now extends to 4.0 when an Anima checkpoint is detected.
+
+### Preprocessor Preview
+- **Preview preprocessor button** — preset preprocessors (depth, openpose, lineart, etc.) now run on demand via a dedicated preview action. The preprocessed image only replaces the control image after you confirm it, instead of swapping silently after the first generation.
+- **Re-run and retry controls** — quick re-run and retry buttons surface when the preview is ready or failed.
+
+### Installer & Downloads
+- **One-click AnimaLLLite extension install** — when an Anima checkpoint is selected but the `ComfyUI-Anima-LLLite` extension is missing, MooshieUI prompts to clone and restart ComfyUI automatically.
+- **Hugging Face token support** — gated model downloads pick up the user's HF token when provided.
+
+### Internationalization
+- **ControlNet preset names and descriptions are now translatable** — preset labels, descriptions, and preprocessor preview controls route through the locale system instead of being hardcoded English.
+
+---
+
 ## What's New in v1.1.8
 
 ### Theme Customization

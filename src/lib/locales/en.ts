@@ -469,6 +469,18 @@ const en: Record<string, string> = {
   "generation.controlnet.strength_tip": "How strongly the ControlNet guides the generation. Higher values follow the control image more closely but may reduce creativity.",
   "generation.controlnet.select_model": "Select model...",
 
+  // ControlNet — Anima LLLite
+  "generation.controlnet.anima_lllite_install": "Anima ControlNet requires the AnimaLLLite ComfyUI extension. Install it to use ControlNet with Anima models.",
+  "generation.controlnet.prepare_preprocessor": "Preview preprocessor",
+  "generation.controlnet.prepare_preprocessor_tip": "Run the preprocessor on the control image and preview the result before generating.",
+  "generation.controlnet.preprocessor_preparing": "Preparing...",
+  "generation.controlnet.preprocessor_ready": "Preview ready",
+  "generation.controlnet.preprocessor_preview_failed": "Preprocessor preview failed",
+  "generation.controlnet.preprocessor_preview_timeout": "Preprocessor preview timed out",
+  "generation.controlnet.requires_inpainting": "Requires inpainting mode",
+
+  // (Anima preset labels live with the rest of the preset keys below)
+
   // Face Detailer
   "generation.facefix.title": "Face Detailer",
   "generation.facefix.tip": "Detects faces in the generated image and re-denoises each face region for better detail. Runs after generation (and after the refiner if enabled).",
@@ -1068,6 +1080,14 @@ const en: Record<string, string> = {
   "generation.controlnet.preset_scribble_desc": "Hand-drawn sketch guidance — turn rough drawings into art",
   "generation.controlnet.preset_softedge": "Soft Edge",
   "generation.controlnet.preset_softedge_desc": "Soft structural edges (HED) — natural edge preservation",
+  "generation.controlnet.preset_anytest_1000": "AnyTest v1 (step 1000)",
+  "generation.controlnet.preset_anytest_1000_desc": "Anima multi-task ControlNet — step 1000 checkpoint",
+  "generation.controlnet.preset_anytest_2000": "AnyTest v1 (step 2000)",
+  "generation.controlnet.preset_anytest_2000_desc": "Anima multi-task ControlNet — step 2000 checkpoint",
+  "generation.controlnet.preset_inpainting": "Inpainting",
+  "generation.controlnet.preset_inpainting_desc": "Anima inpainting ControlNet — requires a mask",
+  "generation.controlnet.preprocessor_rerun": "Re-run",
+  "generation.controlnet.preprocessor_retry": "Retry",
 
   // ── Image input extras ──────────────────────────────────
   "generation.image.drag_drop_or": "Drag & drop or",
