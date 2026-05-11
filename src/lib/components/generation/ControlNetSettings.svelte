@@ -44,7 +44,7 @@
   let uploadingImage = $state(false);
   let imagePreviewUrl = $state<string | null>(null);
   let controlnetDropZone = $state<HTMLElement | null>(null);
-  const ANIMA_PRESET_IDS = ["depth", "anytest_2000", "anytest_1000"];
+  const ANIMA_PRESET_IDS = ["depth", "anytest_2000", "anytest_1000", "inpainting"];
 
   $effect(() => {
     const el = controlnetDropZone;
@@ -132,6 +132,10 @@
       preprocessorAvailable = false;
       animaLlliteAvailable = false;
     }
+
+    // Register the preprocessor preview listener once for the component lifetime
+    // to avoid leaks and races on repeated previews.
+    await ipcListen("comfyui:controlnet_preprocessor", handlePreprocessorPreviewEvent);
   });
 
   function isModelInstalled(filename: string): boolean {
@@ -437,14 +441,12 @@
         selectedPresetPreprocessor,
       );
       preprocessorPreviewPromptId = result.prompt_id;
-      // Check if the event already arrived in the buffer
+      // Check if the event already arrived in the buffer (listener registered in onMount)
       const buffered = pendingPreprocessorEvents.get(result.prompt_id);
       if (buffered) {
         pendingPreprocessorEvents.delete(result.prompt_id);
         await applyPreparedPreprocessorImage(buffered);
-        return;
       }
-      await ipcListen("comfyui:controlnet_preprocessor", handlePreprocessorPreviewEvent);
     } catch {
       preprocessorPreviewStatus = "failed";
       preprocessorPreviewPromptId = null;
