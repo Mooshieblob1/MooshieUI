@@ -1,7 +1,37 @@
 //! Auto-deploy bundled MooshieUI custom nodes into ComfyUI's custom_nodes directory.
 //! The Python source is embedded at compile time and written to disk before ComfyUI starts.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
+
+#[derive(Clone, Copy)]
+struct RequiredCustomNodePackage {
+    name: &'static str,
+    git_url: &'static str,
+    verify_nodes: &'static [&'static str],
+}
+
+const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[
+    RequiredCustomNodePackage {
+        name: "comfyui_controlnet_aux",
+        git_url: "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
+        verify_nodes: &[
+            "CannyEdgePreprocessor",
+            "DepthAnythingV2Preprocessor",
+            "OpenposePreprocessor",
+            "LineArtPreprocessor",
+            "ScribblePreprocessor",
+            "HEDPreprocessor",
+            "FakeScribblePreprocessor",
+        ],
+    },
+    RequiredCustomNodePackage {
+        name: "ComfyUI-Anima-LLLite",
+        git_url: "https://github.com/kohya-ss/ComfyUI-Anima-LLLite.git",
+        verify_nodes: &["AnimaLLLiteApply"],
+    },
+];
 
 const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
 const TILED_DIFFUSION_PY: &str = include_str!("../../../comfyui-nodes/nodes_tiled_diffusion.py");
@@ -123,4 +153,271 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         custom_nodes.display()
     );
     Ok(())
+}
+
+/// Ensure all ControlNet custom-node packages used by MooshieUI presets are
+/// present before ComfyUI boots. Requirements are installed once per
+/// requirements.txt content hash, then reinstalled only if the file changes.
+pub async fn ensure_required_controlnet_nodes(
+    comfyui_path: &str,
+    venv_path: &str,
+) -> Result<(), String> {
+    let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
+    std::fs::create_dir_all(&custom_nodes).map_err(|e| {
+        format!(
+            "Failed to create ComfyUI custom_nodes directory at '{}': {}",
+            custom_nodes.display(),
+            e
+        )
+    })?;
+
+    for package in REQUIRED_CONTROLNET_PACKAGES {
+        ensure_custom_node_package(&custom_nodes, venv_path, *package).await?;
+    }
+
+    log::info!("Ensured required ControlNet custom node packages");
+    Ok(())
+}
+
+/// Verify that ComfyUI actually loaded every custom node class required by the
+/// built-in ControlNet presets. Directory presence alone is not enough because
+/// custom-node import failures leave the class missing from /object_info.
+pub async fn verify_required_controlnet_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+) -> Result<(), String> {
+    let mut missing = Vec::new();
+
+    for attempt in 0..5 {
+        missing = missing_required_controlnet_nodes(http_client, base_url).await?;
+        if missing.is_empty() {
+            log::info!("Verified required ControlNet custom node classes");
+            return Ok(());
+        }
+
+        if attempt < 4 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    Err(format!(
+        "Required ControlNet custom nodes failed to load: {}. Check the ComfyUI log for custom-node import errors.",
+        missing.join(", ")
+    ))
+}
+
+async fn ensure_custom_node_package(
+    custom_nodes: &Path,
+    venv_path: &str,
+    package: RequiredCustomNodePackage,
+) -> Result<(), String> {
+    let target_dir = custom_nodes.join(package.name);
+
+    if target_dir.exists() && !target_dir.is_dir() {
+        return Err(format!(
+            "Cannot install required custom node '{}': '{}' exists but is not a directory",
+            package.name,
+            target_dir.display()
+        ));
+    }
+
+    if !target_dir.exists() {
+        log::info!(
+            "Installing required custom node '{}' from {}",
+            package.name,
+            package.git_url
+        );
+        clone_custom_node(package.git_url, &target_dir).await?;
+    }
+
+    let requirements = target_dir.join("requirements.txt");
+    if requirements.exists() {
+        install_requirements_if_needed(&requirements, &target_dir, venv_path, package.name).await?;
+    }
+
+    Ok(())
+}
+
+async fn clone_custom_node(git_url: &str, target_dir: &Path) -> Result<(), String> {
+    let output = tokio::process::Command::new("git")
+        .args(["clone", "--depth=1", git_url])
+        .arg(target_dir)
+        .output()
+        .await
+        .map_err(|e| format!("git clone failed to start for {}: {}", git_url, e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "git clone failed for {}: {}",
+            git_url,
+            command_output_excerpt(&output)
+        ))
+    }
+}
+
+async fn install_requirements_if_needed(
+    requirements: &Path,
+    target_dir: &Path,
+    venv_path: &str,
+    package_name: &str,
+) -> Result<(), String> {
+    let req_hash = file_sha256(requirements)?;
+    let stamp_path = target_dir.join(".mooshieui-requirements.sha256");
+    if std::fs::read_to_string(&stamp_path)
+        .map(|s| s.trim() == req_hash)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    if venv_path.trim().is_empty() {
+        return Err(format!(
+            "Cannot install requirements for {}: ComfyUI venv_path is empty",
+            package_name
+        ));
+    }
+
+    log::info!(
+        "Installing requirements for required custom node {}",
+        package_name
+    );
+
+    let mut command = if let Some(uv_path) = find_uv_bin(venv_path).await {
+        let mut command = tokio::process::Command::new(uv_path);
+        command
+            .args(["pip", "install", "-r"])
+            .arg(requirements)
+            .env("VIRTUAL_ENV", venv_path);
+        command
+    } else {
+        let mut command = tokio::process::Command::new(resolve_pip_bin(venv_path));
+        command.args(["install", "-r"]).arg(requirements);
+        command
+    };
+
+    let output = command
+        .output()
+        .await
+        .map_err(|e| format!("Failed to install requirements for {}: {}", package_name, e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to install requirements for {}: {}",
+            package_name,
+            command_output_excerpt(&output)
+        ));
+    }
+
+    std::fs::write(&stamp_path, req_hash).map_err(|e| {
+        format!(
+            "Failed to write requirements stamp for {} at '{}': {}",
+            package_name,
+            stamp_path.display(),
+            e
+        )
+    })?;
+
+    Ok(())
+}
+
+async fn find_uv_bin(venv_path: &str) -> Option<PathBuf> {
+    let base = Path::new(venv_path)
+        .parent()
+        .unwrap_or(Path::new(venv_path));
+
+    #[cfg(target_os = "windows")]
+    let local_uv = base.join("bin").join("uv.exe");
+    #[cfg(not(target_os = "windows"))]
+    let local_uv = base.join("bin").join("uv");
+
+    if local_uv.exists() {
+        return Some(local_uv);
+    }
+
+    let global_uv = PathBuf::from("uv");
+    let status = tokio::process::Command::new(&global_uv)
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await;
+
+    match status {
+        Ok(status) if status.success() => Some(global_uv),
+        _ => None,
+    }
+}
+
+fn resolve_pip_bin(venv_path: &str) -> PathBuf {
+    let venv_base = Path::new(venv_path);
+    #[cfg(target_os = "windows")]
+    {
+        venv_base.join("Scripts").join("pip.exe")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        venv_base.join("bin").join("pip")
+    }
+}
+
+fn file_sha256(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| {
+        format!(
+            "Failed to read requirements file '{}': {}",
+            path.display(),
+            e
+        )
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn command_output_excerpt(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let combined = if stderr.trim().is_empty() {
+        stdout
+    } else {
+        stderr
+    };
+    let lines: Vec<&str> = combined.lines().collect();
+    let start = lines.len().saturating_sub(20);
+    let excerpt = lines[start..].join("\n");
+    if excerpt.trim().is_empty() {
+        format!("process exited with {}", output.status)
+    } else {
+        excerpt
+    }
+}
+
+async fn missing_required_controlnet_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+) -> Result<Vec<String>, String> {
+    let base_url = base_url.trim_end_matches('/');
+    let mut missing = Vec::new();
+
+    for package in REQUIRED_CONTROLNET_PACKAGES {
+        for node_class in package.verify_nodes {
+            let url = format!("{}/object_info/{}", base_url, node_class);
+            let available = match http_client.get(&url).send().await {
+                Ok(response) if response.status().is_success() => {
+                    let value = response.json::<serde_json::Value>().await.map_err(|e| {
+                        format!("Failed to parse object_info for {}: {}", node_class, e)
+                    })?;
+                    value.get(*node_class).is_some()
+                }
+                _ => false,
+            };
+
+            if !available {
+                missing.push(format!("{} ({})", node_class, package.name));
+            }
+        }
+    }
+
+    Ok(missing)
 }

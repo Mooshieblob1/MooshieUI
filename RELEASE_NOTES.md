@@ -1,3 +1,15 @@
+## What's New in v1.1.10
+
+### Docker ControlNet Startup Fix
+- **Required ControlNet nodes are installed before ComfyUI boots** — the Docker image now bakes in `comfyui_controlnet_aux` and `ComfyUI-Anima-LLLite`, so Anima LLLite generations no longer fail with `Node 'AnimaLLLiteApply' not found` after a pod redeploy.
+- **Startup verification on every managed restart** — MooshieUI now checks required ControlNet and Anima node classes after ComfyUI starts and before reporting the server as ready, catching missing or broken custom-node imports early.
+- **Desktop/server self-healing install path** — managed ComfyUI launches now ensure required ControlNet custom-node packages exist and install their Python requirements when needed.
+
+### Release Pipeline
+- **Docker publish cache export no longer blocks releases** — release Docker builds now use a smaller, non-fatal GitHub Actions cache export while keeping the actual GHCR image push required.
+
+---
+
 ## What's New in v1.1.9
 
 ### Anima LLLite ControlNet
