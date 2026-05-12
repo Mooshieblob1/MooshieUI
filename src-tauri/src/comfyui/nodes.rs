@@ -33,6 +33,15 @@ const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[
     },
 ];
 
+const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
+    "MooshieSaveImage",
+    "MooshieFaceDetailer",
+    "MooshieSoftGuidance",
+    "MooshieSmartGuidance",
+    "NanoSaurLoader",
+    "ApplyTiledDiffusion",
+];
+
 const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
 const TILED_DIFFUSION_PY: &str = include_str!("../../../comfyui-nodes/nodes_tiled_diffusion.py");
 const GUIDANCE_PY: &str = include_str!("../../../comfyui-nodes/nodes_guidance.py");
@@ -202,6 +211,34 @@ pub async fn verify_required_controlnet_nodes(
 
     Err(format!(
         "Required ControlNet custom nodes failed to load: {}. Check the ComfyUI log for custom-node import errors.",
+        missing.join(", ")
+    ))
+}
+
+/// Verify that ComfyUI loaded the MooshieUI custom node classes required by
+/// every generated workflow. If ComfyUI was already running when nodes were
+/// deployed to disk, the files exist but /object_info will still be missing
+/// these classes until the server is restarted.
+pub async fn verify_required_mooshie_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+) -> Result<(), String> {
+    let mut missing = Vec::new();
+
+    for attempt in 0..5 {
+        missing = missing_mooshie_nodes(http_client, base_url).await?;
+        if missing.is_empty() {
+            log::info!("Verified required MooshieUI custom node classes");
+            return Ok(());
+        }
+
+        if attempt < 4 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    Err(format!(
+        "This ComfyUI server has not loaded required MooshieUI custom nodes: {}. If MooshieUI just installed or updated the nodes, fully stop ComfyUI/python.exe, then start MooshieUI again so the custom nodes load. If this is a remote or external ComfyUI server, install the MooshieUI custom nodes there and restart that server.",
         missing.join(", ")
     ))
 }
@@ -397,27 +434,49 @@ async fn missing_required_controlnet_nodes(
     http_client: &reqwest::Client,
     base_url: &str,
 ) -> Result<Vec<String>, String> {
-    let base_url = base_url.trim_end_matches('/');
     let mut missing = Vec::new();
 
     for package in REQUIRED_CONTROLNET_PACKAGES {
         for node_class in package.verify_nodes {
-            let url = format!("{}/object_info/{}", base_url, node_class);
-            let available = match http_client.get(&url).send().await {
-                Ok(response) if response.status().is_success() => {
-                    let value = response.json::<serde_json::Value>().await.map_err(|e| {
-                        format!("Failed to parse object_info for {}: {}", node_class, e)
-                    })?;
-                    value.get(*node_class).is_some()
-                }
-                _ => false,
-            };
-
-            if !available {
+            if !object_info_has_node_class(http_client, base_url, node_class).await? {
                 missing.push(format!("{} ({})", node_class, package.name));
             }
         }
     }
 
     Ok(missing)
+}
+
+async fn missing_mooshie_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+) -> Result<Vec<String>, String> {
+    let mut missing = Vec::new();
+
+    for node_class in REQUIRED_MOOSHIE_NODE_CLASSES {
+        if !object_info_has_node_class(http_client, base_url, node_class).await? {
+            missing.push((*node_class).to_string());
+        }
+    }
+
+    Ok(missing)
+}
+
+async fn object_info_has_node_class(
+    http_client: &reqwest::Client,
+    base_url: &str,
+    node_class: &str,
+) -> Result<bool, String> {
+    let base_url = base_url.trim_end_matches('/');
+    let url = format!("{}/object_info/{}", base_url, node_class);
+    match http_client.get(&url).send().await {
+        Ok(response) if response.status().is_success() => {
+            let value = response
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|e| format!("Failed to parse object_info for {}: {}", node_class, e))?;
+            Ok(value.get(node_class).is_some())
+        }
+        _ => Ok(false),
+    }
 }

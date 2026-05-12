@@ -64,6 +64,7 @@
     if (mode === "prepend") return "Prepend";
     if (mode === "append") return "Append";
     if (mode === "wildcard") return "Wildcard";
+    if (mode === "wildcard_ordered") return "Ordered";
     return "";
   }
 
@@ -71,6 +72,7 @@
     if (mode === "prepend") return "↑";
     if (mode === "append") return "↓";
     if (mode === "wildcard") return "🎲";
+    if (mode === "wildcard_ordered") return "1→";
     return "";
   }
 
@@ -205,7 +207,7 @@
           {#if activeTab === "styles"}
             Bundle artists with per-tag and overall weights. Active styles inject their tags into generations without touching your prompt textbox.
           {:else}
-            Store reusable prompt fragments. On activation, choose whether to prepend, append, or use as a wildcard (one random entry per generation).
+            Store reusable prompt fragments. On activation, choose whether to prepend, append, or use as a random or ordered wildcard.
           {/if}
         </p>
       </div>
@@ -447,7 +449,7 @@
         {#if activeTab === "styles"}
           Plain text: one artist per line as <code class="font-mono">tag</code> or <code class="font-mono">tag:weight</code>. Lines starting with <code class="font-mono">#</code> are ignored. Filename becomes the style name.
         {:else}
-          Plain text: filename becomes the preset name; file contents are used verbatim. For wildcard mode, one line per choice (commas within a line stay grouped).
+          Plain text: filename becomes the preset name; file contents are used verbatim. For wildcard modes, one line per choice (commas within a line stay grouped).
         {/if}
         Use the <strong>Export</strong> button on each {activeTab === "styles" ? "style" : "preset"} to download it.
       </p>

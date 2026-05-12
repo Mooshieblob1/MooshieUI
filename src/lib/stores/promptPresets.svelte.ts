@@ -12,6 +12,8 @@
  *                  keep tags grouped together, so `1girl, solo` on one line
  *                  is picked as the whole block rather than "1girl" or "solo"
  *                  in isolation.
+ *   - "wildcard_ordered" — picks the next newline-separated tag group each
+ *                  generation, wrapping back to the first line after the last.
  *
  * Like Artist Styles, presets live outside the prompt textbox — users see
  * badges, not tags — and survive reloads via localStorage.
@@ -24,7 +26,7 @@ const EXPORT_VERSION = 1;
 
 import { triggerSync } from "../utils/syncTrigger.js";
 
-export type PresetMode = "prepend" | "append" | "wildcard";
+export type PresetMode = "prepend" | "append" | "wildcard" | "wildcard_ordered";
 
 export interface PromptPreset {
   id: string;
@@ -38,6 +40,8 @@ export interface PromptPreset {
 export interface ActivePreset {
   id: string;
   mode: PresetMode;
+  /** Next choice index for ordered wildcard mode. */
+  wildcardIndex?: number;
 }
 
 interface PersistedState {
@@ -59,6 +63,33 @@ function sanitizePreset(raw: any): PromptPreset | null {
     createdAt: typeof raw.createdAt === "number" && raw.createdAt > 0 ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "number" && raw.updatedAt > 0 ? raw.updatedAt : now,
   };
+}
+
+function isPresetMode(mode: unknown): mode is PresetMode {
+  return mode === "prepend" || mode === "append" || mode === "wildcard" || mode === "wildcard_ordered";
+}
+
+function sanitizeStoredIndex(index: unknown): number {
+  if (typeof index !== "number" || !Number.isFinite(index) || index < 0) return 0;
+  return Math.trunc(index);
+}
+
+function normalizeChoiceIndex(index: unknown, length: number): number {
+  if (length <= 0) return 0;
+  const stored = sanitizeStoredIndex(index);
+  return stored % length;
+}
+
+function activePresetWithMode(id: string, mode: PresetMode, wildcardIndex = 0): ActivePreset {
+  if (mode === "wildcard_ordered") {
+    return { id, mode, wildcardIndex: sanitizeStoredIndex(wildcardIndex) };
+  }
+  return { id, mode };
+}
+
+function sanitizeActivePreset(raw: any, validIds: Set<string>): ActivePreset | null {
+  if (!raw || typeof raw.id !== "string" || !validIds.has(raw.id) || !isPresetMode(raw.mode)) return null;
+  return activePresetWithMode(raw.id, raw.mode, raw.wildcardIndex);
 }
 
 /**
@@ -133,13 +164,7 @@ class PromptPresetsStore {
         const parsed = JSON.parse(raw) as ActivePreset[];
         if (Array.isArray(parsed)) {
           const ids = new Set(this.presets.map((p) => p.id));
-          this.active = parsed.filter(
-            (a): a is ActivePreset =>
-              !!a &&
-              typeof a.id === "string" &&
-              ids.has(a.id) &&
-              (a.mode === "prepend" || a.mode === "append" || a.mode === "wildcard"),
-          );
+          this.active = parsed.map((a) => sanitizeActivePreset(a, ids)).filter(Boolean) as ActivePreset[];
         }
       }
     } catch (e) {
@@ -182,28 +207,46 @@ class PromptPresetsStore {
     return this.active.some((a) => a.id === id);
   }
 
-  get activeEntries(): Array<{ preset: PromptPreset; mode: PresetMode }> {
+  get activeEntries(): Array<{ preset: PromptPreset; mode: PresetMode; wildcardIndex?: number }> {
     const byId = new Map(this.presets.map((p) => [p.id, p]));
-    const out: Array<{ preset: PromptPreset; mode: PresetMode }> = [];
+    const out: Array<{ preset: PromptPreset; mode: PresetMode; wildcardIndex?: number }> = [];
     for (const a of this.active) {
       const preset = byId.get(a.id);
-      if (preset) out.push({ preset, mode: a.mode });
+      if (preset) out.push({ preset, mode: a.mode, wildcardIndex: a.wildcardIndex });
     }
     return out;
   }
 
   /**
-   * Resolve active presets into concrete text fragments. Wildcard mode picks
-   * one random choice from the preset content. Called once per generation.
+   * Resolve active presets into concrete text fragments. Wildcard modes pick
+   * one choice from the preset content. Called once per generation.
    */
   resolve(): { prepend: string; append: string } {
     const prepends: string[] = [];
     const appends: string[] = [];
-    for (const { preset, mode } of this.activeEntries) {
-      if (mode === "wildcard") {
+    const byId = new Map(this.presets.map((p) => [p.id, p]));
+    let nextActive: ActivePreset[] | null = null;
+
+    for (const [activeIndex, activePreset] of this.active.entries()) {
+      const preset = byId.get(activePreset.id);
+      if (!preset) continue;
+      const mode = activePreset.mode;
+
+      if (mode === "wildcard" || mode === "wildcard_ordered") {
         const choices = splitWildcardChoices(preset.content);
         if (choices.length === 0) continue;
-        const picked = choices[Math.floor(Math.random() * choices.length)];
+        let picked: string;
+        if (mode === "wildcard_ordered") {
+          const choiceIndex = normalizeChoiceIndex(activePreset.wildcardIndex, choices.length);
+          picked = choices[choiceIndex];
+          const nextIndex = (choiceIndex + 1) % choices.length;
+          if (activePreset.wildcardIndex !== nextIndex) {
+            nextActive ??= this.active.slice();
+            nextActive[activeIndex] = { ...activePreset, wildcardIndex: nextIndex };
+          }
+        } else {
+          picked = choices[Math.floor(Math.random() * choices.length)];
+        }
         // Wildcard picks are appended by convention (same semantic weight
         // regardless of position within the prompt).
         appends.push(picked);
@@ -215,6 +258,11 @@ class PromptPresetsStore {
         if (text) appends.push(text);
       }
     }
+    if (nextActive) {
+      this.active = nextActive;
+      this.saveActive();
+    }
+
     return {
       prepend: prepends.join(", "),
       append: appends.join(", "),
@@ -284,7 +332,7 @@ class PromptPresetsStore {
   activate(id: string, mode: PresetMode) {
     if (!this.getById(id)) return;
     const filtered = this.active.filter((a) => a.id !== id);
-    this.active = [...filtered, { id, mode }];
+    this.active = [...filtered, activePresetWithMode(id, mode)];
     this.saveActive();
   }
 
@@ -296,7 +344,7 @@ class PromptPresetsStore {
 
   setMode(id: string, mode: PresetMode) {
     if (!this.isActive(id)) return;
-    this.active = this.active.map((a) => (a.id === id ? { ...a, mode } : a));
+    this.active = this.active.map((a) => (a.id === id ? activePresetWithMode(a.id, mode, a.wildcardIndex) : a));
     this.saveActive();
   }
 
@@ -441,11 +489,7 @@ class PromptPresetsStore {
         const parsed = JSON.parse(rawActive) as ActivePreset[];
         if (Array.isArray(parsed)) {
           const ids = new Set(this.presets.map((p) => p.id));
-          this.active = parsed.filter(
-            (a): a is ActivePreset =>
-              !!a && typeof a.id === "string" && ids.has(a.id) &&
-              (a.mode === "prepend" || a.mode === "append" || a.mode === "wildcard"),
-          );
+          this.active = parsed.map((a) => sanitizeActivePreset(a, ids)).filter(Boolean) as ActivePreset[];
         }
       }
     } catch (e) {

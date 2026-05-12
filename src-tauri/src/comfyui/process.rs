@@ -155,7 +155,14 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     if config.server_mode != ServerMode::AutoLaunch {
         // Remote mode: assume the configured worker is reachable and mark it
         // idle so `submit_prompt` can dispatch to it.  If the server is
-        // actually down, the POST /prompt will surface the error.
+        // actually down, the POST /prompt will surface the error. If it is
+        // reachable, verify the MooshieUI node required by every workflow now.
+        let health_url = format!("{}/system_stats", config.server_url);
+        if state.http_client.get(&health_url).send().await.is_ok() {
+            super::nodes::verify_required_mooshie_nodes(&state.http_client, &config.server_url)
+                .await
+                .map_err(AppError::ProcessSpawnFailed)?;
+        }
         mark_legacy_worker_idle(state).await;
         return Ok(StartResult::Skipped);
     }
@@ -163,6 +170,9 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     // Check if something is already listening on the target port (e.g. a container)
     let health_url = format!("{}/system_stats", config.server_url);
     if state.http_client.get(&health_url).send().await.is_ok() {
+        super::nodes::verify_required_mooshie_nodes(&state.http_client, &config.server_url)
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
         super::nodes::verify_required_controlnet_nodes(&state.http_client, &config.server_url)
             .await
             .map_err(AppError::ProcessSpawnFailed)?;
@@ -536,6 +546,9 @@ pub async fn wait_for_ready(state: &AppState, timeout_secs: u64) -> Result<(), A
 
         // Check if the server is responding
         if state.http_client.get(&url).send().await.is_ok() {
+            super::nodes::verify_required_mooshie_nodes(&state.http_client, &base_url)
+                .await
+                .map_err(AppError::ProcessSpawnFailed)?;
             super::nodes::verify_required_controlnet_nodes(&state.http_client, &base_url)
                 .await
                 .map_err(AppError::ProcessSpawnFailed)?;
@@ -741,6 +754,9 @@ pub async fn start_worker_process(
     // Check if something is already listening on the worker's port
     let health_url = format!("{}/system_stats", worker.base_url);
     if state.http_client.get(&health_url).send().await.is_ok() {
+        super::nodes::verify_required_mooshie_nodes(&state.http_client, &worker.base_url)
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
         super::nodes::verify_required_controlnet_nodes(&state.http_client, &worker.base_url)
             .await
             .map_err(AppError::ProcessSpawnFailed)?;
@@ -900,6 +916,14 @@ pub async fn wait_for_worker_ready(
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         if state.http_client.get(&url).send().await.is_ok() {
+            if let Err(e) =
+                super::nodes::verify_required_mooshie_nodes(&state.http_client, &worker.base_url)
+                    .await
+            {
+                let mut status = worker.status.write().await;
+                *status = WorkerStatus::Error;
+                return Err(AppError::ProcessSpawnFailed(e));
+            }
             if let Err(e) =
                 super::nodes::verify_required_controlnet_nodes(&state.http_client, &worker.base_url)
                     .await

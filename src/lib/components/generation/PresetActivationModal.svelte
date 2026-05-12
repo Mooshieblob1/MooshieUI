@@ -104,6 +104,27 @@
             </span>
           </span>
         </button>
+
+        <button
+          type="button"
+          class="flex items-start gap-3 rounded-lg border {currentMode === 'wildcard_ordered' ? 'border-indigo-500 bg-indigo-500/10' : 'border-neutral-700 bg-neutral-800/60'} p-3 text-left hover:border-indigo-500 {choiceCount < 2 ? 'opacity-60' : ''}"
+          onclick={() => pick("wildcard_ordered")}
+          disabled={choiceCount < 1}
+        >
+          <span class="text-lg leading-none text-indigo-300">1→</span>
+          <span class="flex-1">
+            <span class="block text-sm font-medium text-neutral-100">Wildcard (in order)</span>
+            <span class="block text-[11px] text-neutral-500">
+              {#if choiceCount === 0}
+                Add entries on separate lines first.
+              {:else if choiceCount === 1}
+                Only one option — will pick that every time.
+              {:else}
+                Use option 1, then 2, through {choiceCount}, then wrap.
+              {/if}
+            </span>
+          </span>
+        </button>
       </div>
 
       <div class="mt-4 flex justify-end">

@@ -99,12 +99,13 @@
         </button>
       {/each}
       {#each promptPresets.activeEntries as entry (entry.preset.id)}
-        {@const icon = entry.mode === "prepend" ? "↑" : entry.mode === "append" ? "↓" : "🎲"}
+        {@const icon = entry.mode === "prepend" ? "↑" : entry.mode === "append" ? "↓" : entry.mode === "wildcard_ordered" ? "1→" : "🎲"}
+        {@const modeLabel = entry.mode === "wildcard_ordered" ? "ordered wildcard" : entry.mode}
         <button
           type="button"
           onclick={() => promptPresets.deactivate(entry.preset.id)}
           class="shrink-0 inline-flex items-center gap-1 rounded-full border border-indigo-500/50 bg-indigo-500/10 text-indigo-200 hover:bg-red-500/15 hover:border-red-500/50 hover:text-red-200 px-2 py-0.5 text-[10px] transition-colors"
-          title={`Click to deactivate — ${entry.mode}`}
+          title={`Click to deactivate — ${modeLabel}`}
           aria-label={`Deactivate preset ${entry.preset.name}`}
         >
           <span class="leading-none">⚡</span>

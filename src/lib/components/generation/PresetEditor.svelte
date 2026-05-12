@@ -107,7 +107,7 @@
           <p class="mt-1 text-[10px] text-neutral-500">
             <span class="text-indigo-300">Prepend / Append:</span> whole content is injected as-is.
             <br />
-            <span class="text-indigo-300">Wildcard:</span> one line is picked at random per generation; commas within a line stay grouped.
+            <span class="text-indigo-300">Wildcard:</span> pick one line at random, or cycle through the lines in order, one generation at a time.
             <br />
             <span class="text-neutral-400">Tip:</span> autocomplete suggestions match the active model's tag list.
           </p>
