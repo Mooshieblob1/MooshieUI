@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{future::Future, pin::Pin};
 
 use axum::extract::{ConnectInfo, Path, State as AxumState};
 use axum::http::{HeaderMap, StatusCode};
@@ -23,7 +24,6 @@ use crate::auth::AuthState;
 use crate::commands;
 use crate::config;
 use crate::state::AppState;
-use crate::user_prefs;
 
 /// Frontend assets embedded at compile time from `../dist/`. Used as a
 /// fallback when the on-disk dist directory isn't found (e.g. installed
@@ -42,6 +42,18 @@ pub struct WebState {
 }
 
 pub type SharedState = Arc<WebState>;
+
+type BackgroundTask = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+#[cfg(feature = "desktop")]
+fn spawn_background(task: BackgroundTask) {
+    tauri::async_runtime::spawn(task);
+}
+
+#[cfg(not(feature = "desktop"))]
+fn spawn_background(task: BackgroundTask) {
+    tokio::spawn(task);
+}
 
 // ---------------------------------------------------------------------------
 // Auth helpers — role-based access for LAN vs localhost
@@ -215,14 +227,7 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
 
     let cleanup_state = state;
     let mut cleanup_rx = cleanup_state.event_tx.subscribe();
-    // NOTE: this function is invoked from Tauri's `.setup()` in the desktop
-    // build, which runs synchronously on the main init thread *before* any
-    // Tokio runtime is entered on that thread. Calling `tokio::spawn` there
-    // panics with "there is no reactor running..." (regression observed in
-    // v1.0.6 on Windows — installer/app exits immediately). The server build
-    // (`feature = "server"`) does not link `tauri` and always calls this
-    // from `#[tokio::main]`, so `tokio::spawn` is safe there.
-    let cleanup_fut = async move {
+    spawn_background(Box::pin(async move {
         loop {
             match cleanup_rx.recv().await {
                 Ok(evt) => {
@@ -289,11 +294,7 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
-    };
-    #[cfg(feature = "desktop")]
-    tauri::async_runtime::spawn(cleanup_fut);
-    #[cfg(not(feature = "desktop"))]
-    tokio::spawn(cleanup_fut);
+    }));
 }
 
 /// Spawn the stuck-worker watchdog.  Every 60s, checks for workers that have
@@ -306,10 +307,7 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
 /// app init which calls both).
 pub fn spawn_stuck_worker_watchdog(state: Arc<AppState>) {
     let watchdog_state = state;
-    // See note in `spawn_prompt_cleanup_reactor` above — desktop init runs
-    // outside a Tokio runtime context, so we must use Tauri's runtime handle
-    // there. Server build has no tauri crate but is always inside tokio::main.
-    let watchdog_fut = async move {
+    spawn_background(Box::pin(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         let max_stuck_secs = 600u64;
         loop {
@@ -348,47 +346,7 @@ pub fn spawn_stuck_worker_watchdog(state: Arc<AppState>) {
                 }
             }
         }
-    };
-    #[cfg(feature = "desktop")]
-    tauri::async_runtime::spawn(watchdog_fut);
-    #[cfg(not(feature = "desktop"))]
-    tokio::spawn(watchdog_fut);
-}
-
-async fn has_active_comfyui_ws_bridge(state: &Arc<AppState>) -> bool {
-    {
-        let mut handle = state.ws_handle.lock().await;
-        let finished = handle.as_ref().map(|h| h.is_finished()).unwrap_or(false);
-        if finished {
-            handle.take();
-        } else if handle.is_some() {
-            return true;
-        }
-    }
-
-    for worker in &state.gpu_manager.workers {
-        let mut handle = worker.ws_handle.lock().await;
-        let finished = handle.as_ref().map(|h| h.is_finished()).unwrap_or(false);
-        if finished {
-            handle.take();
-        } else if handle.is_some() {
-            return true;
-        }
-    }
-
-    false
-}
-
-async fn ensure_comfyui_ws_bridge(
-    state: &Arc<AppState>,
-    event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
-) -> Result<(), crate::error::AppError> {
-    if has_active_comfyui_ws_bridge(state).await {
-        log::debug!("ComfyUI WebSocket bridge already active; skipping reconnect");
-        return Ok(());
-    }
-
-    crate::comfyui::websocket::connect_websocket_headless(state, event_tx).await
+    }));
 }
 
 pub async fn start_server(
@@ -442,11 +400,6 @@ pub async fn start_server(
         .route(
             "/internal-api/_storage/set_limit",
             post(storage_set_limit_handler),
-        )
-        // Per-user preferences (synced across devices/OS)
-        .route(
-            "/internal-api/_user/prefs",
-            get(user_prefs_get_handler).put(user_prefs_set_handler),
         )
         // Health check (unauthenticated, for K8s probes)
         .route("/health", get(health_handler))
@@ -566,42 +519,6 @@ pub async fn start_server(
                         .await;
                     match res {
                         Ok((worker_id, response)) => {
-                            if drain_state.prompt_queue.is_cancelled(&hp.placeholder_id) {
-                                if let Some(worker) =
-                                    drain_state.gpu_manager.workers.get(worker_id as usize)
-                                {
-                                    let _ = drain_state
-                                        .http_client
-                                        .post(format!("{}/queue", worker.base_url))
-                                        .json(
-                                            &serde_json::json!({ "delete": [response.prompt_id] }),
-                                        )
-                                        .send()
-                                        .await;
-                                    let _ =
-                                        drain_state.gpu_manager.interrupt(Some(worker_id)).await;
-                                    let _ = drain_state
-                                        .http_client
-                                        .post(format!("{}/free", worker.base_url))
-                                        .json(&serde_json::json!({
-                                            "unload_models": true,
-                                            "free_memory": true,
-                                        }))
-                                        .send()
-                                        .await;
-                                }
-                                drain_state
-                                    .gpu_manager
-                                    .mark_worker_error_then_idle(worker_id)
-                                    .await;
-                                *hp.result.lock().await =
-                                    Some(Err("generation.error_cancelled".to_string()));
-                                drain_state.broadcast_queue_positions();
-                                drain_state.prompt_queue.drain_notify.notify_one();
-                                hp.submitted.notify_one();
-                                continue;
-                            }
-
                             // Bind alias immediately to prevent race with WebSocket events
                             let was_deferred = drain_state
                                 .prompt_queue
@@ -1546,6 +1463,52 @@ async fn dispatch_command(
             *current = new_config;
             Ok(serde_json::json!(null))
         }
+        "check_attention_backend" => {
+            let (venv_path, current) = {
+                let config = state.config.read().await;
+                (config.venv_path.clone(), config.attention_backend.clone())
+            };
+
+            let uv = crate::commands::api::resolve_uv_bin_pub(&venv_path);
+            let mut venv_packages = Vec::new();
+            let venv_python = {
+                #[cfg(target_os = "windows")]
+                {
+                    std::path::Path::new(&venv_path)
+                        .join("Scripts")
+                        .join("python.exe")
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    std::path::Path::new(&venv_path).join("bin").join("python")
+                }
+            };
+
+            if uv.exists() {
+                if let Ok(output) = tokio::process::Command::new(&uv)
+                    .args(["pip", "list", "--python", &venv_python.to_string_lossy()])
+                    .output()
+                    .await
+                {
+                    if output.status.success() {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        let known = ["sageattention", "flash-attn", "triton"];
+                        for line in stdout.lines() {
+                            let pkg = line.split_whitespace().next().unwrap_or("").to_lowercase();
+                            if known.iter().any(|k| pkg == *k) {
+                                venv_packages.push(pkg);
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(serde_json::json!({
+                "current": current,
+                "venv_packages": venv_packages,
+                "compute_capability": crate::commands::api::detect_compute_capability_pub(),
+            }))
+        }
         "switch_to_app_mode" => {
             #[cfg(not(feature = "desktop"))]
             {
@@ -1605,15 +1568,15 @@ async fn dispatch_command(
         }
         "start_comfyui" => {
             use crate::comfyui::process::{self, StartResult};
+            use crate::comfyui::websocket;
             let result = process::start_comfyui_process(&state)
                 .await
                 .map_err(|e| e.to_string())?;
             let event_tx = state.event_tx.clone();
             match result {
                 StartResult::AlreadyRunning => {
-                    // Ensure progress events flow to SSE without disrupting an
-                    // existing bridge for an in-flight generation.
-                    if let Err(e) = ensure_comfyui_ws_bridge(&state, event_tx.clone()).await {
+                    // Connect websocket so progress events flow to SSE
+                    if let Err(e) = websocket::connect_websocket_headless(&state, event_tx).await {
                         log::error!("Failed to connect WebSocket (headless): {}", e);
                     }
                     state.broadcast("comfyui:server_ready", serde_json::json!(null));
@@ -1625,10 +1588,12 @@ async fn dispatch_command(
                         match process::wait_for_ready(&state_clone, 120).await {
                             Ok(()) => {
                                 log::info!("ComfyUI server is ready (browser mode)");
-                                // Ensure progress events flow to SSE without
-                                // replacing an existing bridge.
-                                if let Err(e) =
-                                    ensure_comfyui_ws_bridge(&state_clone, event_tx.clone()).await
+                                // Connect websocket so progress events flow to SSE
+                                if let Err(e) = websocket::connect_websocket_headless(
+                                    &state_clone,
+                                    event_tx.clone(),
+                                )
+                                .await
                                 {
                                     log::error!("Failed to connect WebSocket (headless): {}", e);
                                 }
@@ -1653,8 +1618,8 @@ async fn dispatch_command(
                     Ok(serde_json::json!("spawned"))
                 }
                 StartResult::Skipped => {
-                    // Remote mode — connect websocket directly if no bridge is active.
-                    if let Err(e) = ensure_comfyui_ws_bridge(&state, event_tx.clone()).await {
+                    // Remote mode — connect websocket directly
+                    if let Err(e) = websocket::connect_websocket_headless(&state, event_tx).await {
                         log::error!("Failed to connect WebSocket (headless): {}", e);
                     }
                     state.broadcast("comfyui:server_ready", serde_json::json!(null));
@@ -1832,13 +1797,7 @@ async fn dispatch_command(
             Ok(serde_json::json!({ "images": images }))
         }
         "interrupt_generation" => {
-            // Optional: a specific placeholder prompt_id to cancel. If absent,
-            // every running worker is interrupted (legacy behaviour).
-            let prompt_id = args.get("promptId").and_then(|v| v.as_str());
-            state
-                .interrupt_prompt(prompt_id)
-                .await
-                .map_err(|e| e.to_string())?;
+            state.interrupt().await.map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
         }
         "clear_all_queues" => {
@@ -1876,7 +1835,7 @@ async fn dispatch_command(
                         if !pending_ids.is_empty() {
                             let _ = state
                                 .http_client
-                                .post(&format!("{}/queue", worker.base_url))
+                                .post(format!("{}/queue", worker.base_url))
                                 .json(&serde_json::json!({ "delete": pending_ids }))
                                 .send()
                                 .await;
@@ -2014,13 +1973,6 @@ async fn dispatch_command(
             let params: crate::comfyui::types::GenerationParams =
                 serde_json::from_value(args["params"].clone())
                     .map_err(|e| format!("Invalid params: {}", e))?;
-
-            // Validate inputs (e.g. img2img/inpainting/refine without an image,
-            // ControlNet enabled without a reference image). Returning the
-            // friendly error here avoids the cryptic `[Errno 21] Is a directory`
-            // crash when ComfyUI's LoadImage node receives an empty filename.
-            crate::templates::validate_generation_params(&params)?;
-
             let seed = if params.seed < 0 {
                 (rand::random::<u64>() >> 1) as i64
             } else {
@@ -2113,38 +2065,6 @@ async fn dispatch_command(
                         .await
                     {
                         Ok((worker_id, response)) => {
-                            if bg_state.prompt_queue.is_cancelled(&bg_placeholder) {
-                                if let Some(worker) =
-                                    bg_state.gpu_manager.workers.get(worker_id as usize)
-                                {
-                                    let _ = bg_state
-                                        .http_client
-                                        .post(format!("{}/queue", worker.base_url))
-                                        .json(
-                                            &serde_json::json!({ "delete": [response.prompt_id] }),
-                                        )
-                                        .send()
-                                        .await;
-                                    let _ = bg_state.gpu_manager.interrupt(Some(worker_id)).await;
-                                    let _ = bg_state
-                                        .http_client
-                                        .post(format!("{}/free", worker.base_url))
-                                        .json(&serde_json::json!({
-                                            "unload_models": true,
-                                            "free_memory": true,
-                                        }))
-                                        .send()
-                                        .await;
-                                }
-                                bg_state
-                                    .gpu_manager
-                                    .mark_worker_error_then_idle(worker_id)
-                                    .await;
-                                bg_state.broadcast_queue_positions();
-                                bg_state.prompt_queue.drain_notify.notify_one();
-                                return;
-                            }
-
                             let was_deferred = bg_state
                                 .prompt_queue
                                 .bind_alias(&bg_placeholder, &response.prompt_id);
@@ -2202,10 +2122,16 @@ async fn dispatch_command(
             }))
         }
         "generate_controlnet_preprocessor_preview" => {
-            let image = args["image"].as_str().unwrap_or("").trim().to_string();
+            crate::temp_images::cleanup(300);
+
+            let image = args["image"]
+                .as_str()
+                .ok_or("Missing image")?
+                .trim()
+                .to_string();
             let preprocessor = args["preprocessor"]
                 .as_str()
-                .unwrap_or("")
+                .ok_or("Missing preprocessor")?
                 .trim()
                 .to_string();
 
@@ -2220,42 +2146,24 @@ async fn dispatch_command(
                 &image,
                 &preprocessor,
             );
-            let placeholder_id = format!("cnprev-{}", uuid::Uuid::new_v4());
-            state.prompt_queue.insert(&placeholder_id, None);
+            let timeout = std::time::Duration::from_secs(120);
+            let (worker_id, response) = state
+                .gpu_manager
+                .submit_prompt(workflow, &state.client_id, timeout)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            state
+                .prompt_queue
+                .insert(&response.prompt_id, username.map(|s| s.to_string()));
+            state
+                .prompt_queue
+                .set_worker(&response.prompt_id, worker_id);
             state.broadcast_queue_positions();
 
-            let bg_state = Arc::clone(&state);
-            let bg_placeholder = placeholder_id.clone();
-            tokio::spawn(async move {
-                let timeout = std::time::Duration::from_secs(120);
-                match bg_state
-                    .gpu_manager
-                    .submit_prompt(workflow, &bg_state.client_id, timeout)
-                    .await
-                {
-                    Ok((worker_id, response)) => {
-                        bg_state
-                            .prompt_queue
-                            .bind_alias(&bg_placeholder, &response.prompt_id);
-                        bg_state.prompt_queue.set_worker(&bg_placeholder, worker_id);
-                        bg_state.broadcast_queue_positions();
-                    }
-                    Err(e) => {
-                        log::error!("[cnprev] submission failed for {}: {}", bg_placeholder, e);
-                        bg_state.prompt_queue.finish(&bg_placeholder);
-                        bg_state.broadcast_queue_positions();
-                        let _ = bg_state.event_tx.send(crate::state::BroadcastEvent {
-                            event: "comfyui:execution_error".to_string(),
-                            payload: serde_json::json!({
-                                "prompt_id": bg_placeholder,
-                                "error": e.to_string(),
-                            }),
-                        });
-                    }
-                }
-            });
-
-            Ok(serde_json::json!({ "prompt_id": placeholder_id }))
+            Ok(serde_json::json!({
+                "prompt_id": response.prompt_id,
+            }))
         }
         "delete_queue_item" => {
             let prompt_id = args["promptId"].as_str().ok_or("Missing promptId")?;
@@ -3309,15 +3217,17 @@ async fn dispatch_command(
 
             // Download with progress broadcast
             let event_tx = state.event_tx.clone();
-            let mut req = state.http_client.get(&url);
-            if let Some(token) = crate::comfyui::client::huggingface_token_for_url(&url) {
-                req = req.bearer_auth(token);
-            }
-            let resp = req.send().await.map_err(|e| e.to_string())?;
+            let resp = state
+                .http_client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
             if !resp.status().is_success() {
-                return Err(crate::comfyui::client::download_status_error_message(
-                    &url,
-                    resp.status(),
+                return Err(format!(
+                    "Failed to download {}: HTTP {}",
+                    url,
+                    resp.status()
                 ));
             }
             let total = resp.content_length().unwrap_or(0);
@@ -3511,15 +3421,6 @@ async fn dispatch_command(
             let encoded: Vec<serde_json::Value> =
                 bytes.iter().map(|b| serde_json::json!(*b)).collect();
             Ok(serde_json::Value::Array(encoded))
-        }
-
-        // --- GPU detection ---
-        // Mirrors the desktop `get_compute_capability` Tauri command. Used by
-        // the recommended-models dropdown to gate FP8-only entries to GPUs
-        // with native FP8 tensor cores (Ada / Blackwell).
-        "get_compute_capability" => {
-            let cap = crate::commands::api::detect_compute_capability_pub();
-            Ok(serde_json::json!(cap))
         }
 
         // For commands not yet mapped, return an error
@@ -4294,74 +4195,6 @@ async fn storage_set_limit_handler(
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Err(e) => (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": e })),
-        )
-            .into_response(),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Per-user preferences endpoints
-// ---------------------------------------------------------------------------
-
-/// Resolve the username key used for preferences storage.
-///
-/// Unlike gallery paths where admins share a root directory, every actor —
-/// including localhost admins — gets their own prefs file.  Localhost /
-/// single-user sessions use the reserved key `"_admin"`.
-fn resolve_prefs_username(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) -> String {
-    if is_localhost(remote) || !state.lan_enabled {
-        return "_admin".to_string();
-    }
-    if let Some(token) = extract_token(headers) {
-        if let Some(username) = state.auth.validate_token(&token) {
-            return username;
-        }
-    }
-    "_admin".to_string()
-}
-
-/// GET /internal-api/_user/prefs — fetch the caller's saved preferences.
-///
-/// Returns 200 + JSON body when prefs exist, 204 when none are saved yet.
-/// Anonymous callers receive 401.
-async fn user_prefs_get_handler(
-    AxumState(state): AxumState<SharedState>,
-    ConnectInfo(remote): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-) -> Response {
-    let role = resolve_role(&state, &headers, &remote);
-    if role == UserRole::Anonymous {
-        return unauthorized_response("Authentication required.");
-    }
-    let username = resolve_prefs_username(&state, &headers, &remote);
-    match user_prefs::load(&username).await {
-        Some(prefs) => (StatusCode::OK, Json(prefs)).into_response(),
-        None => StatusCode::NO_CONTENT.into_response(),
-    }
-}
-
-/// PUT /internal-api/_user/prefs — save the caller's preferences.
-///
-/// The body is a full `UserPrefs` JSON object.  The server stamps
-/// `updated_at` before writing.  Anonymous callers receive 401.
-async fn user_prefs_set_handler(
-    AxumState(state): AxumState<SharedState>,
-    ConnectInfo(remote): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    Json(mut prefs): Json<user_prefs::UserPrefs>,
-) -> Response {
-    let role = resolve_role(&state, &headers, &remote);
-    if role == UserRole::Anonymous {
-        return unauthorized_response("Authentication required.");
-    }
-    let username = resolve_prefs_username(&state, &headers, &remote);
-    // Stamp server-side timestamp so clients can detect stale data in the future.
-    prefs.updated_at = Some(chrono::Utc::now().to_rfc3339());
-    match user_prefs::save(&username, &prefs).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e })),
         )
             .into_response(),

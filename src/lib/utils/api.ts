@@ -36,10 +36,14 @@ export async function generate(params: GenerationParams): Promise<GenerateRespon
   return ipcInvoke("generate", { params });
 }
 
+export interface ControlNetPreprocessorPreviewResponse {
+  prompt_id: string;
+}
+
 export async function generateControlnetPreprocessorPreview(
   image: string,
   preprocessor: string,
-): Promise<{ prompt_id: string }> {
+): Promise<ControlNetPreprocessorPreviewResponse> {
   return ipcInvoke("generate_controlnet_preprocessor_preview", { image, preprocessor });
 }
 
@@ -57,8 +61,8 @@ export async function getQueue(): Promise<QueueInfo> {
   return ipcInvoke("get_queue");
 }
 
-export async function interruptGeneration(promptId?: string): Promise<void> {
-  return ipcInvoke("interrupt_generation", promptId ? { promptId } : {});
+export async function interruptGeneration(): Promise<void> {
+  return ipcInvoke("interrupt_generation");
 }
 
 export async function deleteQueueItem(promptId: string): Promise<void> {
@@ -95,7 +99,9 @@ export async function getClientId(): Promise<string> {
   return ipcInvoke("get_client_id");
 }
 
-export async function startComfyui(): Promise<void> {
+export type StartComfyuiResult = "spawned" | "already_running" | "skipped";
+
+export async function startComfyui(): Promise<StartComfyuiResult> {
   return ipcInvoke("start_comfyui");
 }
 
@@ -548,18 +554,13 @@ export async function checkAttentionBackend(): Promise<AttentionBackendStatus> {
   return ipcInvoke("check_attention_backend");
 }
 
-export async function installAttentionBackend(backend: string): Promise<void> {
-  return ipcInvoke("install_attention_backend", { backend });
+export async function getComputeCapability(): Promise<number | null> {
+  const status = await checkAttentionBackend();
+  return status.compute_capability;
 }
 
-/**
- * Highest NVIDIA GPU compute capability detected via `nvidia-smi` (e.g. 8.9
- * for Ada Lovelace, 12.0 for consumer Blackwell). Returns `null` on
- * non-NVIDIA systems or if `nvidia-smi` isn't available. Lightweight — does
- * not enumerate venv packages, so safe to call on UI mount.
- */
-export async function getComputeCapability(): Promise<number | null> {
-  return ipcInvoke("get_compute_capability");
+export async function installAttentionBackend(backend: string): Promise<void> {
+  return ipcInvoke("install_attention_backend", { backend });
 }
 
 export async function getConfig(): Promise<AppConfig> {
@@ -648,9 +649,4 @@ export async function getGpuStats(): Promise<GpuStats[]> {
   const resp = await fetch("/internal-api/_gpu_stats", { headers });
   if (!resp.ok) throw new Error(await resp.text());
   return resp.json();
-}
-
-export async function getLogs(source: "app" | "comfyui"): Promise<string[]> {
-  if (!isTauri) return [];
-  return ipcInvoke("get_logs", { source });
 }

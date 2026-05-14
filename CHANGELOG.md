@@ -1,9 +1,33 @@
 # Changelog
 
+## What's New in v1.2.0
+
+### Anima Base v1.0
+- **Updated Anima recommendation** — the recommended Anima model now points to `anima-base-v1.0.safetensors` from the `circlestone-labs/Anima` Hugging Face repo, replacing the Preview 3 release. Same auto-download (diffusion model + Qwen 3 text encoder + Qwen Image VAE), same tuned defaults (30 steps, CFG 4, `er_sde` sampler).
+- **Preview builds are detection-only** — Anima Preview 3, Anima Preview 3 (FP8), and Anima Preview 2 no longer appear as download options. Users who already have those files on disk will still see and can select them normally.
+- **Compute-capability gate fixed** — the FP8 entry now stays visible for Ada/Blackwell users who have it installed even when the hardware gate is present, so upgrading to Base v1.0 doesn't hide an already-downloaded file.
+
+### External ComfyUI Detection
+- **Port-conflict modal** — when MooshieUI detects an existing ComfyUI, StabilityMatrix, or other process already bound to the configured port (default 8188), a clear modal explains the conflict and lists actionable steps (close the external app, change the port in Settings, or use it as-is).
+- **Persistent warning toast** — startup and manual-retry failures caused by an external ComfyUI now show a persistent warning toast with a "Details" action button instead of the generic error message.
+- **Missing-node error detection** — if MooshieUI connects to an external ComfyUI that doesn't have the required custom nodes loaded, the same modal surfaces automatically with instructions to switch to the managed install.
+
+### ControlNet Preprocessor Preview
+- **Live preprocessor preview** — a new `generate_controlnet_preprocessor_preview` command builds and queues a minimal workflow that runs only the selected ControlNet preprocessor and returns the processed image for preview before committing to a full generation.
+- **Browser mode support** — the new command is dispatched through the embedded Axum web server for Docker/LAN users.
+
+### Startup Reliability
+- **Tokio reactor panic fixed** — `spawn_background` now uses `tauri::async_runtime::spawn` in desktop mode and `tokio::spawn` in server mode, preventing the "there is no reactor running" panic that occurred when background tasks were spawned during Tauri setup before the runtime was active.
+
+### i18n
+- **Full i18n coverage for new UI** — all new user-visible strings (external ComfyUI modal, preset activation modal, generate button ordered-run mode, app status messages, connection error toasts) are keyed and translated across all 11 shipped locales.
+
+---
+
 ## What's New in v1.1.11
 
 ### Prompt Presets
-- **Ordered wildcard presets** — prompt preset wildcards can now cycle through their lines in document order, wrapping back to the first entry after the last option. This makes it much easier to test every wildcard entry without manually selecting each one.
+- **Ordered wildcard presets** — activating an ordered wildcard now turns the Generate button into a one-click ordered run that queues every line in the wildcard list, then wraps back to the first entry. Only one ordered wildcard preset stays active at a time so character lists do not combine accidentally.
 
 ### Startup Reliability
 - **Missing MooshieUI custom nodes are caught before generation** — MooshieUI now verifies every vital bundled node class (`MooshieSaveImage`, `MooshieFaceDetailer`, `MooshieSoftGuidance`, `MooshieSmartGuidance`, `NanoSaurLoader`, and `ApplyTiledDiffusion`) before treating an existing, newly spawned, worker, or reachable remote ComfyUI server as ready. If ComfyUI was already running and has not loaded the updated nodes, startup now shows a clear restart/install message instead of letting generations fail later with a missing-node error.

@@ -1,8 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe } from "./lib/utils/ipc.js";
-  import { useMobileLayout } from "./lib/utils/device.js";
-  import MobileApp from "./lib/components/mobile/MobileApp.svelte";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
@@ -18,25 +16,25 @@
   import { canvas } from "./lib/stores/canvas.svelte.js";
   import { accessibility } from "./lib/stores/accessibility.svelte.js";
   import { locale } from "./lib/stores/locale.svelte.js";
-  import { prefsSync } from "./lib/stores/prefsSync.svelte.js";
   import type { GenerationParams, OutputImage, InterrogationResult } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
   import { downloads } from "./lib/stores/downloads.svelte.js";
   import { compare } from "./lib/stores/compare.svelte.js";
   import { artistInsert } from "./lib/stores/artistInsert.svelte.js";
+  import { styles as stylesStore } from "./lib/stores/styles.svelte.js";
   import logoUrl from "./lib/assets/logo.png";
 
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
-  import { applyTheme } from "./lib/utils/theme.js";
   import ContextMenu from "./lib/components/ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import { interrogateGalleryImage, interrogateImage } from "./lib/utils/api.js";
-  import TerminalLog from "./lib/components/ui/TerminalLog.svelte";
 
   declare const __APP_VERSION__: string;
   const appVersion = __APP_VERSION__ ?? "dev";
+  type StartComfyResult = "spawned" | "already_running" | "skipped";
+  type ExternalComfyIssue = "already_running" | "missing_nodes";
   
   const visionSimClass = $derived(
     accessibility.visionSimulatorMode === "none"
@@ -47,10 +45,8 @@
   const MAX_INPUT_PIXELS = 1024 * 1024;
   let lastProgressEventAt = 0;
 
-  type PendingOutputImage = { blob: Blob; url: string; tempFilename?: string };
-
   /** Images received via WebSocket during generation, keyed by prompt_id. */
-  let pendingOutputImages = new Map<string, PendingOutputImage[]>();
+  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string }>>();
   /** In-flight output_image fetch promises per prompt_id (for SSE race-condition avoidance). */
   let pendingOutputFetches = new Map<string, Promise<void>[]>();
   /** Wait for pending fetches with a hard time limit to prevent hanging. */
@@ -58,27 +54,6 @@
   async function awaitFetchesWithTimeout(fetches: Promise<void>[]): Promise<void> {
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, FETCH_TIMEOUT_MS));
     await Promise.race([Promise.allSettled(fetches), timeout]);
-  }
-
-  async function recoverCachedOutputImages(promptId: string): Promise<PendingOutputImage[]> {
-    const images: PendingOutputImage[] = [];
-    try {
-      const recovered = await recoverPromptOutputs(promptId);
-      for (const imgRef of recovered.images) {
-        try {
-          const resp = await fetch(
-            `/internal-api/_temp_image/${encodeURIComponent(imgRef.temp_filename)}`,
-            { headers: authHeaders() },
-          );
-          if (resp.ok) {
-            const blob = await resp.blob();
-            const url = URL.createObjectURL(blob);
-            images.push({ blob, url, tempFilename: imgRef.temp_filename });
-          }
-        } catch { /* individual image fetch failed */ }
-      }
-    } catch { /* recovery command failed */ }
-    return images;
   }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
   let sseReconnectHandler: (() => void) | null = null;
@@ -250,6 +225,10 @@
     };
     const tKey = keyMap[key];
     return tKey ? locale.t(tKey) : key;
+  }
+
+  function applyTheme(theme: string) {
+    document.documentElement.classList.toggle("light", theme === "light");
   }
 
   function applyFontScale(scale: number) {
@@ -455,7 +434,6 @@
   let currentPage = $state<"generate" | "gallery" | "modelhub" | "artists" | "settings">(
     "generate"
   );
-  let showTerminalLog = $state(false);
 
   // Auth gate state (browser mode LAN access)
   let authRequired = $state(false);
@@ -587,6 +565,12 @@
   }
   let versionTapCount = $state(0);
   let startupStatus = $state<string>("");
+  let comfyuiServerUrl = $state("http://127.0.0.1:8188");
+  let comfyuiServerPort = $state(8188);
+  let startComfyBusy = $state(false);
+  let showExternalComfyModal = $state(false);
+  let externalComfyIssue = $state<ExternalComfyIssue>("already_running");
+  let externalComfyDetails = $state<string | null>(null);
 
   let galleryImagesPerRow = $state(5);
   let gallerySortBy = $state<"date" | "name" | "size">("date");
@@ -890,10 +874,6 @@
       metadata.mooshie_smart_guidance = "true";
     }
 
-    if (typeof params.flux_guidance === "number") {
-      metadata.mooshie_flux_guidance = String(params.flux_guidance);
-    }
-
     if (params.differential_diffusion) {
       metadata.mooshie_differential_diffusion = "true";
     }
@@ -980,10 +960,6 @@
       // MooshieUI-exclusive params round-trip
       if (metadata.mooshie_smart_guidance !== undefined) {
         generation.smartGuidance = metadata.mooshie_smart_guidance === "true";
-      }
-      if (metadata.mooshie_flux_guidance !== undefined) {
-        const fg = parseFloat(metadata.mooshie_flux_guidance);
-        if (Number.isFinite(fg)) generation.fluxGuidance = fg;
       }
       if (metadata.mooshie_differential_diffusion !== undefined) {
         generation.differentialDiffusion = metadata.mooshie_differential_diffusion === "true";
@@ -1147,6 +1123,46 @@
     const tempFilenames = images.map((img) => img.tempFilename);
     console.log("[finalizeOutputImages] images:", newImages.length, "blob[0].type:", blobs[0]?.type, "blob[0].size:", blobs[0]?.size, "filename[0]:", newImages[0]?.filename);
     gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
+
+    // If a style was just applied to the prompt and it doesn't have a thumbnail yet,
+    // automatically assign this generation's primary image to it.
+    if (stylesStore.pendingStyleForThumbnail && newImages.length > 0) {
+      const styleId = stylesStore.pendingStyleForThumbnail;
+      stylesStore.pendingStyleForThumbnail = null; // Clear immediately
+
+      const firstImage = newImages[0];
+      const persistPromise = gallery.getPersistPromise(firstImage);
+      if (persistPromise) {
+        persistPromise.then(async (galleryFilename) => {
+          if (!galleryFilename) return;
+          // Resolve to a proper URL for this platform (thumbnail:// or https://thumbnail.localhost/ on Windows)
+          let thumbnail = galleryFilename;
+          try {
+            if (isTauri) {
+              const { convertFileSrc } = await import("@tauri-apps/api/core");
+              thumbnail = convertFileSrc(galleryFilename, "thumbnail");
+            } else if (isBrowserMode) {
+              thumbnail = `/internal-api/_gallery_image/${galleryFilename}`;
+            }
+          } catch { /* keep raw filename as fallback */ }
+          stylesStore.updateStyle(styleId, { thumbnail });
+        });
+      } else if (firstImage.gallery_filename) {
+        // Already persisted synchronously (rare) — resolve URL the same way
+        (async () => {
+          let thumbnail = firstImage.gallery_filename!;
+          try {
+            if (isTauri) {
+              const { convertFileSrc } = await import("@tauri-apps/api/core");
+              thumbnail = convertFileSrc(thumbnail, "thumbnail");
+            } else if (isBrowserMode) {
+              thumbnail = `/internal-api/_gallery_image/${thumbnail}`;
+            }
+          } catch { /* keep raw filename */ }
+          stylesStore.updateStyle(styleId, { thumbnail });
+        })();
+      }
+    }
   }
 
   /**
@@ -1398,42 +1414,108 @@
 
   let autoStartEnabled = $state(true); // will be read from config
 
+  function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  function isExternalComfyNodeError(message: string): boolean {
+    return message.includes("has not loaded required MooshieUI custom nodes")
+      || message.includes("Required ControlNet custom nodes failed to load");
+  }
+
+  function openExternalComfyDetails(issue = externalComfyIssue, details = externalComfyDetails) {
+    externalComfyIssue = issue;
+    externalComfyDetails = details;
+    showExternalComfyModal = true;
+    gallery.clearToast();
+  }
+
+  function showExternalComfyToast(issue: ExternalComfyIssue, details: string | null = null) {
+    externalComfyIssue = issue;
+    externalComfyDetails = details;
+    gallery.showToast(
+      issue === "missing_nodes"
+        ? locale.t("app.external_comfy.missing_nodes_toast", { port: comfyuiServerPort })
+        : locale.t("app.external_comfy.already_running_toast", { port: comfyuiServerPort }),
+      issue === "missing_nodes" ? "error" : "warning",
+      {
+        persistent: true,
+        actionLabel: locale.t("common.details"),
+        onAction: () => openExternalComfyDetails(issue, details),
+      },
+    );
+  }
+
+  async function refreshAlreadyRunningComfyui() {
+    try {
+      await models.refresh();
+      console.log("Models loaded (already running):", models.checkpoints);
+      if (models.checkpoints.length > 0) {
+        connection.connected = true;
+        generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
+      }
+      startupStatus = "";
+    } catch (e) {
+      console.error("Model refresh failed (already running):", e);
+    }
+  }
+
+  async function startComfyuiWithWarning() {
+    if (startComfyBusy) return;
+    startComfyBusy = true;
+    try {
+      console.log("Starting ComfyUI...");
+      startupStatus = locale.t("app.status.starting_comfyui");
+      const result = await ipcInvoke<StartComfyResult>("start_comfyui");
+      console.log("start_comfyui returned:", result);
+
+      if (result === "spawned") {
+        startupStatus = locale.t("app.status.starting_comfyui");
+      } else if (result === "already_running") {
+        startupStatus = locale.t("app.status.connecting");
+        showExternalComfyToast("already_running");
+        await refreshAlreadyRunningComfyui();
+      } else if (result === "skipped") {
+        startupStatus = locale.t("app.status.connecting");
+      }
+    } catch (e) {
+      const message = errorMessage(e);
+      console.error("Failed to start ComfyUI:", e);
+      startupStatus = locale.t("app.status.failed_to_start", { message });
+      if (isExternalComfyNodeError(message)) {
+        showExternalComfyToast("missing_nodes", message);
+      }
+    } finally {
+      startComfyBusy = false;
+    }
+  }
+
   async function initApp() {
     // Apply UI preferences (theme, font scale) immediately
     try {
       const cfg = await getConfig();
-      applyTheme(cfg.theme, cfg.theme_palette);
+      applyTheme(cfg.theme);
       applyFontScale(cfg.font_scale);
       autoStartEnabled = cfg.auto_start !== false;
+      comfyuiServerUrl = cfg.server_url;
+      comfyuiServerPort = cfg.server_port;
     } catch {
       // Config not ready yet, defaults are fine
     }
 
     // Load persisted settings
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
-    // Sync preferences from server (browser/LAN mode only — no-op in Tauri)
-    prefsSync.loadAndApply().catch(() => {});
 
     // Set up event listeners BEFORE starting so we don't miss events
     await Promise.all([
       ipcListen("comfyui:connection", (event: any) => {
         console.log("Connection event:", event.payload);
-        const wasConnected = connection.connected;
         connection.connected = event.payload.connected;
         if (event.payload.connected) {
           startupStatus = "";
           models.refresh().then(() => {
             generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
           });
-          // If we just reconnected after a drop, kick the stuck-prompt
-          // reconciler immediately by clearing last-activity timestamps —
-          // the WS may have died mid-generation and we want to finalize
-          // any prompts that have already left ComfyUI's queue.
-          if (!wasConnected && progress.isGenerating) {
-            for (const p of progress.pendingPrompts) {
-              promptLastActivity.set(p.promptId, 0);
-            }
-          }
         }
       }),
       ipcListen("comfyui:server_ready", async () => {
@@ -1453,7 +1535,7 @@
       }),
       ipcListen("comfyui:server_error", (event: any) => {
         console.error("Server error:", event.payload);
-        startupStatus = `Failed to start: ${event.payload?.error || "unknown error"}`;
+        startupStatus = locale.t("app.status.failed_to_start", { message: event.payload?.error || locale.t("app.status.unknown_error") });
       }),
       ipcListen("comfyui:progress", (event: any) => {
         const data = event.payload;
@@ -1471,10 +1553,6 @@
       }),
       ipcListen("mooshie:queue_update", (event: any) => {
         const data = event.payload;
-        if (data.total === 0) {
-          progress.resetQueuePosition();
-          return;
-        }
         if (data.prompt_id && data.position != null && data.total != null) {
           // Restore the prompt to pendingPrompts if this is an initial burst after
           // a page refresh (the in-memory queue was lost but the server still has it).
@@ -1714,11 +1792,8 @@
           const item = progress.completePrompt(promptId);
           promptLastActivity.delete(promptId);
           if (item) {
-            let images = pendingOutputImages.get(promptId) ?? [];
+            const images = pendingOutputImages.get(promptId) ?? [];
             pendingOutputImages.delete(promptId);
-            if (images.length === 0) {
-              images = await recoverCachedOutputImages(promptId);
-            }
             finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images);
 
             // Track grid batch completion — stitch when all cells are done
@@ -1742,9 +1817,7 @@
         // Build a user-visible error message from the raw error string
         const rawErr = String(data.error ?? "");
         let toastMsg = locale.t("generation.error_failed");
-        if (rawErr === "generation.error_cancelled") {
-          toastMsg = locale.t("generation.error_cancelled");
-        } else if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
+        if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
           toastMsg = locale.t("generation.error_model_config");
         } else {
           try {
@@ -1818,15 +1891,30 @@
 
               if (images.length === 0) {
                 // SSE event was likely dropped during a reconnect — the image was
-                // saved to a temp file on the server and cached by the
-                // WebSocket bridge.  Try to recover it before giving up.
-                images = await recoverCachedOutputImages(p.promptId);
+                // saved to a temp file on the server and cached by the cleanup
+                // reactor.  Try to recover it before giving up.
+                try {
+                  const recovered = await recoverPromptOutputs(p.promptId);
+                  for (const imgRef of recovered.images) {
+                    try {
+                      const resp = await fetch(
+                        `/internal-api/_temp_image/${encodeURIComponent(imgRef.temp_filename)}`,
+                        { headers: authHeaders() },
+                      );
+                      if (resp.ok) {
+                        const blob = await resp.blob();
+                        const url = URL.createObjectURL(blob);
+                        images.push({ blob, url, tempFilename: imgRef.temp_filename });
+                      }
+                    } catch { /* individual image fetch failed */ }
+                  }
+                } catch { /* recovery command failed */ }
               }
 
               if (images.length > 0) {
                 finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images);
               } else {
-                gallery.showToast("A generation was lost due to a connection issue — please try again.", "error");
+                gallery.showToast(locale.t("generation.error_lost_connection"), "error");
               }
             }
           }
@@ -1854,34 +1942,9 @@
     // Start ComfyUI server — returns immediately, background task handles readiness
     // The backend will auto-connect WebSocket and emit comfyui:server_ready when done
     if (autoStartEnabled) {
-      try {
-        console.log("Starting ComfyUI...");
-        const result = await ipcInvoke<string>("start_comfyui");
-        console.log("start_comfyui returned:", result);
-        if (result === "spawned") {
-          startupStatus = "Starting ComfyUI...";
-        } else if (result === "already_running") {
-          // SSE EventSource may not be connected yet, so the broadcast
-          // comfyui:server_ready event could be lost. Handle it directly.
-          startupStatus = "Connecting...";
-          try {
-            await models.refresh();
-            console.log("Models loaded (already running):", models.checkpoints);
-            if (models.checkpoints.length > 0) {
-              connection.connected = true;
-              generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
-            }
-            startupStatus = "";
-          } catch (e) {
-            console.error("Model refresh failed (already running):", e);
-          }
-        }
-      } catch (e) {
-        console.error("Failed to start ComfyUI:", e);
-        startupStatus = `Failed to start: ${e}`;
-      }
+      await startComfyuiWithWarning();
     } else {
-      startupStatus = "ComfyUI not started (auto-start disabled)";
+      startupStatus = locale.t("app.status.auto_start_disabled");
     }
 
     // Load persisted gallery images from disk (independent of server status)
@@ -2034,8 +2097,6 @@
   </div>
 {:else if !setupComplete}
   <SetupWizard onSetupComplete={onSetupDone} />
-{:else if useMobileLayout}
-  <MobileApp canUseModelhub={canUseModelhub} />
 {:else}
 <div class="flex h-full bg-neutral-950 text-neutral-100 {visionSimClass}">
   <!-- SVG filters for color vision simulation -->
@@ -2177,21 +2238,6 @@
 
     <div class="flex-1"></div>
 
-    <!-- Terminal log toggle (only visible when enabled in Developer settings) -->
-    {#if generation.showTerminalLog}
-    <button
-      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors mx-auto
-        {showTerminalLog ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
-      onclick={() => (showTerminalLog = !showTerminalLog)}
-      title="Toggle terminal log"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
-      </svg>
-    </button>
-    {/if}
-
     <button
       class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
       'settings'
@@ -2236,10 +2282,10 @@
           if (generation.devModeUnlocked) {
             generation.devModeUnlocked = false;
             generation.devMode = false;
-            gallery.showToast('🛠 Developer mode disabled', 'info');
+            gallery.showToast(locale.t("app.dev_mode_disabled"), 'info');
           } else {
             generation.devModeUnlocked = true;
-            gallery.showToast('🛠 Developer mode unlocked', 'success');
+            gallery.showToast(locale.t("app.dev_mode_unlocked"), 'success');
           }
         }
       }}
@@ -2252,23 +2298,15 @@
     <DownloadBanner />
     {#if startupStatus && !connection.connected}
       <div class="flex items-center gap-2 px-4 py-2 bg-amber-900/30 border-b border-amber-800/50 text-amber-200 text-sm">
-        {#if !autoStartEnabled && !startupStatus.startsWith("Starting") && !startupStatus.startsWith("Connecting")}
+        {#if startupStatus !== locale.t("app.status.starting_comfyui") && startupStatus !== locale.t("app.status.connecting")}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           {startupStatus}
           <button
-            class="ml-2 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs transition-colors cursor-pointer"
-            onclick={async () => {
-              try {
-                startupStatus = "Starting ComfyUI...";
-                const result = await ipcInvoke<string>("start_comfyui");
-                if (result === "spawned") startupStatus = "Starting ComfyUI...";
-                else if (result === "already_running") startupStatus = "Connecting...";
-              } catch (e) {
-                startupStatus = `Failed to start: ${e}`;
-              }
-            }}
+            class="ml-2 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+            disabled={startComfyBusy}
+            onclick={startComfyuiWithWarning}
           >
-            Start ComfyUI
+            {locale.t("app.start_comfyui")}
           </button>
         {:else}
           <div class="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
@@ -2537,15 +2575,11 @@
       <SettingsPage {userRole} />
     {/if}
     </div>
-    {#if generation.showTerminalLog && showTerminalLog}
-      <TerminalLog onclose={() => (showTerminalLog = false)} />
-    {/if}
   </main>
 </div>
 {/if}
 
-<!-- Lightbox overlay (desktop only) -->
-{#if !useMobileLayout}
+<!-- Lightbox overlay -->
 {#if gallery.lightboxOpen && (gallery.selectedImage || gallery.lightboxUrl)}
   <div
     class="lightbox-backdrop fixed inset-0 bg-black/90 z-50 flex {visionSimClass}"
@@ -2804,25 +2838,132 @@
     </div>
   </div>
 {/if}
-{/if}
 
 <!-- Toast notification -->
 {#if gallery.toast}
-  {@const type = gallery.toast.type}
+  {@const toast = gallery.toast}
+  {@const type = toast.type}
   <div
-    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-60 px-4 py-2 text-sm rounded-lg shadow-lg border animate-fade-in flex items-center gap-2
+    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-60 max-w-[calc(100vw-2rem)] px-4 py-2 text-sm rounded-lg shadow-lg border animate-fade-in flex items-center gap-2
     {type === 'success' ? 'bg-green-800/90 border-green-700 text-green-100' : 
      type === 'error' ? 'bg-red-800/90 border-red-700 text-red-100' :
+     type === 'warning' ? 'bg-amber-900/95 border-amber-700 text-amber-100' :
      'bg-neutral-800 text-neutral-100 border-neutral-700'}"
   >
     {#if type === 'success'}
-      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
     {:else if type === 'error'}
-      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
+    {:else if type === 'warning'}
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
     {:else}
-      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
     {/if}
-    {gallery.toast.message}
+    <span class="min-w-0 wrap-break-word">{toast.message}</span>
+    {#if toast.actionLabel && toast.onAction}
+      <button
+        type="button"
+        class="ml-1 shrink-0 rounded-md border border-current/30 px-2 py-1 text-xs font-medium transition-colors hover:bg-white/10"
+        onclick={() => toast.onAction?.()}
+      >
+        {toast.actionLabel}
+      </button>
+    {/if}
+    {#if toast.persistent || toast.actionLabel}
+      <button
+        type="button"
+        class="-mr-1 shrink-0 rounded-md p-1 transition-colors hover:bg-white/10"
+        aria-label={locale.t("common.dismiss_notification")}
+        onclick={() => gallery.clearToast()}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    {/if}
+  </div>
+{/if}
+
+{#if showExternalComfyModal}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="fixed inset-0 z-260 flex items-center justify-center bg-black/70 px-4"
+    onclick={(e) => { if (e.target === e.currentTarget) showExternalComfyModal = false; }}
+    onkeydown={(e) => { if (e.key === 'Escape') showExternalComfyModal = false; }}
+  >
+    <div
+      class="w-full max-w-lg rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="external-comfy-title"
+      tabindex="-1"
+      use:focusOnMount
+    >
+      <div class="mb-4 flex items-start gap-3">
+        <div class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-900/60 text-amber-200">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        </div>
+        <div class="min-w-0">
+          <h2 id="external-comfy-title" class="text-base font-semibold text-neutral-100">
+            {externalComfyIssue === 'missing_nodes' ? locale.t("app.external_comfy.title_missing_nodes") : locale.t("app.external_comfy.title_already_running")}
+          </h2>
+          <p class="mt-1 text-sm text-neutral-400">
+            {locale.t("app.external_comfy.found_server_prefix")} <span class="font-mono text-neutral-200">{comfyuiServerUrl}</span> {locale.t("app.external_comfy.found_server_suffix")}
+          </p>
+        </div>
+      </div>
+
+      <div class="space-y-4 text-sm text-neutral-300">
+        {#if externalComfyIssue === 'missing_nodes'}
+          <p>
+            {locale.t("app.external_comfy.missing_nodes_body")}
+          </p>
+        {:else}
+          <p>
+            {locale.t("app.external_comfy.already_running_body", { port: comfyuiServerPort })}
+          </p>
+        {/if}
+
+        <div class="rounded-lg border border-neutral-700 bg-neutral-950/60 p-3">
+          <h3 class="mb-2 text-xs font-semibold uppercase text-neutral-400">{locale.t("app.external_comfy.what_to_do")}</h3>
+          <ol class="list-decimal space-y-1.5 pl-5 text-neutral-300">
+            <li>{locale.t("app.external_comfy.step_close_apps")}</li>
+            <li>{locale.t("app.external_comfy.step_kill_process")}</li>
+            <li>{locale.t("app.external_comfy.step_try_again")}</li>
+          </ol>
+        </div>
+
+        <p class="text-xs text-neutral-500">
+          {locale.t("app.external_comfy.external_hint")}
+        </p>
+
+        {#if externalComfyDetails}
+          <details class="rounded-lg border border-neutral-800 bg-neutral-950/70 p-3 text-xs text-neutral-400">
+            <summary class="cursor-pointer text-neutral-300">{locale.t("app.external_comfy.technical_details")}</summary>
+            <p class="mt-2 whitespace-pre-wrap wrap-break-word">{externalComfyDetails}</p>
+          </details>
+        {/if}
+      </div>
+
+      <div class="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <button
+          type="button"
+          class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-200 transition-colors hover:border-neutral-500"
+          onclick={() => { showExternalComfyModal = false; }}
+        >
+          {locale.t("common.close")}
+        </button>
+        <button
+          type="button"
+          class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={startComfyBusy}
+          onclick={async () => {
+            showExternalComfyModal = false;
+            await startComfyuiWithWarning();
+          }}
+        >
+          {startComfyBusy ? locale.t("app.status.starting") : locale.t("common.try_again")}
+        </button>
+      </div>
+    </div>
   </div>
 {/if}
 
@@ -2841,7 +2982,7 @@
 {#if artistInsertPending}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="fixed inset-0 z-300 flex items-center justify-center bg-black/60"
+    class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60"
     onclick={(e) => { if (e.target === e.currentTarget) artistInsert.dismiss(); }}
     onkeydown={(e) => { if (e.key === 'Escape') artistInsert.dismiss(); }}
   >
@@ -2914,7 +3055,7 @@
 {#if dirPickerImage}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="fixed inset-0 z-200 flex items-center justify-center bg-black/60"
+    class="fixed inset-0 z-[200] flex items-center justify-center bg-black/60"
     onclick={(e) => { if (e.target === e.currentTarget) dirPickerImage = null; }}
     onkeydown={(e) => { if (e.key === 'Escape') dirPickerImage = null; }}
   >

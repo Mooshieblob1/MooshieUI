@@ -132,6 +132,8 @@ class StylesStore {
   styles = $state<ArtistStyle[]>([]);
   /** IDs of currently-active styles. Their tags are injected into every generation. */
   activeIds = $state<string[]>([]);
+  /** Style waiting for the next generated image to become its thumbnail. */
+  pendingStyleForThumbnail = $state<string | null>(null);
 
   constructor() {
     this.loadSettings();
@@ -306,6 +308,10 @@ class StylesStore {
       };
     });
     if (changed) this.saveSettings();
+  }
+
+  updateStyle(id: string, patch: Partial<Omit<ArtistStyle, "id" | "createdAt">>): void {
+    this.update(id, patch);
   }
 
   duplicate(id: string): ArtistStyle | null {

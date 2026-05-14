@@ -23,6 +23,8 @@
     label: string;
     /** Total download size (human-readable) shown in the dropdown */
     size: string;
+    /** Translation key for computed/semantic size labels such as local-only. */
+    sizeKey?: string;
     /** Regular checkpoint model (single file) */
     checkpoint?: ModelFile;
     /** VAE to download alongside the checkpoint */
@@ -82,12 +84,12 @@
       },
     },
     {
-      label: "Anima Preview 3",
+      label: "Anima Base v1.0",
       size: "~13 GB",
       splitModel: {
         diffusionModel: {
-          filename: "anima-preview3-base.safetensors",
-          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-preview3-base.safetensors",
+          filename: "anima-base-v1.0.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-base-v1.0.safetensors",
           category: "diffusion_models",
         },
         clipModel: {
@@ -99,6 +101,38 @@
         vaeModel: {
           filename: "qwen_image_vae.safetensors",
           url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 30,
+        cfg: 4,
+        samplerName: "er_sde",
+        upscaleSteps: 10,
+        upscaleDenoise: 0.3,
+        facefixSteps: 10,
+      },
+    },
+    {
+      label: "Anima Preview 3",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
+      splitModel: {
+        diffusionModel: {
+          filename: "anima-preview3-base.safetensors",
+          url: "",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_06b_base.safetensors",
+          url: "",
+          category: "text_encoders",
+          clipType: "wan",
+        },
+        vaeModel: {
+          filename: "qwen_image_vae.safetensors",
+          url: "",
           category: "vae",
         },
       },
@@ -113,7 +147,9 @@
     },
     {
       label: "Anima Preview 3 (FP8)",
-      size: "~7 GB",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
       // FP8 native tensor-core compute lands on Ada Lovelace (8.9) and
       // Blackwell (10.0+ datacenter / 12.0 consumer). Earlier GPUs would
       // fall back to BF16 emulation and lose the speed/VRAM advantage that
@@ -123,18 +159,18 @@
       splitModel: {
         diffusionModel: {
           filename: "anima-preview3-base-fp8.safetensors",
-          url: "https://huggingface.co/Bedovyy/Anima-FP8/resolve/main/anima-preview3-base-fp8.safetensors",
+          url: "",
           category: "diffusion_models",
         },
         clipModel: {
           filename: "qwen_3_06b_base.safetensors",
-          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+          url: "",
           category: "text_encoders",
           clipType: "wan",
         },
         vaeModel: {
           filename: "qwen_image_vae.safetensors",
-          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+          url: "",
           category: "vae",
         },
       },
@@ -149,22 +185,24 @@
     },
     {
       label: "Anima Preview 2",
-      size: "~13 GB",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
       splitModel: {
         diffusionModel: {
           filename: "anima-preview2.safetensors",
-          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-preview2.safetensors",
+          url: "",
           category: "diffusion_models",
         },
         clipModel: {
           filename: "qwen_3_06b_base.safetensors",
-          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+          url: "",
           category: "text_encoders",
           clipType: "wan",
         },
         vaeModel: {
           filename: "qwen_image_vae.safetensors",
-          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+          url: "",
           category: "vae",
         },
       },
@@ -187,7 +225,8 @@
       // legacy `clip/` directory (where the user's `qwen_3_8b_fp4mixed`
       // happens to live).
       label: "Flux 2 Klein 9B (NVFP4)",
-      size: "Local",
+      size: "",
+      sizeKey: "common.local",
       detectionOnly: true,
       splitModel: {
         diffusionModel: {
@@ -540,14 +579,14 @@
 
     // Add recommended models first
     for (const rec of recommendedModels) {
-      // Hide entries gated behind a compute-capability we haven't met (or
-      // haven't been able to detect). Pre-existing installed copies still
-      // surface from `models.checkpoints` further below if the user already
-      // downloaded them by other means.
-      if (rec.minComputeCapability !== undefined) {
+      const installed = isRecommendedInstalled(rec);
+      // Hide entries gated behind a compute-capability we haven't met unless
+      // all split/checkpoint components already exist locally. That keeps
+      // retired or hardware-specific models visible for users who have them,
+      // without advertising them as fresh downloads.
+      if (rec.minComputeCapability !== undefined && !installed) {
         if (computeCapability === null || computeCapability < rec.minComputeCapability) continue;
       }
-      const installed = isRecommendedInstalled(rec);
       // Detection-only entries (no download URLs) are hidden until every
       // component is present on disk — otherwise the user would see an entry
       // they can't action.
@@ -559,7 +598,7 @@
           value: rec.label,
           rec,
           installed,
-          size: rec.size,
+          size: rec.sizeKey ? locale.t(rec.sizeKey) : rec.size,
           gateHint: rec.gateHint,
         });
       }

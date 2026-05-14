@@ -14,6 +14,8 @@
  *                  in isolation.
  *   - "wildcard_ordered" — picks the next newline-separated tag group each
  *                  generation, wrapping back to the first line after the last.
+ *                  The generate button can use this list length to queue a
+ *                  full ordered run in one click.
  *
  * Like Artist Styles, presets live outside the prompt textbox — users see
  * badges, not tags — and survive reloads via localStorage.
@@ -42,6 +44,13 @@ export interface ActivePreset {
   mode: PresetMode;
   /** Next choice index for ordered wildcard mode. */
   wildcardIndex?: number;
+}
+
+export interface OrderedWildcardRun {
+  presetId: string;
+  presetName: string;
+  count: number;
+  nextIndex: number;
 }
 
 interface PersistedState {
@@ -90,6 +99,19 @@ function activePresetWithMode(id: string, mode: PresetMode, wildcardIndex = 0): 
 function sanitizeActivePreset(raw: any, validIds: Set<string>): ActivePreset | null {
   if (!raw || typeof raw.id !== "string" || !validIds.has(raw.id) || !isPresetMode(raw.mode)) return null;
   return activePresetWithMode(raw.id, raw.mode, raw.wildcardIndex);
+}
+
+function dedupeOrderedActive(active: ActivePreset[]): ActivePreset[] {
+  let hasOrdered = false;
+  const out: ActivePreset[] = [];
+  for (const preset of active) {
+    if (preset.mode === "wildcard_ordered") {
+      if (hasOrdered) continue;
+      hasOrdered = true;
+    }
+    out.push(preset);
+  }
+  return out;
 }
 
 /**
@@ -164,7 +186,7 @@ class PromptPresetsStore {
         const parsed = JSON.parse(raw) as ActivePreset[];
         if (Array.isArray(parsed)) {
           const ids = new Set(this.presets.map((p) => p.id));
-          this.active = parsed.map((a) => sanitizeActivePreset(a, ids)).filter(Boolean) as ActivePreset[];
+          this.active = dedupeOrderedActive(parsed.map((a) => sanitizeActivePreset(a, ids)).filter(Boolean) as ActivePreset[]);
         }
       }
     } catch (e) {
@@ -215,6 +237,28 @@ class PromptPresetsStore {
       if (preset) out.push({ preset, mode: a.mode, wildcardIndex: a.wildcardIndex });
     }
     return out;
+  }
+
+  get orderedWildcardRun(): OrderedWildcardRun | null {
+    const byId = new Map(this.presets.map((p) => [p.id, p]));
+    for (const activePreset of this.active) {
+      if (activePreset.mode !== "wildcard_ordered") continue;
+      const preset = byId.get(activePreset.id);
+      if (!preset) continue;
+      const count = splitWildcardChoices(preset.content).length;
+      if (count === 0) continue;
+      return {
+        presetId: preset.id,
+        presetName: preset.name,
+        count,
+        nextIndex: normalizeChoiceIndex(activePreset.wildcardIndex, count),
+      };
+    }
+    return null;
+  }
+
+  get orderedWildcardRunCount(): number {
+    return this.orderedWildcardRun?.count ?? 0;
   }
 
   /**
@@ -331,8 +375,11 @@ class PromptPresetsStore {
 
   activate(id: string, mode: PresetMode) {
     if (!this.getById(id)) return;
-    const filtered = this.active.filter((a) => a.id !== id);
-    this.active = [...filtered, activePresetWithMode(id, mode)];
+    let filtered = this.active.filter((a) => a.id !== id);
+    if (mode === "wildcard_ordered") {
+      filtered = filtered.filter((a) => a.mode !== "wildcard_ordered");
+    }
+    this.active = dedupeOrderedActive([...filtered, activePresetWithMode(id, mode)]);
     this.saveActive();
   }
 
@@ -344,7 +391,11 @@ class PromptPresetsStore {
 
   setMode(id: string, mode: PresetMode) {
     if (!this.isActive(id)) return;
-    this.active = this.active.map((a) => (a.id === id ? activePresetWithMode(a.id, mode, a.wildcardIndex) : a));
+    let nextActive = this.active.map((a) => (a.id === id ? activePresetWithMode(a.id, mode, a.wildcardIndex) : a));
+    if (mode === "wildcard_ordered") {
+      nextActive = nextActive.filter((a) => a.id === id || a.mode !== "wildcard_ordered");
+    }
+    this.active = dedupeOrderedActive(nextActive);
     this.saveActive();
   }
 
@@ -489,7 +540,7 @@ class PromptPresetsStore {
         const parsed = JSON.parse(rawActive) as ActivePreset[];
         if (Array.isArray(parsed)) {
           const ids = new Set(this.presets.map((p) => p.id));
-          this.active = parsed.map((a) => sanitizeActivePreset(a, ids)).filter(Boolean) as ActivePreset[];
+          this.active = dedupeOrderedActive(parsed.map((a) => sanitizeActivePreset(a, ids)).filter(Boolean) as ActivePreset[]);
         }
       }
     } catch (e) {

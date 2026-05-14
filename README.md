@@ -150,7 +150,7 @@ All settings are automatically saved to disk and restored on next launch:
 - **FluxGuidance** — Flux Dev models auto-inject a FluxGuidance node; Flux Schnell (guidance-distilled) is detected and skipped
 - **Hash-based identification** — Models are recognized by SHA256 hash (CivitAI AutoV2 format), not just filename — renamed files are still detected
 - **CivitAI integration** — Look up any model's metadata (name, version, preview images) via CivitAI's hash database
-- **Recommended models** — ΣIH-1.5 (~7.5 GB) and Anima Preview 2 (~13 GB) auto-download on selection with real-time progress bars and file size display
+- **Recommended models** — ΣIH-1.5 (~7.5 GB) and Anima Base v1.0 (~13 GB) auto-download on selection with real-time progress bars and file size display
 - **Mugen support** — SDXL models using the Flux2 VAE (128-channel latents) with rectified flow scheduling, auto-detected and routed through dedicated VAE conversion nodes
 - **Nanosaur support** — 1.2B DiT architecture with 96-channel VAE, custom ComfyUI nodes for model loading, text encoding, and VAE decode, auto-installed alongside MooshieUI's node pack
 
@@ -342,7 +342,7 @@ Custom ComfyUI nodes for the **Nanosaur** 1.2B DiT architecture:
 - [x] **Queue management page** — view and cancel queued generations
 - [x] **Settings page** — configure ComfyUI connection, paths, defaults, and extra args
 - [x] **Gallery upscale button** — upscale any image from the gallery grid or lightbox
-- [x] **Anima Preview 2 support** — auto-download split model (diffusion + CLIP + VAE), quality prompt injection, optimized defaults
+- [x] **Anima Base v1.0 support** — auto-download split model (diffusion + CLIP + VAE), quality prompt injection, optimized defaults
 - [x] **ΣIH-1.5 support** — auto-download checkpoint + VAE on selection, with file size display
 - [x] **CFG++ auto-detect** — soft-sets CFG to 1.4 when selecting CFG++ samplers
 - [x] **Info tooltips** — hover (?) icons explain technical settings in plain English

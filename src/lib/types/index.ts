@@ -142,6 +142,7 @@ export interface AppConfig {
   default_height: number;
   vram_mode: string;
   keep_alive: boolean;
+  auto_start: boolean;
   theme: string;
   theme_palette: string;
   font_scale: number;

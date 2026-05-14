@@ -7,7 +7,9 @@
   import { models } from "../../stores/models.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
+  import type { GenerationParams } from "../../types/index.js";
 
   interface Props {
     canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
@@ -16,6 +18,17 @@
   let { canvasEditorRef }: Props = $props();
   let errorMsg = $state<string | null>(null);
   let isSubmitting = $state(false);
+  const orderedWildcardRun = $derived(promptPresets.orderedWildcardRun);
+  const orderedWildcardRunCount = $derived(compare.enabled && compare.cellCount > 1 ? 0 : (orderedWildcardRun?.count ?? 0));
+
+  async function submitGeneration(params: GenerationParams) {
+    const result = await generate(params);
+    params.seed = result.seed;
+    progress.enqueue(result.prompt_id, params.upscale_enabled, params.mode, params);
+    if (result.queue_position != null && result.queue_total != null) {
+      progress.updateQueuePosition(result.prompt_id, result.queue_position, result.queue_total);
+    }
+  }
 
   async function handleGenerate() {
     if (isSubmitting) return;
@@ -93,16 +106,15 @@
         generation.height = Math.round(Math.sqrt(area / ratio) / 8) * 8;
       }
 
+      if (orderedWildcardRunCount > 1) {
+        await handleOrderedWildcardGenerate(orderedWildcardRunCount);
+        return;
+      }
+
       const params = generation.toParams();
       console.log("[generate] output_format:", params.output_format, "output_bit_depth:", params.output_bit_depth);
       generation.saveCurrentPromptToHistory();
-      const result = await generate(params);
-      params.seed = result.seed;
-      progress.enqueue(result.prompt_id, params.upscale_enabled, params.mode, params);
-      // Set initial queue position if returned by server
-      if (result.queue_position != null && result.queue_total != null) {
-        progress.updateQueuePosition(result.prompt_id, result.queue_position, result.queue_total);
-      }
+      await submitGeneration(params);
       generation.saveSettings();
     } catch (e) {
       console.error("Generation failed:", e);
@@ -110,6 +122,23 @@
     } finally {
       isSubmitting = false;
     }
+  }
+
+  async function handleOrderedWildcardGenerate(count: number) {
+    generation.saveCurrentPromptToHistory();
+    for (let i = 0; i < count; i++) {
+      const params = generation.toParams();
+      console.log(
+        "[generate] ordered_wildcard:",
+        `${i + 1}/${count}`,
+        "output_format:",
+        params.output_format,
+        "output_bit_depth:",
+        params.output_bit_depth,
+      );
+      await submitGeneration(params);
+    }
+    generation.saveSettings();
   }
 
   /** Left-click: cancel the current generation only, let the queue continue. */
@@ -215,6 +244,7 @@
   <button
     onclick={handleGenerate}
     disabled={!canGenerate}
+    title={orderedWildcardRunCount > 1 ? locale.t('generation.generate_ordered_tip', { count: orderedWildcardRunCount, name: orderedWildcardRun?.presetName ?? '' }) : ''}
     class="flex-1 py-3 rounded-xl font-semibold text-sm transition-colors
       {canGenerate
         ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20'
@@ -222,6 +252,8 @@
   >
     {#if progress.queueCount > 0}
       {locale.t('generation.generate_queue', { count: progress.queueCount })}
+    {:else if orderedWildcardRunCount > 1}
+      {locale.t('generation.generate_ordered', { count: orderedWildcardRunCount })}
     {:else}
       {locale.t('generation.generate')}
     {/if}
@@ -242,6 +274,7 @@
   {:else}
     <button
       disabled
+      title={locale.t('generation.cancel_hint')}
       class="px-5 py-3 rounded-xl font-semibold text-sm bg-neutral-800 text-neutral-600 cursor-not-allowed transition-colors"
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

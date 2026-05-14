@@ -20,7 +20,6 @@ import {
   type StorageInfo,
 } from "../utils/api.js";
 import { isTauri, isBrowserMode, getAuthToken } from "../utils/ipc.js";
-import { triggerSync } from "../utils/syncTrigger.js";
 import { locale } from "./locale.svelte.js";
 import { generation } from "./generation.svelte.js";
 import { createArtistGalleryClient } from "../artist-gallery/client.js";
@@ -81,6 +80,20 @@ function triggerBrowserDownload(data: Uint8Array, filename: string, mimeType: st
 const GALLERY_BOARDS_KEY = "mooshieui.gallery.boards.v1";
 const GALLERY_BOARD_NAMES_KEY = "mooshieui.gallery.boardNames.v1";
 
+type ToastType = "success" | "error" | "info" | "warning";
+type ToastOptions = {
+  persistent?: boolean;
+  actionLabel?: string;
+  onAction?: () => void;
+};
+type GalleryToast = {
+  message: string;
+  type: ToastType;
+  persistent?: boolean;
+  actionLabel?: string;
+  onAction?: () => void;
+};
+
 class GalleryStore {
   images = $state<OutputImage[]>([]);
   /** Images generated during this app session (not loaded from disk). */
@@ -93,7 +106,7 @@ class GalleryStore {
   loading = $state(false);
   /** True while a save/download operation is in progress (prevents double-clicks). */
   saving = $state(false);
-  toast = $state<{ message: string; type: "success" | "error" | "info" } | null>(null);
+  toast = $state<GalleryToast | null>(null);
   boardAssignments = $state<Record<string, string>>({});
   customBoards = $state<string[]>([]);
   /** Storage info from the server (browser mode only). */
@@ -117,6 +130,11 @@ class GalleryStore {
     return `${img.prompt_id}::${img.filename}`;
   }
 
+  /** Return the in-flight persist promise for an image, if save is still pending. */
+  getPersistPromise(img: { prompt_id: string; filename: string }): Promise<string> | undefined {
+    return this._persistPromises.get(this._imageKey(img));
+  }
+
   constructor() {
     this.loadBoardAssignments();
     this.loadCustomBoards();
@@ -137,7 +155,6 @@ class GalleryStore {
   private saveBoardAssignments() {
     try {
       localStorage.setItem(GALLERY_BOARDS_KEY, JSON.stringify(this.boardAssignments));
-      triggerSync();
     } catch (e) {
       console.error("Failed to save gallery boards:", e);
     }
@@ -158,7 +175,6 @@ class GalleryStore {
   private saveCustomBoards() {
     try {
       localStorage.setItem(GALLERY_BOARD_NAMES_KEY, JSON.stringify(this.customBoards));
-      triggerSync();
     } catch (e) {
       console.error("Failed to save custom boards:", e);
     }
@@ -379,10 +395,15 @@ class GalleryStore {
     this.lightboxUrl = null;
   }
 
-  showToast(message: string, type: "success" | "error" | "info" = "info", persistent = false) {
-    this.toast = { message, type };
+  showToast(
+    message: string,
+    type: ToastType = "info",
+    options: boolean | ToastOptions = false,
+  ) {
+    const toastOptions = typeof options === "boolean" ? { persistent: options } : options;
+    this.toast = { message, type, ...toastOptions };
     if (this._toastTimer) clearTimeout(this._toastTimer);
-    if (!persistent) {
+    if (!toastOptions.persistent) {
       this._toastTimer = setTimeout(() => {
         this.toast = null;
         this._toastTimer = null;
@@ -390,6 +411,12 @@ class GalleryStore {
     } else {
       this._toastTimer = null;
     }
+  }
+
+  clearToast() {
+    if (this._toastTimer) clearTimeout(this._toastTimer);
+    this._toastTimer = null;
+    this.toast = null;
   }
 
   /** Save generated images to the persistent gallery on disk.
@@ -1031,29 +1058,6 @@ class GalleryStore {
       this.storageInfo = await getStorageInfo();
     } catch (e) {
       console.error("Failed to fetch storage info:", e);
-    }
-  }
-  /** Collect gallery board state for server-side sync. */
-  collectPrefs(): unknown {
-    return {
-      assignments: this.boardAssignments,
-      boardNames: this.customBoards,
-    };
-  }
-
-  /** Apply gallery board state from the server. */
-  applyServerPrefs(data: any): void {
-    try {
-      if (data?.assignments && typeof data.assignments === "object") {
-        this.boardAssignments = data.assignments;
-        localStorage.setItem(GALLERY_BOARDS_KEY, JSON.stringify(data.assignments));
-      }
-      if (Array.isArray(data?.boardNames)) {
-        this.customBoards = data.boardNames.filter((n: any) => !!n && n !== "Unsorted");
-        localStorage.setItem(GALLERY_BOARD_NAMES_KEY, JSON.stringify(this.customBoards));
-      }
-    } catch (e) {
-      console.error("Failed to apply server prefs (gallery boards):", e);
     }
   }
 }
