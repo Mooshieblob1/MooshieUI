@@ -12,7 +12,7 @@
 - **Edge download fix** — JXL downloads in Edge now use a correct `Content-Disposition` filename, fixing the truncated/garbled filename issue.
 
 ### Generation UI
-- **Collapsible recommendation panels** — the Anima, Illustrious, and NanoSaur recommended-settings boxes in Sampler Settings are now collapsible with their state persisted.
+- **Collapsible recommendation panels** — the Anima, Illustrious, and NanoSaur recommended-settings boxes in Sampler Settings are now collapsible.
 - **Tag autocomplete toggle** — a new Settings switch lets you disable prompt-field tag suggestions entirely. Translated across all 11 locales.
 - **Artist gallery tag insertion** — artist tags inserted from the gallery now convert underscores to spaces before being added to the prompt.
 - **Session image grid overlap fix** — image cards in the bottom session strip no longer overlap at the larger card-size slider values; the grid layout is stable across the full 48–160 px range.
