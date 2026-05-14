@@ -1092,6 +1092,17 @@ async fn gallery_image_handler(
             // (which don't ship with a JXL decoder) can still render the image.
             // The canonical `.jxl` file on disk is untouched.
             if lower.ends_with(".jxl") {
+                // Suggest a `.webp` filename when the browser saves the image
+                // (right-click → "Save Image As"). Without this, Edge silently
+                // saves the file with the URL's `.jxl` extension even though
+                // the bytes are WebP.
+                let webp_filename = {
+                    let stem = filename
+                        .rsplit_once('.')
+                        .map(|(s, _)| s)
+                        .unwrap_or(&filename);
+                    format!("{}.webp", stem)
+                };
                 let transcode = tokio::task::spawn_blocking(move || {
                     commands::api::transcode_jxl_to_webp(&data)
                 })
@@ -1102,6 +1113,10 @@ async fn gallery_image_handler(
                         [
                             ("content-type", "image/webp".to_string()),
                             ("cache-control", "no-cache".to_string()),
+                            (
+                                "content-disposition",
+                                format!("inline; filename=\"{}\"", webp_filename),
+                            ),
                         ],
                         webp,
                     )
@@ -1942,6 +1957,58 @@ async fn dispatch_command(
             let path = dir.join(&filename);
             let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
             Ok(serde_json::json!(bytes))
+        }
+        "load_gallery_image_display" => {
+            // JXL → WebP transcode so non-JXL browsers (Firefox, Edge, Chrome)
+            // can render the image. Other formats are returned as-is.
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+                return Err("Invalid filename".into());
+            }
+            let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
+            let path = dir.join(&filename);
+            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let out = if filename.to_ascii_lowercase().ends_with(".jxl") {
+                tokio::task::spawn_blocking(move || commands::api::transcode_jxl_to_webp(&bytes))
+                    .await
+                    .map_err(|e| format!("Task panicked: {}", e))?
+                    .map_err(|e| e.to_string())?
+            } else {
+                bytes
+            };
+            Ok(serde_json::json!(out))
+        }
+        "load_gallery_image_png" => {
+            // JXL → PNG transcode for downloading / clipboard. PNG keeps
+            // metadata intact and is supported everywhere.
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+                return Err("Invalid filename".into());
+            }
+            let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
+            let path = dir.join(&filename);
+            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let out = if filename.to_ascii_lowercase().ends_with(".jxl") {
+                tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+                    let img = commands::api::decode_gallery_image(&bytes)?;
+                    let mut buf = std::io::Cursor::new(Vec::new());
+                    img.write_to(&mut buf, image::ImageFormat::Png)
+                        .map_err(|e| format!("PNG encode failed: {}", e))?;
+                    Ok(buf.into_inner())
+                })
+                .await
+                .map_err(|e| format!("Task panicked: {}", e))?
+                .map_err(|e| e.to_string())?
+            } else {
+                bytes
+            };
+            Ok(serde_json::json!(out))
         }
         "get_gallery_image_path" => {
             let filename = args["filename"]

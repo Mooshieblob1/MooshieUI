@@ -344,9 +344,9 @@
           {:else}
             <div class="grid gap-2 flex-1 min-h-0 overflow-y-auto px-2 py-2" style="grid-template-columns: repeat(auto-fill, minmax({imageCardSize}px, 1fr)); align-content: start;">
               {#each filteredSessionImages as image}
-                <div class="group relative aspect-square rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors" oncontextmenu={(e) => { if (oncontextmenu) { e.preventDefault(); oncontextmenu(image, e.clientX, e.clientY); } }}>
+                <div class="group relative w-full rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors" style="aspect-ratio: 1 / 1;" oncontextmenu={(e) => { if (oncontextmenu) { e.preventDefault(); oncontextmenu(image, e.clientX, e.clientY); } }}>
               <button
-                class="w-full h-full"
+                class="absolute inset-0 w-full h-full"
                 onclick={() => gallery.openLightbox(image)}
               >
                 <img

@@ -996,6 +996,8 @@ const pt: Record<string, string> = {
   "settings.autocomplete.fetch": "Buscar",
   "settings.autocomplete.fetching": "Carregando...",
   "settings.autocomplete.reset_builtin": "Redefinir para tags Danbooru integradas",
+  "settings.autocomplete.enabled": "Ativar autocompletar de tags",
+  "settings.autocomplete.enabled_desc": "Mostrar sugestões de tags ao digitar no campo de prompt.",
   "settings.interrogator.thresholds_desc": "Controla os limites de confiança do interrogador de imagens (pixai-tagger). Valores mais baixos retornam mais tags, valores mais altos são mais seletivos.",
   "settings.interrogator.more_tags": "Mais tags",
   "settings.interrogator.fewer_tags": "Menos tags",

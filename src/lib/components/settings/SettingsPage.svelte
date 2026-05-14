@@ -2260,6 +2260,22 @@
 
           {#if !collapsed.autocomplete}
           <div class="px-5 pb-5 space-y-4">
+            <!-- Enabled toggle -->
+            <label class="flex items-center justify-between gap-3 cursor-pointer">
+              <div>
+                <p class="text-sm text-neutral-200">{locale.t('settings.autocomplete.enabled')}</p>
+                <p class="text-[11px] text-neutral-500 mt-0.5">{locale.t('settings.autocomplete.enabled_desc')}</p>
+              </div>
+              <button
+                class="relative w-10 h-5 rounded-full transition-colors shrink-0 {autocomplete.enabled ? 'bg-indigo-600' : 'bg-neutral-700'}"
+                onclick={() => { autocomplete.enabled = !autocomplete.enabled; autocomplete.saveSettings(); }}
+                role="switch"
+                aria-checked={autocomplete.enabled}
+              >
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {autocomplete.enabled ? 'translate-x-5' : ''}"></span>
+              </button>
+            </label>
+
             {#if isAdmin}
             <!-- Current source -->
             <div>

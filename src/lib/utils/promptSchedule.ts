@@ -34,6 +34,8 @@ export interface ParsedPrompt {
 /**
  * Split a SwarmUI fromto content string by the most unique separator.
  * Priority: || > | > ,
+ * Either side may be empty (e.g. `<fromto[0.5]:||after>` is valid and produces
+ * only the "after" segment). Returns null only when BOTH sides are empty.
  */
 function splitSwarmContent(content: string): [string, string] | null {
   let parts: string[];
@@ -44,7 +46,8 @@ function splitSwarmContent(content: string): [string, string] | null {
   } else {
     parts = content.split(",").map((s) => s.trim());
   }
-  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  if (parts.length !== 2) return null;
+  if (!parts[0] && !parts[1]) return null;
   return [parts[0], parts[1]];
 }
 
@@ -124,10 +127,12 @@ export function parseScheduledPrompt(raw: string): ParsedPrompt {
       }
 
       const [before, after] = parts;
-      segments.push({ text: before, start: 0, end: timestep });
-      segments.push({ text: after, start: timestep, end: 1.0 });
-      // Keep both texts in baseText for metadata
-      baseText += `${before}, ${after}`;
+      if (before) segments.push({ text: before, start: 0, end: timestep });
+      if (after) segments.push({ text: after, start: timestep, end: 1.0 });
+      // Do NOT add the inner halves to baseText — they should only apply within
+      // their scheduled timestep range. Otherwise both halves would be active
+      // across the full sampling duration (via the base conditioning) AND added
+      // again during their window, which is not what fromto means.
     }
   }
 

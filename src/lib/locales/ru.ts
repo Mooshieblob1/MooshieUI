@@ -996,6 +996,8 @@ const ru: Record<string, string> = {
   "settings.autocomplete.fetch": "Получить",
   "settings.autocomplete.fetching": "Загрузка...",
   "settings.autocomplete.reset_builtin": "Сбросить к встроенным тегам Danbooru",
+  "settings.autocomplete.enabled": "Включить автодополнение тегов",
+  "settings.autocomplete.enabled_desc": "Показывать предложения тегов при вводе в поле подсказки.",
   "settings.interrogator.thresholds_desc": "Управляет порогами доверия для интеррогатора изображений (pixai-tagger). Низкие значения возвращают больше тегов, высокие — более избирательны.",
   "settings.interrogator.more_tags": "Больше тегов",
   "settings.interrogator.fewer_tags": "Меньше тегов",

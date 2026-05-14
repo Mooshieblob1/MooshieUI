@@ -1021,6 +1021,8 @@ const ja: Record<string, string> = {
   "settings.autocomplete.fetch": "取得",
   "settings.autocomplete.fetching": "読み込み中...",
   "settings.autocomplete.reset_builtin": "組み込みDanbooruタグにリセット",
+  "settings.autocomplete.enabled": "タグ自動補完を有効にする",
+  "settings.autocomplete.enabled_desc": "プロンプト入力中にタグ候補を表示します。",
   "settings.interrogator.thresholds_desc": "画像インテロゲーター（pixai-tagger）の信頼度しきい値を制御します。低い値はより多くのタグを返し、高い値はより選択的です。",
   "settings.interrogator.more_tags": "タグを増やす",
   "settings.interrogator.fewer_tags": "タグを減らす",

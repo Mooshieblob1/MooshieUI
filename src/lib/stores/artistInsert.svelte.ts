@@ -26,7 +26,11 @@ class ArtistInsertStore {
    * The `tag` may be provided with or without a leading `@`.
    */
   request(tag: string): void {
-    const withAt = "@" + tag.replace(/^@/, "");
+    // Strip leading @, convert underscores to spaces (danbooru convention),
+    // then re-prefix with @. Escaped parens \( \) are left intact so prompts
+    // round-trip correctly through the scheduler/highlight parser.
+    const cleaned = tag.replace(/^@+/, "").replace(/_/g, " ").trim();
+    const withAt = "@" + cleaned;
     const existing = generation.positivePrompt.trim();
     const existingArtistTags = existing
       .split(",")
@@ -42,6 +46,9 @@ class ArtistInsertStore {
   }
 
   apply(withAt: string, mode: "add" | "replace"): void {
+    // Defensive: normalize underscores → spaces in case a caller passes
+    // a raw danbooru-style tag rather than going through request().
+    const cleaned = "@" + withAt.replace(/^@+/, "").replace(/_/g, " ").trim();
     const existing = generation.positivePrompt.trim();
     let newPrompt: string;
     if (mode === "replace") {
@@ -50,9 +57,9 @@ class ArtistInsertStore {
         .map((s) => s.trim())
         .filter((s) => !s.startsWith("@"))
         .join(", ");
-      newPrompt = stripped ? `${withAt}, ${stripped}` : withAt;
+      newPrompt = stripped ? `${cleaned}, ${stripped}` : cleaned;
     } else {
-      newPrompt = existing ? `${withAt}, ${existing}` : withAt;
+      newPrompt = existing ? `${cleaned}, ${existing}` : cleaned;
     }
     generation.positivePrompt = newPrompt;
     generation.saveSettings();

@@ -1,5 +1,24 @@
 # Changelog
 
+## What's New in v1.2.2
+
+### Prompt Scheduling Fixes
+- **SwarmUI `<fromto[N]:A||B>` empty-side handling** — schedules like `<fromto[10]:cat||>` or `<fromto[10]:||dog>` now parse correctly: the empty half is treated as no prompt for that timestep range instead of being rejected.
+- **Double-encoding fix** — the `before` and `after` halves of a `<fromto>` block are no longer also appended to the base prompt. Scheduling now produces a clean swap at the cutoff step instead of bleeding both halves across all steps.
+
+### JXL Pipeline
+- **Metadata preserved on save/copy** — "Save Image As…" and "Copy to Clipboard" for JXL gallery images now re-embed the generation parameters into the PNG export. The server-side JXL→PNG transcode previously stripped metadata; the frontend now re-injects it according to your metadata mode setting.
+- **Browser-mode JXL support** — the embedded web server now dispatches `load_gallery_image_display` and `load_gallery_image_png` so Firefox and other non-JXL browsers can view and export JXL gallery images.
+- **Edge download fix** — JXL downloads in Edge now use a correct `Content-Disposition` filename, fixing the truncated/garbled filename issue.
+
+### Generation UI
+- **Collapsible recommendation panels** — the Anima, Illustrious, and NanoSaur recommended-settings boxes in Sampler Settings are now collapsible with their state persisted.
+- **Tag autocomplete toggle** — a new Settings switch lets you disable prompt-field tag suggestions entirely. Translated across all 11 locales.
+- **Artist gallery tag insertion** — artist tags inserted from the gallery now convert underscores to spaces before being added to the prompt.
+- **Session image grid overlap fix** — image cards in the bottom session strip no longer overlap at the larger card-size slider values; the grid layout is stable across the full 48–160 px range.
+
+---
+
 ## What's New in v1.2.1
 
 ### Bug Fix

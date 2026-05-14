@@ -996,6 +996,8 @@ const zhTw: Record<string, string> = {
   "settings.autocomplete.fetch": "取得",
   "settings.autocomplete.fetching": "載入中...",
   "settings.autocomplete.reset_builtin": "重置為內建 Danbooru 標籤",
+  "settings.autocomplete.enabled": "啟用標籤自動完成",
+  "settings.autocomplete.enabled_desc": "在提示框中輸入時顯示標籤建議。",
   "settings.interrogator.thresholds_desc": "控制圖像詢問器（pixai-tagger）的信心閾值。較低的值傳回更多標籤，較高的值更具選擇性。",
   "settings.interrogator.more_tags": "更多標籤",
   "settings.interrogator.fewer_tags": "更少標籤",

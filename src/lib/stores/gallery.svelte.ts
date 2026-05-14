@@ -664,6 +664,17 @@ class GalleryStore {
         bytes = await getOutputImage(image.filename, image.subfolder);
       }
 
+      // JXL → PNG transcode strips embedded metadata. Re-embed from the
+      // in-memory metadata so the exported PNG carries the original prompt /
+      // workflow info (parity with saveImageToDir).
+      if (isJxlGallery && image.metadata) {
+        try {
+          bytes = await embedPngMetadataBytes(bytes, image.metadata, generation.metadataMode);
+        } catch (e) {
+          console.warn("Failed to embed PNG metadata into JXL export:", e);
+        }
+      }
+
       // Replace .jxl with .png in the suggested filename — the file is exported as PNG.
       const defaultFilename = isJxlGallery
         ? image.filename.replace(/\.jxl$/i, ".png")
@@ -768,6 +779,28 @@ class GalleryStore {
         // Step 1: Try server-side native clipboard (preserves full PNG with metadata).
         // May fail on headless servers without xclip/wl-copy — fall through to browser API.
         if (galleryFilename) {
+          // JXL: the server-side clipboard handler can't paste raw JXL as an
+          // image, and the standard fetch path serves WebP (no metadata).
+          // Explicitly transcode to PNG + re-embed metadata so paste targets
+          // get a usable, metadata-bearing image.
+          if (galleryFilename.endsWith(".jxl")) {
+            try {
+              let pngBytes = await loadGalleryImagePng(galleryFilename);
+              if (image.metadata) {
+                try {
+                  pngBytes = await embedPngMetadataBytes(pngBytes, image.metadata, generation.metadataMode);
+                } catch (e) {
+                  console.warn("Failed to embed PNG metadata into JXL clipboard copy:", e);
+                }
+              }
+              const pngBlob = new Blob([new Uint8Array(pngBytes)], { type: "image/png" });
+              await this.writeBlobToClipboard(pngBlob);
+              this.showToast(locale.t("gallery.toast.copied"), "success");
+              return;
+            } catch (e) {
+              console.warn("JXL clipboard transcode failed, falling back:", e);
+            }
+          }
           try {
             const path = await getGalleryImagePath(galleryFilename);
             await copyImageToClipboard(path);
@@ -821,7 +854,15 @@ class GalleryStore {
         if (image.gallery_filename.endsWith(".jxl")) {
           // JXL can't be pasted as an image from the raw file path —
           // transcode to PNG first and copy bytes via native clipboard.
-          const pngBytes = await loadGalleryImagePng(image.gallery_filename);
+          // PNG transcode strips metadata, so re-embed it client-side.
+          let pngBytes = await loadGalleryImagePng(image.gallery_filename);
+          if (image.metadata) {
+            try {
+              pngBytes = await embedPngMetadataBytes(pngBytes, image.metadata, generation.metadataMode);
+            } catch (e) {
+              console.warn("Failed to embed PNG metadata into JXL clipboard copy:", e);
+            }
+          }
           await copyBytesToClipboard(pngBytes, "png");
         } else {
           const path = await getGalleryImagePath(image.gallery_filename);

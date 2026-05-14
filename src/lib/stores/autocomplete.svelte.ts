@@ -29,6 +29,8 @@ class AutocompleteStore {
   sourceUrl = $state("");
   /** Display name of uploaded file */
   sourceFileName = $state("");
+  /** Whether tag autocomplete is enabled */
+  enabled = $state(true);
   /** Whether a custom taglist is currently loading */
   loading = $state(false);
   /** Error message if loading failed */
@@ -76,6 +78,7 @@ class AutocompleteStore {
   }
 
   search(queryText: string, limit = this.maxResults): TagEntry[] {
+    if (!this.enabled) return [];
     const normalizedQuery = this.normalizeQuery(queryText);
     if (!normalizedQuery) return [];
 
@@ -103,6 +106,7 @@ class AutocompleteStore {
       this._storeReady = true;
       const saved = await ipcStore.get<Record<string, any>>(STORE_KEY);
       if (saved) {
+        if (saved.enabled === false) this.enabled = false;
         if (saved.maxResults) this.maxResults = saved.maxResults;
         if (saved.sourceMode) this.sourceMode = saved.sourceMode;
         if (saved.sourceUrl) this.sourceUrl = saved.sourceUrl;
@@ -127,6 +131,7 @@ class AutocompleteStore {
     if (!this._storeReady) return;
     try {
       await ipcStore.set(STORE_KEY, {
+        enabled: this.enabled,
         maxResults: this.maxResults,
         sourceMode: this.sourceMode,
         sourceUrl: this.sourceUrl,
