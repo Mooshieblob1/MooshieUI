@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v1.2.1
+
+### Bug Fix
+- **External ComfyUI toast suppressed in server/browser mode** — the "Another ComfyUI is already running" warning toast now only appears in the desktop (Tauri) app. In Docker/LAN browser mode a pre-running ComfyUI is expected, so the toast was noise and has been silenced.
+
+---
+
 ## What's New in v1.2.0
 
 ### Anima Base v1.0

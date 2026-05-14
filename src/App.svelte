@@ -1473,7 +1473,7 @@
         startupStatus = locale.t("app.status.starting_comfyui");
       } else if (result === "already_running") {
         startupStatus = locale.t("app.status.connecting");
-        showExternalComfyToast("already_running");
+        if (isTauri) showExternalComfyToast("already_running");
         await refreshAlreadyRunningComfyui();
       } else if (result === "skipped") {
         startupStatus = locale.t("app.status.connecting");
