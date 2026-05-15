@@ -247,6 +247,14 @@ impl AppState {
             }
         }
 
+        for hp in self.prompt_queue.take_held_related_to(&ids_to_delete) {
+            {
+                let mut result = hp.result.lock().await;
+                *result = Some(Err("generation.error_cancelled".to_string()));
+            }
+            hp.submitted.notify_one();
+        }
+
         if !ids_to_delete.is_empty() {
             for worker in &self.gpu_manager.workers {
                 let _ = self

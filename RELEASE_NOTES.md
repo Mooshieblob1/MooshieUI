@@ -1,3 +1,11 @@
+## What's New in v1.2.6
+
+### Ordered Wildcard Cancellation
+- **Left-click cancel recovers cleanly**: cancelling an ordered wildcard run now wakes backend held-prompt tasks, removes queued prompts, and leaves MooshieUI ready for another generation.
+- **Canceled previews no longer freeze the generation pane**: active prompt cancellation now clears the live preview, progress, active node, and queue state.
+
+---
+
 ## What's New in v1.2.5
 
 ### Prompt Preset Wildcards

@@ -260,9 +260,22 @@ class ProgressStore {
 
   /** Remove a specific prompt from the queue (e.g. on error). */
   removePrompt(promptId: string) {
+    const wasActive = this.activePromptId === promptId;
     this.pendingPrompts = this.pendingPrompts.filter((p) => p.promptId !== promptId);
-    if (this.activePromptId === promptId) {
+
+    if (wasActive || this.pendingPrompts.length === 0) {
       this.activePromptId = null;
+      this.currentStep = 0;
+      this.totalSteps = 0;
+      this.currentNode = null;
+      this.previewImage = null;
+      this.samplingPass = 0;
+      this._lastProgressNode = null;
+    }
+
+    if (this.pendingPrompts.length === 0) {
+      this.queuePosition = null;
+      this.queueTotal = 0;
     }
   }
 

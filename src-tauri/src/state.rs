@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::process::Child;
@@ -205,6 +205,36 @@ impl PromptQueue {
             .unwrap()
             .retain(|real, placeholder| !ids.iter().any(|id| id == real || id == placeholder));
         ids
+    }
+
+    /// Remove held prompts matching any placeholder/real id and return them
+    /// so callers can wake their waiting submission tasks with a cancellation.
+    pub fn take_held_related_to(&self, prompt_ids: &[String]) -> Vec<HeldPrompt> {
+        if prompt_ids.is_empty() {
+            return Vec::new();
+        }
+
+        let id_set: HashSet<String> = prompt_ids.iter().cloned().collect();
+        let mut held = self.held.lock().unwrap();
+        let mut kept: Vec<HeldPrompt> = Vec::with_capacity(held.len());
+        let mut taken: Vec<HeldPrompt> = Vec::new();
+
+        for hp in held.drain(..) {
+            let is_match = id_set.contains(&hp.placeholder_id)
+                || self
+                    .related_ids(&hp.placeholder_id)
+                    .iter()
+                    .any(|id| id_set.contains(id));
+
+            if is_match {
+                taken.push(hp);
+            } else {
+                kept.push(hp);
+            }
+        }
+
+        *held = kept;
+        taken
     }
 
     /// Return a prompt id plus its placeholder/real-id aliases.
