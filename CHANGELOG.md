@@ -19,6 +19,82 @@
 
 ---
 
+## What's New in v1.2.4
+
+### JXL Image Saves
+- **Browser-mode JXL gallery saves no longer fail with a 500**: server-mode saves now use the pre-built WebP display copy instead of forcing an on-demand transcode path.
+- **JXL clipboard copies keep metadata**: copying generated JXL output now re-embeds prompt, sampler, seed, and other generation metadata into the PNG clipboard image.
+
+### Dependency Updates
+- **Core Rust dependencies refreshed**: `rusqlite`, `axum`, `open`, and `zip` were updated to current stable versions.
+
+---
+
+## What's New in v1.2.3
+
+### Port Conflict Recovery
+- **Kill and restart from the port-conflict modal**: the "Another ComfyUI is already running" flow now offers a direct kill-process-and-restart action.
+
+### Generation Cancellation
+- **Cancel no longer leaves ghost runs behind**: cancelling clears only the current user's prompts from the queue.
+- **Ordered wildcard GPU scheduling is more reliable**: fixed a race where later ordered wildcard images could fail after the first image succeeded.
+
+### Browser Mode
+- **Preview menu saves and copies work in browser mode**: fixed a browser/server-mode security error when saving or copying images from the preview menu.
+
+### Gallery and Permissions
+- **Small Gelbooru fallback artist sets stay visible**: artists with fewer than 50 posts now appear as `<=50` instead of disappearing.
+- **Moderators can operate the server**: moderator accounts now have access to operational actions like custom-node installs, model downloads, ComfyUI restarts, and filesystem commands.
+
+---
+
+## What's New in v1.2.2
+
+### Prompt Scheduling
+- **`<fromto[N]:A||B>` parsing fixed**: scheduled prompt blocks now parse correctly.
+- **Double-encoding fixed for scheduled prompt blocks**: `<fromto>` content is no longer encoded twice.
+
+### JXL Pipeline
+- **JXL metadata is preserved on save and copy**: browser-mode JXL output keeps generation metadata through gallery and clipboard paths.
+- **Browser JXL handling improved**: display and download behavior is more reliable, including Edge downloads.
+
+### Generation UI
+- **Recommendation panels are collapsible**: Anima, Illustrious, and NanoSaur guidance panels can be collapsed.
+- **Tag autocomplete can be toggled**: users can disable tag autocomplete when it gets in the way.
+- **Artist tags read more naturally**: artist tag underscores are displayed as spaces.
+- **Session image grid overlap fixed**: generated image cards no longer overlap in the session grid.
+
+---
+
+## What's New in v1.2.1
+
+### Browser Mode Startup
+- **ComfyUI already-running warning is desktop-only**: the "Another ComfyUI is already running" toast is silenced in Docker and LAN browser mode where a pre-running ComfyUI server is expected.
+
+---
+
+## What's New in v1.2.0
+
+### Anima Base v1.0
+- **Anima now uses `anima-base-v1.0.safetensors`**: downloads point at the current model from `circlestone-labs/Anima`.
+- **Old Anima preview options removed**: Preview 3, FP8, and Preview 2 options were removed from model downloads.
+- **Compute capability gate fixed**: Anima download availability now respects the detected GPU capability correctly.
+
+### External ComfyUI Detection
+- **Port conflicts are surfaced clearly**: startup now shows a port-conflict modal and persistent warning when another ComfyUI is already using the configured port.
+- **Missing-node errors are detected earlier**: startup paths report missing node problems before generation fails later.
+
+### ControlNet Preview
+- **Live preprocessor preview added**: the new `generate_controlnet_preprocessor_preview` command supports on-demand preview generation, including browser mode.
+
+### Startup Reliability
+- **Tokio reactor panic fixed**: desktop and server modes now spawn async work with the correct runtime APIs.
+
+### Internationalization
+- **New UI strings are localized**: new release UI text was routed through the locale system across all supported locales.
+
+---
+
 ## What's New in v1.1.11
 
 ### Prompt Presets
