@@ -1,3 +1,12 @@
+## What's New in v1.2.7
+
+### Ordered Wildcard Cancellation
+- **Left-click now skips the current ordered wildcard item**: ordered wildcard runs keep moving after skipping only the active item instead of canceling the whole batch.
+- **Right-click now cancels the full ordered wildcard run**: full-run cancellation invalidates stale async submissions, clears the visible queue immediately, and uses the backend user-scoped cancel path.
+- **Canceled ordered runs no longer revive stale UI state**: token guards prevent late generation responses from re-enabling old runs or enqueueing canceled prompts after a new generation starts.
+
+---
+
 ## What's New in v1.2.6
 
 ### Ordered Wildcard Cancellation

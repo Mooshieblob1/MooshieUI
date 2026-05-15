@@ -20,13 +20,19 @@
   let isSubmitting = $state(false);
   let orderedRunPromptIds = $state<string[]>([]);
   let orderedRunCancelRequested = $state(false);
+  let submitRunToken = 0;
+  let orderedRunToken = 0;
   const orderedWildcardRun = $derived(promptPresets.orderedWildcardRun);
   const orderedWildcardRunCount = $derived(compare.enabled && compare.cellCount > 1 ? 0 : (orderedWildcardRun?.count ?? 0));
   const pendingOrderedRunIds = $derived(orderedRunPromptIds.filter((id) => progress.pendingPrompts.some((prompt) => prompt.promptId === id)));
 
-  async function submitGeneration(params: GenerationParams): Promise<string> {
+  async function requestGeneration(params: GenerationParams) {
     const result = await generate(params);
     params.seed = result.seed;
+    return result;
+  }
+
+  function trackGeneration(params: GenerationParams, result: Awaited<ReturnType<typeof requestGeneration>>): string {
     progress.enqueue(result.prompt_id, params.upscale_enabled, params.mode, params);
     if (result.queue_position != null && result.queue_total != null) {
       progress.updateQueuePosition(result.prompt_id, result.queue_position, result.queue_total);
@@ -34,14 +40,25 @@
     return result.prompt_id;
   }
 
+  async function submitGeneration(params: GenerationParams): Promise<string> {
+    return trackGeneration(params, await requestGeneration(params));
+  }
+
+  function finishSubmitRun(runToken: number) {
+    if (runToken === submitRunToken) {
+      isSubmitting = false;
+    }
+  }
+
   async function handleGenerate() {
     if (isSubmitting) return;
+    const runToken = ++submitRunToken;
     isSubmitting = true;
     errorMsg = null;
 
     if (!generation.checkpoint) {
       errorMsg = locale.t('generation.error_no_checkpoint');
-      isSubmitting = false;
+      finishSubmitRun(runToken);
       return;
     }
 
@@ -121,10 +138,12 @@
       await submitGeneration(params);
       generation.saveSettings();
     } catch (e) {
-      console.error("Generation failed:", e);
-      errorMsg = String(e);
+      if (runToken === submitRunToken) {
+        console.error("Generation failed:", e);
+        errorMsg = String(e);
+      }
     } finally {
-      isSubmitting = false;
+      finishSubmitRun(runToken);
     }
   }
 
@@ -135,10 +154,11 @@
     if (choices.length === 0) return;
 
     generation.saveCurrentPromptToHistory();
+    const runToken = ++orderedRunToken;
     orderedRunPromptIds = [];
     orderedRunCancelRequested = false;
     for (let i = 0; i < count; i++) {
-      if (orderedRunCancelRequested) break;
+      if (orderedRunCancelRequested || runToken !== orderedRunToken) break;
       const choiceIndex = (run.nextIndex + i) % choices.length;
       const fixedPresetChoices = new Map([[run.presetId, choices[choiceIndex]]]);
       const params = generation.toParams({ fixedPresetChoices });
@@ -150,21 +170,34 @@
         "output_bit_depth:",
         params.output_bit_depth,
       );
-      const promptId = await submitGeneration(params);
-      orderedRunPromptIds.push(promptId);
-      if (orderedRunCancelRequested) {
-        await cancelOrderedPromptIds([promptId]);
+      let result: Awaited<ReturnType<typeof requestGeneration>>;
+      try {
+        result = await requestGeneration(params);
+      } catch (e) {
+        if (orderedRunCancelRequested || runToken !== orderedRunToken) break;
+        throw e;
+      }
+      if (orderedRunCancelRequested || runToken !== orderedRunToken) {
+        try { await interruptGeneration(result.prompt_id); } catch { /* already gone */ }
+        break;
+      }
+      const promptId = trackGeneration(params, result);
+      orderedRunPromptIds = [...orderedRunPromptIds, promptId];
+      if (orderedRunCancelRequested || runToken !== orderedRunToken) {
+        await cancelPromptIds([promptId], true);
         break;
       }
       promptPresets.setOrderedWildcardIndex(run.presetId, choiceIndex + 1);
     }
-    generation.saveSettings();
+    if (runToken === orderedRunToken) {
+      generation.saveSettings();
+    }
   }
 
-  /** Left-click: cancel the active ordered run, otherwise cancel the current generation. */
+  /** Left-click: skip the current ordered item, otherwise cancel the current generation. */
   async function handleCancelCurrent() {
-    if (pendingOrderedRunIds.length > 0 || (isSubmitting && orderedWildcardRunCount > 1)) {
-      await handleCancelOrderedRun();
+    if (pendingOrderedRunIds.length > 0) {
+      await handleSkipOrderedPrompt();
       return;
     }
     const promptId = progress.activePromptId ?? progress.pendingPrompts[0]?.promptId;
@@ -172,22 +205,25 @@
     if (promptId) progress.removePrompt(promptId);
   }
 
-  async function handleCancelOrderedRun() {
-    orderedRunCancelRequested = true;
-    await cancelOrderedPromptIds([...pendingOrderedRunIds]);
+  async function handleSkipOrderedPrompt() {
+    const promptId = progress.activePromptId && pendingOrderedRunIds.includes(progress.activePromptId)
+      ? progress.activePromptId
+      : pendingOrderedRunIds[0];
+    if (!promptId) return;
+    await cancelPromptIds([promptId], true);
   }
 
-  async function cancelOrderedPromptIds(idsToCancel: string[]) {
+  async function cancelPromptIds(idsToCancel: string[], interruptActive = false) {
     if (idsToCancel.length === 0) return;
-    const activeOrderedId = progress.activePromptId && idsToCancel.includes(progress.activePromptId)
+    const activePromptId = progress.activePromptId && idsToCancel.includes(progress.activePromptId)
       ? progress.activePromptId
       : null;
 
-    if (activeOrderedId) {
-      await interruptGeneration(activeOrderedId);
+    if (interruptActive && activePromptId) {
+      await interruptGeneration(activePromptId);
     }
     for (const promptId of idsToCancel) {
-      if (promptId === activeOrderedId) continue;
+      if (promptId === activePromptId) continue;
       try { await deleteQueueItem(promptId); } catch { /* already removed */ }
     }
     for (const promptId of idsToCancel) {
@@ -199,16 +235,19 @@
   /** Right-click: cancel current + clear the entire queue. */
   async function handleCancelAll(e: MouseEvent) {
     e.preventDefault();
-    const promptIds = progress.pendingPrompts.map((p) => p.promptId);
-    const activeId = progress.activePromptId;
-    await interruptGeneration(activeId ?? undefined);
-    for (const pid of promptIds) {
-      try { await deleteQueueItem(pid); } catch { /* already removed */ }
-    }
-    progress.cancelAll();
     orderedRunCancelRequested = true;
+    submitRunToken++;
+    orderedRunToken++;
+    progress.cancelAll();
     orderedRunPromptIds = [];
     compare.clearGridBatch();
+    try {
+      await interruptGeneration();
+    } catch (e) {
+      console.error("Failed to cancel queued generations:", e);
+    } finally {
+      isSubmitting = false;
+    }
   }
 
   /** Generate all grid cells sequentially with a shared seed, then stitch into a grid. */
