@@ -151,7 +151,7 @@
         params.output_bit_depth,
       );
       const promptId = await submitGeneration(params);
-      orderedRunPromptIds = [...orderedRunPromptIds, promptId];
+      orderedRunPromptIds.push(promptId);
       if (orderedRunCancelRequested) {
         await cancelOrderedPromptIds([promptId]);
         break;

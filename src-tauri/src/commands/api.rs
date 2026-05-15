@@ -132,7 +132,7 @@ pub async fn interrupt_generation(
     prompt_id: Option<String>,
 ) -> Result<(), AppError> {
     if let Some(prompt_id) = prompt_id {
-        state.interrupt_prompt(Some(&prompt_id)).await
+        state.interrupt_prompt(Some(prompt_id.as_str())).await
     } else {
         state.interrupt_user_prompts(None).await
     }
@@ -353,7 +353,7 @@ pub async fn save_image_file(image_bytes: Vec<u8>, path: String) -> Result<(), A
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_text_file(content: String, path: String) -> Result<(), AppError> {
-    std::fs::write(&path, content)?;
+    tokio::fs::write(&path, content).await?;
     Ok(())
 }
 

@@ -563,6 +563,7 @@
   }
   let versionTapCount = $state(0);
   let startupStatus = $state<string>("");
+  let startupStatusKind = $state<"idle" | "manual" | "starting" | "connecting" | "error">("idle");
 
   let galleryImagesPerRow = $state(5);
   let gallerySortBy = $state<"date" | "name" | "size">("date");
@@ -1403,7 +1404,8 @@
     if (isTauri && selectedMode === "browser") {
       try {
         console.log("Setup selected browser mode, switching UI now...");
-        startupStatus = "Opening Web Browser Mode...";
+        startupStatus = locale.t("app.status.connecting");
+        startupStatusKind = "connecting";
         await ipcInvoke("switch_to_browser_mode");
         return;
       } catch (e) {
@@ -1437,6 +1439,7 @@
         connection.connected = event.payload.connected;
         if (event.payload.connected) {
           startupStatus = "";
+          startupStatusKind = "idle";
           models.refresh().then(() => {
             generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
           });
@@ -1445,6 +1448,7 @@
       ipcListen("comfyui:server_ready", async () => {
         console.log("Server ready event received");
         startupStatus = "";
+        startupStatusKind = "idle";
         // Load models now that server is up
         try {
           await models.refresh();
@@ -1459,7 +1463,10 @@
       }),
       ipcListen("comfyui:server_error", (event: any) => {
         console.error("Server error:", event.payload);
-        startupStatus = `Failed to start: ${event.payload?.error || "unknown error"}`;
+        startupStatus = locale.t("app.status.failed_to_start", {
+          message: event.payload?.error || locale.t("app.status.unknown_error"),
+        });
+        startupStatusKind = "error";
       }),
       ipcListen("comfyui:progress", (event: any) => {
         const data = event.payload;
@@ -1871,11 +1878,13 @@
         const result = await ipcInvoke<string>("start_comfyui");
         console.log("start_comfyui returned:", result);
         if (result === "spawned") {
-          startupStatus = "Starting ComfyUI...";
+          startupStatus = locale.t("app.status.starting_comfyui");
+          startupStatusKind = "starting";
         } else if (result === "already_running") {
           // SSE EventSource may not be connected yet, so the broadcast
           // comfyui:server_ready event could be lost. Handle it directly.
-          startupStatus = "Connecting...";
+          startupStatus = locale.t("app.status.connecting");
+          startupStatusKind = "connecting";
           try {
             await models.refresh();
             console.log("Models loaded (already running):", models.checkpoints);
@@ -1884,16 +1893,19 @@
               generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
             }
             startupStatus = "";
+            startupStatusKind = "idle";
           } catch (e) {
             console.error("Model refresh failed (already running):", e);
           }
         }
       } catch (e) {
         console.error("Failed to start ComfyUI:", e);
-        startupStatus = `Failed to start: ${e}`;
+        startupStatus = locale.t("app.status.failed_to_start", { message: String(e) });
+        startupStatusKind = "error";
       }
     } else {
-      startupStatus = "ComfyUI not started (auto-start disabled)";
+      startupStatus = locale.t("app.status.auto_start_disabled");
+      startupStatusKind = "manual";
     }
 
     // Load persisted gallery images from disk (independent of server status)
@@ -2247,23 +2259,30 @@
     <DownloadBanner />
     {#if startupStatus && !connection.connected}
       <div class="flex items-center gap-2 px-4 py-2 bg-amber-900/30 border-b border-amber-800/50 text-amber-200 text-sm">
-        {#if !autoStartEnabled && !startupStatus.startsWith("Starting") && !startupStatus.startsWith("Connecting")}
+        {#if startupStatusKind === "manual"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           {startupStatus}
           <button
             class="ml-2 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs transition-colors cursor-pointer"
             onclick={async () => {
               try {
-                startupStatus = "Starting ComfyUI...";
+                startupStatus = locale.t("app.status.starting_comfyui");
+                startupStatusKind = "starting";
                 const result = await ipcInvoke<string>("start_comfyui");
-                if (result === "spawned") startupStatus = "Starting ComfyUI...";
-                else if (result === "already_running") startupStatus = "Connecting...";
+                if (result === "spawned") {
+                  startupStatus = locale.t("app.status.starting_comfyui");
+                  startupStatusKind = "starting";
+                } else if (result === "already_running") {
+                  startupStatus = locale.t("app.status.connecting");
+                  startupStatusKind = "connecting";
+                }
               } catch (e) {
-                startupStatus = `Failed to start: ${e}`;
+                startupStatus = locale.t("app.status.failed_to_start", { message: String(e) });
+                startupStatusKind = "error";
               }
             }}
           >
-            Start ComfyUI
+            {locale.t("app.start_comfyui")}
           </button>
         {:else}
           <div class="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>

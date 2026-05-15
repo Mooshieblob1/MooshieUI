@@ -3434,7 +3434,9 @@ async fn dispatch_command(
                 .ok_or("Missing content")?
                 .to_string();
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
-            std::fs::write(&path, content).map_err(|e| e.to_string())?;
+            tokio::fs::write(&path, content)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
         }
         "upload_image" => {
