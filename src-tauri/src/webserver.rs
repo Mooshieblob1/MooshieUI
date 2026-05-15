@@ -1816,6 +1816,10 @@ async fn dispatch_command(
         }
         "interrupt_generation" => {
             if let Some(prompt_id) = args["promptId"].as_str() {
+                let caller = username.map(str::to_string);
+                if !state.prompt_queue.is_owned_by(prompt_id, &caller) {
+                    return Err("Prompt does not belong to the current user".to_string());
+                }
                 state
                     .interrupt_prompt(Some(prompt_id))
                     .await

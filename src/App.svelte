@@ -44,7 +44,7 @@
   let lastProgressEventAt = 0;
 
   /** Images received via WebSocket during generation, keyed by prompt_id. */
-  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string }>>();
+  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>>();
   /** In-flight output_image fetch promises per prompt_id (for SSE race-condition avoidance). */
   let pendingOutputFetches = new Map<string, Promise<void>[]>();
   /** Wait for pending fetches with a hard time limit to prevent hanging. */
@@ -1070,7 +1070,7 @@
     mode: "txt2img" | "img2img" | "inpainting",
     wasUpscaled: boolean,
     params: GenerationParams | null,
-    images: Array<{ blob: Blob; url: string; tempFilename?: string }>,
+    images: Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>,
   ) {
     if (images.length === 0) return;
 
@@ -1084,6 +1084,9 @@
         generation_mode: mode,
         is_upscaled: wasUpscaled,
         url: img.url,
+        sessionBlob: img.blob,
+        tempFilename: img.tempFilename,
+        displayTempFilename: img.displayTempFilename,
         file_size_bytes: img.blob.size,
         generated_at_ms: Date.now(),
       };
@@ -1410,6 +1413,13 @@
         return;
       } catch (e) {
         console.error("Failed to switch to browser mode after setup:", e);
+        const message = locale.t("app.status.failed_to_start", { message: String(e) });
+        setupComplete = true;
+        await initApp();
+        startupStatus = message;
+        startupStatusKind = "error";
+        gallery.showToast(message, "error", true);
+        return;
       }
     }
     setupComplete = true;
@@ -1577,6 +1587,7 @@
           let blob: Blob;
           let url: string;
           let tempFilename: string | undefined;
+          let displayTempFilename: string | undefined;
           const isJxl = data.format === "jxl";
 
           if (data.temp_filename) {
@@ -1587,6 +1598,7 @@
                 // For JXL the event also carries display_temp_filename (WebP/PNG copy).
                 if (isJxl) {
                   const displayFilename = data.display_temp_filename as string | undefined;
+                  displayTempFilename = displayFilename;
                   console.log("[output_image] JXL temp path — jxl:", data.temp_filename, "display:", displayFilename, "display_format:", data.display_format);
                   const [jxlRaw, displayRaw] = await Promise.all([
                     readTempImage(data.temp_filename),
@@ -1615,6 +1627,7 @@
                   // and display copy (pre-built WebP/PNG from display_temp_filename,
                   // or server-side transcode as fallback).
                   const displayFilename = data.display_temp_filename as string | undefined;
+                  displayTempFilename = displayFilename;
                   const displayUrl = displayFilename
                     ? `/internal-api/_temp_image/${encodeURIComponent(displayFilename)}`
                     : `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}?format=webp`;
@@ -1688,7 +1701,7 @@
           }
 
           const arr = pendingOutputImages.get(pid) ?? [];
-          arr.push({ blob, url, tempFilename });
+          arr.push({ blob, url, tempFilename, displayTempFilename });
           pendingOutputImages.set(pid, arr);
         })();
 
@@ -1880,7 +1893,7 @@
         if (result === "spawned") {
           startupStatus = locale.t("app.status.starting_comfyui");
           startupStatusKind = "starting";
-        } else if (result === "already_running") {
+        } else if (result === "already_running" || result === "skipped") {
           // SSE EventSource may not be connected yet, so the broadcast
           // comfyui:server_ready event could be lost. Handle it directly.
           startupStatus = locale.t("app.status.connecting");
@@ -2259,7 +2272,7 @@
     <DownloadBanner />
     {#if startupStatus && !connection.connected}
       <div class="flex items-center gap-2 px-4 py-2 bg-amber-900/30 border-b border-amber-800/50 text-amber-200 text-sm">
-        {#if startupStatusKind === "manual"}
+        {#if startupStatusKind === "manual" || startupStatusKind === "error"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           {startupStatus}
           <button
@@ -2272,9 +2285,20 @@
                 if (result === "spawned") {
                   startupStatus = locale.t("app.status.starting_comfyui");
                   startupStatusKind = "starting";
-                } else if (result === "already_running") {
+                } else if (result === "already_running" || result === "skipped") {
                   startupStatus = locale.t("app.status.connecting");
                   startupStatusKind = "connecting";
+                  try {
+                    await models.refresh();
+                    if (models.checkpoints.length > 0) {
+                      connection.connected = true;
+                      generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
+                    }
+                    startupStatus = "";
+                    startupStatusKind = "idle";
+                  } catch (refreshError) {
+                    console.error("Model refresh failed (already running):", refreshError);
+                  }
                 }
               } catch (e) {
                 startupStatus = locale.t("app.status.failed_to_start", { message: String(e) });
