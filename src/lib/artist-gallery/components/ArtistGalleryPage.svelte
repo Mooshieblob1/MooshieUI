@@ -7,6 +7,7 @@
   import type { ArtistSearchHit } from "../types.js";
   import ArtistLightbox from "./ArtistLightbox.svelte";
   import FavouritesManager from "./FavouritesManager.svelte";
+  import { proxiedCdnUrl } from "../../utils/cdnFetch.js";
 
   interface Props {
     manifestUrl: string;
@@ -127,7 +128,9 @@
     store.lightboxIndex = index;
     // Background: fetch full shard entry to patch in aliases once loaded
     store.client.getArtist(hit.slug).then((full) => {
-      if (full && store.lightboxEntry?.slug === hit.slug) store.lightboxEntry = full;
+      if (full && store.lightboxEntry?.slug === hit.slug) {
+        store.lightboxEntry = { ...full, imageUrl: proxiedCdnUrl(full.imageUrl) };
+      }
     }).catch(() => {});
   }
 

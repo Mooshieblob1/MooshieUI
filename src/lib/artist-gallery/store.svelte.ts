@@ -1,5 +1,5 @@
 import { createArtistGalleryClient } from "./client.js";
-import { cdnFetch } from "../utils/cdnFetch.js";
+import { cdnFetch, proxiedCdnUrl } from "../utils/cdnFetch.js";
 import { isBrowserMode } from "../utils/ipc.js";
 import type {
   ArtistEntry,
@@ -123,7 +123,8 @@ export class ArtistGalleryStore {
   async openArtist(slugOrTag: string): Promise<void> {
     this.activeLoading = true;
     try {
-      this.activeArtist = await this.client.getArtist(slugOrTag);
+      const artist = await this.client.getArtist(slugOrTag);
+      this.activeArtist = artist ? { ...artist, imageUrl: proxiedCdnUrl(artist.imageUrl) } : null;
     } catch (err) {
       console.error("artist-gallery: openArtist failed", err);
       this.activeArtist = null;

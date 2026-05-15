@@ -42,6 +42,7 @@ export function lazyThumbnail(node: HTMLImageElement, opts: LazyThumbnailOpts) {
     if (retryCount < MAX_RETRIES) {
       retryCount++;
       retryTimer = setTimeout(() => {
+        retryTimer = null;
         // Force reload by busting any cache with a retry param
         const src = getSrc();
         if (src) {
@@ -74,6 +75,10 @@ export function lazyThumbnail(node: HTMLImageElement, opts: LazyThumbnailOpts) {
     update(newOpts: LazyThumbnailOpts) {
       current = newOpts;
       retryCount = 0;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
       applySrc();
     },
     destroy() {

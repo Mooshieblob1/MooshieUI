@@ -194,6 +194,31 @@ pub struct ModelInstallDir {
     pub label: String,
 }
 
+pub(crate) fn is_safe_path_component(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed != value {
+        return false;
+    }
+
+    let path = std::path::Path::new(trimmed);
+    let mut components = path.components();
+    matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none()
+}
+
+pub(crate) fn is_safe_relative_model_path(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed != value {
+        return false;
+    }
+
+    let path = std::path::Path::new(trimmed);
+    !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
 /// Returns all directories where a model of the given category can be installed.
 /// Always includes the primary app directory; also includes any extra_model_paths
 /// subdirectories for the category that already exist on disk.
@@ -203,6 +228,10 @@ pub async fn get_model_install_dirs(
     state: State<'_, Arc<AppState>>,
     category: String,
 ) -> Result<Vec<ModelInstallDir>, AppError> {
+    if !is_safe_path_component(&category) {
+        return Err(AppError::Other("Invalid model category".into()));
+    }
+
     let config = state.config.read().await;
     let comfyui_path = config.comfyui_path.clone();
     let extra_model_paths = config.extra_model_paths.clone();
@@ -1439,6 +1468,10 @@ pub async fn find_model_by_hash(
     category: String,
     hash: String,
 ) -> Result<Option<String>, AppError> {
+    if !is_safe_path_component(&category) {
+        return Err(AppError::Other("Invalid model category".into()));
+    }
+
     let config = state.config.read().await;
     if config.comfyui_path.is_empty() {
         return Ok(None);
@@ -1491,6 +1524,13 @@ pub async fn hash_model_file(
     category: String,
     filename: String,
 ) -> Result<ModelHashResult, AppError> {
+    if !is_safe_path_component(&category) {
+        return Err(AppError::Other("Invalid model category".into()));
+    }
+    if !is_safe_relative_model_path(&filename) {
+        return Err(AppError::Other("Invalid model filename".into()));
+    }
+
     let config = state.config.read().await;
     if config.comfyui_path.is_empty() {
         return Err(AppError::Other("ComfyUI path not configured".into()));
@@ -1500,7 +1540,7 @@ pub async fn hash_model_file(
         .join(&category)
         .join(&filename);
 
-    if !path.exists() {
+    if !path.is_file() {
         return Err(AppError::Other(format!("File not found: {}", filename)));
     }
     let sha256 = full_sha256(&path)?;
@@ -1780,6 +1820,13 @@ pub async fn read_modelspec(
     category: String,
     filename: String,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    if !is_safe_path_component(&category) {
+        return Err(AppError::Other("Invalid model category".into()));
+    }
+    if !is_safe_relative_model_path(&filename) {
+        return Err(AppError::Other("Invalid model filename".into()));
+    }
+
     let config = state.config.read().await;
     if config.comfyui_path.is_empty() {
         return Err(AppError::Other("ComfyUI path not configured".into()));
@@ -1789,7 +1836,7 @@ pub async fn read_modelspec(
         .join(&category)
         .join(&filename);
 
-    if !path.exists() {
+    if !path.is_file() {
         return Err(AppError::Other(format!("File not found: {}", filename)));
     }
 
@@ -2076,6 +2123,10 @@ pub(crate) fn resolve_model_path(
     category: &str,
     filename: &str,
 ) -> Option<std::path::PathBuf> {
+    if !is_safe_path_component(category) || !is_safe_relative_model_path(filename) {
+        return None;
+    }
+
     // Primary ComfyUI directory always uses the canonical category name
     let primary = std::path::Path::new(comfyui_path)
         .join("models")

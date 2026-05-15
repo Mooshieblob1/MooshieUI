@@ -1,3 +1,23 @@
+## What's New in v1.2.8
+
+### Browser Mode Image Saves
+- **Generated images no longer disappear after save**: browser-mode temp images stay available long enough for gallery persistence, manual saves, and retrying clients instead of turning into late 404s.
+- **Save and export actions recover from stale temp URLs**: generated image actions now fall back to the in-session blob when a temp handoff has expired.
+- **JXL export metadata is preserved**: JXL-to-PNG save and copy paths keep generation metadata while using the safer browser-mode fallback pipeline.
+
+### Artist Gallery
+- **CDN previews work in browser mode**: artist gallery images now route through the embedded CDN proxy when needed, avoiding browser CORS failures.
+- **CDN proxy URLs keep query strings**: proxied CDN requests now preserve the original query parameters for future cache and asset variants.
+
+### Generation Reliability and Hardening
+- **Stale blob retries are cleaned up**: thumbnail retry timers are cancelled when image URLs change, preventing old revoked blob URLs from retrying forever.
+- **Reconnect recovery is more immediate**: SSE reconnects now force pending prompts through the recovery check so missed outputs are picked up sooner.
+- **Queue updates stay accurate after errors**: execution errors emit the real remaining queue positions instead of clearing unrelated prompts.
+- **Model metadata lookups reject unsafe paths**: model category and filename inputs are validated before filesystem access in desktop and browser mode.
+- **Temporary output recovery caches now expire**: cached output references remain available for missed-event recovery, then clear automatically to avoid long-session memory growth.
+
+---
+
 ## What's New in v1.2.7
 
 ### Ordered Wildcard Cancellation

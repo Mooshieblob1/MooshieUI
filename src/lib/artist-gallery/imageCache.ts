@@ -16,6 +16,8 @@
  *   <img use:cachedSrc={entry.imageUrl} alt={entry.tag} />
  */
 
+import { proxiedCdnUrl } from "../utils/cdnFetch.js";
+
 /** Cache storage bucket name.  Bump the version suffix to bust stale caches. */
 const CACHE_NAME = "anima-artist-images-v1";
 
@@ -53,10 +55,12 @@ export async function fetchCachedArtistImage(url: string): Promise<string> {
 }
 
 async function _doFetch(url: string): Promise<string> {
+  const requestUrl = proxiedCdnUrl(url);
+
   if (hasCacheApi()) {
     try {
       const cache = await caches.open(CACHE_NAME);
-      const cached = await cache.match(url);
+      const cached = await cache.match(requestUrl);
       if (cached) {
         const blob = await cached.blob();
         const blobUrl = URL.createObjectURL(blob);
@@ -68,13 +72,13 @@ async function _doFetch(url: string): Promise<string> {
     }
   }
 
-  const response = await fetch(url, { mode: "cors", credentials: "omit" });
+  const response = await fetch(requestUrl, { credentials: "omit" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
   if (hasCacheApi()) {
     try {
       const cache = await caches.open(CACHE_NAME);
-      await cache.put(url, response.clone());
+      await cache.put(requestUrl, response.clone());
     } catch {
       // Cache write failed — non-fatal.
     }

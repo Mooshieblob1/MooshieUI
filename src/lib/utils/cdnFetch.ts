@@ -11,21 +11,26 @@
  * those requests through the `cdn_proxy_fetch` Tauri command, which uses the
  * shared reqwest client on the Rust side and isn't subject to CORS.
  *
- * Image loads via `<img src>` bypass CORS and work in both modes without any
- * special handling — only JSON `fetch` calls need this adapter.
+ * Plain `<img src>` loads can display CDN images, but cached image fetches and
+ * JSON requests still need the proxy in browser/server mode.
  */
-import { ipcInvoke, isTauri } from "./ipc.js";
+import { ipcInvoke, isBrowserMode, isTauri } from "./ipc.js";
 
 const CDN_PREFIX = "https://cdn.mooshieblob.com/";
 
+export function proxiedCdnUrl(url: string): string {
+  if (isBrowserMode && url.startsWith(CDN_PREFIX)) {
+    return `/internal-api/_cdn/${url.slice(CDN_PREFIX.length)}`;
+  }
+  return url;
+}
+
 /**
  * A drop-in `fetch` for the artist gallery client. In app mode, CDN URLs are
- * routed through the `cdn_proxy_fetch` Tauri command; everything else falls
- * back to the platform `fetch`. In browser/server mode we don't need an
- * adapter — callers can pass `undefined` and default `fetch` does the right
- * thing.
+ * routed through the `cdn_proxy_fetch` Tauri command. In browser/server mode,
+ * CDN URLs are rewritten to the embedded `/internal-api/_cdn/...` proxy.
  */
-export const cdnFetch: typeof fetch | undefined = isTauri
+export const cdnFetch: typeof fetch | undefined = isTauri || isBrowserMode
   ? (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url =
         typeof input === "string"
@@ -35,6 +40,9 @@ export const cdnFetch: typeof fetch | undefined = isTauri
             : input.url;
 
       if (url.startsWith(CDN_PREFIX)) {
+        if (isBrowserMode) {
+          return globalThis.fetch(proxiedCdnUrl(url), init);
+        }
         try {
           const path = url.slice(CDN_PREFIX.length);
           const body = await ipcInvoke<string>("cdn_proxy_fetch", { path });

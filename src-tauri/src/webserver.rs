@@ -44,6 +44,7 @@ pub struct WebState {
 pub type SharedState = Arc<WebState>;
 
 type BackgroundTask = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+const TEMP_EVENT_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[cfg(feature = "desktop")]
 fn spawn_background(task: BackgroundTask) {
@@ -53,6 +54,22 @@ fn spawn_background(task: BackgroundTask) {
 #[cfg(not(feature = "desktop"))]
 fn spawn_background(task: BackgroundTask) {
     tokio::spawn(task);
+}
+
+fn schedule_temp_event_cache_cleanup(state: Arc<AppState>, prompt_ids: Vec<String>) {
+    if prompt_ids.is_empty() {
+        return;
+    }
+
+    spawn_background(Box::pin(async move {
+        tokio::time::sleep(TEMP_EVENT_CACHE_TTL).await;
+        let mut outputs = state.output_image_cache.write().unwrap();
+        let mut previews = state.last_preview_by_prompt.write().unwrap();
+        for prompt_id in prompt_ids {
+            outputs.remove(&prompt_id);
+            previews.remove(&prompt_id);
+        }
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +256,8 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                         "comfyui:executing" => {
                             if evt.payload.get("node").is_some_and(|n| n.is_null()) {
                                 if let Some(pid) = prompt_id {
+                                    let temp_cache_ids =
+                                        cleanup_state.prompt_queue.related_ids(&pid);
                                     let owner = cleanup_state.prompt_queue.owner_of(&pid);
                                     log::info!(
                                         "[gen] completed prompt={} user={}",
@@ -256,11 +275,16 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                                     });
                                     cleanup_state.broadcast_queue_positions();
                                     cleanup_state.prompt_queue.drain_notify.notify_one();
+                                    schedule_temp_event_cache_cleanup(
+                                        cleanup_state.clone(),
+                                        temp_cache_ids,
+                                    );
                                 }
                             }
                         }
                         "comfyui:execution_error" => {
                             if let Some(pid) = prompt_id {
+                                let temp_cache_ids = cleanup_state.prompt_queue.related_ids(&pid);
                                 let owner = cleanup_state.prompt_queue.owner_of(&pid);
                                 log::warn!(
                                     "[gen] error prompt={} user={}",
@@ -281,6 +305,10 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                                 });
                                 cleanup_state.broadcast_queue_positions();
                                 cleanup_state.prompt_queue.drain_notify.notify_one();
+                                schedule_temp_event_cache_cleanup(
+                                    cleanup_state.clone(),
+                                    temp_cache_ids,
+                                );
                             }
                         }
                         _ => {}
@@ -1347,8 +1375,13 @@ async fn gpu_stats_handler(
 async fn cdn_proxy_handler(
     AxumState(state): AxumState<SharedState>,
     Path(path): Path<String>,
+    uri: axum::http::Uri,
 ) -> Response {
-    let target_url = format!("https://cdn.mooshieblob.com/{}", path);
+    let mut target_url = format!("https://cdn.mooshieblob.com/{}", path);
+    if let Some(query) = uri.query() {
+        target_url.push('?');
+        target_url.push_str(query);
+    }
     match state.app.http_client.get(&target_url).send().await {
         Ok(resp) => {
             let status = resp.status();
@@ -2408,8 +2441,9 @@ async fn dispatch_command(
                 metadata.as_ref(),
                 metadata_mode.as_deref(),
             )?;
-            // Clean up temp file after successful save
-            crate::temp_images::remove(&temp_filename);
+            // Keep the temp file available briefly for clients that still hold
+            // the temp URL or race a manual save against gallery persistence.
+            // Periodic cleanup handles expiry.
             Ok(serde_json::json!(result))
         }
         "delete_gallery_image" => {
@@ -2637,6 +2671,10 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing category")?
                 .to_string();
+            if !crate::commands::api::is_safe_path_component(&category) {
+                return Err("Invalid model category".into());
+            }
+
             let config = state.config.read().await;
             let comfyui_path = config.comfyui_path.clone();
             let extra_model_paths = config.extra_model_paths.clone();
@@ -2673,6 +2711,10 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing category")?
                 .to_string();
+            if !crate::commands::api::is_safe_path_component(&category) {
+                return Err("Invalid model category".into());
+            }
+
             let config = state.config.read().await;
             if config.comfyui_path.is_empty() {
                 return Err("ComfyUI path not configured".into());
@@ -2729,6 +2771,13 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
+            if !crate::commands::api::is_safe_path_component(&category) {
+                return Err("Invalid model category".into());
+            }
+            if !crate::commands::api::is_safe_relative_model_path(&filename) {
+                return Err("Invalid model filename".into());
+            }
+
             let config = state.config.read().await;
             if config.comfyui_path.is_empty() {
                 return Err("ComfyUI path not configured".into());
@@ -2739,7 +2788,7 @@ async fn dispatch_command(
                 .join(&filename);
             drop(config);
 
-            if !path.exists() {
+            if !path.is_file() {
                 return Err(format!("File not found: {}", filename));
             }
             let result = tokio::task::spawn_blocking(move || {
@@ -2761,6 +2810,13 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
+            if !crate::commands::api::is_safe_path_component(&category) {
+                return Err("Invalid model category".into());
+            }
+            if !crate::commands::api::is_safe_relative_model_path(&filename) {
+                return Err("Invalid model filename".into());
+            }
+
             let config = state.config.read().await;
             if config.comfyui_path.is_empty() {
                 return Err("ComfyUI path not configured".into());
@@ -2771,7 +2827,7 @@ async fn dispatch_command(
                 .join(&filename);
             drop(config);
 
-            if !path.exists() {
+            if !path.is_file() {
                 return Err(format!("File not found: {}", filename));
             }
             if !filename.ends_with(".safetensors") {

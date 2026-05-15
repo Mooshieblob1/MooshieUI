@@ -418,11 +418,31 @@ pub async fn connect_websocket(
                                                 .await;
                                         }
                                         ws_state.prompt_queue.drain_notify.notify_one();
-                                        // Signal frontend that queue has been cleared.
-                                        emit(
-                                            "mooshie:queue_update",
-                                            serde_json::json!({ "total": 0_u32 }),
-                                        );
+                                        let updates: Vec<serde_json::Value> = {
+                                            let queue = ws_state.prompt_queue.queue.read().unwrap();
+                                            let total = queue.len();
+                                            queue
+                                                .iter()
+                                                .enumerate()
+                                                .map(|(pos, (pid, _))| {
+                                                    serde_json::json!({
+                                                        "prompt_id": pid,
+                                                        "position": pos,
+                                                        "total": total,
+                                                    })
+                                                })
+                                                .collect()
+                                        };
+                                        if updates.is_empty() {
+                                            emit(
+                                                "mooshie:queue_update",
+                                                serde_json::json!({ "total": 0_u32 }),
+                                            );
+                                        } else {
+                                            for payload in updates {
+                                                emit("mooshie:queue_update", payload);
+                                            }
+                                        }
                                     }
                                     _ => {}
                                 }

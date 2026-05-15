@@ -1122,9 +1122,10 @@
 
     // If a style was just applied to the prompt and it doesn't have a thumbnail yet,
     // automatically assign this generation's primary image to it.
-    if (stylesStore.pendingStyleForThumbnail && newImages.length > 0) {
+    if (stylesStore.pendingStyleForThumbnail) {
       const styleId = stylesStore.pendingStyleForThumbnail;
       stylesStore.pendingStyleForThumbnail = null; // Clear immediately
+      if (newImages.length === 0) return;
 
       const firstImage = newImages[0];
       const persistPromise = gallery.getPersistPromise(firstImage);
@@ -1198,6 +1199,10 @@
       // Revoke old blob URL and update the image
       const oldUrl = image.url;
       image.url = newUrl;
+      image.sessionBlob = newBlob;
+      image.tempFilename = newTempFilename;
+      image.displayTempFilename = undefined;
+      image.file_size_bytes = newBlob.size;
 
       // If the lightbox is showing this image's old blob URL, upgrade it
       if (gallery.lightboxOpen && gallery.lightboxUrl === oldUrl) {
@@ -1208,10 +1213,15 @@
       // load the revoked blob URL via displayImage / lastOutputImage.
       if (oldUrl) {
         progress.replaceOutputUrl(oldUrl, newUrl);
-        URL.revokeObjectURL(oldUrl);
+        window.setTimeout(() => {
+          if (!gallery.sessionImages.some((img) => img.url === oldUrl)) {
+            URL.revokeObjectURL(oldUrl);
+          }
+        }, 30_000);
       }
 
       // Trigger Svelte reactivity so lazyThumbnail actions pick up the new URL
+      gallery.images = [...gallery.images];
       gallery.sessionImages = [...gallery.sessionImages];
     } catch (e) {
       // Non-critical — the image is still visible, just without embedded metadata
@@ -1874,9 +1884,7 @@
       if (progress.isGenerating && connection.connected) {
         // Reset last-activity timestamps so the reconciler doesn't skip prompts
         for (const p of progress.pendingPrompts) {
-          if (!promptLastActivity.has(p.promptId)) {
-            promptLastActivity.set(p.promptId, 0);
-          }
+          promptLastActivity.set(p.promptId, 0);
         }
       }
     };

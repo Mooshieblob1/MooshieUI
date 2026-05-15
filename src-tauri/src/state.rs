@@ -139,17 +139,19 @@ impl PromptQueue {
             // Skip past one prompt from each other user after our last prompt
             let mut insert_pos = last_own_idx + 1;
             let mut other_seen = std::collections::HashSet::new();
-            for i in insert_pos..queue.len() {
-                let (_, ref owner) = queue[i];
+            let mut scan_pos = insert_pos;
+            while scan_pos < queue.len() {
+                let (_, ref owner) = queue[scan_pos];
                 if *owner != username {
                     other_seen.insert(owner.clone());
-                    insert_pos = i + 1;
+                    insert_pos = scan_pos + 1;
                     if other_seen.len() >= num_users - 1 {
                         break;
                     }
                 } else {
                     break;
                 }
+                scan_pos += 1;
             }
 
             queue.insert(insert_pos, (prompt_id.to_string(), username));
@@ -517,15 +519,13 @@ impl AppState {
         // 1. If a specific prompt is being cancelled and it's still held
         //    locally (never submitted to ComfyUI), cancel it there and stop.
         if let Some(pid) = prompt_id {
-            let held_index = {
-                let held = self.prompt_queue.held.lock().unwrap();
-                held.iter().position(|hp| hp.placeholder_id == pid)
+            let held_prompt = {
+                let mut held = self.prompt_queue.held.lock().unwrap();
+                held.iter()
+                    .position(|hp| hp.placeholder_id == pid)
+                    .map(|idx| held.remove(idx))
             };
-            if let Some(idx) = held_index {
-                let hp = {
-                    let mut held = self.prompt_queue.held.lock().unwrap();
-                    held.remove(idx)
-                };
+            if let Some(hp) = held_prompt {
                 {
                     let mut result = hp.result.lock().await;
                     *result = Some(Err("generation.error_cancelled".to_string()));
