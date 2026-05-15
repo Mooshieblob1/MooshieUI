@@ -24,6 +24,19 @@
   const CIVITAI_ARCH_CACHE_KEY = "mooshieui.civitai.architectures.v2";
   const CIVITAI_ARCH_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 12;
   const ARCHITECTURE_LOAD_TIMEOUT_MS = 12000;
+  const MODEL_FILE_EXTENSIONS = [
+    ".safetensors",
+    ".ckpt",
+    ".pt",
+    ".pth",
+    ".bin",
+    ".gguf",
+    ".onnx",
+    ".sft",
+    ".pkl",
+    ".pickle",
+    ".npz",
+  ];
 
   const modelTypes = $derived<Array<{ value: CivitaiModelType | ""; label: string }>>([
     { value: "", label: locale.t("modelhub.filter.all_types") },
@@ -135,6 +148,7 @@
   let directCategory = $state("checkpoints");
   let directStatus = $state<string | null>(null);
   let directInstalling = $state(false);
+  let lastInferredDirectFilename = "";
 
   let filterDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let queryDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -312,6 +326,92 @@
     } catch {
       return downloadUrl;
     }
+  }
+
+  function safeFilenameCandidate(value: string | null | undefined): string | null {
+    const trimmed = value?.trim().replace(/^['"]|['"]$/g, "") ?? "";
+    if (!trimmed || trimmed === "." || trimmed === "..") return null;
+    if (trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("\0")) return null;
+    return trimmed;
+  }
+
+  function decodeFilenameCandidate(value: string): string | null {
+    try {
+      return safeFilenameCandidate(decodeURIComponent(value));
+    } catch {
+      return safeFilenameCandidate(value);
+    }
+  }
+
+  function modelFileExtension(filename: string | null | undefined): string | null {
+    const lower = filename?.toLowerCase() ?? "";
+    return MODEL_FILE_EXTENSIONS.find((extension) => lower.endsWith(extension)) ?? null;
+  }
+
+  function filenameFromContentDisposition(value: string | null): string | null {
+    if (!value) return null;
+    const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match?.[1]) {
+      return decodeFilenameCandidate(utf8Match[1]);
+    }
+
+    const quotedMatch = value.match(/filename="([^"]+)"/i);
+    if (quotedMatch?.[1]) return safeFilenameCandidate(quotedMatch[1]);
+
+    const plainMatch = value.match(/filename=([^;]+)/i);
+    return safeFilenameCandidate(plainMatch?.[1]);
+  }
+
+  function inferDirectFilenameFromUrl(value: string): string | null {
+    try {
+      const parsed = new URL(value.trim());
+      const dispositionFilename = filenameFromContentDisposition(
+        parsed.searchParams.get("response-content-disposition"),
+      );
+      if (dispositionFilename && modelFileExtension(dispositionFilename)) {
+        return dispositionFilename;
+      }
+
+      for (const key of ["filename", "file", "name"]) {
+        const candidate = safeFilenameCandidate(parsed.searchParams.get(key));
+        if (candidate && modelFileExtension(candidate)) return candidate;
+      }
+
+      const segments = parsed.pathname.split("/").filter(Boolean).reverse();
+      for (const segment of segments) {
+        const candidate = decodeFilenameCandidate(segment);
+        if (candidate && modelFileExtension(candidate)) return candidate;
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
+  function filenameWithOriginalExtension(filename: string, originalFilename: string | null): string | null {
+    const safeFilename = safeFilenameCandidate(filename);
+    if (!safeFilename) return null;
+
+    const originalExtension = modelFileExtension(originalFilename);
+    if (!originalExtension || modelFileExtension(safeFilename)) return safeFilename;
+    return `${safeFilename.replace(/\.+$/, "")}${originalExtension}`;
+  }
+
+  function applyDirectUrlFilename(value: string) {
+    const inferred = inferDirectFilenameFromUrl(value);
+    if (!inferred) return;
+
+    if (!directFilename.trim() || directFilename.trim() === lastInferredDirectFilename) {
+      directFilename = inferred;
+    }
+    lastInferredDirectFilename = inferred;
+  }
+
+  function handleDirectUrlInput(event: Event) {
+    const value = (event.currentTarget as HTMLInputElement).value;
+    directStatus = null;
+    applyDirectUrlFilename(value);
   }
 
   function loadApiKey() {
@@ -619,19 +719,27 @@
 
   async function installFromDirectUrl() {
     directStatus = null;
-    if (!directUrl.trim()) {
+    const trimmedUrl = directUrl.trim();
+    if (!trimmedUrl) {
       directStatus = locale.t("modelhub.direct.url_required");
       return;
     }
-    if (!directFilename.trim()) {
+
+    const inferredFilename = inferDirectFilenameFromUrl(trimmedUrl);
+    const finalFilename = filenameWithOriginalExtension(
+      directFilename.trim() || inferredFilename || "",
+      inferredFilename,
+    );
+    if (!finalFilename) {
       directStatus = locale.t("modelhub.direct.filename_required");
       return;
     }
+    directFilename = finalFilename;
+    if (inferredFilename) lastInferredDirectFilename = inferredFilename;
 
     // Detect HuggingFace model page URLs (not direct file URLs).
     // A valid HuggingFace download URL contains /resolve/ in the path.
     // A page URL like https://huggingface.co/CabalResearch/Mugen would download HTML.
-    const trimmedUrl = directUrl.trim();
     try {
       const parsed = new URL(trimmedUrl);
       const isHuggingFace =
@@ -649,7 +757,7 @@
 
     directInstalling = true;
     try {
-      await downloadModel(trimmedUrl, directCategory, directFilename.trim(), installDir);
+      await downloadModel(trimmedUrl, directCategory, finalFilename, installDir);
       await models.refresh();
       directStatus = locale.t("modelhub.direct.installed");
     } catch (e) {
@@ -663,6 +771,7 @@
     source = "direct";
     directUrl = item.url;
     directFilename = item.filename;
+    lastInferredDirectFilename = item.filename;
     directCategory = item.category;
     directStatus = null;
   }
@@ -1200,6 +1309,7 @@
               name="directUrl"
               type="url"
               bind:value={directUrl}
+              oninput={handleDirectUrlInput}
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500"
               placeholder="https://.../model.safetensors"
             />

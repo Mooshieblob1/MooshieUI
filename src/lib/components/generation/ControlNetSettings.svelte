@@ -44,6 +44,7 @@
   let uploadingImage = $state(false);
   let imagePreviewUrl = $state<string | null>(null);
   let controlnetDropZone = $state<HTMLElement | null>(null);
+  let controlnetPasteActive = $state(false);
   const ANIMA_PRESET_IDS = ["depth", "anytest_2000", "anytest_1000", "inpainting"];
 
   $effect(() => {
@@ -51,6 +52,19 @@
     if (!el) return;
     el.addEventListener("tauri-file-drop", handleTauriFileDrop);
     return () => el.removeEventListener("tauri-file-drop", handleTauriFileDrop);
+  });
+
+  $effect(() => {
+    const handler = async (event: ClipboardEvent) => {
+      if (!controlnetPasteActive || generation.controlnetImage) return;
+      const target = event.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      await handleImagePaste();
+    };
+    window.addEventListener("paste", handler, { capture: true });
+    return () => window.removeEventListener("paste", handler, { capture: true });
   });
 
   const dlPercent = $derived(dlTotal > 0 ? Math.round((dlBytes / dlTotal) * 100) : 0);
@@ -845,6 +859,8 @@
           bind:this={controlnetDropZone}
           data-drop-zone="controlnet-image"
           class="border-2 border-dashed border-neutral-700 rounded-lg p-4 text-center hover:border-neutral-600 transition-colors"
+          onmouseenter={() => (controlnetPasteActive = true)}
+          onmouseleave={() => (controlnetPasteActive = false)}
           ondragenter={(e) => e.preventDefault()}
           ondragover={(e) => e.preventDefault()}
           ondrop={handleImageDrop}
@@ -866,7 +882,7 @@
               <button
                 type="button"
                 onclick={handleImagePaste}
-                class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors flex items-center gap-1"
+                class="flex items-center gap-1 text-xs text-neutral-500 transition-colors hover:text-neutral-300"
               >
                 <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
                 {locale.t('generation.controlnet.paste')}

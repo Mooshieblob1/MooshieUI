@@ -9,6 +9,7 @@
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import OpenModelFolders from "./OpenModelFolders.svelte";
+  import ModelManagerModal from "./ModelManagerModal.svelte";
   import GpuStatusPanel from "./GpuStatusPanel.svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
   import { applyTheme, THEME_PALETTES } from "../../utils/theme.js";
@@ -85,6 +86,7 @@
 
   // Mode switching state
   let switchingMode = $state(false);
+  let showModelManager = $state(false);
 
   // Queue viewer state (live-polling when settings page is open)
   let queueData = $state<QueueInfo | null>(null);
@@ -722,19 +724,58 @@
 
   // Update check state
   type UpdateCheckState = "idle" | "checking" | "available" | "downloading" | "ready" | "up-to-date" | "error";
+  type BrowserUpdateMode = "local" | "lan" | "server";
   let updateState = $state<UpdateCheckState>("idle");
   let updateVersion = $state("");
   let updateError = $state("");
   let updateDownloaded = $state(0);
   let updateTotal = $state(0);
-  let updateObj: Awaited<ReturnType<typeof check>> | null = null;
+  let browserUpdateMode = $state<BrowserUpdateMode>("local");
+  let updateObj: any | null = null;
 
   const updatePercent = $derived(updateTotal > 0 ? Math.round((updateDownloaded / updateTotal) * 100) : 0);
+
+  async function refreshBrowserUpdateMode(): Promise<BrowserUpdateMode> {
+    let mode: BrowserUpdateMode = "local";
+    try {
+      const resp = await fetch("/internal-api/_auth/status", {
+        headers: authHeaders(),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        mode = data.server_mode === true ? "server" : data.lan_enabled === true ? "lan" : "local";
+      }
+    } catch (e) {
+      console.warn("[settings] failed to read browser update mode:", e);
+    }
+    browserUpdateMode = mode;
+    return mode;
+  }
 
   async function checkForUpdates() {
     updateState = "checking";
     updateError = "";
     try {
+      if (isBrowserMode) {
+        updateObj = null;
+        await refreshBrowserUpdateMode();
+        const resp = await fetch("/internal-api/_check_update", {
+          headers: authHeaders(),
+        });
+        if (!resp.ok) {
+          const message = await resp.text();
+          throw new Error(message || `Update check failed (${resp.status})`);
+        }
+        const data = await resp.json();
+        if (data.error) throw new Error(String(data.error));
+        if (data.update_available) {
+          updateVersion = data.latest_version;
+          updateState = "available";
+        } else {
+          updateState = "up-to-date";
+        }
+        return;
+      }
       if (!isTauri) { updateState = "up-to-date"; return; }
       const { check } = await import("@tauri-apps/plugin-updater");
       const update = await check();
@@ -752,6 +793,18 @@
   }
 
   async function downloadAndInstallUpdate() {
+    if (!updateObj && isBrowserMode && browserUpdateMode === "local") {
+      updateState = "checking";
+      updateError = "";
+      try {
+        await ipcInvoke("switch_to_app_mode");
+        updateState = "available";
+      } catch (e) {
+        updateState = "error";
+        updateError = String(e);
+      }
+      return;
+    }
     if (!updateObj) return;
     updateState = "downloading";
     try {
@@ -787,6 +840,7 @@
       connection: false,
       appearance: false,
       performance: false,
+      models: false,
       paths: false,
       autocomplete: false,
       interrogator: false,
@@ -818,6 +872,7 @@
     { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close attention backend sage flash" },
     { key: "quality", label: "Quality Tags", keywords: "quality tags auto masterpiece best quality anima illustrious noobai pony nanosaur positive negative prompt" },
     { key: "gpu", label: "GPU Workers", keywords: "gpu vram worker backend multi status utilization temperature power nvidia" },
+    { key: "models", label: "Models", keywords: "models manage delete move lora checkpoint vae upscaler controlnet" },
     { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
     { key: "gallery", label: "Gallery", keywords: "import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview" },
     { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
@@ -1091,7 +1146,7 @@
                     onchange={() => { checkRestartNeeded(); autoSave(); }}
                     class="sr-only peer"
                   />
-                  <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                  <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
                 </label>
               </div>
               {#if config.lan_enabled}
@@ -1137,7 +1192,7 @@
                       </div>
 
                       <!-- Scrollable account list (max 6 visible) -->
-                      <div class="max-h-[288px] overflow-y-auto space-y-1 pr-1">
+                      <div class="max-h-72 overflow-y-auto space-y-1 pr-1">
                         {#each sortedAccounts as account}
                           <div class="flex items-center justify-between bg-neutral-800 rounded-lg px-3 py-2">
                             <div class="flex items-center gap-2 min-w-0">
@@ -1214,7 +1269,7 @@
                   {/each}
                 </div>
 
-                <div class="max-h-[288px] overflow-y-auto space-y-1 pr-1">
+                <div class="max-h-72 overflow-y-auto space-y-1 pr-1">
                   {#each sortedAccounts as account}
                     <div class="flex items-center justify-between bg-neutral-800 rounded-lg px-3 py-2">
                       <div class="flex items-center gap-2 min-w-0">
@@ -1842,6 +1897,35 @@
           {#if !collapsed.gpu}
           <div class="px-5 pb-5">
             <GpuStatusPanel />
+          </div>
+          {/if}
+        </section>
+        {/if}
+
+        <!-- Model Management (mods/admins) -->
+        {#if canManageServer && sectionVisible("models")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.models = !collapsed.models)}
+          >
+            {locale.t('settings.models.manage')}
+            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.models ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.models}
+          <div class="px-5 pb-5">
+            <button
+              type="button"
+              onclick={() => (showModelManager = true)}
+              class="w-full flex items-center justify-between rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-left text-sm text-neutral-200 transition-colors hover:border-indigo-500 hover:text-indigo-300"
+            >
+              <span>
+                <span class="block text-sm font-medium">{locale.t('settings.models.title')}</span>
+                <span class="block text-[10px] text-neutral-500">{locale.t('settings.models.manage_desc')}</span>
+              </span>
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6"/><path d="M12 12v6"/></svg>
+            </button>
           </div>
           {/if}
         </section>
@@ -2642,12 +2726,26 @@
               {:else if updateState === "available"}
                 <div class="px-3 py-2 bg-indigo-900/30 border border-indigo-800/50 rounded-lg">
                   <p class="text-sm text-indigo-200 mb-2">{locale.t('settings.about.version_available').replace('{version}', updateVersion)}</p>
-                  <button
-                    onclick={downloadAndInstallUpdate}
-                    class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
-                  >
-                    {locale.t('settings.about.download_install')}
-                  </button>
+                  {#if isBrowserMode && !updateObj}
+                    {#if browserUpdateMode === "local"}
+                      <p class="text-xs text-indigo-200/80 mb-2">{locale.t('settings.about.switch_to_app_mode_hint')}</p>
+                      <button
+                        onclick={downloadAndInstallUpdate}
+                        class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
+                      >
+                        {locale.t('settings.about.switch_to_app_mode')}
+                      </button>
+                    {:else}
+                      <p class="text-xs text-indigo-200/80">{locale.t('settings.about.redeploy_to_update')}</p>
+                    {/if}
+                  {:else}
+                    <button
+                      onclick={downloadAndInstallUpdate}
+                      class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm transition-colors cursor-pointer"
+                    >
+                      {locale.t('settings.about.download_install')}
+                    </button>
+                  {/if}
                 </div>
 
               {:else if updateState === "downloading"}
@@ -2907,6 +3005,10 @@
     </div>
   </div>
 </div>
+{/if}
+
+{#if showModelManager}
+  <ModelManagerModal onclose={() => (showModelManager = false)} />
 {/if}
 
 {#if showQualityTagsWarning}

@@ -620,16 +620,26 @@ pub async fn connect_websocket(
                                     })
                                 };
 
-                                // SSE payload: always use temp filename
+                                // SSE payload: always use temp filenames, including the
+                                // browser-display copy for JXL.
                                 let sse_payload = if let Some(name) = temp_filename {
-                                    serde_json::json!({
+                                    let mut payload = serde_json::json!({
                                         "temp_filename": name,
                                         "format": img.format,
                                         "bit_depth": img.bit_depth,
                                         "image_bytes": img.image_bytes.len(),
                                         "encode_ms": img.encode_ms,
                                         "prompt_id": prompt_id_str,
-                                    })
+                                    });
+                                    if img.format == "jxl" {
+                                        if let Some(ref display_name) = display_temp_filename {
+                                            payload["display_temp_filename"] =
+                                                serde_json::json!(display_name);
+                                            payload["display_format"] =
+                                                serde_json::json!(img.display_format);
+                                        }
+                                    }
+                                    payload
                                 } else {
                                     tauri_payload.clone()
                                 };

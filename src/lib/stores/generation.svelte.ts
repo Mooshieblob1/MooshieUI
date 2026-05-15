@@ -71,6 +71,66 @@ function pickSplitModelVae(diffusionModel: string | null, vaes: string[]): strin
 
 type StylePresetId = "none" | "anime" | "cinematic" | "photoreal" | "digital_art" | "line_art";
 
+const GENERATION_MODES = ["txt2img", "img2img", "inpainting"] as const;
+type GenerationMode = (typeof GENERATION_MODES)[number];
+
+interface ModeToggleState {
+  differentialDiffusion: boolean;
+  upscaleEnabled: boolean;
+  controlnetEnabled: boolean;
+  facefixEnabled: boolean;
+  smartGuidance: boolean;
+}
+
+type ModeToggleStates = Record<GenerationMode, ModeToggleState>;
+
+function isGenerationMode(value: unknown): value is GenerationMode {
+  return typeof value === "string" && GENERATION_MODES.includes(value as GenerationMode);
+}
+
+function defaultModeToggleState(): ModeToggleState {
+  return {
+    differentialDiffusion: false,
+    upscaleEnabled: false,
+    controlnetEnabled: false,
+    facefixEnabled: false,
+    smartGuidance: false,
+  };
+}
+
+function createDefaultModeToggles(): ModeToggleStates {
+  return {
+    txt2img: defaultModeToggleState(),
+    img2img: defaultModeToggleState(),
+    inpainting: defaultModeToggleState(),
+  };
+}
+
+function booleanOrDefault(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function normalizeModeToggles(value: unknown): ModeToggleStates {
+  const normalized = createDefaultModeToggles();
+  if (!value || typeof value !== "object") return normalized;
+
+  const rawStates = value as Record<string, Partial<ModeToggleState> | undefined>;
+  for (const mode of GENERATION_MODES) {
+    const rawState = rawStates[mode];
+    if (!rawState || typeof rawState !== "object") continue;
+    const defaults = normalized[mode];
+    normalized[mode] = {
+      differentialDiffusion: booleanOrDefault(rawState.differentialDiffusion, defaults.differentialDiffusion),
+      upscaleEnabled: booleanOrDefault(rawState.upscaleEnabled, defaults.upscaleEnabled),
+      controlnetEnabled: booleanOrDefault(rawState.controlnetEnabled, defaults.controlnetEnabled),
+      facefixEnabled: booleanOrDefault(rawState.facefixEnabled, defaults.facefixEnabled),
+      smartGuidance: booleanOrDefault(rawState.smartGuidance, defaults.smartGuidance),
+    };
+  }
+
+  return normalized;
+}
+
 interface StylePreset {
   id: StylePresetId;
   label: string;
@@ -82,7 +142,7 @@ interface PromptHistoryEntry {
   id: string;
   positivePrompt: string;
   negativePrompt: string;
-  mode: "txt2img" | "img2img" | "inpainting";
+  mode: GenerationMode;
   stylePreset: StylePresetId;
   createdAt: number;
   favorite: boolean;
@@ -144,7 +204,8 @@ export const DEFAULT_NANOSAUR_POSITIVE_QUALITY = "newest, masterpiece, best qual
 export const DEFAULT_NANOSAUR_NEGATIVE_QUALITY = "oldest, low quality, cartoon, blurry, sketch, monochrome, flat color, text, watermark";
 
 class GenerationStore {
-  mode = $state<"txt2img" | "img2img" | "inpainting">("txt2img");
+  _mode = $state<GenerationMode>("txt2img");
+  modeToggles = $state<ModeToggleStates>(createDefaultModeToggles());
   positivePrompt = $state("");
   negativePrompt = $state("");
   checkpoint = $state("");
@@ -228,6 +289,50 @@ class GenerationStore {
 
   /** Architecture detected from modelspec metadata, or null if not yet read. */
   modelspecArchitecture = $state<string | null>(null);
+
+  get mode(): GenerationMode {
+    return this._mode;
+  }
+
+  set mode(mode: GenerationMode) {
+    this.setMode(mode);
+  }
+
+  setMode(mode: GenerationMode): void {
+    if (mode === this._mode) return;
+
+    this.modeToggles = {
+      ...this.modeToggles,
+      [this._mode]: this.readModeToggleState(),
+    };
+    this._mode = mode;
+    this.applyModeToggleState(this.modeToggles[mode] ?? defaultModeToggleState());
+  }
+
+  readModeToggleState(): ModeToggleState {
+    return {
+      differentialDiffusion: this.differentialDiffusion,
+      upscaleEnabled: this.upscaleEnabled,
+      controlnetEnabled: this.controlnetEnabled,
+      facefixEnabled: this.facefixEnabled,
+      smartGuidance: this.smartGuidance,
+    };
+  }
+
+  modeTogglesWithCurrent(): ModeToggleStates {
+    return {
+      ...this.modeToggles,
+      [this._mode]: this.readModeToggleState(),
+    };
+  }
+
+  applyModeToggleState(state: ModeToggleState): void {
+    this.differentialDiffusion = state.differentialDiffusion;
+    this.upscaleEnabled = state.upscaleEnabled;
+    this.controlnetEnabled = state.controlnetEnabled;
+    this.facefixEnabled = state.facefixEnabled;
+    this.smartGuidance = state.smartGuidance;
+  }
 
   /** True when the selected model is an Anima variant (split diffusion model). */
   get isAnima(): boolean {
@@ -661,6 +766,7 @@ class GenerationStore {
       this._storeReady = true;
       const saved = await ipcStore.get<Record<string, any>>(STORE_KEY);
       if (saved) {
+        const savedMode = isGenerationMode(saved.mode) ? saved.mode : this._mode;
         if (saved.checkpoint) this.checkpoint = saved.checkpoint;
         if (saved.vae !== undefined) this.vae = saved.vae;
         if (saved.samplerName) this.samplerName = saved.samplerName;
@@ -675,7 +781,6 @@ class GenerationStore {
         if (saved.differentialDiffusion !== undefined) this.differentialDiffusion = saved.differentialDiffusion;
         if (saved.positivePrompt) this.positivePrompt = saved.positivePrompt;
         if (saved.negativePrompt) this.negativePrompt = saved.negativePrompt;
-        if (saved.mode) this.mode = saved.mode;
         if (Array.isArray(saved.loras)) {
           this.loras = saved.loras.map((l: any) => ({
             name: l.name || "",
@@ -716,6 +821,16 @@ class GenerationStore {
         if (saved.facefixSteps !== undefined) this.facefixSteps = saved.facefixSteps;
         if (saved.facefixGuideSize !== undefined) this.facefixGuideSize = saved.facefixGuideSize;
         if (saved.facefixMaxFaces !== undefined) this.facefixMaxFaces = saved.facefixMaxFaces;
+        if (saved.modeToggles !== undefined) {
+          this.modeToggles = normalizeModeToggles(saved.modeToggles);
+        } else {
+          this.modeToggles = {
+            ...createDefaultModeToggles(),
+            [savedMode]: this.readModeToggleState(),
+          };
+        }
+        this._mode = savedMode;
+        this.applyModeToggleState(this.modeToggles[savedMode] ?? defaultModeToggleState());
         if (saved.outputBitDepth) this.outputBitDepth = saved.outputBitDepth;
         if (saved.outputFormat === "png" || saved.outputFormat === "jxl") this.outputFormat = saved.outputFormat;
         if (saved.metadataMode) this.metadataMode = saved.metadataMode;
@@ -747,8 +862,11 @@ class GenerationStore {
   async saveSettings() {
     if (!this._storeReady) return;
     try {
+      const modeToggles = this.modeTogglesWithCurrent();
+      this.modeToggles = modeToggles;
       await ipcStore.set(STORE_KEY, {
         mode: this.mode,
+        modeToggles,
         positivePrompt: this.positivePrompt,
         negativePrompt: this.negativePrompt,
         checkpoint: this.checkpoint,
@@ -819,8 +937,10 @@ class GenerationStore {
 
   /** Collect generation settings for server-side sync. */
   collectPrefs(): Record<string, unknown> {
+    const modeToggles = this.modeTogglesWithCurrent();
     return {
       mode: this.mode,
+      modeToggles,
       positivePrompt: this.positivePrompt,
       negativePrompt: this.negativePrompt,
       checkpoint: this.checkpoint,

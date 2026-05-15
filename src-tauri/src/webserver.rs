@@ -171,6 +171,9 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "save_image_file",
     "save_text_file",
     "upload_image",
+    "list_model_files",
+    "delete_model_file",
+    "move_model_file",
 ];
 
 /// Model Hub commands that require explicit per-user access for regular users.
@@ -2671,39 +2674,109 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing category")?
                 .to_string();
-            if !crate::commands::api::is_safe_path_component(&category) {
-                return Err("Invalid model category".into());
-            }
-
             let config = state.config.read().await;
             let comfyui_path = config.comfyui_path.clone();
             let extra_model_paths = config.extra_model_paths.clone();
             drop(config);
 
-            let mut dirs: Vec<serde_json::Value> = Vec::new();
-            if !comfyui_path.is_empty() {
-                let primary = std::path::Path::new(&comfyui_path)
-                    .join("models")
-                    .join(&category);
-                let label = std::path::Path::new(&comfyui_path)
-                    .file_name()
-                    .map(|n| format!("App ({})", n.to_string_lossy()))
-                    .unwrap_or_else(|| "App".to_string());
-                dirs.push(serde_json::json!({ "path": primary.to_string_lossy(), "label": label }));
-            }
-            if let Some(extra) = extra_model_paths {
-                for line in extra.lines().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                    let extra_dir = std::path::Path::new(line).join(&category);
-                    if extra_dir.exists() {
-                        let label = std::path::Path::new(line)
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| line.to_string());
-                        dirs.push(serde_json::json!({ "path": extra_dir.to_string_lossy(), "label": label }));
-                    }
-                }
-            }
-            serde_json::to_value(dirs).map_err(|e| e.to_string())
+            let result = crate::commands::api::model_install_dirs_for_config(
+                &comfyui_path,
+                extra_model_paths.as_deref(),
+                &category,
+            )
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "list_model_files" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let config = state.config.read().await;
+            let comfyui_path = config.comfyui_path.clone();
+            let extra_model_paths = config.extra_model_paths.clone();
+            drop(config);
+
+            let result = tokio::task::spawn_blocking(move || {
+                crate::commands::api::list_model_files_for_config(
+                    &comfyui_path,
+                    extra_model_paths.as_deref(),
+                    &category,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "delete_model_file" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            let directory = args["directory"]
+                .as_str()
+                .ok_or("Missing directory")?
+                .to_string();
+            let config = state.config.read().await;
+            let comfyui_path = config.comfyui_path.clone();
+            let extra_model_paths = config.extra_model_paths.clone();
+            drop(config);
+
+            tokio::task::spawn_blocking(move || {
+                crate::commands::api::delete_model_file_for_config(
+                    &comfyui_path,
+                    extra_model_paths.as_deref(),
+                    &category,
+                    &filename,
+                    &directory,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
+        }
+        "move_model_file" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            let source_directory = args["sourceDirectory"]
+                .as_str()
+                .ok_or("Missing sourceDirectory")?
+                .to_string();
+            let target_directory = args["targetDirectory"]
+                .as_str()
+                .ok_or("Missing targetDirectory")?
+                .to_string();
+            let config = state.config.read().await;
+            let comfyui_path = config.comfyui_path.clone();
+            let extra_model_paths = config.extra_model_paths.clone();
+            drop(config);
+
+            tokio::task::spawn_blocking(move || {
+                crate::commands::api::move_model_file_for_config(
+                    &comfyui_path,
+                    extra_model_paths.as_deref(),
+                    &category,
+                    &filename,
+                    &source_directory,
+                    &target_directory,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
         }
         "find_model_by_hash" => {
             let hash = args["hash"].as_str().ok_or("Missing hash")?.to_string();
@@ -3767,6 +3840,7 @@ async fn auth_status_handler(
         "has_accounts": state.auth.has_accounts(),
         "role": role_str,
         "lan_enabled": state.lan_enabled,
+        "server_mode": !cfg!(feature = "desktop"),
         "can_use_modelhub": can_use_modelhub,
     }))
 }

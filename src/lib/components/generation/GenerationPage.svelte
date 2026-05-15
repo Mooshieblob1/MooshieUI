@@ -18,7 +18,8 @@
   import CanvasEditor from "../canvas/CanvasEditor.svelte";
   import LayerPanel from "../canvas/layers/LayerPanel.svelte";
   import { canvas } from "../../stores/canvas.svelte.js";
-  import { uploadImage, uploadImageBytes, loadGalleryImage, getOutputImage, readClipboardImageSafe } from "../../utils/api.js";
+  import { uploadImage, uploadImageBytes, getOutputImage, readClipboardImageSafe } from "../../utils/api.js";
+  import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage, InterrogationResult } from "../../types/index.js";
@@ -71,6 +72,7 @@
   let imageAspect = $state<{ w: number; h: number } | null>(null);
   let dragOver = $state(false);
   let maskDragOver = $state(false);
+  let imagePasteTarget = $state<"input" | "mask" | null>(null);
   let promptsSectionOpen = $state(true);
 
   /** Which section (or "preview") currently has an image dragged over it */
@@ -625,14 +627,7 @@
 
   async function upscaleImage(image: OutputImage) {
     try {
-      let bytes: number[];
-      if (image.gallery_filename) {
-        bytes = await loadGalleryImage(image.gallery_filename);
-      } else {
-        bytes = await getOutputImage(image.filename, image.subfolder);
-      }
-      const response = await uploadImageBytes(bytes, image.filename);
-      generation.inputImage = response.name;
+      generation.inputImage = await uploadOutputImageForGenerationInput(image, "refine_input.png");
       generation.mode = "img2img";
       generation.upscaleEnabled = true;
       gallery.showToast(locale.t('generation.toast.loaded_upscale'), "success");
@@ -644,14 +639,8 @@
 
   async function inpaintImage(image: OutputImage) {
     try {
-      let bytes: number[];
-      if (image.gallery_filename) {
-        bytes = await loadGalleryImage(image.gallery_filename);
-      } else {
-        bytes = await getOutputImage(image.filename, image.subfolder);
-      }
-
-      const normalized = await normalizeImageBytes(bytes, image.filename || "inpaint_input.png");
+      const source = await loadOutputImageForGenerationInput(image, "inpaint_input.png");
+      const normalized = await normalizeImageBytes(source.bytes, source.filename);
       const response = await uploadImageBytes(normalized.bytes, normalized.filename);
       generation.inputImage = response.name;
       canvas.clearMask();
@@ -1170,6 +1159,21 @@
     pasteHandler = async (e: ClipboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+      if (imagePasteTarget === "input") {
+        e.preventDefault();
+        e.stopPropagation();
+        await handleImagePaste();
+        return;
+      }
+
+      if (imagePasteTarget === "mask") {
+        e.preventDefault();
+        e.stopPropagation();
+        await handleMaskPaste();
+        return;
+      }
+
       const file = getClipboardImageFile(e);
       if (!file) return;
       e.preventDefault();
@@ -1351,6 +1355,8 @@
               <div
                 data-drop-zone="img-input"
                 class="border-2 border-dashed rounded-lg p-4 text-center transition-colors {dragOver ? 'border-indigo-500 bg-indigo-500/10' : 'border-neutral-700 hover:border-neutral-600'}"
+                onmouseenter={() => (imagePasteTarget = "input")}
+                onmouseleave={() => { if (imagePasteTarget === "input") imagePasteTarget = null; }}
                 ondragenter={(e) => { e.preventDefault(); dragOver = true; }}
                 ondragover={(e) => { e.preventDefault(); dragOver = true; }}
                 ondragleave={() => { dragOver = false; }}
@@ -1365,7 +1371,7 @@
                     <button
                       type="button"
                       onclick={handleImagePaste}
-                      class="text-xs text-emerald-500/70 hover:text-emerald-400 transition-colors flex items-center gap-1"
+                      class="flex items-center gap-1 text-xs text-emerald-500/70 transition-colors hover:text-emerald-400"
                     >
                       <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
                       {locale.t('generation.image.ctrl_v_paste')}
@@ -1446,6 +1452,8 @@
                 <div
                   data-drop-zone="mask-input"
                   class="border-2 border-dashed rounded-lg p-4 text-center transition-colors {maskDragOver ? 'border-indigo-500 bg-indigo-500/10' : 'border-neutral-700 hover:border-neutral-600'}"
+                  onmouseenter={() => (imagePasteTarget = "mask")}
+                  onmouseleave={() => { if (imagePasteTarget === "mask") imagePasteTarget = null; }}
                   ondragenter={(e) => { e.preventDefault(); maskDragOver = true; }}
                   ondragover={(e) => { e.preventDefault(); maskDragOver = true; }}
                   ondragleave={() => { maskDragOver = false; }}
@@ -1460,7 +1468,7 @@
                       <button
                         type="button"
                         onclick={handleMaskPaste}
-                        class="text-xs text-emerald-500/70 hover:text-emerald-400 transition-colors flex items-center gap-1"
+                        class="flex items-center gap-1 text-xs text-emerald-500/70 transition-colors hover:text-emerald-400"
                       >
                         <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
                         {locale.t('generation.image.ctrl_v_paste')}
@@ -2013,7 +2021,7 @@
 
   {#if draggingSection && dragCloneHtml}
     <div
-      class="fixed z-[70] pointer-events-none"
+      class="fixed z-70 pointer-events-none"
       style="left: {dragMouseX - dragOffsetX}px; top: {dragMouseY - dragOffsetY}px; width: {dragWidth}px;"
     >
       <div

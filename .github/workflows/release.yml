@@ -109,7 +109,7 @@ jobs:
       - name: Collect release files
         run: |
           mkdir -p release-files
-          find artifacts -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage*" -o -name "*.exe" -o -name "*.msi*" -o -name "*.nsis.zip*" \) -exec cp {} release-files/ \;
+          find artifacts -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage*" -o -name "*.exe" -o -name "*.exe.sig" -o -name "*.msi*" -o -name "*.nsis.zip*" \) -exec cp {} release-files/ \;
           echo "=== Release files ==="
           ls -lh release-files/ || echo "No release files found"
           [ -f "$(find release-files -type f -print -quit)" ] || { echo "ERROR: No release files collected, aborting"; exit 1; }
@@ -123,18 +123,21 @@ jobs:
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
           # Discover updater artifact names from actual files to avoid tag/version mismatch issues.
-          LINUX_ARCHIVE=$(find release-files -maxdepth 1 -type f -name "*.AppImage.tar.gz" -printf "%f\n" | head -n1)
-          WINDOWS_ARCHIVE=$(find release-files -maxdepth 1 -type f -name "*x64-setup.nsis.zip" -printf "%f\n" | head -n1)
+          LINUX_BUNDLE=$(find release-files -maxdepth 1 -type f -name "*.AppImage" -printf "%f\n" | head -n1)
+          WINDOWS_BUNDLE=$(find release-files -maxdepth 1 -type f -name "*x64-setup.exe" -printf "%f\n" | head -n1)
 
-          if [ -z "$LINUX_ARCHIVE" ] || [ -z "$WINDOWS_ARCHIVE" ]; then
-            echo "Missing updater artifacts: linux='$LINUX_ARCHIVE' windows='$WINDOWS_ARCHIVE'"
+          if [ -z "$LINUX_BUNDLE" ] || [ -z "$WINDOWS_BUNDLE" ]; then
+            echo "Missing updater artifacts: linux='$LINUX_BUNDLE' windows='$WINDOWS_BUNDLE'"
             exit 1
           fi
 
-          APPIMAGE_SIG=""
-          NSIS_SIG=""
-          [ -f "release-files/${LINUX_ARCHIVE}.sig" ] && APPIMAGE_SIG=$(cat "release-files/${LINUX_ARCHIVE}.sig")
-          [ -f "release-files/${WINDOWS_ARCHIVE}.sig" ] && NSIS_SIG=$(cat "release-files/${WINDOWS_ARCHIVE}.sig")
+          if [ ! -f "release-files/${LINUX_BUNDLE}.sig" ] || [ ! -f "release-files/${WINDOWS_BUNDLE}.sig" ]; then
+            echo "Missing updater signatures: linux='${LINUX_BUNDLE}.sig' windows='${WINDOWS_BUNDLE}.sig'"
+            exit 1
+          fi
+
+          APPIMAGE_SIG=$(cat "release-files/${LINUX_BUNDLE}.sig")
+          WINDOWS_SIG=$(cat "release-files/${WINDOWS_BUNDLE}.sig")
 
           # Build latest.json with jq for proper escaping
           jq -n \
@@ -142,9 +145,9 @@ jobs:
             --arg notes "MooshieUI ${TAG}" \
             --arg pub_date "$PUB_DATE" \
             --arg linux_sig "$APPIMAGE_SIG" \
-            --arg linux_url "${REPO_URL}/${TAG}/${LINUX_ARCHIVE}" \
-            --arg win_sig "$NSIS_SIG" \
-            --arg win_url "${REPO_URL}/${TAG}/${WINDOWS_ARCHIVE}" \
+            --arg linux_url "${REPO_URL}/${TAG}/${LINUX_BUNDLE}" \
+            --arg win_sig "$WINDOWS_SIG" \
+            --arg win_url "${REPO_URL}/${TAG}/${WINDOWS_BUNDLE}" \
             '{
               version: $version,
               notes: $notes,

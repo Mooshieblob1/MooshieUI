@@ -188,11 +188,33 @@ pub async fn get_client_id(state: State<'_, Arc<AppState>>) -> Result<String, Ap
     Ok(state.client_id.clone())
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 pub struct ModelInstallDir {
     pub path: String,
     pub label: String,
 }
+
+#[derive(serde::Serialize)]
+pub struct ManagedModelFile {
+    pub category: String,
+    pub filename: String,
+    pub directory: String,
+    pub directory_label: String,
+    pub path: String,
+    pub size_bytes: u64,
+    pub modified_ms: u64,
+}
+
+const MANAGED_MODEL_EXTENSIONS: &[&str] = &[
+    "safetensors",
+    "ckpt",
+    "pt",
+    "pth",
+    "bin",
+    "gguf",
+    "onnx",
+    "sft",
+];
 
 pub(crate) fn is_safe_path_component(value: &str) -> bool {
     let trimmed = value.trim();
@@ -219,6 +241,310 @@ pub(crate) fn is_safe_relative_model_path(value: &str) -> bool {
             .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
+fn is_managed_model_file(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            let ext = ext.to_ascii_lowercase();
+            MANAGED_MODEL_EXTENSIONS.contains(&ext.as_str())
+        })
+        .unwrap_or(false)
+}
+
+fn known_model_subdirs() -> Vec<&'static str> {
+    [
+        "checkpoints",
+        "loras",
+        "vae",
+        "upscale_models",
+        "embeddings",
+        "controlnet",
+        "clip",
+        "unet",
+        "diffusion_models",
+        "text_encoders",
+        "ultralytics",
+    ]
+    .iter()
+    .flat_map(|category| category_subdirs(category).iter().copied())
+    .collect()
+}
+
+fn is_structured_model_dir(path: &std::path::Path) -> bool {
+    known_model_subdirs()
+        .iter()
+        .any(|subdir| path.join(subdir).is_dir())
+}
+
+fn classify_flat_model_dir(path: &std::path::Path) -> &'static str {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if name.contains("lora") || name.contains("lycoris") {
+        "loras"
+    } else if name.contains("checkpoint")
+        || name.contains("ckpt")
+        || name.contains("stable-diffusion")
+        || name.contains("stablediffusion")
+    {
+        "checkpoints"
+    } else if name.contains("vae") {
+        "vae"
+    } else if name.contains("upscale") || name.contains("esrgan") {
+        "upscale_models"
+    } else if name.contains("controlnet") || name.contains("control_net") {
+        "controlnet"
+    } else if name.contains("embed") || name.contains("textual") {
+        "embeddings"
+    } else if name.contains("ultralytic") || name.contains("face") {
+        "ultralytics"
+    } else if name.contains("clip")
+        || name.contains("text_encoder")
+        || name.contains("text-encoder")
+    {
+        "text_encoders"
+    } else if name.contains("unet") || name.contains("diffusion") {
+        "diffusion_models"
+    } else {
+        "loras"
+    }
+}
+
+fn push_model_install_dir(
+    dirs: &mut Vec<ModelInstallDir>,
+    seen: &mut BTreeSet<String>,
+    path: std::path::PathBuf,
+    label: String,
+) {
+    let display_path = path.to_string_lossy().to_string();
+    let key = display_path.to_lowercase();
+    if seen.insert(key) {
+        dirs.push(ModelInstallDir {
+            path: display_path,
+            label,
+        });
+    }
+}
+
+pub(crate) fn model_install_dirs_for_config(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+) -> Result<Vec<ModelInstallDir>, AppError> {
+    if !is_safe_path_component(category) || category_subdirs(category).is_empty() {
+        return Err(AppError::Other("Invalid model category".into()));
+    }
+
+    let mut dirs: Vec<ModelInstallDir> = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    if !comfyui_path.is_empty() {
+        let primary = std::path::Path::new(comfyui_path)
+            .join("models")
+            .join(category);
+        let label = std::path::Path::new(comfyui_path)
+            .file_name()
+            .map(|n| format!("App ({})", n.to_string_lossy()))
+            .unwrap_or_else(|| "App".to_string());
+        push_model_install_dir(&mut dirs, &mut seen, primary, label);
+    }
+
+    if let Some(extra) = extra_model_paths {
+        for line in extra.lines().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            let base = std::path::Path::new(line);
+            let base_label = base
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| line.to_string());
+
+            if is_structured_model_dir(base) {
+                for subdir in category_subdirs(category) {
+                    let candidate = base.join(subdir);
+                    if candidate.is_dir() {
+                        let label = if category_subdirs(category).len() > 1 {
+                            format!("{} / {}", base_label, subdir)
+                        } else {
+                            base_label.clone()
+                        };
+                        push_model_install_dir(&mut dirs, &mut seen, candidate, label);
+                    }
+                }
+            } else if classify_flat_model_dir(base) == category {
+                push_model_install_dir(&mut dirs, &mut seen, base.to_path_buf(), base_label);
+            }
+        }
+    }
+
+    Ok(dirs)
+}
+
+fn relative_model_filename(root: &std::path::Path, path: &std::path::Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn modified_ms(metadata: &std::fs::Metadata) -> u64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn collect_model_files_from_dir(
+    category: &str,
+    dir: &ModelInstallDir,
+    root: &std::path::Path,
+    current: &std::path::Path,
+    files: &mut Vec<ManagedModelFile>,
+) -> Result<(), AppError> {
+    for entry in std::fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        let metadata = entry.metadata()?;
+        if file_type.is_dir() {
+            collect_model_files_from_dir(category, dir, root, &path, files)?;
+        } else if file_type.is_file() && is_managed_model_file(&path) {
+            let filename = relative_model_filename(root, &path);
+            if !is_safe_relative_model_path(&filename) {
+                continue;
+            }
+            files.push(ManagedModelFile {
+                category: category.to_string(),
+                filename,
+                directory: dir.path.clone(),
+                directory_label: dir.label.clone(),
+                path: path.to_string_lossy().to_string(),
+                size_bytes: metadata.len(),
+                modified_ms: modified_ms(&metadata),
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn list_model_files_for_config(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+) -> Result<Vec<ManagedModelFile>, AppError> {
+    let dirs = model_install_dirs_for_config(comfyui_path, extra_model_paths, category)?;
+    let mut files = Vec::new();
+    for dir in &dirs {
+        let root = std::path::Path::new(&dir.path);
+        if root.is_dir() {
+            collect_model_files_from_dir(category, dir, root, root, &mut files)?;
+        }
+    }
+    files.sort_by(|a, b| {
+        a.filename
+            .to_lowercase()
+            .cmp(&b.filename.to_lowercase())
+            .then_with(|| a.directory_label.cmp(&b.directory_label))
+    });
+    Ok(files)
+}
+
+fn find_known_model_dir(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+    directory: &str,
+) -> Result<ModelInstallDir, AppError> {
+    model_install_dirs_for_config(comfyui_path, extra_model_paths, category)?
+        .into_iter()
+        .find(|dir| dir.path == directory)
+        .ok_or_else(|| AppError::Other("Unknown model directory".into()))
+}
+
+fn model_file_path_in_dir(directory: &str, filename: &str) -> Result<std::path::PathBuf, AppError> {
+    if !is_safe_relative_model_path(filename) {
+        return Err(AppError::Other("Invalid model filename".into()));
+    }
+    Ok(std::path::Path::new(directory).join(std::path::Path::new(filename)))
+}
+
+pub(crate) fn delete_model_file_for_config(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+    filename: &str,
+    directory: &str,
+) -> Result<(), AppError> {
+    let dir = find_known_model_dir(comfyui_path, extra_model_paths, category, directory)?;
+    let path = model_file_path_in_dir(&dir.path, filename)?;
+    if !is_managed_model_file(&path) {
+        return Err(AppError::Other("Unsupported model file type".into()));
+    }
+    if !path.is_file() {
+        return Err(AppError::Other("Model file not found".into()));
+    }
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+pub(crate) fn move_model_file_for_config(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+    filename: &str,
+    source_directory: &str,
+    target_directory: &str,
+) -> Result<(), AppError> {
+    let source_dir =
+        find_known_model_dir(comfyui_path, extra_model_paths, category, source_directory)?;
+    let target_dir =
+        find_known_model_dir(comfyui_path, extra_model_paths, category, target_directory)?;
+    let source = model_file_path_in_dir(&source_dir.path, filename)?;
+    let target = model_file_path_in_dir(&target_dir.path, filename)?;
+
+    if source == target {
+        return Err(AppError::Other(
+            "Choose a different destination directory".into(),
+        ));
+    }
+    if !is_managed_model_file(&source) {
+        return Err(AppError::Other("Unsupported model file type".into()));
+    }
+    if !source.is_file() {
+        return Err(AppError::Other("Model file not found".into()));
+    }
+    if target.exists() {
+        return Err(AppError::Other(
+            "A model with that name already exists in the destination".into(),
+        ));
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    match std::fs::rename(&source, &target) {
+        Ok(()) => Ok(()),
+        Err(rename_error) => {
+            std::fs::copy(&source, &target).map_err(|copy_error| {
+                AppError::Other(format!(
+                    "Failed to move model: {}; copy fallback failed: {}",
+                    rename_error, copy_error
+                ))
+            })?;
+            std::fs::remove_file(&source)?;
+            Ok(())
+        }
+    }
+}
+
 /// Returns all directories where a model of the given category can be installed.
 /// Always includes the primary app directory; also includes any extra_model_paths
 /// subdirectories for the category that already exist on disk.
@@ -228,54 +554,84 @@ pub async fn get_model_install_dirs(
     state: State<'_, Arc<AppState>>,
     category: String,
 ) -> Result<Vec<ModelInstallDir>, AppError> {
-    if !is_safe_path_component(&category) {
-        return Err(AppError::Other("Invalid model category".into()));
-    }
-
     let config = state.config.read().await;
     let comfyui_path = config.comfyui_path.clone();
     let extra_model_paths = config.extra_model_paths.clone();
     drop(config);
 
-    let mut dirs: Vec<ModelInstallDir> = Vec::new();
+    model_install_dirs_for_config(&comfyui_path, extra_model_paths.as_deref(), &category)
+}
 
-    // Primary: {comfyui_path}/models/{category}
-    if !comfyui_path.is_empty() {
-        let primary = std::path::Path::new(&comfyui_path)
-            .join("models")
-            .join(&category);
-        let label = std::path::Path::new(&comfyui_path)
-            .file_name()
-            .map(|n| format!("App ({})", n.to_string_lossy()))
-            .unwrap_or_else(|| "App".to_string());
-        dirs.push(ModelInstallDir {
-            path: primary.to_string_lossy().to_string(),
-            label,
-        });
-    }
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn list_model_files(
+    state: State<'_, Arc<AppState>>,
+    category: String,
+) -> Result<Vec<ManagedModelFile>, AppError> {
+    let config = state.config.read().await;
+    let comfyui_path = config.comfyui_path.clone();
+    let extra_model_paths = config.extra_model_paths.clone();
+    drop(config);
 
-    // Extra paths: each line is a root that contains {category} subdirectories
-    if let Some(extra) = extra_model_paths {
-        for line in extra.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let extra_dir = std::path::Path::new(line).join(&category);
-            if extra_dir.exists() {
-                let label = std::path::Path::new(line)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| line.to_string());
-                dirs.push(ModelInstallDir {
-                    path: extra_dir.to_string_lossy().to_string(),
-                    label,
-                });
-            }
-        }
-    }
+    tokio::task::spawn_blocking(move || {
+        list_model_files_for_config(&comfyui_path, extra_model_paths.as_deref(), &category)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Model list task failed: {}", e)))?
+}
 
-    Ok(dirs)
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn delete_model_file(
+    state: State<'_, Arc<AppState>>,
+    category: String,
+    filename: String,
+    directory: String,
+) -> Result<(), AppError> {
+    let config = state.config.read().await;
+    let comfyui_path = config.comfyui_path.clone();
+    let extra_model_paths = config.extra_model_paths.clone();
+    drop(config);
+
+    tokio::task::spawn_blocking(move || {
+        delete_model_file_for_config(
+            &comfyui_path,
+            extra_model_paths.as_deref(),
+            &category,
+            &filename,
+            &directory,
+        )
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Model delete task failed: {}", e)))?
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn move_model_file(
+    state: State<'_, Arc<AppState>>,
+    category: String,
+    filename: String,
+    source_directory: String,
+    target_directory: String,
+) -> Result<(), AppError> {
+    let config = state.config.read().await;
+    let comfyui_path = config.comfyui_path.clone();
+    let extra_model_paths = config.extra_model_paths.clone();
+    drop(config);
+
+    tokio::task::spawn_blocking(move || {
+        move_model_file_for_config(
+            &comfyui_path,
+            extra_model_paths.as_deref(),
+            &category,
+            &filename,
+            &source_directory,
+            &target_directory,
+        )
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Model move task failed: {}", e)))?
 }
 
 /// Opens a directory in the OS file explorer.
@@ -2108,6 +2464,7 @@ pub(crate) fn category_subdirs(category: &str) -> &'static [&'static str] {
             "models/text_encoders",
             "Models/text_encoders",
         ],
+        "ultralytics" => &["ultralytics", "models/ultralytics", "Models/ultralytics"],
         _ => &[],
     }
 }

@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe } from "./lib/utils/ipc.js";
+  import { useMobileLayout } from "./lib/utils/device.js";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
+  import MobileApp from "./lib/components/mobile/MobileApp.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
   import ModelHubPage from "./lib/components/modelhub/ModelHubPage.svelte";
@@ -10,7 +12,8 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
+  import { getOutputImage, uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
+  import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput } from "./lib/utils/galleryActions.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
@@ -304,17 +307,7 @@
 
   async function upscaleImage(image: OutputImage) {
     try {
-      // Load image bytes from gallery or output
-      let bytes: number[];
-      if (image.gallery_filename) {
-        bytes = await loadGalleryImage(image.gallery_filename);
-      } else {
-        bytes = await getOutputImage(image.filename, image.subfolder);
-      }
-
-      // Upload to ComfyUI input folder
-      const response = await uploadImageBytes(bytes, image.filename);
-      generation.inputImage = response.name;
+      generation.inputImage = await uploadOutputImageForGenerationInput(image, "refine_input.png");
       generation.mode = "img2img";
       generation.upscaleEnabled = true;
       currentPage = "generate";
@@ -331,20 +324,18 @@
     mode: "img2img" | "inpainting",
   ) {
     try {
-      let bytes: number[];
-      if (image.gallery_filename) {
-        bytes = await loadGalleryImage(image.gallery_filename);
-      } else {
-        bytes = await getOutputImage(image.filename, image.subfolder);
-      }
+      const source = await loadOutputImageForGenerationInput(
+        image,
+        mode === "inpainting" ? "inpaint_input.png" : "img2img_input.png",
+      );
 
       const normalized =
         mode === "inpainting"
-          ? await normalizeImageBytes(bytes, image.filename || "inpaint_input.png")
+          ? await normalizeImageBytes(source.bytes, source.filename)
           : null;
 
-      const uploadBytes = normalized ? normalized.bytes : bytes;
-      const uploadFilename = normalized ? normalized.filename : image.filename;
+      const uploadBytes = normalized ? normalized.bytes : source.bytes;
+      const uploadFilename = normalized ? normalized.filename : source.filename;
 
       const response = await uploadImageBytes(uploadBytes, uploadFilename);
       generation.inputImage = response.name;
@@ -391,6 +382,20 @@
 
   async function inpaintImage(image: OutputImage) {
     await loadImageForMode(image, "inpainting");
+  }
+
+  async function inpaintLightboxPreview() {
+    if (!gallery.lightboxUrl) return;
+    await loadImageForMode(
+      {
+        filename: `preview_${Date.now()}.png`,
+        subfolder: "",
+        type: "output",
+        prompt_id: "preview-lightbox",
+        url: gallery.lightboxUrl,
+      },
+      "inpainting",
+    );
   }
 
   function navigateLightbox(direction: "prev" | "next") {
@@ -1647,7 +1652,7 @@
                     }),
                     fetch(displayUrl, { headers: authHeaders() }),
                   ]);
-                  if (!canonicalResp.ok || !displayResp.ok) {
+                  if (!canonicalResp.ok) {
                     console.error(
                       "[output_image] JXL fetch failed:",
                       canonicalResp.status,
@@ -1656,8 +1661,16 @@
                     return;
                   }
                   blob = new Blob([await canonicalResp.arrayBuffer()], { type: "image/jxl" });
-                  const displayBlob = await displayResp.blob();
-                  url = URL.createObjectURL(displayBlob);
+                  if (displayResp.ok) {
+                    const displayBlob = await displayResp.blob();
+                    url = URL.createObjectURL(displayBlob);
+                  } else {
+                    console.warn(
+                      "[output_image] JXL display fetch failed; keeping canonical output:",
+                      displayResp.status,
+                    );
+                    url = progress.displayImage ?? "";
+                  }
                 } else {
                   const resp = await fetch(
                     `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`,
@@ -2079,8 +2092,10 @@
   </div>
 {:else if !setupComplete}
   <SetupWizard onSetupComplete={onSetupDone} />
+{:else if useMobileLayout}
+  <MobileApp canUseModelhub={canUseModelhub} />
 {:else}
-<div class="flex h-full bg-neutral-950 text-neutral-100 {visionSimClass}">
+<div class="flex h-full bg-neutral-950 text-neutral-100 md:gap-3 md:p-3 {visionSimClass}">
   <!-- SVG filters for color vision simulation -->
   <svg style="display: none">
     <defs>
@@ -2098,7 +2113,7 @@
 
   <!-- Sidebar -->
   <nav
-    class="flex flex-col w-14 bg-neutral-900 border-r border-neutral-800 items-stretch px-1.5 py-3 gap-1.5"
+    class="flex w-14 shrink-0 flex-col items-stretch gap-1.5 border-r border-neutral-800 bg-neutral-900 px-1.5 py-3 md:rounded-2xl md:border md:shadow-2xl md:shadow-black/30"
   >
     <div class="relative mx-auto">
       <button
@@ -2275,7 +2290,7 @@
   </nav>
 
   <!-- Main content -->
-  <main class="flex-1 overflow-hidden flex flex-col">
+  <main class="flex min-w-0 flex-1 flex-col overflow-hidden md:rounded-2xl md:border md:border-neutral-800 md:bg-neutral-900 md:p-1 md:shadow-2xl md:shadow-black/30">
     <UpdateNotification {userRole} />
     <DownloadBanner />
     {#if startupStatus && !connection.connected}
@@ -2322,7 +2337,7 @@
         {/if}
       </div>
     {/if}
-    <div class="flex-1 overflow-hidden">
+    <div class="flex-1 overflow-hidden md:min-h-0 md:rounded-xl md:bg-neutral-950">
     {#if currentPage === "generate"}
       <GenerationPage />
     {:else if currentPage === "gallery"}
@@ -2717,7 +2732,7 @@
         </button>
       {/if}
 
-      <!-- Action buttons (only for gallery images, not preview URLs) -->
+      <!-- Action buttons -->
       {#if gallery.selectedImage}
       <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-neutral-900/70 backdrop-blur-sm rounded-xl px-2 py-1.5 border border-neutral-700/50">
         <!-- Generation group -->
@@ -2819,6 +2834,18 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
         </button>
       </div>
+      {/if}
+
+      {#if !gallery.selectedImage && gallery.lightboxUrl}
+        <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-neutral-900/70 backdrop-blur-sm rounded-xl px-2 py-1.5 border border-neutral-700/50">
+          <button
+            title={locale.t("gallery.inpaint")}
+            class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+            onclick={inpaintLightboxPreview}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+          </button>
+        </div>
       {/if}
 
       {#if gallery.lightboxUrl}

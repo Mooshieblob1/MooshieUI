@@ -142,10 +142,41 @@ export interface ModelInstallDir {
   label: string;
 }
 
+export interface ManagedModelFile {
+  category: string;
+  filename: string;
+  directory: string;
+  directory_label: string;
+  path: string;
+  size_bytes: number;
+  modified_ms: number;
+}
+
 export async function getModelInstallDirs(
   category: string,
 ): Promise<ModelInstallDir[]> {
   return ipcInvoke("get_model_install_dirs", { category });
+}
+
+export async function listModelFiles(category: string): Promise<ManagedModelFile[]> {
+  return ipcInvoke("list_model_files", { category });
+}
+
+export async function deleteModelFile(
+  category: string,
+  filename: string,
+  directory: string,
+): Promise<void> {
+  return ipcInvoke("delete_model_file", { category, filename, directory });
+}
+
+export async function moveModelFile(
+  category: string,
+  filename: string,
+  sourceDirectory: string,
+  targetDirectory: string,
+): Promise<void> {
+  return ipcInvoke("move_model_file", { category, filename, sourceDirectory, targetDirectory });
 }
 
 export async function openDirectory(path: string): Promise<void> {

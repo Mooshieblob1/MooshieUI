@@ -239,6 +239,20 @@ const en: Record<string, string> = {
   "settings.paths.open_folder.clip": "CLIP/T.Enc",
   "settings.paths.open_folder.diffusion": "Diffusion",
   "settings.paths.open_folder.pick_directory": "Multiple directories found — choose which one to open.",
+  "settings.models.manage": "Manage Models",
+  "settings.models.manage_desc": "Move or delete model files from configured directories.",
+  "settings.models.title": "Model Manager",
+  "settings.models.files": "files",
+  "settings.models.directories": "directories",
+  "settings.models.search": "Search models...",
+  "settings.models.refresh": "Refresh",
+  "settings.models.empty": "No models found.",
+  "settings.models.move": "Move",
+  "settings.models.no_move_target": "Add another directory for this model type before moving.",
+  "settings.models.move_title": "Move {name}",
+  "settings.models.delete_title": "Delete {name}",
+  "settings.models.deleted": "Deleted {name}",
+  "settings.models.moved": "Moved {name}",
 
   // Gallery section
   "settings.gallery.title": "Gallery",
@@ -317,6 +331,9 @@ const en: Record<string, string> = {
   "settings.about.download_install": "Download & Install",
   "settings.about.downloading_version": "Downloading v{version}...",
   "settings.about.update_ready": "Update downloaded. Restart to apply v{version}.",
+  "settings.about.switch_to_app_mode_hint": "Switch to App Mode to install it with the desktop updater.",
+  "settings.about.switch_to_app_mode": "Switch to App Mode",
+  "settings.about.redeploy_to_update": "Redeploy or restart the MooshieUI server to update.",
 
   // Quality tags warning dialog
   "settings.quality_warning.title": "Disable auto quality tags?",

@@ -1,5 +1,23 @@
 # Changelog
 
+## What's New in v1.2.9
+
+### Model Manager
+- **Manage local model files from Settings**: browse configured model directories, search model files, refresh the inventory, and move or delete models without leaving MooshieUI.
+- **Model operations stay inside configured folders**: backend checks keep move/delete/list actions constrained to known ComfyUI model directories and supported model file types.
+
+### Mobile and Generation UX
+- **The dedicated mobile UI is back**: mobile browser sessions now use the bottom-sheet mobile shell again, while desktop keeps the new floating app layout.
+- **Paste buttons act immediately**: Ctrl+V paste controls for image inputs, ControlNet, and interrogation now paste directly instead of opening a second paste affordance.
+- **Gallery-to-generation actions are smoother**: image loading and normalization paths now better support staging gallery and preview images for inpainting, refiner, and other generation inputs.
+
+### Model Hub and Updates
+- **Direct model links pick better filenames**: direct URL installs now infer filenames from URL paths, query parameters, and disposition-style values while preserving supported model extensions.
+- **Browser-mode update messaging is clearer**: local browser sessions can switch to App Mode for desktop updates, while server/LAN browser sessions are told to redeploy or restart the server.
+- **Release workflow checks updater artifacts more strictly**: updater bundles and signatures are published directly, and the workflow now fails when required signatures are missing.
+
+---
+
 ## What's New in v1.2.8
 
 ### Browser Mode Image Saves
