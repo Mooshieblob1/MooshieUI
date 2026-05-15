@@ -109,6 +109,10 @@ export async function stopComfyui(): Promise<void> {
   return ipcInvoke("stop_comfyui");
 }
 
+export async function killPortProcess(): Promise<number> {
+  return ipcInvoke("kill_port_process");
+}
+
 export async function checkServerHealth(): Promise<SystemStats> {
   return ipcInvoke("check_server_health");
 }

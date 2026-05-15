@@ -11,8 +11,12 @@ export interface ArtistEntry {
   imageUrl: string;
   /** R2 object key. Useful for direct-to-bucket fetches if a CDN isn't in front. */
   objectKey: string;
-  /** Danbooru post count (popularity; ranking signal). */
+  /** Gelbooru post count, or 50 when the tag is below the reliable threshold. */
   postCount: number;
+  /** True when the count should render as <=50 instead of an exact post total. */
+  belowThreshold?: boolean;
+  /** Compact below-threshold marker used by anima-tags.json; accepted for compatibility. */
+  b?: number | boolean;
   /** Known aliases for the artist tag. */
   aliases: string[];
   /** Whether the webp was present on disk when the index was built. */
@@ -50,6 +54,8 @@ export interface ArtistSearchHit {
   /** Matches ArtistEntry.imageId; combine with manifest.imageBaseUrl to render thumbnails without a shard fetch. */
   imageId: string;
   postCount: number;
+  belowThreshold?: boolean;
+  b?: number | boolean;
   shard: string;
   hasImage: boolean;
 }

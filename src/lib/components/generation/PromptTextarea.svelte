@@ -57,6 +57,11 @@
     return String(count);
   }
 
+  function formatTagCount(tag: { p: number; b?: number }): string {
+    if (tag.b) return `<${tag.b === 1 ? 50 : tag.b}`;
+    return formatCount(tag.p);
+  }
+
   function getCurrentTagFragment(): {
     fragment: string;
     start: number;
@@ -442,7 +447,7 @@
           <span class={CATEGORY_COLORS[tag.c] ?? "text-neutral-300"}>
             {formatTagForDisplay(tag.n)}
           </span>
-          <span class="text-xs text-neutral-500 shrink-0">{formatCount(tag.p)}</span>
+          <span class="text-xs text-neutral-500 shrink-0">{formatTagCount(tag)}</span>
         </button>
       {/each}
     </div>

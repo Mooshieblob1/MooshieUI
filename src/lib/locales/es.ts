@@ -67,6 +67,9 @@ const es: Record<string, string> = {
   "app.external_comfy.step_try_again": "Haz clic en Intentar de nuevo para que MooshieUI pueda iniciar su propio ComfyUI con los nodos necesarios cargados.",
   "app.external_comfy.external_hint": "Si quieres que MooshieUI use intencionalmente un ComfyUI externo, instala los nodos personalizados de MooshieUI y los nodos ControlNet necesarios en esa misma instalación de ComfyUI y reinicia ese servidor.",
   "app.external_comfy.technical_details": "Detalles técnicos",
+  "app.external_comfy.kill_and_restart": "Kill process & restart",
+  "app.external_comfy.kill_busy": "Killing process…",
+  "app.external_comfy.kill_failed": "Failed to free port {port}: {error}",
 
   // ── Asistente de instalación ────────────────────────────
   "setup.title": "MooshieUI",
@@ -637,6 +640,7 @@ const es: Record<string, string> = {
   "generation.interrogate.select_all": "Seleccionar todo",
   "generation.interrogate.deselect_all": "Deseleccionar todo",
   "generation.interrogate.apply_to_prompt": "Aplicar al prompt",
+  "generation.interrogate.copy_aibooru": "Copiar para AIBooru",
 
   // ── Progreso / Vista previa ─────────────────────────────
   "progress.generating": "Generando...",

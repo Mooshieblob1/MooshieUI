@@ -3,6 +3,7 @@
   import { createArtistGalleryStore, type ArtistSortField, type ArtistSortDir, type ArtistPageSize } from "../store.svelte.js";
   import { artistFavourites } from "../favourites.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { formatPostCount, rankingPostCount } from "../counts.js";
   import type { ArtistSearchHit } from "../types.js";
   import ArtistLightbox from "./ArtistLightbox.svelte";
   import FavouritesManager from "./FavouritesManager.svelte";
@@ -122,7 +123,7 @@
     const imageUrl = store.manifest && hit.hasImage && hit.imageId
       ? `${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${hit.imageId}.webp`
       : "";
-    store.lightboxEntry = { tag: hit.tag, slug: hit.slug, imageId: hit.imageId, imageUrl, objectKey: "", postCount: hit.postCount, aliases: [], hasImage: hit.hasImage };
+    store.lightboxEntry = { tag: hit.tag, slug: hit.slug, imageId: hit.imageId, imageUrl, objectKey: "", postCount: hit.postCount, belowThreshold: hit.belowThreshold, b: hit.b, aliases: [], hasImage: hit.hasImage };
     store.lightboxIndex = index;
     // Background: fetch full shard entry to patch in aliases once loaded
     store.client.getArtist(hit.slug).then((full) => {
@@ -164,12 +165,6 @@
   function thumbUrl(hit: ArtistSearchHit): string {
     if (!store.manifest || !hit.hasImage || !hit.imageId) return "";
     return `${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${hit.imageId}.webp`;
-  }
-
-  function formatCount(n: number): string {
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
-    return String(n);
   }
 
   function displayTag(tag: string): string {
@@ -311,7 +306,7 @@
     if (sortField === "uniqueness") {
       const jitter = uniquenessJitter;
       return [...allEntries]
-        .map((e, i) => ({ e, score: baseUniqueness(e.postCount) * (jitter[i] ?? 1) }))
+        .map((e, i) => ({ e, score: baseUniqueness(rankingPostCount(e)) * (jitter[i] ?? 1) }))
         .sort((a, b) => b.score - a.score)
         .map((x) => x.e);
     }
@@ -319,7 +314,7 @@
     return [...allEntries].sort((a, b) =>
       sortField === "name"
         ? a.slug.localeCompare(b.slug) * dir
-        : (a.postCount - b.postCount) * dir,
+        : (rankingPostCount(a) - rankingPostCount(b)) * dir,
     );
   });
 
@@ -673,7 +668,7 @@
             <div class="flex items-center justify-between gap-1 px-2 py-1.5">
               <span class="min-w-0 truncate text-sm text-red-400">{displayTag(hit.tag)}</span>
               <div class="relative flex shrink-0 items-center gap-1">
-                <span class="text-xs text-neutral-500">{formatCount(hit.postCount)}</span>
+                <span class="text-xs text-neutral-500">{formatPostCount(hit)}</span>
                 {#if isFav}
                   <button
                     type="button"

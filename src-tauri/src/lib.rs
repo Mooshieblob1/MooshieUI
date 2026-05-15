@@ -341,6 +341,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::server::start_comfyui,
             commands::server::stop_comfyui,
+            commands::server::kill_port_process,
             commands::server::check_server_health,
             commands::api::get_models,
             commands::api::get_samplers,

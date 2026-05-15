@@ -93,6 +93,12 @@ export interface OutputImage {
   /** Full-resolution image URL served by the backend (with metadata). */
   fullImageUrl?: string;
   gallery_filename?: string;
+  /** In-memory bytes for this session-only image. Avoids fetching blob: URLs in browser mode. */
+  sessionBlob?: Blob;
+  /** Server temp image filename for browser-mode generated images before they are persisted. */
+  tempFilename?: string;
+  /** Browser-display temp image filename when canonical output is not browser-decodable (for example JXL). */
+  displayTempFilename?: string;
   file_size_bytes?: number;
   generated_at_ms?: number;
   metadata?: Record<string, string> | null;

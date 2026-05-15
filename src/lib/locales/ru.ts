@@ -58,6 +58,9 @@ const ru: Record<string, string> = {
   "app.external_comfy.step_try_again": "Click Try Again so MooshieUI can start its own ComfyUI with the required nodes loaded.",
   "app.external_comfy.external_hint": "If you intentionally want MooshieUI to use an external ComfyUI, install MooshieUI's custom nodes and required ControlNet nodes into that same ComfyUI installation, then restart that server.",
   "app.external_comfy.technical_details": "Technical details",
+  "app.external_comfy.kill_and_restart": "Kill process & restart",
+  "app.external_comfy.kill_busy": "Killing process…",
+  "app.external_comfy.kill_failed": "Failed to free port {port}: {error}",
   "generation.presets.edit_title": "Edit Prompt Preset",
   "generation.presets.edit_desc": "Store any prompt fragment as a reusable variable. Put each wildcard choice on its own line — commas within a line stay grouped (e.g. `1girl, solo` is picked as one block).",
   "generation.presets.name_label": "Name",
@@ -610,6 +613,7 @@ const ru: Record<string, string> = {
   "generation.interrogate.select_all": "Выбрать все",
   "generation.interrogate.deselect_all": "Снять выделение",
   "generation.interrogate.apply_to_prompt": "Применить к промпту",
+  "generation.interrogate.copy_aibooru": "Копировать для AIBooru",
 
   // ── Прогресс / Предпросмотр ─────────────────────────────
   "progress.generating": "Генерация...",

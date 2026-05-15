@@ -564,6 +564,121 @@ impl AppState {
         Ok(())
     }
 
+    /// Cancel every prompt owned by `username` — held, queued and currently
+    /// running. This mirrors `clear_all_queues` but scoped to a single user so
+    /// clicking "Cancel" wipes out *their* in-flight and pending prompts
+    /// instead of just sending a global /interrupt that leaves stale entries
+    /// in the ComfyUI worker queues (the source of "ghost cancel" runs where
+    /// an old gen keeps producing while a new one starts).
+    ///
+    /// `username == None` matches admin-owned prompts (single-user desktop
+    /// mode, where every prompt has `owner = None`, results in all prompts
+    /// being cancelled — the desired desktop behavior).
+    pub async fn interrupt_user_prompts(
+        &self,
+        username: Option<&str>,
+    ) -> Result<(), crate::error::AppError> {
+        let owner_filter: Option<String> = username.map(|s| s.to_string());
+
+        // 1. Drain this user's held (not-yet-submitted) prompts so their
+        //    background submission tasks exit cleanly.
+        let owned_held: Vec<HeldPrompt> = {
+            let mut held = self.prompt_queue.held.lock().unwrap();
+            let mut kept: Vec<HeldPrompt> = Vec::with_capacity(held.len());
+            let mut taken: Vec<HeldPrompt> = Vec::new();
+            for hp in held.drain(..) {
+                if hp.username == owner_filter {
+                    taken.push(hp);
+                } else {
+                    kept.push(hp);
+                }
+            }
+            *held = kept;
+            taken
+        };
+        for hp in owned_held {
+            {
+                let mut result = hp.result.lock().await;
+                *result = Some(Err("generation.error_cancelled".to_string()));
+            }
+            hp.submitted.notify_one();
+            self.prompt_queue.remove(&hp.placeholder_id);
+        }
+
+        // 2. Collect this user's queued prompt_ids (both running and pending).
+        let owned_ids: Vec<String> = {
+            let queue = self.prompt_queue.queue.read().unwrap();
+            queue
+                .iter()
+                .filter(|(_, owner)| owner == &owner_filter)
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+
+        // 3. Resolve which workers are currently running owned prompts, and
+        //    drop the prompts (plus aliases) from internal tracking.
+        let mut workers_to_interrupt: std::collections::HashSet<u32> =
+            std::collections::HashSet::new();
+        let mut ids_to_delete: Vec<String> = Vec::new();
+        for pid in &owned_ids {
+            if let Some(wid) = self.prompt_queue.worker_of(pid) {
+                workers_to_interrupt.insert(wid);
+            }
+            for related in self.prompt_queue.cancel_and_remove(pid) {
+                if !ids_to_delete.contains(&related) {
+                    ids_to_delete.push(related);
+                }
+            }
+        }
+
+        // 4. Interrupt every worker that was executing one of this user's
+        //    prompts. Other users' workers are left alone.
+        for wid in &workers_to_interrupt {
+            let _ = self.gpu_manager.interrupt(Some(*wid)).await;
+        }
+
+        // 5. Delete the owned ids (placeholder + real) from every worker's
+        //    pending queue. We fan out to all workers because a pending prompt
+        //    may not yet have a worker assignment — ComfyUI ignores unknown
+        //    ids, so this is safe.
+        if !ids_to_delete.is_empty() {
+            for worker in &self.gpu_manager.workers {
+                let _ = self
+                    .http_client
+                    .post(format!("{}/queue", worker.base_url))
+                    .json(&serde_json::json!({ "delete": ids_to_delete }))
+                    .send()
+                    .await;
+            }
+        }
+
+        // 6. Flush VRAM on each interrupted worker (avoids the black-image
+        //    bug on Blackwell GPUs after a rapid interrupt).
+        for wid in &workers_to_interrupt {
+            if let Some(worker) = self.gpu_manager.workers.get(*wid as usize) {
+                let _ = self
+                    .http_client
+                    .post(format!("{}/free", worker.base_url))
+                    .json(&serde_json::json!({
+                        "unload_models": true,
+                        "free_memory": true,
+                    }))
+                    .send()
+                    .await;
+            }
+        }
+
+        // 7. Mark interrupted workers idle so the next prompt can dispatch
+        //    immediately instead of waiting behind the cancelled one.
+        for wid in &workers_to_interrupt {
+            self.gpu_manager.mark_worker_error_then_idle(*wid).await;
+        }
+
+        self.prompt_queue.drain_notify.notify_one();
+        self.broadcast_queue_positions();
+        Ok(())
+    }
+
     /// Broadcast an event to SSE clients.
     pub fn broadcast(&self, event: &str, payload: serde_json::Value) {
         let _ = self.event_tx.send(BroadcastEvent {

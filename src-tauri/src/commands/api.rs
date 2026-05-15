@@ -128,7 +128,10 @@ pub async fn get_history(
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn interrupt_generation(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
-    state.interrupt().await
+    // Desktop is single-user (admin / owner == None) so this cancels every
+    // held/queued/running prompt — including any pending ones that would
+    // otherwise resume after a plain /interrupt.
+    state.interrupt_user_prompts(None).await
 }
 
 #[cfg(feature = "desktop")]

@@ -8,6 +8,8 @@ export interface TagEntry {
   c: number; // category (0=general, 1=artist, 3=copyright, 4=character, 5=meta)
   p: number; // post count
   a?: string[]; // aliases
+  /** Truthy when the post count is below the source list's threshold (e.g. <50). UI displays "<50" instead of the numeric `p`. */
+  b?: number;
 }
 
 interface SearchEntry {

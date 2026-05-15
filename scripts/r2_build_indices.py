@@ -54,7 +54,11 @@ def build(release_dir: Path, release_prefix: str, public_base_url: str, anima_ta
     artist_index: dict[str, dict] = json.loads(artist_index_path.read_text(encoding="utf-8"))
     anima_tags = json.loads(anima_tags_path.read_text(encoding="utf-8"))
     tag_meta: dict[str, dict] = {
-        t["n"]: {"postCount": t.get("p", 0), "aliases": t.get("a", []) or []}
+        t["n"]: {
+            "postCount": t.get("p", 0),
+            "aliases": t.get("a", []) or [],
+            "belowThreshold": bool(t.get("belowThreshold") or t.get("b")),
+        }
         for t in anima_tags
         if t.get("c") == 1
     }
@@ -73,10 +77,15 @@ def build(release_dir: Path, release_prefix: str, public_base_url: str, anima_ta
         object_key = meta.get("object_key") or f"{release_prefix}/images/{filename}"
         image_url = f"{base}/{object_key}" if base else ""
 
-        src = tag_meta.get(tag, {})
+        src = tag_meta.get(tag)
         has_image = filename in on_disk
         if has_image:
             with_image += 1
+
+        post_count = int((src or {}).get("postCount", 0))
+        below_threshold = bool(meta.get("belowThreshold") or meta.get("b")) or src is None or bool((src or {}).get("belowThreshold")) or post_count <= 50
+        if below_threshold:
+            post_count = 50
 
         entry = {
             "tag": tag,
@@ -84,23 +93,26 @@ def build(release_dir: Path, release_prefix: str, public_base_url: str, anima_ta
             "imageId": image_id,
             "imageUrl": image_url,
             "objectKey": object_key,
-            "postCount": int(src.get("postCount", 0)),
-            "aliases": list(src.get("aliases", [])),
+            "postCount": post_count,
+            "aliases": list((src or {}).get("aliases", [])),
             "hasImage": has_image,
         }
+        if below_threshold:
+            entry["belowThreshold"] = True
 
         bucket = bucket_for(slug)
         shards.setdefault(bucket, {})[slug] = entry
-        search_flat.append(
-            {
-                "slug": slug,
-                "tag": tag,
-                "imageId": image_id,
-                "postCount": entry["postCount"],
-                "shard": bucket,
-                "hasImage": has_image,
-            }
-        )
+        search_hit = {
+            "slug": slug,
+            "tag": tag,
+            "imageId": image_id,
+            "postCount": entry["postCount"],
+            "shard": bucket,
+            "hasImage": has_image,
+        }
+        if below_threshold:
+            search_hit["belowThreshold"] = True
+        search_flat.append(search_hit)
 
     # Sort search by post count descending (typeahead ranking hint).
     search_flat.sort(key=lambda e: (-e["postCount"], e["slug"]))

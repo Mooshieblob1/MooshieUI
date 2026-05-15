@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ArtistEntry } from "../types.js";
+  import { formatPostCount } from "../counts.js";
   import { cachedSrc } from "../imageCache.js";
   import { locale } from "../../stores/locale.svelte.js";
 
@@ -106,7 +107,7 @@
           {displayTag(entry.tag)}
         </a>
         <div class="mt-0.5 text-xs text-neutral-500">
-          {locale.t('artist_gallery.lightbox.posts', { count: entry.postCount.toLocaleString() })}
+          {locale.t('artist_gallery.lightbox.posts', { count: formatPostCount(entry, false) })}
           {#if entry.aliases.length > 0}
             {locale.t('artist_gallery.lightbox.aliases', { list: entry.aliases.map((a) => a.replace(/^@/, "")).join(", ") })}
           {/if}

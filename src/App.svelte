@@ -10,7 +10,7 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
+  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage, killPortProcess } from "./lib/utils/api.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
@@ -46,7 +46,7 @@
   let lastProgressEventAt = 0;
 
   /** Images received via WebSocket during generation, keyed by prompt_id. */
-  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string }>>();
+  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>>();
   /** In-flight output_image fetch promises per prompt_id (for SSE race-condition avoidance). */
   let pendingOutputFetches = new Map<string, Promise<void>[]>();
   /** Wait for pending fetches with a hard time limit to prevent hanging. */
@@ -571,6 +571,7 @@
   let showExternalComfyModal = $state(false);
   let externalComfyIssue = $state<ExternalComfyIssue>("already_running");
   let externalComfyDetails = $state<string | null>(null);
+  let killPortBusy = $state(false);
 
   let galleryImagesPerRow = $state(5);
   let gallerySortBy = $state<"date" | "name" | "size">("date");
@@ -1077,7 +1078,7 @@
     mode: "txt2img" | "img2img" | "inpainting",
     wasUpscaled: boolean,
     params: GenerationParams | null,
-    images: Array<{ blob: Blob; url: string; tempFilename?: string }>,
+    images: Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>,
   ) {
     if (images.length === 0) return;
 
@@ -1091,6 +1092,9 @@
         generation_mode: mode,
         is_upscaled: wasUpscaled,
         url: img.url,
+        sessionBlob: img.blob,
+        tempFilename: img.tempFilename,
+        displayTempFilename: img.displayTempFilename,
         file_size_bytes: img.blob.size,
         generated_at_ms: Date.now(),
       };
@@ -1190,14 +1194,21 @@
       const newTempFilename = result.tempFilename;
       if (!newTempFilename) return;
 
-      // Fetch the metadata-embedded image as a new blob URL
+      image.tempFilename = newTempFilename;
+
+      // Fetch the metadata-embedded image as a new blob URL. If the canonical
+      // temp image is JXL, ask the server for a WebP display copy — Chromium
+      // cannot render image/jxl blob URLs, which made the preview appear to
+      // vanish after metadata embedding in browser mode.
+      const displayQuery = newTempFilename.toLowerCase().endsWith(".jxl") ? "?format=webp" : "";
       const imgResp = await fetch(
-        `/internal-api/_temp_image/${encodeURIComponent(newTempFilename)}`,
+        `/internal-api/_temp_image/${encodeURIComponent(newTempFilename)}${displayQuery}`,
         { headers: authHeaders() },
       );
       if (!imgResp.ok) return;
       const newBlob = await imgResp.blob();
       const newUrl = URL.createObjectURL(newBlob);
+      image.sessionBlob = newBlob;
 
       // Revoke old blob URL and update the image
       const oldUrl = image.url;
@@ -1228,7 +1239,7 @@
    * with per-cell labels and a single MooshieUI watermark.
    */
   async function stitchGrid(
-    cellImages: { blob: Blob; url: string }[],
+    cellImages: { blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }[],
     rows: number,
     cols: number,
     cellLabels: string[],
@@ -1460,6 +1471,28 @@
     }
   }
 
+  async function killExternalComfyAndRestart() {
+    if (killPortBusy || startComfyBusy) return;
+    killPortBusy = true;
+    try {
+      const port = await killPortProcess();
+      // Give the OS a moment to release the port
+      await new Promise((r) => setTimeout(r, 500));
+      showExternalComfyModal = false;
+      await startComfyuiWithWarning();
+      void port;
+    } catch (e) {
+      console.error("Failed to kill port process:", e);
+      const message = e instanceof Error ? e.message : String(e);
+      gallery.showToast(
+        locale.t("app.external_comfy.kill_failed", { port: comfyuiServerPort, error: message }),
+        "error",
+      );
+    } finally {
+      killPortBusy = false;
+    }
+  }
+
   async function startComfyuiWithWarning() {
     if (startComfyBusy) return;
     startComfyBusy = true;
@@ -1646,6 +1679,7 @@
           let blob: Blob;
           let url: string;
           let tempFilename: string | undefined;
+          let displayTempFilename: string | undefined;
           const isJxl = data.format === "jxl";
 
           if (data.temp_filename) {
@@ -1656,6 +1690,7 @@
                 // For JXL the event also carries display_temp_filename (WebP/PNG copy).
                 if (isJxl) {
                   const displayFilename = data.display_temp_filename as string | undefined;
+                  displayTempFilename = displayFilename;
                   console.log("[output_image] JXL temp path — jxl:", data.temp_filename, "display:", displayFilename, "display_format:", data.display_format);
                   const [jxlRaw, displayRaw] = await Promise.all([
                     readTempImage(data.temp_filename),
@@ -1684,6 +1719,7 @@
                   // and display copy (pre-built WebP/PNG from display_temp_filename,
                   // or server-side transcode as fallback).
                   const displayFilename = data.display_temp_filename as string | undefined;
+                  displayTempFilename = displayFilename;
                   const displayUrl = displayFilename
                     ? `/internal-api/_temp_image/${encodeURIComponent(displayFilename)}`
                     : `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}?format=webp`;
@@ -1757,7 +1793,7 @@
           }
 
           const arr = pendingOutputImages.get(pid) ?? [];
-          arr.push({ blob, url, tempFilename });
+          arr.push({ blob, url, tempFilename, displayTempFilename });
           pendingOutputImages.set(pid, arr);
         })();
 
@@ -2951,6 +2987,16 @@
         >
           {locale.t("common.close")}
         </button>
+        {#if externalComfyIssue === "already_running"}
+          <button
+            type="button"
+            class="rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={killPortBusy || startComfyBusy}
+            onclick={killExternalComfyAndRestart}
+          >
+            {killPortBusy ? locale.t("app.external_comfy.kill_busy") : locale.t("app.external_comfy.kill_and_restart")}
+          </button>
+        {/if}
         <button
           type="button"
           class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"

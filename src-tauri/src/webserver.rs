@@ -132,9 +132,18 @@ fn resolve_username(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) 
     None
 }
 
-/// Commands that ONLY the admin (localhost) can execute.
-/// These involve mode switching, filesystem access, or LAN configuration.
-const ADMIN_ONLY_COMMANDS: &[&str] = &[
+/// Commands that moderators (and admins) can execute.
+/// Moderators have full operational access; filesystem/server panels are
+/// hidden in the UI for mods but all commands are permitted at the API level.
+const MODERATOR_COMMANDS: &[&str] = &[
+    // server / config control
+    "update_config",
+    "stop_comfyui",
+    "kill_port_process",
+    "export_logs",
+    "install_pip_package",
+    "clear_all_queues",
+    // previously admin-only: mode switching, filesystem, node install
     "switch_to_app_mode",
     "set_gallery_path",
     "install_custom_node",
@@ -144,16 +153,6 @@ const ADMIN_ONLY_COMMANDS: &[&str] = &[
     "read_image_metadata_path",
     "save_image_file",
     "upload_image",
-];
-
-/// Commands that moderators (and admins) can execute.
-/// These involve server control and configuration but no filesystem access.
-const MODERATOR_COMMANDS: &[&str] = &[
-    "update_config",
-    "stop_comfyui",
-    "export_logs",
-    "install_pip_package",
-    "clear_all_queues",
 ];
 
 /// Model Hub commands that require explicit per-user access for regular users.
@@ -174,9 +173,7 @@ fn is_modelhub_command(command: &str) -> bool {
 /// Check command permission level.
 /// Returns the minimum role required to execute the command.
 fn min_role_for_command(command: &str) -> UserRole {
-    if ADMIN_ONLY_COMMANDS.contains(&command) {
-        UserRole::Admin
-    } else if MODERATOR_COMMANDS.contains(&command) {
+    if MODERATOR_COMMANDS.contains(&command) {
         UserRole::Moderator
     } else {
         UserRole::User
@@ -1648,6 +1645,11 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
         }
+        "kill_port_process" => {
+            let port = state.config.read().await.server_port;
+            crate::comfyui::process::kill_process_on_port(port).await;
+            Ok(serde_json::json!(port))
+        }
         "connect_ws" => {
             use crate::comfyui::websocket;
             let event_tx = state.event_tx.clone();
@@ -1812,7 +1814,13 @@ async fn dispatch_command(
             Ok(serde_json::json!({ "images": images }))
         }
         "interrupt_generation" => {
-            state.interrupt().await.map_err(|e| e.to_string())?;
+            // Per-user cancel: wipe this caller's held + queued + running
+            // prompts and interrupt only the workers executing them. Other
+            // users' generations are untouched.
+            state
+                .interrupt_user_prompts(username)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
         }
         "clear_all_queues" => {

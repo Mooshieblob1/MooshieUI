@@ -187,16 +187,33 @@ impl GpuManager {
 
     /// Wait for any worker to become available, with timeout.
     /// Returns the worker, or None on timeout.
+    ///
+    /// Loops on spurious wakeups: `Notify::notified()` may resolve immediately
+    /// when a stored permit is consumed (e.g. an earlier `notify_one()` fired
+    /// while no waiter existed — common during initial server-ready signaling
+    /// and right after a worker is released). Without a loop, the second
+    /// back-to-back call to `submit_prompt` would consume that stale permit,
+    /// find every worker still `Running`, and return `None` instantly — which
+    /// surfaced as a spurious "All GPU workers are busy" red toast when
+    /// queueing ordered wildcard runs.
     pub async fn wait_for_available(&self, timeout: Duration) -> Option<Arc<GpuWorker>> {
-        // Fast path: check immediately
-        if let Some(w) = self.find_available().await {
-            return Some(w);
-        }
-
-        // Wait for notification
-        match tokio::time::timeout(timeout, self.worker_available.notified()).await {
-            Ok(()) => self.find_available().await,
-            Err(_) => None,
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if let Some(w) = self.find_available().await {
+                return Some(w);
+            }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return None;
+            }
+            // IMPORTANT: build the future BEFORE awaiting so a notify_one()
+            // racing with find_available() is not lost.
+            let notified = self.worker_available.notified();
+            if tokio::time::timeout(remaining, notified).await.is_err() {
+                return None;
+            }
+            // Loop and re-check: the wakeup may have been a stale permit,
+            // or another submit_prompt may have grabbed the freed worker.
         }
     }
 
@@ -209,25 +226,24 @@ impl GpuManager {
         client_id: &str,
         timeout: Duration,
     ) -> Result<(u32, crate::comfyui::types::PromptResponse), AppError> {
-        let worker = self
-            .wait_for_available(timeout)
-            .await
-            .ok_or_else(|| AppError::Other("All GPU workers are busy — try again later".into()))?;
-
-        if !worker.try_reserve() {
-            // Race condition: another request grabbed it. Retry once.
-            let worker = self.find_available().await.ok_or_else(|| {
-                AppError::Other("All GPU workers are busy — try again later".into())
-            })?;
-            if !worker.try_reserve() {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
                 return Err(AppError::Other(
                     "All GPU workers are busy — try again later".into(),
                 ));
             }
-            return self.do_submit(&worker, workflow, client_id).await;
+            let worker = self.wait_for_available(remaining).await.ok_or_else(|| {
+                AppError::Other("All GPU workers are busy — try again later".into())
+            })?;
+            if worker.try_reserve() {
+                return self.do_submit(&worker, workflow, client_id).await;
+            }
+            // Lost the reservation race against another submitter — loop and
+            // wait for another idle worker (or the same one to free again)
+            // instead of failing the user-facing call instantly.
         }
-
-        self.do_submit(&worker, workflow, client_id).await
     }
 
     /// Actually POST the prompt to a specific worker.

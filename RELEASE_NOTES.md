@@ -1,3 +1,26 @@
+## What's New in v1.2.3
+
+### Port Conflict — Kill & Restart
+- New **"Kill process & restart"** button in the "Another ComfyUI is already running" modal. When port 8188 is held by StabilityMatrix or a leftover process, you can now free it and restart MooshieUI's managed ComfyUI in one click instead of manually hunting down the process.
+
+### Cancel Generation — No More Ghost Runs
+- Cancelling a generation now clears **only that user's** held, pending, and in-progress prompts from the queue — matching the behaviour of "Clear Queue" but scoped per-user. Previously, cancelling a prompt could leave a background generation still running while a new one also started, producing two simultaneous outputs.
+
+### Ordered Wildcard Reliability Fix
+- Fixed a race condition in the GPU scheduler where ordered wildcard batch jobs would succeed for the first image and then receive **"All GPU workers are busy"** for every subsequent image, even on an idle GPU. The availability notifier now loops until the deadline instead of returning on the first stale wakeup.
+
+### Artist Style Gallery — Gelbooru Fallback Artists
+- Artists that exist in Danbooru but have **fewer than 50 posts on Gelbooru** now appear in the style browser as **≤50** instead of disappearing. The post-count display, sorting, and uniqueness scoring all use the capped count for below-threshold entries.
+
+### Browser-Mode Preview Save Fix
+- Saving or copying images from the preview menu in server/browser mode (e.g. `mooshieui.gpu.garden`) no longer fails with a **Security Error** when the browser blocks cross-origin `blob:` URL fetches. Generated images now retain a stable server-side temp filename and in-memory blob so save and copy can use those sources directly.
+- JXL preview images no longer disappear after metadata embedding — the display copy now requests a WebP rendition from the server so Chromium can show it.
+
+### Moderator Permissions
+- Moderators now have **full operational access** equivalent to admins: they can install custom nodes, download models, restart ComfyUI, and access filesystem commands. UI panels that are hidden for mods (paths, connection, performance settings) remain hidden — only the backend command gates are elevated.
+
+---
+
 ## What's New in v1.2.2
 
 ### Prompt Scheduling Fixes

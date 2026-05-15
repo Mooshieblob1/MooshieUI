@@ -661,7 +661,7 @@ pub async fn stop_comfyui_process(state: &AppState) -> Result<(), AppError> {
 }
 
 /// Find and kill any process listening on the given port.
-async fn kill_process_on_port(port: u16) {
+pub async fn kill_process_on_port(port: u16) {
     #[cfg(target_os = "linux")]
     {
         // fuser -k sends SIGKILL to all processes using the port

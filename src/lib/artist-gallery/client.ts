@@ -6,6 +6,7 @@ import type {
   ArtistShard,
   SearchOptions,
 } from "./types.js";
+import { rankingPostCount } from "./counts.js";
 
 const MANIFEST_CACHE_MS = 60_000;
 
@@ -98,12 +99,15 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
     searchPromise = fetchJson<ArtistSearchHit[]>(
       baseDir() + manifest.searchIndex.path,
     ).then((hits) => {
-      for (const h of hits) {
+      const sortedHits = [...hits].sort((a, b) =>
+        rankingPostCount(b) - rankingPostCount(a) || a.slug.localeCompare(b.slug),
+      );
+      for (const h of sortedHits) {
         slugToBucket.set(h.slug, h.shard);
         tagToSlug.set(h.tag.toLowerCase(), h.slug);
         tagToSlug.set(normalizeTag(h.tag), h.slug);
       }
-      return hits;
+      return sortedHits;
     }).catch((err) => {
       searchPromise = null;
       throw err;
