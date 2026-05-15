@@ -152,6 +152,7 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "move_installation",
     "read_image_metadata_path",
     "save_image_file",
+    "save_text_file",
     "upload_image",
 ];
 
@@ -1814,13 +1815,17 @@ async fn dispatch_command(
             Ok(serde_json::json!({ "images": images }))
         }
         "interrupt_generation" => {
-            // Per-user cancel: wipe this caller's held + queued + running
-            // prompts and interrupt only the workers executing them. Other
-            // users' generations are untouched.
-            state
-                .interrupt_user_prompts(username)
-                .await
-                .map_err(|e| e.to_string())?;
+            if let Some(prompt_id) = args["promptId"].as_str() {
+                state
+                    .interrupt_prompt(Some(prompt_id))
+                    .await
+                    .map_err(|e| e.to_string())?;
+            } else {
+                state
+                    .interrupt_user_prompts(username)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
             Ok(serde_json::json!(null))
         }
         "clear_all_queues" => {
@@ -3421,6 +3426,15 @@ async fn dispatch_command(
                 .map_err(|e| format!("Invalid imageBytes: {}", e))?;
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
             std::fs::write(&path, &image_bytes).map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
+        }
+        "save_text_file" => {
+            let content = args["content"]
+                .as_str()
+                .ok_or("Missing content")?
+                .to_string();
+            let path = args["path"].as_str().ok_or("Missing path")?.to_string();
+            std::fs::write(&path, content).map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
         }
         "upload_image" => {

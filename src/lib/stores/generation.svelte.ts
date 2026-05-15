@@ -10,6 +10,10 @@ const STORE_KEY = "generation-settings";
 const PROMPT_HISTORY_KEY = "mooshieui.promptHistory.v1";
 const MAX_PROMPT_HISTORY = 100;
 
+export interface GenerationToParamsOptions {
+  fixedPresetChoices?: ReadonlyMap<string, string>;
+}
+
 /**
  * Translate NAI-style weight brackets to ComfyUI (tag:weight) syntax.
  * - {text} → (text:1.05)   — each layer multiplies by 1.05
@@ -909,7 +913,7 @@ class GenerationStore {
     }
   }
 
-  toParams() {
+  toParams(options: GenerationToParamsOptions = {}) {
     const style = this.stylePresetsEnabled
       ? (STYLE_PRESETS.find((preset) => preset.id === this.stylePreset) ?? STYLE_PRESETS[0])
       : STYLE_PRESETS[0];
@@ -917,8 +921,15 @@ class GenerationStore {
     // Expand inline `@preset:<slug>` directives in the user-typed prompts
     // first, so wildcard rolls happen before any merging/dedup logic. Each
     // occurrence rolls independently.
-    const inlinePositive = promptPresets.resolveInline(this.positivePrompt);
-    const inlineNegative = promptPresets.resolveInline(this.negativePrompt);
+    const inlinePositiveIds = promptPresets.inlinePresetIds(this.positivePrompt);
+    const inlineNegativeIds = promptPresets.inlinePresetIds(this.negativePrompt);
+    const inlinePresetIds = new Set([...inlinePositiveIds, ...inlineNegativeIds]);
+    const inlinePositive = promptPresets.resolveInline(this.positivePrompt, {
+      fixedChoices: options.fixedPresetChoices,
+    });
+    const inlineNegative = promptPresets.resolveInline(this.negativePrompt, {
+      fixedChoices: options.fixedPresetChoices,
+    });
 
     let positivePrompt = this.mergeTagPrompts(inlinePositive, style.positive);
     let negativePrompt = this.mergeTagPrompts(inlineNegative, style.negative);
@@ -934,7 +945,11 @@ class GenerationStore {
     // Inject active Prompt Presets (prepend / append / wildcard). Wildcards
     // pick a random choice per generation — mergeTagPrompts dedupes against
     // whatever the user has already typed.
-    const preset = promptPresets.resolve();
+    const preset = promptPresets.resolve({
+      fixedChoices: options.fixedPresetChoices,
+      skipIds: inlinePresetIds,
+      advanceFixedOrdered: false,
+    });
     if (preset.prepend) {
       positivePrompt = this.mergeTagPrompts(preset.prepend, positivePrompt);
     }

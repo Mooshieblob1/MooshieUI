@@ -7,7 +7,7 @@
   let {
     onSetupComplete,
   }: {
-    onSetupComplete: () => void;
+    onSetupComplete: (mode: "app" | "browser") => void;
   } = $props();
 
   let phase = $state<"detecting" | "ready" | "installing" | "choose-mode" | "done" | "error">(
@@ -88,18 +88,8 @@
   }
 
   async function finishSetup() {
-    // Save the chosen browser_mode to config
-    if (chosenMode === "browser") {
-      try {
-        const cfg = await ipcInvoke<any>("get_config");
-        cfg.browser_mode = true;
-        await ipcInvoke("update_config", { config: cfg });
-      } catch (e) {
-        console.error("Failed to set browser mode:", e);
-      }
-    }
     phase = "done";
-    setTimeout(() => onSetupComplete(), 1500);
+    setTimeout(() => onSetupComplete(chosenMode), 1500);
   }
 
   const downloadPercent = $derived(

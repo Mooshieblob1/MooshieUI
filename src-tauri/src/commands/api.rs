@@ -127,10 +127,20 @@ pub async fn get_history(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-pub async fn interrupt_generation(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
-    // Desktop is single-user (admin / owner == None) so this cancels every
-    // held/queued/running prompt — including any pending ones that would
-    // otherwise resume after a plain /interrupt.
+pub async fn interrupt_generation(
+    state: State<'_, Arc<AppState>>,
+    prompt_id: Option<String>,
+) -> Result<(), AppError> {
+    if let Some(prompt_id) = prompt_id {
+        state.interrupt_prompt(Some(&prompt_id)).await
+    } else {
+        state.interrupt_user_prompts(None).await
+    }
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn clear_all_queues(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
     state.interrupt_user_prompts(None).await
 }
 
@@ -337,6 +347,13 @@ pub async fn download_model(
 #[tauri::command]
 pub async fn save_image_file(image_bytes: Vec<u8>, path: String) -> Result<(), AppError> {
     std::fs::write(&path, &image_bytes)?;
+    Ok(())
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn save_text_file(content: String, path: String) -> Result<(), AppError> {
+    std::fs::write(&path, content)?;
     Ok(())
 }
 
@@ -2721,6 +2738,15 @@ pub async fn export_logs(
     {
         let config = state.config.read().await;
         let _ = writeln!(output, "=== App Configuration ===");
+        let _ = writeln!(
+            output,
+            "UI mode: {}",
+            if config.browser_mode {
+                "Browser"
+            } else {
+                "App"
+            }
+        );
         let _ = writeln!(output, "Server mode: {:?}", config.server_mode);
         let _ = writeln!(output, "Server URL: {}", config.server_url);
         let _ = writeln!(output, "Server port: {}", config.server_port);

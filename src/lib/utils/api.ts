@@ -61,8 +61,10 @@ export async function getQueue(): Promise<QueueInfo> {
   return ipcInvoke("get_queue");
 }
 
-export async function interruptGeneration(): Promise<void> {
-  return ipcInvoke("interrupt_generation");
+export async function interruptGeneration(promptId?: string): Promise<void> {
+  return promptId
+    ? ipcInvoke("interrupt_generation", { promptId })
+    : ipcInvoke("interrupt_generation");
 }
 
 export async function deleteQueueItem(promptId: string): Promise<void> {
@@ -265,6 +267,13 @@ export async function saveImageFile(
   path: string
 ): Promise<void> {
   return ipcInvoke("save_image_file", { imageBytes, path });
+}
+
+export async function saveTextFile(
+  content: string,
+  path: string
+): Promise<void> {
+  return ipcInvoke("save_text_file", { content, path });
 }
 
 export async function embedPngMetadataBytes(

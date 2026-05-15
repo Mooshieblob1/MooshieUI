@@ -18,16 +18,20 @@
   let { canvasEditorRef }: Props = $props();
   let errorMsg = $state<string | null>(null);
   let isSubmitting = $state(false);
+  let orderedRunPromptIds = $state<string[]>([]);
+  let orderedRunCancelRequested = $state(false);
   const orderedWildcardRun = $derived(promptPresets.orderedWildcardRun);
   const orderedWildcardRunCount = $derived(compare.enabled && compare.cellCount > 1 ? 0 : (orderedWildcardRun?.count ?? 0));
+  const pendingOrderedRunIds = $derived(orderedRunPromptIds.filter((id) => progress.pendingPrompts.some((prompt) => prompt.promptId === id)));
 
-  async function submitGeneration(params: GenerationParams) {
+  async function submitGeneration(params: GenerationParams): Promise<string> {
     const result = await generate(params);
     params.seed = result.seed;
     progress.enqueue(result.prompt_id, params.upscale_enabled, params.mode, params);
     if (result.queue_position != null && result.queue_total != null) {
       progress.updateQueuePosition(result.prompt_id, result.queue_position, result.queue_total);
     }
+    return result.prompt_id;
   }
 
   async function handleGenerate() {
@@ -125,9 +129,19 @@
   }
 
   async function handleOrderedWildcardGenerate(count: number) {
+    const run = orderedWildcardRun;
+    if (!run) return;
+    const choices = promptPresets.wildcardChoices(run.presetId);
+    if (choices.length === 0) return;
+
     generation.saveCurrentPromptToHistory();
+    orderedRunPromptIds = [];
+    orderedRunCancelRequested = false;
     for (let i = 0; i < count; i++) {
-      const params = generation.toParams();
+      if (orderedRunCancelRequested) break;
+      const choiceIndex = (run.nextIndex + i) % choices.length;
+      const fixedPresetChoices = new Map([[run.presetId, choices[choiceIndex]]]);
+      const params = generation.toParams({ fixedPresetChoices });
       console.log(
         "[generate] ordered_wildcard:",
         `${i + 1}/${count}`,
@@ -136,16 +150,50 @@
         "output_bit_depth:",
         params.output_bit_depth,
       );
-      await submitGeneration(params);
+      const promptId = await submitGeneration(params);
+      orderedRunPromptIds = [...orderedRunPromptIds, promptId];
+      if (orderedRunCancelRequested) {
+        await cancelOrderedPromptIds([promptId]);
+        break;
+      }
+      promptPresets.setOrderedWildcardIndex(run.presetId, choiceIndex + 1);
     }
     generation.saveSettings();
   }
 
-  /** Left-click: cancel the current generation only, let the queue continue. */
+  /** Left-click: cancel the active ordered run, otherwise cancel the current generation. */
   async function handleCancelCurrent() {
+    if (pendingOrderedRunIds.length > 0 || (isSubmitting && orderedWildcardRunCount > 1)) {
+      await handleCancelOrderedRun();
+      return;
+    }
     const promptId = progress.activePromptId ?? progress.pendingPrompts[0]?.promptId;
     await interruptGeneration(promptId ?? undefined);
     if (promptId) progress.removePrompt(promptId);
+  }
+
+  async function handleCancelOrderedRun() {
+    orderedRunCancelRequested = true;
+    await cancelOrderedPromptIds([...pendingOrderedRunIds]);
+  }
+
+  async function cancelOrderedPromptIds(idsToCancel: string[]) {
+    if (idsToCancel.length === 0) return;
+    const activeOrderedId = progress.activePromptId && idsToCancel.includes(progress.activePromptId)
+      ? progress.activePromptId
+      : null;
+
+    if (activeOrderedId) {
+      await interruptGeneration(activeOrderedId);
+    }
+    for (const promptId of idsToCancel) {
+      if (promptId === activeOrderedId) continue;
+      try { await deleteQueueItem(promptId); } catch { /* already removed */ }
+    }
+    for (const promptId of idsToCancel) {
+      progress.removePrompt(promptId);
+    }
+    orderedRunPromptIds = orderedRunPromptIds.filter((id) => !idsToCancel.includes(id));
   }
 
   /** Right-click: cancel current + clear the entire queue. */
@@ -158,6 +206,8 @@
       try { await deleteQueueItem(pid); } catch { /* already removed */ }
     }
     progress.cancelAll();
+    orderedRunCancelRequested = true;
+    orderedRunPromptIds = [];
     compare.clearGridBatch();
   }
 

@@ -53,6 +53,12 @@ export interface OrderedWildcardRun {
   nextIndex: number;
 }
 
+export interface ResolvePromptPresetOptions {
+  fixedChoices?: ReadonlyMap<string, string>;
+  skipIds?: ReadonlySet<string>;
+  advanceFixedOrdered?: boolean;
+}
+
 interface PersistedState {
   version: number;
   presets: PromptPreset[];
@@ -261,35 +267,81 @@ class PromptPresetsStore {
     return this.orderedWildcardRun?.count ?? 0;
   }
 
+  wildcardChoices(id: string): string[] {
+    const preset = this.getById(id);
+    return preset ? splitWildcardChoices(preset.content) : [];
+  }
+
+  setOrderedWildcardIndex(id: string, index: number): void {
+    const choices = this.wildcardChoices(id);
+    const nextIndex = normalizeChoiceIndex(index, choices.length);
+    let changed = false;
+    this.active = this.active.map((activePreset) => {
+      if (activePreset.id !== id || activePreset.mode !== "wildcard_ordered") return activePreset;
+      if (activePreset.wildcardIndex === nextIndex) return activePreset;
+      changed = true;
+      return { ...activePreset, wildcardIndex: nextIndex };
+    });
+    if (changed) this.saveActive();
+  }
+
+  inlinePresetIds(text: string): Set<string> {
+    const ids = new Set<string>();
+    if (!text || !text.includes("@preset:")) return ids;
+    const lookup = this.bySlug;
+    for (const match of text.matchAll(INLINE_PRESET_REGEX)) {
+      const preset = lookup.get(match[1].toLowerCase());
+      if (preset) ids.add(preset.id);
+    }
+    return ids;
+  }
+
   /**
    * Resolve active presets into concrete text fragments. Wildcard modes pick
    * one choice from the preset content. Called once per generation.
    */
-  resolve(): { prepend: string; append: string } {
+  resolve(options: ResolvePromptPresetOptions = {}): { prepend: string; append: string } {
     const prepends: string[] = [];
     const appends: string[] = [];
     const byId = new Map(this.presets.map((p) => [p.id, p]));
     let nextActive: ActivePreset[] | null = null;
 
     for (const [activeIndex, activePreset] of this.active.entries()) {
+      if (options.skipIds?.has(activePreset.id)) continue;
       const preset = byId.get(activePreset.id);
       if (!preset) continue;
       const mode = activePreset.mode;
 
       if (mode === "wildcard" || mode === "wildcard_ordered") {
-        const choices = splitWildcardChoices(preset.content);
-        if (choices.length === 0) continue;
+        const fixedChoice = options.fixedChoices?.get(preset.id)?.trim();
+        const choices = fixedChoice ? [] : splitWildcardChoices(preset.content);
+        if (!fixedChoice && choices.length === 0) continue;
         let picked: string;
         if (mode === "wildcard_ordered") {
-          const choiceIndex = normalizeChoiceIndex(activePreset.wildcardIndex, choices.length);
-          picked = choices[choiceIndex];
-          const nextIndex = (choiceIndex + 1) % choices.length;
-          if (activePreset.wildcardIndex !== nextIndex) {
-            nextActive ??= this.active.slice();
-            nextActive[activeIndex] = { ...activePreset, wildcardIndex: nextIndex };
+          if (fixedChoice) {
+            picked = fixedChoice;
+            if (options.advanceFixedOrdered !== false) {
+              const storedChoices = splitWildcardChoices(preset.content);
+              const choiceIndex = storedChoices.findIndex((choice) => choice === fixedChoice);
+              if (choiceIndex >= 0) {
+                const nextIndex = (choiceIndex + 1) % storedChoices.length;
+                if (activePreset.wildcardIndex !== nextIndex) {
+                  nextActive ??= this.active.slice();
+                  nextActive[activeIndex] = { ...activePreset, wildcardIndex: nextIndex };
+                }
+              }
+            }
+          } else {
+            const choiceIndex = normalizeChoiceIndex(activePreset.wildcardIndex, choices.length);
+            picked = choices[choiceIndex];
+            const nextIndex = (choiceIndex + 1) % choices.length;
+            if (activePreset.wildcardIndex !== nextIndex) {
+              nextActive ??= this.active.slice();
+              nextActive[activeIndex] = { ...activePreset, wildcardIndex: nextIndex };
+            }
           }
         } else {
-          picked = choices[Math.floor(Math.random() * choices.length)];
+          picked = fixedChoice || choices[Math.floor(Math.random() * choices.length)];
         }
         // Wildcard picks are appended by convention (same semantic weight
         // regardless of position within the prompt).
@@ -343,12 +395,14 @@ class PromptPresetsStore {
    *   are tidied so the prompt doesn't end up with `, ,` artefacts.
    * - Unknown slugs are left untouched (so typos are debuggable).
    */
-  resolveInline(text: string): string {
+  resolveInline(text: string, options: Pick<ResolvePromptPresetOptions, "fixedChoices"> = {}): string {
     if (!text || !text.includes("@preset:")) return text;
     const lookup = this.bySlug;
     let resolved = text.replace(INLINE_PRESET_REGEX, (full, slug: string) => {
       const preset = lookup.get(slug.toLowerCase());
       if (!preset) return full;
+      const fixedChoice = options.fixedChoices?.get(preset.id)?.trim();
+      if (fixedChoice) return fixedChoice;
       const choices = splitWildcardChoices(preset.content);
       if (choices.length === 0) {
         const verbatim = preset.content.trim();

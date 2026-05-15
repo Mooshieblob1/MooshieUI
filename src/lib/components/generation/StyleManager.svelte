@@ -1,6 +1,7 @@
 <script lang="ts">
   import { styles, type ArtistStyle } from "../../stores/styles.svelte.js";
   import { promptPresets, presetSlug, type PromptPreset, type PresetMode } from "../../stores/promptPresets.svelte.js";
+  import { saveTextFile } from "../../utils/api.js";
   import StyleEditor from "./StyleEditor.svelte";
   import PresetEditor from "./PresetEditor.svelte";
   import PresetActivationModal from "./PresetActivationModal.svelte";
@@ -97,13 +98,12 @@
     try {
       if (isTauri) {
         const { save } = await import("@tauri-apps/plugin-dialog");
-        const { writeTextFile } = await import("@tauri-apps/plugin-fs");
         const path = await save({
           defaultPath: filename,
           filters: [{ name: "Text", extensions: ["txt"] }],
         });
         if (!path) return;
-        await writeTextFile(path, content);
+        await saveTextFile(content, path);
         importStatus = `Exported to ${path}`;
       } else {
         const blob = new Blob([content], { type: "text/plain;charset=utf-8" });

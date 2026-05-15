@@ -145,7 +145,21 @@ pub async fn switch_to_browser_mode(
     log::info!("switch_to_browser_mode: opening {}", url);
     match open::that(&url) {
         Ok(_) => log::info!("switch_to_browser_mode: open::that succeeded"),
-        Err(e) => log::error!("switch_to_browser_mode: open::that failed: {}", e),
+        Err(e) => {
+            log::error!("switch_to_browser_mode: open::that failed: {}", e);
+            {
+                let mut cfg = state.config.write().await;
+                cfg.browser_mode = false;
+                save_config(&cfg).map_err(AppError::Other)?;
+            }
+            state
+                .app_mode_active
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            return Err(AppError::Other(format!(
+                "Failed to open browser at {}: {}",
+                url, e
+            )));
+        }
     }
 
     // Hide the Tauri window
