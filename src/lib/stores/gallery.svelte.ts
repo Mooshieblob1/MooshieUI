@@ -665,10 +665,11 @@ class GalleryStore {
         bytes = isJxlGallery
           ? await loadGalleryImagePng(image.gallery_filename)
           : await loadGalleryImage(image.gallery_filename);
-      } else if (isBrowserMode && image.tempFilename) {
-        // Browser-mode session image: use the server temp file directly instead
-        // of fetching blob: URLs, which some proxied browser contexts reject.
-        bytes = await this._tempImageToPngBytes(image.tempFilename, image.filename);
+      } else if (isBrowserMode && (image.displayTempFilename || image.tempFilename)) {
+        // Browser-mode session image: prefer the pre-built display WebP (for JXL)
+        // over fetching the raw temp with ?format=webp, which fails for JXL files.
+        const fetchFilename = image.displayTempFilename ?? image.tempFilename!;
+        bytes = await this._tempImageToPngBytes(fetchFilename, fetchFilename);
       } else if (image.sessionBlob && image.sessionBlob.type !== "image/jxl") {
         bytes = await this._blobToPngBytes(image.sessionBlob);
       } else if (image.url) {
@@ -776,8 +777,11 @@ class GalleryStore {
         bytes = isJxlGallery
           ? await loadGalleryImagePng(image.gallery_filename)
           : await loadGalleryImage(image.gallery_filename);
-      } else if (isBrowserMode && image.tempFilename) {
-        bytes = await this._tempImageToPngBytes(image.tempFilename, image.filename);
+      } else if (isBrowserMode && (image.displayTempFilename || image.tempFilename)) {
+        // Browser-mode session image: prefer the pre-built display WebP (for JXL)
+        // over fetching the raw temp with ?format=webp, which fails for JXL files.
+        const fetchFilename = image.displayTempFilename ?? image.tempFilename!;
+        bytes = await this._tempImageToPngBytes(fetchFilename, fetchFilename);
       } else if (image.sessionBlob && image.sessionBlob.type !== "image/jxl") {
         bytes = await this._blobToPngBytes(image.sessionBlob);
       } else if (image.url) {
@@ -839,8 +843,24 @@ class GalleryStore {
           // Explicitly transcode to PNG + re-embed metadata so paste targets
           // get a usable, metadata-bearing image.
           if (galleryFilename.endsWith(".jxl")) {
+            let pngBytes: number[] | null = null;
             try {
-              let pngBytes = await loadGalleryImagePng(galleryFilename);
+              pngBytes = await loadGalleryImagePng(galleryFilename);
+            } catch (e) {
+              console.warn("JXL gallery transcode failed, falling back to display copy:", e);
+              // Server can't decode JXL — use the pre-built WebP display copy instead.
+              const displayUrl = image.displayTempFilename
+                ? tempImageUrl(image.displayTempFilename)
+                : image.url;
+              if (displayUrl) {
+                try {
+                  pngBytes = await this._blobUrlToPngBytes(displayUrl);
+                } catch (e2) {
+                  console.warn("JXL display copy fallback also failed:", e2);
+                }
+              }
+            }
+            if (pngBytes) {
               if (image.metadata) {
                 try {
                   pngBytes = await embedPngMetadataBytes(pngBytes, image.metadata, generation.metadataMode);
@@ -852,8 +872,6 @@ class GalleryStore {
               await this.writeBlobToClipboard(pngBlob);
               this.showToast(locale.t("gallery.toast.copied"), "success");
               return;
-            } catch (e) {
-              console.warn("JXL clipboard transcode failed, falling back:", e);
             }
           }
           try {

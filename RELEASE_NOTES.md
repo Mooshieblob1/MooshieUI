@@ -1,3 +1,16 @@
+## What's New in v1.2.4
+
+### JXL Image Save Fix (Browser/Server Mode)
+- Fixed a **500 error** when saving a JXL-format generation from the preview menu in browser/server mode. The server was asked to transcode the raw `.jxl` temp file on-the-fly, which it cannot do. MooshieUI now uses the pre-built WebP display copy (already served for preview) for the save operation, eliminating the error entirely.
+
+### JXL Clipboard Copy — Metadata Now Included
+- Copying a JXL session image to the clipboard now correctly re-embeds generation metadata (prompt, sampler, seed, etc.) into the PNG. Previously the clipboard copy went through a canvas round-trip that stripped all metadata; it now falls back gracefully to the pre-built display copy with full metadata intact when the gallery transcoder is unavailable.
+
+### Dependency Updates
+- Bumped `rusqlite`, `axum`, `open`, and `zip` to their latest stable releases.
+
+---
+
 ## What's New in v1.2.3
 
 ### Port Conflict — Kill & Restart
