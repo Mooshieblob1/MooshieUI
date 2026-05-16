@@ -603,6 +603,7 @@ const fr: Record<string, string> = {
   "generation.toast.loaded_inpaint": "Image chargée pour l\'inpainting",
   "generation.toast.failed_load": "Échec du chargement de l\'image",
   "generation.toast.failed_drop": "Échec de la lecture de l\'image déposée",
+  "generation.toast.image_ready": "Image prête",
 
   // Panel collapse
   "generation.panel.expand_left": "Développer le panneau gauche",

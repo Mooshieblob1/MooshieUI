@@ -652,6 +652,7 @@ const en: Record<string, string> = {
   "generation.toast.loaded_inpaint": "Image loaded for inpainting",
   "generation.toast.failed_load": "Failed to load image",
   "generation.toast.failed_drop": "Failed to read dropped image",
+  "generation.toast.image_ready": "Image ready",
 
   // Panel collapse
   "generation.panel.expand_left": "Expand left panel",

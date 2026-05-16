@@ -10,14 +10,30 @@
 
   interface Props {
     canUseModelhub?: boolean;
+    navigationTarget?: MobileTab | null;
+    navigationVersion?: number;
+    onTabChange?: (tab: MobileTab) => void;
   }
-  let { canUseModelhub = false }: Props = $props();
+  let {
+    canUseModelhub = false,
+    navigationTarget = null,
+    navigationVersion = 0,
+    onTabChange,
+  }: Props = $props();
 
   let currentTab = $state<MobileTab>("generate");
+  let lastNavigationVersion = $state(navigationVersion);
 
   function go(tab: MobileTab) {
     currentTab = tab;
+    onTabChange?.(tab);
   }
+
+  $effect(() => {
+    if (navigationVersion === lastNavigationVersion) return;
+    lastNavigationVersion = navigationVersion;
+    if (navigationTarget) go(navigationTarget);
+  });
 </script>
 
 <div class="flex flex-col h-full w-full bg-neutral-950 text-neutral-100 overflow-hidden tap-highlight-none">

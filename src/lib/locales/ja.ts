@@ -603,6 +603,7 @@ const ja: Record<string, string> = {
   "generation.toast.loaded_inpaint": "インペイント用に画像を読み込みました",
   "generation.toast.failed_load": "画像の読み込みに失敗しました",
   "generation.toast.failed_drop": "ドロップした画像の読み取りに失敗しました",
+  "generation.toast.image_ready": "画像の準備ができました",
 
   // Panel collapse
   "generation.panel.expand_left": "左パネルを展開",

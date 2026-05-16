@@ -52,12 +52,23 @@
   let pendingOutputFetches = new Map<string, Promise<void>[]>();
   /** Wait for pending fetches with a hard time limit to prevent hanging. */
   const FETCH_TIMEOUT_MS = 30_000;
+  const GENERATION_DONE_TOAST_VISIBLE_MS = 6_000;
+  const GENERATION_DONE_TOAST_EXIT_MS = 220;
+  type PrimaryPage = "generate" | "gallery" | "modelhub" | "artists" | "settings";
+  type GenerationDoneToast = {
+    id: number;
+    imageUrl: string;
+    leaving: boolean;
+  };
   async function awaitFetchesWithTimeout(fetches: Promise<void>[]): Promise<void> {
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, FETCH_TIMEOUT_MS));
     await Promise.race([Promise.allSettled(fetches), timeout]);
   }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
   let sseReconnectHandler: (() => void) | null = null;
+  let generationDoneToastTimer: ReturnType<typeof setTimeout> | null = null;
+  let generationDoneToastClearTimer: ReturnType<typeof setTimeout> | null = null;
+  let generationDoneToastSeq = 0;
   /** Timestamp of the most recent SSE event per prompt — prevents false reconciliation. */
   let promptLastActivity = new Map<string, number>();
 
@@ -434,9 +445,10 @@
   }
 
   let setupComplete = $state<boolean | null>(null); // null = loading
-  let currentPage = $state<"generate" | "gallery" | "modelhub" | "artists" | "settings">(
-    "generate"
-  );
+  let currentPage = $state<PrimaryPage>("generate");
+  let mobileCurrentTab = $state<PrimaryPage>("generate");
+  let mobileGenerateNavigationVersion = $state(0);
+  let generationDoneToast = $state<GenerationDoneToast | null>(null);
 
   // Auth gate state (browser mode LAN access)
   let authRequired = $state(false);
@@ -1124,6 +1136,7 @@
     const tempFilenames = images.map((img) => img.tempFilename);
     console.log("[finalizeOutputImages] images:", newImages.length, "blob[0].type:", blobs[0]?.type, "blob[0].size:", blobs[0]?.size, "filename[0]:", newImages[0]?.filename);
     gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
+    showGenerationDoneToast(newImages);
 
     // If a style was just applied to the prompt and it doesn't have a thumbnail yet,
     // automatically assign this generation's primary image to it.
@@ -1166,6 +1179,60 @@
       }
     }
   }
+
+  function clearGenerationDoneToastTimers() {
+    if (generationDoneToastTimer) clearTimeout(generationDoneToastTimer);
+    if (generationDoneToastClearTimer) clearTimeout(generationDoneToastClearTimer);
+    generationDoneToastTimer = null;
+    generationDoneToastClearTimer = null;
+  }
+
+  function viewingGeneratePage(): boolean {
+    return useMobileLayout ? mobileCurrentTab === "generate" : currentPage === "generate";
+  }
+
+  function dismissGenerationDoneToast() {
+    if (!generationDoneToast || generationDoneToast.leaving) return;
+    if (generationDoneToastTimer) clearTimeout(generationDoneToastTimer);
+    generationDoneToastTimer = null;
+    generationDoneToast = { ...generationDoneToast, leaving: true };
+    generationDoneToastClearTimer = setTimeout(() => {
+      generationDoneToast = null;
+      generationDoneToastClearTimer = null;
+    }, GENERATION_DONE_TOAST_EXIT_MS);
+  }
+
+  function showGenerationDoneToast(images: OutputImage[]) {
+    if (images.length === 0 || viewingGeneratePage()) return;
+    const image = images.find((candidate) => candidate.url) ?? images[0];
+    if (!image?.url) return;
+
+    clearGenerationDoneToastTimers();
+    generationDoneToast = {
+      id: ++generationDoneToastSeq,
+      imageUrl: image.url,
+      leaving: false,
+    };
+    generationDoneToastTimer = setTimeout(
+      dismissGenerationDoneToast,
+      GENERATION_DONE_TOAST_VISIBLE_MS,
+    );
+  }
+
+  function openGenerateFromDoneToast() {
+    currentPage = "generate";
+    if (useMobileLayout) {
+      mobileCurrentTab = "generate";
+      mobileGenerateNavigationVersion += 1;
+    }
+    dismissGenerationDoneToast();
+  }
+
+  $effect(() => {
+    if (generationDoneToast && viewingGeneratePage()) {
+      dismissGenerationDoneToast();
+    }
+  });
 
   /**
    * Embed metadata into a temp image on the server and upgrade the blob URL.
@@ -1999,6 +2066,7 @@
   onDestroy(() => {
     if (reconcileIntervalId) clearInterval(reconcileIntervalId);
     if (sseReconnectHandler) window.removeEventListener("mooshie:sse-reconnected", sseReconnectHandler);
+    clearGenerationDoneToastTimers();
   });
 </script>
 
@@ -2093,7 +2161,12 @@
 {:else if !setupComplete}
   <SetupWizard onSetupComplete={onSetupDone} />
 {:else if useMobileLayout}
-  <MobileApp canUseModelhub={canUseModelhub} />
+  <MobileApp
+    canUseModelhub={canUseModelhub}
+    navigationTarget="generate"
+    navigationVersion={mobileGenerateNavigationVersion}
+    onTabChange={(tab) => (mobileCurrentTab = tab)}
+  />
 {:else}
 <div class="flex h-full bg-neutral-950 text-neutral-100 md:gap-3 md:p-3 {visionSimClass}">
   <!-- SVG filters for color vision simulation -->
@@ -2872,6 +2945,43 @@
       {/if}
     </div>
   </div>
+{/if}
+
+{#if generationDoneToast}
+  {#key generationDoneToast.id}
+    <div class="fixed bottom-5 right-4 z-80 w-[min(22rem,calc(100vw-2rem))] md:right-5">
+      <div
+        class="generation-done-toast flex items-center gap-3 rounded-xl border border-neutral-700 bg-neutral-900/95 p-2 shadow-2xl shadow-black/40 backdrop-blur-sm {generationDoneToast.leaving ? 'generation-done-toast-out' : 'generation-done-toast-in'}"
+      >
+        <button
+          type="button"
+          class="flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 text-left transition-colors hover:bg-neutral-800/70 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          onclick={openGenerateFromDoneToast}
+          aria-label={locale.t("generation.toast.image_ready")}
+        >
+          <img
+            src={generationDoneToast.imageUrl}
+            alt=""
+            class="h-14 w-14 shrink-0 rounded-lg border border-neutral-700 object-cover bg-neutral-950"
+          />
+          <span class="min-w-0">
+            <span class="block truncate text-sm font-semibold text-neutral-100">
+              {locale.t("generation.toast.image_ready")}
+            </span>
+            <span class="block truncate text-xs text-neutral-400">{locale.t("nav.generate")}</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-neutral-800 hover:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          onclick={dismissGenerationDoneToast}
+          aria-label={locale.t("common.dismiss_notification")}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+    </div>
+  {/key}
 {/if}
 
 <!-- Toast notification -->

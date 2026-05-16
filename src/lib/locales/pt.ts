@@ -582,6 +582,7 @@ const pt: Record<string, string> = {
   "generation.toast.loaded_inpaint": "Imagem carregada para inpainting",
   "generation.toast.failed_load": "Falha ao carregar imagem",
   "generation.toast.failed_drop": "Falha ao ler imagem solta",
+  "generation.toast.image_ready": "Imagem pronta",
 
   // Panel collapse
   "generation.panel.expand_left": "Expandir painel esquerdo",

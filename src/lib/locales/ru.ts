@@ -582,6 +582,7 @@ const ru: Record<string, string> = {
   "generation.toast.loaded_inpaint": "Изображение загружено для инпейнта",
   "generation.toast.failed_load": "Не удалось загрузить изображение",
   "generation.toast.failed_drop": "Не удалось прочитать перетащенное изображение",
+  "generation.toast.image_ready": "Изображение готово",
 
   // Panel collapse
   "generation.panel.expand_left": "Развернуть левую панель",

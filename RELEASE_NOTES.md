@@ -1,3 +1,12 @@
+## What's New in v1.2.10
+
+### Generation Toast Notifications
+- **Get notified when generation finishes while away**: a toast now appears when an image finishes generating and the user is on a different tab or page, so nothing is missed after navigating away mid-queue.
+- **Mobile UI carries the same notification**: the mobile shell now accepts navigation state as props and surfaces the generation-done toast in the same way as the desktop layout.
+- **All 11 languages supported**: the new notification string is fully translated across English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Russian, Traditional Chinese, and Simplified Chinese.
+
+---
+
 ## What's New in v1.2.9
 
 ### Model Manager

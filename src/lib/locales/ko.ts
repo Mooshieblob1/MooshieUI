@@ -582,6 +582,7 @@ const ko: Record<string, string> = {
   "generation.toast.loaded_inpaint": "인페인트용 이미지 로드됨",
   "generation.toast.failed_load": "이미지 로드 실패",
   "generation.toast.failed_drop": "드롭된 이미지 읽기 실패",
+  "generation.toast.image_ready": "이미지가 준비되었습니다",
 
   // Panel collapse
   "generation.panel.expand_left": "왼쪽 패널 펼치기",

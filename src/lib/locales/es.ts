@@ -625,6 +625,7 @@ const es: Record<string, string> = {
   "generation.toast.loaded_inpaint": "Imagen cargada para inpainting",
   "generation.toast.failed_load": "Error al cargar la imagen",
   "generation.toast.failed_drop": "Error al leer la imagen soltada",
+  "generation.toast.image_ready": "Imagen lista",
 
   // Panel collapse
   "generation.panel.expand_left": "Expandir panel izquierdo",

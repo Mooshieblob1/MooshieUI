@@ -582,6 +582,7 @@ const zh: Record<string, string> = {
   "generation.toast.loaded_inpaint": "已加载图片用于修复",
   "generation.toast.failed_load": "加载图片失败",
   "generation.toast.failed_drop": "读取拖放的图片失败",
+  "generation.toast.image_ready": "图片已就绪",
 
   // Panel collapse
   "generation.panel.expand_left": "展开左侧面板",
