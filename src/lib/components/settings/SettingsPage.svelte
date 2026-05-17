@@ -11,6 +11,7 @@
   import OpenModelFolders from "./OpenModelFolders.svelte";
   import ModelManagerModal from "./ModelManagerModal.svelte";
   import GpuStatusPanel from "./GpuStatusPanel.svelte";
+  import ModelRequestsPanel from "./ModelRequestsPanel.svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
   import { applyTheme, THEME_PALETTES } from "../../utils/theme.js";
   import { onMount, onDestroy } from "svelte";
@@ -841,6 +842,7 @@
       appearance: false,
       performance: false,
       models: false,
+      modelRequests: false,
       paths: false,
       autocomplete: false,
       interrogator: false,
@@ -1926,6 +1928,25 @@
               </span>
               <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15h6"/><path d="M12 12v6"/></svg>
             </button>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
+        <!-- Model Requests (mods/admins) -->
+        {#if canManageServer && sectionVisible("models")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.modelRequests = !collapsed.modelRequests)}
+          >
+            Model Requests
+            <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.modelRequests ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.modelRequests}
+          <div class="px-5 pb-5">
+            <ModelRequestsPanel {userRole} />
           </div>
           {/if}
         </section>

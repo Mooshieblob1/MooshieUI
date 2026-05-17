@@ -430,6 +430,40 @@ pub async fn start_server(
             "/internal-api/_storage/set_limit",
             post(storage_set_limit_handler),
         )
+        // Model request queue
+        .route(
+            "/internal-api/_model_requests",
+            get(model_requests_list_handler),
+        )
+        .route(
+            "/internal-api/_model_requests/add",
+            post(model_requests_add_handler),
+        )
+        .route(
+            "/internal-api/_model_requests/approve",
+            post(model_requests_approve_handler),
+        )
+        .route(
+            "/internal-api/_model_requests/deny",
+            post(model_requests_deny_handler),
+        )
+        // Notifications
+        .route(
+            "/internal-api/_notifications",
+            get(notifications_list_handler),
+        )
+        .route(
+            "/internal-api/_notifications/unread_count",
+            get(notifications_unread_count_handler),
+        )
+        .route(
+            "/internal-api/_notifications/mark_read",
+            post(notifications_mark_read_handler),
+        )
+        .route(
+            "/internal-api/_notifications/mark_all_read",
+            post(notifications_mark_all_read_handler),
+        )
         // Health check (unauthenticated, for K8s probes)
         .route("/health", get(health_handler))
         // Update check (admin/moderator only)
@@ -2102,11 +2136,21 @@ async fn dispatch_command(
             let user = username.map(|s| s.to_string());
 
             log::info!(
-                "[gen] user={} seed={} steps={}",
+                "[gen] user={} seed={} steps={} mode={}",
                 user.as_deref().unwrap_or("admin"),
                 seed,
                 params.steps,
+                params.mode,
             );
+            if params.controlnet.as_ref().is_some_and(|cn| cn.enabled)
+                || params.facefix_enabled
+                || !params.loras.is_empty()
+            {
+                log::info!(
+                    "Workflow JSON: {}",
+                    serde_json::to_string_pretty(&workflow).unwrap_or_default()
+                );
+            }
 
             // Check needs_hold BEFORE inserting the placeholder
             let needs_hold = user.is_some() && state.prompt_queue.active_count_for_user(&user) > 0;
@@ -4530,4 +4574,359 @@ pub fn start_heartbeat_watchdog(state: Arc<AppState>, timeout_secs: u64) {
             }
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Model request handlers
+// ---------------------------------------------------------------------------
+
+/// GET /internal-api/_model_requests — list all model requests.
+/// Query params: ?status=pending|approved|denied (optional filter).
+async fn model_requests_list_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let status_filter = params.get("status").and_then(|s| match s.as_str() {
+        "pending" => Some(crate::model_requests::RequestStatus::Pending),
+        "approved" => Some(crate::model_requests::RequestStatus::Approved),
+        "denied" => Some(crate::model_requests::RequestStatus::Denied),
+        _ => None,
+    });
+
+    let requests = state.app.model_requests.get_requests(status_filter);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "requests": requests })),
+    )
+        .into_response()
+}
+
+/// POST /internal-api/_model_requests/add — submit a new model request.
+/// Body: { model_id, model_name, model_type, model_url, file_name, file_url, file_size_kb, category }
+async fn model_requests_add_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    let model_id = match req.get("model_id").and_then(|v| v.as_u64()) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing model_id" })),
+            )
+                .into_response();
+        }
+    };
+    let model_name = req
+        .get("model_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown")
+        .to_string();
+    let model_type = req
+        .get("model_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown")
+        .to_string();
+    let model_url = req
+        .get("model_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let file_name = req
+        .get("file_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let file_url = req
+        .get("file_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let file_size_kb = req
+        .get("file_size_kb")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let category = req
+        .get("category")
+        .and_then(|v| v.as_str())
+        .unwrap_or("checkpoints")
+        .to_string();
+
+    if file_name.is_empty() || file_url.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Missing file_name or file_url" })),
+        )
+            .into_response();
+    }
+
+    let request = state.app.model_requests.add_request(
+        &username,
+        model_id,
+        &model_name,
+        &model_type,
+        &model_url,
+        &file_name,
+        &file_url,
+        file_size_kb,
+        &category,
+    );
+
+    // Notify all mods/admins about the new request
+    let _ = state.app.notifications.create(
+        "global",
+        &format!("Model request: {}", model_name),
+        Some(&format!(
+            "{} requested {} ({})",
+            username, model_name, model_type
+        )),
+        "info",
+    );
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "request": request })),
+    )
+        .into_response()
+}
+
+/// POST /internal-api/_model_requests/approve — approve a request (mod/admin).
+/// Body: { request_id }
+async fn model_requests_approve_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role != UserRole::Admin && role != UserRole::Moderator {
+        return forbidden_response("Only admins and moderators can approve requests.");
+    }
+
+    let handler_username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    let request_id = match req.get("request_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing request_id" })),
+            )
+                .into_response();
+        }
+    };
+
+    match state
+        .app
+        .model_requests
+        .approve_request(request_id, &handler_username)
+    {
+        Ok(request) => {
+            // Notify the requester
+            let _ = state.app.notifications.create(
+                &request.username,
+                &format!("Model approved: {}", request.model_name),
+                Some(&format!(
+                    "Your request for {} was approved by {}. The model will be downloaded.",
+                    request.model_name, handler_username
+                )),
+                "success",
+            );
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "request": request })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /internal-api/_model_requests/deny — deny a request (mod/admin).
+/// Body: { request_id, reason? }
+async fn model_requests_deny_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role != UserRole::Admin && role != UserRole::Moderator {
+        return forbidden_response("Only admins and moderators can deny requests.");
+    }
+
+    let handler_username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    let request_id = match req.get("request_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing request_id" })),
+            )
+                .into_response();
+        }
+    };
+    let reason = req.get("reason").and_then(|v| v.as_str());
+
+    match state
+        .app
+        .model_requests
+        .deny_request(request_id, &handler_username, reason)
+    {
+        Ok(request) => {
+            // Notify the requester with the reason
+            let body = match &request.deny_reason {
+                Some(r) => format!(
+                    "Your request for {} was denied by {}. Reason: {}",
+                    request.model_name, handler_username, r
+                ),
+                None => format!(
+                    "Your request for {} was denied by {}.",
+                    request.model_name, handler_username
+                ),
+            };
+            let _ = state.app.notifications.create(
+                &request.username,
+                &format!("Model denied: {}", request.model_name),
+                Some(&body),
+                "warning",
+            );
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "request": request })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Notification handlers
+// ---------------------------------------------------------------------------
+
+/// GET /internal-api/_notifications — list notifications for the current user.
+async fn notifications_list_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    let notifications = state.app.notifications.get_for_user(&username);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "notifications": notifications })),
+    )
+        .into_response()
+}
+
+/// GET /internal-api/_notifications/unread_count — get unread notification count.
+async fn notifications_unread_count_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    let count = state.app.notifications.unread_count(&username);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "unread_count": count })),
+    )
+        .into_response()
+}
+
+/// POST /internal-api/_notifications/mark_read — mark a notification as read.
+/// Body: { notification_id }
+async fn notifications_mark_read_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let notification_id = match req.get("notification_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing notification_id" })),
+            )
+                .into_response();
+        }
+    };
+
+    match state.app.notifications.mark_read(notification_id) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /internal-api/_notifications/mark_all_read — mark all notifications as read.
+async fn notifications_mark_all_read_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    state.app.notifications.mark_all_read(&username);
+    (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
 }

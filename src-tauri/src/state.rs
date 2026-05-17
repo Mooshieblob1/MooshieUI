@@ -9,6 +9,8 @@ use crate::comfyui::gpu_manager::GpuManager;
 use crate::config::AppConfig;
 #[cfg(any(feature = "desktop", feature = "server"))]
 use crate::interrogator::InterrogatorState;
+use crate::model_requests::ModelRequestState;
+use crate::notifications::NotificationState;
 
 /// Stored Tauri AppHandle so the headless web server can control the window.
 #[cfg(feature = "desktop")]
@@ -466,6 +468,10 @@ pub struct AppState {
     /// Updated by the WebSocket bridge on every `comfyui:preview` event.
     /// Sent to clients that reconnect mid-generation via the SSE initial burst.
     pub last_preview_by_prompt: std::sync::RwLock<HashMap<String, String>>,
+    /// Model request queue for non-mod users.
+    pub model_requests: ModelRequestState,
+    /// Notification system for global and per-user notifications.
+    pub notifications: NotificationState,
 }
 
 impl AppState {
@@ -492,6 +498,8 @@ impl AppState {
             gpu_manager,
             output_image_cache: std::sync::RwLock::new(HashMap::new()),
             last_preview_by_prompt: std::sync::RwLock::new(HashMap::new()),
+            model_requests: ModelRequestState::new(),
+            notifications: NotificationState::new(),
         }
     }
 

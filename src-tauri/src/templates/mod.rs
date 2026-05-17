@@ -202,6 +202,12 @@ pub fn load_model_nodes(
 
     // LoRA chain
     for lora in &params.loras {
+        if lora.name.trim().is_empty() {
+            log::warn!(
+                "Skipping LoRA with empty name — this should have been filtered by the frontend"
+            );
+            continue;
+        }
         let lora_id = next_id.to_string();
         workflow.insert(
             lora_id.clone(),

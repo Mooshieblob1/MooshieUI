@@ -9,6 +9,8 @@ pub mod interrogator;
 pub mod jxl;
 pub mod log_buffer;
 pub mod metadata;
+pub mod model_requests;
+pub mod notifications;
 #[cfg(feature = "desktop")]
 pub mod setup;
 pub mod state;

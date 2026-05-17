@@ -17,6 +17,7 @@
     type CivitaiFileFormat,
   } from "../../utils/api.js";
   import { models } from "../../stores/models.svelte.js";
+  import { modelRequests } from "../../stores/modelRequests.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
 
   const CIVITAI_API_KEY_KEY = "mooshieui.civitai.apiKey.v1";
@@ -717,6 +718,25 @@
     }
   }
 
+  async function requestModel(model: CivitaiModel, file: CivitaiModelFile) {
+    const category = mapCivitaiTypeToCategory(model.type);
+    if (!category) {
+      error = locale.t("modelhub.civitai.cannot_install", { type: model.type });
+      return;
+    }
+
+    await modelRequests.addRequest({
+      model_id: model.id,
+      model_name: model.name,
+      model_type: model.type,
+      model_url: modelUrl(model),
+      file_name: file.name,
+      file_url: file.downloadUrl,
+      file_size_kb: file.sizeKB,
+      category,
+    });
+  }
+
   async function installFromDirectUrl() {
     directStatus = null;
     const trimmedUrl = directUrl.trim();
@@ -1260,6 +1280,13 @@
                               >
                                 {dl ? locale.t("modelhub.civitai.installing") : locale.t("modelhub.civitai.install_to_app")}
                               </button>
+                              <button
+                                class="px-2 py-1 text-[11px] rounded border border-amber-700 text-amber-300 hover:border-amber-500 hover:text-amber-200 transition-colors"
+                                onclick={() => requestModel(model, file)}
+                                title="Request this model to be downloaded by a mod/admin"
+                              >
+                                {locale.t("modelhub.civitai.request_model")}
+                              </button>
                             </div>
                           </div>
                         {/each}
@@ -1396,5 +1423,17 @@
         {locale.t("modelhub.pick_dir.cancel")}
       </button>
     </div>
+  </div>
+{/if}
+
+{#if modelRequests.toastMessage}
+  <div
+    class="fixed bottom-4 right-4 z-50 px-4 py-2.5 rounded-lg border text-sm shadow-lg transition-all {modelRequests.toastKind === 'success'
+      ? 'bg-emerald-900/90 border-emerald-700 text-emerald-200'
+      : modelRequests.toastKind === 'error'
+        ? 'bg-red-900/90 border-red-700 text-red-200'
+        : 'bg-indigo-900/90 border-indigo-700 text-indigo-200'}"
+  >
+    {modelRequests.toastMessage}
   </div>
 {/if}

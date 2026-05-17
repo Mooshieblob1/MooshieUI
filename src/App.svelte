@@ -26,6 +26,8 @@
   import { compare } from "./lib/stores/compare.svelte.js";
   import { artistInsert } from "./lib/stores/artistInsert.svelte.js";
   import { styles as stylesStore } from "./lib/stores/styles.svelte.js";
+  import { notifications } from "./lib/stores/notifications.svelte.js";
+  import NotificationBell from "./lib/components/ui/NotificationBell.svelte";
   import logoUrl from "./lib/assets/logo.png";
 
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
@@ -1467,6 +1469,7 @@
 
     loadGalleryPrefs();
     downloads.init();
+    notifications.startPolling();
 
     // Check auth for browser mode LAN access (before any ipcInvoke calls)
     const authOk = await checkAuth();
@@ -2330,6 +2333,8 @@
         /></svg
       >
     </button>
+
+    <NotificationBell />
 
     <!-- Connection status dot -->
     <div

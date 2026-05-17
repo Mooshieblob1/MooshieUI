@@ -1027,6 +1027,7 @@ const en: Record<string, string> = {
   "modelhub.civitai.open_link": "Open Link",
   "modelhub.civitai.installing": "Installing...",
   "modelhub.civitai.install_to_app": "Install to App",
+  "modelhub.civitai.request_model": "Request",
   "modelhub.pick_dir.title": "Choose install directory",
   "modelhub.pick_dir.description": "Select which directory to install this model to.",
   "modelhub.pick_dir.cancel": "Cancel",

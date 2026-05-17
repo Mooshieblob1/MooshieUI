@@ -43,7 +43,10 @@ pub async fn generate(
         params.output_bit_depth,
         params.mode,
     );
-    if params.controlnet.as_ref().is_some_and(|cn| cn.enabled) || params.facefix_enabled {
+    if params.controlnet.as_ref().is_some_and(|cn| cn.enabled)
+        || params.facefix_enabled
+        || !params.loras.is_empty()
+    {
         log::info!(
             "Workflow JSON: {}",
             serde_json::to_string_pretty(&workflow).unwrap_or_default()
