@@ -1,4 +1,4 @@
--## What's New in v1.3.0
+## What's New in v1.3.0
 
 ### Internationalization
 - Added missing Spanish translations for notifications and generation-ready messages; ensured key parity between `en` and `es`.
@@ -14,8 +14,6 @@
 ## What's New in v1.2.11
 
 ### LoRA Compatibility Fix
-- **Fixed `LoraLoader` JSONDecodeError on server deployments**: the server-side workflow builder now filters LoRA entries with empty or whitespace-only names before constructing the ComfyUI prompt, preventing a `json.decoder.JSONDecodeError` crash when a custom `LoraLoader` node attempts to parse the `lora_name` field.
-- **Added workflow JSON logging for LoRA diagnostics**: when any LoRA is active in a generation, the full workflow JSON is now written to the server logs (previously logged only for ControlNet and facefix). This makes it possible to inspect the exact prompt sent to ComfyUI for debugging format issues.
 - **Fixed `LoraLoader` JSONDecodeError on server deployments**: the server-side workflow builder now filters LoRA entries with empty or whitespace-only names before constructing the ComfyUI prompt, preventing a `json.decoder.JSONDecodeError` crash when a custom `LoraLoader` node attempts to parse the `lora_name` field.
 - **Added workflow JSON logging for LoRA diagnostics**: when any LoRA is active in a generation, the full workflow JSON is now written to the server logs (previously logged only for ControlNet and facefix). This makes it possible to inspect the exact prompt sent to ComfyUI for debugging format issues.
 

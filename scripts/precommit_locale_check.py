@@ -16,7 +16,7 @@ res_en=extract(en)
 res_es=extract(es)
 if res_en is None or res_es is None:
     print('MISSING_LOCALE_FILES', res_en is None, res_es is None)
-    sys.exit(0)
+    sys.exit(1)
 
 en_keys,en_map=res_en
 es_keys,es_map=res_es

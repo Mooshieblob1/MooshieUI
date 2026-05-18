@@ -3500,7 +3500,7 @@ async fn dispatch_command(
             let mut req = state
                 .http_client
                 .get(&url)
-                .header("User-Agent", "MooshieUI/1.0");
+                .header("User-Agent", "MooshieUI/1.3.0");
             if let Some(token) = crate::comfyui::client::huggingface_token_for_url(&url) {
                 req = req.bearer_auth(token);
             }
