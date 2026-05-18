@@ -2518,6 +2518,28 @@ pub(crate) fn resolve_model_path(
     None
 }
 
+pub(crate) fn validate_lora_files_for_generation(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    loras: &[crate::comfyui::types::LoraParam],
+) -> Result<(), AppError> {
+    for lora in loras {
+        let name = lora.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let path = resolve_model_path(comfyui_path, extra_model_paths, "loras", name)
+            .ok_or_else(|| AppError::InvalidWorkflow(format!("LoRA file not found: '{}'", name)))?;
+        crate::comfyui::client::validate_downloaded_model_file(&path, name).map_err(|e| {
+            AppError::InvalidWorkflow(format!(
+                "LoRA file '{}' is invalid and needs to be re-downloaded: {}",
+                name, e
+            ))
+        })?;
+    }
+    Ok(())
+}
+
 /// Fetch combined LoRA info: hash the file, look up on CivitAI, read ModelSpec.
 /// Returns structured info for the LoRA gallery panel.
 #[cfg(feature = "desktop")]

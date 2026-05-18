@@ -44,6 +44,12 @@ const en: Record<string, string> = {
   "common.detected": "detected",
   "common.click_to_type": "Click to type a value",
 
+  // ── Notifications ─────────────────────────────────────
+  "notifications.title": "Notifications",
+  "notifications.mark_all_read": "Mark all read",
+  "notifications.clear_all": "Clear all",
+  "notifications.empty": "No notifications yet",
+
   // ── App Status ─────────────────────────────────────────
   "app.status.starting": "Starting...",
   "app.status.starting_comfyui": "Starting ComfyUI...",
@@ -653,6 +659,8 @@ const en: Record<string, string> = {
   "generation.toast.failed_load": "Failed to load image",
   "generation.toast.failed_drop": "Failed to read dropped image",
   "generation.toast.image_ready": "Image ready",
+  "generation.notification.image_ready_body": "Your completed generation is ready to view.",
+  "generation.notification.images_ready_body": "{count} generated images are ready to view.",
 
   // Panel collapse
   "generation.panel.expand_left": "Expand left panel",

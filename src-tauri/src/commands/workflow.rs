@@ -29,6 +29,14 @@ pub async fn generate(
     // `[Errno 21] Is a directory: '<input_dir>/'`, which surfaces as a generic
     // execution error far away from the actual cause.
     templates::validate_generation_params(&params).map_err(AppError::InvalidWorkflow)?;
+    {
+        let config = state.config.read().await;
+        crate::commands::api::validate_lora_files_for_generation(
+            &config.comfyui_path,
+            config.extra_model_paths.as_deref(),
+            &params.loras,
+        )?;
+    }
 
     let seed = if params.seed < 0 {
         (rand::random::<u64>() >> 1) as i64

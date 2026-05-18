@@ -1209,6 +1209,14 @@
     const image = images.find((candidate) => candidate.url) ?? images[0];
     if (!image?.url) return;
 
+    notifications.addLocalNotification({
+      title: locale.t("generation.toast.image_ready"),
+      body: images.length > 1
+        ? locale.t("generation.notification.images_ready_body", { count: images.length })
+        : locale.t("generation.notification.image_ready_body"),
+      kind: "success",
+    });
+
     clearGenerationDoneToastTimers();
     generationDoneToast = {
       id: ++generationDoneToastSeq,

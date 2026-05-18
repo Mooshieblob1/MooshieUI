@@ -44,6 +44,137 @@ pub fn download_status_error_message(url: &str, status: reqwest::StatusCode) -> 
     }
 }
 
+pub fn reject_non_model_download_content_type(
+    url: &str,
+    content_type: &str,
+) -> Result<(), AppError> {
+    let content_type = content_type.to_ascii_lowercase();
+    let looks_like_error_body = [
+        "text/html",
+        "text/plain",
+        "application/json",
+        "application/problem+json",
+        "application/xml",
+        "text/xml",
+    ]
+    .iter()
+    .any(|needle| content_type.contains(needle));
+
+    if looks_like_error_body {
+        return Err(AppError::ApiError {
+            status: 200,
+            message: format!(
+                "The URL returned '{}' instead of model bytes for {}. This usually means the download requires authentication, a direct file URL, or a different token.",
+                content_type,
+                url
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+pub fn validate_downloaded_model_file(
+    path: &std::path::Path,
+    filename: &str,
+) -> Result<(), AppError> {
+    let size = std::fs::metadata(path)?.len();
+    if size == 0 {
+        return Err(AppError::Other(format!(
+            "Downloaded model '{}' is empty",
+            filename
+        )));
+    }
+
+    let ext = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    if ext == "safetensors" || ext == "sft" {
+        validate_safetensors_file(path, filename, size)?;
+    }
+
+    Ok(())
+}
+
+fn validate_safetensors_file(
+    path: &std::path::Path,
+    filename: &str,
+    file_size: u64,
+) -> Result<(), AppError> {
+    use std::io::Read;
+
+    if file_size < 9 {
+        return Err(AppError::Other(format!(
+            "'{}' is too small to be a valid safetensors file",
+            filename
+        )));
+    }
+
+    let mut file = std::fs::File::open(path)?;
+    let mut size_buf = [0u8; 8];
+    file.read_exact(&mut size_buf)?;
+    let header_size = u64::from_le_bytes(size_buf);
+
+    if header_size == 0 || header_size > 100 * 1024 * 1024 {
+        return Err(AppError::Other(format!(
+            "'{}' has an invalid safetensors header size ({})",
+            filename, header_size
+        )));
+    }
+    if 8 + header_size > file_size {
+        return Err(AppError::Other(format!(
+            "'{}' is incomplete: safetensors header declares {} bytes but the file is only {} bytes",
+            filename, header_size, file_size
+        )));
+    }
+
+    let mut header_buf = vec![0u8; header_size as usize];
+    file.read_exact(&mut header_buf)?;
+    let header: serde_json::Value = serde_json::from_slice(&header_buf).map_err(|e| {
+        AppError::Other(format!(
+            "'{}' is not a valid safetensors file: {}. The server may have saved an HTML/JSON error page instead of the model.",
+            filename, e
+        ))
+    })?;
+    let header = header.as_object().ok_or_else(|| {
+        AppError::Other(format!("'{}' has an invalid safetensors header", filename))
+    })?;
+
+    let mut tensor_count = 0usize;
+    let mut max_end = 0u64;
+    for (key, value) in header {
+        if key == "__metadata__" {
+            continue;
+        }
+        tensor_count += 1;
+        if let Some(offsets) = value.get("data_offsets").and_then(|v| v.as_array()) {
+            if let Some(end) = offsets.get(1).and_then(|v| v.as_u64()) {
+                max_end = max_end.max(end);
+            }
+        }
+    }
+
+    if tensor_count == 0 {
+        return Err(AppError::Other(format!(
+            "'{}' has no tensors in its safetensors header",
+            filename
+        )));
+    }
+
+    let required_size = 8 + header_size + max_end;
+    if required_size > file_size {
+        return Err(AppError::Other(format!(
+            "'{}' is incomplete: tensor data ends at byte {} but the file is only {} bytes",
+            filename, required_size, file_size
+        )));
+    }
+
+    Ok(())
+}
+
 /// Compute SHA256 of a file. Returns lowercase hex. Used to verify downloaded model files.
 pub fn sha256_file(path: &std::path::Path) -> Result<String, AppError> {
     use std::io::Read;
@@ -381,7 +512,10 @@ impl AppState {
         if dest.exists() {
             let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
             if size > 0 {
-                if let Some(expected_hex) = expected_sha256 {
+                let cached_is_valid = validate_downloaded_model_file(&dest, filename).is_ok();
+                if !cached_is_valid {
+                    let _ = std::fs::remove_file(&dest);
+                } else if let Some(expected_hex) = expected_sha256 {
                     let dest_clone = dest.clone();
                     let computed = tokio::task::spawn_blocking(move || sha256_file(&dest_clone))
                         .await
@@ -419,14 +553,7 @@ impl AppState {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_lowercase();
-        if content_type.contains("text/html") {
-            return Err(AppError::ApiError {
-                status: 200,
-                message:
-                    "The URL points to a web page, not a file. Use a direct download URL (e.g. a HuggingFace /resolve/main/ URL)."
-                        .to_string(),
-            });
-        }
+        reject_non_model_download_content_type(url, &content_type)?;
 
         let total = resp.content_length().unwrap_or(0);
         let mut downloaded: u64 = 0;
@@ -496,6 +623,8 @@ impl AppState {
                 )));
             }
         }
+
+        validate_downloaded_model_file(&dest, filename)?;
 
         Ok(())
     }

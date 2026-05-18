@@ -464,6 +464,14 @@ pub async fn start_server(
             "/internal-api/_notifications/mark_all_read",
             post(notifications_mark_all_read_handler),
         )
+        .route(
+            "/internal-api/_notifications/dismiss",
+            post(notifications_dismiss_handler),
+        )
+        .route(
+            "/internal-api/_notifications/clear",
+            post(notifications_clear_handler),
+        )
         // Health check (unauthenticated, for K8s probes)
         .route("/health", get(health_handler))
         // Update check (admin/moderator only)
@@ -2127,6 +2135,16 @@ async fn dispatch_command(
             let params: crate::comfyui::types::GenerationParams =
                 serde_json::from_value(args["params"].clone())
                     .map_err(|e| format!("Invalid params: {}", e))?;
+            crate::templates::validate_generation_params(&params)?;
+            {
+                let config = state.config.read().await;
+                crate::commands::api::validate_lora_files_for_generation(
+                    &config.comfyui_path,
+                    config.extra_model_paths.as_deref(),
+                    &params.loras,
+                )
+                .map_err(|e| e.to_string())?;
+            }
             let seed = if params.seed < 0 {
                 (rand::random::<u64>() >> 1) as i64
             } else {
@@ -3451,7 +3469,12 @@ async fn dispatch_command(
             if dest.exists() {
                 let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
                 if size > 0 {
-                    if let Some(ref expected_hex) = expected_sha256 {
+                    let cached_is_valid =
+                        crate::comfyui::client::validate_downloaded_model_file(&dest, &filename)
+                            .is_ok();
+                    if !cached_is_valid {
+                        let _ = std::fs::remove_file(&dest);
+                    } else if let Some(ref expected_hex) = expected_sha256 {
                         let dest_clone = dest.clone();
                         let expected = expected_hex.to_lowercase();
                         let computed = tokio::task::spawn_blocking(move || {
@@ -3474,19 +3497,28 @@ async fn dispatch_command(
 
             // Download with progress broadcast
             let event_tx = state.event_tx.clone();
-            let resp = state
+            let mut req = state
                 .http_client
                 .get(&url)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
+                .header("User-Agent", "MooshieUI/1.0");
+            if let Some(token) = crate::comfyui::client::huggingface_token_for_url(&url) {
+                req = req.bearer_auth(token);
+            }
+            let resp = req.send().await.map_err(|e| e.to_string())?;
             if !resp.status().is_success() {
-                return Err(format!(
-                    "Failed to download {}: HTTP {}",
-                    url,
-                    resp.status()
+                let status = resp.status();
+                return Err(crate::comfyui::client::download_status_error_message(
+                    &url, status,
                 ));
             }
+            let content_type = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_lowercase();
+            crate::comfyui::client::reject_non_model_download_content_type(&url, &content_type)
+                .map_err(|e| e.to_string())?;
             let total = resp.content_length().unwrap_or(0);
             let mut downloaded: u64 = 0;
             let mut file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
@@ -3544,6 +3576,12 @@ async fn dispatch_command(
                     ));
                 }
             }
+            crate::comfyui::client::validate_downloaded_model_file(&dest, &filename).map_err(
+                |e| {
+                    let _ = std::fs::remove_file(&dest);
+                    e.to_string()
+                },
+            )?;
 
             Ok(serde_json::json!(null))
         }
@@ -4903,7 +4941,14 @@ async fn notifications_mark_read_handler(
         }
     };
 
-    match state.app.notifications.mark_read(notification_id) {
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    match state
+        .app
+        .notifications
+        .mark_read(&username, notification_id)
+    {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
         Err(e) => (
             StatusCode::NOT_FOUND,
@@ -4928,5 +4973,60 @@ async fn notifications_mark_all_read_handler(
         resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
 
     state.app.notifications.mark_all_read(&username);
+    (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
+}
+
+/// POST /internal-api/_notifications/dismiss — dismiss a notification for this user.
+/// Body: { notification_id }
+async fn notifications_dismiss_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    let notification_id = match req.get("notification_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing notification_id" })),
+            )
+                .into_response();
+        }
+    };
+
+    match state.app.notifications.dismiss(&username, notification_id) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /internal-api/_notifications/clear — dismiss all notifications for this user.
+async fn notifications_clear_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    state.app.notifications.clear_all(&username);
     (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
 }

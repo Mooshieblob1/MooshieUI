@@ -1,5 +1,18 @@
 # Changelog
 
+## What's New in v1.3.0
+
+### Internationalization
+- Added missing Spanish translations for notifications and generation-ready messages; ensured key parity between `en` and `es`.
+
+### Release
+- Bumped app version to v1.3.0 across `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
+
+### Maintenance
+- Ran pre-commit checks and resolved the blocking i18n gate; documented minor clippy and a11y warnings for follow-up.
+
+---
+
 ## What's New in v1.2.11
 
 ### LoRA Compatibility Fix

@@ -42,6 +42,11 @@ const es: Record<string, string> = {
   "common.no_clipboard_image": "No se encontró imagen en el portapapeles",
   "common.detected": "detectado",
   "common.click_to_type": "Haz clic para escribir un valor",
+  // ── Notifications ─────────────────────────────────────
+  "notifications.title": "Notificaciones",
+  "notifications.mark_all_read": "Marcar todo como leído",
+  "notifications.clear_all": "Borrar todo",
+  "notifications.empty": "No hay notificaciones",
 
   // ── Estado de la app ───────────────────────────────────
   "app.status.starting": "Iniciando...",
@@ -336,6 +341,8 @@ const es: Record<string, string> = {
   "settings.quality_warning.disable": "Desactivar de todos modos",
 
   // ── Generación ──────────────────────────────────────────
+  "generation.notification.image_ready_body": "Tu generación completada está lista para ver.",
+  "generation.notification.images_ready_body": "{count} imágenes generadas están listas para ver.",
   "generation.mode.txt2img": "Texto a imagen",
   "generation.mode.img2img": "Imagen a imagen",
   "generation.mode.inpainting": "Inpainting",
@@ -734,6 +741,7 @@ const es: Record<string, string> = {
   "modelhub.civitai.refresh": "Actualizar",
   "modelhub.civitai.loading": "Buscando modelos en CivitAI...",
   "modelhub.civitai.no_results": "No se encontraron modelos para esta búsqueda.",
+  "modelhub.civitai.request_model": "Solicitar",
 
   "modelhub.direct.url": "URL del modelo",
   "modelhub.direct.filename": "Nombre de archivo",

@@ -167,7 +167,7 @@ jobs:
       - name: Checkout (for release notes)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
@@ -192,11 +192,23 @@ jobs:
             sed -n "/^## What's New in ${TAG}/,/^---$/p" RELEASE_NOTES.md | sed '$ { /^---$/d }' >> /tmp/release-body.md
           fi
 
-          gh release create "${TAG}" \
-            --repo "${{ github.repository }}" \
-            --title "MooshieUI ${TAG}" \
-            --notes-file /tmp/release-body.md \
-            /tmp/release-files/*
+          if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists; updating notes and replacing assets."
+            gh release edit "${TAG}" \
+              --repo "${{ github.repository }}" \
+              --title "MooshieUI ${TAG}" \
+              --notes-file /tmp/release-body.md
+            gh release upload "${TAG}" \
+              --repo "${{ github.repository }}" \
+              --clobber \
+              /tmp/release-files/*
+          else
+            gh release create "${TAG}" \
+              --repo "${{ github.repository }}" \
+              --title "MooshieUI ${TAG}" \
+              --notes-file /tmp/release-body.md \
+              /tmp/release-files/*
+          fi
 
   # -------------------------------------------------------------------------
   # Headless server binary (no webkit / Tauri deps required)
@@ -256,15 +268,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare Docker metadata
+        id: docker-vars
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          OWNER="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          VERSION="${TAG#v}"
+          MAJOR_MINOR="$(echo "${VERSION}" | awk -F. '{print $1 "." $2}')"
+          SHORT_SHA="${GITHUB_SHA::12}"
+
+          echo "image=ghcr.io/${OWNER}/mooshieui" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "major_minor=${MAJOR_MINOR}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
       - name: Extract version metadata
         id: meta
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/mooshieui
+          images: ${{ steps.docker-vars.outputs.image }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
+            type=raw,value=${{ steps.docker-vars.outputs.version }}
+            type=raw,value=${{ steps.docker-vars.outputs.major_minor }}
+            type=raw,value=${{ steps.docker-vars.outputs.short_sha }}
             type=raw,value=latest
 
       - name: Build and push Docker image
