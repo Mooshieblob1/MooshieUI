@@ -471,8 +471,8 @@
 
   {#if showSuggestions}
     <div
-      class="absolute z-50 w-full max-h-60 overflow-y-auto bg-neutral-800 border border-neutral-600 rounded-lg shadow-xl"
-      style="top: calc(100% + 4px); left: 0;"
+      class="fixed z-50 w-80 max-h-60 overflow-y-auto bg-neutral-800 border border-neutral-600 rounded-lg shadow-xl"
+      style="top: {dropdownTop}px; left: {dropdownLeft}px;"
     >
       {#each suggestions as tag, i}
         <button

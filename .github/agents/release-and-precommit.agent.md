@@ -20,7 +20,8 @@ Run every step below **in sequence**. Stop and report immediately if a **blockin
 ### Step 1: Identify Changed Files (required context)
 
 ```bash
-cd /home/blob/Repos/DesktopWebUI/comfyui-desktop
+# change to repo root in a portable way (falls back to current dir)
+cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
 git diff --name-only HEAD
 git diff --staged --name-only
 ```
