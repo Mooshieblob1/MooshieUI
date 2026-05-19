@@ -246,20 +246,57 @@
       const end = textareaEl.selectionEnd;
       if (start !== end) {
         e.preventDefault();
+        // Push current value to undo stack before modifying
+        undoStack = [...undoStack, value];
+        redoStack = [];
         adjustWeight(e.key === "ArrowUp" ? 0.05 : -0.05, start, end);
         return;
       }
     }
 
-    // NAI-style bracket weighting: { wraps selection to increase, [ to decrease
-    if ((e.key === "{" || e.key === "[") && textareaEl) {
+    // NAI-style bracket weighting: { / } wraps selection to increase, [ / ] to decrease.
+    // If selected text is already wrapped in {} and user presses [ or ], strip {}s first.
+    if ((e.key === "{" || e.key === "}" || e.key === "[" || e.key === "]") && textareaEl) {
       const start = textareaEl.selectionStart;
       const end = textareaEl.selectionEnd;
       if (start !== end) {
         e.preventDefault();
-        const open = e.key === "{" ? "{" : "[";
-        const close = e.key === "{" ? "}" : "]";
-        const wrapped = `${open}${value.substring(start, end)}${close}`;
+        const selected = value.substring(start, end);
+        const braceKey = (e.key === "{" || e.key === "}") ? "brace" : "bracket";
+
+        // If pressing [ or ] and selection is already wrapped in {}, strip one layer of {}
+        if (braceKey === "bracket" && selected.startsWith("{") && selected.endsWith("}")) {
+          // Push current value to undo stack before modifying
+          undoStack = [...undoStack, value];
+          redoStack = [];
+          const inner = selected.slice(1, -1);
+          value = value.substring(0, start) + inner + value.substring(end);
+          requestAnimationFrame(() => {
+            textareaEl?.focus();
+            textareaEl?.setSelectionRange(start, start + inner.length);
+          });
+          return;
+        }
+
+        // If pressing { or } and selection is already wrapped in [], strip one layer of []
+        if (braceKey === "brace" && selected.startsWith("[") && selected.endsWith("]")) {
+          undoStack = [...undoStack, value];
+          redoStack = [];
+          const inner = selected.slice(1, -1);
+          value = value.substring(0, start) + inner + value.substring(end);
+          requestAnimationFrame(() => {
+            textareaEl?.focus();
+            textareaEl?.setSelectionRange(start, start + inner.length);
+          });
+          return;
+        }
+
+        // Normal wrap: surround with the appropriate bracket pair
+        const open = braceKey === "brace" ? "{" : "[";
+        const close = braceKey === "brace" ? "}" : "]";
+        const wrapped = `${open}${selected}${close}`;
+        undoStack = [...undoStack, value];
+        redoStack = [];
         value = value.substring(0, start) + wrapped + value.substring(end);
         requestAnimationFrame(() => {
           textareaEl?.focus();

@@ -1,5 +1,14 @@
 # Changelog
 
+## What's New in v1.3.1
+
+### Build Fixes
+- Fixed Svelte 5 event-handler inconsistency that could break the frontend build by standardizing event handlers to `onclick=` across `src/App.svelte` and `src/lib/components/generation/PromptTextarea.svelte`.
+- Bumped app version to `1.3.1` in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
+- Ran pre-commit checks and validated `npm run build` and `cargo check` locally.
+
+---
+
 ## What's New in v1.3.0
 
 ### Internationalization
