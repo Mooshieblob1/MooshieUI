@@ -1,3 +1,10 @@
+## What's New in v1.3.2
+
+### Documentation
+- Update README (`b015944`): minor documentation improvements and clarifications.
+
+---
+
 ## What's New in v1.3.1
 
 ### Build Fixes
