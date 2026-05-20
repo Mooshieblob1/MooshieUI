@@ -66,7 +66,7 @@ flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 jxl-oxide = { version = "0.12", default-features = false }
 jxl-encoder = { version = "0.3", default-features = false, features = ["std", "unsafe-performance"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
 ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "tracing", "tls-native", "api-24", "load-dynamic"], optional = true }
 csv = { version = "1", optional = true }
 axum = { version = "0.8", features = ["tokio"] }
