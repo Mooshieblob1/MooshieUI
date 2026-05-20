@@ -1,0 +1,618 @@
+{
+  "settings.connection.network_proxy": {
+    "en": "Network proxy (git / pip)",
+    "de": "Netzwerk-Proxy (git / pip)"
+  },
+  "settings.connection.network_proxy_desc": {
+    "en": "Optional. Used when MooshieUI clones ControlNet custom nodes or installs their Python requirements. Example: http://127.0.0.1:7890. Leave empty to use system defaults.",
+    "de": "Optional. Wird verwendet, wenn MooshieUI ControlNet-Custom-Nodes klont oder deren Python-Abhängigkeiten installiert. Beispiel: http://127.0.0.1:7890. Leer lassen für Systemstandard."
+  },
+  "settings.models.manage": {
+    "en": "Manage Models",
+    "de": "Modelle verwalten"
+  },
+  "settings.models.manage_desc": {
+    "en": "Move or delete model files from configured directories.",
+    "de": "Modelldateien in konfigurierten Verzeichnissen verschieben oder löschen."
+  },
+  "settings.models.title": {
+    "en": "Model Manager",
+    "de": "Modellverwaltung"
+  },
+  "settings.models.files": {
+    "en": "files",
+    "de": "Dateien"
+  },
+  "settings.models.directories": {
+    "en": "directories",
+    "de": "Verzeichnisse"
+  },
+  "settings.models.search": {
+    "en": "Search models...",
+    "de": "Modelle suchen…"
+  },
+  "settings.models.refresh": {
+    "en": "Refresh",
+    "de": "Aktualisieren"
+  },
+  "settings.models.empty": {
+    "en": "No models found.",
+    "de": "Keine Modelle gefunden."
+  },
+  "settings.models.move": {
+    "en": "Move",
+    "de": "Verschieben"
+  },
+  "settings.models.no_move_target": {
+    "en": "Add another directory for this model type before moving.",
+    "de": "Fügen Sie ein weiteres Verzeichnis für diesen Modelltyp hinzu, bevor Sie verschieben."
+  },
+  "settings.models.move_title": {
+    "en": "Move {name}",
+    "de": "{name} verschieben"
+  },
+  "settings.models.delete_title": {
+    "en": "Delete {name}",
+    "de": "{name} löschen"
+  },
+  "settings.models.deleted": {
+    "en": "Deleted {name}",
+    "de": "{name} gelöscht"
+  },
+  "settings.models.moved": {
+    "en": "Moved {name}",
+    "de": "{name} verschoben"
+  },
+  "settings.gallery.storage_label": {
+    "en": "Gallery Storage Location",
+    "de": "Galerie-Speicherort"
+  },
+  "settings.gallery.storage_desc": {
+    "en": "Where generated images are saved. Large galleries (100 GB+) can be pointed to a separate drive to avoid copying during installation moves.",
+    "de": "Speicherort für generierte Bilder. Große Galerien (100 GB+) können auf ein separates Laufwerk gelegt werden, um Kopieren bei Installation/Verlagerung zu vermeiden."
+  },
+  "settings.gallery.storage_browse_title": {
+    "en": "Choose gallery storage folder",
+    "de": "Galerie-Speicherordner wählen"
+  },
+  "settings.gallery.storage_reset": {
+    "en": "Reset to default",
+    "de": "Auf Standard zurücksetzen"
+  },
+  "settings.gallery.storage_reset_title": {
+    "en": "Use the default location inside the app data directory",
+    "de": "Standardort im App-Datenverzeichnis verwenden"
+  },
+  "settings.gallery.storage_custom": {
+    "en": "Custom",
+    "de": "Benutzerdefiniert"
+  },
+  "settings.gallery.storage_default": {
+    "en": "Default",
+    "de": "Standard"
+  },
+  "settings.gallery.storage_moved": {
+    "en": "Gallery path updated. Existing images stay at the old location — move them manually if needed.",
+    "de": "Galeriepfad aktualisiert. Vorhandene Bilder bleiben am alten Ort — bei Bedarf manuell verschieben."
+  },
+  "settings.gallery.save_dir_placeholder": {
+    "en": "/home/user/Pictures/AI",
+    "de": "/home/benutzer/Bilder/KI"
+  },
+  "settings.autocomplete.url_placeholder": {
+    "en": "https://example.com/tags.json or .csv",
+    "de": "https://example.com/tags.json oder .csv"
+  },
+  "gallery.i2i": {
+    "en": "I2I",
+    "de": "B2B"
+  },
+  "settings.queue.title": {
+    "en": "Queue",
+    "de": "Warteschlange"
+  },
+  "model_requests.browser_only": {
+    "en": "Model requests are only available in browser mode.",
+    "de": "Modellanfragen sind nur im Browser-Modus verfügbar."
+  },
+  "model_requests.requested": {
+    "en": "Model \"{name}\" requested for download.",
+    "de": "Modell „{name}“ zum Download angefragt."
+  },
+  "model_requests.approved": {
+    "en": "Request approved.",
+    "de": "Anfrage genehmigt."
+  },
+  "model_requests.denied": {
+    "en": "Request denied.",
+    "de": "Anfrage abgelehnt."
+  },
+  "model_requests.title": {
+    "en": "Model Requests",
+    "de": "Modellanfragen"
+  },
+  "model_requests.desc_admin": {
+    "en": "Review and manage model download requests from users.",
+    "de": "Modell-Download-Anfragen von Nutzern prüfen und verwalten."
+  },
+  "model_requests.desc_user": {
+    "en": "Your model download requests and their status.",
+    "de": "Ihre Modell-Download-Anfragen und deren Status."
+  },
+  "model_requests.filter_pending": {
+    "en": "Pending",
+    "de": "Ausstehend"
+  },
+  "model_requests.filter_approved": {
+    "en": "Approved",
+    "de": "Genehmigt"
+  },
+  "model_requests.filter_denied": {
+    "en": "Denied",
+    "de": "Abgelehnt"
+  },
+  "model_requests.filter_all": {
+    "en": "All",
+    "de": "Alle"
+  },
+  "model_requests.loading": {
+    "en": "Loading requests...",
+    "de": "Anfragen werden geladen…"
+  },
+  "model_requests.empty_pending": {
+    "en": "No pending requests.",
+    "de": "Keine ausstehenden Anfragen."
+  },
+  "model_requests.empty": {
+    "en": "No requests found.",
+    "de": "Keine Anfragen gefunden."
+  },
+  "model_requests.by": {
+    "en": "By: {user}",
+    "de": "Von: {user}"
+  },
+  "model_requests.handled_by": {
+    "en": "Handled by: {user}",
+    "de": "Bearbeitet von: {user}"
+  },
+  "model_requests.reason": {
+    "en": "Reason: {reason}",
+    "de": "Grund: {reason}"
+  },
+  "model_requests.approve_download": {
+    "en": "Approve & Download",
+    "de": "Genehmigen & herunterladen"
+  },
+  "model_requests.deny": {
+    "en": "Deny",
+    "de": "Ablehnen"
+  },
+  "model_requests.view_civitai": {
+    "en": "View on CivitAI ↗",
+    "de": "Auf CivitAI ansehen ↗"
+  },
+  "model_requests.deny_title": {
+    "en": "Deny Request",
+    "de": "Anfrage ablehnen"
+  },
+  "model_requests.deny_body": {
+    "en": "Deny the request for {model} by {user}.",
+    "de": "Anfrage für {model} von {user} ablehnen."
+  },
+  "model_requests.deny_reason_label": {
+    "en": "Reason (optional, shown to requester)",
+    "de": "Grund (optional, wird dem Anfragenden angezeigt)"
+  },
+  "model_requests.deny_reason_placeholder": {
+    "en": "e.g., This model is already available...",
+    "de": "z. B. Dieses Modell ist bereits verfügbar…"
+  },
+  "model_requests.denying": {
+    "en": "Denying...",
+    "de": "Wird abgelehnt…"
+  },
+  "model_requests.deny_confirm": {
+    "en": "Deny Request",
+    "de": "Anfrage ablehnen"
+  },
+  "settings.gpu.loading": {
+    "en": "Loading GPU info…",
+    "de": "GPU-Informationen werden geladen…"
+  },
+  "settings.gpu.fetch_failed": {
+    "en": "Failed to fetch GPU stats",
+    "de": "GPU-Statistiken konnten nicht abgerufen werden"
+  },
+  "settings.gpu.none": {
+    "en": "No GPUs detected",
+    "de": "Keine GPUs erkannt"
+  },
+  "settings.gpu.utilization": {
+    "en": "Utilization",
+    "de": "Auslastung"
+  },
+  "settings.gpu.temp": {
+    "en": "Temp",
+    "de": "Temp."
+  },
+  "settings.gpu.power": {
+    "en": "Power",
+    "de": "Leistung"
+  },
+  "settings.gpu.no_worker": {
+    "en": "No worker",
+    "de": "Kein Worker"
+  },
+  "settings.gpu.status_running": {
+    "en": "Running",
+    "de": "Läuft"
+  },
+  "settings.gpu.status_idle": {
+    "en": "Idle",
+    "de": "Leerlauf"
+  },
+  "settings.gpu.status_starting": {
+    "en": "Starting",
+    "de": "Startet"
+  },
+  "settings.gpu.status_error": {
+    "en": "Error",
+    "de": "Fehler"
+  },
+  "settings.gpu.busy": {
+    "en": "(busy)",
+    "de": "(beschäftigt)"
+  },
+  "settings.gpu.auto_refresh": {
+    "en": "Auto-refreshes every 5 seconds",
+    "de": "Aktualisiert sich alle 5 Sekunden automatisch"
+  },
+  "schedule.title": {
+    "en": "Prompt Scheduling",
+    "de": "Prompt-Zeitplanung"
+  },
+  "schedule.intro": {
+    "en": "Build a timestep-scheduled tag without remembering the syntax. Pivot values are fractions of total steps (0 = start, 1 = end).",
+    "de": "Zeitplan-Tag erstellen, ohne die Syntax auswendig zu lernen. Pivot-Werte sind Anteile der Gesamtschritte (0 = Start, 1 = Ende)."
+  },
+  "schedule.mode_swap": {
+    "en": "Swap (fromto)",
+    "de": "Wechsel (fromto)"
+  },
+  "schedule.mode_from": {
+    "en": "From",
+    "de": "Ab"
+  },
+  "schedule.mode_from_hint": {
+    "en": "late-stage",
+    "de": "späte Phase"
+  },
+  "schedule.mode_to": {
+    "en": "To",
+    "de": "Bis"
+  },
+  "schedule.mode_to_hint": {
+    "en": "early-stage",
+    "de": "frühe Phase"
+  },
+  "schedule.mode_range": {
+    "en": "Range",
+    "de": "Bereich"
+  },
+  "schedule.mode_range_hint": {
+    "en": "window",
+    "de": "Fenster"
+  },
+  "schedule.swap_desc": {
+    "en": "Render \"before\" for the first portion of the schedule, then swap to \"after\".",
+    "de": "„Vorher“ für den ersten Teil des Zeitplans rendern, dann zu „Nachher“ wechseln."
+  },
+  "schedule.before": {
+    "en": "Before",
+    "de": "Vorher"
+  },
+  "schedule.after": {
+    "en": "After",
+    "de": "Nachher"
+  },
+  "schedule.before_placeholder": {
+    "en": "e.g. a photo of a cat",
+    "de": "z. B. ein Foto einer Katze"
+  },
+  "schedule.after_placeholder": {
+    "en": "e.g. a photo of a dog",
+    "de": "z. B. ein Foto eines Hundes"
+  },
+  "schedule.sep": {
+    "en": "Sep",
+    "de": "Trenner"
+  },
+  "schedule.text_placeholder": {
+    "en": "the tags to schedule",
+    "de": "die zu planenden Tags"
+  },
+  "schedule.end": {
+    "en": "End",
+    "de": "Ende"
+  },
+  "schedule.preview": {
+    "en": "Preview",
+    "de": "Vorschau"
+  },
+  "schedule.preview_empty": {
+    "en": "Fill in the fields above to see the generated tag.",
+    "de": "Felder oben ausfüllen, um das generierte Tag zu sehen."
+  },
+  "schedule.append_positive": {
+    "en": "+ Append to positive",
+    "de": "+ An Positiv anhängen"
+  },
+  "schedule.append_negative": {
+    "en": "+ Append to negative",
+    "de": "+ An Negativ anhängen"
+  },
+  "schedule.copied": {
+    "en": "✓ Copied",
+    "de": "✓ Kopiert"
+  },
+  "schedule.syntax_reference": {
+    "en": "Syntax reference",
+    "de": "Syntax-Referenz"
+  },
+  "schedule.desc_fromto": {
+    "en": "\"before\" is applied 0%→{pivot}%, then \"after\" {pivot}%→100%.",
+    "de": "„Vorher“ gilt 0 %→{pivot} %, dann „Nachher“ {pivot} %→100 %."
+  },
+  "schedule.desc_from": {
+    "en": "Text is applied from {start}% of steps onward.",
+    "de": "Text gilt ab {start} % der Schritte."
+  },
+  "schedule.desc_to": {
+    "en": "Text is applied from 0% up to {end}% of steps.",
+    "de": "Text gilt von 0 % bis {end} % der Schritte."
+  },
+  "schedule.desc_range": {
+    "en": "Text is applied from {start}% to {end}% of steps.",
+    "de": "Text gilt von {start} % bis {end} % der Schritte."
+  },
+  "schedule.syntax_fromto": {
+    "en": "SwarmUI — render A for 0→N, swap to B for N→1.",
+    "de": "SwarmUI — A für 0→N rendern, dann zu B für N→1 wechseln."
+  },
+  "schedule.syntax_from": {
+    "en": "MooshieUI — apply text from step N to end.",
+    "de": "MooshieUI — Text ab Schritt N bis Ende anwenden."
+  },
+  "schedule.syntax_to": {
+    "en": "MooshieUI — apply text from start to step N.",
+    "de": "MooshieUI — Text von Start bis Schritt N anwenden."
+  },
+  "schedule.syntax_range": {
+    "en": "MooshieUI — apply text only between A and B.",
+    "de": "MooshieUI — Text nur zwischen A und B anwenden."
+  },
+  "styles.manager.title_styles": {
+    "en": "Artist Styles",
+    "de": "Künstlerstile"
+  },
+  "styles.manager.title_presets": {
+    "en": "Prompt Presets",
+    "de": "Prompt-Vorlagen"
+  },
+  "styles.manager.desc_styles": {
+    "en": "Bundle artists with per-tag and overall weights. Active styles inject their tags into generations without touching your prompt textbox.",
+    "de": "Künstler mit Tag- und Gesamtgewichten bündeln. Aktive Stile fügen ihre Tags in Generierungen ein, ohne den Prompt-Text zu ändern."
+  },
+  "styles.manager.desc_presets": {
+    "en": "Store reusable prompt fragments. On activation, choose whether to prepend, append, or use as a random or ordered wildcard.",
+    "de": "Wiederverwendbare Prompt-Fragmente speichern. Bei Aktivierung: voranstellen, anhängen oder als Zufalls-/Reihenfolge-Wildcard."
+  },
+  "styles.manager.tab_styles": {
+    "en": "✦ Styles",
+    "de": "✦ Stile"
+  },
+  "styles.manager.tab_presets": {
+    "en": "⚡ Presets",
+    "de": "⚡ Vorlagen"
+  },
+  "styles.manager.new_style": {
+    "en": "New style",
+    "de": "Neuer Stil"
+  },
+  "styles.manager.new_preset": {
+    "en": "New preset",
+    "de": "Neue Vorlage"
+  },
+  "styles.manager.create_btn": {
+    "en": "+ Create",
+    "de": "+ Erstellen"
+  },
+  "styles.manager.empty_styles": {
+    "en": "You haven't created any styles yet.",
+    "de": "Noch keine Stile erstellt."
+  },
+  "styles.manager.empty_presets": {
+    "en": "No presets yet. Create one to store a reusable prompt fragment or a wildcard list.",
+    "de": "Noch keine Vorlagen. Erstellen Sie eine für ein wiederverwendbares Prompt-Fragment oder eine Wildcard-Liste."
+  },
+  "styles.manager.no_thumb": {
+    "en": "no thumb",
+    "de": "kein Vorschaubild"
+  },
+  "styles.manager.active": {
+    "en": "active",
+    "de": "aktiv"
+  },
+  "styles.manager.artists_count": {
+    "en": "{count} artist",
+    "de": "{count} Künstler"
+  },
+  "styles.manager.artists_count_plural": {
+    "en": "{count} artists",
+    "de": "{count} Künstler"
+  },
+  "styles.manager.overall_weight": {
+    "en": "overall ×{weight}",
+    "de": "gesamt ×{weight}"
+  },
+  "styles.manager.activate": {
+    "en": "Activate",
+    "de": "Aktivieren"
+  },
+  "styles.manager.deactivate": {
+    "en": "Deactivate",
+    "de": "Deaktivieren"
+  },
+  "styles.manager.export_txt": {
+    "en": "Export as .txt",
+    "de": "Als .txt exportieren"
+  },
+  "styles.manager.export_aria": {
+    "en": "Export {name} as .txt",
+    "de": "{name} als .txt exportieren"
+  },
+  "styles.manager.delete_aria": {
+    "en": "Delete {name}",
+    "de": "{name} löschen"
+  },
+  "styles.manager.wildcard_options": {
+    "en": "{count} wildcard option",
+    "de": "{count} Wildcard-Option"
+  },
+  "styles.manager.wildcard_options_plural": {
+    "en": "{count} wildcard options",
+    "de": "{count} Wildcard-Optionen"
+  },
+  "styles.manager.inline_token_title": {
+    "en": "Inline token — click to copy",
+    "de": "Inline-Token — zum Kopieren klicken"
+  },
+  "styles.manager.change_mode": {
+    "en": "Change mode",
+    "de": "Modus ändern"
+  },
+  "styles.manager.activate_ellipsis": {
+    "en": "Activate…",
+    "de": "Aktivieren…"
+  },
+  "styles.manager.mode_btn": {
+    "en": "↻ mode",
+    "de": "↻ Modus"
+  },
+  "styles.manager.import_export": {
+    "en": "Import / export ({kind})",
+    "de": "Import / Export ({kind})"
+  },
+  "styles.manager.import_txt": {
+    "en": "Import .txt…",
+    "de": ".txt importieren…"
+  },
+  "styles.manager.help_styles": {
+    "en": "Plain text: one artist per line as tag or tag:weight. Lines starting with # are ignored. Filename becomes the style name.",
+    "de": "Klartext: ein Künstler pro Zeile als Tag oder Tag:Gewicht. Zeilen mit # werden ignoriert. Dateiname wird zum Stilnamen."
+  },
+  "styles.manager.help_presets": {
+    "en": "Plain text: filename becomes the preset name; file contents are used verbatim. For wildcard modes, one line per choice (commas within a line stay grouped).",
+    "de": "Klartext: Dateiname wird zum Vorlagennamen; Inhalt wird unverändert übernommen. Bei Wildcard-Modi eine Zeile pro Auswahl (Kommas in einer Zeile bleiben gruppiert)."
+  },
+  "styles.manager.help_export": {
+    "en": "Use the Export button on each {kind} to download it.",
+    "de": "Export-Schaltfläche bei jedem {kind} zum Herunterladen."
+  },
+  "styles.manager.delete_confirm": {
+    "en": "Delete \"{name}\"? This cannot be undone.",
+    "de": "„{name}“ löschen? Dies kann nicht rückgängig gemacht werden."
+  },
+  "styles.manager.default_style_name": {
+    "en": "Style {n}",
+    "de": "Stil {n}"
+  },
+  "styles.manager.default_preset_name": {
+    "en": "Preset {n}",
+    "de": "Vorlage {n}"
+  },
+  "settings.app_mode.browser_title": {
+    "en": "Web Browser Mode",
+    "de": "Webbrowser-Modus"
+  },
+  "settings.app_mode.browser_desc": {
+    "en": "UI runs in your web browser. Switch to use the native app window.",
+    "de": "Die Oberfläche läuft im Webbrowser. Wechseln Sie zum nativen App-Fenster."
+  },
+  "settings.app_mode.app_title": {
+    "en": "App Mode",
+    "de": "App-Modus"
+  },
+  "settings.app_mode.app_desc": {
+    "en": "UI runs in the native app window. Switch to use your web browser.",
+    "de": "Die Oberfläche läuft im nativen App-Fenster. Wechseln Sie zum Webbrowser."
+  },
+  "settings.app_mode.switch_to_app": {
+    "en": "Switch to App Mode",
+    "de": "Zum App-Modus wechseln"
+  },
+  "settings.app_mode.switch_to_browser": {
+    "en": "Switch to Web Browser Mode",
+    "de": "Zum Webbrowser-Modus wechseln"
+  },
+  "settings.app_mode.switched_to_app": {
+    "en": "Switched to app mode. The app window should now be visible — you can close this browser tab.",
+    "de": "Zum App-Modus gewechselt. Das App-Fenster sollte sichtbar sein — Sie können diesen Browser-Tab schließen."
+  },
+  "settings.app_mode.switching_to_browser": {
+    "en": "Switching to browser mode...",
+    "de": "Wechsel zum Browser-Modus…"
+  },
+  "settings.sections.connection": {
+    "en": "Connection",
+    "de": "Verbindung"
+  },
+  "settings.sections.appearance": {
+    "en": "Appearance",
+    "de": "Darstellung"
+  },
+  "settings.sections.performance": {
+    "en": "Performance",
+    "de": "Leistung"
+  },
+  "settings.sections.quality": {
+    "en": "Quality Tags",
+    "de": "Qualitäts-Tags"
+  },
+  "settings.sections.gpu": {
+    "en": "GPU Workers",
+    "de": "GPU-Worker"
+  },
+  "settings.sections.models": {
+    "en": "Models",
+    "de": "Modelle"
+  },
+  "settings.sections.model_requests": {
+    "en": "Model Requests",
+    "de": "Modellanfragen"
+  },
+  "settings.sections.paths": {
+    "en": "Paths",
+    "de": "Pfade"
+  },
+  "settings.sections.gallery": {
+    "en": "Gallery",
+    "de": "Galerie"
+  },
+  "settings.sections.autocomplete": {
+    "en": "Autocomplete",
+    "de": "Autovervollständigung"
+  },
+  "settings.sections.queue": {
+    "en": "Queue",
+    "de": "Warteschlange"
+  },
+  "settings.sections.about": {
+    "en": "Help & Updates",
+    "de": "Hilfe & Updates"
+  },
+  "settings.sections.app_mode": {
+    "en": "App Mode",
+    "de": "App-Modus"
+  }
+}

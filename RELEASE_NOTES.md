@@ -1,3 +1,21 @@
+## What's New in v1.3.3
+
+### External ComfyUI & Startup
+- **Detect external ComfyUI on your port**: when another ComfyUI is already listening (or is missing MooshieUI custom nodes), MooshieUI shows a guided modal with kill-and-restart instead of failing silently.
+- **Clearer missing-node errors**: startup failures now include a ComfyUI log excerpt and structured payloads for the UI.
+
+### Internationalization
+- **Major UI string sweep**: generation, settings, gallery, mobile, model hub, canvas, and auth strings are localized across all 11 languages.
+- **Localized notifications**: model-request and generation-failure toasts use translated titles and bodies with locale-aware relative timestamps.
+
+### Settings & Network
+- **Network proxy for custom-node installs**: optional proxy setting is used when cloning ControlNet nodes or installing their Python requirements via pip/git.
+
+### Dependencies
+- Bumped rusqlite, zip (Windows), svelte, marked, konva, axum, rand, and open; updated Docker workflow actions.
+
+---
+
 ## What's New in v1.3.2
 
 ### Documentation

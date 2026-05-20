@@ -47,7 +47,7 @@
   let historySectionOpen = $state(true);
 
   function historyLabel(ts: number): string {
-    return new Date(ts).toLocaleString(undefined, {
+    return new Date(ts).toLocaleString(locale.intlTag, {
       month: "short",
       day: "numeric",
       hour: "2-digit",
@@ -85,7 +85,7 @@
           type="button"
           onclick={() => styles.deactivate(activeStyle.id)}
           class="shrink-0 inline-flex items-center gap-1 rounded-full border border-indigo-500/50 bg-indigo-500/10 text-indigo-200 hover:bg-red-500/15 hover:border-red-500/50 hover:text-red-200 px-2 py-0.5 text-[10px] transition-colors"
-          title={`Click to deactivate — ${activeStyle.artists.length} artists × ${activeStyle.overallWeight.toFixed(2)}`}
+          title={`Click to deactivate — ${activeStyle.artists.length} artists × ${locale.formatDecimal(activeStyle.overallWeight, 2)}`}
           aria-label={`Deactivate style ${activeStyle.name}`}
         >
           {#if activeStyle.thumbnail}
@@ -95,7 +95,7 @@
           {/if}
           <span class="leading-none">✦</span>
           <span class="max-w-28 truncate">{activeStyle.name}</span>
-          <span class="font-mono text-[9px] text-indigo-300/80">×{activeStyle.overallWeight.toFixed(2)}</span>
+          <span class="font-mono text-[9px] text-indigo-300/80">×{locale.formatDecimal(activeStyle.overallWeight, 2)}</span>
         </button>
       {/each}
       {#each promptPresets.activeEntries as entry (entry.preset.id)}
@@ -138,7 +138,7 @@
     {/if}
     <PromptTextarea
       bind:value={generation.positivePrompt}
-      placeholder={generation.isAnima ? "1girl, long hair, @artist_name, ..." : "A beautiful landscape, golden hour lighting, ..."}
+      placeholder={generation.isAnima ? locale.t("generation.prompts.positive_placeholder_anima") : locale.t("generation.prompts.positive_placeholder")}
       rows={4}
       minHeight="min-h-25"
       storageKey="mooshieui.promptHeight.positive"

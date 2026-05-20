@@ -15,7 +15,7 @@
   }
 
   function historyLabel(ts: number): string {
-    return new Date(ts).toLocaleString(undefined, {
+    return new Date(ts).toLocaleString(locale.intlTag, {
       month: "short",
       day: "numeric",
       hour: "2-digit",
@@ -76,7 +76,7 @@
               >★</button>
               <button
                 type="button"
-                aria-label="Remove"
+                aria-label={tt("common.aria_remove", "Remove")}
                 class="px-2 py-1 text-[11px] rounded border border-neutral-700 text-neutral-400"
                 onclick={(e) => {
                   e.stopPropagation();

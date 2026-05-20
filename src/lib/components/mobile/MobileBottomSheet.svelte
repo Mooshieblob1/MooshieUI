@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { locale } from "../../stores/locale.svelte.js";
 
   type Snap = "peek" | "half" | "full" | "closed";
 
@@ -123,7 +124,7 @@
       onpointermove={onHandlePointerMove}
       onpointerup={onHandlePointerUp}
       onpointercancel={onHandlePointerUp}
-      aria-label="Drag to resize"
+      aria-label={locale.t("common.aria_drag_resize")}
     >
       <div class="bottom-sheet-handle"></div>
     </button>
@@ -134,7 +135,7 @@
           type="button"
           class="touch-target text-neutral-400 hover:text-neutral-200 -mr-2 px-2"
           onclick={onClose}
-          aria-label="Close"
+          aria-label={locale.t("common.aria_close")}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

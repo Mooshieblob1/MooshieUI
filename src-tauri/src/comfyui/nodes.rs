@@ -33,6 +33,9 @@ const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[
     },
 ];
 
+/// Substring present in [`format_missing_mooshie_nodes_error`] output.
+pub const MISSING_MOOSHIE_NODES_MARKER: &str = "has not loaded required MooshieUI custom nodes";
+
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveImage",
     "MooshieFaceDetailer",
@@ -170,6 +173,7 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
 pub async fn ensure_required_controlnet_nodes(
     comfyui_path: &str,
     venv_path: &str,
+    network_proxy: Option<&str>,
 ) -> Result<(), String> {
     let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
     std::fs::create_dir_all(&custom_nodes).map_err(|e| {
@@ -181,7 +185,7 @@ pub async fn ensure_required_controlnet_nodes(
     })?;
 
     for package in REQUIRED_CONTROLNET_PACKAGES {
-        ensure_custom_node_package(&custom_nodes, venv_path, *package).await?;
+        ensure_custom_node_package(&custom_nodes, venv_path, network_proxy, *package).await?;
     }
 
     log::info!("Ensured required ControlNet custom node packages");
@@ -237,15 +241,69 @@ pub async fn verify_required_mooshie_nodes(
         }
     }
 
-    Err(format!(
-        "This ComfyUI server has not loaded required MooshieUI custom nodes: {}. If MooshieUI just installed or updated the nodes, fully stop ComfyUI/python.exe, then start MooshieUI again so the custom nodes load. If this is a remote or external ComfyUI server, install the MooshieUI custom nodes there and restart that server.",
+    Err(format_missing_mooshie_nodes_error(&missing))
+}
+
+/// Build the user-facing missing-nodes error, including a ComfyUI log excerpt when available.
+pub fn format_missing_mooshie_nodes_error(missing: &[String]) -> String {
+    let mut msg = format!(
+        "This ComfyUI server {}: {}. If MooshieUI just installed or updated the nodes, fully stop ComfyUI/python.exe, then start MooshieUI again so the custom nodes load. If this is a remote or external ComfyUI server, install the MooshieUI custom nodes there and restart that server.",
+        MISSING_MOOSHIE_NODES_MARKER,
         missing.join(", ")
-    ))
+    );
+    if let Some(log) = super::process::read_comfyui_log_tail(25) {
+        msg.push_str("\n\nComfyUI log (last lines):\n");
+        msg.push_str(&log);
+    }
+    msg
+}
+
+pub fn is_missing_mooshie_nodes_error(message: &str) -> bool {
+    message.contains(MISSING_MOOSHIE_NODES_MARKER)
+}
+
+/// Parse missing node class names from a formatted missing-nodes error.
+pub fn parse_missing_nodes_from_error(message: &str) -> Vec<String> {
+    let Some(start) = message.find(MISSING_MOOSHIE_NODES_MARKER) else {
+        return Vec::new();
+    };
+    let rest = &message[start + MISSING_MOOSHIE_NODES_MARKER.len()..];
+    let Some(colon) = rest.find(':') else {
+        return Vec::new();
+    };
+    let after = rest[colon + 1..].trim_start();
+    let end = after.find('.').unwrap_or(after.len());
+    after[..end]
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// JSON payload for `comfyui:server_error` / startup failures.
+pub fn server_error_payload(error: &str, port: u16) -> serde_json::Value {
+    let missing_nodes = parse_missing_nodes_from_error(error);
+    let kind = if !missing_nodes.is_empty() {
+        "missing_mooshie_nodes"
+    } else if error.contains("exited with") || error.contains("process exited") {
+        "crashed"
+    } else {
+        "generic"
+    };
+    let log_excerpt = super::process::read_comfyui_log_tail(25);
+    serde_json::json!({
+        "error": error,
+        "kind": kind,
+        "missing_nodes": missing_nodes,
+        "log_excerpt": log_excerpt,
+        "port": port,
+    })
 }
 
 async fn ensure_custom_node_package(
     custom_nodes: &Path,
     venv_path: &str,
+    network_proxy: Option<&str>,
     package: RequiredCustomNodePackage,
 ) -> Result<(), String> {
     let target_dir = custom_nodes.join(package.name);
@@ -264,21 +322,41 @@ async fn ensure_custom_node_package(
             package.name,
             package.git_url
         );
-        clone_custom_node(package.git_url, &target_dir).await?;
+        clone_custom_node(package.git_url, &target_dir, network_proxy).await?;
     }
 
     let requirements = target_dir.join("requirements.txt");
     if requirements.exists() {
-        install_requirements_if_needed(&requirements, &target_dir, venv_path, package.name).await?;
+        install_requirements_if_needed(
+            &requirements,
+            &target_dir,
+            venv_path,
+            network_proxy,
+            package.name,
+        )
+        .await?;
     }
 
     Ok(())
 }
 
-async fn clone_custom_node(git_url: &str, target_dir: &Path) -> Result<(), String> {
-    let output = tokio::process::Command::new("git")
-        .args(["clone", "--depth=1", git_url])
-        .arg(target_dir)
+pub(crate) fn apply_network_proxy(cmd: &mut tokio::process::Command, network_proxy: Option<&str>) {
+    if let Some(proxy) = network_proxy.map(str::trim).filter(|s| !s.is_empty()) {
+        cmd.env("HTTP_PROXY", proxy)
+            .env("HTTPS_PROXY", proxy)
+            .env("ALL_PROXY", proxy);
+    }
+}
+
+async fn clone_custom_node(
+    git_url: &str,
+    target_dir: &Path,
+    network_proxy: Option<&str>,
+) -> Result<(), String> {
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.args(["clone", "--depth=1", git_url]).arg(target_dir);
+    apply_network_proxy(&mut cmd, network_proxy);
+    let output = cmd
         .output()
         .await
         .map_err(|e| format!("git clone failed to start for {}: {}", git_url, e))?;
@@ -298,6 +376,7 @@ async fn install_requirements_if_needed(
     requirements: &Path,
     target_dir: &Path,
     venv_path: &str,
+    network_proxy: Option<&str>,
     package_name: &str,
 ) -> Result<(), String> {
     let req_hash = file_sha256(requirements)?;
@@ -334,6 +413,7 @@ async fn install_requirements_if_needed(
         command
     };
 
+    apply_network_proxy(&mut command, network_proxy);
     let output = command
         .output()
         .await

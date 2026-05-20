@@ -1,0 +1,32 @@
+{
+  "de": {
+    "settings.restart_required": "Erfordert einen Neustart von ComfyUI, damit die Änderung wirksam wird."
+  },
+  "ja": {
+    "settings.restart_required": "反映するには ComfyUI の再起動が必要です。"
+  },
+  "fr": {
+    "settings.restart_required": "Nécessite un redémarrage de ComfyUI pour prendre effet."
+  },
+  "es": {
+    "settings.restart_required": "Requiere reiniciar ComfyUI para que surta efecto."
+  },
+  "it": {
+    "settings.restart_required": "Richiede il riavvio di ComfyUI per avere effetto."
+  },
+  "ko": {
+    "settings.restart_required": "적용하려면 ComfyUI를 다시 시작해야 합니다."
+  },
+  "zh": {
+    "settings.restart_required": "需要重启 ComfyUI 后才会生效。"
+  },
+  "zh-tw": {
+    "settings.restart_required": "需要重新啟動 ComfyUI 後才會生效。"
+  },
+  "pt": {
+    "settings.restart_required": "É necessário reiniciar o ComfyUI para que tenha efeito."
+  },
+  "ru": {
+    "settings.restart_required": "Требуется перезапуск ComfyUI, чтобы изменения вступили в силу."
+  }
+}

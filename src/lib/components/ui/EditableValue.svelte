@@ -19,7 +19,7 @@
   let editValue = $state("");
 
   async function startEdit() {
-    editValue = decimals > 0 ? value.toFixed(decimals) : String(value);
+    editValue = decimals > 0 ? locale.formatDecimalForInput(value, decimals) : locale.formatInteger(value);
     editing = true;
     await tick();
     inputEl?.focus();
@@ -28,7 +28,7 @@
 
   function commit() {
     editing = false;
-    const parsed = parseFloat(editValue);
+    const parsed = locale.parseDecimal(editValue);
     if (isNaN(parsed)) return;
     const clamped = Math.min(max, Math.max(min, parsed));
     const snapped = Math.round(clamped / step) * step;
@@ -64,7 +64,7 @@
     onclick={startEdit}
     title={locale.t('common.click_to_type')}
   >
-    {decimals > 0 ? value.toFixed(decimals) : value}{suffix}
+    {decimals > 0 ? locale.formatDecimal(value, decimals) : locale.formatInteger(value)}{suffix}
   </button>
 {/if}
 </span>

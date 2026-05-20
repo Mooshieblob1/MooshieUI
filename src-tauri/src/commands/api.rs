@@ -1609,10 +1609,15 @@ pub async fn install_custom_node(
     git_url: String,
     node_name: String,
 ) -> Result<(), AppError> {
-    let (comfyui_path, venv_path) = {
+    let (comfyui_path, venv_path, network_proxy) = {
         let config = state.config.read().await;
-        (config.comfyui_path.clone(), config.venv_path.clone())
+        (
+            config.comfyui_path.clone(),
+            config.venv_path.clone(),
+            config.network_proxy.clone(),
+        )
     };
+    let network_proxy = network_proxy.as_deref();
     let custom_nodes_dir = std::path::Path::new(&comfyui_path).join("custom_nodes");
     let target_dir = custom_nodes_dir.join(&node_name);
 
@@ -1636,7 +1641,8 @@ pub async fn install_custom_node(
     // git clone — stream stderr for progress (git writes progress to stderr)
     emit_progress("clone", &format!("Cloning {}...", node_name), false);
 
-    let mut child = tokio::process::Command::new("git")
+    let mut git_cmd = tokio::process::Command::new("git");
+    git_cmd
         .args([
             "clone",
             "--progress",
@@ -1644,7 +1650,9 @@ pub async fn install_custom_node(
             target_dir.to_string_lossy().as_ref(),
         ])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    crate::comfyui::nodes::apply_network_proxy(&mut git_cmd, network_proxy);
+    let mut child = git_cmd
         .spawn()
         .map_err(|e| AppError::Other(format!("git clone failed to start: {}", e)))?;
 
@@ -1691,12 +1699,13 @@ pub async fn install_custom_node(
         let uv_path = resolve_uv_bin(&venv_path);
 
         let mut pip_child = if uv_path.exists() {
-            tokio::process::Command::new(&uv_path)
-                .args(["pip", "install", "-r", &req_file.to_string_lossy()])
+            let mut cmd = tokio::process::Command::new(&uv_path);
+            cmd.args(["pip", "install", "-r", &req_file.to_string_lossy()])
                 .env("VIRTUAL_ENV", &venv_path)
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
+                .stderr(std::process::Stdio::piped());
+            crate::comfyui::nodes::apply_network_proxy(&mut cmd, network_proxy);
+            cmd.spawn()
                 .map_err(|e| AppError::Other(format!("uv pip install failed to start: {}", e)))?
         } else {
             let venv_base = std::path::Path::new(&venv_path);
@@ -1705,11 +1714,12 @@ pub async fn install_custom_node(
             #[cfg(not(target_os = "windows"))]
             let pip_path = venv_base.join("bin").join("pip");
 
-            tokio::process::Command::new(&pip_path)
-                .args(["install", "-r", &req_file.to_string_lossy()])
+            let mut cmd = tokio::process::Command::new(&pip_path);
+            cmd.args(["install", "-r", &req_file.to_string_lossy()])
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
+                .stderr(std::process::Stdio::piped());
+            crate::comfyui::nodes::apply_network_proxy(&mut cmd, network_proxy);
+            cmd.spawn()
                 .map_err(|e| AppError::Other(format!("pip install failed to start: {}", e)))?
         };
 

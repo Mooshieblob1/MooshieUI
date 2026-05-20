@@ -391,7 +391,7 @@
         <h1 class="text-lg font-semibold">{locale.t('artist_gallery.title')}</h1>
         <p class="text-xs text-neutral-500">
           {#if store.manifest}
-            {locale.t('artist_gallery.subtitle', { count: store.manifest.artistsWithImage.toLocaleString(), release: store.manifest.releasePrefix })}
+            {locale.t('artist_gallery.subtitle', { count: locale.formatInteger(store.manifest.artistsWithImage), release: store.manifest.releasePrefix })}
             <button type="button" class="underline hover:text-neutral-300" onclick={() => showGenParams = true}>{locale.t('artist_gallery.gen_params_btn')}</button>
           {:else if store.manifestError}
             <span class="text-red-400">{locale.t('artist_gallery.manifest_error', { error: store.manifestError })}</span>
@@ -562,7 +562,7 @@
     {:else}
       <p class="px-4 pt-2 text-xs text-neutral-500">
         {#if isSearching}
-          {store.searchLoading ? locale.t('artist_gallery.searching') : (store.results.length === 1 ? locale.t('artist_gallery.search_result_one', { query: queryInput }) : locale.t('artist_gallery.search_results', { count: store.results.length.toLocaleString(), query: queryInput }))}
+          {store.searchLoading ? locale.t('artist_gallery.searching') : (store.results.length === 1 ? locale.t('artist_gallery.search_result_one', { query: queryInput }) : locale.t('artist_gallery.search_results', { count: locale.formatInteger(store.results.length), query: queryInput }))}
         {:else}
           {locale.t('artist_gallery.hint_copy')}
         {/if}
@@ -588,7 +588,7 @@
           <span class="text-sm text-neutral-400">
             {locale.t('artist_gallery.page_of', { page: safePage, total: totalPages })}
             <span class="text-neutral-600">·</span>
-            {locale.t('artist_gallery.artist_count', { count: filteredEntries.length.toLocaleString() })}
+            {locale.t('artist_gallery.artist_count', { count: locale.formatInteger(filteredEntries.length) })}
           </span>
           <div class="flex items-center gap-1">
             <input
@@ -764,7 +764,7 @@
           <span class="text-sm text-neutral-400">
             {locale.t('artist_gallery.page_of', { page: safePage, total: totalPages })}
             <span class="text-neutral-600">·</span>
-            {locale.t('artist_gallery.artist_count', { count: filteredEntries.length.toLocaleString() })}
+            {locale.t('artist_gallery.artist_count', { count: locale.formatInteger(filteredEntries.length) })}
           </span>
           <div class="flex items-center gap-1">
             <input

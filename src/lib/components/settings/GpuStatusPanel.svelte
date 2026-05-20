@@ -13,7 +13,7 @@
       gpus = await getGpuStats();
       error = null;
     } catch (e: any) {
-      error = e?.message ?? "Failed to fetch GPU stats";
+      error = e?.message ?? locale.t("settings.gpu.fetch_failed");
     } finally {
       loading = false;
     }
@@ -42,11 +42,11 @@
   }
 
   function statusLabel(status: string | undefined): string {
-    if (!status) return "No worker";
-    if (status === "running") return "Running";
-    if (status === "idle") return "Idle";
-    if (status === "starting") return "Starting";
-    if (status === "error") return "Error";
+    if (!status) return locale.t("settings.gpu.no_worker");
+    if (status === "running") return locale.t("settings.gpu.status_running");
+    if (status === "idle") return locale.t("settings.gpu.status_idle");
+    if (status === "starting") return locale.t("settings.gpu.status_starting");
+    if (status === "error") return locale.t("settings.gpu.status_error");
     return status;
   }
 
@@ -69,20 +69,19 @@
       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
       <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
     </svg>
-    Loading GPU info…
+    {locale.t("settings.gpu.loading")}
   </div>
 {:else if error}
   <div class="text-sm text-red-400 py-2">{error}</div>
 {:else if gpus.length === 0}
-  <div class="text-sm text-neutral-500 py-2">No GPUs detected</div>
+  <div class="text-sm text-neutral-500 py-2">{locale.t("settings.gpu.none")}</div>
 {:else}
   <div class="space-y-3">
     {#each gpus as gpu (gpu.index)}
       <div class="bg-neutral-800/60 border border-neutral-700/50 rounded-lg p-4 space-y-3">
-        <!-- Header: GPU name + worker status badge -->
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <span class="text-sm font-medium text-neutral-100">GPU {gpu.index}</span>
+            <span class="text-sm font-medium text-neutral-100">{locale.t("settings.gpu.label", { index: String(gpu.index) })}</span>
             <span class="text-xs text-neutral-400 truncate max-w-[200px]">{gpu.name}</span>
           </div>
           <div class="flex items-center gap-2">
@@ -91,22 +90,21 @@
                 <span class="w-2 h-2 rounded-full {statusColor(gpu.worker.status)}"></span>
                 {statusLabel(gpu.worker.status)}
                 {#if gpu.worker.reserved}
-                  <span class="text-amber-400 text-[10px]">(busy)</span>
+                  <span class="text-amber-400 text-[10px]">{locale.t("settings.gpu.busy")}</span>
                 {/if}
               </span>
             {:else}
               <span class="inline-flex items-center gap-1.5 text-xs text-neutral-500">
                 <span class="w-2 h-2 rounded-full bg-neutral-600"></span>
-                No worker
+                {locale.t("settings.gpu.no_worker")}
               </span>
             {/if}
           </div>
         </div>
 
-        <!-- VRAM bar -->
         <div>
           <div class="flex items-center justify-between text-[11px] mb-1">
-            <span class="text-neutral-400">VRAM</span>
+            <span class="text-neutral-400">{locale.t("settings.gpu.vram")}</span>
             <span class="text-neutral-300">{gpu.vram_used_mb} / {gpu.vram_total_mb} MiB ({vramPercent(gpu)}%)</span>
           </div>
           <div class="w-full h-2 bg-neutral-700 rounded-full overflow-hidden">
@@ -117,29 +115,28 @@
           </div>
         </div>
 
-        <!-- Stats row -->
         <div class="flex items-center gap-4 text-[11px]">
           <div class="flex items-center gap-1.5">
-            <span class="text-neutral-500">Utilization</span>
+            <span class="text-neutral-500">{locale.t("settings.gpu.utilization")}</span>
             <span class="text-neutral-200 font-medium">{gpu.gpu_util}%</span>
           </div>
           <div class="flex items-center gap-1.5">
-            <span class="text-neutral-500">Temp</span>
+            <span class="text-neutral-500">{locale.t("settings.gpu.temp")}</span>
             <span class="font-medium {tempColor(gpu.temperature)}">{gpu.temperature}°C</span>
           </div>
           <div class="flex items-center gap-1.5">
-            <span class="text-neutral-500">Power</span>
+            <span class="text-neutral-500">{locale.t("settings.gpu.power")}</span>
             <span class="text-neutral-200 font-medium">{gpu.power_draw_w}W</span>
           </div>
           {#if gpu.worker?.label}
             <div class="flex items-center gap-1.5 ml-auto">
-              <span class="text-neutral-500">Worker</span>
-              <span class="text-neutral-300">{gpu.worker.label} (:{gpu.worker.port})</span>
+              <span class="text-neutral-500">{locale.t("settings.gpu.worker")}</span>
+              <span class="text-neutral-300">{locale.t("settings.gpu.worker_label", { label: gpu.worker.label, port: String(gpu.worker.port) })}</span>
             </div>
           {/if}
         </div>
       </div>
     {/each}
   </div>
-  <p class="text-[10px] text-neutral-600 mt-2">Auto-refreshes every 5 seconds</p>
+  <p class="text-[10px] text-neutral-600 mt-2">{locale.t("settings.gpu.auto_refresh")}</p>
 {/if}

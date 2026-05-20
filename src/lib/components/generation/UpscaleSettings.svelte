@@ -67,11 +67,6 @@
   let dlBytes = $state(0);
   let dlTotal = $state(0);
 
-  function formatBytes(bytes: number): string {
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  }
 
   /** Extract scale factor from upscaler model names (e.g., "OmniSR_X4_DIV2K" → 4, "2x_Modern..." → 2) */
   function extractScaleFromModel(filename: string): number | null {
@@ -231,7 +226,7 @@
             <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
               <span class="truncate mr-2">{locale.t('generation.upscale.downloading', { model: downloading || '' })}</span>
               {#if dlTotal > 0}
-                <span class="shrink-0 tabular-nums">{formatBytes(dlBytes)} / {formatBytes(dlTotal)} ({dlPercent}%)</span>
+                <span class="shrink-0 tabular-nums">{locale.formatBytes(dlBytes)} / {locale.formatBytes(dlTotal)} ({dlPercent}%)</span>
               {/if}
             </div>
             {#if dlTotal > 0}

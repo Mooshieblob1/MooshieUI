@@ -74,7 +74,7 @@
   );
 
   function historyLabel(ts: number): string {
-    return new Date(ts).toLocaleString(undefined, {
+    return new Date(ts).toLocaleString(locale.intlTag, {
       month: "short",
       day: "numeric",
       hour: "2-digit",
@@ -247,13 +247,13 @@
   }
 </script>
 
-<div class="flex flex-col h-full">
-  <!-- Tab bar -->
-  <div class="flex items-center gap-0.5 px-2 pt-1 pb-0.5 border-b border-neutral-800 shrink-0">
+<div class="flex flex-col h-full min-w-0">
+  <!-- Tab bar (scroll horizontally when many/long tabs) -->
+  <div class="flex items-center gap-0.5 px-2 pt-1 pb-0.5 border-b border-neutral-800 shrink-0 overflow-x-auto overflow-y-hidden">
     {#each visibleTabs as tab}
       <button
         onclick={() => { activeTab = tab; }}
-        class="px-3 py-1.5 text-[11px] font-medium rounded-t-md transition-colors flex items-center gap-1.5 {activeTab === tab
+        class="shrink-0 whitespace-nowrap px-3 py-1.5 text-[11px] font-medium rounded-t-md transition-colors flex items-center gap-1.5 {activeTab === tab
           ? 'bg-neutral-800/80 text-neutral-100 border-b-2 border-indigo-500'
           : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800/40'}"
       >
@@ -293,7 +293,7 @@
   </div>
 
   <!-- Tab content -->
-  <div class="flex-1 min-h-0 overflow-hidden">
+  <div class="flex-1 min-h-0 min-w-0 overflow-auto">
     {#if activeTab === "loras"}
       <LoraGallery cardSize={loraCardSize} onCardSizeChange={(s) => { loraCardSize = s; }} />    {:else if activeTab === "checkpoints"}
       <CheckpointGallery />    {:else if activeTab === "images"}
@@ -549,7 +549,7 @@
                     {#if thumb}
                       <img src={thumb} alt={hit.tag} loading="lazy" decoding="async" class="h-full w-full object-cover" />
                     {:else}
-                      <div class="flex h-full w-full items-center justify-center text-[10px] text-neutral-500">no preview</div>
+                      <div class="flex h-full w-full items-center justify-center text-[10px] text-neutral-500">{locale.t("gallery.no_preview")}</div>
                     {/if}
                     <button
                       type="button"
@@ -570,7 +570,7 @@
                   <div class="px-2 py-1.5">
                     <div class="truncate text-xs text-red-400">{displayArtistTag(hit.tag)}</div>
                     {#if hit.postCount > 0}
-                      <div class="text-[10px] text-neutral-500">{hit.postCount.toLocaleString()} posts</div>
+                      <div class="text-[10px] text-neutral-500">{locale.formatInteger(hit.postCount)} posts</div>
                     {/if}
                   </div>
                 </div>

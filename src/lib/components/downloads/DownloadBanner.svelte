@@ -2,17 +2,6 @@
   import { downloads } from "../../stores/downloads.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
 
-  function formatBytes(bytes: number): string {
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  }
-
-  function formatSpeed(bytesPerSec: number): string {
-    if (bytesPerSec <= 0) return "";
-    if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(0)} KB/s`;
-    return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
-  }
 
   function shortName(filename: string): string {
     // Trim long filenames for display
@@ -60,9 +49,9 @@
 
           <span class="text-[11px] text-neutral-500 tabular-nums shrink-0">
             {#if dl.total > 0}
-              {formatBytes(dl.downloaded)} / {formatBytes(dl.total)} ({percent}%){#if dl.speed > 0} · {formatSpeed(dl.speed)}{/if}
+              {locale.formatBytes(dl.downloaded)} / {locale.formatBytes(dl.total)} ({percent}%){#if dl.speed > 0} · {locale.formatBytesPerSecond(dl.speed)}{/if}
             {:else}
-              {formatBytes(dl.downloaded)}{#if dl.speed > 0} · {formatSpeed(dl.speed)}{/if}
+              {locale.formatBytes(dl.downloaded)}{#if dl.speed > 0} · {locale.formatBytesPerSecond(dl.speed)}{/if}
             {/if}
           </span>
         {/if}

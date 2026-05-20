@@ -348,7 +348,7 @@
             <span class="px-2 py-0.5 rounded-full text-xs font-medium text-white {ratingColor(ratingLabel.name)}">
               {ratingLabel.name.replace(/_/g, " ")}
             </span>
-            <span class="text-xs text-neutral-500">({(ratingLabel.confidence * 100).toFixed(1)}%)</span>
+            <span class="text-xs text-neutral-500">({locale.formatPercent(ratingLabel.confidence * 100, 1)})</span>
           </div>
         {/if}
 
@@ -367,7 +367,7 @@
                     class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-colors border {checkedCharacter[tag.name] ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-300' : 'bg-neutral-800 border-neutral-700 text-neutral-500'}"
                   >
                     {tag.name.replace(/_/g, " ")}
-                    <span class="text-[10px] opacity-60">{(tag.confidence * 100).toFixed(0)}%</span>
+                    <span class="text-[10px] opacity-60">{locale.formatPercent(tag.confidence * 100, 0)}</span>
                   </button>
                 {/each}
               </div>
@@ -390,7 +390,7 @@
                     class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-colors border {checkedArtist[tag.name] ? 'bg-purple-600/20 border-purple-500/50 text-purple-300' : 'bg-neutral-800 border-neutral-700 text-neutral-500'}"
                   >
                     {tag.name.replace(/_/g, " ")}
-                    <span class="text-[10px] opacity-60">{(tag.confidence * 100).toFixed(0)}%</span>
+                    <span class="text-[10px] opacity-60">{locale.formatPercent(tag.confidence * 100, 0)}</span>
                   </button>
                 {/each}
               </div>
@@ -413,7 +413,7 @@
                     class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-colors border {checkedGeneral[tag.name] ? 'bg-neutral-600/30 border-neutral-500/50 text-neutral-200' : 'bg-neutral-800 border-neutral-700 text-neutral-500'}"
                   >
                     {tag.name.replace(/_/g, " ")}
-                    <span class="text-[10px] opacity-60">{(tag.confidence * 100).toFixed(0)}%</span>
+                    <span class="text-[10px] opacity-60">{locale.formatPercent(tag.confidence * 100, 0)}</span>
                   </button>
                 {/each}
               </div>
@@ -436,7 +436,7 @@
                     class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-colors border {checkedCopyright[tag.name] ? 'bg-neutral-600/30 border-neutral-500/50 text-neutral-200' : 'bg-neutral-800 border-neutral-700 text-neutral-500'}"
                   >
                     {tag.name.replace(/_/g, " ")}
-                    <span class="text-[10px] opacity-60">{(tag.confidence * 100).toFixed(0)}%</span>
+                    <span class="text-[10px] opacity-60">{locale.formatPercent(tag.confidence * 100, 0)}</span>
                   </button>
                 {/each}
               </div>

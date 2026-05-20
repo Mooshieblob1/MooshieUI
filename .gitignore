@@ -25,6 +25,9 @@ venv/
 *.swo
 *~
 
+# Cursor IDE (local only)
+.cursor/
+
 # Claude Code local settings
 .claude/settings.local.json
 
@@ -60,3 +63,5 @@ src-tauri/test_out.txt
 src-tauri/test_output.txt
 add-locale-stubs.ps1
 new_keys.txt
+.github/check_env_token.ps1
+.github/poll_pr169.ps1

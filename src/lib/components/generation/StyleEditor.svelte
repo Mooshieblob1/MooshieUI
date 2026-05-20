@@ -4,6 +4,7 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
     styleId: string;
@@ -188,24 +189,24 @@
   class="fixed inset-0 z-200 flex items-center justify-center bg-black/80 backdrop-blur-sm"
   role="dialog"
   aria-modal="true"
-  aria-label="Edit Style"
+  aria-label={locale.t("styles.editor.aria")}
 >
   <button
     type="button"
     class="absolute inset-0 h-full w-full cursor-default"
-    aria-label="Close"
+    aria-label={locale.t("common.aria_close")}
     onclick={onclose}
   ></button>
 
   {#if style}
     <div class="relative z-10 w-full max-w-3xl max-h-[92vh] overflow-y-auto rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
       <div class="mb-4 flex items-center justify-between gap-3">
-        <h2 class="text-sm font-semibold text-neutral-100">Edit Style</h2>
+        <h2 class="text-sm font-semibold text-neutral-100">{locale.t("styles.editor.title")}</h2>
         <button
           type="button"
           class="text-neutral-500 hover:text-neutral-200 text-lg leading-none"
           onclick={onclose}
-          aria-label="Close"
+          aria-label={locale.t("common.aria_close")}
         >✕</button>
       </div>
 
@@ -215,12 +216,12 @@
         <div class="flex flex-col gap-2">
           <div class="relative h-32 w-32 overflow-hidden rounded-lg border border-neutral-700 bg-neutral-950 flex items-center justify-center">
             {#if style.thumbnail}
-              <img src={style.thumbnail} alt="Style thumbnail" class="h-full w-full object-cover" />
+              <img src={style.thumbnail} alt={locale.t("styles.editor.thumbnail_alt")} class="h-full w-full object-cover" />
             {:else}
-              <span class="text-[10px] text-neutral-500">No thumbnail</span>
+              <span class="text-[10px] text-neutral-500">{locale.t("styles.editor.no_thumbnail")}</span>
             {/if}
             {#if thumbnailBusy}
-              <div class="absolute inset-0 flex items-center justify-center bg-black/60 text-[10px] text-neutral-300">Loading…</div>
+              <div class="absolute inset-0 flex items-center justify-center bg-black/60 text-[10px] text-neutral-300">{locale.t("styles.editor.loading")}</div>
             {/if}
           </div>
           <div class="flex flex-col gap-1">
@@ -229,20 +230,20 @@
               class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:border-indigo-500 disabled:opacity-50"
               onclick={setThumbnailFromLastGen}
               disabled={thumbnailBusy}
-            >Use last gen</button>
+            >{locale.t("styles.editor.use_last_gen")}</button>
             <button
               type="button"
               class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:border-indigo-500 disabled:opacity-50"
               onclick={() => fileInput?.click()}
               disabled={thumbnailBusy}
-            >Upload…</button>
+            >{locale.t("styles.editor.upload")}</button>
             {#if style.thumbnail}
               <button
                 type="button"
                 class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:text-red-300"
                 onclick={clearThumbnail}
                 disabled={thumbnailBusy}
-              >Clear</button>
+              >{locale.t("styles.editor.clear")}</button>
             {/if}
             <input
               bind:this={fileInput}
@@ -259,21 +260,21 @@
 
         <div class="space-y-3">
           <div>
-            <label for="sty-name" class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">Name</label>
+            <label for="sty-name" class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("styles.editor.name")}</label>
             <input
               id="sty-name"
               type="text"
               value={style.name}
               oninput={(e) => setName((e.currentTarget as HTMLInputElement).value)}
-              placeholder="My signature style"
+              placeholder={locale.t("styles.editor.name_placeholder")}
               class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-sm text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
             />
           </div>
 
           <div>
             <div class="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wide text-neutral-500">
-              <label for="sty-overall">Overall weight</label>
-              <span class="font-mono text-neutral-300">{style.overallWeight.toFixed(2)}</span>
+              <label for="sty-overall">{locale.t("styles.editor.overall_weight")}</label>
+              <span class="font-mono text-neutral-300">{locale.formatDecimal(style.overallWeight, 2)}</span>
             </div>
             <input
               id="sty-overall"
@@ -285,7 +286,7 @@
               oninput={(e) => setOverallWeight(parseFloat((e.currentTarget as HTMLInputElement).value))}
               class="w-full"
             />
-            <p class="mt-0.5 text-[10px] text-neutral-500">Multiplies every artist's individual weight when the style is active.</p>
+            <p class="mt-0.5 text-[10px] text-neutral-500">{locale.t("styles.editor.overall_weight_desc")}</p>
           </div>
         </div>
       </section>
@@ -302,7 +303,7 @@
         {:else}
           <div class="space-y-1.5">
             {#each style.artists as artist, i (artist.tag + i)}
-              {@const effective = (artist.weight * style.overallWeight).toFixed(2)}
+              {@const effective = locale.formatDecimal(artist.weight * style.overallWeight, 2)}
               <div class="flex items-center gap-2 rounded border border-neutral-800 bg-neutral-950/60 px-2 py-1.5">
                 <span class="flex-1 truncate font-mono text-[11px] text-red-300">@{displayTag(artist.tag)}</span>
                 <input
@@ -315,14 +316,14 @@
                   class="w-28"
                   aria-label={`Weight for ${displayTag(artist.tag)}`}
                 />
-                <span class="w-10 shrink-0 text-right font-mono text-[10px] text-neutral-400">{artist.weight.toFixed(2)}</span>
-                <span class="w-14 shrink-0 text-right font-mono text-[10px] text-indigo-300" title="Effective weight (per-artist × overall)">= {effective}</span>
+                <span class="w-10 shrink-0 text-right font-mono text-[10px] text-neutral-400">{locale.formatDecimal(artist.weight, 2)}</span>
+                <span class="w-14 shrink-0 text-right font-mono text-[10px] text-indigo-300" title={locale.t("styles.editor.effective_weight")}>= {effective}</span>
                 <button
                   type="button"
                   class="rounded px-1.5 py-0.5 text-[11px] text-neutral-500 hover:bg-red-500/10 hover:text-red-300"
                   onclick={() => removeArtist(i)}
-                  title="Remove"
-                  aria-label={`Remove ${displayTag(artist.tag)}`}
+                  title={locale.t("common.remove")}
+                  aria-label={`${locale.t("common.aria_remove")} ${displayTag(artist.tag)}`}
                 >✕</button>
               </div>
             {/each}
@@ -332,20 +333,20 @@
 
       <!-- Add artists -->
       <section class="mb-3 space-y-3">
-        <h3 class="text-xs font-medium uppercase tracking-wide text-neutral-400">Add artists</h3>
+        <h3 class="text-xs font-medium uppercase tracking-wide text-neutral-400">{locale.t("styles.editor.add_artists")}</h3>
 
         <!-- Search favourites + gallery -->
         <div>
           <input
             type="text"
             bind:value={searchQuery}
-            placeholder="Search favourites or artist gallery…"
+            placeholder={locale.t("styles.editor.search_placeholder")}
             class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-sm text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
           />
 
           {#if favouriteCandidates.length > 0}
             <div class="mt-2">
-              <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">From favourites</p>
+              <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("styles.editor.from_favourites")}</p>
               <div class="flex flex-wrap gap-1">
                 {#each favouriteCandidates as slug (slug)}
                   {@const cat = artistFavourites.categoryOf(slug)}
@@ -367,7 +368,7 @@
 
           {#if gallerySuggestions.length > 0}
             <div class="mt-2">
-              <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">From gallery</p>
+              <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("styles.editor.from_gallery")}</p>
               <div class="flex flex-wrap gap-1">
                 {#each gallerySuggestions as hit (hit.slug)}
                   <button
@@ -404,18 +405,18 @@
           {/if}
 
           {#if searchQuery.trim() && favouriteCandidates.length === 0 && gallerySuggestions.length === 0 && autocompleteSuggestions.length === 0}
-            <p class="mt-2 text-[10px] text-neutral-500">No matches. Use the free-text field below to add any tag.</p>
+            <p class="mt-2 text-[10px] text-neutral-500">{locale.t("styles.editor.no_matches")}</p>
           {/if}
         </div>
 
         <!-- Free-text add -->
         <div>
-          <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">Paste tags</p>
+          <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("styles.editor.paste_tags")}</p>
           <div class="flex gap-2">
             <input
               type="text"
               bind:value={newTagInput}
-              placeholder="@artist_1, @artist_2, …"
+              placeholder={locale.t("styles.editor.paste_placeholder")}
               onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); addFromFreeText(); } }}
               class="flex-1 rounded border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-sm text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
             />
@@ -423,7 +424,7 @@
               type="button"
               class="rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:border-indigo-500"
               onclick={addFromFreeText}
-            >Add</button>
+            >{locale.t("common.add")}</button>
           </div>
         </div>
       </section>
@@ -433,13 +434,13 @@
           type="button"
           class="rounded bg-indigo-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
           onclick={onclose}
-        >Done</button>
+        >{locale.t("common.done")}</button>
       </div>
     </div>
   {:else}
     <div class="relative z-10 rounded-xl border border-neutral-700 bg-neutral-900 p-5 text-sm text-neutral-300">
       Style not found.
-      <button class="ml-3 text-indigo-400 hover:text-indigo-300" onclick={onclose}>Close</button>
+      <button class="ml-3 text-indigo-400 hover:text-indigo-300" onclick={onclose}>{locale.t("common.cancel")}</button>
     </div>
   {/if}
 </div>

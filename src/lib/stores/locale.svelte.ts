@@ -1,4 +1,19 @@
 import { ipcStore } from "../utils/ipc.js";
+import {
+  formatBytes as formatBytesIntl,
+  formatBytesPerSecond,
+  formatCompactCount,
+  formatCompactCountUpperK,
+  formatDateTime as formatDateTimeIntl,
+  formatDecimal as formatDecimalIntl,
+  formatDecimalForInput as formatDecimalForInputIntl,
+  formatDecimalTrimmed as formatDecimalTrimmedIntl,
+  formatInteger as formatIntegerIntl,
+  formatNumber as formatNumberIntl,
+  formatPercent as formatPercentIntl,
+  intlLocale,
+  parseLocaleDecimal,
+} from "../utils/localeFormat.js";
 import { triggerSync } from "../utils/syncTrigger.js";
 import en from "../locales/en.js";
 import es from "../locales/es.js";
@@ -59,6 +74,62 @@ class LocaleStore {
         return;
       }
     }
+  }
+
+  /** BCP 47 tag for Intl (dates, numbers). */
+  get intlTag(): string {
+    return intlLocale(this.current);
+  }
+
+  formatNumber(value: number, options?: Intl.NumberFormatOptions): string {
+    return formatNumberIntl(value, this.current, options);
+  }
+
+  formatInteger(value: number): string {
+    return formatIntegerIntl(value, this.current);
+  }
+
+  formatDecimal(value: number, fractionDigits = 2): string {
+    return formatDecimalIntl(value, this.current, fractionDigits);
+  }
+
+  formatDecimalTrimmed(value: number, maxFractionDigits = 2): string {
+    return formatDecimalTrimmedIntl(value, this.current, maxFractionDigits);
+  }
+
+  formatPercent(value: number, fractionDigits = 0): string {
+    return formatPercentIntl(value, this.current, fractionDigits);
+  }
+
+  formatBytes(bytes: number): string {
+    return formatBytesIntl(bytes, this.current);
+  }
+
+  formatBytesPerSecond(bytesPerSec: number): string {
+    return formatBytesPerSecond(bytesPerSec, this.current);
+  }
+
+  formatCompactCount(value: number): string {
+    return formatCompactCount(value, this.current);
+  }
+
+  formatCompactCountUpperK(value: number): string {
+    return formatCompactCountUpperK(value, this.current);
+  }
+
+  formatDateTime(
+    value: Date | number | string,
+    options?: Intl.DateTimeFormatOptions,
+  ): string {
+    return formatDateTimeIntl(value, this.current, options);
+  }
+
+  formatDecimalForInput(value: number, fractionDigits: number): string {
+    return formatDecimalForInputIntl(value, this.current, fractionDigits);
+  }
+
+  parseDecimal(raw: string): number {
+    return parseLocaleDecimal(raw);
   }
 
   /** Look up a translation key, with optional {var} interpolation. */

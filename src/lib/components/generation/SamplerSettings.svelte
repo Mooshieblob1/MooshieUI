@@ -227,7 +227,7 @@
       Steps: {recommendedStepRange().min}-{recommendedStepRange().max}
     </span>
     <span class="text-[10px] {cfgOutOfRange ? 'text-amber-400' : 'text-neutral-500'} truncate">
-      CFG: {recommendedCfgRange().min.toFixed(1)}-{recommendedCfgRange().max.toFixed(1)}
+      CFG: {locale.formatDecimal(recommendedCfgRange().min, 1)}-{locale.formatDecimal(recommendedCfgRange().max, 1)}
     </span>
     {#if cfgOutOfRange || stepsOutOfRange}
       <button

@@ -1915,7 +1915,7 @@
         </div>
         {#if !bottomCollapsed}
           <div
-            class="overflow-hidden shrink-0 border-t border-neutral-800/50"
+            class="overflow-hidden shrink-0 min-w-0 border-t border-neutral-800/50"
             style="height: {bottomHeight}px"
           >
             <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} oncontextmenu={handleSessionContextMenu} />

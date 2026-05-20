@@ -34,7 +34,12 @@
   import ContextMenu from "./lib/components/ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
+  import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
   import { interrogateGalleryImage, interrogateImage } from "./lib/utils/api.js";
+  import {
+    parseComfyServerError,
+    type ComfyServerErrorPayload,
+  } from "./lib/utils/comfyStartup.js";
 
   declare const __APP_VERSION__: string;
   const appVersion = __APP_VERSION__ ?? "dev";
@@ -508,7 +513,7 @@
       });
       const data = await resp.json();
       if (!resp.ok) {
-        loginError = data.error ?? "Login failed.";
+        loginError = data.error ?? locale.t("auth.login_failed");
         return;
       }
       setAuthToken(data.token, rememberMe);
@@ -542,11 +547,11 @@
 
   async function handleSetNewPassword() {
     if (newPass1.length < 4) {
-      changePassError = "Password must be at least 4 characters.";
+      changePassError = locale.t("auth.password_min_length");
       return;
     }
     if (newPass1 !== newPass2) {
-      changePassError = "Passwords do not match.";
+      changePassError = locale.t("auth.passwords_mismatch");
       return;
     }
     changePassBusy = true;
@@ -562,7 +567,7 @@
       });
       const data = await resp.json();
       if (!resp.ok) {
-        changePassError = data.error ?? "Failed to change password.";
+        changePassError = data.error ?? locale.t("auth.change_password_failed");
         return;
       }
       // Password changed — proceed normally
@@ -583,6 +588,19 @@
   let versionTapCount = $state(0);
   let startupStatus = $state<string>("");
   let startupStatusKind = $state<"idle" | "manual" | "starting" | "connecting" | "error">("idle");
+  let externalComfyOpen = $state(false);
+  let externalComfyPayload = $state<ComfyServerErrorPayload>({ error: "" });
+  let comfyServerUrl = $state("http://127.0.0.1:8188");
+
+  function showComfyStartupIssue(raw: unknown, fallbackMessage = "") {
+    const parsed = parseComfyServerError(raw, fallbackMessage);
+    externalComfyPayload = parsed;
+    externalComfyOpen = true;
+    startupStatus = locale.t("app.status.failed_to_start", {
+      message: parsed.error ?? fallbackMessage,
+    });
+    startupStatusKind = "error";
+  }
 
   let galleryImagesPerRow = $state(5);
   let gallerySortBy = $state<"date" | "name" | "size">("date");
@@ -781,12 +799,12 @@
 
   function formatDate(ts: number | undefined): string {
     if (!ts) return "Unknown";
-    return new Date(ts).toLocaleString();
+    return locale.formatDateTime(ts);
   }
 
   function formatDateGroup(ts: number | undefined): string {
     if (!ts) return "Unknown Date";
-    return new Date(ts).toLocaleDateString(undefined, {
+    return new Date(ts).toLocaleDateString(locale.intlTag, {
       year: "numeric",
       month: "short",
       day: "numeric",
@@ -795,7 +813,7 @@
 
   function formatMonthGroup(ts: number | undefined): string {
     if (!ts) return "Unknown Month";
-    return new Date(ts).toLocaleDateString(undefined, {
+    return new Date(ts).toLocaleDateString(locale.intlTag, {
       year: "numeric",
       month: "long",
     });
@@ -1027,15 +1045,7 @@
 
   function formatBytes(bytes: number | undefined): string {
     if (!bytes || bytes <= 0) return "-";
-    const units = ["B", "KB", "MB", "GB"];
-    let value = bytes;
-    let unitIndex = 0;
-    while (value >= 1024 && unitIndex < units.length - 1) {
-      value /= 1024;
-      unitIndex += 1;
-    }
-    const rounded = unitIndex === 0 ? value.toFixed(0) : value.toFixed(1);
-    return `${rounded} ${units[unitIndex]}`;
+    return locale.formatBytes(bytes);
   }
 
   function viewColumns(view: "huge" | "large" | "small" | "details"): number {
@@ -1528,6 +1538,7 @@
       applyTheme(cfg.theme);
       applyFontScale(cfg.font_scale);
       autoStartEnabled = cfg.auto_start !== false;
+      comfyServerUrl = cfg.server_url || `http://127.0.0.1:${cfg.server_port ?? 8188}`;
     } catch {
       // Config not ready yet, defaults are fine
     }
@@ -1566,10 +1577,10 @@
       }),
       ipcListen("comfyui:server_error", (event: any) => {
         console.error("Server error:", event.payload);
-        startupStatus = locale.t("app.status.failed_to_start", {
-          message: event.payload?.error || locale.t("app.status.unknown_error"),
-        });
-        startupStatusKind = "error";
+        showComfyStartupIssue(
+          event.payload,
+          event.payload?.error || locale.t("app.status.unknown_error"),
+        );
       }),
       ipcListen("comfyui:progress", (event: any) => {
         const data = event.payload;
@@ -1861,15 +1872,17 @@
         const data = event.payload;
         // Build a user-visible error message from the raw error string
         const rawErr = String(data.error ?? "");
-        let toastMsg = "Generation failed";
+        let toastMsg = locale.t("generation.toast.failed");
         if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
-          toastMsg = "Generation failed — a model or VAE may not be configured correctly. Check your model settings.";
+          toastMsg = locale.t("generation.toast.failed_validation");
         } else {
           try {
             const m = rawErr.match(/API error \(\d+\): ([\s\S]+)/);
             if (m) {
               const parsed = JSON.parse(m[1]);
-              if (parsed.error?.message) toastMsg = `Generation failed: ${parsed.error.message}`;
+              if (parsed.error?.message) {
+                toastMsg = locale.t("generation.toast.failed_detail", { message: parsed.error.message });
+              }
             }
           } catch { /* ignore parse errors */ }
         }
@@ -1959,7 +1972,7 @@
               if (images.length > 0) {
                 finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images);
               } else {
-                gallery.showToast("A generation was lost due to a connection issue — please try again.", "error");
+                gallery.showToast(locale.t("app.generation_lost"), "error");
               }
             }
           }
@@ -2012,8 +2025,7 @@
         }
       } catch (e) {
         console.error("Failed to start ComfyUI:", e);
-        startupStatus = locale.t("app.status.failed_to_start", { message: String(e) });
-        startupStatusKind = "error";
+        showComfyStartupIssue(e, String(e));
       }
     } else {
       startupStatus = locale.t("app.status.auto_start_disabled");
@@ -2090,11 +2102,11 @@
           <img src={logoUrl} alt="MooshieUI" class="w-10 h-10 rounded-lg" />
           <h1 class="text-xl font-bold text-neutral-100">MooshieUI</h1>
         </div>
-        <p class="text-sm text-neutral-400 text-center">Your password has been reset by an admin. Please choose a new password.</p>
+        <p class="text-sm text-neutral-400 text-center">{locale.t("auth.password_reset_by_admin")}</p>
         <input
           type="password"
           bind:value={newPass1}
-          placeholder="New password (4+ characters)"
+          placeholder={locale.t("auth.new_password_placeholder")}
           class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
           onkeydown={(e) => { if (e.key === "Enter") document.getElementById("confirm-pass")?.focus(); }}
         />
@@ -2102,7 +2114,7 @@
           id="confirm-pass"
           type="password"
           bind:value={newPass2}
-          placeholder="Confirm new password"
+          placeholder={locale.t("auth.confirm_password_placeholder")}
           class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
           onkeydown={(e) => { if (e.key === "Enter") handleSetNewPassword(); }}
         />
@@ -2126,18 +2138,18 @@
         <img src={logoUrl} alt="MooshieUI" class="w-10 h-10 rounded-lg" />
         <h1 class="text-xl font-bold text-neutral-100">MooshieUI</h1>
       </div>
-      <p class="text-sm text-neutral-400 text-center">Sign in to continue</p>
+      <p class="text-sm text-neutral-400 text-center">{locale.t("auth.sign_in_continue")}</p>
       <input
         type="text"
         bind:value={loginUser}
-        placeholder="Username"
+        placeholder={locale.t("auth.username_placeholder")}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
         onkeydown={(e) => { if (e.key === "Enter") handleLogin(); }}
       />
       <input
         type="password"
         bind:value={loginPass}
-        placeholder="Password"
+        placeholder={locale.t("auth.password_placeholder")}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
         onkeydown={(e) => { if (e.key === "Enter") handleLogin(); }}
       />
@@ -2147,7 +2159,7 @@
           bind:checked={rememberMe}
           class="w-4 h-4 rounded border-neutral-600 bg-neutral-800 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
         />
-        <span class="text-sm text-neutral-400">Remember me</span>
+        <span class="text-sm text-neutral-400">{locale.t("auth.remember_me")}</span>
       </label>
       {#if loginError}
         <p class="text-xs text-red-400">{loginError}</p>
@@ -2302,7 +2314,7 @@
         ? 'bg-indigo-600 text-white'
         : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
       onclick={() => (currentPage = "artists")}
-      title="Artist Gallery"
+      title={locale.t("nav.artist_gallery")}
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -2365,10 +2377,10 @@
           if (generation.devModeUnlocked) {
             generation.devModeUnlocked = false;
             generation.devMode = false;
-            gallery.showToast('🛠 Developer mode disabled', 'info');
+            gallery.showToast(locale.t("app.dev_mode_disabled"), "info");
           } else {
             generation.devModeUnlocked = true;
-            gallery.showToast('🛠 Developer mode unlocked', 'success');
+            gallery.showToast(locale.t("app.dev_mode_unlocked"), "success");
           }
         }
       }}
@@ -2379,6 +2391,19 @@
   <main class="flex min-w-0 flex-1 flex-col overflow-hidden md:rounded-2xl md:border md:border-neutral-800 md:bg-neutral-900 md:p-1 md:shadow-2xl md:shadow-black/30">
     <UpdateNotification {userRole} />
     <DownloadBanner />
+    <ExternalComfyModal
+      open={externalComfyOpen}
+      payload={externalComfyPayload}
+      serverUrl={comfyServerUrl}
+      onclose={() => {
+        externalComfyOpen = false;
+      }}
+      onrestarted={() => {
+        externalComfyOpen = false;
+        startupStatus = locale.t("app.status.starting_comfyui");
+        startupStatusKind = "starting";
+      }}
+    />
     {#if startupStatus && !connection.connected}
       <div class="flex items-center gap-2 px-4 py-2 bg-amber-900/30 border-b border-amber-800/50 text-amber-200 text-sm">
         {#if startupStatusKind === "manual" || startupStatusKind === "error"}
@@ -2807,14 +2832,14 @@
         <button
           class="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-10 h-10 flex items-center justify-center rounded-full bg-black/40 hover:bg-black/70 text-white transition-colors"
           onclick={() => navigateLightbox("prev")}
-          title="Previous image (←)"
+          title={locale.t("gallery.lightbox.prev_title")}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
         <button
           class="absolute right-14 top-1/2 -translate-y-1/2 z-10 w-10 h-10 flex items-center justify-center rounded-full bg-black/40 hover:bg-black/70 text-white transition-colors"
           onclick={() => navigateLightbox("next")}
-          title="Next image (→)"
+          title={locale.t("gallery.lightbox.next_title")}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
@@ -3040,9 +3065,9 @@
   >
     <div class="w-96 max-w-full rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
       {#if artistInsertPending.duplicate}
-        <h2 class="mb-1 text-sm font-semibold text-neutral-100">Tag already in prompt</h2>
+        <h2 class="mb-1 text-sm font-semibold text-neutral-100">{locale.t("artist_insert.tag_duplicate_title")}</h2>
         <p class="mb-3 text-xs text-neutral-400">
-          <span class="font-mono text-indigo-300">{artistInsertPending.tag}</span> is already in your prompt.
+          {locale.t("artist_insert.tag_duplicate_body", { tag: artistInsertPending.tag })}
         </p>
         <div class="flex justify-end gap-2">
           <button
@@ -3050,17 +3075,16 @@
             class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-neutral-500"
             onclick={() => artistInsert.dismiss()}
           >
-            OK
+            {locale.t("common.ok")}
           </button>
         </div>
       {:else}
-        <h2 class="mb-1 text-sm font-semibold text-neutral-100">Artist tag already in prompt</h2>
+        <h2 class="mb-1 text-sm font-semibold text-neutral-100">{locale.t("artist_insert.artist_duplicate_title")}</h2>
         <p class="mb-3 text-xs text-neutral-400">
-          Your prompt already contains
-          {#each artistInsertPending.existingTags as t, i}
-            <span class="font-mono text-red-400">{t}</span>{i < artistInsertPending.existingTags.length - 1 ? ', ' : ''}
-          {/each}.
-          Add <span class="font-mono text-indigo-300">{artistInsertPending.tag}</span> alongside, or replace?
+          {locale.t("artist_insert.artist_duplicate_body", {
+            existing: artistInsertPending.existingTags.join(", "),
+            tag: artistInsertPending.tag,
+          })}
         </p>
         <div class="flex justify-end gap-2">
           <button
@@ -3068,21 +3092,21 @@
             class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-neutral-500"
             onclick={() => artistInsert.dismiss()}
           >
-            Cancel
+            {locale.t("common.cancel")}
           </button>
           <button
             type="button"
             class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-indigo-500"
             onclick={() => applyArtistTag(artistInsertPending!.tag, 'add')}
           >
-            Add alongside
+            {locale.t("artist_insert.add_alongside")}
           </button>
           <button
             type="button"
             class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-500"
             onclick={() => applyArtistTag(artistInsertPending!.tag, 'replace')}
           >
-            Replace
+            {locale.t("artist_insert.replace")}
           </button>
         </div>
       {/if}

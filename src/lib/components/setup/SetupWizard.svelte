@@ -20,16 +20,16 @@
   let showAdvanced = $state(false);
   let gpuLabel = $derived(
     gpu === "nvidia"
-      ? "NVIDIA GPU (CUDA)"
+      ? locale.t("setup.gpu.nvidia")
       : gpu === "amd"
-        ? "AMD GPU (ROCm)"
+        ? locale.t("setup.gpu.amd")
         : gpu === "intel"
-          ? "Intel Arc GPU (XPU)"
+          ? locale.t("setup.gpu.intel")
           : gpu === "mps"
-            ? "Apple Silicon (Metal)"
-            : "CPU only"
+            ? locale.t("setup.gpu.mps")
+            : locale.t("setup.gpu.cpu")
   );
-  let progressMessage = $state("Preparing...");
+  let progressMessage = $state("");
   let progressPercent = $state(0);
   let errorMessage = $state("");
 
@@ -56,22 +56,25 @@
   let logContainer: HTMLDivElement | undefined = $state();
 
   // Per-step tracking
-  const steps = [
-    { id: "uv", label: "Download uv" },
-    { id: "python", label: "Install Python 3.11" },
-    { id: "comfyui", label: "Download ComfyUI" },
-    { id: "venv", label: "Create virtual environment" },
-    { id: "pytorch", label: "Install PyTorch" },
-    { id: "deps", label: "Install dependencies" },
-    { id: "attention", label: "Install attention backend" },
-    { id: "nodes", label: "Install custom nodes" },
-    { id: "config", label: "Configure system" },
-  ];
+  const steps = $derived([
+    { id: "uv", label: locale.t("setup.step.uv") },
+    { id: "python", label: locale.t("setup.step.python") },
+    { id: "comfyui", label: locale.t("setup.step.comfyui") },
+    { id: "venv", label: locale.t("setup.step.venv") },
+    { id: "pytorch", label: locale.t("setup.step.pytorch") },
+    { id: "deps", label: locale.t("setup.step.deps") },
+    { id: "attention", label: locale.t("setup.step.attention") },
+    { id: "nodes", label: locale.t("setup.step.nodes") },
+    { id: "config", label: locale.t("setup.step.config") },
+  ]);
   const visibleSteps = $derived(
     attentionBackend !== "default" && gpu === "nvidia"
       ? steps
       : steps.filter((s) => s.id !== "attention")
   );
+  $effect(() => {
+    if (!progressMessage) progressMessage = locale.t("setup.progress_preparing");
+  });
   let currentStep = $state("");
   let completedSteps = $state<Set<string>>(new Set());
 
@@ -80,12 +83,6 @@
   let downloadedBytes = $state(0);
   let downloadTotalBytes = $state(0);
 
-  function formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  }
 
   async function finishSetup() {
     phase = "done";
@@ -183,12 +180,12 @@
     });
   });
 
-  const gpuOptions = [
-    { value: "nvidia", label: "NVIDIA GPU (CUDA)", icon: "🟢", color: "bg-green-900/50 text-green-400" },
-    { value: "amd", label: "AMD GPU (ROCm)", icon: "🔴", color: "bg-red-900/50 text-red-400" },
-    { value: "intel", label: "Intel Arc GPU (XPU)", icon: "🔵", color: "bg-blue-900/50 text-blue-400" },
-    { value: "cpu", label: "CPU only", icon: "⚪", color: "bg-neutral-700 text-neutral-400" },
-  ];
+  const gpuOptions = $derived([
+    { value: "nvidia", label: locale.t("setup.gpu.nvidia"), icon: "🟢", color: "bg-green-900/50 text-green-400" },
+    { value: "amd", label: locale.t("setup.gpu.amd"), icon: "🔴", color: "bg-red-900/50 text-red-400" },
+    { value: "intel", label: locale.t("setup.gpu.intel"), icon: "🔵", color: "bg-blue-900/50 text-blue-400" },
+    { value: "cpu", label: locale.t("setup.gpu.cpu"), icon: "⚪", color: "bg-neutral-700 text-neutral-400" },
+  ]);
 
   async function browseInstallPath() {
     if (!isTauri) return;
@@ -196,7 +193,7 @@
     const selected = await open({
       directory: true,
       multiple: false,
-      title: "Choose Install Location",
+      title: locale.t("setup.install_location"),
     });
     if (selected && typeof selected === "string") {
       customInstallPath = selected;
@@ -217,7 +214,7 @@
   async function startInstall() {
     phase = "installing";
     progressPercent = 0;
-    progressMessage = "Starting installation...";
+    progressMessage = locale.t("setup.progress_starting");
     logLines = [];
     completedSteps = new Set();
     currentStep = "";
@@ -317,9 +314,7 @@
 
         <h2 class="text-xl font-semibold mb-4">{locale.t('setup.welcome')}</h2>
         <p class="text-neutral-400 text-sm mb-6">
-          MooshieUI will automatically install everything you need — ComfyUI,
-          Python, and the right AI libraries for your hardware. No manual setup
-          required.
+          {locale.t("setup.intro")}
         </p>
 
         <!-- GPU Selection -->
@@ -329,7 +324,7 @@
               <div class="flex items-center gap-3">
                 <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm bg-blue-900/50 text-blue-400">🔵</div>
                 <div>
-                  <p class="text-sm font-medium text-neutral-200">Apple Silicon (Metal)</p>
+                  <p class="text-sm font-medium text-neutral-200">{locale.t("setup.gpu.mps")}</p>
                   <p class="text-xs text-neutral-500">{locale.t('setup.gpu.mps_note')}</p>
                 </div>
               </div>
@@ -353,7 +348,7 @@
                   </div>
                   {#if opt.value === detectedGpu}
                     <span class="text-[10px] px-1.5 py-0.5 rounded bg-neutral-700/50 text-neutral-400">
-                      detected
+                      {locale.t("common.detected")}
                     </span>
                   {/if}
                 </button>
@@ -428,7 +423,7 @@
                 if (!useCustomPath) customInstallPath = "";
               }}
             >
-              {useCustomPath ? "Use default" : "Change"}
+              {useCustomPath ? locale.t("setup.use_default") : locale.t("setup.change")}
             </button>
           </div>
 
@@ -556,7 +551,7 @@
           <div class="mt-3 bg-neutral-800/80 rounded-lg px-3 py-2">
             <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
               <span class="truncate mr-2">{downloadFilename}</span>
-              <span class="shrink-0 tabular-nums">{formatBytes(downloadedBytes)} / {formatBytes(downloadTotalBytes)} ({downloadPercent}%)</span>
+              <span class="shrink-0 tabular-nums">{locale.formatBytes(downloadedBytes)} / {locale.formatBytes(downloadTotalBytes)} ({downloadPercent}%)</span>
             </div>
             <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
               <div
@@ -568,14 +563,14 @@
         {/if}
 
         <p class="text-xs text-neutral-600 mt-4">
-          Please don't close the app during installation.
+          {locale.t("setup.progress_dont_close")}
         </p>
       {:else if phase === "choose-mode"}
         <div class="text-center py-6">
           <div class="text-4xl mb-3">&#10003;</div>
-          <h2 class="text-xl font-semibold mb-2">Installation Complete</h2>
+          <h2 class="text-xl font-semibold mb-2">{locale.t("setup.choose_mode.title")}</h2>
           <p class="text-neutral-400 text-sm mb-6">
-            How would you like to use MooshieUI?
+            {locale.t("setup.choose_mode.question")}
           </p>
 
           <div class="flex gap-4 justify-center mb-6">
@@ -587,9 +582,9 @@
               onclick={() => (chosenMode = "app")}
             >
               <div class="text-2xl mb-2">&#128421;</div>
-              <h3 class="text-sm font-medium text-neutral-200">App Mode</h3>
+              <h3 class="text-sm font-medium text-neutral-200">{locale.t("setup.choose_mode.app_title")}</h3>
               <p class="text-xs text-neutral-500 mt-1">
-                Native desktop window. Recommended for most users.
+                {locale.t("setup.choose_mode.app_desc")}
               </p>
             </button>
 
@@ -601,22 +596,22 @@
               onclick={() => (chosenMode = "browser")}
             >
               <div class="text-2xl mb-2">&#127760;</div>
-              <h3 class="text-sm font-medium text-neutral-200">Web Browser Mode</h3>
+              <h3 class="text-sm font-medium text-neutral-200">{locale.t("setup.choose_mode.browser_title")}</h3>
               <p class="text-xs text-neutral-500 mt-1">
-                Opens in your default browser. Useful for LAN access or multi-monitor setups.
+                {locale.t("setup.choose_mode.browser_desc")}
               </p>
             </button>
           </div>
 
           <p class="text-xs text-neutral-600 mb-4">
-            You can change this anytime in Settings.
+            {locale.t("setup.choose_mode.change_later")}
           </p>
 
           <button
             class="px-8 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors"
             onclick={finishSetup}
           >
-            Get Started
+            {locale.t("setup.get_started")}
           </button>
         </div>
       {:else if phase === "done"}

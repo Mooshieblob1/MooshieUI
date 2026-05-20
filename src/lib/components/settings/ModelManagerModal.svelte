@@ -61,16 +61,9 @@
     void loadCategory();
   });
 
-  function formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  }
-
   function formatModified(ms: number): string {
     if (!ms) return locale.t("common.none");
-    return new Date(ms).toLocaleDateString(undefined, {
+    return new Date(ms).toLocaleDateString(locale.intlTag, {
       year: "numeric",
       month: "short",
       day: "numeric",
@@ -218,7 +211,7 @@
       <div class="flex items-center justify-between rounded-t-2xl border-b border-neutral-700 bg-neutral-800 px-5 py-4">
         <div>
           <h2 class="text-base font-semibold text-neutral-100">{locale.t("settings.models.title")}</h2>
-          <p class="text-xs text-neutral-500">{files.length} {locale.t("settings.models.files")} · {formatBytes(totalSize)}</p>
+          <p class="text-xs text-neutral-500">{files.length} {locale.t("settings.models.files")} · {locale.formatBytes(totalSize)}</p>
         </div>
         <div class="flex items-center gap-2">
           <div class="flex gap-1 overflow-x-auto sm:hidden">
@@ -296,7 +289,7 @@
                   <p class="truncate text-[10px] text-neutral-500" title={file.directory}>{file.directory_label} · {file.directory}</p>
                 </div>
                 <div class="truncate text-xs text-neutral-400" title={file.directory_label}>{file.directory_label}</div>
-                <div class="text-xs tabular-nums text-neutral-400">{formatBytes(file.size_bytes)}</div>
+                <div class="text-xs tabular-nums text-neutral-400">{locale.formatBytes(file.size_bytes)}</div>
                 <div class="text-xs text-neutral-500">{formatModified(file.modified_ms)}</div>
                 <div class="flex justify-end gap-1.5">
                   <button

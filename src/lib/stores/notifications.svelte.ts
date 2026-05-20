@@ -12,6 +12,9 @@ export interface Notification {
   read: boolean;
   created_at: string;
   local?: boolean;
+  /** When true, title/body are locale keys; params supplies interpolation. */
+  i18n?: boolean;
+  params?: Record<string, unknown>;
 }
 
 type NotificationInput = {

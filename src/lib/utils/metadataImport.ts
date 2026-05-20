@@ -1,6 +1,7 @@
 import { generation } from "../stores/generation.svelte.js";
 import { readImageMetadataBytes, readImageMetadataPath } from "./api.js";
 import { gallery } from "../stores/gallery.svelte.js";
+import { locale } from "../stores/locale.svelte.js";
 import { readPngMetadataClientSide } from "./pngMetadata.js";
 import { isBrowserMode } from "./ipc.js";
 
@@ -260,7 +261,7 @@ export async function handleMetadataImport(
     }
   } catch (err) {
     console.error("Metadata import failed:", err);
-    gallery.showToast("Failed to read image metadata", "error");
+    gallery.showToast(locale.t("metadata.toast.read_failed"), "error");
   }
 }
 
@@ -270,25 +271,25 @@ function applyParsedMetadata(
   target: DroppableSectionId | "all"
 ): void {
   if (!meta || Object.keys(meta).length === 0) {
-    gallery.showToast("No metadata found in image", "info");
+    gallery.showToast(locale.t("metadata.toast.no_metadata"), "info");
     return;
   }
 
   if (target === "all") {
     const applied = applyAllMetadata(meta);
     if (applied.length > 0) {
-      gallery.showToast(`Applied ${applied.join(", ")} from image metadata`, "success");
+      gallery.showToast(locale.t("metadata.toast.applied_all", { fields: applied.join(", ") }), "success");
       generation.saveSettings();
     } else {
-      gallery.showToast("No applicable parameters found in image metadata", "info");
+      gallery.showToast(locale.t("metadata.toast.no_applicable"), "info");
     }
   } else {
     const applied = applyMetadataToSection(meta, target);
     if (applied) {
-      gallery.showToast(`Applied ${sectionLabel(target)} from image metadata`, "success");
+      gallery.showToast(locale.t("metadata.toast.applied_section", { section: sectionLabel(target) }), "success");
       generation.saveSettings();
     } else {
-      gallery.showToast(`No ${sectionLabel(target)} found in image metadata`, "info");
+      gallery.showToast(locale.t("metadata.toast.no_section", { section: sectionLabel(target) }), "info");
     }
   }
 }
@@ -302,13 +303,13 @@ export async function handleMetadataImportBytes(
   bytes: number[],
   target: DroppableSectionId | "all"
 ): Promise<void> {
-  gallery.showToast("Reading image metadata...", "info");
+  gallery.showToast(locale.t("metadata.toast.reading"), "info");
   try {
     const meta = await readImageMetadataBytes(bytes);
     applyParsedMetadata(meta, target);
   } catch (err) {
     console.error("Metadata import failed:", err);
-    gallery.showToast("Failed to read image metadata", "error");
+    gallery.showToast(locale.t("metadata.toast.read_failed"), "error");
   }
 }
 
@@ -320,13 +321,13 @@ export async function handleMetadataImportPath(
   filePath: string,
   target: DroppableSectionId | "all"
 ): Promise<void> {
-  gallery.showToast("Reading image metadata...", "info");
+  gallery.showToast(locale.t("metadata.toast.reading"), "info");
   try {
     const meta = await readImageMetadataPath(filePath);
     applyParsedMetadata(meta, target);
   } catch (err) {
     console.error("Metadata import failed:", err);
-    gallery.showToast("Failed to read image metadata", "error");
+    gallery.showToast(locale.t("metadata.toast.read_failed"), "error");
   }
 }
 

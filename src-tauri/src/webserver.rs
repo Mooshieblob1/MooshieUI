@@ -1546,9 +1546,10 @@ async fn dispatch_command(
             serde_json::to_value(config.clone()).map_err(|e| e.to_string())
         }
         "update_config" => {
-            let new_config: crate::config::AppConfig =
+            let mut new_config: crate::config::AppConfig =
                 serde_json::from_value(args["config"].clone())
                     .map_err(|e| format!("Invalid config: {}", e))?;
+            config::normalize_config_fields(&mut new_config);
             config::save_config(&new_config)?;
             let mut current = state.config.write().await;
             *current = new_config;
@@ -2612,7 +2613,9 @@ async fn dispatch_command(
             let custom_nodes_dir = std::path::Path::new(&config.comfyui_path).join("custom_nodes");
             let target_dir = custom_nodes_dir.join(&node_name);
             let venv_path = config.venv_path.clone();
+            let network_proxy = config.network_proxy.clone();
             drop(config);
+            let network_proxy = network_proxy.as_deref();
 
             let emit = |step: &str, message: &str, done: bool| {
                 state.broadcast(
@@ -2633,7 +2636,8 @@ async fn dispatch_command(
 
             emit("clone", &format!("Cloning {}...", node_name), false);
 
-            let status = tokio::process::Command::new("git")
+            let mut git_cmd = tokio::process::Command::new("git");
+            git_cmd
                 .args([
                     "clone",
                     "--progress",
@@ -2641,7 +2645,9 @@ async fn dispatch_command(
                     &target_dir.to_string_lossy(),
                 ])
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            crate::comfyui::nodes::apply_network_proxy(&mut git_cmd, network_proxy);
+            let status = git_cmd
                 .status()
                 .await
                 .map_err(|e| format!("git clone failed to start: {}", e))?;
@@ -2656,10 +2662,11 @@ async fn dispatch_command(
                 emit("pip", "Installing Python dependencies...", false);
                 let uv_path = crate::commands::api::resolve_uv_bin_pub(&venv_path);
                 let pip_status = if uv_path.exists() {
-                    tokio::process::Command::new(&uv_path)
-                        .args(["pip", "install", "-r", &req_file.to_string_lossy()])
-                        .env("VIRTUAL_ENV", &venv_path)
-                        .status()
+                    let mut cmd = tokio::process::Command::new(&uv_path);
+                    cmd.args(["pip", "install", "-r", &req_file.to_string_lossy()])
+                        .env("VIRTUAL_ENV", &venv_path);
+                    crate::comfyui::nodes::apply_network_proxy(&mut cmd, network_proxy);
+                    cmd.status()
                         .await
                         .map_err(|e| format!("uv pip install failed: {}", e))?
                 } else {
@@ -2668,9 +2675,10 @@ async fn dispatch_command(
                     let pip_path = venv_base.join("Scripts").join("pip.exe");
                     #[cfg(not(target_os = "windows"))]
                     let pip_path = venv_base.join("bin").join("pip");
-                    tokio::process::Command::new(&pip_path)
-                        .args(["install", "-r", &req_file.to_string_lossy()])
-                        .status()
+                    let mut cmd = tokio::process::Command::new(&pip_path);
+                    cmd.args(["install", "-r", &req_file.to_string_lossy()]);
+                    crate::comfyui::nodes::apply_network_proxy(&mut cmd, network_proxy);
+                    cmd.status()
                         .await
                         .map_err(|e| format!("pip install failed: {}", e))?
                 };
@@ -4728,13 +4736,15 @@ async fn model_requests_add_handler(
     );
 
     // Notify all mods/admins about the new request
-    let _ = state.app.notifications.create(
+    let _ = state.app.notifications.create_i18n(
         "global",
-        &format!("Model request: {}", model_name),
-        Some(&format!(
-            "{} requested {} ({})",
-            username, model_name, model_type
-        )),
+        "notifications.model_request.new_title",
+        Some("notifications.model_request.new_body"),
+        Some(serde_json::json!({
+            "username": username,
+            "model_name": model_name,
+            "model_type": model_type,
+        })),
         "info",
     );
 
@@ -4779,13 +4789,14 @@ async fn model_requests_approve_handler(
     {
         Ok(request) => {
             // Notify the requester
-            let _ = state.app.notifications.create(
+            let _ = state.app.notifications.create_i18n(
                 &request.username,
-                &format!("Model approved: {}", request.model_name),
-                Some(&format!(
-                    "Your request for {} was approved by {}. The model will be downloaded.",
-                    request.model_name, handler_username
-                )),
+                "notifications.model_request.approved_title",
+                Some("notifications.model_request.approved_body"),
+                Some(serde_json::json!({
+                    "model_name": request.model_name,
+                    "handler": handler_username,
+                })),
                 "success",
             );
 
@@ -4838,20 +4849,28 @@ async fn model_requests_deny_handler(
     {
         Ok(request) => {
             // Notify the requester with the reason
-            let body = match &request.deny_reason {
-                Some(r) => format!(
-                    "Your request for {} was denied by {}. Reason: {}",
-                    request.model_name, handler_username, r
+            let (body_key, params) = match &request.deny_reason {
+                Some(r) => (
+                    "notifications.model_request.denied_body_reason",
+                    serde_json::json!({
+                        "model_name": request.model_name,
+                        "handler": handler_username,
+                        "reason": r,
+                    }),
                 ),
-                None => format!(
-                    "Your request for {} was denied by {}.",
-                    request.model_name, handler_username
+                None => (
+                    "notifications.model_request.denied_body",
+                    serde_json::json!({
+                        "model_name": request.model_name,
+                        "handler": handler_username,
+                    }),
                 ),
             };
-            let _ = state.app.notifications.create(
+            let _ = state.app.notifications.create_i18n(
                 &request.username,
-                &format!("Model denied: {}", request.model_name),
-                Some(&body),
+                "notifications.model_request.denied_title",
+                Some(body_key),
+                Some(params),
                 "warning",
             );
 

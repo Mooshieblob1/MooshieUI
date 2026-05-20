@@ -358,11 +358,6 @@
   // Hash-based model detection: maps "category::hash" -> resolved filename on disk
   let hashResolved = $state<Record<string, string>>({});
 
-  function formatBytes(bytes: number): string {
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  }
 
   function dlPercent(e: DlEntry): number {
     return e.total > 0 ? Math.round((e.downloaded / e.total) * 100) : 0;
@@ -818,7 +813,7 @@
                 </span>
                 {#if entry.total > 0}
                   <span class="shrink-0 tabular-nums">
-                    {formatBytes(entry.downloaded)} / {formatBytes(entry.total)} ({dlPercent(entry)}%)
+                    {locale.formatBytes(entry.downloaded)} / {locale.formatBytes(entry.total)} ({dlPercent(entry)}%)
                   </span>
                 {/if}
               </div>
@@ -895,7 +890,7 @@
         {#if modelSpec.title}
           <span class="text-neutral-500 truncate">— {modelSpec.title}</span>
         {/if}
-        <span class="ml-auto px-1 py-0.5 rounded bg-emerald-900/30 text-emerald-400 text-[9px]">ModelSpec</span>
+        <span class="ml-auto px-1 py-0.5 rounded bg-emerald-900/30 text-emerald-400 text-[9px]">{locale.t("generation.model_spec_badge")}</span>
       </button>
       {#if showModelInfo}
         <div class="mt-1.5 bg-neutral-800/60 border border-neutral-700/50 rounded-lg p-2.5 space-y-1.5 text-xs">
@@ -1085,7 +1080,7 @@
             <div use:scrollCapture>
               <div class="flex items-center justify-between text-xs mb-0.5">
                 <span class="text-neutral-500">{locale.t('generation.model.lora_strength_model')}<InfoTip text={locale.t('generation.model.lora_strength_model_tip')} /></span>
-                <span class="text-neutral-300 tabular-nums">{lora.strength_model.toFixed(2)}</span>
+                <span class="text-neutral-300 tabular-nums">{locale.formatDecimal(lora.strength_model, 2)}</span>
               </div>
               <input
                 type="range"
@@ -1099,7 +1094,7 @@
             <div use:scrollCapture>
               <div class="flex items-center justify-between text-xs mb-0.5">
                 <span class="text-neutral-500">{locale.t('generation.model.lora_strength_clip')}<InfoTip text={locale.t('generation.model.lora_strength_clip_tip')} /></span>
-                <span class="text-neutral-300 tabular-nums">{lora.strength_clip.toFixed(2)}</span>
+                <span class="text-neutral-300 tabular-nums">{locale.formatDecimal(lora.strength_clip, 2)}</span>
               </div>
               <input
                 type="range"

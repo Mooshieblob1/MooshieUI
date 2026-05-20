@@ -71,6 +71,9 @@ pub struct AppConfig {
     /// Multi-GPU worker configs. When empty, single-worker mode (backward compat).
     #[serde(default)]
     pub gpu_workers: Vec<GpuWorkerConfig>,
+    /// Optional HTTP(S) proxy for git clone and pip when installing ControlNet custom nodes.
+    /// Example: `http://127.0.0.1:7890`. Also applied via HTTP_PROXY / HTTPS_PROXY env vars.
+    pub network_proxy: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -115,6 +118,7 @@ impl Default for AppConfig {
             lan_enabled: false,
             attention_backend: "default".to_string(),
             gpu_workers: vec![],
+            network_proxy: None,
         }
     }
 }
@@ -257,11 +261,21 @@ pub fn load_persisted_config() -> AppConfig {
     AppConfig::default()
 }
 
+pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
+    match &mut config.network_proxy {
+        Some(p) if p.trim().is_empty() => config.network_proxy = None,
+        Some(p) => *p = p.trim().to_string(),
+        None => {}
+    }
+}
+
 /// Save config to disk.
 pub fn save_config(config: &AppConfig) -> Result<(), String> {
+    let mut config = config.clone();
+    normalize_config_fields(&mut config);
     let dir = app_data_dir().ok_or("Failed to determine app data directory")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create data dir: {}", e))?;
-    let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(dir.join("config.json"), json).map_err(|e| e.to_string())?;
     Ok(())
 }

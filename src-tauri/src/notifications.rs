@@ -36,6 +36,12 @@ pub struct Notification {
     pub dismissed_by: Vec<String>,
     /// ISO 8601 timestamp when the notification was created.
     pub created_at: String,
+    /// When true, `title` and optional `body` are locale keys; `params` supplies `{var}` interpolation.
+    #[serde(default)]
+    pub i18n: bool,
+    /// Interpolation values for i18n title/body keys.
+    #[serde(default)]
+    pub params: Option<serde_json::Value>,
 }
 
 /// Notification view returned to clients.
@@ -48,6 +54,10 @@ pub struct UserNotification {
     pub kind: String,
     pub read: bool,
     pub created_at: String,
+    #[serde(default)]
+    pub i18n: bool,
+    #[serde(default)]
+    pub params: Option<serde_json::Value>,
 }
 
 fn default_notif_type() -> String {
@@ -96,7 +106,7 @@ impl NotificationState {
         }
     }
 
-    /// Create a new notification.
+    /// Create a new notification with plain-text title/body (legacy).
     pub fn create(
         &self,
         target: &str,
@@ -119,6 +129,43 @@ impl NotificationState {
             read_by: Vec::new(),
             dismissed_by: Vec::new(),
             created_at: now,
+            i18n: false,
+            params: None,
+        };
+        {
+            let mut db = self.db.write().unwrap();
+            db.notifications.push(notification.clone());
+        }
+        self.save();
+        notification
+    }
+
+    /// Create a notification using frontend locale keys (`title` / optional `body`) and params.
+    pub fn create_i18n(
+        &self,
+        target: &str,
+        title_key: &str,
+        body_key: Option<&str>,
+        params: Option<serde_json::Value>,
+        kind: &str,
+    ) -> Notification {
+        let id = format!(
+            "notif_{}",
+            uuid::Uuid::new_v4().to_string().replace("-", "")[..12].to_string()
+        );
+        let now = Utc::now().to_rfc3339();
+        let notification = Notification {
+            id,
+            target: target.to_string(),
+            title: title_key.to_string(),
+            body: body_key.map(|s| s.to_string()),
+            kind: kind.to_string(),
+            read: false,
+            read_by: Vec::new(),
+            dismissed_by: Vec::new(),
+            created_at: now,
+            i18n: true,
+            params,
         };
 
         {
@@ -144,6 +191,8 @@ impl NotificationState {
                 kind: notification.kind.clone(),
                 read: notification_read_by(notification, username),
                 created_at: notification.created_at.clone(),
+                i18n: notification.i18n,
+                params: notification.params.clone(),
             })
             .collect();
         // Sort: unread first, then newest first

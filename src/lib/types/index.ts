@@ -162,6 +162,8 @@ export interface AppConfig {
   ui_server_port: number;
   lan_enabled: boolean;
   attention_backend: string;
+  /** HTTP(S) proxy for git/pip when installing ControlNet custom nodes (optional). */
+  network_proxy: string | null;
 }
 
 export interface QueueInfo {

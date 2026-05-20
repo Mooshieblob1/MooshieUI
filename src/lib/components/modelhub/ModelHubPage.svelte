@@ -1229,7 +1229,7 @@
                   </div>
                   <div class="rounded border border-neutral-800 bg-neutral-950 px-2 py-1.5">
                     <div class="text-neutral-500">{locale.t("modelhub.civitai.stat_rating")}</div>
-                    <div class="text-neutral-200">{model.stats?.rating?.toFixed?.(2) ?? "-"}</div>
+                    <div class="text-neutral-200">{model.stats?.rating != null ? locale.formatDecimal(model.stats.rating, 2) : "-"}</div>
                   </div>
                   <div class="rounded border border-neutral-800 bg-neutral-950 px-2 py-1.5">
                     <div class="text-neutral-500">{locale.t("modelhub.civitai.stat_votes")}</div>
@@ -1283,7 +1283,7 @@
                               <button
                                 class="px-2 py-1 text-[11px] rounded border border-amber-700 text-amber-300 hover:border-amber-500 hover:text-amber-200 transition-colors"
                                 onclick={() => requestModel(model, file)}
-                                title="Request this model to be downloaded by a mod/admin"
+                                title={locale.t("modelhub.request_download_title")}
                               >
                                 {locale.t("modelhub.civitai.request_model")}
                               </button>

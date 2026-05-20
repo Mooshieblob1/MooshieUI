@@ -103,13 +103,6 @@
     }
   }
 
-  function formatBytes(bytes: number): string {
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    if (bytes < 1024 * 1024 * 1024)
-      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  }
-
   onMount(async () => {
     await ipcListen("download:progress", (event: any) => {
       const data = event.payload as {
@@ -692,7 +685,7 @@
             <span class="truncate mr-2">{locale.t('generation.controlnet.downloading', { model: downloading || '' })}</span>
             {#if dlTotal > 0}
               <span class="shrink-0 tabular-nums"
-                >{formatBytes(dlBytes)} / {formatBytes(dlTotal)} ({dlPercent}%)</span
+                >{locale.formatBytes(dlBytes)} / {locale.formatBytes(dlTotal)} ({dlPercent}%)</span
               >
             {/if}
           </div>
@@ -750,7 +743,7 @@
         </div>
         {#if preprocessorPreviewUrl && preprocessorPreviewStatus === "ready"}
           <div class="relative rounded-lg overflow-hidden bg-neutral-800 border border-neutral-700">
-            <img src={preprocessorPreviewUrl} alt="Preprocessor preview" class="w-full max-h-32 object-contain" />
+            <img src={preprocessorPreviewUrl} alt={locale.t("controlnet.preprocessor_preview_alt")} class="w-full max-h-32 object-contain" />
           </div>
         {/if}
       {/if}
@@ -902,7 +895,7 @@
           text={locale.t('generation.controlnet.strength_tip')}
         /></span>
         <span class="text-neutral-300"
-          >{generation.controlnetStrength.toFixed(2)}</span
+          >{locale.formatDecimal(generation.controlnetStrength, 2)}</span
         >
       </label>
       <input
@@ -924,7 +917,7 @@
             text={locale.t('generation.controlnet.start_percent_tip')}
           /></span>
           <span class="text-neutral-300"
-            >{(generation.controlnetStartPercent * 100).toFixed(0)}%</span
+            >{locale.formatPercent(generation.controlnetStartPercent * 100, 0)}</span
           >
         </label>
         <input
@@ -944,7 +937,7 @@
             text={locale.t('generation.controlnet.end_percent_tip')}
           /></span>
           <span class="text-neutral-300"
-            >{(generation.controlnetEndPercent * 100).toFixed(0)}%</span
+            >{locale.formatPercent(generation.controlnetEndPercent * 100, 0)}</span
           >
         </label>
         <input

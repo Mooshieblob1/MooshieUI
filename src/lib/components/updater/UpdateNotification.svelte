@@ -31,11 +31,6 @@
     totalSize > 0 ? Math.round((downloadProgress / totalSize) * 100) : 0
   );
 
-  function formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
 
   // Track whether we've already checked for server updates (browser mode).
   // The role may resolve after mount, so we use $effect to react to canSeeUpdate.
@@ -129,7 +124,7 @@
         if (event.event === "Started") {
           totalSize = event.data.contentLength ?? 0;
           downloadProgress = 0;
-          console.log(`[Updater] Download started (size: ${formatBytes(totalSize)})`);
+          console.log(`[Updater] Download started (size: ${locale.formatBytes(totalSize)})`);
         } else if (event.event === "Progress") {
           downloadProgress += event.data.chunkLength;
         } else if (event.event === "Finished") {
@@ -196,7 +191,7 @@
 
     {:else if updateState === "downloading"}
       <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0"></div>
-      <span class="flex-1">{locale.t('updater.downloading', { version })} {formatBytes(downloadProgress)}{totalSize > 0 ? ` / ${formatBytes(totalSize)}` : ''}</span>
+      <span class="flex-1">{locale.t('updater.downloading', { version })} {locale.formatBytes(downloadProgress)}{totalSize > 0 ? ` / ${locale.formatBytes(totalSize)}` : ''}</span>
       <div class="w-32 h-2 bg-neutral-700 rounded-full overflow-hidden">
         <div
           class="h-full bg-indigo-500 transition-[width] duration-300"

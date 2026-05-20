@@ -2,6 +2,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import { getLogs } from "../../utils/api.js";
   import { isTauri } from "../../utils/ipc.js";
+  import { locale } from "../../stores/locale.svelte.js";
 
   let {
     onclose,
@@ -148,18 +149,18 @@
         ? 'bg-neutral-700 text-neutral-100'
         : 'text-neutral-500 hover:text-neutral-300'}"
       onclick={() => { activeTab = 'comfyui'; }}
-    >ComfyUI</button>
+    >{locale.t("terminal.tab_comfyui")}</button>
     <button
       class="px-2.5 py-0.5 rounded text-[11px] transition-colors {activeTab === 'app'
         ? 'bg-neutral-700 text-neutral-100'
         : 'text-neutral-500 hover:text-neutral-300'}"
       onclick={() => { activeTab = 'app'; }}
-    >App</button>
+    >{locale.t("terminal.tab_app")}</button>
 
     <div class="flex-1"></div>
 
     <!-- Line count -->
-    <span class="text-neutral-600 text-[10px]">{lines.length} lines</span>
+    <span class="text-neutral-600 text-[10px]">{locale.t("common.lines", { count: String(lines.length) })}</span>
 
     <!-- Auto-scroll indicator / button -->
     <button
@@ -167,28 +168,28 @@
         ? 'text-indigo-400 hover:text-indigo-300'
         : 'text-neutral-500 hover:text-neutral-300'}"
       onclick={scrollToBottom}
-      title="Scroll to bottom"
-    >↓ auto</button>
+      title={locale.t("terminal.scroll_bottom")}
+    >{locale.t("terminal.auto_scroll")}</button>
 
     <!-- Copy -->
     <button
       class="px-1.5 py-0.5 rounded text-[10px] text-neutral-500 hover:text-neutral-300 transition-colors"
       onclick={copyAll}
-      title="Copy all to clipboard"
-    >copy</button>
+      title={locale.t("terminal.copy_all")}
+    >{locale.t("terminal.copy_btn")}</button>
 
     <!-- Clear -->
     <button
       class="px-1.5 py-0.5 rounded text-[10px] text-neutral-500 hover:text-neutral-300 transition-colors"
       onclick={clearDisplay}
-      title="Clear display"
-    >clear</button>
+      title={locale.t("terminal.clear")}
+    >{locale.t("terminal.clear_btn")}</button>
 
     <!-- Close -->
     <button
       class="ml-1 w-5 h-5 flex items-center justify-center rounded text-neutral-500 hover:text-neutral-200 hover:bg-neutral-700 transition-colors"
       onclick={onclose}
-      title="Close terminal log"
+      title={locale.t("terminal.close")}
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none"
         stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -206,7 +207,7 @@
   >
     {#if lines.length === 0}
       <span class="text-neutral-600 italic">
-        {activeTab === 'comfyui' ? 'No ComfyUI output yet. Start ComfyUI to see logs.' : 'No app logs yet.'}
+        {activeTab === 'comfyui' ? locale.t("terminal.empty_comfyui") : locale.t("terminal.empty_app")}
       </span>
     {:else}
       {#each lines as line (line + lines.indexOf(line))}

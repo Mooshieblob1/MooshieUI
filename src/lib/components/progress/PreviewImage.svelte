@@ -245,7 +245,7 @@
     >
       <img
         src={previewSrc}
-        alt="Preview"
+        alt={locale.t("preview.alt")}
         class="w-full h-full object-contain"
       />
     </button>

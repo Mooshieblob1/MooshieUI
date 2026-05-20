@@ -135,12 +135,10 @@ async fn main() {
                         }
                         Err(e) => {
                             log::error!("ComfyUI failed to become ready: {}", e);
+                            let port = state.config.read().await.server_port;
                             state.broadcast(
                                 "comfyui:server_error",
-                                serde_json::json!({
-                                    "error": e.to_string(),
-                                    "crashed": e.to_string().contains("exited with"),
-                                }),
+                                crate::comfyui::nodes::server_error_payload(&e.to_string(), port),
                             );
                         }
                     }

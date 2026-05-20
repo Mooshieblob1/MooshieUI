@@ -1,4 +1,5 @@
 import { isBrowserMode, authHeaders } from "../utils/ipc.js";
+import { locale } from "./locale.svelte.js";
 
 export interface ModelRequest {
   id: string;
@@ -71,7 +72,7 @@ class ModelRequestsStore {
 
   async addRequest(payload: AddModelRequestPayload) {
     if (!isBrowserMode) {
-      this.showToast("Model requests are only available in browser mode.", "error");
+      this.showToast(locale.t("model_requests.browser_only"), "error");
       return null;
     }
     try {
@@ -84,7 +85,7 @@ class ModelRequestsStore {
       if (!resp.ok) {
         throw new Error(data.error ?? "Failed to submit request");
       }
-      this.showToast(`Model "${payload.model_name}" requested for download.`, "success");
+      this.showToast(locale.t("model_requests.requested", { name: payload.model_name }), "success");
       return data.request as ModelRequest;
     } catch (e) {
       this.showToast(String(e), "error");
@@ -107,7 +108,7 @@ class ModelRequestsStore {
       // Update local state
       const idx = this.requests.findIndex((r) => r.id === requestId);
       if (idx !== -1) this.requests[idx] = data.request;
-      this.showToast(`Request approved.`, "success");
+      this.showToast(locale.t("model_requests.approved"), "success");
       return data.request as ModelRequest;
     } catch (e) {
       this.showToast(String(e), "error");
@@ -130,7 +131,7 @@ class ModelRequestsStore {
       // Update local state
       const idx = this.requests.findIndex((r) => r.id === requestId);
       if (idx !== -1) this.requests[idx] = data.request;
-      this.showToast(`Request denied.`, "info");
+      this.showToast(locale.t("model_requests.denied"), "info");
       return data.request as ModelRequest;
     } catch (e) {
       this.showToast(String(e), "error");

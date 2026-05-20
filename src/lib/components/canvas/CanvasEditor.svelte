@@ -62,7 +62,7 @@
               {#if progress.displayImage}
                 <img
                   src={progress.displayImage}
-                  alt="Inpainting generation preview"
+                  alt={locale.t("canvas.inpaint_preview_alt")}
                   class="w-full h-full object-contain"
                 />
               {:else}

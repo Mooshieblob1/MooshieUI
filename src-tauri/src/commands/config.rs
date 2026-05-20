@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::config::{save_config, AppConfig};
+use crate::config::{normalize_config_fields, save_config, AppConfig};
 use crate::error::AppError;
 use crate::state::AppState;
 use crate::webserver;
@@ -16,8 +16,9 @@ pub async fn get_config(state: State<'_, Arc<AppState>>) -> Result<AppConfig, Ap
 #[tauri::command]
 pub async fn update_config(
     state: State<'_, Arc<AppState>>,
-    config: AppConfig,
+    mut config: AppConfig,
 ) -> Result<(), AppError> {
+    normalize_config_fields(&mut config);
     save_config(&config).map_err(AppError::Other)?;
     let mut current = state.config.write().await;
     *current = config;

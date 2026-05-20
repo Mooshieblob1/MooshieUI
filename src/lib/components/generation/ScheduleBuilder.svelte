@@ -1,5 +1,6 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
 
   type Mode = "fromto" | "from" | "to" | "range";
 
@@ -22,7 +23,7 @@
   }
 
   function fmt(v: number): string {
-    return clamp01(v).toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+    return locale.formatDecimalTrimmed(clamp01(v), 2);
   }
 
   /**
@@ -66,17 +67,21 @@
 
   const description = $derived.by(() => {
     if (mode === "fromto") {
-      return `"before" is applied 0%→${Math.round(clamp01(swapPivot) * 100)}%, then "after" ${Math.round(clamp01(swapPivot) * 100)}%→100%.`;
+      const pivot = String(Math.round(clamp01(swapPivot) * 100));
+      return locale.t("schedule.desc_fromto", { pivot });
     }
     if (mode === "from") {
-      return `Text is applied from ${Math.round(clamp01(schedStart) * 100)}% of steps onward.`;
+      return locale.t("schedule.desc_from", { start: String(Math.round(clamp01(schedStart) * 100)) });
     }
     if (mode === "to") {
-      return `Text is applied from 0% up to ${Math.round(clamp01(schedEnd) * 100)}% of steps.`;
+      return locale.t("schedule.desc_to", { end: String(Math.round(clamp01(schedEnd) * 100)) });
     }
     const lo = Math.min(schedStart, schedEnd);
     const hi = Math.max(schedStart, schedEnd);
-    return `Text is applied from ${Math.round(clamp01(lo) * 100)}% to ${Math.round(clamp01(hi) * 100)}% of steps.`;
+    return locale.t("schedule.desc_range", {
+      start: String(Math.round(clamp01(lo) * 100)),
+      end: String(Math.round(clamp01(hi) * 100)),
+    });
   });
 
   let copied = $state(false);
@@ -107,19 +112,17 @@
 
 <div class="flex h-full flex-col overflow-y-auto px-3 py-2 text-neutral-200">
   <div class="mb-3">
-    <h2 class="text-sm font-semibold text-neutral-100">Prompt Scheduling</h2>
-    <p class="text-[11px] text-neutral-500">
-      Build a timestep-scheduled tag without remembering the syntax. Pivot values are fractions of total steps (0 = start, 1 = end).
-    </p>
+    <h2 class="text-sm font-semibold text-neutral-100">{locale.t("bottom_panel.tab.schedule")}</h2>
+    <p class="text-[11px] text-neutral-500">{locale.t("schedule.intro")}</p>
   </div>
 
   <!-- Mode tabs -->
   <div class="mb-3 flex flex-wrap gap-1">
     {#each [
-      { id: "fromto", label: "Swap (fromto)", hint: "SwarmUI" },
-      { id: "from", label: "From", hint: "late-stage" },
-      { id: "to", label: "To", hint: "early-stage" },
-      { id: "range", label: "Range", hint: "window" },
+      { id: "fromto", label: locale.t("schedule.mode_swap"), hint: locale.t("schedule.mode_swap_hint") },
+      { id: "from", label: locale.t("schedule.mode_from"), hint: locale.t("schedule.mode_from_hint") },
+      { id: "to", label: locale.t("schedule.mode_to"), hint: locale.t("schedule.mode_to_hint") },
+      { id: "range", label: locale.t("schedule.mode_range"), hint: locale.t("schedule.mode_range_hint") },
     ] as m (m.id)}
       <button
         type="button"
@@ -136,32 +139,30 @@
 
   {#if mode === "fromto"}
     <section class="mb-3 space-y-2 rounded-lg border border-neutral-800 bg-neutral-950/50 p-3">
-      <p class="text-[11px] text-neutral-400">
-        Render "before" for the first portion of the schedule, then swap to "after".
-      </p>
+      <p class="text-[11px] text-neutral-400">{locale.t("schedule.swap_desc")}</p>
       <div>
-        <label for="sch-swap-before" class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">Before</label>
+        <label for="sch-swap-before" class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("schedule.before")}</label>
         <input
           id="sch-swap-before"
           type="text"
           bind:value={swapBefore}
-          placeholder="e.g. a photo of a cat"
+          placeholder={locale.t("schedule.before_placeholder")}
           class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
         />
       </div>
       <div>
-        <label for="sch-swap-after" class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">After</label>
+        <label for="sch-swap-after" class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("schedule.after")}</label>
         <input
           id="sch-swap-after"
           type="text"
           bind:value={swapAfter}
-          placeholder="e.g. a photo of a dog"
+          placeholder={locale.t("schedule.after_placeholder")}
           class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
         />
       </div>
       <div class="flex items-center gap-3">
         <label class="flex flex-1 items-center gap-2 text-[11px] text-neutral-400">
-          <span class="w-14 shrink-0">Pivot</span>
+          <span class="w-14 shrink-0">{locale.t("schedule.pivot")}</span>
           <input
             type="range"
             min="0"
@@ -173,7 +174,7 @@
           <span class="w-10 shrink-0 text-right font-mono text-[11px] text-neutral-300">{fmt(swapPivot)}</span>
         </label>
         <label class="flex items-center gap-1 text-[11px] text-neutral-400">
-          Sep
+          {locale.t("schedule.sep")}
           <select
             bind:value={swapSeparator}
             class="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-1 text-[11px] text-neutral-200 focus:border-indigo-500 focus:outline-none"
@@ -188,35 +189,35 @@
   {:else}
     <section class="mb-3 space-y-2 rounded-lg border border-neutral-800 bg-neutral-950/50 p-3">
       <div>
-        <label for="sch-text" class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">Text</label>
+        <label for="sch-text" class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("schedule.text")}</label>
         <input
           id="sch-text"
           type="text"
           bind:value={schedText}
-          placeholder="the tags to schedule"
+          placeholder={locale.t("schedule.text_placeholder")}
           class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
         />
       </div>
       {#if mode === "from"}
         <label class="flex items-center gap-2 text-[11px] text-neutral-400">
-          <span class="w-14 shrink-0">Start</span>
+          <span class="w-14 shrink-0">{locale.t("schedule.start")}</span>
           <input type="range" min="0" max="1" step="0.05" bind:value={schedStart} class="flex-1 accent-indigo-500" />
           <span class="w-10 shrink-0 text-right font-mono text-[11px] text-neutral-300">{fmt(schedStart)}</span>
         </label>
       {:else if mode === "to"}
         <label class="flex items-center gap-2 text-[11px] text-neutral-400">
-          <span class="w-14 shrink-0">End</span>
+          <span class="w-14 shrink-0">{locale.t("schedule.end")}</span>
           <input type="range" min="0" max="1" step="0.05" bind:value={schedEnd} class="flex-1 accent-indigo-500" />
           <span class="w-10 shrink-0 text-right font-mono text-[11px] text-neutral-300">{fmt(schedEnd)}</span>
         </label>
       {:else if mode === "range"}
         <label class="flex items-center gap-2 text-[11px] text-neutral-400">
-          <span class="w-14 shrink-0">Start</span>
+          <span class="w-14 shrink-0">{locale.t("schedule.start")}</span>
           <input type="range" min="0" max="1" step="0.05" bind:value={schedStart} class="flex-1 accent-indigo-500" />
           <span class="w-10 shrink-0 text-right font-mono text-[11px] text-neutral-300">{fmt(schedStart)}</span>
         </label>
         <label class="flex items-center gap-2 text-[11px] text-neutral-400">
-          <span class="w-14 shrink-0">End</span>
+          <span class="w-14 shrink-0">{locale.t("schedule.end")}</span>
           <input type="range" min="0" max="1" step="0.05" bind:value={schedEnd} class="flex-1 accent-indigo-500" />
           <span class="w-10 shrink-0 text-right font-mono text-[11px] text-neutral-300">{fmt(schedEnd)}</span>
         </label>
@@ -227,7 +228,7 @@
   <!-- Preview -->
   <section class="mb-3 rounded-lg border border-neutral-800 bg-neutral-950/70 p-3">
     <div class="mb-1 flex items-center justify-between">
-      <h3 class="text-[10px] uppercase tracking-wide text-neutral-500">Preview</h3>
+      <h3 class="text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("schedule.preview")}</h3>
       <span class="text-[10px] text-neutral-500">{description}</span>
     </div>
     {#if output}
@@ -235,7 +236,7 @@
         {output}
       </code>
     {:else}
-      <p class="text-[11px] italic text-neutral-600">Fill in the fields above to see the generated tag.</p>
+      <p class="text-[11px] italic text-neutral-600">{locale.t("schedule.preview_empty")}</p>
     {/if}
   </section>
 
@@ -246,42 +247,42 @@
       class="rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:border-indigo-500 disabled:opacity-40 disabled:hover:border-neutral-700"
       onclick={() => appendToPrompt("positive")}
       disabled={!output}
-    >+ Append to positive</button>
+    >{locale.t("schedule.append_positive")}</button>
     <button
       type="button"
       class="rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:border-indigo-500 disabled:opacity-40 disabled:hover:border-neutral-700"
       onclick={() => appendToPrompt("negative")}
       disabled={!output}
-    >+ Append to negative</button>
+    >{locale.t("schedule.append_negative")}</button>
     <button
       type="button"
       class="rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:border-indigo-500 disabled:opacity-40 disabled:hover:border-neutral-700"
       onclick={copyToClipboard}
       disabled={!output}
     >
-      {copied ? "✓ Copied" : "Copy"}
+      {copied ? locale.t("schedule.copied") : locale.t("common.copy")}
     </button>
   </div>
 
   <!-- Cheat-sheet -->
   <details class="mt-2 rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 text-[11px] text-neutral-400">
-    <summary class="cursor-pointer text-neutral-300">Syntax reference</summary>
+    <summary class="cursor-pointer text-neutral-300">{locale.t("schedule.syntax_reference")}</summary>
     <dl class="mt-2 space-y-1.5 font-mono text-[11px]">
       <div>
         <dt class="text-indigo-300">&lt;fromto[N]:A || B&gt;</dt>
-        <dd class="text-neutral-400">SwarmUI — render A for 0→N, swap to B for N→1.</dd>
+        <dd class="text-neutral-400">{locale.t("schedule.syntax_fromto")}</dd>
       </div>
       <div>
         <dt class="text-indigo-300">&lt;from:N&gt;text&lt;/from&gt;</dt>
-        <dd class="text-neutral-400">MooshieUI — apply text from step N to end.</dd>
+        <dd class="text-neutral-400">{locale.t("schedule.syntax_from")}</dd>
       </div>
       <div>
         <dt class="text-indigo-300">&lt;to:N&gt;text&lt;/to&gt;</dt>
-        <dd class="text-neutral-400">MooshieUI — apply text from start to step N.</dd>
+        <dd class="text-neutral-400">{locale.t("schedule.syntax_to")}</dd>
       </div>
       <div>
         <dt class="text-indigo-300">&lt;range:A:B&gt;text&lt;/range&gt;</dt>
-        <dd class="text-neutral-400">MooshieUI — apply text only between A and B.</dd>
+        <dd class="text-neutral-400">{locale.t("schedule.syntax_range")}</dd>
       </div>
     </dl>
   </details>

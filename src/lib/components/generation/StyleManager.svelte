@@ -5,6 +5,7 @@
   import StyleEditor from "./StyleEditor.svelte";
   import PresetEditor from "./PresetEditor.svelte";
   import PresetActivationModal from "./PresetActivationModal.svelte";
+  import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
     onclose?: () => void;
@@ -30,26 +31,26 @@
   let fileInput: HTMLInputElement | null = $state(null);
 
   function createStyle() {
-    const name = newName.trim() || `Style ${styles.styles.length + 1}`;
+    const name = newName.trim() || locale.t("styles.manager.default_style_name", { n: String(styles.styles.length + 1) });
     const created = styles.create(name);
     newName = "";
     editingId = created.id;
   }
 
   function confirmDelete(style: ArtistStyle) {
-    if (!confirm(`Delete "${style.name}"? This cannot be undone.`)) return;
+    if (!confirm(locale.t("styles.manager.delete_confirm", { name: style.name }))) return;
     styles.remove(style.id);
   }
 
   function createPreset() {
-    const name = newPresetName.trim() || `Preset ${promptPresets.presets.length + 1}`;
+    const name = newPresetName.trim() || locale.t("styles.manager.default_preset_name", { n: String(promptPresets.presets.length + 1) });
     const created = promptPresets.create(name);
     newPresetName = "";
     editingPresetId = created.id;
   }
 
   function confirmDeletePreset(preset: PromptPreset) {
-    if (!confirm(`Delete "${preset.name}"? This cannot be undone.`)) return;
+    if (!confirm(locale.t("styles.manager.delete_confirm", { name: preset.name }))) return;
     promptPresets.remove(preset.id);
   }
 
@@ -201,14 +202,10 @@
     <div class="mb-3 flex items-start justify-between gap-3">
       <div>
         <h2 class="text-sm font-semibold text-neutral-100">
-          {activeTab === "styles" ? "Artist Styles" : "Prompt Presets"}
+          {activeTab === "styles" ? locale.t("bottom_panel.tab.styles") : locale.t("styles.manager.title_presets")}
         </h2>
         <p class="text-[11px] text-neutral-500">
-          {#if activeTab === "styles"}
-            Bundle artists with per-tag and overall weights. Active styles inject their tags into generations without touching your prompt textbox.
-          {:else}
-            Store reusable prompt fragments. On activation, choose whether to prepend, append, or use as a random or ordered wildcard.
-          {/if}
+          {activeTab === "styles" ? locale.t("styles.manager.desc_styles") : locale.t("styles.manager.desc_presets")}
         </p>
       </div>
     </div>
@@ -220,14 +217,14 @@
         class="px-3 py-1.5 text-xs transition-colors border-b-2 {activeTab === 'styles' ? 'border-indigo-500 text-neutral-100' : 'border-transparent text-neutral-500 hover:text-neutral-300'}"
         onclick={() => (activeTab = "styles")}
       >
-        ✦ Styles <span class="text-[10px] text-neutral-500">({styles.styles.length})</span>
+        {locale.t("styles.manager.tab_styles")} <span class="text-[10px] text-neutral-500">({styles.styles.length})</span>
       </button>
       <button
         type="button"
         class="px-3 py-1.5 text-xs transition-colors border-b-2 {activeTab === 'presets' ? 'border-indigo-500 text-neutral-100' : 'border-transparent text-neutral-500 hover:text-neutral-300'}"
         onclick={() => (activeTab = "presets")}
       >
-        ⚡ Presets <span class="text-[10px] text-neutral-500">({promptPresets.presets.length})</span>
+        {locale.t("styles.manager.tab_presets")} <span class="text-[10px] text-neutral-500">({promptPresets.presets.length})</span>
       </button>
     </div>
 
@@ -235,13 +232,13 @@
     <!-- Create -->
     <section class="mb-5 flex items-end gap-2 rounded-lg border border-neutral-800 bg-neutral-950/50 p-2">
       <div class="flex-1">
-        <label for="sty-mgr-new-name" class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">New style</label>
+        <label for="sty-mgr-new-name" class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("styles.manager.new_style")}</label>
         <input
           id="sty-mgr-new-name"
           type="text"
           bind:value={newName}
           onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); createStyle(); } }}
-          placeholder="Name (optional)"
+          placeholder={locale.t("styles.manager.name_optional")}
           class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
         />
       </div>
@@ -249,14 +246,14 @@
         type="button"
         class="rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
         onclick={createStyle}
-      >+ Create</button>
+      >{locale.t("styles.manager.create_btn")}</button>
     </section>
 
     <!-- List -->
     <section class="mb-5">
       {#if styles.styles.length === 0}
         <p class="rounded border border-dashed border-neutral-800 bg-neutral-950/50 p-4 text-center text-[11px] text-neutral-500">
-          You haven't created any styles yet.
+          {locale.t("styles.manager.empty_styles")}
         </p>
       {:else}
         <ul class="space-y-2">
@@ -267,18 +264,18 @@
                 {#if style.thumbnail}
                   <img src={style.thumbnail} alt="" class="h-full w-full object-cover" />
                 {:else}
-                  <div class="flex h-full w-full items-center justify-center text-[9px] text-neutral-600">no thumb</div>
+                  <div class="flex h-full w-full items-center justify-center text-[9px] text-neutral-600">{locale.t("styles.manager.no_thumb")}</div>
                 {/if}
               </div>
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2">
                   <p class="truncate text-sm text-neutral-100">{style.name}</p>
                   {#if active}
-                    <span class="shrink-0 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-indigo-300">active</span>
+                    <span class="shrink-0 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-indigo-300">{locale.t("styles.manager.active")}</span>
                   {/if}
                 </div>
                 <p class="truncate text-[11px] text-neutral-500">
-                  {style.artists.length} artist{style.artists.length === 1 ? "" : "s"} · overall ×{style.overallWeight.toFixed(2)}
+                  {style.artists.length === 1 ? locale.t("styles.manager.artists_count", { count: String(style.artists.length) }) : locale.t("styles.manager.artists_count_plural", { count: String(style.artists.length) })} · {locale.t("styles.manager.overall_weight", { weight: locale.formatDecimal(style.overallWeight, 2) })}
                 </p>
               </div>
               <div class="flex shrink-0 items-center gap-1">
@@ -286,32 +283,32 @@
                   type="button"
                   class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] {active ? 'text-indigo-300 hover:text-neutral-200' : 'text-neutral-300 hover:text-indigo-200'}"
                   onclick={() => styles.toggleActive(style.id)}
-                  title={active ? "Deactivate" : "Activate"}
-                >{active ? "Deactivate" : "Activate"}</button>
+                  title={active ? locale.t("styles.manager.deactivate") : locale.t("styles.manager.activate")}
+                >{active ? locale.t("styles.manager.deactivate") : locale.t("styles.manager.activate")}</button>
                 <button
                   type="button"
                   class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:text-indigo-200"
                   onclick={() => (editingId = style.id)}
-                >Edit</button>
+                >{locale.t("common.edit")}</button>
                 <button
                   type="button"
                   class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:text-neutral-200"
                   onclick={() => styles.duplicate(style.id)}
-                  title="Duplicate"
+                  title={locale.t("common.duplicate")}
                 >⧉</button>
                 <button
                   type="button"
                   class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:text-indigo-200"
                   onclick={() => exportStyle(style.id)}
-                  title="Export as .txt"
-                  aria-label={`Export ${style.name} as .txt`}
+                  title={locale.t("styles.manager.export_txt")}
+                  aria-label={locale.t("styles.manager.export_aria", { name: style.name })}
                 >↓</button>
                 <button
                   type="button"
                   class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:bg-red-500/10 hover:text-red-300"
                   onclick={() => confirmDelete(style)}
-                  title="Delete"
-                  aria-label={`Delete ${style.name}`}
+                  title={locale.t("common.delete")}
+                  aria-label={locale.t("styles.manager.delete_aria", { name: style.name })}
                 >✕</button>
               </div>
             </li>
@@ -323,13 +320,13 @@
     <!-- Presets: create -->
     <section class="mb-5 flex items-end gap-2 rounded-lg border border-neutral-800 bg-neutral-950/50 p-2">
       <div class="flex-1">
-        <label for="pst-mgr-new-name" class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">New preset</label>
+        <label for="pst-mgr-new-name" class="mb-1 block text-[10px] uppercase tracking-wide text-neutral-500">{locale.t("styles.manager.new_preset")}</label>
         <input
           id="pst-mgr-new-name"
           type="text"
           bind:value={newPresetName}
           onkeydown={(e) => { if (e.key === "Enter") { e.preventDefault(); createPreset(); } }}
-          placeholder="Name (optional)"
+          placeholder={locale.t("styles.manager.name_optional")}
           class="w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-sm text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
         />
       </div>
@@ -337,14 +334,14 @@
         type="button"
         class="rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
         onclick={createPreset}
-      >+ Create</button>
+      >{locale.t("styles.manager.create_btn")}</button>
     </section>
 
     <!-- Presets: list -->
     <section class="mb-5">
       {#if promptPresets.presets.length === 0}
         <p class="rounded border border-dashed border-neutral-800 bg-neutral-950/50 p-4 text-center text-[11px] text-neutral-500">
-          No presets yet. Create one to store a reusable prompt fragment or a wildcard list.
+          {locale.t("styles.manager.empty_presets")}
         </p>
       {:else}
         <ul class="space-y-2">
@@ -367,11 +364,11 @@
                     {preset.content || "(empty)"}
                   </p>
                   <p class="flex items-center gap-2 text-[10px] text-neutral-600">
-                    <span>{choiceCount} wildcard option{choiceCount === 1 ? "" : "s"}</span>
+                    <span>{choiceCount === 1 ? locale.t("styles.manager.wildcard_options", { count: String(choiceCount) }) : locale.t("styles.manager.wildcard_options_plural", { count: String(choiceCount) })}</span>
                     <button
                       type="button"
                       class="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 font-mono text-[10px] text-neutral-400 hover:border-indigo-500/40 hover:text-indigo-200"
-                      title="Inline token — click to copy"
+                      title={locale.t("styles.manager.inline_token_title")}
                       onclick={() => navigator.clipboard?.writeText(`@preset:${presetSlug(preset.name)}`)}
                     >@preset:{presetSlug(preset.name)}</button>
                   </p>
@@ -381,40 +378,40 @@
                     type="button"
                     class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] {active ? 'text-indigo-300 hover:text-neutral-200' : 'text-neutral-300 hover:text-indigo-200'}"
                     onclick={() => onPresetActivateClick(preset)}
-                    title={active ? "Deactivate" : "Activate…"}
-                  >{active ? "Deactivate" : "Activate…"}</button>
+                    title={active ? locale.t("styles.manager.deactivate") : locale.t("styles.manager.activate_ellipsis")}
+                  >{active ? locale.t("styles.manager.deactivate") : locale.t("styles.manager.activate_ellipsis")}</button>
                   {#if active && mode}
                     <button
                       type="button"
                       class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:text-indigo-200"
                       onclick={() => (activatingPresetId = preset.id)}
-                      title="Change mode"
-                    >↻ mode</button>
+                      title={locale.t("styles.manager.change_mode")}
+                    >{locale.t("styles.manager.mode_btn")}</button>
                   {/if}
                   <button
                     type="button"
                     class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:text-indigo-200"
                     onclick={() => (editingPresetId = preset.id)}
-                  >Edit</button>
+                  >{locale.t("common.edit")}</button>
                   <button
                     type="button"
                     class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:text-neutral-200"
                     onclick={() => promptPresets.duplicate(preset.id)}
-                    title="Duplicate"
+                    title={locale.t("common.duplicate")}
                   >⧉</button>
                   <button
                     type="button"
                     class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:text-indigo-200"
                     onclick={() => exportPreset(preset.id)}
-                    title="Export as .txt"
-                    aria-label={`Export ${preset.name} as .txt`}
+                    title={locale.t("styles.manager.export_txt")}
+                    aria-label={locale.t("styles.manager.export_aria", { name: preset.name })}
                   >↓</button>
                   <button
                     type="button"
                     class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:bg-red-500/10 hover:text-red-300"
                     onclick={() => confirmDeletePreset(preset)}
-                    title="Delete"
-                    aria-label={`Delete ${preset.name}`}
+                    title={locale.t("common.delete")}
+                    aria-label={locale.t("styles.manager.delete_aria", { name: preset.name })}
                   >✕</button>
                 </div>
               </div>
@@ -428,14 +425,14 @@
     <!-- Import / export -->
     <section class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2">
       <h3 class="text-[10px] uppercase tracking-wide text-neutral-500">
-        Import / export ({activeTab === "styles" ? "styles" : "presets"})
+        {locale.t("styles.manager.import_export", { kind: activeTab === "styles" ? "styles" : "presets" })}
       </h3>
       <div class="flex flex-wrap items-center gap-2">
         <button
           type="button"
           class="rounded border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:border-indigo-500"
           onclick={importTxt}
-        >Import .txt…</button>
+        >{locale.t("styles.manager.import_txt")}</button>
         <input
           bind:this={fileInput}
           type="file"
@@ -446,12 +443,8 @@
         />
       </div>
       <p class="text-[10px] text-neutral-500">
-        {#if activeTab === "styles"}
-          Plain text: one artist per line as <code class="font-mono">tag</code> or <code class="font-mono">tag:weight</code>. Lines starting with <code class="font-mono">#</code> are ignored. Filename becomes the style name.
-        {:else}
-          Plain text: filename becomes the preset name; file contents are used verbatim. For wildcard modes, one line per choice (commas within a line stay grouped).
-        {/if}
-        Use the <strong>Export</strong> button on each {activeTab === "styles" ? "style" : "preset"} to download it.
+        {activeTab === "styles" ? locale.t("styles.manager.help_styles") : locale.t("styles.manager.help_presets")}
+        {locale.t("styles.manager.help_export", { kind: activeTab === "styles" ? "style" : "preset" })}
       </p>
       {#if importStatus}
         <p class="text-[11px] text-emerald-400">{importStatus}</p>

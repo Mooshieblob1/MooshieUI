@@ -1,6 +1,11 @@
 <script lang="ts">
   import { notifications } from "../../stores/notifications.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import {
+    formatNotificationTime,
+    notificationBody,
+    notificationTitle,
+  } from "../../utils/notificationI18n.js";
 
   function kindIcon(kind: string): string {
     switch (kind) {
@@ -20,18 +25,6 @@
     }
   }
 
-  function formatTime(iso: string): string {
-    const diff = Date.now() - new Date(iso).getTime();
-    if (diff < 0 || isNaN(diff)) return "";
-    const sec = Math.floor(diff / 1000);
-    if (sec < 60) return "Just now";
-    const min = Math.floor(sec / 60);
-    if (min < 60) return `${min}m ago`;
-    const hrs = Math.floor(min / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    const days = Math.floor(hrs / 24);
-    return `${days}d ago`;
-  }
 </script>
 
 <div class="relative mx-auto">
@@ -111,11 +104,11 @@
               >
                 <span class="text-xs mt-0.5 {kindColor(notif.kind)}">{kindIcon(notif.kind)}</span>
                 <div class="min-w-0 flex-1">
-                  <p class="text-xs font-medium text-neutral-200 truncate">{notif.title}</p>
-                  {#if notif.body}
-                    <p class="text-[11px] text-neutral-400 mt-0.5 line-clamp-2">{notif.body}</p>
+                  <p class="text-xs font-medium text-neutral-200 truncate">{notificationTitle(notif)}</p>
+                  {#if notificationBody(notif)}
+                    <p class="text-[11px] text-neutral-400 mt-0.5 line-clamp-2">{notificationBody(notif)}</p>
                   {/if}
-                  <p class="text-[10px] text-neutral-600 mt-1">{formatTime(notif.created_at)}</p>
+                  <p class="text-[10px] text-neutral-600 mt-1">{formatNotificationTime(notif.created_at)}</p>
                 </div>
                 {#if !notif.read}
                   <span class="w-2 h-2 rounded-full bg-indigo-400 shrink-0 mt-1.5"></span>

@@ -180,7 +180,7 @@
         />
       </label>
       <label class="block">
-        <span class="text-sm text-neutral-200">CFG: {generation.cfg.toFixed(1)}</span>
+        <span class="text-sm text-neutral-200">CFG: {locale.formatDecimal(generation.cfg, 1)}</span>
         <input
           type="range"
           min="1"

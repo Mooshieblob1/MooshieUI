@@ -214,9 +214,7 @@
 
   function formatCount(n: number | undefined): string {
     if (n == null) return "";
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-    return String(n);
+    return locale.formatCompactCountUpperK(n);
   }
 
   // Resolved data-URL cache: civitai url → "data:image/...;base64,..."

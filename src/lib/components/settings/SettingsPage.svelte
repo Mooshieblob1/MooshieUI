@@ -150,17 +150,12 @@
   let storageError = $state<string | null>(null);
   let storageBusy = $state(false);
 
-  function formatBytes(bytes: number): string {
-    if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
-    return `${(bytes / 1024).toFixed(0)} KB`;
-  }
 
   async function applyStorageLimit() {
     storageBusy = true;
     storageError = null;
     try {
-      const gb = parseFloat(storageInputGB);
+      const gb = locale.parseDecimal(storageInputGB);
       if (isNaN(gb) || gb < 0.1 || gb > 100) {
         storageError = "Enter a value between 0.1 and 100 GB.";
         return;
@@ -869,19 +864,21 @@
   });
 
   const sections = [
-    { key: "connection", label: "Connection", keywords: "server mode url port remote autolaunch" },
-    { key: "appearance", label: "Appearance", keywords: "theme dark light font scale size style presets fooocus" },
-    { key: "performance", label: "Performance", keywords: "vram mode high low normal keep alive close attention backend sage flash" },
-    { key: "quality", label: "Quality Tags", keywords: "quality tags auto masterpiece best quality anima illustrious noobai pony nanosaur positive negative prompt" },
-    { key: "gpu", label: "GPU Workers", keywords: "gpu vram worker backend multi status utilization temperature power nvidia" },
-    { key: "models", label: "Models", keywords: "models manage delete move lora checkpoint vae upscaler controlnet" },
-    { key: "paths", label: "Paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
-    { key: "gallery", label: "Gallery", keywords: "import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview" },
-    { key: "autocomplete", label: "Autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
-    { key: "interrogator", label: "Interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
-    { key: "civitai", label: "CivitAI", keywords: "civitai api key metadata model hub image fetch download authentication" },
-    { key: "queue", label: "Queue", keywords: "queue position pending running cancel clear jobs users order wait" },
-    { key: "about", label: "Help & Updates", keywords: "version update check updates about troubleshooting logs export diagnostic github report issue" },
+    { key: "appMode", labelKey: "settings.sections.app_mode", keywords: "browser app mode desktop native window web switch ui" },
+    { key: "connection", labelKey: "settings.sections.connection", keywords: "server mode url port remote autolaunch" },
+    { key: "appearance", labelKey: "settings.sections.appearance", keywords: "theme dark light font scale size style presets fooocus" },
+    { key: "performance", labelKey: "settings.sections.performance", keywords: "vram mode high low normal keep alive close attention backend sage flash" },
+    { key: "quality", labelKey: "settings.sections.quality", keywords: "quality tags auto masterpiece best quality anima illustrious noobai pony nanosaur positive negative prompt" },
+    { key: "gpu", labelKey: "settings.sections.gpu", keywords: "gpu vram worker backend multi status utilization temperature power nvidia" },
+    { key: "models", labelKey: "settings.sections.models", keywords: "models manage delete move lora checkpoint vae upscaler controlnet" },
+    { key: "modelRequests", labelKey: "settings.sections.model_requests", keywords: "model requests approve deny pending download civitai hub" },
+    { key: "paths", labelKey: "settings.sections.paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
+    { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview" },
+    { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
+    { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
+    { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
+    { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
+    { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates about troubleshooting logs export diagnostic github report issue" },
   ];
 
   function sectionVisible(key: string): boolean {
@@ -889,7 +886,7 @@
     const s = sections.find((sec) => sec.key === key);
     if (!s) return false;
     const q = search.toLowerCase();
-    return s.label.toLowerCase().includes(q) || s.keywords.includes(q);
+    return locale.t(s.labelKey).toLowerCase().includes(q) || s.keywords.includes(q);
   }
 
   // Track original values for restart-needing settings
@@ -1103,18 +1100,18 @@
         </div>
       {:else if config}
         <!-- Browser / App Mode Switch (admin only) -->
-        {#if isAdmin}
+        {#if isAdmin && sectionVisible("appMode")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <div class="p-5 space-y-3">
             <div class="flex items-center justify-between">
               <div>
                 <h3 class="text-sm font-medium text-neutral-200">
-                  {config.browser_mode ? "Web Browser Mode" : "App Mode"}
+                  {config.browser_mode ? locale.t('settings.app_mode.browser_title') : locale.t('settings.app_mode.app_title')}
                 </h3>
                 <p class="text-xs text-neutral-500 mt-0.5">
                   {config.browser_mode
-                    ? "UI runs in your web browser. Switch to use the native app window."
-                    : "UI runs in the native app window. Switch to use your web browser."}
+                    ? locale.t('settings.app_mode.browser_desc')
+                    : locale.t('settings.app_mode.app_desc')}
                 </p>
               </div>
               <button
@@ -1123,22 +1120,22 @@
                   : 'bg-neutral-700 hover:bg-neutral-600 text-neutral-200'}"
                 onclick={switchUiMode}
               >
-                {config.browser_mode ? "Switch to App Mode" : "Switch to Web Browser Mode"}
+                {config.browser_mode ? locale.t('settings.app_mode.switch_to_app') : locale.t('settings.app_mode.switch_to_browser')}
               </button>
             </div>
             {#if switchingMode}
               <p class="text-xs text-amber-400">
                 {config.browser_mode
-                  ? "Switched to app mode. The app window should now be visible — you can close this browser tab."
-                  : "Switching to browser mode..."}
+                  ? locale.t('settings.app_mode.switched_to_app')
+                  : locale.t('settings.app_mode.switching_to_browser')}
               </p>
             {/if}
             {#if config.browser_mode}
               <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
                 <div>
-                  <label class="text-xs text-neutral-300 font-medium">Enable LAN Access</label>
+                  <label class="text-xs text-neutral-300 font-medium">{locale.t('settings.lan.enable')}</label>
                   <p class="text-xs text-neutral-500 mt-0.5">
-                    Allow other devices on your network to access the UI. Requires authentication when enabled.
+                    {locale.t('settings.lan.enable_desc')}
                   </p>
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer">
@@ -1154,13 +1151,13 @@
               {#if config.lan_enabled}
                 <div class="space-y-3 pt-2 border-t border-neutral-800">
                   <p class="text-xs text-amber-400">
-                    Warning: Enabling LAN access exposes the UI to your local network. Add at least one account to require authentication.
+                    {locale.t('settings.lan.warning')}
                   </p>
 
                   <!-- LAN address -->
                   {#if lanAddresses.length > 0}
                     <div class="bg-neutral-800 rounded-lg px-3 py-2">
-                      <p class="text-xs text-neutral-400 mb-1">Access from other devices at:</p>
+                      <p class="text-xs text-neutral-400 mb-1">{locale.t('settings.lan.access_at')}</p>
                       {#each lanAddresses as addr}
                         <p class="text-sm text-indigo-400 font-mono select-all">{addr}</p>
                       {/each}
@@ -1171,25 +1168,25 @@
                   {#if lanAccounts.length > 0}
                     <div class="space-y-2">
                       <div class="flex items-center justify-between">
-                        <p class="text-xs text-neutral-400 font-medium">Accounts</p>
-                        <p class="text-[10px] text-neutral-500">{sortedAccounts.length} of {lanAccounts.length}</p>
+                        <p class="text-xs text-neutral-400 font-medium">{locale.t('settings.lan.accounts')}</p>
+                        <p class="text-[10px] text-neutral-500">{locale.t('settings.lan.accounts_count', { shown: sortedAccounts.length, total: lanAccounts.length })}</p>
                       </div>
 
                       <!-- Search -->
                       <input
                         type="text"
-                        placeholder="Search accounts…"
+                        placeholder={locale.t('settings.lan.search_accounts')}
                         bind:value={accountSearch}
                         class="w-full px-3 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
                       />
 
                       <!-- Sort buttons -->
                       <div class="flex gap-1">
-                        {#each [["name", "Name"], ["joined", "Joined"], ["last_online", "Last Online"]] as [key, label]}
+                        {#each [["name", "settings.lan.sort_name"], ["joined", "settings.lan.sort_joined"], ["last_online", "settings.lan.sort_last_online"]] as [key, labelKey]}
                           <button
                             class="text-[10px] px-2 py-1 rounded cursor-pointer transition-colors {accountSort === key ? 'bg-indigo-600/30 text-indigo-300' : 'bg-neutral-800 text-neutral-400 hover:text-neutral-300'}"
                             onclick={() => { if (accountSort === key) { accountSortAsc = !accountSortAsc; } else { accountSort = key as typeof accountSort; accountSortAsc = true; } }}
-                          >{label} {accountSort === key ? (accountSortAsc ? '↑' : '↓') : ''}</button>
+                          >{locale.t(labelKey)} {accountSort === key ? (accountSortAsc ? '↑' : '↓') : ''}</button>
                         {/each}
                       </div>
 
@@ -1201,21 +1198,21 @@
                               <span class="inline-block w-2 h-2 rounded-full shrink-0 {account.online ? 'bg-green-500' : 'bg-neutral-600'}"></span>
                               <span class="text-sm text-neutral-200 truncate" title={account.username}>{account.username}</span>
                               {#if account.role === "moderator"}
-                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">Mod</span>
+                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">{locale.t('common.role_mod')}</span>
                               {/if}
-                              <span class="text-[10px] text-neutral-500 shrink-0">{formatBytes(account.storage_limit_bytes)}</span>
-                              <span class="text-[10px] text-neutral-500 shrink-0" title={account.created_at ? `Joined: ${new Date(account.created_at).toLocaleDateString()}` : ''}>
+                              <span class="text-[10px] text-neutral-500 shrink-0">{locale.formatBytes(account.storage_limit_bytes)}</span>
+                              <span class="text-[10px] text-neutral-500 shrink-0" title={account.created_at ? locale.t('settings.lan.joined_title', { date: new Date(account.created_at).toLocaleDateString() }) : ''}>
                                 {account.created_at ? relativeTime(account.created_at) : ''}
                               </span>
                               {#if !account.online && account.last_online}
-                                <span class="text-[10px] text-neutral-600 shrink-0" title={`Last online: ${new Date(account.last_online).toLocaleString()}`}>
+                                <span class="text-[10px] text-neutral-600 shrink-0" title={locale.t('settings.lan.last_online_title', { date: locale.formatDateTime(account.last_online) })}>
                                   · {relativeTime(account.last_online)}
                                 </span>
                               {/if}
                             </div>
                             <button
                               class="shrink-0 ml-2 p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
-                              title="Manage {account.username}"
+                              title={locale.t('settings.lan.manage_user', { user: account.username })}
                               onclick={() => { actionsTargetAccount = account; showAccountActionsModal = true; }}
                             >
                               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
@@ -1225,7 +1222,7 @@
                       </div>
                     </div>
                   {:else}
-                    <p class="text-xs text-neutral-500">No accounts yet — anyone on your network can access the UI without authentication.</p>
+                    <p class="text-xs text-neutral-500">{locale.t('settings.lan.no_accounts')}</p>
                   {/if}
 
                   <!-- Add account button -->
@@ -1233,7 +1230,7 @@
                     class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {lanAuthBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}"
                     disabled={lanAuthBusy}
                     onclick={() => { lanNewUser = ''; lanNewPass = ''; lanAuthError = null; showAddAccountModal = true; }}
-                  >+ Add Account</button>
+                  >{locale.t('settings.lan.add_account')}</button>
                 </div>
               {/if}
             {/if}
@@ -1245,29 +1242,29 @@
         {#if canManageServer && !isAdmin && isBrowserMode}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <div class="p-5 space-y-3">
-            <h3 class="text-sm font-medium text-neutral-200">Account Management</h3>
-            <p class="text-xs text-neutral-500">Manage user accounts. You can reset passwords and remove accounts (except admin and moderator accounts).</p>
+            <h3 class="text-sm font-medium text-neutral-200">{locale.t('settings.lan.account_management')}</h3>
+            <p class="text-xs text-neutral-500">{locale.t('settings.lan.account_management_desc')}</p>
 
             {#if lanAccounts.length > 0}
               <div class="space-y-2">
                 <div class="flex items-center justify-between">
-                  <p class="text-xs text-neutral-400 font-medium">Accounts</p>
-                  <p class="text-[10px] text-neutral-500">{sortedAccounts.length} of {lanAccounts.length}</p>
+                  <p class="text-xs text-neutral-400 font-medium">{locale.t('settings.lan.accounts')}</p>
+                  <p class="text-[10px] text-neutral-500">{locale.t('settings.lan.accounts_count', { shown: sortedAccounts.length, total: lanAccounts.length })}</p>
                 </div>
 
                 <input
                   type="text"
-                  placeholder="Search accounts…"
+                  placeholder={locale.t('settings.lan.search_accounts')}
                   bind:value={accountSearch}
                   class="w-full px-3 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
                 />
 
                 <div class="flex gap-1">
-                  {#each [["name", "Name"], ["joined", "Joined"], ["last_online", "Last Online"]] as [key, label]}
+                  {#each [["name", "settings.lan.sort_name"], ["joined", "settings.lan.sort_joined"], ["last_online", "settings.lan.sort_last_online"]] as [key, labelKey]}
                     <button
                       class="text-[10px] px-2 py-1 rounded cursor-pointer transition-colors {accountSort === key ? 'bg-indigo-600/30 text-indigo-300' : 'bg-neutral-800 text-neutral-400 hover:text-neutral-300'}"
                       onclick={() => { if (accountSort === key) { accountSortAsc = !accountSortAsc; } else { accountSort = key as typeof accountSort; accountSortAsc = true; } }}
-                    >{label} {accountSort === key ? (accountSortAsc ? '↑' : '↓') : ''}</button>
+                    >{locale.t(labelKey)} {accountSort === key ? (accountSortAsc ? '↑' : '↓') : ''}</button>
                   {/each}
                 </div>
 
@@ -1278,19 +1275,19 @@
                         <span class="inline-block w-2 h-2 rounded-full shrink-0 {account.online ? 'bg-green-500' : 'bg-neutral-600'}"></span>
                         <span class="text-sm text-neutral-200 truncate" title={account.username}>{account.username}</span>
                         {#if account.role === "moderator"}
-                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">Mod</span>
+                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">{locale.t('common.role_mod')}</span>
                         {/if}
                         {#if account.role === "admin"}
-                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-600/30 text-amber-300 font-medium shrink-0">Admin</span>
+                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-600/30 text-amber-300 font-medium shrink-0">{locale.t('common.role_admin')}</span>
                         {/if}
                         {#if account.role === "user"}
-                          <span class="text-[10px] text-neutral-500 shrink-0">{formatBytes(account.storage_limit_bytes)}</span>
+                          <span class="text-[10px] text-neutral-500 shrink-0">{locale.formatBytes(account.storage_limit_bytes)}</span>
                         {/if}
-                        <span class="text-[10px] text-neutral-500 shrink-0" title={account.created_at ? `Joined: ${new Date(account.created_at).toLocaleDateString()}` : ''}>
+                        <span class="text-[10px] text-neutral-500 shrink-0" title={account.created_at ? locale.t('settings.lan.joined_title', { date: new Date(account.created_at).toLocaleDateString() }) : ''}>
                           {account.created_at ? relativeTime(account.created_at) : ''}
                         </span>
                         {#if !account.online && account.last_online}
-                          <span class="text-[10px] text-neutral-600 shrink-0" title={`Last online: ${new Date(account.last_online).toLocaleString()}`}>
+                          <span class="text-[10px] text-neutral-600 shrink-0" title={locale.t('settings.lan.last_online_title', { date: locale.formatDateTime(account.last_online) })}>
                             · {relativeTime(account.last_online)}
                           </span>
                         {/if}
@@ -1298,7 +1295,7 @@
                       {#if account.role === "user"}
                         <button
                           class="shrink-0 ml-2 p-1 rounded hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
-                          title="Manage {account.username}"
+                          title={locale.t('settings.lan.manage_user', { user: account.username })}
                           onclick={() => { actionsTargetAccount = account; showAccountActionsModal = true; }}
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
@@ -1309,7 +1306,7 @@
                 </div>
               </div>
             {:else}
-              <p class="text-xs text-neutral-500">No accounts found.</p>
+              <p class="text-xs text-neutral-500">{locale.t('settings.lan.no_accounts_found')}</p>
             {/if}
 
             <!-- Add account button (moderators can create accounts too) -->
@@ -1317,7 +1314,7 @@
               class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {lanAuthBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}"
               disabled={lanAuthBusy}
               onclick={() => { lanNewUser = ''; lanNewPass = ''; lanAuthError = null; showAddAccountModal = true; }}
-            >+ Add Account</button>
+            >{locale.t('settings.lan.add_account')}</button>
 
             {#if lanAuthError}
               <p class="text-xs text-red-400 mt-1">{lanAuthError}</p>
@@ -1493,7 +1490,7 @@
                 bind:value={config.server_url}
                 oninput={checkRestartNeeded}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
-                placeholder="http://127.0.0.1:8188"
+                placeholder={locale.t('settings.connection.server_url_placeholder')}
               />
             </div>
             <div>
@@ -1506,6 +1503,17 @@
                 min="1"
                 max="65535"
               />
+            </div>
+            <div>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.network_proxy')}</label>
+              <input
+                type="text"
+                bind:value={config.network_proxy}
+                oninput={checkRestartNeeded}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                placeholder={locale.t('settings.connection.proxy_placeholder')}
+              />
+              <p class="text-xs text-neutral-500 mt-1">{locale.t('settings.connection.network_proxy_desc')}</p>
             </div>
           </div>
           </div>
@@ -1808,7 +1816,7 @@
                   onblur={() => generation.saveSettings()}
                   rows="2"
                   class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
-                  placeholder="masterpiece, best quality, ..."
+                  placeholder={locale.t('settings.prompt.positive_example')}
                 ></textarea>
               </div>
               <div>
@@ -1819,7 +1827,7 @@
                   onblur={() => generation.saveSettings()}
                   rows="2"
                   class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
-                  placeholder="worst quality, low quality, ..."
+                  placeholder={locale.t('settings.prompt.negative_example')}
                 ></textarea>
               </div>
             </div>
@@ -1835,7 +1843,7 @@
                   onblur={() => generation.saveSettings()}
                   rows="2"
                   class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
-                  placeholder="best quality, masterpiece, ..."
+                  placeholder={locale.t('settings.prompt.positive_example')}
                 ></textarea>
               </div>
               <div>
@@ -1846,7 +1854,7 @@
                   onblur={() => generation.saveSettings()}
                   rows="2"
                   class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
-                  placeholder="worst quality, bad quality, ..."
+                  placeholder={locale.t('settings.prompt.negative_bad_example')}
                 ></textarea>
               </div>
             </div>
@@ -1862,7 +1870,7 @@
                   onblur={() => generation.saveSettings()}
                   rows="2"
                   class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
-                  placeholder="best quality, masterpiece, ..."
+                  placeholder={locale.t('settings.prompt.positive_example')}
                 ></textarea>
               </div>
               <div>
@@ -1873,7 +1881,7 @@
                   onblur={() => generation.saveSettings()}
                   rows="2"
                   class="w-full mt-0.5 px-2 py-1.5 bg-neutral-900 border border-neutral-700 rounded-lg text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-indigo-500/50 resize-y"
-                  placeholder="worst quality, low quality, ..."
+                  placeholder={locale.t('settings.prompt.negative_example')}
                 ></textarea>
               </div>
             </div>
@@ -1892,7 +1900,7 @@
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.gpu = !collapsed.gpu)}
           >
-            GPU Workers
+            {locale.t('settings.sections.gpu')}
             <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.gpu ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
 
@@ -1934,13 +1942,13 @@
         {/if}
 
         <!-- Model Requests (mods/admins) -->
-        {#if canManageServer && sectionVisible("models")}
+        {#if canManageServer && sectionVisible("modelRequests")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <button
             class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
             onclick={() => (collapsed.modelRequests = !collapsed.modelRequests)}
           >
-            Model Requests
+            {locale.t('settings.sections.model_requests')}
             <svg class="w-4 h-4 text-neutral-500 transition-transform {collapsed.modelRequests ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
 
@@ -2026,7 +2034,7 @@
               type="text"
               bind:value={config.comfyui_path}
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
-              placeholder="/path/to/ComfyUI"
+              placeholder={locale.t('settings.paths.comfyui_placeholder')}
             />
           </div>
 
@@ -2036,7 +2044,7 @@
               type="text"
               bind:value={config.venv_path}
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
-              placeholder="/path/to/venv"
+              placeholder={locale.t('settings.paths.venv_placeholder')}
             />
           </div>
 
@@ -2146,7 +2154,7 @@
                 }
               }}
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
-              placeholder="--fp16 --force-channels-last"
+              placeholder={locale.t('settings.paths.extra_args_placeholder')}
             />
             <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.paths.extra_args_desc')}</p>
           </div>
@@ -2388,15 +2396,15 @@
               <div class="flex items-center gap-2 text-sm text-neutral-300">
                 {#if autocomplete.sourceMode === "builtin"}
                   <span class="inline-block w-2 h-2 rounded-full bg-indigo-400"></span>
-                  {locale.t('settings.autocomplete.source_builtin')} ({autocomplete.tags.length.toLocaleString()} {locale.t('settings.autocomplete.tags_count')})
+                  {locale.t('settings.autocomplete.source_builtin')} ({locale.formatInteger(autocomplete.tags.length)} {locale.t('settings.autocomplete.tags_count')})
                 {:else if autocomplete.sourceMode === "url"}
                   <span class="inline-block w-2 h-2 rounded-full bg-green-400"></span>
                   URL: <span class="text-neutral-400 truncate max-w-xs">{autocomplete.sourceUrl}</span>
-                  ({autocomplete.tags.length.toLocaleString()} tags)
+                  ({locale.formatInteger(autocomplete.tags.length)} tags)
                 {:else if autocomplete.sourceMode === "file"}
                   <span class="inline-block w-2 h-2 rounded-full bg-green-400"></span>
                   File: {autocomplete.sourceFileName}
-                  ({autocomplete.tags.length.toLocaleString()} tags)
+                  ({locale.formatInteger(autocomplete.tags.length)} tags)
                 {/if}
               </div>
             </div>
@@ -2519,7 +2527,7 @@
             <div>
               <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
                 {locale.t('settings.interrogator.general_threshold')}
-                <span class="text-neutral-300">{config.interrogator_general_threshold.toFixed(2)}</span>
+                <span class="text-neutral-300">{locale.formatDecimal(config.interrogator_general_threshold, 2)}</span>
               </label>
               <input
                 type="range"
@@ -2539,7 +2547,7 @@
             <div>
               <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
                 {locale.t('settings.interrogator.character_threshold')}
-                <span class="text-neutral-300">{config.interrogator_character_threshold.toFixed(2)}</span>
+                <span class="text-neutral-300">{locale.formatDecimal(config.interrogator_character_threshold, 2)}</span>
               </label>
               <input
                 type="range"
@@ -2603,7 +2611,7 @@
         {#if isBrowserMode && !isAdmin}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <div class="p-5 space-y-3">
-            <h3 class="text-sm font-medium text-neutral-200">Account</h3>
+            <h3 class="text-sm font-medium text-neutral-200">{locale.t('settings.account')}</h3>
             <button
               class="w-full py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700"
               onclick={() => {
@@ -2612,26 +2620,26 @@
                 cpSuccess = false;
               }}
             >
-              {showChangePasswordForm ? "Cancel" : "Change Password"}
+              {showChangePasswordForm ? locale.t('common.cancel') : locale.t('auth.change_password')}
             </button>
             {#if showChangePasswordForm}
             <div class="space-y-2">
               <input
                 type="password"
                 bind:value={cpCurrentPass}
-                placeholder="Current password"
+                placeholder={locale.t('settings.lan.current_password')}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
               />
               <input
                 type="password"
                 bind:value={cpNewPass1}
-                placeholder="New password (4+ characters)"
+                placeholder={locale.t('auth.new_password_placeholder')}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
               />
               <input
                 type="password"
                 bind:value={cpNewPass2}
-                placeholder="Confirm new password"
+                placeholder={locale.t('auth.confirm_password_placeholder')}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
                 onkeydown={(e) => { if (e.key === "Enter") changeOwnPassword(); }}
               />
@@ -2639,14 +2647,14 @@
                 <p class="text-xs text-red-400">{cpError}</p>
               {/if}
               {#if cpSuccess}
-                <p class="text-xs text-green-400">Password changed successfully.</p>
+                <p class="text-xs text-green-400">{locale.t('settings.lan.password_changed')}</p>
               {/if}
               <button
                 class="w-full py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {cpBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}"
                 disabled={cpBusy}
                 onclick={changeOwnPassword}
               >
-                {cpBusy ? "Saving..." : "Confirm Change"}
+                {cpBusy ? locale.t('common.saving') : locale.t('auth.confirm_change')}
               </button>
             </div>
             {/if}
@@ -2849,7 +2857,7 @@
             class="w-full flex items-center justify-between px-4 py-3 border-b border-amber-800/30 text-left"
             onclick={() => (collapsed.developer = !collapsed.developer)}
           >
-            <span class="text-[10px] font-semibold tracking-widest text-amber-400 uppercase">Developer</span>
+            <span class="text-[10px] font-semibold tracking-widest text-amber-400 uppercase">{locale.t('settings.developer.title')}</span>
             <svg class="w-4 h-4 text-amber-600 transition-transform {collapsed.developer ? '-rotate-90' : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           {#if !collapsed.developer}
@@ -2861,8 +2869,8 @@
                 bind:checked={generation.devMode}
               />
               <div>
-                <p class="text-xs font-medium text-neutral-200">Force-show checkpoints tab</p>
-                <p class="text-[11px] text-neutral-500 mt-0.5">Shows the Checkpoints tab in the bottom panel even when fewer than 10 checkpoints are installed.</p>
+                <p class="text-xs font-medium text-neutral-200">{locale.t('settings.developer.force_checkpoints')}</p>
+                <p class="text-[11px] text-neutral-500 mt-0.5">{locale.t('settings.developer.force_checkpoints_desc')}</p>
               </div>
             </label>
             <label class="flex items-center gap-3 cursor-pointer select-none">
@@ -2872,8 +2880,8 @@
                 bind:checked={generation.showTerminalLog}
               />
               <div>
-                <p class="text-xs font-medium text-neutral-200">Show terminal log panel</p>
-                <p class="text-[11px] text-neutral-500 mt-0.5">Adds a live log viewer to the sidebar showing ComfyUI output and app messages. Useful for diagnosing errors.</p>
+                <p class="text-xs font-medium text-neutral-200">{locale.t('settings.developer.terminal_log')}</p>
+                <p class="text-[11px] text-neutral-500 mt-0.5">{locale.t('settings.developer.terminal_log_desc')}</p>
               </div>
             </label>
           </div>
@@ -2881,7 +2889,7 @@
         </section>
         {/if}
 
-        <p class="text-[10px] text-neutral-500 break-inside-avoid"><span class="text-amber-400">*</span> Requires a restart of ComfyUI to take effect.</p>
+        <p class="text-[10px] text-neutral-500 break-inside-avoid"><span class="text-amber-400">*</span> {locale.t('settings.restart_required')}</p>
 
         {#if error}
           <div class="px-3 py-2 bg-red-900/30 border border-red-800/50 rounded-lg text-red-200 text-xs break-inside-avoid">
@@ -3072,23 +3080,23 @@
   tabindex="-1"
 >
   <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-    <h3 id="add-account-title" class="text-sm font-medium text-neutral-100">Add LAN Account</h3>
+    <h3 id="add-account-title" class="text-sm font-medium text-neutral-100">{locale.t('settings.lan.add_lan_account')}</h3>
     <div class="space-y-3">
       <div>
-        <label class="block text-xs text-neutral-400 mb-1">Username</label>
+        <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.lan.username')}</label>
         <input
           type="text"
           bind:value={lanNewUser}
-          placeholder="Enter username"
+          placeholder={locale.t('settings.lan.enter_username')}
           class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
         />
       </div>
       <div>
-        <label class="block text-xs text-neutral-400 mb-1">Password</label>
+        <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.lan.password')}</label>
         <input
           type="password"
           bind:value={lanNewPass}
-          placeholder="At least 4 characters"
+          placeholder={locale.t('settings.lan.password_min_placeholder')}
           class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
         />
       </div>
@@ -3100,12 +3108,12 @@
       <button
         class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
         onclick={() => { showAddAccountModal = false; }}
-      >Cancel</button>
+      >{locale.t('common.cancel')}</button>
       <button
         class="px-4 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {lanAuthBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}"
         disabled={lanAuthBusy}
         onclick={async () => { await createLanAccount(); if (!lanAuthError) showAddAccountModal = false; }}
-      >Create Account</button>
+      >{locale.t('settings.lan.create_account')}</button>
     </div>
   </div>
 </div>
@@ -3123,14 +3131,14 @@
   tabindex="-1"
 >
   <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-    <h3 id="reset-password-title" class="text-sm font-medium text-neutral-100">Reset Password</h3>
-    <p class="text-xs text-neutral-400">Set a temporary password for <span class="text-neutral-200 font-medium">{resetTargetUser}</span>. They will be asked to choose a new password on their next login.</p>
+    <h3 id="reset-password-title" class="text-sm font-medium text-neutral-100">{locale.t('settings.lan.reset_password')}</h3>
+    <p class="text-xs text-neutral-400">{locale.t('settings.lan.reset_password_body', { user: resetTargetUser })}</p>
     <div>
-      <label class="block text-xs text-neutral-400 mb-1">Temporary Password</label>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.lan.temp_password')}</label>
       <input
         type="password"
         bind:value={resetTempPass}
-        placeholder="At least 4 characters"
+        placeholder={locale.t('settings.lan.password_min_placeholder')}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
         onkeydown={(e) => { if (e.key === 'Enter') adminResetPassword(); }}
       />
@@ -3139,19 +3147,19 @@
       <p class="text-xs text-red-400">{resetError}</p>
     {/if}
     {#if resetSuccess}
-      <p class="text-xs text-green-400">Password reset. The user will be prompted to set a new password on their next login.</p>
+      <p class="text-xs text-green-400">{locale.t('settings.lan.reset_success')}</p>
     {/if}
     <div class="flex justify-end gap-2 pt-2">
       <button
         class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
         onclick={() => { showResetPasswordModal = false; }}
-      >Close</button>
+      >{locale.t('common.close')}</button>
       {#if !resetSuccess}
       <button
         class="px-4 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {resetBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-amber-600 hover:bg-amber-500 text-white'}"
         disabled={resetBusy}
         onclick={adminResetPassword}
-      >Reset Password</button>
+      >{locale.t('settings.lan.reset_password_btn')}</button>
       {/if}
     </div>
   </div>
@@ -3170,8 +3178,8 @@
   tabindex="-1"
 >
   <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-    <h3 id="delete-account-title" class="text-sm font-medium text-neutral-100">Delete Account</h3>
-    <p class="text-xs text-neutral-400">Are you sure you want to delete <span class="text-neutral-200 font-medium">{deleteTargetUser}</span>?</p>
+    <h3 id="delete-account-title" class="text-sm font-medium text-neutral-100">{locale.t('settings.lan.delete_account')}</h3>
+    <p class="text-xs text-neutral-400">{locale.t('settings.lan.delete_confirm', { user: deleteTargetUser })}</p>
 
     <label class="flex items-start gap-2 cursor-pointer">
       <input
@@ -3180,14 +3188,14 @@
         class="mt-0.5 accent-indigo-600"
       />
       <div>
-        <span class="text-xs text-neutral-300">Keep user data (gallery images)</span>
-        <p class="text-[10px] text-neutral-500 mt-0.5">Re-creating an account with this name will restore access to their images.</p>
+        <span class="text-xs text-neutral-300">{locale.t('settings.lan.keep_user_data')}</span>
+        <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.lan.keep_user_data_desc')}</p>
       </div>
     </label>
 
     {#if !deleteKeepData}
       <p class="text-[10px] text-red-400 bg-red-400/10 rounded-lg px-3 py-2">
-        This will permanently delete all of {deleteTargetUser}'s generated images. This cannot be undone.
+        {locale.t('settings.lan.delete_images_warning', { user: deleteTargetUser })}
       </p>
     {/if}
 
@@ -3195,12 +3203,12 @@
       <button
         class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
         onclick={() => { showDeleteModal = false; }}
-      >Cancel</button>
+      >{locale.t('common.cancel')}</button>
       <button
         class="px-4 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {lanAuthBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-red-600 hover:bg-red-500 text-white'}"
         disabled={lanAuthBusy}
         onclick={async () => { await deleteLanAccount(deleteTargetUser, deleteKeepData); showDeleteModal = false; }}
-      >Delete Account</button>
+      >{locale.t('settings.lan.delete_account_btn')}</button>
     </div>
   </div>
 </div>
@@ -3215,8 +3223,8 @@
   tabindex="-1"
 >
   <div class="bg-neutral-900 border border-neutral-700 rounded-xl p-5 w-80 space-y-3">
-    <h3 class="text-sm font-medium text-neutral-200">Storage Limit — {storageTargetUser}</h3>
-    <p class="text-xs text-neutral-400">Set the maximum gallery storage for this user (in GB).</p>
+    <h3 class="text-sm font-medium text-neutral-200">{locale.t('settings.lan.storage_limit_title', { user: storageTargetUser })}</h3>
+    <p class="text-xs text-neutral-400">{locale.t('settings.lan.storage_limit_desc')}</p>
     <input
       type="number"
       min="0.1"
@@ -3232,12 +3240,12 @@
       <button
         class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
         onclick={() => { showStorageModal = false; }}
-      >Cancel</button>
+      >{locale.t('common.cancel')}</button>
       <button
         class="px-4 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer {storageBusy ? 'bg-neutral-700 text-neutral-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}"
         disabled={storageBusy}
         onclick={applyStorageLimit}
-      >Save</button>
+      >{locale.t('common.save')}</button>
     </div>
   </div>
 </div>
@@ -3258,7 +3266,7 @@
       <span class="inline-block w-2 h-2 rounded-full shrink-0 {actionsTargetAccount.online ? 'bg-green-500' : 'bg-neutral-600'}"></span>
       <h3 class="text-sm font-medium text-neutral-100 truncate">{actionsTargetAccount.username}</h3>
       {#if actionsTargetAccount.role === "moderator"}
-        <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">Mod</span>
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-medium shrink-0">{locale.t('common.role_mod')}</span>
       {/if}
     </div>
     <div class="flex flex-col gap-2">
@@ -3267,36 +3275,36 @@
           class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left {actionsTargetAccount.role === 'moderator' ? 'bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
           disabled={lanAuthBusy}
           onclick={() => { toggleAccountRole(actionsTargetAccount!.username, actionsTargetAccount!.role); showAccountActionsModal = false; }}
-        >{actionsTargetAccount.role === "moderator" ? "Revoke Moderator" : "Make Moderator"}</button>
+        >{actionsTargetAccount.role === "moderator" ? locale.t('settings.lan.revoke_moderator') : locale.t('settings.lan.make_moderator')}</button>
       {/if}
       <button
         class="w-full px-3 py-2 rounded-lg text-xs font-medium bg-neutral-800 text-cyan-400 hover:bg-neutral-700 transition-colors cursor-pointer text-left"
         disabled={lanAuthBusy}
-        onclick={() => { storageTargetUser = actionsTargetAccount!.username; storageInputGB = (actionsTargetAccount!.storage_limit_bytes / (1024 * 1024 * 1024)).toFixed(1); storageError = null; showAccountActionsModal = false; showStorageModal = true; }}
-      >Storage Limit — {formatBytes(actionsTargetAccount.storage_limit_bytes)}</button>
+        onclick={() => { storageTargetUser = actionsTargetAccount!.username; storageInputGB = locale.formatDecimalForInput(actionsTargetAccount!.storage_limit_bytes / (1024 * 1024 * 1024), 1); storageError = null; showAccountActionsModal = false; showStorageModal = true; }}
+      >{locale.t('settings.lan.storage_limit_btn', { size: locale.formatBytes(actionsTargetAccount.storage_limit_bytes) })}</button>
       {#if actionsTargetAccount.role === 'user'}
       <button
         class="w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left {actionsTargetAccount.can_use_modelhub ? 'bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30' : 'bg-neutral-800 text-neutral-300 hover:bg-neutral-700'}"
         disabled={lanAuthBusy}
         onclick={() => { toggleModelhubAccess(actionsTargetAccount!.username, actionsTargetAccount!.can_use_modelhub); showAccountActionsModal = false; }}
-      >{actionsTargetAccount.can_use_modelhub ? "Revoke Model Hub Access" : "Grant Model Hub Access"}</button>
+      >{actionsTargetAccount.can_use_modelhub ? locale.t('settings.lan.revoke_modelhub') : locale.t('settings.lan.grant_modelhub')}</button>
       {/if}
       <button
         class="w-full px-3 py-2 rounded-lg text-xs font-medium bg-neutral-800 text-amber-400 hover:bg-neutral-700 transition-colors cursor-pointer text-left"
         disabled={lanAuthBusy}
         onclick={() => { resetTargetUser = actionsTargetAccount!.username; resetTempPass = ''; resetError = null; resetSuccess = false; showAccountActionsModal = false; showResetPasswordModal = true; }}
-      >Reset Password</button>
+      >{locale.t('settings.lan.reset_password')}</button>
       <button
         class="w-full px-3 py-2 rounded-lg text-xs font-medium bg-neutral-800 text-red-400 hover:bg-neutral-700 transition-colors cursor-pointer text-left"
         disabled={lanAuthBusy}
         onclick={() => { deleteTargetUser = actionsTargetAccount!.username; deleteKeepData = true; showAccountActionsModal = false; showDeleteModal = true; }}
-      >Remove Account</button>
+      >{locale.t('settings.lan.remove_account')}</button>
     </div>
     <div class="flex justify-end pt-1">
       <button
         class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
         onclick={() => { showAccountActionsModal = false; }}
-      >Close</button>
+      >{locale.t('common.close')}</button>
     </div>
   </div>
 </div>

@@ -254,7 +254,7 @@
         type="button"
         onclick={close}
         class="touch-target px-3 text-white"
-        aria-label="Close"
+        aria-label={tt("common.aria_close", "Close")}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -270,7 +270,7 @@
         type="button"
         onclick={() => (actionOpen = true)}
         class="touch-target px-3 text-white"
-        aria-label="Actions"
+        aria-label={tt("common.aria_actions", "Actions")}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -310,7 +310,7 @@
         class="touch-target flex flex-col items-center gap-0.5 text-white/90 px-3 disabled:opacity-30"
         disabled={currentIndex <= 0}
         onclick={() => navigate(-1)}
-        aria-label="Previous"
+        aria-label={tt("common.aria_previous", "Previous")}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -368,7 +368,7 @@
         class="touch-target flex flex-col items-center gap-0.5 text-white/90 px-3 disabled:opacity-30"
         disabled={currentIndex < 0 || currentIndex >= images.length - 1}
         onclick={() => navigate(1)}
-        aria-label="Next"
+        aria-label={tt("common.aria_next", "Next")}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

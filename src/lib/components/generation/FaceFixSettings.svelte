@@ -38,11 +38,6 @@
   let dlBytes = $state(0);
   let dlTotal = $state(0);
 
-  function formatBytes(bytes: number): string {
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  }
 
   const dlPercent = $derived(dlTotal > 0 ? Math.round((dlBytes / dlTotal) * 100) : 0);
 
@@ -153,7 +148,7 @@
           <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
             <span class="truncate mr-2">{locale.t('generation.facefix.downloading', { model: downloading || '' })}</span>
             {#if dlTotal > 0}
-              <span class="shrink-0 tabular-nums">{formatBytes(dlBytes)} / {formatBytes(dlTotal)} ({dlPercent}%)</span>
+              <span class="shrink-0 tabular-nums">{locale.formatBytes(dlBytes)} / {locale.formatBytes(dlTotal)} ({dlPercent}%)</span>
             {/if}
           </div>
           {#if dlTotal > 0}

@@ -102,7 +102,7 @@
 
       <img
         src={canvas.currentStagingImage}
-        alt="Staged"
+        alt={locale.t("canvas.staged_alt")}
         class="w-10 h-10 rounded border border-neutral-700 object-cover"
       />
 

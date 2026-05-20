@@ -300,7 +300,7 @@ class GalleryStore {
     try {
       await this.loadArtistIndex(manifestUrl);
       if (!this.artistIndexReady) {
-        this.showToast("Artist index unavailable — check your connection.", "error");
+        this.showToast(locale.t("gallery.artist_index_unavailable"), "error");
         return { sorted: 0, scanned: 0, boards: [] };
       }
       // Make sure every image has its metadata loaded before scanning so we
@@ -1213,11 +1213,7 @@ class GalleryStore {
   /** Human-readable storage usage string, e.g., "1.2 GB / 2.0 GB". */
   get storageLabel(): string {
     if (!this.storageInfo) return "";
-    const fmt = (b: number) => {
-      if (b >= 1_073_741_824) return `${(b / 1_073_741_824).toFixed(1)} GB`;
-      if (b >= 1_048_576) return `${(b / 1_048_576).toFixed(0)} MB`;
-      return `${(b / 1024).toFixed(0)} KB`;
-    };
+    const fmt = (b: number) => locale.formatBytes(b);
     if (this.storageInfo.limit_bytes === 0) return fmt(this.storageInfo.usage_bytes);
     return `${fmt(this.storageInfo.usage_bytes)} / ${fmt(this.storageInfo.limit_bytes)}`;
   }

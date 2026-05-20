@@ -138,7 +138,7 @@
         type="button"
         class="touch-target px-3 text-xs text-neutral-300 hover:text-neutral-100 flex items-center gap-1"
         onclick={() => (filtersOpen = true)}
-        aria-label="Filters"
+        aria-label={tt("gallery.filters", "Filters")}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
