@@ -1,3 +1,10 @@
+## What's New in v1.3.4
+
+### Release Fix
+- Fixed the headless server release build by using the library crate path for the ComfyUI startup error payload.
+
+---
+
 ## What's New in v1.3.3
 
 ### External ComfyUI & Startup

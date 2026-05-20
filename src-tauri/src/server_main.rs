@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use comfyui_desktop_lib::auth::AuthState;
-use comfyui_desktop_lib::comfyui::{process, websocket};
+use comfyui_desktop_lib::comfyui::{nodes, process, websocket};
 use comfyui_desktop_lib::config::load_persisted_config;
 use comfyui_desktop_lib::state::AppState;
 use comfyui_desktop_lib::{temp_images, webserver};
@@ -138,7 +138,7 @@ async fn main() {
                             let port = state.config.read().await.server_port;
                             state.broadcast(
                                 "comfyui:server_error",
-                                crate::comfyui::nodes::server_error_payload(&e.to_string(), port),
+                                nodes::server_error_payload(&e.to_string(), port),
                             );
                         }
                     }
