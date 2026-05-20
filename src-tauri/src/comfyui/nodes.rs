@@ -36,6 +36,9 @@ const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[
 /// Substring present in [`format_missing_mooshie_nodes_error`] output.
 pub const MISSING_MOOSHIE_NODES_MARKER: &str = "has not loaded required MooshieUI custom nodes";
 
+/// Substring present in [`verify_required_controlnet_nodes`] error output.
+pub const MISSING_CONTROLNET_NODES_MARKER: &str = "Required ControlNet custom nodes failed to load";
+
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveImage",
     "MooshieFaceDetailer",
@@ -214,7 +217,8 @@ pub async fn verify_required_controlnet_nodes(
     }
 
     Err(format!(
-        "Required ControlNet custom nodes failed to load: {}. Check the ComfyUI log for custom-node import errors.",
+        "{}: {}. Check the ComfyUI log for custom-node import errors.",
+        MISSING_CONTROLNET_NODES_MARKER,
         missing.join(", ")
     ))
 }
@@ -285,6 +289,8 @@ pub fn server_error_payload(error: &str, port: u16) -> serde_json::Value {
     let missing_nodes = parse_missing_nodes_from_error(error);
     let kind = if !missing_nodes.is_empty() {
         "missing_mooshie_nodes"
+    } else if error.contains(MISSING_CONTROLNET_NODES_MARKER) {
+        "missing_controlnet_nodes"
     } else if error.contains("exited with") || error.contains("process exited") {
         "crashed"
     } else {
@@ -558,5 +564,57 @@ async fn object_info_has_node_class(
             Ok(value.get(node_class).is_some())
         }
         _ => Ok(false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_missing_mooshie_nodes_from_error() {
+        let err = format_missing_mooshie_nodes_error(&[
+            "MooshieSaveImage".to_string(),
+            "ApplyTiledDiffusion".to_string(),
+        ]);
+        let parsed = parse_missing_nodes_from_error(&err);
+        assert_eq!(parsed.len(), 2);
+        assert!(parsed.contains(&"MooshieSaveImage".to_string()));
+    }
+
+    #[test]
+    fn server_error_payload_mooshie_kind() {
+        let err = format_missing_mooshie_nodes_error(&["MooshieSaveImage".to_string()]);
+        let payload = server_error_payload(&err, 8188);
+        assert_eq!(payload["kind"], "missing_mooshie_nodes");
+        assert_eq!(payload["port"], 8188);
+        assert!(payload["missing_nodes"].as_array().unwrap().len() == 1);
+    }
+
+    #[test]
+    fn server_error_payload_controlnet_kind() {
+        let err = format!(
+            "{}: CannyEdgePreprocessor. Check the ComfyUI log for custom-node import errors.",
+            MISSING_CONTROLNET_NODES_MARKER
+        );
+        let payload = server_error_payload(&err, 8188);
+        assert_eq!(payload["kind"], "missing_controlnet_nodes");
+    }
+
+    #[test]
+    fn server_error_payload_crashed_kind() {
+        let err = "ComfyUI process exited with exit code: 1";
+        let payload = server_error_payload(err, 8188);
+        assert_eq!(payload["kind"], "crashed");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn parse_netstat_listening_pid_exact_port() {
+        use crate::comfyui::process::parse_netstat_listening_pid;
+
+        let line = "  TCP    0.0.0.0:8188           0.0.0.0:0              LISTENING       4242";
+        assert_eq!(parse_netstat_listening_pid(line, 8188), Some(4242));
+        assert_eq!(parse_netstat_listening_pid(line, 18188), None);
     }
 }

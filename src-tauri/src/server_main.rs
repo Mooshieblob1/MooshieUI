@@ -145,6 +145,12 @@ async fn main() {
                 }
                 Err(e) => {
                     log::error!("Failed to start ComfyUI: {}", e);
+                    let err_str = e.to_string();
+                    let port = state.config.read().await.server_port;
+                    state.broadcast(
+                        "comfyui:server_error",
+                        nodes::server_error_payload(&err_str, port),
+                    );
                 }
             }
         }

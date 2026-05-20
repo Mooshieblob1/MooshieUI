@@ -1,17 +1,37 @@
 /** Payload from backend `comfyui:server_error` or structured startup failures. */
 export interface ComfyServerErrorPayload {
   error?: string;
-  kind?: "missing_mooshie_nodes" | "crashed" | "generic" | string;
+  kind?:
+    | "missing_mooshie_nodes"
+    | "missing_controlnet_nodes"
+    | "crashed"
+    | "generic"
+    | string;
   missing_nodes?: string[];
   log_excerpt?: string | null;
   port?: number;
   crashed?: boolean;
 }
 
-const MISSING_MARKER = "has not loaded required MooshieUI custom nodes";
+const MISSING_MOOSHIE_MARKER = "has not loaded required MooshieUI custom nodes";
+const MISSING_CONTROLNET_MARKER = "Required ControlNet custom nodes failed to load";
 
 export function isMissingMooshieNodesMessage(message: string): boolean {
-  return message.includes(MISSING_MARKER);
+  return message.includes(MISSING_MOOSHIE_MARKER);
+}
+
+export function isMissingControlNetNodesMessage(message: string): boolean {
+  return message.includes(MISSING_CONTROLNET_MARKER);
+}
+
+export function isNodeLoadFailurePayload(payload: ComfyServerErrorPayload): boolean {
+  return (
+    payload.kind === "missing_mooshie_nodes" ||
+    payload.kind === "missing_controlnet_nodes" ||
+    (payload.missing_nodes?.length ?? 0) > 0 ||
+    isMissingMooshieNodesMessage(payload.error ?? "") ||
+    isMissingControlNetNodesMessage(payload.error ?? "")
+  );
 }
 
 export function parseComfyServerError(
@@ -44,16 +64,18 @@ export function parseComfyServerError(
     error: message,
     kind: isMissingMooshieNodesMessage(message)
       ? "missing_mooshie_nodes"
-      : undefined,
+      : isMissingControlNetNodesMessage(message)
+        ? "missing_controlnet_nodes"
+        : undefined,
     missing_nodes: parseMissingNodesFromMessage(message),
     log_excerpt: null,
   };
 }
 
 export function parseMissingNodesFromMessage(message: string): string[] {
-  const idx = message.indexOf(MISSING_MARKER);
+  const idx = message.indexOf(MISSING_MOOSHIE_MARKER);
   if (idx < 0) return [];
-  const after = message.slice(idx + MISSING_MARKER.length);
+  const after = message.slice(idx + MISSING_MOOSHIE_MARKER.length);
   const colon = after.indexOf(":");
   if (colon < 0) return [];
   const rest = after.slice(colon + 1).trimStart();

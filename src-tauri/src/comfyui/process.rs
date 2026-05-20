@@ -4,6 +4,32 @@ use crate::config::ServerMode;
 use crate::error::AppError;
 use crate::state::AppState;
 
+/// True when ComfyUI's `/system_stats` endpoint responds with HTTP 2xx.
+pub async fn comfyui_health_ok(http_client: &reqwest::Client, health_url: &str) -> bool {
+    match http_client.get(health_url).send().await {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => false,
+    }
+}
+
+/// Parse a Windows `netstat -ano` LISTENING line and return the PID when the local port matches exactly.
+#[cfg(target_os = "windows")]
+pub(crate) fn parse_netstat_listening_pid(line: &str, port: u16) -> Option<u32> {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 5 {
+        return None;
+    }
+    if !parts[3].eq_ignore_ascii_case("LISTENING") {
+        return None;
+    }
+    let local_addr = parts[1];
+    let port_str = local_addr.rsplit(':').next()?;
+    if port_str.parse::<u16>().ok()? != port {
+        return None;
+    }
+    parts.last()?.parse().ok()
+}
+
 /// Detect whether the system has a Blackwell (compute capability 12.x) NVIDIA GPU.
 /// Returns `true` if any installed GPU has compute capability >= 12.0.
 fn has_blackwell_gpu() -> bool {
@@ -116,7 +142,7 @@ async fn wait_for_port_free(state: &AppState, health_url: &str, port: u16) {
     kill_process_on_port(port).await;
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_millis(250)).await;
-        if state.http_client.get(health_url).send().await.is_err() {
+        if !comfyui_health_ok(&state.http_client, health_url).await {
             return;
         }
     }
@@ -174,7 +200,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         // actually down, the POST /prompt will surface the error. If it is
         // reachable, verify the MooshieUI node required by every workflow now.
         let health_url = format!("{}/system_stats", config.server_url);
-        if state.http_client.get(&health_url).send().await.is_ok() {
+        if comfyui_health_ok(&state.http_client, &health_url).await {
             super::nodes::verify_required_mooshie_nodes(&state.http_client, &config.server_url)
                 .await
                 .map_err(AppError::ProcessSpawnFailed)?;
@@ -185,7 +211,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
 
     // Check if something is already listening on the target port (e.g. a container)
     let health_url = format!("{}/system_stats", config.server_url);
-    if state.http_client.get(&health_url).send().await.is_ok() {
+    if comfyui_health_ok(&state.http_client, &health_url).await {
         let mooshie_ok =
             super::nodes::verify_required_mooshie_nodes(&state.http_client, &config.server_url)
                 .await;
@@ -579,7 +605,7 @@ pub async fn wait_for_ready(state: &AppState, timeout_secs: u64) -> Result<(), A
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Check if the server is responding
-        if state.http_client.get(&url).send().await.is_ok() {
+        if comfyui_health_ok(&state.http_client, &url).await {
             super::nodes::verify_required_mooshie_nodes(&state.http_client, &base_url)
                 .await
                 .map_err(AppError::ProcessSpawnFailed)?;
@@ -685,7 +711,7 @@ pub async fn stop_comfyui_process(state: &AppState) -> Result<(), AppError> {
     let health_url = format!("http://127.0.0.1:{}/system_stats", port);
     for _ in 0..20 {
         tokio::time::sleep(Duration::from_millis(250)).await;
-        if state.http_client.get(&health_url).send().await.is_err() {
+        if !comfyui_health_ok(&state.http_client, &health_url).await {
             return Ok(()); // Port is free
         }
     }
@@ -706,9 +732,8 @@ pub async fn kill_process_on_port(port: u16) {
     }
     #[cfg(target_os = "macos")]
     {
-        // lsof to find PID, then kill
         if let Ok(output) = tokio::process::Command::new("lsof")
-            .args(["-ti", &format!(":{}", port)])
+            .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"])
             .output()
             .await
         {
@@ -729,23 +754,17 @@ pub async fn kill_process_on_port(port: u16) {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-        // Find PID with netstat, then taskkill
         let mut cmd = tokio::process::Command::new("cmd");
-        cmd.args([
-            "/C",
-            &format!("netstat -ano | findstr :{} | findstr LISTENING", port),
-        ]);
+        cmd.args(["/C", "netstat -ano"]);
         cmd.creation_flags(CREATE_NO_WINDOW);
         if let Ok(output) = cmd.output().await {
             let text = String::from_utf8_lossy(&output.stdout);
             for line in text.lines() {
-                if let Some(pid) = line.split_whitespace().last() {
-                    if let Ok(_pid) = pid.parse::<u32>() {
-                        let mut kill_cmd = tokio::process::Command::new("taskkill");
-                        kill_cmd.args(["/F", "/PID", pid]);
-                        kill_cmd.creation_flags(CREATE_NO_WINDOW);
-                        let _ = kill_cmd.output().await;
-                    }
+                if let Some(pid) = parse_netstat_listening_pid(line, port) {
+                    let mut kill_cmd = tokio::process::Command::new("taskkill");
+                    kill_cmd.args(["/F", "/PID", &pid.to_string()]);
+                    kill_cmd.creation_flags(CREATE_NO_WINDOW);
+                    let _ = kill_cmd.output().await;
                 }
             }
         }
@@ -791,7 +810,7 @@ pub async fn start_worker_process(
 
     // Check if something is already listening on the worker's port
     let health_url = format!("{}/system_stats", worker.base_url);
-    if state.http_client.get(&health_url).send().await.is_ok() {
+    if comfyui_health_ok(&state.http_client, &health_url).await {
         let mooshie_ok =
             super::nodes::verify_required_mooshie_nodes(&state.http_client, &worker.base_url).await;
         let controlnet_ok =
@@ -964,7 +983,7 @@ pub async fn wait_for_worker_ready(
     for i in 0..iterations {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        if state.http_client.get(&url).send().await.is_ok() {
+        if comfyui_health_ok(&state.http_client, &url).await {
             if let Err(e) =
                 super::nodes::verify_required_mooshie_nodes(&state.http_client, &worker.base_url)
                     .await
@@ -1103,7 +1122,7 @@ pub async fn wait_all_workers_ready(state: &AppState, timeout_secs: u64) {
             let iterations = timeout_secs * 2;
             for i in 0..iterations {
                 tokio::time::sleep(Duration::from_millis(500)).await;
-                if http_client.get(&url).send().await.is_ok() {
+                if comfyui_health_ok(&http_client, &url).await {
                     let mut status = w.status.write().await;
                     *status = WorkerStatus::Idle;
                     log::info!(

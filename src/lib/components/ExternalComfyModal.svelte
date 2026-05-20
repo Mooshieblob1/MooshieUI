@@ -1,8 +1,11 @@
 <script lang="ts">
   import { locale } from "../stores/locale.svelte.js";
   import { killPortProcess } from "../utils/api.js";
-  import { ipcInvoke } from "../utils/ipc.js";
-  import type { ComfyServerErrorPayload } from "../utils/comfyStartup.js";
+  import { ipcInvoke, ipcListen } from "../utils/ipc.js";
+  import {
+    isNodeLoadFailurePayload,
+    type ComfyServerErrorPayload,
+  } from "../utils/comfyStartup.js";
 
   interface Props {
     open: boolean;
@@ -18,18 +21,55 @@
   let busy = $state(false);
   let localError = $state("");
 
-  const isMissingNodes = $derived(
-    payload.kind === "missing_mooshie_nodes" ||
-      (payload.missing_nodes?.length ?? 0) > 0,
-  );
+  const isNodeLoadFailure = $derived(isNodeLoadFailurePayload(payload));
 
   const title = $derived(
-    isMissingNodes
+    isNodeLoadFailure
       ? locale.t("app.external_comfy.title_missing_nodes")
       : locale.t("app.external_comfy.title_already_running"),
   );
 
   const port = $derived(payload.port ?? 8188);
+
+  function waitForComfyReady(timeoutMs = 120_000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error(locale.t("generation.controlnet.install_timeout")));
+      }, timeoutMs);
+
+      let unlistenReady: (() => void) | undefined;
+      let unlistenError: (() => void) | undefined;
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        unlistenReady?.();
+        unlistenError?.();
+      };
+
+      ipcListen("comfyui:server_ready", () => {
+        cleanup();
+        resolve();
+      }).then((fn) => {
+        unlistenReady = fn;
+      });
+
+      ipcListen("comfyui:server_error", (event: { payload?: unknown }) => {
+        cleanup();
+        const err =
+          event.payload &&
+          typeof event.payload === "object" &&
+          event.payload !== null &&
+          "error" in event.payload &&
+          typeof (event.payload as { error?: unknown }).error === "string"
+            ? (event.payload as { error: string }).error
+            : locale.t("app.status.unknown_error");
+        reject(new Error(err));
+      }).then((fn) => {
+        unlistenError = fn;
+      });
+    });
+  }
 
   async function killAndRestart() {
     busy = true;
@@ -37,10 +77,20 @@
     try {
       await killPortProcess();
       const result = await ipcInvoke<string>("start_comfyui");
-      if (result === "spawned" || result === "already_running" || result === "skipped") {
+      if (result === "already_running" || result === "skipped") {
         onrestarted?.();
         onclose();
+        return;
       }
+      if (result !== "spawned") {
+        localError = locale.t("app.status.failed_to_start", {
+          message: result,
+        });
+        return;
+      }
+      onrestarted?.();
+      await waitForComfyReady();
+      onclose();
     } catch (e) {
       localError = String(e);
     } finally {
@@ -85,7 +135,7 @@
       </p>
 
       <p class="mt-3 text-sm text-neutral-400">
-        {#if isMissingNodes}
+        {#if isNodeLoadFailure}
           {locale.t("app.external_comfy.missing_nodes_body")}
         {:else}
           {locale.t("app.external_comfy.already_running_body", { port })}

@@ -1697,12 +1697,12 @@ async fn dispatch_command(
                             Err(e) => {
                                 let err_str = e.to_string();
                                 log::error!("ComfyUI failed to become ready: {}", err_str);
+                                let port = state_clone.config.read().await.server_port;
                                 let _ = event_tx.send(crate::state::BroadcastEvent {
                                     event: "comfyui:server_error".to_string(),
-                                    payload: serde_json::json!({
-                                        "error": err_str,
-                                        "crashed": err_str.contains("exited with"),
-                                    }),
+                                    payload: crate::comfyui::nodes::server_error_payload(
+                                        &err_str, port,
+                                    ),
                                 });
                             }
                         }
