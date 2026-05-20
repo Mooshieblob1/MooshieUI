@@ -16,6 +16,7 @@
   let interrogateImageUrl = $state<string | null>(null);
   let interrogateError = $state<string | null>(null);
   let isDragOver = $state(false);
+  let pasteActive = $state(false);
 
   async function interrogateBytes(base64: string, previewUrl?: string) {
     showInterrogateModal = true;
@@ -253,10 +254,10 @@
     return () => el.removeEventListener("tauri-file-drop", handleTauriFileDrop);
   });
 
-  // Listen for Ctrl+V — uses native clipboard (bypasses WebView restrictions)
+  // Listen for Ctrl+V while this drop zone is active — uses native clipboard (bypasses WebView restrictions)
   $effect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === "v") {
+      if (pasteActive && e.ctrlKey && e.key === "v") {
         // Don't intercept if user is typing in an input/textarea
         const active = document.activeElement;
         if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return;
@@ -285,6 +286,8 @@
   bind:this={dropZoneEl}
   data-drop-zone="interrogate-image"
   class="border-2 border-dashed rounded-lg p-4 text-center transition-colors {isDragOver ? 'border-indigo-500 bg-indigo-500/10' : 'border-neutral-700 hover:border-neutral-600'}"
+  onmouseenter={() => (pasteActive = true)}
+  onmouseleave={() => (pasteActive = false)}
   ondragenter={(e) => { e.preventDefault(); e.stopPropagation(); isDragOver = true; }}
   ondragover={(e) => { e.preventDefault(); e.stopPropagation(); isDragOver = true; }}
   ondragleave={() => { isDragOver = false; }}
@@ -304,7 +307,7 @@
     <button
       type="button"
       onclick={interrogateFromClipboard}
-      class="text-xs text-emerald-500/70 hover:text-emerald-400 transition-colors flex items-center gap-1"
+      class="flex items-center gap-1 text-xs text-emerald-500/70 transition-colors hover:text-emerald-400"
     >
       <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
       {locale.t('generation.interrogate.paste')}

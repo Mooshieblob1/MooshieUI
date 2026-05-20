@@ -5,6 +5,7 @@ export interface QueuedPrompt {
   mode: "txt2img" | "img2img" | "inpainting";
   wasUpscaled: boolean;
   params: GenerationParams;
+  enqueuedAt: number;
 }
 
 class ProgressStore {
@@ -44,6 +45,12 @@ class ProgressStore {
   queuePosition = $state<number | null>(null);
   /** Total prompts in the global queue across all users. */
   queueTotal = $state(0);
+
+  /**
+   * Server-wide generation activity broadcast to all users.
+   * null when the server is idle. Set from `mooshie:server_progress` events.
+   */
+  serverProgress = $state<{ value: number; max: number } | null>(null);
 
   // --- Derived getters ---
 
@@ -165,13 +172,38 @@ class ProgressStore {
     this.queueTotal = 0;
   }
 
-  /** Add a new prompt to the queue. */
+  /** Add a new prompt to the queue.
+   *
+   * Idempotent by promptId: if the prompt is already tracked (e.g. inserted by
+   * `restoreFromSnapshot` after an SSE `queue_update` event raced the HTTP
+   * response), the existing entry is upgraded with the real params/mode instead
+   * of appending a duplicate. Without this, the same prompt_id can appear twice
+   * in `pendingPrompts`, making the queue display show 2 when only 1 image is
+   * being generated.
+   */
   enqueue(
     promptId: string,
     wasUpscaled: boolean = false,
     mode: "txt2img" | "img2img" | "inpainting" = "txt2img",
     params: GenerationParams | null = null,
   ) {
+    const existingIdx = this.pendingPrompts.findIndex((p) => p.promptId === promptId);
+    if (existingIdx >= 0) {
+      const existing = this.pendingPrompts[existingIdx];
+      const next = [...this.pendingPrompts];
+      next[existingIdx] = {
+        promptId,
+        mode,
+        wasUpscaled,
+        params: params!,
+        // Preserve enqueuedAt from the existing entry (set by restoreFromSnapshot
+        // or a prior enqueue). If unset, stamp it now so the reconciler's 30s
+        // activity guard has a valid baseline.
+        enqueuedAt: existing.enqueuedAt ?? Date.now(),
+      };
+      this.pendingPrompts = next;
+      return;
+    }
     this.pendingPrompts = [
       ...this.pendingPrompts,
       {
@@ -179,6 +211,7 @@ class ProgressStore {
         mode,
         wasUpscaled,
         params: params!,
+        enqueuedAt: Date.now(),
       },
     ];
   }
@@ -201,7 +234,7 @@ class ProgressStore {
 
     if (item) {
       this._lastCompletedWasUpscaled = item.wasUpscaled;
-      if (item.params.seed != null && item.params.seed >= 0) {
+      if (item.params != null && item.params.seed != null && item.params.seed >= 0) {
         this.lastCompletedSeed = item.params.seed;
       }
     }
@@ -227,9 +260,22 @@ class ProgressStore {
 
   /** Remove a specific prompt from the queue (e.g. on error). */
   removePrompt(promptId: string) {
+    const wasActive = this.activePromptId === promptId;
     this.pendingPrompts = this.pendingPrompts.filter((p) => p.promptId !== promptId);
-    if (this.activePromptId === promptId) {
+
+    if (wasActive || this.pendingPrompts.length === 0) {
       this.activePromptId = null;
+      this.currentStep = 0;
+      this.totalSteps = 0;
+      this.currentNode = null;
+      this.previewImage = null;
+      this.samplingPass = 0;
+      this._lastProgressNode = null;
+    }
+
+    if (this.pendingPrompts.length === 0) {
+      this.queuePosition = null;
+      this.queueTotal = 0;
     }
   }
 
@@ -245,6 +291,44 @@ class ProgressStore {
     this._lastProgressNode = null;
     this.queuePosition = null;
     this.queueTotal = 0;
+  }
+
+  /** Update server-wide progress (from mooshie:server_progress events). */
+  updateServerProgress(value: number, max: number) {
+    if (max <= 0) {
+      this.serverProgress = null;
+    } else {
+      this.serverProgress = { value, max };
+    }
+  }
+
+  /** Clear server-wide progress indicator (server went idle). */
+  clearServerProgress() {
+    this.serverProgress = null;
+  }
+
+  /**
+   * Restore pending queue entries from a snapshot delivered on SSE reconnect.
+   * Only adds entries that aren't already tracked (idempotent).
+   */
+  restoreFromSnapshot(promptIds: string[]) {
+    const now = Date.now();
+    for (const pid of promptIds) {
+      if (!this.pendingPrompts.some((p) => p.promptId === pid)) {
+        this.pendingPrompts = [
+          ...this.pendingPrompts,
+          {
+            promptId: pid,
+            mode: "txt2img",
+            wasUpscaled: false,
+            params: null as any,
+            // Stamp enqueuedAt so the reconciler's 30s activity guard has a
+            // baseline for prompts restored from an SSE snapshot.
+            enqueuedAt: now,
+          },
+        ];
+      }
+    }
   }
 
   // --- Backward-compat aliases ---

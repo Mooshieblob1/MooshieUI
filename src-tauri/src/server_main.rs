@@ -13,7 +13,7 @@ use comfyui_desktop_lib::{temp_images, webserver};
 
 #[tokio::main]
 async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    comfyui_desktop_lib::log_buffer::init();
 
     log::info!("MooshieUI Server starting...");
 

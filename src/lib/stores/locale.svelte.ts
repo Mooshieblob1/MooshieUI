@@ -1,4 +1,5 @@
 import { ipcStore } from "../utils/ipc.js";
+import { triggerSync } from "../utils/syncTrigger.js";
 import en from "../locales/en.js";
 import es from "../locales/es.js";
 import ja from "../locales/ja.js";
@@ -85,6 +86,19 @@ class LocaleStore {
 
   async saveSettings(): Promise<void> {
     await ipcStore.set(STORE_KEY, { locale: this.current });
+    triggerSync();
+  }
+
+  applyServerPrefs(localeValue: string): void {
+    try {
+      if (localeValue && translations[localeValue as Locale]) {
+        this.current = localeValue as Locale;
+        this.hasStoredPreference = true;
+        this.saveSettings().catch(() => {});
+      }
+    } catch (e) {
+      console.error("Failed to apply server prefs (locale):", e);
+    }
   }
 }
 

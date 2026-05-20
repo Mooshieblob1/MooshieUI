@@ -6,6 +6,7 @@ import type {
   ArtistShard,
   SearchOptions,
 } from "./types.js";
+import { rankingPostCount } from "./counts.js";
 
 const MANIFEST_CACHE_MS = 60_000;
 
@@ -39,7 +40,15 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
     if (!res.ok) {
       throw new Error(`artist-gallery: ${url} returned ${res.status}`);
     }
-    return (await res.json()) as T;
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as T;
+    } catch (e) {
+      const preview = text.slice(0, 80).replace(/\s+/g, " ");
+      throw new Error(
+        `artist-gallery: ${url} returned non-JSON (${res.headers.get("content-type") ?? "no content-type"}): "${preview}…"`,
+      );
+    }
   }
 
   async function loadManifest(): Promise<ArtistManifest> {
@@ -90,12 +99,15 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
     searchPromise = fetchJson<ArtistSearchHit[]>(
       baseDir() + manifest.searchIndex.path,
     ).then((hits) => {
-      for (const h of hits) {
+      const sortedHits = [...hits].sort((a, b) =>
+        rankingPostCount(b) - rankingPostCount(a) || a.slug.localeCompare(b.slug),
+      );
+      for (const h of sortedHits) {
         slugToBucket.set(h.slug, h.shard);
         tagToSlug.set(h.tag.toLowerCase(), h.slug);
         tagToSlug.set(normalizeTag(h.tag), h.slug);
       }
-      return hits;
+      return sortedHits;
     }).catch((err) => {
       searchPromise = null;
       throw err;

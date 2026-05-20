@@ -1,0 +1,4 @@
+- Standardized Svelte event handlers to `onclick=` across `src/App.svelte` and `src/lib/components/generation/PromptTextarea.svelte` to resolve Svelte 5 build errors.
+- Bumped app version to `1.3.1` in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
+- Updated `RELEASE_NOTES.md` and `CHANGELOG.md` with v1.3.1 notes.
+- Ran `cargo check` and `npm run build` locally; both completed successfully.

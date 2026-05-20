@@ -3,7 +3,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { downloadModel, findModelByHash, hashModelFile, readModelSpec, type ModelSpec } from "../../utils/api.js";
+  import { downloadModel, findModelByHash, hashModelFile, readModelSpec, type ModelSpec, getComputeCapability } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
   import { onMount, onDestroy } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
@@ -11,6 +11,7 @@
 
   interface ModelFile {
     filename: string;
+    /** Download URL. Empty string means detection-only — no download attempted. */
     url: string;
     category: string;
     /** AutoV2 hash (first 10 chars of full SHA256, uppercase) — CivitAI-compatible */
@@ -22,6 +23,8 @@
     label: string;
     /** Total download size (human-readable) shown in the dropdown */
     size: string;
+    /** Translation key for computed/semantic size labels such as local-only. */
+    sizeKey?: string;
     /** Regular checkpoint model (single file) */
     checkpoint?: ModelFile;
     /** VAE to download alongside the checkpoint */
@@ -40,7 +43,23 @@
       scheduler?: string;
       upscaleSteps?: number;
       upscaleDenoise?: number;
+      facefixSteps?: number;
     };
+    /**
+     * Minimum NVIDIA compute capability required (e.g. 8.9 for Ada / Blackwell
+     * FP8 native tensor cores). Hides the entry on lower-tier GPUs where the
+     * model would either fail to load or run dramatically slower than the
+     * non-quantised alternative. `null`/absent = available everywhere.
+     */
+    minComputeCapability?: number;
+    /** Hint shown next to the size in the dropdown to explain the gate. */
+    gateHint?: string;
+    /**
+     * When true, the entry is shown only if all components are detected
+     * locally (by hash or filename). Used for models we can't redistribute
+     * but want to recognise / auto-pair when the user has them on disk.
+     */
+    detectionOnly?: boolean;
   }
 
   const recommendedModels: RecommendedModel[] = [
@@ -65,12 +84,12 @@
       },
     },
     {
-      label: "Anima Preview 3",
+      label: "Anima Base v1.0",
       size: "~13 GB",
       splitModel: {
         diffusionModel: {
-          filename: "anima-preview3-base.safetensors",
-          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-preview3-base.safetensors",
+          filename: "anima-base-v1.0.safetensors",
+          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-base-v1.0.safetensors",
           category: "diffusion_models",
         },
         clipModel: {
@@ -95,23 +114,25 @@
       },
     },
     {
-      label: "Anima Preview 2",
-      size: "~13 GB",
+      label: "Anima Preview 3",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
       splitModel: {
         diffusionModel: {
-          filename: "anima-preview2.safetensors",
-          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-preview2.safetensors",
+          filename: "anima-preview3-base.safetensors",
+          url: "",
           category: "diffusion_models",
         },
         clipModel: {
           filename: "qwen_3_06b_base.safetensors",
-          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+          url: "",
           category: "text_encoders",
           clipType: "wan",
         },
         vaeModel: {
           filename: "qwen_image_vae.safetensors",
-          url: "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+          url: "",
           category: "vae",
         },
       },
@@ -122,6 +143,117 @@
         upscaleSteps: 10,
         upscaleDenoise: 0.3,
         facefixSteps: 10,
+      },
+    },
+    {
+      label: "Anima Preview 3 (FP8)",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
+      // FP8 native tensor-core compute lands on Ada Lovelace (8.9) and
+      // Blackwell (10.0+ datacenter / 12.0 consumer). Earlier GPUs would
+      // fall back to BF16 emulation and lose the speed/VRAM advantage that
+      // makes this build worthwhile, so we hide the entry on those tiers.
+      minComputeCapability: 8.9,
+      gateHint: "Ada / Blackwell only",
+      splitModel: {
+        diffusionModel: {
+          filename: "anima-preview3-base-fp8.safetensors",
+          url: "",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_06b_base.safetensors",
+          url: "",
+          category: "text_encoders",
+          clipType: "wan",
+        },
+        vaeModel: {
+          filename: "qwen_image_vae.safetensors",
+          url: "",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 30,
+        cfg: 4,
+        samplerName: "er_sde",
+        upscaleSteps: 10,
+        upscaleDenoise: 0.3,
+        facefixSteps: 10,
+      },
+    },
+    {
+      label: "Anima Preview 2",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
+      splitModel: {
+        diffusionModel: {
+          filename: "anima-preview2.safetensors",
+          url: "",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_06b_base.safetensors",
+          url: "",
+          category: "text_encoders",
+          clipType: "wan",
+        },
+        vaeModel: {
+          filename: "qwen_image_vae.safetensors",
+          url: "",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 30,
+        cfg: 4,
+        samplerName: "er_sde",
+        upscaleSteps: 10,
+        upscaleDenoise: 0.3,
+        facefixSteps: 10,
+      },
+    },
+    {
+      // Flux 2 Klein 9B (NVFP4) — detection-only entry. We can't redistribute
+      // BFL's weights, but if the user has dropped the three components into
+      // their ComfyUI models tree we recognise them and auto-wire the split
+      // model + Qwen 3 text encoder + Flux VAE. Resolution by hash via
+      // `findModelByHash` handles renamed files, and the unified text-encoder
+      // listing in `models.svelte.ts` picks up encoders living under the
+      // legacy `clip/` directory (where the user's `qwen_3_8b_fp4mixed`
+      // happens to live).
+      label: "Flux 2 Klein 9B (NVFP4)",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
+      splitModel: {
+        diffusionModel: {
+          filename: "flux-2-klein-9b-nvfp4.safetensors",
+          url: "",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_8b_fp4mixed.safetensors",
+          url: "",
+          // Listed under text_encoders so the picker resolves correctly;
+          // backend hash lookup also falls through to `clip/`.
+          category: "text_encoders",
+          // Flux 2 Klein ships with Qwen 3 as its text encoder.
+          clipType: "qwen_image",
+        },
+        vaeModel: {
+          filename: "flux-vae.safetensors",
+          url: "",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 20,
+        cfg: 1.0,
+        samplerName: "euler",
+        scheduler: "simple",
       },
     },
   ];
@@ -198,12 +330,30 @@
   let showLoraDropdown = $state<number | null>(null);
   let loraSearches = $state<Record<number, string>>({});
   let downloading = $state<string | null>(null);
-  let downloadProgress = $state("");
+  let downloadError = $state("");
 
-  // Download progress tracking
-  let dlFilename = $state("");
-  let dlBytes = $state(0);
-  let dlTotal = $state(0);
+  /**
+   * Detected NVIDIA compute capability. `null` until probed; remains `null`
+   * on non-NVIDIA systems / when nvidia-smi is unavailable. We surface gated
+   * recommended models (e.g. FP8-only builds) only when this is known to
+   * meet or exceed the entry's `minComputeCapability` — never optimistically
+   * (so AMD/Intel/CPU users don't see entries they can't run).
+   */
+  let computeCapability = $state<number | null>(null);
+
+  // Per-file download progress. Keyed by filename so parallel downloads of
+  // different components (diffusion model / text encoder / VAE) each have
+  // their own tracked row that stays visible until the whole batch completes.
+  interface DlEntry {
+    filename: string;
+    label: string;
+    downloaded: number;
+    total: number;
+    done: boolean;
+  }
+  let dlEntries = $state<Record<string, DlEntry>>({});
+  // Preserve a stable render order (the order downloads were started).
+  let dlOrder = $state<string[]>([]);
 
   // Hash-based model detection: maps "category::hash" -> resolved filename on disk
   let hashResolved = $state<Record<string, string>>({});
@@ -214,7 +364,9 @@
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 
-  const dlPercent = $derived(dlTotal > 0 ? Math.round((dlBytes / dlTotal) * 100) : 0);
+  function dlPercent(e: DlEntry): number {
+    return e.total > 0 ? Math.round((e.downloaded / e.total) * 100) : 0;
+  }
 
   /** Load cached model hashes from localStorage */
   function loadCachedHashes(): Record<string, string> {
@@ -313,19 +465,34 @@
         total: number;
         done: boolean;
       };
-      if (data.done) {
-        dlFilename = "";
-        dlBytes = 0;
-        dlTotal = 0;
-      } else {
-        dlFilename = data.filename;
-        dlBytes = data.downloaded;
-        dlTotal = data.total;
-      }
+      // Only update entries we initiated. Ignore bleed-through from other
+      // download:progress emitters (setup wizard, ControlNet, etc.).
+      const existing = dlEntries[data.filename];
+      if (!existing) return;
+      dlEntries = {
+        ...dlEntries,
+        [data.filename]: {
+          ...existing,
+          downloaded: data.downloaded,
+          total: data.total || existing.total,
+          done: data.done,
+        },
+      };
     });
 
     // Resolve model hashes in background
     resolveModelHashes();
+
+    // Probe NVIDIA compute capability so we can gate FP8-only recommended
+    // entries. Cheap (single nvidia-smi shell-out) and fire-and-forget — a
+    // failure just leaves the gate closed, which is the safe default.
+    try {
+      computeCapability = await getComputeCapability();
+      console.debug("[ModelSelector] detected compute capability:", computeCapability);
+    } catch (err) {
+      console.warn("[ModelSelector] getComputeCapability failed:", err);
+      computeCapability = null;
+    }
   });
 
   onDestroy(() => {
@@ -408,11 +575,22 @@
   /** Combine installed checkpoints + recommended models into a single filtered list */
   const filteredItems = $derived(() => {
     const q = checkpointSearch.toLowerCase();
-    const items: { type: "checkpoint" | "recommended"; label: string; value: string; rec?: RecommendedModel; installed: boolean; size?: string }[] = [];
+    const items: { type: "checkpoint" | "recommended"; label: string; value: string; rec?: RecommendedModel; installed: boolean; size?: string; gateHint?: string }[] = [];
 
     // Add recommended models first
     for (const rec of recommendedModels) {
       const installed = isRecommendedInstalled(rec);
+      // Hide entries gated behind a compute-capability we haven't met unless
+      // all split/checkpoint components already exist locally. That keeps
+      // retired or hardware-specific models visible for users who have them,
+      // without advertising them as fresh downloads.
+      if (rec.minComputeCapability !== undefined && !installed) {
+        if (computeCapability === null || computeCapability < rec.minComputeCapability) continue;
+      }
+      // Detection-only entries (no download URLs) are hidden until every
+      // component is present on disk — otherwise the user would see an entry
+      // they can't action.
+      if (rec.detectionOnly && !installed) continue;
       if (!q || rec.label.toLowerCase().includes(q)) {
         items.push({
           type: "recommended",
@@ -420,7 +598,8 @@
           value: rec.label,
           rec,
           installed,
-          size: rec.size,
+          size: rec.sizeKey ? locale.t(rec.sizeKey) : rec.size,
+          gateHint: rec.gateHint,
         });
       }
     }
@@ -476,22 +655,65 @@
     }
 
     if (missingFiles.length > 0) {
+      // Detection-only entries have no download URLs — surface a clear error
+      // rather than letting the empty URL hit the backend.
+      const undownloadable = missingFiles.filter((m) => !m.file.url);
+      if (undownloadable.length > 0) {
+        downloadError = `Missing local file(s): ${undownloadable.map((m) => m.file.filename).join(", ")}`;
+        downloading = rec.label;
+        setTimeout(() => {
+          downloading = null;
+          downloadError = "";
+        }, 4000);
+        return;
+      }
       downloading = rec.label;
+      downloadError = "";
+      // Seed a progress row for every file up-front so all three bars are
+      // visible from the moment the download starts — even before their first
+      // progress event arrives.
+      const seeded: Record<string, DlEntry> = {};
+      const order: string[] = [];
+      for (const { file, label } of missingFiles) {
+        seeded[file.filename] = {
+          filename: file.filename,
+          label,
+          downloaded: 0,
+          total: 0,
+          done: false,
+        };
+        order.push(file.filename);
+      }
+      dlEntries = seeded;
+      dlOrder = order;
+
       try {
-        for (const { file, label } of missingFiles) {
-          downloadProgress = label;
-          await downloadModel(file.url, file.category, file.filename);
-          await cacheHashAfterDownload(file);
-        }
+        // Run all downloads in parallel. Each call emits its own
+        // download:progress events keyed by filename, so the UI tracks them
+        // independently.
+        await Promise.all(
+          missingFiles.map(async ({ file }) => {
+            await downloadModel(file.url, file.category, file.filename);
+            await cacheHashAfterDownload(file);
+          }),
+        );
         await models.refresh();
       } catch (e) {
         console.error("Failed to download model:", e);
-        downloadProgress = `Download failed: ${e}`;
-        setTimeout(() => { downloading = null; downloadProgress = ""; }, 3000);
+        downloadError = `Download failed: ${e}`;
+        setTimeout(() => {
+          downloading = null;
+          downloadError = "";
+          dlEntries = {};
+          dlOrder = [];
+        }, 3000);
         return;
       } finally {
-        downloading = null;
-        downloadProgress = "";
+        if (!downloadError) {
+          downloading = null;
+          dlEntries = {};
+          dlOrder = [];
+        }
       }
     }
 
@@ -504,6 +726,19 @@
       generation.clipType = sm.clipModel.clipType;
       generation.vae = resolvedFilename(sm.vaeModel);
       generation.checkpoint = rec.label;
+
+      // For detection-only entries we never went through the download path,
+      // so cache hashes the first time the user activates the entry. This
+      // makes future detections survive renames / directory moves without
+      // requiring the user to relink.
+      if (rec.detectionOnly) {
+        // Fire-and-forget — hashing GBs of weights can take a while.
+        void Promise.all([
+          cacheHashAfterDownload({ ...sm.diffusionModel, filename: generation.diffusionModel! }),
+          cacheHashAfterDownload({ ...sm.clipModel, filename: generation.clipModel! }),
+          cacheHashAfterDownload({ ...sm.vaeModel, filename: generation.vae }),
+        ]).catch((e) => console.warn("[ModelSelector] hash caching failed:", e));
+      }
     } else if (rec.checkpoint) {
       generation.useSplitModel = false;
       generation.diffusionModel = null;
@@ -564,25 +799,44 @@
       <span class="truncate">{displayCheckpoint()}</span>
     </button>
     {#if downloading}
-      <div class="mt-2 bg-neutral-800/80 rounded-lg px-3 py-2">
-        <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
-          <span class="truncate mr-2">{downloadProgress || locale.t('generation.model.downloading_checkpoint')}</span>
-          {#if dlTotal > 0}
-            <span class="shrink-0 tabular-nums">{formatBytes(dlBytes)} / {formatBytes(dlTotal)} ({dlPercent}%)</span>
-          {/if}
-        </div>
-        {#if dlTotal > 0}
-          <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
-            <div
-              class="bg-indigo-400 h-full rounded-full transition-[width] duration-300 ease-out"
-              style="width: {dlPercent}%"
-            ></div>
-          </div>
-        {:else}
-          <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
-            <div class="bg-indigo-400 h-full rounded-full w-1/3 animate-pulse"></div>
-          </div>
+      <div class="mt-2 bg-neutral-800/80 rounded-lg px-3 py-2 space-y-2">
+        {#if downloadError}
+          <div class="text-[11px] text-red-400">{downloadError}</div>
         {/if}
+        {#each dlOrder as filename (filename)}
+          {@const entry = dlEntries[filename]}
+          {#if entry}
+            <div>
+              <div class="flex items-center justify-between text-[11px] text-neutral-400 mb-1">
+                <span class="truncate mr-2 flex items-center gap-1.5">
+                  {#if entry.done}
+                    <svg class="w-3 h-3 text-emerald-400 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                      <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 010 1.42l-7.5 7.5a1 1 0 01-1.42 0l-3.5-3.5a1 1 0 111.42-1.42L8.5 12.08l6.79-6.79a1 1 0 011.414 0z" clip-rule="evenodd" />
+                    </svg>
+                  {/if}
+                  <span class="truncate">{entry.label}</span>
+                </span>
+                {#if entry.total > 0}
+                  <span class="shrink-0 tabular-nums">
+                    {formatBytes(entry.downloaded)} / {formatBytes(entry.total)} ({dlPercent(entry)}%)
+                  </span>
+                {/if}
+              </div>
+              {#if entry.total > 0}
+                <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    class="h-full rounded-full transition-[width] duration-300 ease-out {entry.done ? 'bg-emerald-400' : 'bg-indigo-400'}"
+                    style="width: {dlPercent(entry)}%"
+                  ></div>
+                </div>
+              {:else}
+                <div class="w-full bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+                  <div class="bg-indigo-400 h-full rounded-full w-1/3 animate-pulse"></div>
+                </div>
+              {/if}
+            </div>
+          {/if}
+        {/each}
       </div>
     {/if}
     {#if showCheckpointDropdown}
@@ -604,6 +858,9 @@
               >
                 <span class="text-sm truncate">
                   {item.label}
+                  {#if item.gateHint}
+                    <span class="ml-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1 py-0.5 align-middle text-[9px] uppercase tracking-wide text-emerald-300">{item.gateHint}</span>
+                  {/if}
                   {#if !item.installed}
                     <span class="text-[10px] text-neutral-500 ml-1">({locale.t('generation.model.auto_download')})</span>
                   {/if}

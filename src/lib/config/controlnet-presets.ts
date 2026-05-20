@@ -1,14 +1,24 @@
 export interface ControlNetModelEntry {
   filename: string;
   url: string;
+  preprocessor?: string | null;
+  defaults?: ControlNetDefaults;
+}
+
+export interface ControlNetDefaults {
+  strength?: number;
+  startPercent?: number;
+  endPercent?: number;
 }
 
 export interface ControlNetPreset {
   id: string;
   label: string;
   description: string;
-  preprocessor: string;
+  preprocessor: string | null;
   preprocessorParams?: Record<string, number>;
+  defaults?: ControlNetDefaults;
+  requiresMode?: "inpainting";
   models: {
     /** Standard SDXL (eps prediction) */
     sdxl?: ControlNetModelEntry | null;
@@ -20,6 +30,8 @@ export interface ControlNetPreset {
     flux?: ControlNetModelEntry | null;
     /** Stable Diffusion 3 / 3.5 */
     sd3?: ControlNetModelEntry | null;
+    /** Anima LLLite (Wan2.1 fine-tune) */
+    anima?: ControlNetModelEntry | null;
   };
 }
 
@@ -79,6 +91,11 @@ export const CONTROLNET_PRESETS: ControlNetPreset[] = [
         filename: "sd3.5_large_controlnet_depth.safetensors",
         url: "https://huggingface.co/stabilityai/stable-diffusion-3.5-controlnets/resolve/main/sd3.5_large_controlnet_depth.safetensors",
       },
+      anima: {
+        filename: "anima-lllite-depth-1.safetensors",
+        url: "https://huggingface.co/Mooshie/Anima-LLLite/resolve/main/anima-lllite-depth-1.safetensors",
+        defaults: { strength: 1.2, startPercent: 0, endPercent: 1 },
+      },
     },
   },
   {
@@ -130,6 +147,46 @@ export const CONTROLNET_PRESETS: ControlNetPreset[] = [
     },
   },
   {
+    id: "anytest_1000",
+    label: "AnyTest v1 (step 1000)",
+    description: "Anima multi-task ControlNet — step 1000 checkpoint",
+    preprocessor: null,
+    models: {
+      anima: {
+        filename: "anima-lllite-any-test-like-1-step1000.safetensors",
+        url: "https://huggingface.co/Mooshie/Anima-LLLite/resolve/main/anima-lllite-any-test-like-1-step1000.safetensors",
+        defaults: { strength: 1.25, startPercent: 0, endPercent: 1 },
+      },
+    },
+  },
+  {
+    id: "anytest_2000",
+    label: "AnyTest v1 (step 2000)",
+    description: "Anima multi-task ControlNet — step 2000 checkpoint",
+    preprocessor: null,
+    models: {
+      anima: {
+        filename: "anima-lllite-any-test-like-1-step2000.safetensors",
+        url: "https://huggingface.co/Mooshie/Anima-LLLite/resolve/main/anima-lllite-any-test-like-1-step2000.safetensors",
+        defaults: { strength: 1.0, startPercent: 0, endPercent: 1 },
+      },
+    },
+  },
+  {
+    id: "inpainting",
+    label: "Inpainting",
+    description: "Anima inpainting ControlNet — requires a mask",
+    preprocessor: null,
+    requiresMode: "inpainting",
+    models: {
+      anima: {
+        filename: "anima-lllite-inpainting-v1.safetensors",
+        url: "https://huggingface.co/Mooshie/Anima-LLLite/resolve/main/anima-lllite-inpainting-v1.safetensors",
+        defaults: { strength: 1.0, startPercent: 0, endPercent: 1 },
+      },
+    },
+  },
+  {
     id: "softedge",
     label: "Soft Edge",
     description: "Soft structural edges (HED) — natural edge preservation",
@@ -162,6 +219,8 @@ export function getPresetModel(
 
   // Map architectures to their ControlNet compatibility
   switch (arch) {
+    case "anima":
+      return preset.models.anima ?? null;
     case "flux":
       return preset.models.flux ?? null;
     case "sd3":
@@ -178,4 +237,33 @@ export function getPresetModel(
       // Unknown or unsupported (auraflow, pixart, hunyuandit, cascade) — try best match
       return preset.models.illustrious ?? preset.models.sdxl ?? preset.models.sd15 ?? null;
   }
+}
+
+/** Get the preprocessor for a preset, respecting any per-model override */
+export function getPresetPreprocessor(
+  presetId: string,
+  arch: string,
+): string | null {
+  const preset = getPreset(presetId);
+  if (!preset) return null;
+
+  // Per-model override takes priority
+  const modelEntry = getPresetModel(presetId, arch);
+  if (modelEntry && modelEntry.preprocessor !== undefined) {
+    return modelEntry.preprocessor;
+  }
+
+  return preset.preprocessor;
+}
+
+/** Get default ControlNet strength/range for a preset, respecting any per-model override */
+export function getPresetDefaults(
+  presetId: string,
+  arch: string,
+): ControlNetDefaults | null {
+  const preset = getPreset(presetId);
+  if (!preset) return null;
+
+  const modelEntry = getPresetModel(presetId, arch);
+  return modelEntry?.defaults ?? preset.defaults ?? null;
 }

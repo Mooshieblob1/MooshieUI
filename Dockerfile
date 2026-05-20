@@ -90,6 +90,21 @@ RUN uv venv ${COMFYUI_PATH}/.venv --python python3.12 && \
     uv pip install ultralytics==8.4.34 && \
     uv pip install --force-reinstall --no-deps opencv-python-headless
 
+# Install ControlNet custom-node packages required by MooshieUI presets before
+# ComfyUI ever boots. The server also verifies these node classes after every
+# restart so broken imports fail early instead of at generation time.
+RUN mkdir -p ${COMFYUI_PATH}/custom_nodes && \
+    git clone --depth=1 https://github.com/Fannovel16/comfyui_controlnet_aux.git \
+        ${COMFYUI_PATH}/custom_nodes/comfyui_controlnet_aux && \
+    git clone --depth=1 https://github.com/kohya-ss/ComfyUI-Anima-LLLite.git \
+        ${COMFYUI_PATH}/custom_nodes/ComfyUI-Anima-LLLite && \
+    . ${COMFYUI_PATH}/.venv/bin/activate && \
+    for req in \
+        ${COMFYUI_PATH}/custom_nodes/comfyui_controlnet_aux/requirements.txt \
+        ${COMFYUI_PATH}/custom_nodes/ComfyUI-Anima-LLLite/requirements.txt; do \
+        if [ -f "$req" ]; then uv pip install -r "$req"; fi; \
+    done
+
 # Copy custom nodes (auto-deployed by the binary on startup, but also
 # pre-copy them so they're available even if the binary doesn't run the
 # deploy step — e.g. if ComfyUI is already running)

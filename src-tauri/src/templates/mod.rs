@@ -9,6 +9,74 @@ use serde_json::{json, Value};
 
 use crate::comfyui::types::{GenerationParams, PromptSegment};
 
+/// Validate generation parameters before workflow construction.
+///
+/// Catches missing input images for modes that require them, and ControlNet
+/// configurations with no reference image. Without these guards the request
+/// reaches ComfyUI's `LoadImage` node with an empty filename, which it
+/// resolves to the input directory and crashes with `[Errno 21] Is a directory`.
+///
+/// Both the Tauri `generate` command and the LAN web server `generate` route
+/// must call this before `build_workflow`.
+pub fn validate_generation_params(params: &GenerationParams) -> Result<(), String> {
+    let needs_input_image =
+        matches!(params.mode.as_str(), "img2img" | "inpainting") || params.refine_only;
+
+    if needs_input_image
+        && params
+            .input_image
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+    {
+        return Err(format!(
+            "{} mode requires an input image — please upload one before generating.",
+            if params.refine_only {
+                "refine"
+            } else {
+                params.mode.as_str()
+            }
+        ));
+    }
+
+    if matches!(params.mode.as_str(), "inpainting")
+        && params
+            .mask_image
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+    {
+        return Err(
+            "Inpainting mode requires a mask image — please paint a mask before generating.".into(),
+        );
+    }
+
+    if let Some(cn) = params.controlnet.as_ref() {
+        if cn.enabled && cn.image.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            return Err(
+                "ControlNet is enabled but no reference image was provided — please upload one or disable ControlNet.".into(),
+            );
+        }
+        if cn.enabled
+            && cn.preset.as_deref().is_some_and(|p| p == "inpainting")
+            && params
+                .mask_image
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+        {
+            return Err(
+                "The Anima inpainting ControlNet preset requires a mask — please paint a mask before generating.".into(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 pub struct WorkflowResult {
     pub workflow: serde_json::Map<String, Value>,
     pub next_id: u32,
@@ -134,6 +202,12 @@ pub fn load_model_nodes(
 
     // LoRA chain
     for lora in &params.loras {
+        if lora.name.trim().is_empty() {
+            log::warn!(
+                "Skipping LoRA with empty name — this should have been filtered by the frontend"
+            );
+            continue;
+        }
         let lora_id = next_id.to_string();
         workflow.insert(
             lora_id.clone(),
@@ -204,15 +278,20 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
     // Inject ControlNet if enabled
     if let Some(ref cn) = params.controlnet {
         if cn.enabled && cn.controlnet_model.is_some() && cn.image.is_some() {
-            controlnet::inject_controlnet(&mut result, cn);
+            if is_anima_architecture(params) {
+                let mask = params.mask_image.as_deref();
+                controlnet::inject_anima_lllite(&mut result, cn, mask);
+            } else {
+                controlnet::inject_controlnet(&mut result, cn);
 
-            // Rewire the primary KSampler to use ControlNet-conditioned positive/negative
-            if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
-                if let Some(inputs) = sampler_node.get_mut("inputs") {
-                    inputs["positive"] =
-                        json!([result.positive_source.0, result.positive_source.1]);
-                    inputs["negative"] =
-                        json!([result.negative_source.0, result.negative_source.1]);
+                // Rewire the primary KSampler to use ControlNet-conditioned positive/negative
+                if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+                    if let Some(inputs) = sampler_node.get_mut("inputs") {
+                        inputs["positive"] =
+                            json!([result.positive_source.0, result.positive_source.1]);
+                        inputs["negative"] =
+                            json!([result.negative_source.0, result.negative_source.1]);
+                    }
                 }
             }
         }
@@ -232,13 +311,18 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
     };
 
     let save_id = result.next_id.to_string();
+    let output_format = match params.output_format.as_str() {
+        "jxl" => "jxl_raw",
+        _ => "png",
+    };
     result.workflow.insert(
         save_id,
         json!({
             "class_type": "MooshieSaveImage",
             "inputs": {
                 "images": [final_image.0, final_image.1],
-                "bit_depth": params.output_bit_depth
+                "bit_depth": params.output_bit_depth,
+                "output_format": output_format
             }
         }),
     );
@@ -340,9 +424,19 @@ pub fn is_nanosaur_architecture(params: &GenerationParams) -> bool {
     model_name_lower(params).contains("nanosaur")
 }
 
+/// Returns true when the model is Anima (Wan2.1 fine-tune with AnimaLLLite ControlNet).
+pub fn is_anima_architecture(params: &GenerationParams) -> bool {
+    if params.model_architecture == "anima" {
+        return true;
+    }
+    let name = model_name_lower(params);
+    name.contains("anima")
+}
+
 /// Returns true when the model needs a 16-channel latent (SD3, Flux, Anima/WAN).
 pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
-    if is_sd3_architecture(params) || is_flux_architecture(params) {
+    if is_sd3_architecture(params) || is_flux_architecture(params) || is_anima_architecture(params)
+    {
         return true;
     }
     let name = model_name_lower(params);
@@ -664,7 +758,7 @@ fn inject_flux_guidance(result: &mut WorkflowResult, params: &GenerationParams) 
             "class_type": "FluxGuidance",
             "inputs": {
                 "conditioning": [result.positive_source.0.clone(), result.positive_source.1],
-                "guidance": 3.5
+                "guidance": params.flux_guidance
             }
         }),
     );

@@ -1,4 +1,5 @@
 import { ipcInvoke, isBrowserMode, isTauri } from "./ipc.js";
+import { getLogSnapshot } from "./log-buffer.js";
 import { locale } from "../stores/locale.svelte.js";
 import type {
   AppConfig,
@@ -35,6 +36,17 @@ export async function generate(params: GenerationParams): Promise<GenerateRespon
   return ipcInvoke("generate", { params });
 }
 
+export interface ControlNetPreprocessorPreviewResponse {
+  prompt_id: string;
+}
+
+export async function generateControlnetPreprocessorPreview(
+  image: string,
+  preprocessor: string,
+): Promise<ControlNetPreprocessorPreviewResponse> {
+  return ipcInvoke("generate_controlnet_preprocessor_preview", { image, preprocessor });
+}
+
 export async function getHistory(promptId: string): Promise<Record<string, unknown>> {
   return ipcInvoke("get_history", { promptId });
 }
@@ -49,8 +61,10 @@ export async function getQueue(): Promise<QueueInfo> {
   return ipcInvoke("get_queue");
 }
 
-export async function interruptGeneration(): Promise<void> {
-  return ipcInvoke("interrupt_generation");
+export async function interruptGeneration(promptId?: string): Promise<void> {
+  return promptId
+    ? ipcInvoke("interrupt_generation", { promptId })
+    : ipcInvoke("interrupt_generation");
 }
 
 export async function deleteQueueItem(promptId: string): Promise<void> {
@@ -87,12 +101,18 @@ export async function getClientId(): Promise<string> {
   return ipcInvoke("get_client_id");
 }
 
-export async function startComfyui(): Promise<void> {
+export type StartComfyuiResult = "spawned" | "already_running" | "skipped";
+
+export async function startComfyui(): Promise<StartComfyuiResult> {
   return ipcInvoke("start_comfyui");
 }
 
 export async function stopComfyui(): Promise<void> {
   return ipcInvoke("stop_comfyui");
+}
+
+export async function killPortProcess(): Promise<number> {
+  return ipcInvoke("kill_port_process");
 }
 
 export async function checkServerHealth(): Promise<SystemStats> {
@@ -122,10 +142,41 @@ export interface ModelInstallDir {
   label: string;
 }
 
+export interface ManagedModelFile {
+  category: string;
+  filename: string;
+  directory: string;
+  directory_label: string;
+  path: string;
+  size_bytes: number;
+  modified_ms: number;
+}
+
 export async function getModelInstallDirs(
   category: string,
 ): Promise<ModelInstallDir[]> {
   return ipcInvoke("get_model_install_dirs", { category });
+}
+
+export async function listModelFiles(category: string): Promise<ManagedModelFile[]> {
+  return ipcInvoke("list_model_files", { category });
+}
+
+export async function deleteModelFile(
+  category: string,
+  filename: string,
+  directory: string,
+): Promise<void> {
+  return ipcInvoke("delete_model_file", { category, filename, directory });
+}
+
+export async function moveModelFile(
+  category: string,
+  filename: string,
+  sourceDirectory: string,
+  targetDirectory: string,
+): Promise<void> {
+  return ipcInvoke("move_model_file", { category, filename, sourceDirectory, targetDirectory });
 }
 
 export async function openDirectory(path: string): Promise<void> {
@@ -249,6 +300,13 @@ export async function saveImageFile(
   return ipcInvoke("save_image_file", { imageBytes, path });
 }
 
+export async function saveTextFile(
+  content: string,
+  path: string
+): Promise<void> {
+  return ipcInvoke("save_text_file", { content, path });
+}
+
 export async function embedPngMetadataBytes(
   imageBytes: number[],
   metadata: Record<string, string>,
@@ -338,6 +396,21 @@ export async function importImageDirectory(directory: string): Promise<ImportRes
 
 export async function loadGalleryImage(filename: string): Promise<number[]> {
   return ipcInvoke("load_gallery_image", { filename });
+}
+
+/** Load a gallery image transcoded to WebP for display (JXL → WebP in Rust). */
+export async function loadGalleryImageDisplay(filename: string): Promise<number[]> {
+  return ipcInvoke("load_gallery_image_display", { filename });
+}
+
+/** Load a gallery image encoded as PNG (JXL → PNG in Rust). Used for copy/save/download. */
+export async function loadGalleryImagePng(filename: string): Promise<number[]> {
+  return ipcInvoke("load_gallery_image_png", { filename });
+}
+
+/** Read a file from the temp_images directory by filename (no path traversal). */
+export async function readTempImage(filename: string): Promise<number[]> {
+  return ipcInvoke("read_temp_image", { filename });
 }
 
 
@@ -525,6 +598,11 @@ export async function checkAttentionBackend(): Promise<AttentionBackendStatus> {
   return ipcInvoke("check_attention_backend");
 }
 
+export async function getComputeCapability(): Promise<number | null> {
+  const status = await checkAttentionBackend();
+  return status.compute_capability;
+}
+
 export async function installAttentionBackend(backend: string): Promise<void> {
   return ipcInvoke("install_attention_backend", { backend });
 }
@@ -597,7 +675,10 @@ export async function readClipboardImageSafe(): Promise<number[]> {
 }
 
 export async function exportLogs(destination: string): Promise<void> {
-  return ipcInvoke("export_logs", { destination });
+  return ipcInvoke("export_logs", {
+    destination,
+    frontendLogs: getLogSnapshot(),
+  });
 }
 
 export async function getGpuStats(): Promise<GpuStats[]> {

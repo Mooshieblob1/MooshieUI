@@ -223,6 +223,42 @@
     document.body.removeChild(ta);
   }
 
+  async function handleCopyAIBooru() {
+    if (!result) return;
+
+    const allTags: string[] = [];
+    for (const tag of result.artist_tags) {
+      if (checkedArtist[tag.name]) allTags.push(tag.name);
+    }
+    for (const tag of result.character_tags) {
+      if (checkedCharacter[tag.name]) allTags.push(tag.name);
+    }
+    for (const tag of result.general_tags) {
+      if (checkedGeneral[tag.name]) allTags.push(tag.name);
+    }
+    for (const tag of result.copyright_tags) {
+      if (checkedCopyright[tag.name]) allTags.push(tag.name);
+    }
+
+    // AIBooru format: each tag uses underscores instead of spaces, tags
+    // separated by spaces (no commas).
+    const text = allTags.map((t) => t.replace(/\s+/g, "_")).join(" ");
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return;
+      } catch { /* fall through */ }
+    }
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -440,6 +476,10 @@
               onclick={handleCopy}
               class="px-3 py-1.5 text-sm rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-200 transition-colors"
             >{locale.t('common.copy')}</button>
+            <button
+              onclick={handleCopyAIBooru}
+              class="px-3 py-1.5 text-sm rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-200 transition-colors"
+            >{locale.t('generation.interrogate.copy_aibooru')}</button>
             <button
               onclick={handleApply}
               disabled={!anyChecked}

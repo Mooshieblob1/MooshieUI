@@ -6,6 +6,175 @@ use crate::comfyui::types::*;
 use crate::error::AppError;
 use crate::state::AppState;
 
+fn is_optional_model_category(category: &str) -> bool {
+    matches!(
+        category,
+        "diffusion_models" | "text_encoders" | "clip" | "controlnet" | "ultralytics"
+    )
+}
+
+fn is_huggingface_url(url: &str) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(|host| host.to_ascii_lowercase()))
+        .is_some_and(|host| host == "huggingface.co" || host.ends_with(".huggingface.co"))
+}
+
+pub fn huggingface_token_for_url(url: &str) -> Option<String> {
+    if !is_huggingface_url(url) {
+        return None;
+    }
+
+    ["HF_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HUGGINGFACE_TOKEN"]
+        .iter()
+        .find_map(|key| {
+            std::env::var(key)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+pub fn download_status_error_message(url: &str, status: reqwest::StatusCode) -> String {
+    if is_huggingface_url(url) && matches!(status.as_u16(), 401 | 403) {
+        format!(
+            "Failed to download {url}: HTTP {status}. This Hugging Face file requires access; set HF_TOKEN, HUGGINGFACE_HUB_TOKEN, or HUGGINGFACE_TOKEN, or install the file manually."
+        )
+    } else {
+        format!("Failed to download {url}: HTTP {status}")
+    }
+}
+
+pub fn reject_non_model_download_content_type(
+    url: &str,
+    content_type: &str,
+) -> Result<(), AppError> {
+    let content_type = content_type.to_ascii_lowercase();
+    let looks_like_error_body = [
+        "text/html",
+        "text/plain",
+        "application/json",
+        "application/problem+json",
+        "application/xml",
+        "text/xml",
+    ]
+    .iter()
+    .any(|needle| content_type.contains(needle));
+
+    if looks_like_error_body {
+        return Err(AppError::ApiError {
+            status: 200,
+            message: format!(
+                "The URL returned '{}' instead of model bytes for {}. This usually means the download requires authentication, a direct file URL, or a different token.",
+                content_type,
+                url
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+pub fn validate_downloaded_model_file(
+    path: &std::path::Path,
+    filename: &str,
+) -> Result<(), AppError> {
+    let size = std::fs::metadata(path)?.len();
+    if size == 0 {
+        return Err(AppError::Other(format!(
+            "Downloaded model '{}' is empty",
+            filename
+        )));
+    }
+
+    let ext = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    if ext == "safetensors" || ext == "sft" {
+        validate_safetensors_file(path, filename, size)?;
+    }
+
+    Ok(())
+}
+
+fn validate_safetensors_file(
+    path: &std::path::Path,
+    filename: &str,
+    file_size: u64,
+) -> Result<(), AppError> {
+    use std::io::Read;
+
+    if file_size < 9 {
+        return Err(AppError::Other(format!(
+            "'{}' is too small to be a valid safetensors file",
+            filename
+        )));
+    }
+
+    let mut file = std::fs::File::open(path)?;
+    let mut size_buf = [0u8; 8];
+    file.read_exact(&mut size_buf)?;
+    let header_size = u64::from_le_bytes(size_buf);
+
+    if header_size == 0 || header_size > 100 * 1024 * 1024 {
+        return Err(AppError::Other(format!(
+            "'{}' has an invalid safetensors header size ({})",
+            filename, header_size
+        )));
+    }
+    if 8 + header_size > file_size {
+        return Err(AppError::Other(format!(
+            "'{}' is incomplete: safetensors header declares {} bytes but the file is only {} bytes",
+            filename, header_size, file_size
+        )));
+    }
+
+    let mut header_buf = vec![0u8; header_size as usize];
+    file.read_exact(&mut header_buf)?;
+    let header: serde_json::Value = serde_json::from_slice(&header_buf).map_err(|e| {
+        AppError::Other(format!(
+            "'{}' is not a valid safetensors file: {}. The server may have saved an HTML/JSON error page instead of the model.",
+            filename, e
+        ))
+    })?;
+    let header = header.as_object().ok_or_else(|| {
+        AppError::Other(format!("'{}' has an invalid safetensors header", filename))
+    })?;
+
+    let mut tensor_count = 0usize;
+    let mut max_end = 0u64;
+    for (key, value) in header {
+        if key == "__metadata__" {
+            continue;
+        }
+        tensor_count += 1;
+        if let Some(offsets) = value.get("data_offsets").and_then(|v| v.as_array()) {
+            if let Some(end) = offsets.get(1).and_then(|v| v.as_u64()) {
+                max_end = max_end.max(end);
+            }
+        }
+    }
+
+    if tensor_count == 0 {
+        return Err(AppError::Other(format!(
+            "'{}' has no tensors in its safetensors header",
+            filename
+        )));
+    }
+
+    let required_size = 8 + header_size + max_end;
+    if required_size > file_size {
+        return Err(AppError::Other(format!(
+            "'{}' is incomplete: tensor data ends at byte {} but the file is only {} bytes",
+            filename, required_size, file_size
+        )));
+    }
+
+    Ok(())
+}
+
 /// Compute SHA256 of a file. Returns lowercase hex. Used to verify downloaded model files.
 pub fn sha256_file(path: &std::path::Path) -> Result<String, AppError> {
     use std::io::Read;
@@ -25,35 +194,32 @@ pub fn sha256_file(path: &std::path::Path) -> Result<String, AppError> {
 
 impl AppState {
     pub async fn api_get(&self, path: &str) -> Result<Value, AppError> {
-        let url = format!("{}{}", self.base_url().await, path);
-        let resp = self.http_client.get(&url).send().await?;
-        if !resp.status().is_success() {
-            return Err(AppError::ApiError {
-                status: resp.status().as_u16(),
-                message: resp.text().await.unwrap_or_default(),
-            });
-        }
-        Ok(resp.json().await?)
+        // Delegate to the GPU manager so the request is dispatched to a real
+        // worker port. The legacy single-`server_url` path was broken in
+        // multi-GPU server-mode deployments where `server_url` (default
+        // 127.0.0.1:8188) doesn't actually host ComfyUI — workers run on
+        // 8188, 8189, … per `gpu_workers` config — causing /models, /samplers
+        // and /embeddings to 500 with connection-refused.
+        self.gpu_manager.api_get(path).await
     }
 
     pub async fn api_post(&self, path: &str, body: &Value) -> Result<Value, AppError> {
-        let url = format!("{}{}", self.base_url().await, path);
-        let resp = self.http_client.post(&url).json(body).send().await?;
-        if !resp.status().is_success() {
-            return Err(AppError::ApiError {
-                status: resp.status().as_u16(),
-                message: resp.text().await.unwrap_or_default(),
-            });
-        }
-        let text = resp.text().await?;
-        if text.trim().is_empty() {
-            return Ok(Value::Null);
-        }
-        Ok(serde_json::from_str(&text)?)
+        self.gpu_manager.api_post(path, body).await
     }
 
     pub async fn get_models_list(&self, category: &str) -> Result<Vec<String>, AppError> {
-        let val = self.api_get(&format!("/models/{}", category)).await?;
+        let val = match self.api_get(&format!("/models/{}", category)).await {
+            Ok(value) => value,
+            Err(e) if is_optional_model_category(category) => {
+                log::debug!(
+                    "Optional ComfyUI model category '{}' unavailable: {}",
+                    category,
+                    e
+                );
+                return Ok(Vec::new());
+            }
+            Err(e) => return Err(e),
+        };
         let models: Vec<String> = serde_json::from_value(val)?;
 
         // ComfyUI may return models from wrong categories when external model
@@ -203,8 +369,36 @@ impl AppState {
     }
 
     pub async fn delete_queue_items(&self, ids: Vec<String>) -> Result<(), AppError> {
-        self.api_post("/queue", &serde_json::json!({ "delete": ids }))
-            .await?;
+        let mut ids_to_delete: Vec<String> = Vec::new();
+        for id in ids {
+            for related_id in self.prompt_queue.cancel_and_remove(&id) {
+                if !ids_to_delete.iter().any(|existing| existing == &related_id) {
+                    ids_to_delete.push(related_id);
+                }
+            }
+        }
+
+        for hp in self.prompt_queue.take_held_related_to(&ids_to_delete) {
+            {
+                let mut result = hp.result.lock().await;
+                *result = Some(Err("generation.error_cancelled".to_string()));
+            }
+            hp.submitted.notify_one();
+        }
+
+        if !ids_to_delete.is_empty() {
+            for worker in &self.gpu_manager.workers {
+                let _ = self
+                    .http_client
+                    .post(format!("{}/queue", worker.base_url))
+                    .json(&serde_json::json!({ "delete": ids_to_delete }))
+                    .send()
+                    .await;
+            }
+        }
+
+        self.broadcast_queue_positions();
+        self.prompt_queue.drain_notify.notify_one();
         Ok(())
     }
 
@@ -318,7 +512,10 @@ impl AppState {
         if dest.exists() {
             let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
             if size > 0 {
-                if let Some(expected_hex) = expected_sha256 {
+                let cached_is_valid = validate_downloaded_model_file(&dest, filename).is_ok();
+                if !cached_is_valid {
+                    let _ = std::fs::remove_file(&dest);
+                } else if let Some(expected_hex) = expected_sha256 {
                     let dest_clone = dest.clone();
                     let computed = tokio::task::spawn_blocking(move || sha256_file(&dest_clone))
                         .await
@@ -335,11 +532,16 @@ impl AppState {
             let _ = std::fs::remove_file(&dest);
         }
 
-        let resp = self.http_client.get(url).send().await?;
+        let mut req = self.http_client.get(url);
+        if let Some(token) = huggingface_token_for_url(url) {
+            req = req.bearer_auth(token);
+        }
+        let resp = req.send().await?;
         if !resp.status().is_success() {
+            let status = resp.status();
             return Err(AppError::ApiError {
-                status: resp.status().as_u16(),
-                message: format!("Failed to download {}", url),
+                status: status.as_u16(),
+                message: download_status_error_message(url, status),
             });
         }
 
@@ -351,14 +553,7 @@ impl AppState {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_lowercase();
-        if content_type.contains("text/html") {
-            return Err(AppError::ApiError {
-                status: 200,
-                message:
-                    "The URL points to a web page, not a file. Use a direct download URL (e.g. a HuggingFace /resolve/main/ URL)."
-                        .to_string(),
-            });
-        }
+        reject_non_model_download_content_type(url, &content_type)?;
 
         let total = resp.content_length().unwrap_or(0);
         let mut downloaded: u64 = 0;
@@ -428,6 +623,8 @@ impl AppState {
                 )));
             }
         }
+
+        validate_downloaded_model_file(&dest, filename)?;
 
         Ok(())
     }

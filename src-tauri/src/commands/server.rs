@@ -33,7 +33,8 @@ pub async fn start_comfyui(
             tokio::spawn(async move {
                 let state = app.state::<Arc<AppState>>();
                 if let Err(e) =
-                    websocket::connect_websocket(app.clone(), &state, event_tx.clone()).await
+                    websocket::connect_websocket(app.clone(), Arc::clone(&state), event_tx.clone())
+                        .await
                 {
                     log::error!("Failed to connect WebSocket: {}", e);
                 }
@@ -54,9 +55,12 @@ pub async fn start_comfyui(
                 match process::wait_for_ready(&state, 120).await {
                     Ok(()) => {
                         log::info!("ComfyUI server is ready");
-                        if let Err(e) =
-                            websocket::connect_websocket(app.clone(), &state, event_tx.clone())
-                                .await
+                        if let Err(e) = websocket::connect_websocket(
+                            app.clone(),
+                            Arc::clone(&state),
+                            event_tx.clone(),
+                        )
+                        .await
                         {
                             log::error!("Failed to connect WebSocket: {}", e);
                         }
@@ -90,7 +94,8 @@ pub async fn start_comfyui(
             tokio::spawn(async move {
                 let state = app.state::<Arc<AppState>>();
                 if let Err(e) =
-                    websocket::connect_websocket(app.clone(), &state, event_tx.clone()).await
+                    websocket::connect_websocket(app.clone(), Arc::clone(&state), event_tx.clone())
+                        .await
                 {
                     log::error!("Failed to connect WebSocket: {}", e);
                 }
@@ -109,6 +114,15 @@ pub async fn start_comfyui(
 #[tauri::command]
 pub async fn stop_comfyui(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
     process::stop_comfyui_process(&state).await
+}
+
+/// Kill whatever process is currently listening on the configured ComfyUI port.
+/// Used by the "external instance" modal so the user can free port 8188 and retry.
+#[tauri::command]
+pub async fn kill_port_process(state: State<'_, Arc<AppState>>) -> Result<u16, AppError> {
+    let port = state.config.read().await.server_port;
+    process::kill_process_on_port(port).await;
+    Ok(port)
 }
 
 #[tauri::command]

@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { ArtistEntry } from "../types.js";
   import { cachedSrc } from "../imageCache.js";
+  import { formatPostCount } from "../counts.js";
+  import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
     entry: ArtistEntry;
@@ -8,12 +10,6 @@
   }
 
   let { entry, onclick }: Props = $props();
-
-  function formatCount(n: number): string {
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
-    return String(n);
-  }
 
   function displayTag(tag: string): string {
     return tag.replace(/^@/, "").replace(/_/g, " ");
@@ -38,12 +34,12 @@
       />
     {:else}
       <div class="flex h-full w-full items-center justify-center text-xs text-neutral-500">
-        no preview
+        {locale.t('artist_gallery.no_preview')}
       </div>
     {/if}
   </div>
   <div class="flex items-center justify-between gap-2 px-2 py-1.5">
     <span class="truncate text-sm text-red-400">{displayTag(entry.tag)}</span>
-    <span class="shrink-0 text-xs text-neutral-500">{formatCount(entry.postCount)}</span>
+    <span class="shrink-0 text-xs text-neutral-500">{formatPostCount(entry)}</span>
   </div>
 </button>

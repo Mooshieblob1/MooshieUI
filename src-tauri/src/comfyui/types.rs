@@ -35,6 +35,10 @@ pub struct DeviceInfo {
 pub struct QueueInfo {
     pub queue_running: Vec<serde_json::Value>,
     pub queue_pending: Vec<serde_json::Value>,
+    /// Ordered queue positions from the internal fair-queue tracker.
+    /// Empty when not populated (e.g. raw ComfyUI response).
+    #[serde(default)]
+    pub queue_positions: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -98,6 +102,12 @@ pub struct GenerationParams {
     pub upscale_steps: u32,
     pub upscale_tile_size: u32,
     pub upscale_tiling: bool,
+    /// "Refine" mode — when true with mode="img2img", skip the main img2img
+    /// KSampler/VAE round-trip and feed the loaded input image directly into
+    /// the upscale chain. Mirrors SwarmUI's "Refine Image" button: a single
+    /// low-denoise second pass at higher resolution.
+    #[serde(default)]
+    pub refine_only: bool,
     /// Enable Soft Guidance (CFG rescaling) for upscale pass to prevent hallucination
     #[serde(default)]
     pub upscale_soft_guidance: bool,
@@ -134,6 +144,9 @@ pub struct GenerationParams {
     /// Enable Smart Guidance (positive-biased) — patches model for all generation passes
     #[serde(default)]
     pub smart_guidance: bool,
+    /// FluxGuidance value for Flux Dev / Flux 2 Klein family. Default 3.5.
+    #[serde(default = "default_flux_guidance")]
+    pub flux_guidance: f32,
     /// Face fix (FaceDetailer) — detect faces with YOLOv8 and re-denoise them
     #[serde(default)]
     pub facefix_enabled: bool,
@@ -150,16 +163,27 @@ pub struct GenerationParams {
     /// Output image bit depth — "8bit" (default) or "16bit"
     #[serde(default = "default_output_bit_depth")]
     pub output_bit_depth: String,
+    /// Storage format the Rust bridge will produce for this generation.
+    /// "png" (default, backward compatible) or "jxl" (raw pixels out of
+    /// ComfyUI, encoded to JPEG XL in the Tauri backend).
+    #[serde(default = "default_output_format")]
+    pub output_format: String,
 }
 
 fn default_output_bit_depth() -> String {
     "8bit".to_string()
 }
 
+fn default_output_format() -> String {
+    "png".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlNetParam {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
+    pub preset: Option<String>,
     pub controlnet_model: Option<String>,
     pub image: Option<String>,
     pub preprocessor: Option<String>,
@@ -181,6 +205,10 @@ fn default_end_percent() -> f64 {
 
 fn default_facefix_denoise() -> f64 {
     0.4
+}
+
+fn default_flux_guidance() -> f32 {
+    3.5
 }
 
 fn default_soft_guidance_multiplier() -> f64 {

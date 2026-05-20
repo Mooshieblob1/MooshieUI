@@ -3,7 +3,9 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { generate } from "../../utils/api.js";
+  import { generate, uploadImageBytes } from "../../utils/api.js";
+  import { loadOutputImageForGenerationInput, uploadImageUrlForGenerationInput } from "../../utils/galleryActions.js";
+  import type { GenerationParams } from "../../types/index.js";
 
   let currentTipIndex = $state(0);
   let progressPercent = $state(0);
@@ -96,18 +98,56 @@
   });
 
   async function upscaleImage() {
-    generation.upscaleEnabled = true;
-    if (progress.lastOutputImage) {
-      generation.inputImage = progress.lastOutputImage;
+    // The Refine button takes the most-recent output and runs it back through
+    // the upscale chain (MooshieUI's "refiner") at low denoise — analogous to
+    // SwarmUI's "Refine Image" button.
+    //
+    // ComfyUI needs a real input/ filename here. Browser-mode preview URLs can
+    // be blob: URLs, so resolve the client-held bytes first and upload them.
+    const savedImage = getActiveSavedImage();
+    if (!savedImage && !progress.lastOutputImage) {
+      gallery.showToast(locale.t("preview.not_available"), "info");
+      return;
     }
-    const params = generation.toParams();
-    params.mode = "img2img";
+
     try {
+      let uploadName: string;
+      if (savedImage) {
+        const source = await loadOutputImageForGenerationInput(savedImage, `refine_${Date.now()}.png`);
+        const upload = await uploadImageBytes(source.bytes, source.filename);
+        uploadName = upload.name;
+      } else {
+        const sourceUrl = previewSrc ?? progress.lastOutputImage;
+        if (!sourceUrl) {
+          gallery.showToast(locale.t("preview.not_available"), "info");
+          return;
+        }
+        uploadName = await uploadImageUrlForGenerationInput(sourceUrl, `refine_${Date.now()}.png`);
+      }
+
+      const params = generation.toParams() as GenerationParams;
+      params.mode = "img2img";
+      params.input_image = uploadName;
+      // Force refine-only mode so we don't re-do the main img2img sampler —
+      // the upscale chain alone is the refiner pass.
+      params.refine_only = true;
+      params.upscale_enabled = true;
+      // ControlNet on a refine pass would re-condition the existing image
+      // against the original control input, which is rarely what the user
+      // wants. Disable it for this pass.
+      params.controlnet = null;
+
       const result = await generate(params);
       params.seed = result.seed;
       progress.enqueue(result.prompt_id, true, "img2img", params);
+
+      // Reflect the upload in the UI so a follow-up Generate also works.
+      generation.mode = "img2img";
+      generation.inputImage = uploadName;
+      generation.upscaleEnabled = true;
     } catch (e) {
-      console.error("Upscale failed:", e);
+      console.error("Refine failed:", e);
+      gallery.showToast(`${locale.t("preview.refine_failed")}: ${e}`, "error");
     }
   }
 
@@ -125,10 +165,13 @@
   }
 
   /** Prefer the real backend URL (supports right-click → Save with metadata)
-   *  once persistence completes — fall back to the blob URL for previews. */
+   *  once persistence completes — fall back to the blob URL for previews.
+   *  For JXL gallery files, always use the blob URL: WebView2 cannot natively
+   *  decode JXL so the gallery:// URL would render nothing. */
   const previewSrc = $derived.by(() => {
     const saved = getActiveSavedImage();
-    if (saved?.fullImageUrl) return saved.fullImageUrl;
+    const isJxlGallery = saved?.gallery_filename?.endsWith(".jxl") ?? false;
+    if (saved?.fullImageUrl && !isJxlGallery) return saved.fullImageUrl;
     return progress.displayImage;
   });
 

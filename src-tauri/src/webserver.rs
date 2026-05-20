@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{future::Future, pin::Pin};
 
 use axum::extract::{ConnectInfo, Path, State as AxumState};
 use axum::http::{HeaderMap, StatusCode};
@@ -24,6 +25,15 @@ use crate::commands;
 use crate::config;
 use crate::state::AppState;
 
+/// Frontend assets embedded at compile time from `../dist/`. Used as a
+/// fallback when the on-disk dist directory isn't found (e.g. installed
+/// production builds where the dist folder isn't unpacked next to the exe).
+/// In dev builds rust-embed reads from disk at runtime, so `npm run dev`
+/// output is picked up without rebuilding the Rust binary.
+#[derive(rust_embed::Embed)]
+#[folder = "$CARGO_MANIFEST_DIR/../dist/"]
+struct FrontendAssets;
+
 /// Shared state for axum handlers.
 pub struct WebState {
     pub app: Arc<AppState>,
@@ -32,6 +42,35 @@ pub struct WebState {
 }
 
 pub type SharedState = Arc<WebState>;
+
+type BackgroundTask = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+const TEMP_EVENT_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
+
+#[cfg(feature = "desktop")]
+fn spawn_background(task: BackgroundTask) {
+    tauri::async_runtime::spawn(task);
+}
+
+#[cfg(not(feature = "desktop"))]
+fn spawn_background(task: BackgroundTask) {
+    tokio::spawn(task);
+}
+
+fn schedule_temp_event_cache_cleanup(state: Arc<AppState>, prompt_ids: Vec<String>) {
+    if prompt_ids.is_empty() {
+        return;
+    }
+
+    spawn_background(Box::pin(async move {
+        tokio::time::sleep(TEMP_EVENT_CACHE_TTL).await;
+        let mut outputs = state.output_image_cache.write().unwrap();
+        let mut previews = state.last_preview_by_prompt.write().unwrap();
+        for prompt_id in prompt_ids {
+            outputs.remove(&prompt_id);
+            previews.remove(&prompt_id);
+        }
+    }));
+}
 
 // ---------------------------------------------------------------------------
 // Auth helpers — role-based access for LAN vs localhost
@@ -110,9 +149,18 @@ fn resolve_username(state: &WebState, headers: &HeaderMap, remote: &SocketAddr) 
     None
 }
 
-/// Commands that ONLY the admin (localhost) can execute.
-/// These involve mode switching, filesystem access, or LAN configuration.
-const ADMIN_ONLY_COMMANDS: &[&str] = &[
+/// Commands that moderators (and admins) can execute.
+/// Moderators have full operational access; filesystem/server panels are
+/// hidden in the UI for mods but all commands are permitted at the API level.
+const MODERATOR_COMMANDS: &[&str] = &[
+    // server / config control
+    "update_config",
+    "stop_comfyui",
+    "kill_port_process",
+    "export_logs",
+    "install_pip_package",
+    "clear_all_queues",
+    // previously admin-only: mode switching, filesystem, node install
     "switch_to_app_mode",
     "set_gallery_path",
     "install_custom_node",
@@ -121,17 +169,11 @@ const ADMIN_ONLY_COMMANDS: &[&str] = &[
     "move_installation",
     "read_image_metadata_path",
     "save_image_file",
+    "save_text_file",
     "upload_image",
-];
-
-/// Commands that moderators (and admins) can execute.
-/// These involve server control and configuration but no filesystem access.
-const MODERATOR_COMMANDS: &[&str] = &[
-    "update_config",
-    "stop_comfyui",
-    "export_logs",
-    "install_pip_package",
-    "clear_all_queues",
+    "list_model_files",
+    "delete_model_file",
+    "move_model_file",
 ];
 
 /// Model Hub commands that require explicit per-user access for regular users.
@@ -152,9 +194,7 @@ fn is_modelhub_command(command: &str) -> bool {
 /// Check command permission level.
 /// Returns the minimum role required to execute the command.
 fn min_role_for_command(command: &str) -> UserRole {
-    if ADMIN_ONLY_COMMANDS.contains(&command) {
-        UserRole::Admin
-    } else if MODERATOR_COMMANDS.contains(&command) {
+    if MODERATOR_COMMANDS.contains(&command) {
         UserRole::Moderator
     } else {
         UserRole::User
@@ -185,6 +225,159 @@ fn forbidden_response(msg: &str) -> Response {
 /// browser URL even when fallback ports were used.
 ///
 /// Panics if none of the candidate ports can be bound.
+/// Spawn the prompt-queue cleanup reactor.  Listens on the shared broadcast
+/// channel for ComfyUI completion/error events and:
+///   * releases the GPU worker that handled the prompt
+///   * removes the prompt from the fair queue
+///   * notifies the held-prompt drain reactor
+///
+/// Idempotent — calling this more than once is a no-op.  Must be started in
+/// both desktop and browser modes, otherwise workers stay reserved forever
+/// after the first successful prompt and subsequent `submit_prompt` calls
+/// block for the full 300s timeout.
+pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
+    if state
+        .cleanup_reactors_started
+        .swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        return;
+    }
+
+    let cleanup_state = state;
+    let mut cleanup_rx = cleanup_state.event_tx.subscribe();
+    spawn_background(Box::pin(async move {
+        loop {
+            match cleanup_rx.recv().await {
+                Ok(evt) => {
+                    let prompt_id = evt
+                        .payload
+                        .get("prompt_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| cleanup_state.prompt_queue.resolve_alias(s));
+
+                    match evt.event.as_str() {
+                        "comfyui:executing" => {
+                            if evt.payload.get("node").is_some_and(|n| n.is_null()) {
+                                if let Some(pid) = prompt_id {
+                                    let temp_cache_ids =
+                                        cleanup_state.prompt_queue.related_ids(&pid);
+                                    let owner = cleanup_state.prompt_queue.owner_of(&pid);
+                                    log::info!(
+                                        "[gen] completed prompt={} user={}",
+                                        &pid[..8.min(pid.len())],
+                                        owner.as_deref().unwrap_or("admin"),
+                                    );
+                                    if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
+                                        cleanup_state.gpu_manager.mark_worker_idle(wid).await;
+                                    }
+                                    let alias_pid = pid.clone();
+                                    let alias_state = cleanup_state.clone();
+                                    tokio::spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                        alias_state.prompt_queue.cleanup_alias(&alias_pid);
+                                    });
+                                    cleanup_state.broadcast_queue_positions();
+                                    cleanup_state.prompt_queue.drain_notify.notify_one();
+                                    schedule_temp_event_cache_cleanup(
+                                        cleanup_state.clone(),
+                                        temp_cache_ids,
+                                    );
+                                }
+                            }
+                        }
+                        "comfyui:execution_error" => {
+                            if let Some(pid) = prompt_id {
+                                let temp_cache_ids = cleanup_state.prompt_queue.related_ids(&pid);
+                                let owner = cleanup_state.prompt_queue.owner_of(&pid);
+                                log::warn!(
+                                    "[gen] error prompt={} user={}",
+                                    &pid[..8.min(pid.len())],
+                                    owner.as_deref().unwrap_or("admin"),
+                                );
+                                if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
+                                    cleanup_state
+                                        .gpu_manager
+                                        .mark_worker_error_then_idle(wid)
+                                        .await;
+                                }
+                                let alias_pid = pid.clone();
+                                let alias_state = cleanup_state.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                    alias_state.prompt_queue.cleanup_alias(&alias_pid);
+                                });
+                                cleanup_state.broadcast_queue_positions();
+                                cleanup_state.prompt_queue.drain_notify.notify_one();
+                                schedule_temp_event_cache_cleanup(
+                                    cleanup_state.clone(),
+                                    temp_cache_ids,
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    log::warn!("Queue cleanup reactor lagged by {} events", n);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    }));
+}
+
+/// Spawn the stuck-worker watchdog.  Every 60s, checks for workers that have
+/// been reserved for longer than 10 minutes without a corresponding queue
+/// entry and force-releases them.  Catches cases where the WebSocket
+/// completion event was missed.
+///
+/// This uses the same idempotency flag as the cleanup reactor; call
+/// [`spawn_prompt_cleanup_reactor`] first (or rely on [`start_server`] /
+/// app init which calls both).
+pub fn spawn_stuck_worker_watchdog(state: Arc<AppState>) {
+    let watchdog_state = state;
+    spawn_background(Box::pin(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        let max_stuck_secs = 600u64;
+        loop {
+            interval.tick().await;
+            for worker in &watchdog_state.gpu_manager.workers {
+                let status = *worker.status.read().await;
+                let reserved = worker.reserved.load(std::sync::atomic::Ordering::Acquire);
+                if status == crate::comfyui::gpu_manager::WorkerStatus::Running && reserved {
+                    let has_active_prompt = {
+                        let wmap = watchdog_state.prompt_queue.worker_map_snapshot();
+                        wmap.values().any(|&wid| wid == worker.id)
+                    };
+                    if !has_active_prompt {
+                        let last_released = worker
+                            .last_released
+                            .load(std::sync::atomic::Ordering::Acquire);
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        let stuck_secs = if last_released == 0 {
+                            now_ms / 1000
+                        } else {
+                            (now_ms.saturating_sub(last_released)) / 1000
+                        };
+                        if stuck_secs > max_stuck_secs {
+                            log::warn!(
+                                "[watchdog] Releasing stuck worker {} (GPU {}, stuck {}s, no queue entry)",
+                                worker.id,
+                                worker.gpu_index,
+                                stuck_secs,
+                            );
+                            watchdog_state.gpu_manager.mark_worker_idle(worker.id).await;
+                        }
+                    }
+                }
+            }
+        }
+    }));
+}
+
 pub async fn start_server(
     state: Arc<AppState>,
     port: u16,
@@ -236,6 +429,48 @@ pub async fn start_server(
         .route(
             "/internal-api/_storage/set_limit",
             post(storage_set_limit_handler),
+        )
+        // Model request queue
+        .route(
+            "/internal-api/_model_requests",
+            get(model_requests_list_handler),
+        )
+        .route(
+            "/internal-api/_model_requests/add",
+            post(model_requests_add_handler),
+        )
+        .route(
+            "/internal-api/_model_requests/approve",
+            post(model_requests_approve_handler),
+        )
+        .route(
+            "/internal-api/_model_requests/deny",
+            post(model_requests_deny_handler),
+        )
+        // Notifications
+        .route(
+            "/internal-api/_notifications",
+            get(notifications_list_handler),
+        )
+        .route(
+            "/internal-api/_notifications/unread_count",
+            get(notifications_unread_count_handler),
+        )
+        .route(
+            "/internal-api/_notifications/mark_read",
+            post(notifications_mark_read_handler),
+        )
+        .route(
+            "/internal-api/_notifications/mark_all_read",
+            post(notifications_mark_all_read_handler),
+        )
+        .route(
+            "/internal-api/_notifications/dismiss",
+            post(notifications_dismiss_handler),
+        )
+        .route(
+            "/internal-api/_notifications/clear",
+            post(notifications_clear_handler),
         )
         // Health check (unauthenticated, for K8s probes)
         .route("/health", get(health_handler))
@@ -332,118 +567,12 @@ pub async fn start_server(
 
     log::info!("Starting UI web server on {}", bind_addr);
 
-    // Spawn prompt queue cleanup reactor — listens for completion/error events
-    // and removes finished prompts from the queue, then broadcasts position updates.
-    {
-        let cleanup_state = web_state.app.clone();
-        let mut cleanup_rx = cleanup_state.event_tx.subscribe();
-        tokio::spawn(async move {
-            loop {
-                match cleanup_rx.recv().await {
-                    Ok(evt) => {
-                        // Resolve alias: translate ComfyUI's real prompt_id to our placeholder
-                        let prompt_id = evt
-                            .payload
-                            .get("prompt_id")
-                            .and_then(|v| v.as_str())
-                            .map(|s| cleanup_state.prompt_queue.resolve_alias(s));
-
-                        match evt.event.as_str() {
-                            "comfyui:executing" => {
-                                // node=null means execution finished for this prompt
-                                if evt.payload.get("node").map_or(false, |n| n.is_null()) {
-                                    if let Some(pid) = prompt_id {
-                                        let owner = cleanup_state.prompt_queue.owner_of(&pid);
-                                        log::info!(
-                                            "[gen] completed prompt={} user={}",
-                                            &pid[..8.min(pid.len())],
-                                            owner.as_deref().unwrap_or("admin"),
-                                        );
-                                        // Release the GPU worker that handled this prompt
-                                        if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
-                                            cleanup_state.gpu_manager.mark_worker_idle(wid).await;
-                                        }
-                                        // Completed normally — no recovery needed; clear cache.
-                                        cleanup_state.output_image_cache.write().unwrap().remove(&pid);
-                                        // Delay alias cleanup so SSE streams have time to
-                                        // resolve the alias for this same event.  Without the
-                                        // delay, the SSE filter_map can race with this reactor
-                                        // and forward the raw ComfyUI prompt_id instead of the
-                                        // gen-* placeholder the frontend expects.
-                                        let alias_pid = pid.clone();
-                                        let alias_state = cleanup_state.clone();
-                                        tokio::spawn(async move {
-                                            tokio::time::sleep(std::time::Duration::from_secs(5))
-                                                .await;
-                                            alias_state.prompt_queue.cleanup_alias(&alias_pid);
-                                        });
-                                        cleanup_state.broadcast_queue_positions();
-                                        // Signal the drain reactor to submit next held prompt
-                                        cleanup_state.prompt_queue.drain_notify.notify_one();
-                                    }
-                                }
-                            }
-                            "comfyui:execution_error" => {
-                                if let Some(pid) = prompt_id {
-                                    let owner = cleanup_state.prompt_queue.owner_of(&pid);
-                                    log::warn!(
-                                        "[gen] error prompt={} user={}",
-                                        &pid[..8.min(pid.len())],
-                                        owner.as_deref().unwrap_or("admin"),
-                                    );
-                                    // Release the GPU worker (error is transient, mark idle)
-                                    if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
-                                        cleanup_state
-                                            .gpu_manager
-                                            .mark_worker_error_then_idle(wid)
-                                            .await;
-                                    }
-                                    // Error — no output to recover; clear cache.
-                                    cleanup_state.output_image_cache.write().unwrap().remove(&pid);
-                                    let alias_pid = pid.clone();
-                                    let alias_state = cleanup_state.clone();
-                                    tokio::spawn(async move {
-                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                        alias_state.prompt_queue.cleanup_alias(&alias_pid);
-                                    });
-                                    cleanup_state.broadcast_queue_positions();
-                                    // Signal the drain reactor to submit next held prompt
-                                    cleanup_state.prompt_queue.drain_notify.notify_one();
-                                }
-                            }
-                            "comfyui:output_image" => {
-                                // Cache temp_filename by placeholder_id so the reconciler
-                                // can recover images if the SSE event was dropped during
-                                // a client reconnect.
-                                if let Some(pid) = prompt_id {
-                                    if let Some(temp_fn) = evt
-                                        .payload
-                                        .get("temp_filename")
-                                        .and_then(|v| v.as_str())
-                                    {
-                                        cleanup_state
-                                            .output_image_cache
-                                            .write()
-                                            .unwrap()
-                                            .entry(pid)
-                                            .or_default()
-                                            .push(temp_fn.to_string());
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        log::warn!("Queue cleanup reactor lagged by {} events", n);
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        break;
-                    }
-                }
-            }
-        });
-    }
+    // Start the shared prompt cleanup reactor + stuck-worker watchdog.
+    // These are idempotent (guarded by web_state.app.cleanup_reactors_started)
+    // so calling start_server multiple times (or from both desktop and browser
+    // modes) won't spawn duplicates.
+    spawn_prompt_cleanup_reactor(web_state.app.clone());
+    spawn_stuck_worker_watchdog(web_state.app.clone());
 
     // Spawn held-prompt drain reactor — when a prompt finishes, submits the next
     // held prompt to ComfyUI (one per user at a time, round-robin fair).
@@ -462,13 +591,24 @@ pub async fn start_server(
                     match res {
                         Ok((worker_id, response)) => {
                             // Bind alias immediately to prevent race with WebSocket events
-                            drain_state
+                            let was_deferred = drain_state
                                 .prompt_queue
                                 .bind_alias(&hp.placeholder_id, &response.prompt_id);
-                            drain_state
-                                .prompt_queue
-                                .set_worker(&hp.placeholder_id, worker_id);
-                            *hp.result.lock().await = Some(Ok((response.prompt_id, worker_id)));
+                            if was_deferred {
+                                // Completion/error arrived before bind_alias; release worker.
+                                drain_state
+                                    .gpu_manager
+                                    .mark_worker_error_then_idle(worker_id)
+                                    .await;
+                                *hp.result.lock().await =
+                                    Some(Err("execution completed before alias bind".to_string()));
+                                drain_state.prompt_queue.drain_notify.notify_one();
+                            } else {
+                                drain_state
+                                    .prompt_queue
+                                    .set_worker(&hp.placeholder_id, worker_id);
+                                *hp.result.lock().await = Some(Ok((response.prompt_id, worker_id)));
+                            }
                         }
                         Err(e) => {
                             *hp.result.lock().await =
@@ -493,56 +633,8 @@ pub async fn start_server(
         });
     }
 
-    // Stuck-worker watchdog — every 60s, check for workers that have been
-    // reserved (running) for longer than 10 minutes without a corresponding
-    // queue entry. This catches cases where the WebSocket completion event
-    // was missed, leaving a worker permanently stuck.
-    {
-        let watchdog_state = web_state.app.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-            let max_stuck_secs = 600u64; // 10 minutes
-            loop {
-                interval.tick().await;
-                for worker in &watchdog_state.gpu_manager.workers {
-                    let status = *worker.status.read().await;
-                    let reserved = worker.reserved.load(std::sync::atomic::Ordering::Acquire);
-                    if status == crate::comfyui::gpu_manager::WorkerStatus::Running && reserved {
-                        // Check if any prompt in the queue is assigned to this worker
-                        let has_active_prompt = {
-                            let wmap = watchdog_state.prompt_queue.worker_map_snapshot();
-                            wmap.values().any(|&wid| wid == worker.id)
-                        };
-                        if !has_active_prompt {
-                            // Worker is reserved but has no tracked prompt — check how long
-                            let last_released = worker
-                                .last_released
-                                .load(std::sync::atomic::Ordering::Acquire);
-                            let now_ms = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis() as u64;
-                            // If last_released is 0, worker was never released (started stuck)
-                            let stuck_secs = if last_released == 0 {
-                                now_ms / 1000
-                            } else {
-                                (now_ms.saturating_sub(last_released)) / 1000
-                            };
-                            if stuck_secs > max_stuck_secs {
-                                log::warn!(
-                                    "[watchdog] Releasing stuck worker {} (GPU {}, stuck {}s, no queue entry)",
-                                    worker.id,
-                                    worker.gpu_index,
-                                    stuck_secs,
-                                );
-                                watchdog_state.gpu_manager.mark_worker_idle(worker.id).await;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-    }
+    // Stuck-worker watchdog is spawned by spawn_stuck_worker_watchdog() at
+    // the top of this function.
 
     // Periodic image expiry cleanup — delete images older than 7 days (every 30 min).
     {
@@ -605,62 +697,93 @@ fn resolve_dist_dir() -> PathBuf {
         }
     }
 
-    // Fallback — will 404 on requests but won't crash
-    log::warn!(
-        "Could not find frontend dist directory, tried: {:?}",
+    // No on-disk dist found — production builds rely on the compile-time
+    // embedded FrontendAssets instead, so this is not necessarily an error.
+    log::info!(
+        "No on-disk frontend dist directory; using embedded assets. Searched: {:?}",
         candidates
     );
     candidates[0].clone()
 }
 
-/// Serve static files from the dist directory.
+/// Serve static files from the dist directory, falling back to assets
+/// embedded into the binary at compile time.
+///
+/// Lookup order:
+///   1. File on disk under `dist_dir` (prefers freshly-built `npm run dev`
+///      / `npm run build` output for dev workflows).
+///   2. Embedded asset at the same relative path.
+///   3. Embedded `index.html` (SPA fallback).
+///
+/// Production installs typically hit path 2/3 because the Tauri bundle
+/// embeds the frontend into the binary via the asset protocol and does
+/// not copy `dist/` next to the exe. Before this fallback existed, every
+/// browser-mode request in a production install returned 404 ("Not Found").
 async fn serve_static(dist_dir: PathBuf, req: axum::extract::Request) -> Response {
-    let path = req.uri().path().trim_start_matches('/');
-    let file_path = if path.is_empty() {
-        dist_dir.join("index.html")
+    let raw_path = req.uri().path().trim_start_matches('/');
+    let rel_path = if raw_path.is_empty() {
+        "index.html"
     } else {
-        dist_dir.join(path)
+        raw_path
     };
 
-    // If the path doesn't exist, serve index.html (SPA fallback)
-    let file_path = if file_path.exists() && file_path.is_file() {
-        file_path
-    } else {
-        dist_dir.join("index.html")
-    };
-
-    match tokio::fs::read(&file_path).await {
-        Ok(contents) => {
-            let mime = mime_guess::from_path(&file_path)
-                .first_or_octet_stream()
-                .to_string();
-
-            // Inject browser-mode flag into HTML so the frontend IPC layer
-            // knows to use HTTP endpoints instead of Tauri IPC.
-            let contents = if mime == "text/html" {
-                let html = String::from_utf8_lossy(&contents);
-                let injected = html.replacen(
-                    "<head>",
-                    "<head><script>window.__MOOSHIE_BROWSER_MODE__=true;</script>",
-                    1,
-                );
-                injected.into_bytes()
-            } else {
-                contents
-            };
-
-            (
-                StatusCode::OK,
-                [
-                    ("content-type", mime),
-                    ("cache-control", "no-cache".to_string()),
-                ],
-                contents,
-            )
-                .into_response()
+    // 1. On-disk first so hot-reloaded dev builds override any stale
+    //    compile-time embed.
+    let disk_path = dist_dir.join(rel_path);
+    if disk_path.is_file() {
+        if let Ok(contents) = tokio::fs::read(&disk_path).await {
+            return build_asset_response(rel_path, contents);
         }
-        Err(_) => (StatusCode::NOT_FOUND, "Not Found").into_response(),
     }
+
+    // 2. Embedded fallback.
+    if let Some(file) = FrontendAssets::get(rel_path) {
+        return build_asset_response(rel_path, file.data.into_owned());
+    }
+
+    // 3. SPA fallback — serve index.html for unknown client-side routes.
+    let index_disk = dist_dir.join("index.html");
+    if index_disk.is_file() {
+        if let Ok(contents) = tokio::fs::read(&index_disk).await {
+            return build_asset_response("index.html", contents);
+        }
+    }
+    if let Some(file) = FrontendAssets::get("index.html") {
+        return build_asset_response("index.html", file.data.into_owned());
+    }
+
+    (StatusCode::NOT_FOUND, "Not Found").into_response()
+}
+
+/// Build an HTTP response for a static asset. Injects the browser-mode flag
+/// into HTML payloads so the frontend IPC layer routes through HTTP instead
+/// of Tauri.
+fn build_asset_response(rel_path: &str, contents: Vec<u8>) -> Response {
+    let mime = mime_guess::from_path(rel_path)
+        .first_or_octet_stream()
+        .to_string();
+
+    let contents = if mime == "text/html" {
+        let html = String::from_utf8_lossy(&contents);
+        let injected = html.replacen(
+            "<head>",
+            "<head><script>window.__MOOSHIE_BROWSER_MODE__=true;</script>",
+            1,
+        );
+        injected.into_bytes()
+    } else {
+        contents
+    };
+
+    (
+        StatusCode::OK,
+        [
+            ("content-type", mime),
+            ("cache-control", "no-cache".to_string()),
+        ],
+        contents,
+    )
+        .into_response()
 }
 
 /// Health check endpoint for K8s liveness/readiness probes.
@@ -805,6 +928,41 @@ async fn sse_handler(
     let sse_username = resolve_username(&state, &hdrs, &remote);
     let prompt_queue = state.app.clone();
 
+    // Build the initial burst — queue positions + last preview frame for any
+    // prompt this user already has in flight (handles page refresh mid-gen).
+    let initial_events: Vec<Result<Event, std::convert::Infallible>> = {
+        let app = state.app.clone();
+        let queue = app.prompt_queue.queue.read().unwrap();
+        let total = queue.len();
+        let mut evts = Vec::new();
+        for (pos, (pid, _owner)) in queue.iter().enumerate() {
+            if app.prompt_queue.is_owned_by(pid, &sse_username) {
+                let json = serde_json::json!({
+                    "event": "mooshie:queue_update",
+                    "payload": { "prompt_id": pid, "position": pos, "total": total }
+                });
+                evts.push(Ok(Event::default().data(json.to_string())));
+
+                // Re-send last preview frame so the user sees the latest frame
+                // immediately without waiting for the next ComfyUI preview tick.
+                if let Some(temp_fn) = app
+                    .last_preview_by_prompt
+                    .read()
+                    .unwrap()
+                    .get(pid.as_str())
+                    .cloned()
+                {
+                    let preview_json = serde_json::json!({
+                        "event": "comfyui:preview",
+                        "payload": { "temp_filename": temp_fn, "format": "jpeg", "prompt_id": pid }
+                    });
+                    evts.push(Ok(Event::default().data(preview_json.to_string())));
+                }
+            }
+        }
+        evts
+    };
+
     let rx = state.app.event_tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(move |result| {
         let sse_username = sse_username.clone();
@@ -862,7 +1020,7 @@ async fn sse_handler(
         }
     });
 
-    Sse::new(stream)
+    Sse::new(tokio_stream::iter(initial_events).chain(stream))
         .keep_alive(
             KeepAlive::new()
                 .interval(Duration::from_secs(15))
@@ -888,6 +1046,9 @@ async fn heartbeat_stop_handler(AxumState(state): AxumState<SharedState>) -> Sta
     {
         return StatusCode::OK;
     }
+    // Cancel any in-progress generation before the watchdog fires and exits.
+    // Best-effort: ignore errors (ComfyUI may not be running).
+    let _ = state.app.gpu_manager.interrupt(None).await;
     // Set heartbeat to epoch so the watchdog triggers immediately
     let mut hb = state.app.last_heartbeat.lock().await;
     *hb = std::time::Instant::now() - Duration::from_secs(3600);
@@ -997,9 +1158,56 @@ async fn gallery_image_handler(
     let file_path = gallery_dir.join(&filename);
     match tokio::fs::read(&file_path).await {
         Ok(data) => {
-            let content_type = if filename.ends_with(".webp") {
+            let lower = filename.to_ascii_lowercase();
+            // JXL: decode and transcode to lossless WebP so WebView2 / Chromium
+            // (which don't ship with a JXL decoder) can still render the image.
+            // The canonical `.jxl` file on disk is untouched.
+            if lower.ends_with(".jxl") {
+                // Suggest a `.webp` filename when the browser saves the image
+                // (right-click → "Save Image As"). Without this, Edge silently
+                // saves the file with the URL's `.jxl` extension even though
+                // the bytes are WebP.
+                let webp_filename = {
+                    let stem = filename
+                        .rsplit_once('.')
+                        .map(|(s, _)| s)
+                        .unwrap_or(&filename);
+                    format!("{}.webp", stem)
+                };
+                let transcode = tokio::task::spawn_blocking(move || {
+                    commands::api::transcode_jxl_to_webp(&data)
+                })
+                .await;
+                return match transcode {
+                    Ok(Ok(webp)) => (
+                        StatusCode::OK,
+                        [
+                            ("content-type", "image/webp".to_string()),
+                            ("cache-control", "no-cache".to_string()),
+                            (
+                                "content-disposition",
+                                format!("inline; filename=\"{}\"", webp_filename),
+                            ),
+                        ],
+                        webp,
+                    )
+                        .into_response(),
+                    Ok(Err(e)) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("JXL transcode failed: {}", e),
+                    )
+                        .into_response(),
+                    Err(e) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("JXL transcode task panicked: {}", e),
+                    )
+                        .into_response(),
+                };
+            }
+
+            let content_type = if lower.ends_with(".webp") {
                 "image/webp"
-            } else if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
+            } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
                 "image/jpeg"
             } else {
                 "image/png"
@@ -1049,10 +1257,51 @@ async fn temp_image_handler(
 
     match crate::temp_images::load(&filename) {
         Some(data) => {
-            let content_type = if filename.ends_with(".png") {
+            let lower = filename.to_ascii_lowercase();
+            let want_webp = query.split('&').any(|p| p == "format=webp");
+            let want_raw = query.split('&').any(|p| p == "raw=true");
+
+            // JXL has no native browser support on WebView2 / Chromium. Transcode
+            // on request (or unconditionally for JXL in all current browsers).
+            // Skip transcoding when ?raw=true is requested (for gallery save).
+            if !want_raw && (lower.ends_with(".jxl") || want_webp) {
+                let needs_transcode =
+                    lower.ends_with(".jxl") || (want_webp && !lower.ends_with(".webp"));
+                if needs_transcode {
+                    let transcode = tokio::task::spawn_blocking(move || {
+                        commands::api::transcode_jxl_to_webp(&data)
+                    })
+                    .await;
+                    return match transcode {
+                        Ok(Ok(webp)) => (
+                            StatusCode::OK,
+                            [
+                                ("content-type", "image/webp".to_string()),
+                                ("cache-control", "no-store".to_string()),
+                            ],
+                            webp,
+                        )
+                            .into_response(),
+                        Ok(Err(e)) => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("JXL transcode failed: {}", e),
+                        )
+                            .into_response(),
+                        Err(e) => (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("JXL transcode task panicked: {}", e),
+                        )
+                            .into_response(),
+                    };
+                }
+            }
+
+            let content_type = if lower.ends_with(".png") {
                 "image/png"
-            } else if filename.ends_with(".webp") {
+            } else if lower.ends_with(".webp") {
                 "image/webp"
+            } else if lower.ends_with(".jxl") {
+                "image/jxl"
             } else {
                 "image/jpeg"
             };
@@ -1110,15 +1359,28 @@ async fn embed_temp_metadata_handler(
     };
 
     let embed_mode = crate::metadata::MetadataMode::from_str(metadata_mode);
-    let embedded = match crate::metadata::embed_png_metadata(&bytes, &metadata, embed_mode) {
-        Ok(b) => b,
-        Err(e) => {
-            log::warn!("embed_temp_metadata failed: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response();
+    let detected_format = crate::metadata::detect_format(&bytes);
+
+    let (embedded, out_ext) = match detected_format {
+        crate::metadata::ImageFormat::Jxl => {
+            match crate::metadata::embed_jxl_metadata(&bytes, &metadata) {
+                Ok(b) => (b, "jxl"),
+                Err(e) => {
+                    log::warn!("embed_temp_metadata (JXL) failed: {}", e);
+                    return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response();
+                }
+            }
         }
+        _ => match crate::metadata::embed_png_metadata(&bytes, &metadata, embed_mode) {
+            Ok(b) => (b, "png"),
+            Err(e) => {
+                log::warn!("embed_temp_metadata (PNG) failed: {}", e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response();
+            }
+        },
     };
 
-    match crate::temp_images::save(&embedded, "png") {
+    match crate::temp_images::save(&embedded, out_ext) {
         Some(new_filename) => {
             let json = serde_json::json!({ "tempFilename": new_filename });
             axum::Json(json).into_response()
@@ -1158,8 +1420,13 @@ async fn gpu_stats_handler(
 async fn cdn_proxy_handler(
     AxumState(state): AxumState<SharedState>,
     Path(path): Path<String>,
+    uri: axum::http::Uri,
 ) -> Response {
-    let target_url = format!("https://cdn.mooshieblob.com/{}", path);
+    let mut target_url = format!("https://cdn.mooshieblob.com/{}", path);
+    if let Some(query) = uri.query() {
+        target_url.push('?');
+        target_url.push_str(query);
+    }
     match state.app.http_client.get(&target_url).send().await {
         Ok(resp) => {
             let status = resp.status();
@@ -1282,10 +1549,56 @@ async fn dispatch_command(
             let new_config: crate::config::AppConfig =
                 serde_json::from_value(args["config"].clone())
                     .map_err(|e| format!("Invalid config: {}", e))?;
-            config::save_config(&new_config).map_err(|e| e)?;
+            config::save_config(&new_config)?;
             let mut current = state.config.write().await;
             *current = new_config;
             Ok(serde_json::json!(null))
+        }
+        "check_attention_backend" => {
+            let (venv_path, current) = {
+                let config = state.config.read().await;
+                (config.venv_path.clone(), config.attention_backend.clone())
+            };
+
+            let uv = crate::commands::api::resolve_uv_bin_pub(&venv_path);
+            let mut venv_packages = Vec::new();
+            let venv_python = {
+                #[cfg(target_os = "windows")]
+                {
+                    std::path::Path::new(&venv_path)
+                        .join("Scripts")
+                        .join("python.exe")
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    std::path::Path::new(&venv_path).join("bin").join("python")
+                }
+            };
+
+            if uv.exists() {
+                if let Ok(output) = tokio::process::Command::new(&uv)
+                    .args(["pip", "list", "--python", &venv_python.to_string_lossy()])
+                    .output()
+                    .await
+                {
+                    if output.status.success() {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        let known = ["sageattention", "flash-attn", "triton"];
+                        for line in stdout.lines() {
+                            let pkg = line.split_whitespace().next().unwrap_or("").to_lowercase();
+                            if known.iter().any(|k| pkg == *k) {
+                                venv_packages.push(pkg);
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(serde_json::json!({
+                "current": current,
+                "venv_packages": venv_packages,
+                "compute_capability": crate::commands::api::detect_compute_capability_pub(),
+            }))
         }
         "switch_to_app_mode" => {
             #[cfg(not(feature = "desktop"))]
@@ -1297,7 +1610,7 @@ async fn dispatch_command(
                 // Step 1: Save config
                 let mut cfg = state.config.write().await;
                 cfg.browser_mode = false;
-                config::save_config(&cfg).map_err(|e| e)?;
+                config::save_config(&cfg)?;
                 drop(cfg);
 
                 // Step 2: Disarm heartbeat watchdog
@@ -1411,6 +1724,11 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
         }
+        "kill_port_process" => {
+            let port = state.config.read().await.server_port;
+            crate::comfyui::process::kill_process_on_port(port).await;
+            Ok(serde_json::json!(port))
+        }
         "connect_ws" => {
             use crate::comfyui::websocket;
             let event_tx = state.event_tx.clone();
@@ -1484,9 +1802,67 @@ async fn dispatch_command(
             };
             resolve(&mut running);
             resolve(&mut pending);
+            // Include tracked placeholders that haven't been submitted to a
+            // ComfyUI worker yet (background submission in flight, or held in
+            // the fair queue). Without this, the frontend reconciler falsely
+            // concludes these prompts have vanished and clears them
+            // immediately after the user clicks generate.
+            let known: std::collections::HashSet<String> = running
+                .iter()
+                .chain(pending.iter())
+                .filter_map(|e| {
+                    e.as_array()
+                        .and_then(|a| a.get(1))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+                .collect();
+            let tracked: Vec<String> = {
+                let q = state.prompt_queue.queue.read().unwrap();
+                q.iter().map(|(pid, _)| pid.clone()).collect()
+            };
+            for pid in tracked {
+                if !known.contains(&pid) {
+                    pending.push(serde_json::json!([0, pid, {}, {}, []]));
+                }
+            }
+
+            // Check if caller is privileged (admin or moderator) — can see usernames.
+            // username=None means localhost (always admin).
+            let is_privileged = match username {
+                None => true,
+                Some(u) => matches!(
+                    auth.get_account_role(u).as_deref(),
+                    Some("admin") | Some("moderator")
+                ),
+            };
+            // Build ordered queue positions from our internal fair-queue tracker.
+            // This is separate from ComfyUI's queue and reflects round-robin ordering.
+            let queue_positions: Vec<serde_json::Value> = {
+                let queue = state.prompt_queue.queue.read().unwrap();
+                queue
+                    .iter()
+                    .enumerate()
+                    .map(|(pos, (id, owner))| {
+                        if is_privileged {
+                            serde_json::json!({
+                                "prompt_id": id,
+                                "position": pos,
+                                "username": owner,
+                            })
+                        } else {
+                            serde_json::json!({
+                                "prompt_id": id,
+                                "position": pos,
+                            })
+                        }
+                    })
+                    .collect()
+            };
             Ok(serde_json::json!({
                 "queue_running": running,
                 "queue_pending": pending,
+                "queue_positions": queue_positions,
             }))
         }
         "get_history" => {
@@ -1517,7 +1893,21 @@ async fn dispatch_command(
             Ok(serde_json::json!({ "images": images }))
         }
         "interrupt_generation" => {
-            state.interrupt().await.map_err(|e| e.to_string())?;
+            if let Some(prompt_id) = args["promptId"].as_str() {
+                let caller = username.map(str::to_string);
+                if !state.prompt_queue.is_owned_by(prompt_id, &caller) {
+                    return Err("Prompt does not belong to the current user".to_string());
+                }
+                state
+                    .interrupt_prompt(Some(prompt_id))
+                    .await
+                    .map_err(|e| e.to_string())?;
+            } else {
+                state
+                    .interrupt_user_prompts(username)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
             Ok(serde_json::json!(null))
         }
         "clear_all_queues" => {
@@ -1555,7 +1945,7 @@ async fn dispatch_command(
                         if !pending_ids.is_empty() {
                             let _ = state
                                 .http_client
-                                .post(&format!("{}/queue", worker.base_url))
+                                .post(format!("{}/queue", worker.base_url))
                                 .json(&serde_json::json!({ "delete": pending_ids }))
                                 .send()
                                 .await;
@@ -1663,6 +2053,58 @@ async fn dispatch_command(
             let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
             Ok(serde_json::json!(bytes))
         }
+        "load_gallery_image_display" => {
+            // JXL → WebP transcode so non-JXL browsers (Firefox, Edge, Chrome)
+            // can render the image. Other formats are returned as-is.
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+                return Err("Invalid filename".into());
+            }
+            let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
+            let path = dir.join(&filename);
+            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let out = if filename.to_ascii_lowercase().ends_with(".jxl") {
+                tokio::task::spawn_blocking(move || commands::api::transcode_jxl_to_webp(&bytes))
+                    .await
+                    .map_err(|e| format!("Task panicked: {}", e))?
+                    .map_err(|e| e.to_string())?
+            } else {
+                bytes
+            };
+            Ok(serde_json::json!(out))
+        }
+        "load_gallery_image_png" => {
+            // JXL → PNG transcode for downloading / clipboard. PNG keeps
+            // metadata intact and is supported everywhere.
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+                return Err("Invalid filename".into());
+            }
+            let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
+            let path = dir.join(&filename);
+            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let out = if filename.to_ascii_lowercase().ends_with(".jxl") {
+                tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+                    let img = commands::api::decode_gallery_image(&bytes)?;
+                    let mut buf = std::io::Cursor::new(Vec::new());
+                    img.write_to(&mut buf, image::ImageFormat::Png)
+                        .map_err(|e| format!("PNG encode failed: {}", e))?;
+                    Ok(buf.into_inner())
+                })
+                .await
+                .map_err(|e| format!("Task panicked: {}", e))?
+                .map_err(|e| e.to_string())?
+            } else {
+                bytes
+            };
+            Ok(serde_json::json!(out))
+        }
         "get_gallery_image_path" => {
             let filename = args["filename"]
                 .as_str()
@@ -1693,6 +2135,16 @@ async fn dispatch_command(
             let params: crate::comfyui::types::GenerationParams =
                 serde_json::from_value(args["params"].clone())
                     .map_err(|e| format!("Invalid params: {}", e))?;
+            crate::templates::validate_generation_params(&params)?;
+            {
+                let config = state.config.read().await;
+                crate::commands::api::validate_lora_files_for_generation(
+                    &config.comfyui_path,
+                    config.extra_model_paths.as_deref(),
+                    &params.loras,
+                )
+                .map_err(|e| e.to_string())?;
+            }
             let seed = if params.seed < 0 {
                 (rand::random::<u64>() >> 1) as i64
             } else {
@@ -1702,11 +2154,21 @@ async fn dispatch_command(
             let user = username.map(|s| s.to_string());
 
             log::info!(
-                "[gen] user={} seed={} steps={}",
+                "[gen] user={} seed={} steps={} mode={}",
                 user.as_deref().unwrap_or("admin"),
                 seed,
                 params.steps,
+                params.mode,
             );
+            if params.controlnet.as_ref().is_some_and(|cn| cn.enabled)
+                || params.facefix_enabled
+                || !params.loras.is_empty()
+            {
+                log::info!(
+                    "Workflow JSON: {}",
+                    serde_json::to_string_pretty(&workflow).unwrap_or_default()
+                );
+            }
 
             // Check needs_hold BEFORE inserting the placeholder
             let needs_hold = user.is_some() && state.prompt_queue.active_count_for_user(&user) > 0;
@@ -1785,11 +2247,37 @@ async fn dispatch_command(
                         .await
                     {
                         Ok((worker_id, response)) => {
-                            bg_state
+                            let was_deferred = bg_state
                                 .prompt_queue
                                 .bind_alias(&bg_placeholder, &response.prompt_id);
-                            bg_state.prompt_queue.set_worker(&bg_placeholder, worker_id);
-                            bg_state.broadcast_queue_positions();
+                            if was_deferred {
+                                // Completion/error arrived in the window before bind_alias.
+                                // Placeholder is already removed from the queue; release worker.
+                                log::warn!(
+                                    "[gen] deferred cleanup on bind: placeholder={}",
+                                    &bg_placeholder[..8.min(bg_placeholder.len())],
+                                );
+                                bg_state
+                                    .gpu_manager
+                                    .mark_worker_error_then_idle(worker_id)
+                                    .await;
+                                bg_state
+                                    .output_image_cache
+                                    .write()
+                                    .unwrap()
+                                    .remove(&bg_placeholder);
+                                let alias_state = bg_state.clone();
+                                let alias_pid = bg_placeholder.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                    alias_state.prompt_queue.cleanup_alias(&alias_pid);
+                                });
+                                bg_state.broadcast_queue_positions();
+                                bg_state.prompt_queue.drain_notify.notify_one();
+                            } else {
+                                bg_state.prompt_queue.set_worker(&bg_placeholder, worker_id);
+                                bg_state.broadcast_queue_positions();
+                            }
                         }
                         Err(e) => {
                             log::error!("[gen] submission failed for {}: {}", bg_placeholder, e);
@@ -1813,6 +2301,50 @@ async fn dispatch_command(
                 "seed": seed,
                 "queue_position": queue_pos,
                 "queue_total": queue_total,
+            }))
+        }
+        "generate_controlnet_preprocessor_preview" => {
+            crate::temp_images::cleanup(300);
+
+            let image = args["image"]
+                .as_str()
+                .ok_or("Missing image")?
+                .trim()
+                .to_string();
+            let preprocessor = args["preprocessor"]
+                .as_str()
+                .ok_or("Missing preprocessor")?
+                .trim()
+                .to_string();
+
+            if image.is_empty() {
+                return Err("ControlNet preprocessor preview needs a control image.".into());
+            }
+            if preprocessor.is_empty() {
+                return Err("ControlNet preprocessor preview needs a preprocessor.".into());
+            }
+
+            let workflow = crate::templates::controlnet::build_preprocessor_preview_workflow(
+                &image,
+                &preprocessor,
+            );
+            let timeout = std::time::Duration::from_secs(120);
+            let (worker_id, response) = state
+                .gpu_manager
+                .submit_prompt(workflow, &state.client_id, timeout)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            state
+                .prompt_queue
+                .insert(&response.prompt_id, username.map(|s| s.to_string()));
+            state
+                .prompt_queue
+                .set_worker(&response.prompt_id, worker_id);
+            state.broadcast_queue_positions();
+
+            Ok(serde_json::json!({
+                "prompt_id": response.prompt_id,
             }))
         }
         "delete_queue_item" => {
@@ -1974,8 +2506,9 @@ async fn dispatch_command(
                 metadata.as_ref(),
                 metadata_mode.as_deref(),
             )?;
-            // Clean up temp file after successful save
-            crate::temp_images::remove(&temp_filename);
+            // Keep the temp file available briefly for clients that still hold
+            // the temp URL or race a manual save against gallery persistence.
+            // Periodic cleanup handles expiry.
             Ok(serde_json::json!(result))
         }
         "delete_gallery_image" => {
@@ -2208,30 +2741,104 @@ async fn dispatch_command(
             let extra_model_paths = config.extra_model_paths.clone();
             drop(config);
 
-            let mut dirs: Vec<serde_json::Value> = Vec::new();
-            if !comfyui_path.is_empty() {
-                let primary = std::path::Path::new(&comfyui_path)
-                    .join("models")
-                    .join(&category);
-                let label = std::path::Path::new(&comfyui_path)
-                    .file_name()
-                    .map(|n| format!("App ({})", n.to_string_lossy()))
-                    .unwrap_or_else(|| "App".to_string());
-                dirs.push(serde_json::json!({ "path": primary.to_string_lossy(), "label": label }));
-            }
-            if let Some(extra) = extra_model_paths {
-                for line in extra.lines().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                    let extra_dir = std::path::Path::new(line).join(&category);
-                    if extra_dir.exists() {
-                        let label = std::path::Path::new(line)
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| line.to_string());
-                        dirs.push(serde_json::json!({ "path": extra_dir.to_string_lossy(), "label": label }));
-                    }
-                }
-            }
-            serde_json::to_value(dirs).map_err(|e| e.to_string())
+            let result = crate::commands::api::model_install_dirs_for_config(
+                &comfyui_path,
+                extra_model_paths.as_deref(),
+                &category,
+            )
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "list_model_files" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let config = state.config.read().await;
+            let comfyui_path = config.comfyui_path.clone();
+            let extra_model_paths = config.extra_model_paths.clone();
+            drop(config);
+
+            let result = tokio::task::spawn_blocking(move || {
+                crate::commands::api::list_model_files_for_config(
+                    &comfyui_path,
+                    extra_model_paths.as_deref(),
+                    &category,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "delete_model_file" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            let directory = args["directory"]
+                .as_str()
+                .ok_or("Missing directory")?
+                .to_string();
+            let config = state.config.read().await;
+            let comfyui_path = config.comfyui_path.clone();
+            let extra_model_paths = config.extra_model_paths.clone();
+            drop(config);
+
+            tokio::task::spawn_blocking(move || {
+                crate::commands::api::delete_model_file_for_config(
+                    &comfyui_path,
+                    extra_model_paths.as_deref(),
+                    &category,
+                    &filename,
+                    &directory,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
+        }
+        "move_model_file" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            let source_directory = args["sourceDirectory"]
+                .as_str()
+                .ok_or("Missing sourceDirectory")?
+                .to_string();
+            let target_directory = args["targetDirectory"]
+                .as_str()
+                .ok_or("Missing targetDirectory")?
+                .to_string();
+            let config = state.config.read().await;
+            let comfyui_path = config.comfyui_path.clone();
+            let extra_model_paths = config.extra_model_paths.clone();
+            drop(config);
+
+            tokio::task::spawn_blocking(move || {
+                crate::commands::api::move_model_file_for_config(
+                    &comfyui_path,
+                    extra_model_paths.as_deref(),
+                    &category,
+                    &filename,
+                    &source_directory,
+                    &target_directory,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
         }
         "find_model_by_hash" => {
             let hash = args["hash"].as_str().ok_or("Missing hash")?.to_string();
@@ -2239,6 +2846,10 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing category")?
                 .to_string();
+            if !crate::commands::api::is_safe_path_component(&category) {
+                return Err("Invalid model category".into());
+            }
+
             let config = state.config.read().await;
             if config.comfyui_path.is_empty() {
                 return Err("ComfyUI path not configured".into());
@@ -2295,6 +2906,13 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
+            if !crate::commands::api::is_safe_path_component(&category) {
+                return Err("Invalid model category".into());
+            }
+            if !crate::commands::api::is_safe_relative_model_path(&filename) {
+                return Err("Invalid model filename".into());
+            }
+
             let config = state.config.read().await;
             if config.comfyui_path.is_empty() {
                 return Err("ComfyUI path not configured".into());
@@ -2305,7 +2923,7 @@ async fn dispatch_command(
                 .join(&filename);
             drop(config);
 
-            if !path.exists() {
+            if !path.is_file() {
                 return Err(format!("File not found: {}", filename));
             }
             let result = tokio::task::spawn_blocking(move || {
@@ -2327,6 +2945,13 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
+            if !crate::commands::api::is_safe_path_component(&category) {
+                return Err("Invalid model category".into());
+            }
+            if !crate::commands::api::is_safe_relative_model_path(&filename) {
+                return Err("Invalid model filename".into());
+            }
+
             let config = state.config.read().await;
             if config.comfyui_path.is_empty() {
                 return Err("ComfyUI path not configured".into());
@@ -2337,7 +2962,7 @@ async fn dispatch_command(
                 .join(&filename);
             drop(config);
 
-            if !path.exists() {
+            if !path.is_file() {
                 return Err(format!("File not found: {}", filename));
             }
             if !filename.ends_with(".safetensors") {
@@ -2694,7 +3319,7 @@ async fn dispatch_command(
                                 "url": url,
                                 "width": img.get("width").and_then(|w| w.as_u64()),
                                 "height": img.get("height").and_then(|h| h.as_u64()),
-                                "nsfw": img.get("nsfwLevel").and_then(|n| n.as_u64()).map(|n| if n <= 1 { "None" } else { &"Level" }),
+                                "nsfw": img.get("nsfwLevel").and_then(|n| n.as_u64()).map(|n| if n <= 1 { "None" } else { "Level" }),
                             })
                         })
                     }).collect();
@@ -2754,7 +3379,7 @@ async fn dispatch_command(
             let resolved = if trimmed.is_empty() {
                 let mut cfg = state.config.write().await;
                 cfg.gallery_path = None;
-                config::save_config(&cfg).map_err(|e| e)?;
+                config::save_config(&cfg)?;
                 let dir = config::app_data_dir()
                     .ok_or("Cannot find app data directory")?
                     .join("gallery");
@@ -2766,7 +3391,7 @@ async fn dispatch_command(
                     .map_err(|e| format!("Cannot create gallery directory: {}", e))?;
                 let mut cfg = state.config.write().await;
                 cfg.gallery_path = Some(trimmed.clone());
-                config::save_config(&cfg).map_err(|e| e)?;
+                config::save_config(&cfg)?;
                 trimmed
             };
             Ok(serde_json::json!(resolved))
@@ -2791,6 +3416,16 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing destination")?
                 .to_string();
+            // Fold any frontend logs from the payload into the shared ring
+            // buffer before exporting so this handler matches the desktop
+            // command's behaviour.
+            if let Some(lines) = args.get("frontendLogs").and_then(|v| v.as_array()) {
+                let strings: Vec<String> = lines
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
+                crate::log_buffer::push_frontend_lines(strings);
+            }
             // Simplified: just write config info to the destination
             let cfg = state.config.read().await;
             let info = format!("MooshieUI Log Export\nConfig: {:?}", *cfg);
@@ -2834,7 +3469,12 @@ async fn dispatch_command(
             if dest.exists() {
                 let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
                 if size > 0 {
-                    if let Some(ref expected_hex) = expected_sha256 {
+                    let cached_is_valid =
+                        crate::comfyui::client::validate_downloaded_model_file(&dest, &filename)
+                            .is_ok();
+                    if !cached_is_valid {
+                        let _ = std::fs::remove_file(&dest);
+                    } else if let Some(ref expected_hex) = expected_sha256 {
                         let dest_clone = dest.clone();
                         let expected = expected_hex.to_lowercase();
                         let computed = tokio::task::spawn_blocking(move || {
@@ -2857,19 +3497,28 @@ async fn dispatch_command(
 
             // Download with progress broadcast
             let event_tx = state.event_tx.clone();
-            let resp = state
+            let mut req = state
                 .http_client
                 .get(&url)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
+                .header("User-Agent", "MooshieUI/1.3.0");
+            if let Some(token) = crate::comfyui::client::huggingface_token_for_url(&url) {
+                req = req.bearer_auth(token);
+            }
+            let resp = req.send().await.map_err(|e| e.to_string())?;
             if !resp.status().is_success() {
-                return Err(format!(
-                    "Failed to download {}: HTTP {}",
-                    url,
-                    resp.status()
+                let status = resp.status();
+                return Err(crate::comfyui::client::download_status_error_message(
+                    &url, status,
                 ));
             }
+            let content_type = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_lowercase();
+            crate::comfyui::client::reject_non_model_download_content_type(&url, &content_type)
+                .map_err(|e| e.to_string())?;
             let total = resp.content_length().unwrap_or(0);
             let mut downloaded: u64 = 0;
             let mut file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
@@ -2927,6 +3576,12 @@ async fn dispatch_command(
                     ));
                 }
             }
+            crate::comfyui::client::validate_downloaded_model_file(&dest, &filename).map_err(
+                |e| {
+                    let _ = std::fs::remove_file(&dest);
+                    e.to_string()
+                },
+            )?;
 
             Ok(serde_json::json!(null))
         }
@@ -2986,6 +3641,17 @@ async fn dispatch_command(
                 .map_err(|e| format!("Invalid imageBytes: {}", e))?;
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
             std::fs::write(&path, &image_bytes).map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
+        }
+        "save_text_file" => {
+            let content = args["content"]
+                .as_str()
+                .ok_or("Missing content")?
+                .to_string();
+            let path = args["path"].as_str().ok_or("Missing path")?.to_string();
+            tokio::fs::write(&path, content)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
         }
         "upload_image" => {
@@ -3256,6 +3922,7 @@ async fn auth_status_handler(
         "has_accounts": state.auth.has_accounts(),
         "role": role_str,
         "lan_enabled": state.lan_enabled,
+        "server_mode": !cfg!(feature = "desktop"),
         "can_use_modelhub": can_use_modelhub,
     }))
 }
@@ -3692,7 +4359,7 @@ fn dir_usage_bytes(dir: &std::path::Path) -> u64 {
         .map(|entries| {
             entries
                 .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().ok().map_or(false, |ft| ft.is_file()))
+                .filter(|e| e.file_type().ok().is_some_and(|ft| ft.is_file()))
                 .filter_map(|e| e.metadata().ok().map(|m| m.len()))
                 .sum()
         })
@@ -3740,7 +4407,7 @@ async fn storage_info_handler(
     if gallery_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(&gallery_dir) {
             for entry in entries.flatten() {
-                if entry.file_type().ok().map_or(true, |ft| !ft.is_file()) {
+                if entry.file_type().ok().is_none_or(|ft| !ft.is_file()) {
                     continue;
                 }
                 let name = entry.file_name().to_string_lossy().into_owned();
@@ -3863,7 +4530,7 @@ fn cleanup_expired_images(auth: &AuthState) {
     };
 
     for dir_entry in user_dirs.flatten() {
-        if !dir_entry.file_type().ok().map_or(false, |ft| ft.is_dir()) {
+        if !dir_entry.file_type().ok().is_some_and(|ft| ft.is_dir()) {
             continue;
         }
         let user_dir = dir_entry.path();
@@ -3875,7 +4542,7 @@ fn cleanup_expired_images(auth: &AuthState) {
         let mut expired_count = 0_u64;
         let mut expired_bytes = 0_u64;
         for file_entry in files.flatten() {
-            if file_entry.file_type().ok().map_or(true, |ft| !ft.is_file()) {
+            if file_entry.file_type().ok().is_none_or(|ft| !ft.is_file()) {
                 continue;
             }
             let name = file_entry.file_name().to_string_lossy().into_owned();
@@ -3938,9 +4605,428 @@ pub fn start_heartbeat_watchdog(state: Arc<AppState>, timeout_secs: u64) {
                     "No heartbeat for {:?}, shutting down (browser tab likely closed)",
                     elapsed
                 );
-                // Trigger app exit
+                // Cancel any in-progress generation before exiting so the
+                // ComfyUI queue doesn't keep running after the tab closes.
+                let _ = state.gpu_manager.interrupt(None).await;
                 std::process::exit(0);
             }
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Model request handlers
+// ---------------------------------------------------------------------------
+
+/// GET /internal-api/_model_requests — list all model requests.
+/// Query params: ?status=pending|approved|denied (optional filter).
+async fn model_requests_list_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let status_filter = params.get("status").and_then(|s| match s.as_str() {
+        "pending" => Some(crate::model_requests::RequestStatus::Pending),
+        "approved" => Some(crate::model_requests::RequestStatus::Approved),
+        "denied" => Some(crate::model_requests::RequestStatus::Denied),
+        _ => None,
+    });
+
+    let requests = state.app.model_requests.get_requests(status_filter);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "requests": requests })),
+    )
+        .into_response()
+}
+
+/// POST /internal-api/_model_requests/add — submit a new model request.
+/// Body: { model_id, model_name, model_type, model_url, file_name, file_url, file_size_kb, category }
+async fn model_requests_add_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    let model_id = match req.get("model_id").and_then(|v| v.as_u64()) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing model_id" })),
+            )
+                .into_response();
+        }
+    };
+    let model_name = req
+        .get("model_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown")
+        .to_string();
+    let model_type = req
+        .get("model_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown")
+        .to_string();
+    let model_url = req
+        .get("model_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let file_name = req
+        .get("file_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let file_url = req
+        .get("file_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let file_size_kb = req
+        .get("file_size_kb")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let category = req
+        .get("category")
+        .and_then(|v| v.as_str())
+        .unwrap_or("checkpoints")
+        .to_string();
+
+    if file_name.is_empty() || file_url.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Missing file_name or file_url" })),
+        )
+            .into_response();
+    }
+
+    let request = state.app.model_requests.add_request(
+        &username,
+        model_id,
+        &model_name,
+        &model_type,
+        &model_url,
+        &file_name,
+        &file_url,
+        file_size_kb,
+        &category,
+    );
+
+    // Notify all mods/admins about the new request
+    let _ = state.app.notifications.create(
+        "global",
+        &format!("Model request: {}", model_name),
+        Some(&format!(
+            "{} requested {} ({})",
+            username, model_name, model_type
+        )),
+        "info",
+    );
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "request": request })),
+    )
+        .into_response()
+}
+
+/// POST /internal-api/_model_requests/approve — approve a request (mod/admin).
+/// Body: { request_id }
+async fn model_requests_approve_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role != UserRole::Admin && role != UserRole::Moderator {
+        return forbidden_response("Only admins and moderators can approve requests.");
+    }
+
+    let handler_username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    let request_id = match req.get("request_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing request_id" })),
+            )
+                .into_response();
+        }
+    };
+
+    match state
+        .app
+        .model_requests
+        .approve_request(request_id, &handler_username)
+    {
+        Ok(request) => {
+            // Notify the requester
+            let _ = state.app.notifications.create(
+                &request.username,
+                &format!("Model approved: {}", request.model_name),
+                Some(&format!(
+                    "Your request for {} was approved by {}. The model will be downloaded.",
+                    request.model_name, handler_username
+                )),
+                "success",
+            );
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "request": request })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /internal-api/_model_requests/deny — deny a request (mod/admin).
+/// Body: { request_id, reason? }
+async fn model_requests_deny_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role != UserRole::Admin && role != UserRole::Moderator {
+        return forbidden_response("Only admins and moderators can deny requests.");
+    }
+
+    let handler_username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    let request_id = match req.get("request_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing request_id" })),
+            )
+                .into_response();
+        }
+    };
+    let reason = req.get("reason").and_then(|v| v.as_str());
+
+    match state
+        .app
+        .model_requests
+        .deny_request(request_id, &handler_username, reason)
+    {
+        Ok(request) => {
+            // Notify the requester with the reason
+            let body = match &request.deny_reason {
+                Some(r) => format!(
+                    "Your request for {} was denied by {}. Reason: {}",
+                    request.model_name, handler_username, r
+                ),
+                None => format!(
+                    "Your request for {} was denied by {}.",
+                    request.model_name, handler_username
+                ),
+            };
+            let _ = state.app.notifications.create(
+                &request.username,
+                &format!("Model denied: {}", request.model_name),
+                Some(&body),
+                "warning",
+            );
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "request": request })),
+            )
+                .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Notification handlers
+// ---------------------------------------------------------------------------
+
+/// GET /internal-api/_notifications — list notifications for the current user.
+async fn notifications_list_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    let notifications = state.app.notifications.get_for_user(&username);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "notifications": notifications })),
+    )
+        .into_response()
+}
+
+/// GET /internal-api/_notifications/unread_count — get unread notification count.
+async fn notifications_unread_count_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    let count = state.app.notifications.unread_count(&username);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "unread_count": count })),
+    )
+        .into_response()
+}
+
+/// POST /internal-api/_notifications/mark_read — mark a notification as read.
+/// Body: { notification_id }
+async fn notifications_mark_read_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let notification_id = match req.get("notification_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing notification_id" })),
+            )
+                .into_response();
+        }
+    };
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    match state
+        .app
+        .notifications
+        .mark_read(&username, notification_id)
+    {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /internal-api/_notifications/mark_all_read — mark all notifications as read.
+async fn notifications_mark_all_read_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    state.app.notifications.mark_all_read(&username);
+    (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
+}
+
+/// POST /internal-api/_notifications/dismiss — dismiss a notification for this user.
+/// Body: { notification_id }
+async fn notifications_dismiss_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    let notification_id = match req.get("notification_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Missing notification_id" })),
+            )
+                .into_response();
+        }
+    };
+
+    match state.app.notifications.dismiss(&username, notification_id) {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /internal-api/_notifications/clear — dismiss all notifications for this user.
+async fn notifications_clear_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let role = resolve_role(&state, &headers, &remote);
+    if role == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| "admin".to_string());
+
+    state.app.notifications.clear_all(&username);
+    (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
 }

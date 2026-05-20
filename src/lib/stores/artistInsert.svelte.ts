@@ -13,6 +13,15 @@ export type ArtistInsertPending = {
   duplicate: boolean;
 };
 
+/**
+ * Escape any unescaped `(` and `)` in a tag so it round-trips through the
+ * prompt scheduler/highlighter without being interpreted as a weight group.
+ * Already-escaped parens (preceded by `\`) are left untouched.
+ */
+function escapeParens(s: string): string {
+  return s.replace(/(\\?)([()])/g, (_, esc, paren) => (esc ? esc + paren : "\\" + paren));
+}
+
 class ArtistInsertStore {
   pending = $state<ArtistInsertPending | null>(null);
 
@@ -26,7 +35,12 @@ class ArtistInsertStore {
    * The `tag` may be provided with or without a leading `@`.
    */
   request(tag: string): void {
-    const withAt = "@" + tag.replace(/^@/, "");
+    // Strip leading @, convert underscores to spaces (danbooru convention),
+    // escape any unescaped parens (so `artist (tag)` becomes `artist \(tag\)`),
+    // then re-prefix with @. Already-escaped parens are left as-is so prompts
+    // round-trip correctly through the scheduler/highlight parser.
+    const cleaned = escapeParens(tag.replace(/^@+/, "").replace(/_/g, " ").trim());
+    const withAt = "@" + cleaned;
     const existing = generation.positivePrompt.trim();
     const existingArtistTags = existing
       .split(",")
@@ -42,6 +56,10 @@ class ArtistInsertStore {
   }
 
   apply(withAt: string, mode: "add" | "replace"): void {
+    // Defensive: normalize underscores → spaces and escape unescaped parens
+    // in case a caller passes a raw danbooru-style tag rather than going
+    // through request().
+    const cleaned = "@" + escapeParens(withAt.replace(/^@+/, "").replace(/_/g, " ").trim());
     const existing = generation.positivePrompt.trim();
     let newPrompt: string;
     if (mode === "replace") {
@@ -50,9 +68,9 @@ class ArtistInsertStore {
         .map((s) => s.trim())
         .filter((s) => !s.startsWith("@"))
         .join(", ");
-      newPrompt = stripped ? `${withAt}, ${stripped}` : withAt;
+      newPrompt = stripped ? `${cleaned}, ${stripped}` : cleaned;
     } else {
-      newPrompt = existing ? `${withAt}, ${existing}` : withAt;
+      newPrompt = existing ? `${cleaned}, ${existing}` : cleaned;
     }
     generation.positivePrompt = newPrompt;
     generation.saveSettings();

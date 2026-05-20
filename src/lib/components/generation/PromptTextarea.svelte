@@ -3,18 +3,22 @@
   import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
+  import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import ArtistHoverPreview from "../../artist-gallery/components/ArtistHoverPreview.svelte";
-  import { smoothScroll } from "../../utils/smoothScroll.js";
-  import { renderHighlightedPrompt, hasSchedulingTags } from "../../utils/promptSchedule.js";
+  import { renderHighlightedPrompt, hasSchedulingTags, hasPresetTokens } from "../../utils/promptSchedule.js";
 
   interface Props {
     value: string;
     placeholder?: string;
     rows?: number;
     minHeight?: string;
+    storageKey?: string;
   }
 
-  let { value = $bindable(), placeholder = "", rows = 4, minHeight = "min-h-25" }: Props = $props();
+  let { value = $bindable(), placeholder = "", rows = 4, minHeight = "min-h-25", storageKey }: Props = $props();
+
+  // Restored height is applied as inline style (set in $effect on mount).
+  let resizeStyle = $state("");
 
   /** Format a tag name for insertion into the prompt. Escapes parentheses for models that take raw tags. */
   function formatTagForPrompt(name: string): string {
@@ -51,6 +55,11 @@
     if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
     if (count >= 1_000) return `${(count / 1_000).toFixed(0)}k`;
     return String(count);
+  }
+
+  function formatTagCount(tag: { p: number; b?: number }): string {
+    if (tag.b) return `<${tag.b === 1 ? 50 : tag.b}`;
+    return formatCount(tag.p);
   }
 
   function getCurrentTagFragment(): {
@@ -237,20 +246,57 @@
       const end = textareaEl.selectionEnd;
       if (start !== end) {
         e.preventDefault();
+        // Push current value to undo stack before modifying
+        undoStack = [...undoStack, value];
+        redoStack = [];
         adjustWeight(e.key === "ArrowUp" ? 0.05 : -0.05, start, end);
         return;
       }
     }
 
-    // NAI-style bracket weighting: { wraps selection to increase, [ to decrease
-    if ((e.key === "{" || e.key === "[") && textareaEl) {
+    // NAI-style bracket weighting: { / } wraps selection to increase, [ / ] to decrease.
+    // If selected text is already wrapped in {} and user presses [ or ], strip {}s first.
+    if ((e.key === "{" || e.key === "}" || e.key === "[" || e.key === "]") && textareaEl) {
       const start = textareaEl.selectionStart;
       const end = textareaEl.selectionEnd;
       if (start !== end) {
         e.preventDefault();
-        const open = e.key === "{" ? "{" : "[";
-        const close = e.key === "{" ? "}" : "]";
-        const wrapped = `${open}${value.substring(start, end)}${close}`;
+        const selected = value.substring(start, end);
+        const braceKey = (e.key === "{" || e.key === "}") ? "brace" : "bracket";
+
+        // If pressing [ or ] and selection is already wrapped in {}, strip one layer of {}
+        if (braceKey === "bracket" && selected.startsWith("{") && selected.endsWith("}")) {
+          // Push current value to undo stack before modifying
+          undoStack = [...undoStack, value];
+          redoStack = [];
+          const inner = selected.slice(1, -1);
+          value = value.substring(0, start) + inner + value.substring(end);
+          requestAnimationFrame(() => {
+            textareaEl?.focus();
+            textareaEl?.setSelectionRange(start, start + inner.length);
+          });
+          return;
+        }
+
+        // If pressing { or } and selection is already wrapped in [], strip one layer of []
+        if (braceKey === "brace" && selected.startsWith("[") && selected.endsWith("]")) {
+          undoStack = [...undoStack, value];
+          redoStack = [];
+          const inner = selected.slice(1, -1);
+          value = value.substring(0, start) + inner + value.substring(end);
+          requestAnimationFrame(() => {
+            textareaEl?.focus();
+            textareaEl?.setSelectionRange(start, start + inner.length);
+          });
+          return;
+        }
+
+        // Normal wrap: surround with the appropriate bracket pair
+        const open = braceKey === "brace" ? "{" : "[";
+        const close = braceKey === "brace" ? "}" : "]";
+        const wrapped = `${open}${selected}${close}`;
+        undoStack = [...undoStack, value];
+        redoStack = [];
         value = value.substring(0, start) + wrapped + value.substring(end);
         requestAnimationFrame(() => {
           textareaEl?.focus();
@@ -356,11 +402,11 @@
     }, 200);
   }
 
-  // Reactive: detect if current value has scheduling tags
-  const showBackdrop = $derived(hasSchedulingTags(value));
+  // Reactive: detect if current value has scheduling tags or inline preset tokens
+  const showBackdrop = $derived(hasSchedulingTags(value) || hasPresetTokens(value));
 
   // Reactive: render highlighted HTML for the backdrop overlay
-  const highlightedHtml = $derived(showBackdrop ? renderHighlightedPrompt(value) : "");
+  const highlightedHtml = $derived(showBackdrop ? renderHighlightedPrompt(value, promptPresets.slugs) : "");
 
   function syncScroll() {
     if (textareaEl && backdropEl) {
@@ -369,10 +415,34 @@
     }
   }
 
+  // Restore saved height and persist future resize changes via ResizeObserver.
+  let resizeObserver: ResizeObserver | null = null;
+  $effect(() => {
+    if (!textareaEl || !storageKey) return;
+    // Restore saved height on mount.
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      textareaEl.style.height = saved;
+      resizeStyle = `height: ${saved};`;
+    }
+    // Observe future user-driven resizes.
+    resizeObserver?.disconnect();
+    resizeObserver = new ResizeObserver(() => {
+      if (!textareaEl || !storageKey) return;
+      const h = textareaEl.style.height;
+      if (h && h !== "" && h !== "0px") {
+        localStorage.setItem(storageKey, h);
+        resizeStyle = `height: ${h};`;
+      }
+    });
+    resizeObserver.observe(textareaEl);
+  });
+
   onDestroy(() => {
     if (suggestionTimer !== null) {
       window.clearTimeout(suggestionTimer);
     }
+    resizeObserver?.disconnect();
   });
 </script>
 
@@ -391,8 +461,7 @@
     {placeholder}
     {rows}
     class="w-full border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors {minHeight} {showBackdrop ? 'bg-transparent' : 'bg-neutral-800'}"
-    style="position: relative; z-index: 1; {showBackdrop ? 'caret-color: #e5e5e5;' : ''}"
-    use:smoothScroll={{ duration: 0.4, multiplier: 1.2 }}
+    style="position: relative; z-index: 1; {resizeStyle}{showBackdrop ? 'caret-color: #e5e5e5;' : ''}"
     onkeydown={handleKeydown}
     oninput={handleInput}
     onclick={handleClick}
@@ -415,7 +484,7 @@
           <span class={CATEGORY_COLORS[tag.c] ?? "text-neutral-300"}>
             {formatTagForDisplay(tag.n)}
           </span>
-          <span class="text-xs text-neutral-500 shrink-0">{formatCount(tag.p)}</span>
+          <span class="text-xs text-neutral-500 shrink-0">{formatTagCount(tag)}</span>
         </button>
       {/each}
     </div>

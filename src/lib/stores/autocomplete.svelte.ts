@@ -1,4 +1,5 @@
 import { ipcStore } from "../utils/ipc.js";
+import { triggerSync } from "../utils/syncTrigger.js";
 import builtinTags from "../assets/danbooru-tags.json";
 import animaTags from "../assets/anima-tags.json";
 
@@ -7,6 +8,8 @@ export interface TagEntry {
   c: number; // category (0=general, 1=artist, 3=copyright, 4=character, 5=meta)
   p: number; // post count
   a?: string[]; // aliases
+  /** Truthy when the post count is below the source list's threshold (e.g. <50). UI displays "<50" instead of the numeric `p`. */
+  b?: number;
 }
 
 interface SearchEntry {
@@ -28,6 +31,8 @@ class AutocompleteStore {
   sourceUrl = $state("");
   /** Display name of uploaded file */
   sourceFileName = $state("");
+  /** Whether tag autocomplete is enabled */
+  enabled = $state(true);
   /** Whether a custom taglist is currently loading */
   loading = $state(false);
   /** Error message if loading failed */
@@ -75,6 +80,7 @@ class AutocompleteStore {
   }
 
   search(queryText: string, limit = this.maxResults): TagEntry[] {
+    if (!this.enabled) return [];
     const normalizedQuery = this.normalizeQuery(queryText);
     if (!normalizedQuery) return [];
 
@@ -102,6 +108,7 @@ class AutocompleteStore {
       this._storeReady = true;
       const saved = await ipcStore.get<Record<string, any>>(STORE_KEY);
       if (saved) {
+        if (saved.enabled === false) this.enabled = false;
         if (saved.maxResults) this.maxResults = saved.maxResults;
         if (saved.sourceMode) this.sourceMode = saved.sourceMode;
         if (saved.sourceUrl) this.sourceUrl = saved.sourceUrl;
@@ -126,12 +133,14 @@ class AutocompleteStore {
     if (!this._storeReady) return;
     try {
       await ipcStore.set(STORE_KEY, {
+        enabled: this.enabled,
         maxResults: this.maxResults,
         sourceMode: this.sourceMode,
         sourceUrl: this.sourceUrl,
         sourceFileName: this.sourceFileName,
         customTags: this._customTags,
       });
+      triggerSync();
     } catch (e) {
       console.error("Failed to save autocomplete settings:", e);
     }
@@ -245,6 +254,27 @@ class AutocompleteStore {
   async setMaxResults(n: number) {
     this.maxResults = Math.max(1, Math.min(50, n));
     await this.saveSettings();
+  }
+
+  /** Collect autocomplete settings for server-side sync. */
+  collectPrefs(): Record<string, unknown> {
+    return {
+      maxResults: this.maxResults,
+      sourceMode: this.sourceMode,
+      sourceUrl: this.sourceUrl,
+      sourceFileName: this.sourceFileName,
+      customTags: this._customTags,
+    };
+  }
+
+  /** Apply autocomplete settings from the server. Writes to ipcStore and re-hydrates. */
+  async applyServerPrefs(data: Record<string, any>): Promise<void> {
+    try {
+      await ipcStore.set(STORE_KEY, data);
+      await this.loadSettings();
+    } catch (e) {
+      console.error("autocomplete: applyServerPrefs failed", e);
+    }
   }
 }
 

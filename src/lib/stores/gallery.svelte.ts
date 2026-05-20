@@ -2,6 +2,8 @@ import type { OutputImage } from "../types/index.js";
 import {
   listGalleryImageEntries,
   loadGalleryImage,
+  loadGalleryImageDisplay,
+  loadGalleryImagePng,
   saveToGallery,
   saveToGalleryBytes,
   saveToGalleryTemp,
@@ -21,6 +23,7 @@ import { isTauri, isBrowserMode, getAuthToken } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
 import { generation } from "./generation.svelte.js";
 import { createArtistGalleryClient } from "../artist-gallery/client.js";
+import { cdnFetch } from "../utils/cdnFetch.js";
 import {
   buildArtistTagIndex,
   detectArtistsInPrompt,
@@ -51,6 +54,15 @@ async function fullImageUrl(filename: string): Promise<string> {
   return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 
+/** Convert a temp filename to a browser-loadable URL, including auth token in browser mode. */
+function tempImageUrl(filename: string, params?: Record<string, string>): string {
+  const query = new URLSearchParams(params ?? {});
+  const token = getAuthToken();
+  if (token) query.set("token", token);
+  const suffix = query.toString();
+  return `/internal-api/_temp_image/${encodeURIComponent(filename)}${suffix ? `?${suffix}` : ""}`;
+}
+
 /** Show a native save dialog. Returns the chosen path, or null. Tauri-only; browser falls back to download. */
 async function showSaveDialog(defaultPath: string, extensions: string[]): Promise<string | null> {
   if (isTauri) {
@@ -63,7 +75,9 @@ async function showSaveDialog(defaultPath: string, extensions: string[]): Promis
 
 /** Trigger a file download in the browser using a temporary anchor element. */
 function triggerBrowserDownload(data: Uint8Array, filename: string, mimeType: string) {
-  const blob = new Blob([data], { type: mimeType });
+  const buffer = new ArrayBuffer(data.byteLength);
+  new Uint8Array(buffer).set(data);
+  const blob = new Blob([buffer], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -74,8 +88,33 @@ function triggerBrowserDownload(data: Uint8Array, filename: string, mimeType: st
   URL.revokeObjectURL(url);
 }
 
+async function blobToBytes(blob: Blob): Promise<number[]> {
+  const buffer = await blob.arrayBuffer();
+  return Array.from(new Uint8Array(buffer));
+}
+
+function pngBlobFromBytes(bytes: number[]): Blob {
+  const buffer = new ArrayBuffer(bytes.length);
+  new Uint8Array(buffer).set(bytes);
+  return new Blob([buffer], { type: "image/png" });
+}
+
 const GALLERY_BOARDS_KEY = "mooshieui.gallery.boards.v1";
 const GALLERY_BOARD_NAMES_KEY = "mooshieui.gallery.boardNames.v1";
+
+type ToastType = "success" | "error" | "info" | "warning";
+type ToastOptions = {
+  persistent?: boolean;
+  actionLabel?: string;
+  onAction?: () => void;
+};
+type GalleryToast = {
+  message: string;
+  type: ToastType;
+  persistent?: boolean;
+  actionLabel?: string;
+  onAction?: () => void;
+};
 
 class GalleryStore {
   images = $state<OutputImage[]>([]);
@@ -89,7 +128,7 @@ class GalleryStore {
   loading = $state(false);
   /** True while a save/download operation is in progress (prevents double-clicks). */
   saving = $state(false);
-  toast = $state<{ message: string; type: "success" | "error" | "info" } | null>(null);
+  toast = $state<GalleryToast | null>(null);
   boardAssignments = $state<Record<string, string>>({});
   customBoards = $state<string[]>([]);
   /** Storage info from the server (browser mode only). */
@@ -111,6 +150,11 @@ class GalleryStore {
 
   private _imageKey(img: { prompt_id: string; filename: string }) {
     return `${img.prompt_id}::${img.filename}`;
+  }
+
+  /** Return the in-flight persist promise for an image, if save is still pending. */
+  getPersistPromise(img: { prompt_id: string; filename: string }): Promise<string> | undefined {
+    return this._persistPromises.get(this._imageKey(img));
   }
 
   constructor() {
@@ -207,7 +251,7 @@ class GalleryStore {
     if (this._artistIndexPromise) return this._artistIndexPromise;
     this._artistIndexPromise = (async () => {
       try {
-        const client = createArtistGalleryClient({ manifestUrl });
+        const client = createArtistGalleryClient({ manifestUrl, fetchImpl: cdnFetch });
         const hits = await client.loadSearchIndex();
         this.artistTagIndex = buildArtistTagIndex(hits);
         this.artistIndexReady = true;
@@ -305,26 +349,41 @@ class GalleryStore {
   async openLightbox(image: OutputImage) {
     this.selectedImage = image;
     this.lightboxOpen = true;
-    if (image.fullImageUrl) {
-      // Serve the real image from backend — supports right-click → Save with metadata
+    const isJxl = image.gallery_filename?.endsWith(".jxl") ?? false;
+    if (image.fullImageUrl && !isJxl) {
+      // Serve the real image from backend — supports right-click → Save with metadata.
+      // JXL is excluded: WebView2 cannot decode JXL natively, so we always use the
+      // blob URL (WebP) for display.
       this.lightboxUrl = image.fullImageUrl;
       this.lightboxLoading = false;
     } else if (image.url) {
-      // Session images still have a blob URL (pre-persistence) — show it
-      // immediately, then upgrade to the gallery URL once persist finishes
-      // so right-click → Copy Image preserves stealth-alpha metadata.
+      // Session images still have a blob URL — show it immediately.
+      // For JXL we keep the WebP blob URL permanently (no upgrade to gallery://
+      // URL since WebView2 can't display JXL). For PNG we upgrade to the
+      // gallery:// URL once persistence completes — but only if the resolved
+      // filename is NOT a JXL file (guard against the race where gallery_filename
+      // wasn't set yet when isJxl was computed above).
       this.lightboxUrl = image.url;
       this.lightboxLoading = false;
-      const key = this._imageKey(image);
-      const pending = this._persistPromises.get(key);
-      if (pending) {
-        const galleryFilename = await pending;
-        if (galleryFilename && this.lightboxOpen && this.selectedImage && this._imageKey(this.selectedImage) === key) {
-          this.lightboxUrl = await fullImageUrl(galleryFilename);
+      if (!isJxl) {
+        const key = this._imageKey(image);
+        const pending = this._persistPromises.get(key);
+        if (pending) {
+          const galleryFilename = await pending;
+          if (galleryFilename && this.lightboxOpen && this.selectedImage && this._imageKey(this.selectedImage) === key) {
+            if (galleryFilename.endsWith(".jxl")) {
+              // Persist completed and it turned out to be JXL — don't upgrade to
+              // gallery:// (raw JXL, WebView2 can't decode). The WebP blob URL in
+              // image.url is already correct.
+            } else {
+              this.lightboxUrl = await fullImageUrl(galleryFilename);
+            }
+          }
         }
       }
     } else if (image.gallery_filename) {
-      // Persisted images without a fullImageUrl — load full-res from disk
+      // Persisted images without a blob URL — load full-res from disk.
+      // JXL files are transcoded to WebP on the fly by loadFullImage.
       this.lightboxUrl = null;
       this.lightboxLoading = true;
       try {
@@ -346,16 +405,27 @@ class GalleryStore {
   }
 
   closeLightbox() {
-    if (this.lightboxUrl?.startsWith("blob:")) URL.revokeObjectURL(this.lightboxUrl);
+    if (this.lightboxUrl?.startsWith("blob:")) {
+      // Don't revoke a blob URL that is still referenced by a session image
+      // or by progress.lastOutputImage — revoking would break subsequent
+      // lightbox opens and the post-generation preview in PreviewImage.
+      const isShared = this.sessionImages.some((img) => img.url === this.lightboxUrl);
+      if (!isShared) URL.revokeObjectURL(this.lightboxUrl);
+    }
     this.lightboxOpen = false;
     this.selectedImage = null;
     this.lightboxUrl = null;
   }
 
-  showToast(message: string, type: "success" | "error" | "info" = "info", persistent = false) {
-    this.toast = { message, type };
+  showToast(
+    message: string,
+    type: ToastType = "info",
+    options: boolean | ToastOptions = false,
+  ) {
+    const toastOptions = typeof options === "boolean" ? { persistent: options } : options;
+    this.toast = { message, type, ...toastOptions };
     if (this._toastTimer) clearTimeout(this._toastTimer);
-    if (!persistent) {
+    if (!toastOptions.persistent) {
       this._toastTimer = setTimeout(() => {
         this.toast = null;
         this._toastTimer = null;
@@ -363,6 +433,12 @@ class GalleryStore {
     } else {
       this._toastTimer = null;
     }
+  }
+
+  clearToast() {
+    if (this._toastTimer) clearTimeout(this._toastTimer);
+    this._toastTimer = null;
+    this.toast = null;
   }
 
   /** Save generated images to the persistent gallery on disk.
@@ -395,20 +471,34 @@ class GalleryStore {
         let galleryFilename: string;
         const blob = blobs?.[i];
         const tempFilename = tempFilenames?.[i];
-        // In browser mode, prefer temp-file save (zero extra data transfer —
-        // the full-res image already lives on the server as a temp file).
-        if (isBrowserMode && tempFilename) {
-          galleryFilename = await saveToGalleryTemp(
-            tempFilename,
-            img.filename,
-            img.prompt_id,
-            img.generation_mode,
-            metadata,
-            metadataMode,
-          );
-        } else if (blob && !isBrowserMode) {
-          const buf = await blob.arrayBuffer();
-          const bytes = Array.from(new Uint8Array(buf));
+        // Prefer temp-file save when available — avoids serialising multi-MB
+        // images as JSON number arrays through the IPC bridge.
+        if (tempFilename) {
+          try {
+            galleryFilename = await saveToGalleryTemp(
+              tempFilename,
+              img.filename,
+              img.prompt_id,
+              img.generation_mode,
+              metadata,
+              metadataMode,
+            );
+          } catch (tempError) {
+            if (!blob) throw tempError;
+            console.warn("[persistImages] temp save failed; falling back to in-memory blob:", tempError);
+            const bytes = await blobToBytes(blob);
+            galleryFilename = await saveToGalleryBytes(
+              bytes,
+              img.filename,
+              img.prompt_id,
+              img.generation_mode,
+              metadata,
+              metadataMode,
+            );
+          }
+        } else if (blob) {
+          const bytes = await blobToBytes(blob);
+          console.log("[persistImages] saveToGalleryBytes — filename:", img.filename, "blobType:", blob.type, "bytes:", bytes.length);
           galleryFilename = await saveToGalleryBytes(
             bytes,
             img.filename,
@@ -417,6 +507,7 @@ class GalleryStore {
             metadata,
             metadataMode,
           );
+          console.log("[persistImages] saved → galleryFilename:", galleryFilename);
         } else {
           galleryFilename = await saveToGallery(
             img.filename,
@@ -430,6 +521,8 @@ class GalleryStore {
         img.gallery_filename = galleryFilename;
         img.thumbnailUrl = await thumbnailUrl(galleryFilename);
         img.fullImageUrl = await fullImageUrl(galleryFilename);
+        img.tempFilename = undefined;
+        img.displayTempFilename = undefined;
         resolvers[i]!(galleryFilename);
       } catch (e) {
         console.error("Failed to save image to gallery:", e);
@@ -567,14 +660,18 @@ class GalleryStore {
 
   /** Load full-resolution image data on demand. Returns the blob URL. */
   async loadFullImage(galleryFilename: string): Promise<string> {
-    const bytes = await loadGalleryImage(galleryFilename);
+    // Use the display variant: JXL files are transcoded to WebP server-side
+    // since WebView2 cannot natively decode JXL in <img> tags.
+    const bytes = await loadGalleryImageDisplay(galleryFilename);
     const ext = galleryFilename.split(".").pop()?.toLowerCase() ?? "png";
     const mimeType =
-      ext === "jpg" || ext === "jpeg"
-        ? "image/jpeg"
-        : ext === "webp"
-          ? "image/webp"
-          : "image/png";
+      ext === "jxl"
+        ? "image/webp"  // JXL was transcoded to WebP by loadGalleryImageDisplay
+        : ext === "jpg" || ext === "jpeg"
+          ? "image/jpeg"
+          : ext === "webp"
+            ? "image/webp"
+            : "image/png";
     const blob = new Blob([new Uint8Array(bytes)], { type: mimeType });
     return URL.createObjectURL(blob);
   }
@@ -584,22 +681,75 @@ class GalleryStore {
     if (this.saving) return;
     this.saving = true;
     try {
-      let bytes: number[];
+      let bytes: number[] | null = null;
+      const isJxlGallery = image.gallery_filename?.endsWith(".jxl") ?? false;
+      const isJxlExport = isJxlGallery
+        || image.filename.toLowerCase().endsWith(".jxl")
+        || (image.tempFilename?.toLowerCase().endsWith(".jxl") ?? false)
+        || image.sessionBlob?.type === "image/jxl";
       if (image.gallery_filename) {
-        bytes = await loadGalleryImage(image.gallery_filename);
+        // JXL files are transcoded to PNG — universally compatible with metadata support.
+        bytes = isJxlGallery
+          ? await loadGalleryImagePng(image.gallery_filename)
+          : await loadGalleryImage(image.gallery_filename);
+      } else if (image.sessionBlob && image.sessionBlob.type !== "image/jxl") {
+        bytes = await this._blobToPngBytes(image.sessionBlob);
+      } else if (isBrowserMode && (image.displayTempFilename || image.tempFilename)) {
+        // Browser-mode JXL needs the pre-built display copy. If the temp file
+        // has expired, fall back to the session blob/display URL already held by the client.
+        const fetchFilename = image.displayTempFilename ?? image.tempFilename!;
+        try {
+          bytes = await this._tempImageToPngBytes(fetchFilename, fetchFilename);
+        } catch (tempError) {
+          console.warn("Temp image fetch failed; falling back to session image:", tempError);
+          if (image.url) {
+            bytes = await this._blobUrlToPngBytes(image.url);
+          } else if (image.sessionBlob) {
+            bytes = await blobToBytes(image.sessionBlob);
+          } else {
+            throw tempError;
+          }
+        }
       } else if (image.url) {
-        const response = await fetch(image.url);
-        const buf = await response.arrayBuffer();
-        bytes = Array.from(new Uint8Array(buf));
+        // Session image: WebP (JXL display copy) or PNG blob — canvas-convert to PNG.
+        let blob: Blob | null = null;
+        try {
+          const response = await fetch(image.url);
+          if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
+          blob = await response.blob();
+        } catch {
+          bytes = await this._blobUrlToPngBytes(image.url);
+        }
+        if (blob?.type === "image/webp") {
+          bytes = await this._blobUrlToPngBytes(image.url);
+        } else if (blob) {
+          bytes = await blobToBytes(blob);
+        }
       } else {
         bytes = await getOutputImage(image.filename, image.subfolder);
       }
+      if (!bytes) throw new Error("Image bytes unavailable");
 
-      const path = await showSaveDialog(image.filename, ["png", "jpg", "jpeg", "webp"]);
+      // JXL -> PNG transcode strips embedded metadata. Re-embed from the
+      // in-memory metadata so the exported PNG carries the original prompt /
+      // workflow info (parity with saveImageToDir).
+      if (isJxlExport && image.metadata) {
+        try {
+          bytes = await embedPngMetadataBytes(bytes, image.metadata, generation.metadataMode);
+        } catch (e) {
+          console.warn("Failed to embed PNG metadata into JXL export:", e);
+        }
+      }
+
+      // Replace .jxl with .png in the suggested filename — the file is exported as PNG.
+      const defaultFilename = isJxlExport
+        ? image.filename.replace(/\.jxl$/i, ".png")
+        : image.filename;
+      const path = await showSaveDialog(defaultFilename, ["png", "jpg", "jpeg", "webp"]);
       if (path) {
         await saveImageFile(bytes, path);
       } else {
-        triggerBrowserDownload(new Uint8Array(bytes), image.filename, "image/png");
+        triggerBrowserDownload(new Uint8Array(bytes), defaultFilename, "image/png");
       }
       this.showToast(locale.t("gallery.toast.image_saved"), "success");
     } catch (e) {
@@ -614,17 +764,33 @@ class GalleryStore {
     if (this.saving) return;
     this.saving = true;
     try {
-      const response = await fetch(blobUrl);
-      const blob = await response.blob();
+      let saveBytes: number[];
+      let blob: Blob | null = null;
+      try {
+        const response = await fetch(blobUrl);
+        if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
+        blob = await response.blob();
+      } catch {
+        blob = null;
+      }
 
-      const path = await showSaveDialog(defaultName, ["png", "jpg", "jpeg", "webp"]);
-      if (path) {
-        const arrayBuf = await blob.arrayBuffer();
-        const bytes = Array.from(new Uint8Array(arrayBuf));
-        await saveImageFile(bytes, path);
+      if (!blob && blobUrl.startsWith("blob:")) {
+        saveBytes = await this._blobUrlToPngBytes(blobUrl);
+      } else if (blob?.type === "image/webp") {
+        saveBytes = await this._blobUrlToPngBytes(blobUrl);
+      } else if (blob) {
+        saveBytes = await blobToBytes(blob);
       } else {
-        const arrayBuf = await blob.arrayBuffer();
-        triggerBrowserDownload(new Uint8Array(arrayBuf), defaultName, blob.type || "image/png");
+        throw new Error("Image URL is no longer available");
+      }
+
+      // Normalise the default filename extension — always saving as PNG.
+      const pngName = defaultName.replace(/\.(webp|jxl)$/i, ".png");
+      const path = await showSaveDialog(pngName, ["png", "jpg", "jpeg", "webp"]);
+      if (path) {
+        await saveImageFile(saveBytes, path);
+      } else {
+        triggerBrowserDownload(new Uint8Array(saveBytes), pngName, "image/png");
       }
       this.showToast(locale.t("gallery.toast.image_saved"), "success");
     } catch (e) {
@@ -637,18 +803,59 @@ class GalleryStore {
   /** Save an image directly to a specific directory (manual save mode). Embeds metadata. */
   async saveImageToDir(image: OutputImage, dir: string) {
     try {
-      let bytes: number[];
+      let bytes: number[] | null = null;
+      const isJxlGallery = image.gallery_filename?.endsWith(".jxl") ?? false;
+      const isJxlExport = isJxlGallery
+        || image.filename.toLowerCase().endsWith(".jxl")
+        || (image.tempFilename?.toLowerCase().endsWith(".jxl") ?? false)
+        || image.sessionBlob?.type === "image/jxl";
       if (image.gallery_filename) {
-        bytes = await loadGalleryImage(image.gallery_filename);
+        // JXL → PNG so the saved file can be opened anywhere and supports metadata.
+        bytes = isJxlGallery
+          ? await loadGalleryImagePng(image.gallery_filename)
+          : await loadGalleryImage(image.gallery_filename);
+      } else if (image.sessionBlob && image.sessionBlob.type !== "image/jxl") {
+        bytes = await this._blobToPngBytes(image.sessionBlob);
+      } else if (isBrowserMode && (image.displayTempFilename || image.tempFilename)) {
+        // Browser-mode JXL needs the pre-built display copy. If the temp file
+        // has expired, fall back to the session blob/display URL already held by the client.
+        const fetchFilename = image.displayTempFilename ?? image.tempFilename!;
+        try {
+          bytes = await this._tempImageToPngBytes(fetchFilename, fetchFilename);
+        } catch (tempError) {
+          console.warn("Temp image fetch failed; falling back to session image:", tempError);
+          if (image.url) {
+            bytes = await this._blobUrlToPngBytes(image.url);
+          } else if (image.sessionBlob) {
+            bytes = await blobToBytes(image.sessionBlob);
+          } else {
+            throw tempError;
+          }
+        }
       } else if (image.url) {
-        const response = await fetch(image.url);
-        const buf = await response.arrayBuffer();
-        bytes = Array.from(new Uint8Array(buf));
+        // Session image (WebP display blob or PNG) — canvas-convert to PNG.
+        let blob: Blob | null = null;
+        try {
+          const response = await fetch(image.url);
+          if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
+          blob = await response.blob();
+        } catch {
+          bytes = await this._blobUrlToPngBytes(image.url);
+        }
+        if (blob?.type === "image/webp") {
+          bytes = await this._blobUrlToPngBytes(image.url);
+        } else if (blob) {
+          bytes = await blobToBytes(blob);
+        }
       } else {
         bytes = await getOutputImage(image.filename, image.subfolder);
       }
-      const filename = image.filename || `image_${Date.now()}.png`;
-      if (image.metadata && filename.toLowerCase().endsWith(".png")) {
+      if (!bytes) throw new Error("Image bytes unavailable");
+      // Use .png extension for JXL exports so the saved file matches its contents.
+      const filename = isJxlExport
+        ? (image.filename || `image_${Date.now()}.jxl`).replace(/\.jxl$/i, ".png")
+        : (image.filename || `image_${Date.now()}.png`);
+      if (image.metadata) {
         bytes = await embedPngMetadataBytes(bytes, image.metadata, generation.metadataMode);
       }
       await saveImageFile(bytes, `${dir}/${filename}`);
@@ -677,6 +884,40 @@ class GalleryStore {
         // Step 1: Try server-side native clipboard (preserves full PNG with metadata).
         // May fail on headless servers without xclip/wl-copy — fall through to browser API.
         if (galleryFilename) {
+          // JXL: the server-side clipboard handler can't paste raw JXL as an
+          // image, and the standard fetch path serves WebP (no metadata).
+          // Explicitly transcode to PNG + re-embed metadata so paste targets
+          // get a usable, metadata-bearing image.
+          if (galleryFilename.endsWith(".jxl")) {
+            let pngBytes: number[] | null = null;
+            try {
+              pngBytes = await loadGalleryImagePng(galleryFilename);
+            } catch (e) {
+              console.warn("JXL gallery transcode failed, falling back to display copy:", e);
+              const displayUrl = image.displayTempFilename
+                ? tempImageUrl(image.displayTempFilename)
+                : image.url;
+              if (displayUrl) {
+                try {
+                  pngBytes = await this._blobUrlToPngBytes(displayUrl);
+                } catch (e2) {
+                  console.warn("JXL display copy fallback also failed:", e2);
+                }
+              }
+            }
+            if (pngBytes) {
+              if (image.metadata) {
+                try {
+                  pngBytes = await embedPngMetadataBytes(pngBytes, image.metadata, generation.metadataMode);
+                } catch (e) {
+                  console.warn("Failed to embed PNG metadata into JXL clipboard copy:", e);
+                }
+              }
+              await this.writeBlobToClipboard(pngBlobFromBytes(pngBytes));
+              this.showToast(locale.t("gallery.toast.copied"), "success");
+              return;
+            }
+          }
           try {
             const path = await getGalleryImagePath(galleryFilename);
             await copyImageToClipboard(path);
@@ -725,10 +966,25 @@ class GalleryStore {
         this.showToast(locale.t("gallery.toast.not_saved_yet"), "info");
         return;
       }
-      // Tauri mode: prefer native clipboard via file path
+      // Tauri mode: prefer native clipboard
       if (image.gallery_filename) {
-        const path = await getGalleryImagePath(image.gallery_filename);
-        await copyImageToClipboard(path);
+        if (image.gallery_filename.endsWith(".jxl")) {
+          // JXL can't be pasted as an image from the raw file path —
+          // transcode to PNG first and copy bytes via native clipboard.
+          // PNG transcode strips metadata, so re-embed it client-side.
+          let pngBytes = await loadGalleryImagePng(image.gallery_filename);
+          if (image.metadata) {
+            try {
+              pngBytes = await embedPngMetadataBytes(pngBytes, image.metadata, generation.metadataMode);
+            } catch (e) {
+              console.warn("Failed to embed PNG metadata into JXL clipboard copy:", e);
+            }
+          }
+          await copyBytesToClipboard(pngBytes, "png");
+        } else {
+          const path = await getGalleryImagePath(image.gallery_filename);
+          await copyImageToClipboard(path);
+        }
       } else if (image.url) {
         await this.copyBlobToClipboard(image.url, image.metadata ?? undefined);
         return;
@@ -788,6 +1044,13 @@ class GalleryStore {
         mimeType = "image/png";
       }
 
+      // Always export as PNG — convert WebP blobs (JXL display copies) via canvas
+      // so metadata embedding works and the image pastes correctly in all apps.
+      if (mimeType !== "image/png") {
+        bytes = await this._blobUrlToPngBytes(blobUrl);
+        mimeType = "image/png";
+      }
+
       if (metadata) {
         bytes = await embedPngMetadataBytes(bytes, metadata);
       }
@@ -830,6 +1093,26 @@ class GalleryStore {
       img.onerror = () => reject(new Error("Failed to load blob URL as image"));
       img.src = blobUrl;
     });
+  }
+
+  private async _blobToPngBytes(blob: Blob): Promise<number[]> {
+    if (blob.type === "image/png" || blob.type === "image/jpeg") {
+      return blobToBytes(blob);
+    }
+    const url = URL.createObjectURL(blob);
+    try {
+      return await this._blobUrlToPngBytes(url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  private async _tempImageToPngBytes(tempFilename: string, outputFilename: string): Promise<number[]> {
+    const isJxl = tempFilename.toLowerCase().endsWith(".jxl") || outputFilename.toLowerCase().endsWith(".jxl");
+    const resp = await fetch(tempImageUrl(tempFilename, isJxl ? { format: "webp" } : undefined));
+    if (!resp.ok) throw new Error(`Temp image fetch failed: ${resp.status}`);
+    const blob = await resp.blob();
+    return this._blobToPngBytes(blob);
   }
 
   /** Delete an image from the gallery. */

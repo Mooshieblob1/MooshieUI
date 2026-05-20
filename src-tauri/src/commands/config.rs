@@ -134,7 +134,10 @@ pub async fn switch_to_browser_mode(
     // app_mode_active is set, so we need a fresh one for the new browser session.
     {
         let shared_state: Arc<AppState> = state.inner().clone();
-        webserver::start_heartbeat_watchdog(shared_state, 10);
+        // 120s: browsers throttle background setInterval to ~1 min;
+        // we need a timeout well above that to avoid killing the
+        // process while generation is running in a background tab.
+        webserver::start_heartbeat_watchdog(shared_state, 120);
     }
 
     // Open the browser
@@ -142,7 +145,21 @@ pub async fn switch_to_browser_mode(
     log::info!("switch_to_browser_mode: opening {}", url);
     match open::that(&url) {
         Ok(_) => log::info!("switch_to_browser_mode: open::that succeeded"),
-        Err(e) => log::error!("switch_to_browser_mode: open::that failed: {}", e),
+        Err(e) => {
+            log::error!("switch_to_browser_mode: open::that failed: {}", e);
+            {
+                let mut cfg = state.config.write().await;
+                cfg.browser_mode = false;
+                save_config(&cfg).map_err(AppError::Other)?;
+            }
+            state
+                .app_mode_active
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            return Err(AppError::Other(format!(
+                "Failed to open browser at {}: {}",
+                url, e
+            )));
+        }
     }
 
     // Hide the Tauri window

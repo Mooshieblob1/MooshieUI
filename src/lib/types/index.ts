@@ -65,6 +65,11 @@ export interface GenerationParams {
   upscale_soft_guidance: boolean;
   upscale_soft_guidance_multiplier: number;
   smart_guidance: boolean;
+  /** FluxGuidance value (Flux Dev / Flux 2 Klein only). Default 3.5. */
+  flux_guidance?: number;
+  /** "Refine" mode: skip the main img2img sampler and feed the loaded image
+   *  straight into the upscale chain. Mirrors SwarmUI's Refine button. */
+  refine_only?: boolean;
   use_split_model: boolean;
   diffusion_model: string | null;
   clip_model: string | null;
@@ -72,6 +77,8 @@ export interface GenerationParams {
   controlnet: ControlNetPayload | null;
   model_architecture: string;
   output_bit_depth: string;
+  /** Storage format for this generation: "png" (default) or "jxl". */
+  output_format: string;
 }
 
 export interface OutputImage {
@@ -86,6 +93,12 @@ export interface OutputImage {
   /** Full-resolution image URL served by the backend (with metadata). */
   fullImageUrl?: string;
   gallery_filename?: string;
+  /** In-memory bytes for this session-only image. Avoids fetching blob: URLs in browser mode. */
+  sessionBlob?: Blob;
+  /** Server temp image filename for browser-mode generated images before they are persisted. */
+  tempFilename?: string;
+  /** Browser-display temp image filename when canonical output is not browser-decodable (for example JXL). */
+  displayTempFilename?: string;
   file_size_bytes?: number;
   generated_at_ms?: number;
   metadata?: Record<string, string> | null;
@@ -135,7 +148,9 @@ export interface AppConfig {
   default_height: number;
   vram_mode: string;
   keep_alive: boolean;
+  auto_start: boolean;
   theme: string;
+  theme_palette: string;
   font_scale: number;
   setup_complete: boolean;
   extra_model_paths: string | null;
@@ -152,6 +167,13 @@ export interface AppConfig {
 export interface QueueInfo {
   queue_running: unknown[];
   queue_pending: unknown[];
+  /** Ordered queue positions from the server's fair-queue tracker. */
+  queue_positions?: Array<{
+    prompt_id: string;
+    position: number;
+    /** Only present for admin/moderator callers. */
+    username?: string | null;
+  }>;
 }
 
 export interface QueueDisplayItem {

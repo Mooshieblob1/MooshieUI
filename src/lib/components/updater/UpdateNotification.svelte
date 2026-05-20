@@ -47,9 +47,22 @@
     }
   });
 
+  async function shouldShowServerUpdateBanner() {
+    const resp = await fetch("/internal-api/_auth/status", {
+      headers: authHeaders(),
+    });
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    return data.server_mode === true || data.lan_enabled === true;
+  }
+
   async function checkServerUpdate() {
     await new Promise((r) => setTimeout(r, 3000));
     try {
+      if (!(await shouldShowServerUpdateBanner())) {
+        console.log("[Updater] Skipping redeploy banner in local browser mode");
+        return;
+      }
       console.log(`[Updater] Checking server for updates (current: v${currentVersion})...`);
       const resp = await fetch("/internal-api/_check_update", {
         headers: authHeaders(),
