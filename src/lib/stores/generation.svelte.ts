@@ -1,11 +1,18 @@
 import { ipcStore } from "../utils/ipc.js";
+import { triggerSync } from "../utils/syncTrigger.js";
 import { parseScheduledPrompt } from "../utils/promptSchedule.js";
 import type { LoraEntry } from "../types/index.js";
 import { autocomplete } from "./autocomplete.svelte.js";
+import { styles } from "./styles.svelte.js";
+import { promptPresets } from "./promptPresets.svelte.js";
 
 const STORE_KEY = "generation-settings";
 const PROMPT_HISTORY_KEY = "mooshieui.promptHistory.v1";
 const MAX_PROMPT_HISTORY = 100;
+
+export interface GenerationToParamsOptions {
+  fixedPresetChoices?: ReadonlyMap<string, string>;
+}
 
 /**
  * Translate NAI-style weight brackets to ComfyUI (tag:weight) syntax.
@@ -37,7 +44,92 @@ function translateNaiWeightSyntax(prompt: string): string {
   return prompt;
 }
 
+/**
+ * Pick the right VAE filename for a split-model setup based on the diffusion
+ * model name. Anima/Qwen produces 16-channel latents and needs `qwen_image_vae`;
+ * Flux 2 / Klein needs the Flux VAE. Falls back to SDXL VAE only as a last
+ * resort. Returning a wrong VAE here is what causes
+ * `expected input[…, 16, …] to have 4 channels` at decode time.
+ */
+function pickSplitModelVae(diffusionModel: string | null, vaes: string[]): string {
+  if (vaes.length === 0) return "";
+  const dm = (diffusionModel ?? "").toLowerCase();
+  const looksAnimaOrQwen =
+    dm.includes("anima") || dm.includes("qwen") || dm.includes("wan");
+  const looksFlux = dm.includes("flux") || dm.includes("klein");
+
+  if (looksAnimaOrQwen) {
+    const qwen = vaes.find((v) => v.toLowerCase().includes("qwen"));
+    if (qwen) return qwen;
+  }
+  if (looksFlux) {
+    const flux = vaes.find((v) => v.toLowerCase().includes("flux"));
+    if (flux) return flux;
+  }
+  return vaes.find((v) => v.toLowerCase().includes("sdxl_vae")) ?? vaes[0];
+}
+
 type StylePresetId = "none" | "anime" | "cinematic" | "photoreal" | "digital_art" | "line_art";
+
+const GENERATION_MODES = ["txt2img", "img2img", "inpainting"] as const;
+type GenerationMode = (typeof GENERATION_MODES)[number];
+
+interface ModeToggleState {
+  differentialDiffusion: boolean;
+  upscaleEnabled: boolean;
+  controlnetEnabled: boolean;
+  facefixEnabled: boolean;
+  smartGuidance: boolean;
+}
+
+type ModeToggleStates = Record<GenerationMode, ModeToggleState>;
+
+function isGenerationMode(value: unknown): value is GenerationMode {
+  return typeof value === "string" && GENERATION_MODES.includes(value as GenerationMode);
+}
+
+function defaultModeToggleState(): ModeToggleState {
+  return {
+    differentialDiffusion: false,
+    upscaleEnabled: false,
+    controlnetEnabled: false,
+    facefixEnabled: false,
+    smartGuidance: false,
+  };
+}
+
+function createDefaultModeToggles(): ModeToggleStates {
+  return {
+    txt2img: defaultModeToggleState(),
+    img2img: defaultModeToggleState(),
+    inpainting: defaultModeToggleState(),
+  };
+}
+
+function booleanOrDefault(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function normalizeModeToggles(value: unknown): ModeToggleStates {
+  const normalized = createDefaultModeToggles();
+  if (!value || typeof value !== "object") return normalized;
+
+  const rawStates = value as Record<string, Partial<ModeToggleState> | undefined>;
+  for (const mode of GENERATION_MODES) {
+    const rawState = rawStates[mode];
+    if (!rawState || typeof rawState !== "object") continue;
+    const defaults = normalized[mode];
+    normalized[mode] = {
+      differentialDiffusion: booleanOrDefault(rawState.differentialDiffusion, defaults.differentialDiffusion),
+      upscaleEnabled: booleanOrDefault(rawState.upscaleEnabled, defaults.upscaleEnabled),
+      controlnetEnabled: booleanOrDefault(rawState.controlnetEnabled, defaults.controlnetEnabled),
+      facefixEnabled: booleanOrDefault(rawState.facefixEnabled, defaults.facefixEnabled),
+      smartGuidance: booleanOrDefault(rawState.smartGuidance, defaults.smartGuidance),
+    };
+  }
+
+  return normalized;
+}
 
 interface StylePreset {
   id: StylePresetId;
@@ -50,7 +142,7 @@ interface PromptHistoryEntry {
   id: string;
   positivePrompt: string;
   negativePrompt: string;
-  mode: "txt2img" | "img2img" | "inpainting";
+  mode: GenerationMode;
   stylePreset: StylePresetId;
   createdAt: number;
   favorite: boolean;
@@ -112,7 +204,8 @@ export const DEFAULT_NANOSAUR_POSITIVE_QUALITY = "newest, masterpiece, best qual
 export const DEFAULT_NANOSAUR_NEGATIVE_QUALITY = "oldest, low quality, cartoon, blurry, sketch, monochrome, flat color, text, watermark";
 
 class GenerationStore {
-  mode = $state<"txt2img" | "img2img" | "inpainting">("txt2img");
+  _mode = $state<GenerationMode>("txt2img");
+  modeToggles = $state<ModeToggleStates>(createDefaultModeToggles());
   positivePrompt = $state("");
   negativePrompt = $state("");
   checkpoint = $state("");
@@ -142,6 +235,12 @@ class GenerationStore {
   upscaleSoftGuidance = $state(true);
   upscaleSoftGuidanceMultiplier = $state(0.4);
   smartGuidance = $state(false);
+  /**
+   * FluxGuidance value (used by Flux Dev / Flux 2 Klein family). Replaces
+   * CFG for those models since they're guidance-distilled and ignore CFG.
+   * Range: 0-10, sweet spot 2-4. Default matches ComfyUI's FluxGuidance node.
+   */
+  fluxGuidance = $state(3.5);
   useSplitModel = $state(false);
   diffusionModel = $state<string | null>(null);
   clipModel = $state<string | null>(null);
@@ -164,6 +263,7 @@ class GenerationStore {
   facefixGuideSize = $state(512);
   facefixMaxFaces = $state(8);
   outputBitDepth = $state<"8bit" | "16bit">("8bit");
+  outputFormat = $state<"png" | "jxl">("png");
   metadataMode = $state<"text_chunk" | "stealth" | "both">("both");
   autoQualityTags = $state(true);
   customAnimaPositiveQuality = $state(DEFAULT_ANIMA_POSITIVE_QUALITY);
@@ -184,13 +284,59 @@ class GenerationStore {
   devModeUnlocked = $state(false);
   /** Developer mode: bypasses checkpoint selector restrictions. Not persisted. */
   devMode = $state(false);
+  /** Show the terminal log panel in the sidebar. Not persisted. */
+  showTerminalLog = $state(false);
 
   /** Architecture detected from modelspec metadata, or null if not yet read. */
   modelspecArchitecture = $state<string | null>(null);
 
+  get mode(): GenerationMode {
+    return this._mode;
+  }
+
+  set mode(mode: GenerationMode) {
+    this.setMode(mode);
+  }
+
+  setMode(mode: GenerationMode): void {
+    if (mode === this._mode) return;
+
+    this.modeToggles = {
+      ...this.modeToggles,
+      [this._mode]: this.readModeToggleState(),
+    };
+    this._mode = mode;
+    this.applyModeToggleState(this.modeToggles[mode] ?? defaultModeToggleState());
+  }
+
+  readModeToggleState(): ModeToggleState {
+    return {
+      differentialDiffusion: this.differentialDiffusion,
+      upscaleEnabled: this.upscaleEnabled,
+      controlnetEnabled: this.controlnetEnabled,
+      facefixEnabled: this.facefixEnabled,
+      smartGuidance: this.smartGuidance,
+    };
+  }
+
+  modeTogglesWithCurrent(): ModeToggleStates {
+    return {
+      ...this.modeToggles,
+      [this._mode]: this.readModeToggleState(),
+    };
+  }
+
+  applyModeToggleState(state: ModeToggleState): void {
+    this.differentialDiffusion = state.differentialDiffusion;
+    this.upscaleEnabled = state.upscaleEnabled;
+    this.controlnetEnabled = state.controlnetEnabled;
+    this.facefixEnabled = state.facefixEnabled;
+    this.smartGuidance = state.smartGuidance;
+  }
+
   /** True when the selected model is an Anima variant (split diffusion model). */
   get isAnima(): boolean {
-    return this.useSplitModel && (this.diffusionModel?.includes("anima") ?? false);
+    return this.detectedArchitecture === "anima";
   }
 
   /** True when the selected model is an Illustrious/NoobAI family variant. */
@@ -265,7 +411,7 @@ class GenerationStore {
   }
 
   /** Detect the base model architecture from modelspec (authoritative) or filename (fallback). */
-  get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "sd3" | "flux" | "pony" | "auraflow" | "pixart" | "hunyuandit" | "cascade" | "kolors" | "mugen" | "nanosaur" | "unknown" {
+  get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "sd3" | "flux" | "pony" | "auraflow" | "pixart" | "hunyuandit" | "cascade" | "kolors" | "mugen" | "nanosaur" | "anima" | "unknown" {
     const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
 
     // 1. Use modelspec architecture if available (definitive)
@@ -273,6 +419,8 @@ class GenerationStore {
       const arch = this.modelspecArchitecture.toLowerCase();
       // Nanosaur (custom DiT — check before other heuristics)
       if (name.includes("nanosaur")) return "nanosaur";
+      // Anima (Wan2.1 fine-tune with AnimaLLLite)
+      if (name.includes("anima") || arch.includes("anima")) return "anima";
       // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
       if (name.includes("mugen")) return "mugen";
       // Illustrious/NoobAI family (they report as SDXL arch but need special ControlNets)
@@ -301,6 +449,8 @@ class GenerationStore {
     if (!name) return "unknown";
     // Nanosaur (custom DiT — check before other heuristics)
     if (name.includes("nanosaur")) return "nanosaur";
+    // Anima (Wan2.1 fine-tune with AnimaLLLite)
+    if (name.includes("anima")) return "anima";
     // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
     if (name.includes("mugen")) return "mugen";
     // Illustrious/NoobAI/vpred SDXL variants
@@ -377,6 +527,7 @@ class GenerationStore {
   private savePromptHistory() {
     try {
       localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(this.promptHistory.slice(0, MAX_PROMPT_HISTORY)));
+      triggerSync();
     } catch (e) {
       console.error("Failed to save prompt history:", e);
     }
@@ -615,6 +766,7 @@ class GenerationStore {
       this._storeReady = true;
       const saved = await ipcStore.get<Record<string, any>>(STORE_KEY);
       if (saved) {
+        const savedMode = isGenerationMode(saved.mode) ? saved.mode : this._mode;
         if (saved.checkpoint) this.checkpoint = saved.checkpoint;
         if (saved.vae !== undefined) this.vae = saved.vae;
         if (saved.samplerName) this.samplerName = saved.samplerName;
@@ -629,7 +781,6 @@ class GenerationStore {
         if (saved.differentialDiffusion !== undefined) this.differentialDiffusion = saved.differentialDiffusion;
         if (saved.positivePrompt) this.positivePrompt = saved.positivePrompt;
         if (saved.negativePrompt) this.negativePrompt = saved.negativePrompt;
-        if (saved.mode) this.mode = saved.mode;
         if (Array.isArray(saved.loras)) {
           this.loras = saved.loras.map((l: any) => ({
             name: l.name || "",
@@ -649,6 +800,7 @@ class GenerationStore {
         if (saved.upscaleSoftGuidance !== undefined) this.upscaleSoftGuidance = saved.upscaleSoftGuidance;
         if (saved.upscaleSoftGuidanceMultiplier !== undefined) this.upscaleSoftGuidanceMultiplier = saved.upscaleSoftGuidanceMultiplier;
         if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
+        if (saved.fluxGuidance !== undefined) this.fluxGuidance = saved.fluxGuidance;
         if (saved.useSplitModel !== undefined) this.useSplitModel = saved.useSplitModel;
         if (saved.diffusionModel !== undefined) this.diffusionModel = saved.diffusionModel;
         if (saved.clipModel !== undefined) this.clipModel = saved.clipModel;
@@ -669,7 +821,18 @@ class GenerationStore {
         if (saved.facefixSteps !== undefined) this.facefixSteps = saved.facefixSteps;
         if (saved.facefixGuideSize !== undefined) this.facefixGuideSize = saved.facefixGuideSize;
         if (saved.facefixMaxFaces !== undefined) this.facefixMaxFaces = saved.facefixMaxFaces;
+        if (saved.modeToggles !== undefined) {
+          this.modeToggles = normalizeModeToggles(saved.modeToggles);
+        } else {
+          this.modeToggles = {
+            ...createDefaultModeToggles(),
+            [savedMode]: this.readModeToggleState(),
+          };
+        }
+        this._mode = savedMode;
+        this.applyModeToggleState(this.modeToggles[savedMode] ?? defaultModeToggleState());
         if (saved.outputBitDepth) this.outputBitDepth = saved.outputBitDepth;
+        if (saved.outputFormat === "png" || saved.outputFormat === "jxl") this.outputFormat = saved.outputFormat;
         if (saved.metadataMode) this.metadataMode = saved.metadataMode;
         if (saved.autoQualityTags !== undefined) this.autoQualityTags = saved.autoQualityTags;
         if (saved.customAnimaPositiveQuality !== undefined) this.customAnimaPositiveQuality = saved.customAnimaPositiveQuality;
@@ -699,8 +862,11 @@ class GenerationStore {
   async saveSettings() {
     if (!this._storeReady) return;
     try {
+      const modeToggles = this.modeTogglesWithCurrent();
+      this.modeToggles = modeToggles;
       await ipcStore.set(STORE_KEY, {
         mode: this.mode,
+        modeToggles,
         positivePrompt: this.positivePrompt,
         negativePrompt: this.negativePrompt,
         checkpoint: this.checkpoint,
@@ -727,6 +893,7 @@ class GenerationStore {
         upscaleSoftGuidance: this.upscaleSoftGuidance,
         upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
         smartGuidance: this.smartGuidance,
+        fluxGuidance: this.fluxGuidance,
         useSplitModel: this.useSplitModel,
         diffusionModel: this.diffusionModel,
         clipModel: this.clipModel,
@@ -748,6 +915,7 @@ class GenerationStore {
         facefixGuideSize: this.facefixGuideSize,
         facefixMaxFaces: this.facefixMaxFaces,
         outputBitDepth: this.outputBitDepth,
+        outputFormat: this.outputFormat,
         metadataMode: this.metadataMode,
         autoQualityTags: this.autoQualityTags,
         customAnimaPositiveQuality: this.customAnimaPositiveQuality,
@@ -761,18 +929,153 @@ class GenerationStore {
         manualSaveMode: this.manualSaveMode,
         autoSaveDirs: this.autoSaveDirs,
       });
+      triggerSync();
     } catch (e) {
       console.error("Failed to save settings:", e);
     }
   }
 
-  toParams() {
+  /** Collect generation settings for server-side sync. */
+  collectPrefs(): Record<string, unknown> {
+    const modeToggles = this.modeTogglesWithCurrent();
+    return {
+      mode: this.mode,
+      modeToggles,
+      positivePrompt: this.positivePrompt,
+      negativePrompt: this.negativePrompt,
+      checkpoint: this.checkpoint,
+      vae: this.vae,
+      loras: this.loras,
+      samplerName: this.samplerName,
+      scheduler: this.scheduler,
+      steps: this.steps,
+      cfg: this.cfg,
+      seed: this.seed,
+      width: this.width,
+      height: this.height,
+      batchSize: this.batchSize,
+      denoise: this.denoise,
+      differentialDiffusion: this.differentialDiffusion,
+      upscaleEnabled: this.upscaleEnabled,
+      upscaleMethod: this.upscaleMethod,
+      upscaleModel: this.upscaleModel,
+      upscaleScale: this.upscaleScale,
+      upscaleDenoise: this.upscaleDenoise,
+      upscaleSteps: this.upscaleSteps,
+      upscaleTileSize: this.upscaleTileSize,
+      upscaleTiling: this.upscaleTiling,
+      upscaleSoftGuidance: this.upscaleSoftGuidance,
+      upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
+      smartGuidance: this.smartGuidance,
+      fluxGuidance: this.fluxGuidance,
+      useSplitModel: this.useSplitModel,
+      diffusionModel: this.diffusionModel,
+      clipModel: this.clipModel,
+      clipType: this.clipType,
+      stylePreset: this.stylePreset,
+      stylePresetsEnabled: this.stylePresetsEnabled,
+      controlnetEnabled: this.controlnetEnabled,
+      controlnetMode: this.controlnetMode,
+      controlnetPreset: this.controlnetPreset,
+      controlnetModel: this.controlnetModel,
+      controlnetPreprocessor: this.controlnetPreprocessor,
+      controlnetStrength: this.controlnetStrength,
+      controlnetStartPercent: this.controlnetStartPercent,
+      controlnetEndPercent: this.controlnetEndPercent,
+      facefixEnabled: this.facefixEnabled,
+      facefixDetector: this.facefixDetector,
+      facefixDenoise: this.facefixDenoise,
+      facefixSteps: this.facefixSteps,
+      facefixGuideSize: this.facefixGuideSize,
+      facefixMaxFaces: this.facefixMaxFaces,
+      outputBitDepth: this.outputBitDepth,
+      outputFormat: this.outputFormat,
+      metadataMode: this.metadataMode,
+      autoQualityTags: this.autoQualityTags,
+      customAnimaPositiveQuality: this.customAnimaPositiveQuality,
+      customAnimaNegativeQuality: this.customAnimaNegativeQuality,
+      customIllustriousPositiveQuality: this.customIllustriousPositiveQuality,
+      customIllustriousNegativeQuality: this.customIllustriousNegativeQuality,
+      customPonyPositiveQuality: this.customPonyPositiveQuality,
+      customPonyNegativeQuality: this.customPonyNegativeQuality,
+      customNanosaurPositiveQuality: this.customNanosaurPositiveQuality,
+      customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
+      manualSaveMode: this.manualSaveMode,
+      autoSaveDirs: this.autoSaveDirs,
+    };
+  }
+
+  /** Collect prompt history for server-side sync. */
+  collectPromptHistory(): unknown[] {
+    return this.promptHistory.slice(0, MAX_PROMPT_HISTORY);
+  }
+
+  /** Apply generation settings from the server. Writes to ipcStore and re-hydrates. */
+  async applyServerPrefs(data: Record<string, any>): Promise<void> {
+    try {
+      await ipcStore.set(STORE_KEY, data);
+      await this.loadSettings();
+    } catch (e) {
+      console.error("generation: applyServerPrefs failed", e);
+    }
+  }
+
+  /** Apply prompt history from the server. */
+  applyPromptHistory(entries: any[]): void {
+    try {
+      const valid = entries
+        .filter((e) => !!e?.id)
+        .slice(0, MAX_PROMPT_HISTORY) as PromptHistoryEntry[];
+      localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(valid));
+      this.promptHistory = valid;
+    } catch (e) {
+      console.error("generation: applyPromptHistory failed", e);
+    }
+  }
+
+  toParams(options: GenerationToParamsOptions = {}) {
     const style = this.stylePresetsEnabled
       ? (STYLE_PRESETS.find((preset) => preset.id === this.stylePreset) ?? STYLE_PRESETS[0])
       : STYLE_PRESETS[0];
 
-    let positivePrompt = this.mergeTagPrompts(this.positivePrompt, style.positive);
-    let negativePrompt = this.mergeTagPrompts(this.negativePrompt, style.negative);
+    // Expand inline `@preset:<slug>` directives in the user-typed prompts
+    // first, so wildcard rolls happen before any merging/dedup logic. Each
+    // occurrence rolls independently.
+    const inlinePositiveIds = promptPresets.inlinePresetIds(this.positivePrompt);
+    const inlineNegativeIds = promptPresets.inlinePresetIds(this.negativePrompt);
+    const inlinePresetIds = new Set([...inlinePositiveIds, ...inlineNegativeIds]);
+    const inlinePositive = promptPresets.resolveInline(this.positivePrompt, {
+      fixedChoices: options.fixedPresetChoices,
+    });
+    const inlineNegative = promptPresets.resolveInline(this.negativePrompt, {
+      fixedChoices: options.fixedPresetChoices,
+    });
+
+    let positivePrompt = this.mergeTagPrompts(inlinePositive, style.positive);
+    let negativePrompt = this.mergeTagPrompts(inlineNegative, style.negative);
+
+    // Inject tags contributed by any currently-active Artist Styles. These are
+    // not visible in the prompt textbox — they flow straight into the payload
+    // so the user sees badges in the UI instead.
+    const styleFragment = styles.buildPromptFragment();
+    if (styleFragment) {
+      positivePrompt = this.mergeTagPrompts(positivePrompt, styleFragment);
+    }
+
+    // Inject active Prompt Presets (prepend / append / wildcard). Wildcards
+    // pick a random choice per generation — mergeTagPrompts dedupes against
+    // whatever the user has already typed.
+    const preset = promptPresets.resolve({
+      fixedChoices: options.fixedPresetChoices,
+      skipIds: inlinePresetIds,
+      advanceFixedOrdered: false,
+    });
+    if (preset.prepend) {
+      positivePrompt = this.mergeTagPrompts(preset.prepend, positivePrompt);
+    }
+    if (preset.append) {
+      positivePrompt = this.mergeTagPrompts(positivePrompt, preset.append);
+    }
 
     // Auto-apply quality tags for supported model families
     if (this.autoQualityTags) {
@@ -873,6 +1176,7 @@ class GenerationStore {
       upscale_soft_guidance: this.upscaleSoftGuidance,
       upscale_soft_guidance_multiplier: this.upscaleSoftGuidanceMultiplier,
       smart_guidance: this.smartGuidance,
+      flux_guidance: this.fluxGuidance,
       upscale_positive_prompt: upscalePositivePrompt,
       upscale_negative_prompt: upscaleNegativePrompt,
       use_split_model: this.useSplitModel,
@@ -900,6 +1204,7 @@ class GenerationStore {
       facefix_max_faces: this.facefixMaxFaces,
       model_architecture: this.detectedArchitecture,
       output_bit_depth: this.outputBitDepth,
+      output_format: this.outputFormat,
     };
   }
 
@@ -924,9 +1229,29 @@ class GenerationStore {
   applyDefaultsIfNeeded(checkpoints: string[], vaes: string[]) {
     // Always fix empty VAE for split-model users — VAELoader requires a real file.
     // This covers existing users whose saved settings pre-date the VAE field.
-    if (this.useSplitModel && !this.vae && vaes.length > 0) {
-      this.vae = vaes.find((v) => v.includes("sdxl_vae")) ?? vaes[0];
-      this.saveSettings();
+    // Pick a VAE that matches the diffusion model's latent channel layout, NOT
+    // the SDXL 4-channel VAE (which would crash VAEDecode with a channel
+    // mismatch on Anima/Qwen/Flux split models that produce 16-channel latents).
+    if (this.useSplitModel && vaes.length > 0) {
+      const desired = pickSplitModelVae(this.diffusionModel, vaes);
+      // Auto-correct an obvious 4-ch ↔ 16-ch latent mismatch: an Anima/Qwen/Flux
+      // split model paired with sdxl_vae cannot decode (4-channel VAE vs
+      // 16-channel latent). Force the matching VAE so generation succeeds.
+      const dm = (this.diffusionModel ?? "").toLowerCase();
+      const needs16ch =
+        dm.includes("anima") ||
+        dm.includes("qwen") ||
+        dm.includes("wan") ||
+        dm.includes("flux") ||
+        dm.includes("klein");
+      const currentVae = (this.vae ?? "").toLowerCase();
+      const currentIsSdxl = currentVae.includes("sdxl_vae");
+      if (!this.vae || (needs16ch && currentIsSdxl)) {
+        if (desired && desired !== this.vae) {
+          this.vae = desired;
+          this.saveSettings();
+        }
+      }
     }
     if (this.checkpoint) return;
 

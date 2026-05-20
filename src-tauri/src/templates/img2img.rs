@@ -47,6 +47,27 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     );
     next_id += 1;
 
+    // Refine-only mode: skip the main img2img round-trip and feed the loaded
+    // image directly into whatever runs next (typically the upscale chain).
+    // This implements SwarmUI's "Refine Image" semantics — a single low-denoise
+    // second pass at higher resolution rather than two sequential samplings.
+    if params.refine_only {
+        return WorkflowResult {
+            workflow,
+            next_id,
+            image_output: (load_img_id, 0),
+            model_source,
+            clip_source,
+            positive_source: pos_source,
+            negative_source: neg_source,
+            vae_source,
+            // Empty sampler_id — no main sampler exists. inject_*/controlnet
+            // rewiring is keyed on `workflow.get_mut(&sampler_id)` and a
+            // missing key is a safe no-op.
+            sampler_id: String::new(),
+        };
+    }
+
     // Resize input image to target dimensions (avoids VRAM issues with large images)
     let resize_id = next_id.to_string();
     workflow.insert(

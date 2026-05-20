@@ -52,6 +52,12 @@ pub struct InterrogatorState {
     model_dir: PathBuf,
 }
 
+impl Default for InterrogatorState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InterrogatorState {
     pub fn new() -> Self {
         let model_dir = config::app_data_dir()
@@ -213,7 +219,7 @@ impl InterrogatorState {
             })?
             .with_intra_threads(thread_count)
             .map_err(|e| AppError::InterrogatorError(format!("Failed to set thread count: {}", e)))?
-            .commit_from_file(&self.model_path())
+            .commit_from_file(self.model_path())
             .map_err(|e| {
                 AppError::InterrogatorError(format!("Failed to load ONNX model: {}", e))
             })?;

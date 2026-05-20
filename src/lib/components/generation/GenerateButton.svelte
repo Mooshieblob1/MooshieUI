@@ -7,7 +7,9 @@
   import { models } from "../../stores/models.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
+  import type { GenerationParams } from "../../types/index.js";
 
   interface Props {
     canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
@@ -15,12 +17,48 @@
 
   let { canvasEditorRef }: Props = $props();
   let errorMsg = $state<string | null>(null);
+  let isSubmitting = $state(false);
+  let orderedRunPromptIds = $state<string[]>([]);
+  let orderedRunCancelRequested = $state(false);
+  let submitRunToken = 0;
+  let orderedRunToken = 0;
+  const orderedWildcardRun = $derived(promptPresets.orderedWildcardRun);
+  const orderedWildcardRunCount = $derived(compare.enabled && compare.cellCount > 1 ? 0 : (orderedWildcardRun?.count ?? 0));
+  const pendingOrderedRunIds = $derived(orderedRunPromptIds.filter((id) => progress.pendingPrompts.some((prompt) => prompt.promptId === id)));
+
+  async function requestGeneration(params: GenerationParams) {
+    const result = await generate(params);
+    params.seed = result.seed;
+    return result;
+  }
+
+  function trackGeneration(params: GenerationParams, result: Awaited<ReturnType<typeof requestGeneration>>): string {
+    progress.enqueue(result.prompt_id, params.upscale_enabled, params.mode, params);
+    if (result.queue_position != null && result.queue_total != null) {
+      progress.updateQueuePosition(result.prompt_id, result.queue_position, result.queue_total);
+    }
+    return result.prompt_id;
+  }
+
+  async function submitGeneration(params: GenerationParams): Promise<string> {
+    return trackGeneration(params, await requestGeneration(params));
+  }
+
+  function finishSubmitRun(runToken: number) {
+    if (runToken === submitRunToken) {
+      isSubmitting = false;
+    }
+  }
 
   async function handleGenerate() {
+    if (isSubmitting) return;
+    const runToken = ++submitRunToken;
+    isSubmitting = true;
     errorMsg = null;
 
     if (!generation.checkpoint) {
       errorMsg = locale.t('generation.error_no_checkpoint');
+      finishSubmitRun(runToken);
       return;
     }
 
@@ -89,37 +127,127 @@
         generation.height = Math.round(Math.sqrt(area / ratio) / 8) * 8;
       }
 
-      const params = generation.toParams();
-      generation.saveCurrentPromptToHistory();
-      const result = await generate(params);
-      params.seed = result.seed;
-      progress.enqueue(result.prompt_id, params.upscale_enabled, params.mode, params);
-      // Set initial queue position if returned by server
-      if (result.queue_position != null && result.queue_total != null) {
-        progress.updateQueuePosition(result.prompt_id, result.queue_position, result.queue_total);
+      if (orderedWildcardRunCount > 1) {
+        await handleOrderedWildcardGenerate(orderedWildcardRunCount);
+        return;
       }
+
+      const params = generation.toParams();
+      console.log("[generate] output_format:", params.output_format, "output_bit_depth:", params.output_bit_depth);
+      generation.saveCurrentPromptToHistory();
+      await submitGeneration(params);
       generation.saveSettings();
     } catch (e) {
-      console.error("Generation failed:", e);
-      errorMsg = String(e);
+      if (runToken === submitRunToken) {
+        console.error("Generation failed:", e);
+        errorMsg = String(e);
+      }
+    } finally {
+      finishSubmitRun(runToken);
     }
   }
 
-  /** Left-click: cancel the current generation only, let the queue continue. */
+  async function handleOrderedWildcardGenerate(count: number) {
+    const run = orderedWildcardRun;
+    if (!run) return;
+    const choices = promptPresets.wildcardChoices(run.presetId);
+    if (choices.length === 0) return;
+
+    generation.saveCurrentPromptToHistory();
+    const runToken = ++orderedRunToken;
+    orderedRunPromptIds = [];
+    orderedRunCancelRequested = false;
+    for (let i = 0; i < count; i++) {
+      if (orderedRunCancelRequested || runToken !== orderedRunToken) break;
+      const choiceIndex = (run.nextIndex + i) % choices.length;
+      const fixedPresetChoices = new Map([[run.presetId, choices[choiceIndex]]]);
+      const params = generation.toParams({ fixedPresetChoices });
+      console.log(
+        "[generate] ordered_wildcard:",
+        `${i + 1}/${count}`,
+        "output_format:",
+        params.output_format,
+        "output_bit_depth:",
+        params.output_bit_depth,
+      );
+      let result: Awaited<ReturnType<typeof requestGeneration>>;
+      try {
+        result = await requestGeneration(params);
+      } catch (e) {
+        if (orderedRunCancelRequested || runToken !== orderedRunToken) break;
+        throw e;
+      }
+      if (orderedRunCancelRequested || runToken !== orderedRunToken) {
+        try { await interruptGeneration(result.prompt_id); } catch { /* already gone */ }
+        break;
+      }
+      const promptId = trackGeneration(params, result);
+      orderedRunPromptIds = [...orderedRunPromptIds, promptId];
+      if (orderedRunCancelRequested || runToken !== orderedRunToken) {
+        await cancelPromptIds([promptId], true);
+        break;
+      }
+      promptPresets.setOrderedWildcardIndex(run.presetId, choiceIndex + 1);
+    }
+    if (runToken === orderedRunToken) {
+      generation.saveSettings();
+    }
+  }
+
+  /** Left-click: skip the current ordered item, otherwise cancel the current generation. */
   async function handleCancelCurrent() {
-    await interruptGeneration();
+    if (pendingOrderedRunIds.length > 0) {
+      await handleSkipOrderedPrompt();
+      return;
+    }
+    const promptId = progress.activePromptId ?? progress.pendingPrompts[0]?.promptId;
+    await interruptGeneration(promptId ?? undefined);
+    if (promptId) progress.removePrompt(promptId);
+  }
+
+  async function handleSkipOrderedPrompt() {
+    const promptId = progress.activePromptId && pendingOrderedRunIds.includes(progress.activePromptId)
+      ? progress.activePromptId
+      : pendingOrderedRunIds[0];
+    if (!promptId) return;
+    await cancelPromptIds([promptId], true);
+  }
+
+  async function cancelPromptIds(idsToCancel: string[], interruptActive = false) {
+    if (idsToCancel.length === 0) return;
+    const activePromptId = progress.activePromptId && idsToCancel.includes(progress.activePromptId)
+      ? progress.activePromptId
+      : null;
+
+    if (interruptActive && activePromptId) {
+      await interruptGeneration(activePromptId);
+    }
+    for (const promptId of idsToCancel) {
+      if (promptId === activePromptId) continue;
+      try { await deleteQueueItem(promptId); } catch { /* already removed */ }
+    }
+    for (const promptId of idsToCancel) {
+      progress.removePrompt(promptId);
+    }
+    orderedRunPromptIds = orderedRunPromptIds.filter((id) => !idsToCancel.includes(id));
   }
 
   /** Right-click: cancel current + clear the entire queue. */
   async function handleCancelAll(e: MouseEvent) {
     e.preventDefault();
-    const promptIds = progress.pendingPrompts.map((p) => p.promptId);
-    await interruptGeneration();
-    for (const pid of promptIds) {
-      try { await deleteQueueItem(pid); } catch { /* already removed */ }
-    }
+    orderedRunCancelRequested = true;
+    submitRunToken++;
+    orderedRunToken++;
     progress.cancelAll();
+    orderedRunPromptIds = [];
     compare.clearGridBatch();
+    try {
+      await interruptGeneration();
+    } catch (e) {
+      console.error("Failed to cancel queued generations:", e);
+    } finally {
+      isSubmitting = false;
+    }
   }
 
   /** Generate all grid cells sequentially with a shared seed, then stitch into a grid. */
@@ -205,6 +333,7 @@
   <button
     onclick={handleGenerate}
     disabled={!canGenerate}
+    title={orderedWildcardRunCount > 1 ? locale.t('generation.generate_ordered_tip', { count: orderedWildcardRunCount, name: orderedWildcardRun?.presetName ?? '' }) : ''}
     class="flex-1 py-3 rounded-xl font-semibold text-sm transition-colors
       {canGenerate
         ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20'
@@ -212,6 +341,8 @@
   >
     {#if progress.queueCount > 0}
       {locale.t('generation.generate_queue', { count: progress.queueCount })}
+    {:else if orderedWildcardRunCount > 1}
+      {locale.t('generation.generate_ordered', { count: orderedWildcardRunCount })}
     {:else}
       {locale.t('generation.generate')}
     {/if}
@@ -232,6 +363,7 @@
   {:else}
     <button
       disabled
+      title={locale.t('generation.cancel_hint')}
       class="px-5 py-3 rounded-xl font-semibold text-sm bg-neutral-800 text-neutral-600 cursor-not-allowed transition-colors"
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

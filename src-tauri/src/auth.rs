@@ -87,6 +87,12 @@ pub struct AuthState {
     last_activity: RwLock<HashMap<String, std::time::Instant>>,
 }
 
+impl Default for AuthState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AuthState {
     pub fn new() -> Self {
         let mut db = load_auth_db().unwrap_or_default();

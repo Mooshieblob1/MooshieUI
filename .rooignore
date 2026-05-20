@@ -1,0 +1,55 @@
+# RooIgnore — exclude large/infrequent-change directories from Roo's context
+# Keeps token count lean by skipping build artifacts, dependencies, and binary files.
+
+# Dependencies (massive, rarely changed directly)
+node_modules/
+src-tauri/target/
+
+# Build output
+dist/
+build/
+
+# Python virtual environments
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Large binary assets
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.avif
+*.jxl
+*.ico
+*.icns
+
+# Generated/lock files (large, auto-generated)
+package-lock.json
+pnpm-lock.yaml
+src-tauri/Cargo.lock
+
+# IDE and tool config directories
+.vscode/
+.idea/
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
+error-logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Archives (large, rarely needed in context)
+*.zip
+*.tar.gz
+*.deb
+*.AppImage
+*.msi
+*.exe
+*.dmg

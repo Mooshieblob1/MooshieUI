@@ -30,6 +30,60 @@ pub fn is_png_16bit(image_bytes: &[u8]) -> Result<bool, String> {
     Ok(reader.info().bit_depth == png::BitDepth::Sixteen)
 }
 
+/// What image container a byte slice represents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    Png,
+    Jxl,
+    Unknown,
+}
+
+/// Sniff the container format from the first few bytes.
+pub fn detect_format(bytes: &[u8]) -> ImageFormat {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        ImageFormat::Png
+    } else if bytes.len() >= 12
+        && bytes[0..12]
+            == [
+                0x00, 0x00, 0x00, 0x0C, b'J', b'X', b'L', b' ', 0x0D, 0x0A, 0x87, 0x0A,
+            ]
+    {
+        ImageFormat::Jxl
+    } else if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0x0A {
+        // Naked JXL codestream
+        ImageFormat::Jxl
+    } else {
+        ImageFormat::Unknown
+    }
+}
+
+/// Embed SwarmUI-compatible metadata into a JXL file by writing an `xml ` box.
+/// Accepts a naked codestream or a container and always returns a valid container.
+pub fn embed_jxl_metadata(
+    image_bytes: &[u8],
+    params: &HashMap<String, String>,
+) -> Result<Vec<u8>, String> {
+    let xmp = format_swarmui_json(params);
+    crate::jxl::wrap_with_xmp(image_bytes, &xmp).map_err(|e| e.to_string())
+}
+
+/// Read MooshieUI/SwarmUI metadata from a JXL file's `xml ` box, if present.
+pub fn read_jxl_metadata(image_bytes: &[u8]) -> Result<Option<HashMap<String, String>>, String> {
+    let Some(xmp) = crate::jxl::read_xmp_box(image_bytes) else {
+        return Ok(None);
+    };
+    Ok(parse_swarmui_json(xmp.trim()))
+}
+
+/// Format-aware dispatcher: returns metadata for PNG or JXL image bytes.
+pub fn read_image_metadata(bytes: &[u8]) -> Result<Option<HashMap<String, String>>, String> {
+    match detect_format(bytes) {
+        ImageFormat::Png => read_png_metadata(bytes),
+        ImageFormat::Jxl => read_jxl_metadata(bytes),
+        ImageFormat::Unknown => Ok(None),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -405,7 +459,7 @@ fn read_stealth_alpha(image_bytes: &[u8]) -> Result<Option<HashMap<String, Strin
     }
 
     let data_bits = len_val as usize;
-    if data_bits == 0 || data_bits % 8 != 0 {
+    if data_bits == 0 || !data_bits.is_multiple_of(8) {
         return Ok(None);
     }
     let data_bytes_len = data_bits / 8;
@@ -460,7 +514,7 @@ fn gzip_decompress(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
 // ---------------------------------------------------------------------------
 
 /// Build SwarmUI-compatible JSON from the flat metadata map.
-fn format_swarmui_json(params: &HashMap<String, String>) -> String {
+pub(crate) fn format_swarmui_json(params: &HashMap<String, String>) -> String {
     let mut image_params = serde_json::Map::new();
 
     let mappings: &[(&str, &str)] = &[
@@ -570,7 +624,7 @@ fn format_swarmui_json(params: &HashMap<String, String>) -> String {
 }
 
 /// Parse SwarmUI JSON format back into our flat key-value map.
-fn parse_swarmui_json(text: &str) -> Option<HashMap<String, String>> {
+pub(crate) fn parse_swarmui_json(text: &str) -> Option<HashMap<String, String>> {
     let root: serde_json::Value = serde_json::from_str(text).ok()?;
     let obj = root.as_object()?;
 
@@ -829,7 +883,7 @@ mod tests {
         let info = reader.info().clone();
         assert_eq!(info.color_type, png::ColorType::Rgba);
 
-        let mut buf = vec![0u8; reader.output_buffer_size()];
+        let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
         reader.next_frame(&mut buf).unwrap();
 
         let w = info.width as usize;

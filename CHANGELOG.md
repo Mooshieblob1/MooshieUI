@@ -1,6 +1,445 @@
 # Changelog
 
-## What's New in v0.9.6
+## What's New in v1.3.2
+
+### Documentation
+- Update README (`b015944`): minor documentation improvements and clarifications.
+
+---
+
+## What's New in v1.3.1
+
+### Build Fixes
+- Fixed Svelte 5 event-handler inconsistency that could break the frontend build by standardizing event handlers to `onclick=` across `src/App.svelte` and `src/lib/components/generation/PromptTextarea.svelte`.
+- Bumped app version to `1.3.1` in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
+- Ran pre-commit checks and validated `npm run build` and `cargo check` locally.
+
+---
+
+## What's New in v1.3.0
+
+### Internationalization
+- Added missing Spanish translations for notifications and generation-ready messages; ensured key parity between `en` and `es`.
+
+### Release
+- Bumped app version to v1.3.0 across `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
+
+### Maintenance
+- Ran pre-commit checks and resolved the blocking i18n gate; documented minor clippy and a11y warnings for follow-up.
+
+---
+
+## What's New in v1.2.11
+
+### LoRA Compatibility Fix
+- **Fixed `LoraLoader` JSONDecodeError on server deployments**: the server-side workflow builder now filters LoRA entries with empty or whitespace-only names before constructing the ComfyUI prompt, preventing a `json.decoder.JSONDecodeError` crash when a custom `LoraLoader` node attempts to parse the `lora_name` field.
+- **Added workflow JSON logging for LoRA diagnostics**: when any LoRA is active in a generation, the full workflow JSON is now written to the server logs (previously logged only for ControlNet and facefix). This makes it possible to inspect the exact prompt sent to ComfyUI for debugging format issues.
+
+---
+
+## What's New in v1.2.10
+
+### Generation Toast Notifications
+- **Get notified when generation finishes while away**: a toast now appears when an image finishes generating and the user is on a different tab or page, so nothing is missed after navigating away mid-queue.
+- **Mobile UI carries the same notification**: the mobile shell now accepts navigation state as props and surfaces the generation-done toast in the same way as the desktop layout.
+- **All 11 languages supported**: the new notification string is fully translated across English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Russian, Traditional Chinese, and Simplified Chinese.
+
+---
+
+## What's New in v1.2.9
+
+### Model Manager
+- **Manage local model files from Settings**: browse configured model directories, search model files, refresh the inventory, and move or delete models without leaving MooshieUI.
+- **Model operations stay inside configured folders**: backend checks keep move/delete/list actions constrained to known ComfyUI model directories and supported model file types.
+
+### Mobile and Generation UX
+- **The dedicated mobile UI is back**: mobile browser sessions now use the bottom-sheet mobile shell again, while desktop keeps the new floating app layout.
+- **Paste buttons act immediately**: Ctrl+V paste controls for image inputs, ControlNet, and interrogation now paste directly instead of opening a second paste affordance.
+- **Gallery-to-generation actions are smoother**: image loading and normalization paths now better support staging gallery and preview images for inpainting, refiner, and other generation inputs.
+
+### Model Hub and Updates
+- **Direct model links pick better filenames**: direct URL installs now infer filenames from URL paths, query parameters, and disposition-style values while preserving supported model extensions.
+- **Browser-mode update messaging is clearer**: local browser sessions can switch to App Mode for desktop updates, while server/LAN browser sessions are told to redeploy or restart the server.
+- **Release workflow checks updater artifacts more strictly**: updater bundles and signatures are published directly, and the workflow now fails when required signatures are missing.
+
+---
+
+## What's New in v1.2.8
+
+### Browser Mode Image Saves
+- **Generated images no longer disappear after save**: browser-mode temp images stay available long enough for gallery persistence, manual saves, and retrying clients instead of turning into late 404s.
+- **Save and export actions recover from stale temp URLs**: generated image actions now fall back to the in-session blob when a temp handoff has expired.
+- **JXL export metadata is preserved**: JXL-to-PNG save and copy paths keep generation metadata while using the safer browser-mode fallback pipeline.
+
+### Artist Gallery
+- **CDN previews work in browser mode**: artist gallery images now route through the embedded CDN proxy when needed, avoiding browser CORS failures.
+- **CDN proxy URLs keep query strings**: proxied CDN requests now preserve the original query parameters for future cache and asset variants.
+
+### Generation Reliability and Hardening
+- **Stale blob retries are cleaned up**: thumbnail retry timers are cancelled when image URLs change, preventing old revoked blob URLs from retrying forever.
+- **Reconnect recovery is more immediate**: SSE reconnects now force pending prompts through the recovery check so missed outputs are picked up sooner.
+- **Queue updates stay accurate after errors**: execution errors emit the real remaining queue positions instead of clearing unrelated prompts.
+- **Model metadata lookups reject unsafe paths**: model category and filename inputs are validated before filesystem access in desktop and browser mode.
+- **Temporary output recovery caches now expire**: cached output references remain available for missed-event recovery, then clear automatically to avoid long-session memory growth.
+
+---
+
+## What's New in v1.2.7
+
+### Ordered Wildcard Cancellation
+- **Left-click now skips the current ordered wildcard item**: ordered wildcard runs keep moving after skipping only the active item instead of canceling the whole batch.
+- **Right-click now cancels the full ordered wildcard run**: full-run cancellation invalidates stale async submissions, clears the visible queue immediately, and uses the backend user-scoped cancel path.
+- **Canceled ordered runs no longer revive stale UI state**: token guards prevent late generation responses from re-enabling old runs or enqueueing canceled prompts after a new generation starts.
+
+---
+
+## What's New in v1.2.6
+
+### Ordered Wildcard Cancellation
+- **Left-click cancel recovers cleanly**: cancelling an ordered wildcard run now wakes backend held-prompt tasks, removes queued prompts, and leaves MooshieUI ready for another generation.
+- **Canceled previews no longer freeze the generation pane**: active prompt cancellation now clears the live preview, progress, active node, and queue state.
+
+---
+
+## What's New in v1.2.5
+
+### Prompt Preset Wildcards
+- **Inline ordered wildcards are now stable per generation**: prompt presets used inline keep a fixed wildcard choice for the whole prompt, so repeated references resolve consistently during ordered runs.
+- **Active preset injection avoids inline duplicates**: active presets are skipped when the same preset is already referenced inline, preventing doubled prompt text during generation.
+
+### Generation Cancellation
+- **Ordered wildcard batches can be cancelled cleanly**: generated prompt IDs are tracked through the run, allowing cancellation to delete queued prompts and interrupt only the active prompt instead of affecting unrelated work.
+
+### Export Reliability
+- **Prompt preset and style text exports use the backend writer**: `.txt` exports now save through MooshieUI's Tauri file-write command after the save dialog returns a path, fixing exports that failed in desktop mode.
+
+### Browser Mode Startup
+- **First-run Web Browser Mode opens immediately**: choosing Web Browser Mode during setup now starts the embedded web UI and opens the browser right away instead of continuing in the desktop window until the next launch.
+- **Browser launch failures keep the app visible**: if the system default browser cannot be opened, MooshieUI restores App Mode and reports the error rather than hiding the window.
+- **Diagnostics show the UI mode**: exported logs now include whether MooshieUI is running in App Mode or Browser Mode, separate from the ComfyUI server mode.
+
+---
+
+## What's New in v1.2.4
+
+### JXL Image Saves
+- **Browser-mode JXL gallery saves no longer fail with a 500**: server-mode saves now use the pre-built WebP display copy instead of forcing an on-demand transcode path.
+- **JXL clipboard copies keep metadata**: copying generated JXL output now re-embeds prompt, sampler, seed, and other generation metadata into the PNG clipboard image.
+
+### Dependency Updates
+- **Core Rust dependencies refreshed**: `rusqlite`, `axum`, `open`, and `zip` were updated to current stable versions.
+
+---
+
+## What's New in v1.2.3
+
+### Port Conflict Recovery
+- **Kill and restart from the port-conflict modal**: the "Another ComfyUI is already running" flow now offers a direct kill-process-and-restart action.
+
+### Generation Cancellation
+- **Cancel no longer leaves ghost runs behind**: cancelling clears only the current user's prompts from the queue.
+- **Ordered wildcard GPU scheduling is more reliable**: fixed a race where later ordered wildcard images could fail after the first image succeeded.
+
+### Browser Mode
+- **Preview menu saves and copies work in browser mode**: fixed a browser/server-mode security error when saving or copying images from the preview menu.
+
+### Gallery and Permissions
+- **Small Gelbooru fallback artist sets stay visible**: artists with fewer than 50 posts now appear as `<=50` instead of disappearing.
+- **Moderators can operate the server**: moderator accounts now have access to operational actions like custom-node installs, model downloads, ComfyUI restarts, and filesystem commands.
+
+---
+
+## What's New in v1.2.2
+
+### Prompt Scheduling
+- **`<fromto[N]:A||B>` parsing fixed**: scheduled prompt blocks now parse correctly.
+- **Double-encoding fixed for scheduled prompt blocks**: `<fromto>` content is no longer encoded twice.
+
+### JXL Pipeline
+- **JXL metadata is preserved on save and copy**: browser-mode JXL output keeps generation metadata through gallery and clipboard paths.
+- **Browser JXL handling improved**: display and download behavior is more reliable, including Edge downloads.
+
+### Generation UI
+- **Recommendation panels are collapsible**: Anima, Illustrious, and NanoSaur guidance panels can be collapsed.
+- **Tag autocomplete can be toggled**: users can disable tag autocomplete when it gets in the way.
+- **Artist tags read more naturally**: artist tag underscores are displayed as spaces.
+- **Session image grid overlap fixed**: generated image cards no longer overlap in the session grid.
+
+---
+
+## What's New in v1.2.1
+
+### Browser Mode Startup
+- **ComfyUI already-running warning is desktop-only**: the "Another ComfyUI is already running" toast is silenced in Docker and LAN browser mode where a pre-running ComfyUI server is expected.
+
+---
+
+## What's New in v1.2.0
+
+### Anima Base v1.0
+- **Anima now uses `anima-base-v1.0.safetensors`**: downloads point at the current model from `circlestone-labs/Anima`.
+- **Old Anima preview options removed**: Preview 3, FP8, and Preview 2 options were removed from model downloads.
+- **Compute capability gate fixed**: Anima download availability now respects the detected GPU capability correctly.
+
+### External ComfyUI Detection
+- **Port conflicts are surfaced clearly**: startup now shows a port-conflict modal and persistent warning when another ComfyUI is already using the configured port.
+- **Missing-node errors are detected earlier**: startup paths report missing node problems before generation fails later.
+
+### ControlNet Preview
+- **Live preprocessor preview added**: the new `generate_controlnet_preprocessor_preview` command supports on-demand preview generation, including browser mode.
+
+### Startup Reliability
+- **Tokio reactor panic fixed**: desktop and server modes now spawn async work with the correct runtime APIs.
+
+### Internationalization
+- **New UI strings are localized**: new release UI text was routed through the locale system across all supported locales.
+
+---
+
+## What's New in v1.1.11
+
+### Prompt Presets
+- **Ordered wildcard presets** — prompt preset wildcards can now cycle through their lines in document order, wrapping back to the first entry after the last option. This makes it much easier to test every wildcard entry without manually selecting each one.
+
+### Startup Reliability
+- **Missing MooshieUI custom nodes are caught before generation** — MooshieUI now verifies every vital bundled node class (`MooshieSaveImage`, `MooshieFaceDetailer`, `MooshieSoftGuidance`, `MooshieSmartGuidance`, `NanoSaurLoader`, and `ApplyTiledDiffusion`) before treating an existing, newly spawned, worker, or reachable remote ComfyUI server as ready. If ComfyUI was already running and has not loaded the updated nodes, startup now shows a clear restart/install message instead of letting generations fail later with a missing-node error.
+
+---
+
+## What's New in v1.1.10
+
+### Docker ControlNet Startup Fix
+- **Required ControlNet nodes are installed before ComfyUI boots** — the Docker image now bakes in `comfyui_controlnet_aux` and `ComfyUI-Anima-LLLite`, so Anima LLLite generations no longer fail with `Node 'AnimaLLLiteApply' not found` after a pod redeploy.
+- **Startup verification on every managed restart** — MooshieUI now checks required ControlNet and Anima node classes after ComfyUI starts and before reporting the server as ready, catching missing or broken custom-node imports early.
+- **Desktop/server self-healing install path** — managed ComfyUI launches now ensure required ControlNet custom-node packages exist and install their Python requirements when needed.
+
+### Release Pipeline
+- **Docker publish cache export no longer blocks releases** — release Docker builds now use a smaller, non-fatal GitHub Actions cache export while keeping the actual GHCR image push required.
+
+---
+
+## What's New in v1.1.9
+
+### Anima LLLite ControlNet
+- **First-class Anima LLLite support** — Anima models now route through the new `AnimaLLLiteApply` node with a curated preset list (Depth Map + AnyTest v1 step 1000/2000 + inpainting), downloaded from the public `Mooshie/Anima-LLLite` Hugging Face mirror.
+- **Per-preset defaults** — strength, start %, and end % are tuned per Anima preset so depth and AnyTest work out of the box without manual tweaking.
+- **OpenPose / LineArt / Scribble hidden for Anima** — the LLLite weights for these tasks are intentionally weak per the model card, so they're no longer surfaced for Anima checkpoints.
+- **Wider strength slider for Anima** — the ControlNet strength slider now extends to 4.0 when an Anima checkpoint is detected.
+
+### Preprocessor Preview
+- **Preview preprocessor button** — preset preprocessors (depth, openpose, lineart, etc.) now run on demand via a dedicated preview action. The preprocessed image only replaces the control image after you confirm it, instead of swapping silently after the first generation.
+- **Re-run and retry controls** — quick re-run and retry buttons surface when the preview is ready or failed.
+
+### Installer & Downloads
+- **One-click AnimaLLLite extension install** — when an Anima checkpoint is selected but the `ComfyUI-Anima-LLLite` extension is missing, MooshieUI prompts to clone and restart ComfyUI automatically.
+- **Hugging Face token support** — gated model downloads pick up the user's HF token when provided.
+
+### Internationalization
+- **ControlNet preset names and descriptions are now translatable** — preset labels, descriptions, and preprocessor preview controls route through the locale system instead of being hardcoded English.
+
+---
+
+## What's New in v1.1.8
+
+### Theme Customization
+- **Paired light and dark palettes** — MooshieUI now supports free, built-in Mooshie, Nord, Solarized, Gruvbox, and Catppuccin palettes, with matching light and dark variants.
+- **Theme controls on desktop and mobile** — the Settings pages now include persisted theme mode and palette selectors, with the palette label routed through the locale system.
+- **Dropdowns follow the active palette** — select boxes, option text, focus rings, and selected-option states now use the active theme colors instead of retaining the Mooshie yellow tint.
+
+### Browser Generation Reliability
+- **Server WebSocket reconnects are idempotent** — repeated browser startup calls now reuse an active ComfyUI WebSocket bridge instead of aborting it mid-generation, preventing lost final output frames.
+- **Final image recovery cache** — preview and final output temp files are cached by prompt ID so the browser UI can recover an image if the final SSE event is missed during a reconnect.
+
+### Model Loading Cleanup
+- **Optional model categories no longer log noisy 500s** — ComfyUI installs without optional `diffusion_models`, `text_encoders`, `clip`, `controlnet`, or `ultralytics` folders now return empty lists for those probes instead of surfacing server errors.
+
+---
+
+## What's New in v1.1.7
+
+### Generation Reliability
+- **Recover from ComfyUI WebSocket drops** — the Tauri, browser/SSE, and per-worker WebSocket bridges now reconnect with backoff instead of exiting permanently. If a prompt finishes while the socket is down, MooshieUI checks ComfyUI history and emits a synthetic completion event so the UI can finalize the image instead of hanging.
+
+### Cancel & Queue Fixes
+- **Cancel releases multi-GPU workers cleanly** — cancelling a generation now removes the prompt from internal queue tracking, deletes placeholder and real ComfyUI prompt IDs from every worker queue, interrupts/frees the affected worker, and marks it idle so the next generation does not briefly sit behind a stale cancelled prompt.
+- **Cancel-before-active race fixed** — clicking cancel before ComfyUI reports an active prompt now targets the first pending prompt, covering the fast cancel-and-requeue path.
+
+### Internationalisation
+- **Generation error toasts use locale keys** — generation failure, model/VAE configuration, detailed error, and cancellation messages now route through the locale system across all supported languages.
+- **Locale duplicate-key cleanup** — duplicate bottom-panel/gallery locale stubs were removed while preserving translated bottom-panel tab labels.
+
+---
+
+## What's New in v1.1.6
+
+### Bug Fixes
+- **Multi-GPU model/sampler/embedding queries no longer 500** — `AppState::api_get` and `api_post` previously hit the configured `server_url` (default `127.0.0.1:8188`), which in multi-GPU server-mode deployments doesn't host ComfyUI — workers run on per-GPU ports listed in `gpu_workers`. Read-only API calls now delegate to `GpuManager`, which dispatches to the first ready worker. This fixes the recurring `/internal-api/get_models` 500s and the `/object_info/*` lookups used by the dynamic node introspector.
+
+## What's New in v1.1.5
+
+### Bug Fixes
+- **Cancel actually cancels in multi-GPU mode** — clicking cancel previously only interrupted the first ComfyUI worker, so on multi-GPU deployments (e.g. `mooshieui.gpu.garden`) other workers kept running and the UI appeared to "switch between" two simultaneous generations. Cancellation is now worker-aware: the active prompt's worker is interrupted, the prompt is removed from that worker's pending queue, and `/free` is issued to flush VRAM. Held prompts that never reached ComfyUI are cancelled locally without an HTTP roundtrip.
+- **Split-model VAE auto-correction** — when an Anima/Qwen/WAN/Flux/Klein diffusion model was selected with a stale SDXL VAE in the persisted settings, generation produced a channel-mismatch error. Defaults application now detects the diffusion model family and rewrites the VAE choice (Qwen VAE for Anima/Qwen/WAN, Flux VAE for Flux/Klein, otherwise SDXL VAE) before saving.
+- **Artist gallery thumbnails in browser mode** — manifest URLs pointing at `cdn.mooshieblob.com` were blocked by CORS when MooshieUI is served from a different origin. The artist-gallery store now rewrites `imageBaseUrl` to `/internal-api/_cdn` in browser mode so all `<img>` tags load through the existing CDN proxy.
+
+### Internationalisation
+- **Setup wizard logo, title, and tagline keyed for i18n** — the last three hardcoded English strings on the first-run setup screen now use `setup.logo_alt`, `setup.title`, and `setup.subtitle`. The new `setup.logo_alt` key has been translated into all 11 supported locales.
+
+---
+
+## What's New in v1.1.4
+
+### Bug Fixes
+- **LAN/web server input validation** — the input-image and ControlNet guards added in v1.1.2 / v1.1.3 only ran inside the Tauri `generate` command, so users connecting through the embedded web server (`mooshieui.gpu.garden` and other LAN deployments) still hit `[Errno 21] Is a directory` from ComfyUI's `LoadImage` node when generating without a required input image. The validation has been extracted into a shared `validate_generation_params` helper and is now called from both the Tauri command and the LAN web server's `generate` route.
+- **Refine without an image** — the validator now also rejects `refine_only` requests submitted without an input image, and rejects `inpainting` mode submitted without a mask.
+
+---
+
+## What's New in v1.1.3
+
+### Flux Model Support
+- **Flux Guidance slider** — when a Flux Dev or Flux 2 Klein checkpoint is selected, the Smart Guidance toggle is replaced with a dedicated Flux Guidance slider (range 0–10, default 3.5). The value is plumbed through to the `FluxGuidance` node in the workflow, replacing the previously hardcoded `3.5`. The setting is persisted alongside other generation defaults and round-trips through PNG metadata as `mooshie_flux_guidance`.
+- **Negative prompt is greyed out for Flux models** — Flux is guidance-distilled and ignores the negative conditioning, so the textarea is now visually disabled (40% opacity, no pointer interaction) with an inline "ignored by Flux models" hint when a Flux checkpoint is active.
+- **Flux 2 Klein 9B (NVFP4) detection** — the model selector now correctly detects `flux-2-klein-9b-nvfp4.safetensors` in `diffusion_models/`, its `qwen_3_8b_fp4mixed.safetensors` text encoder in either `clip/` or `text_encoders/`, and the `flux-vae.safetensors` VAE. Hashes are auto-cached on first activation so subsequent loads resolve instantly.
+
+### Bug Fixes
+- **ControlNet input validation** — the backend now rejects generation requests when ControlNet is enabled but no reference image has been uploaded, returning a clear `Invalid workflow` error instead of crashing the server with `[Errno 21] Is a directory` from the `LoadImage` node. Mirrors the existing img2img / inpainting guard.
+- **Text encoder discovery** — model lookup now searches both `clip/` and `text_encoders/` ComfyUI directories and falls back through both during hash resolution, fixing missing-encoder errors when ComfyUI installs split a model's CLIP across the two folders.
+
+---
+
+## What's New in v1.1.2
+
+### Bug Fixes
+- **img2img / inpainting input validation** — the backend now rejects generation requests for `img2img` and `inpainting` modes when no input image has been provided, returning a clear `Invalid workflow` error instead of letting ComfyUI fail deep in the graph with a confusing `[Errno 21] Is a directory` error from the `LoadImage` node.
+
+---
+
+## What's New in v1.1.1
+
+### Mobile Browser UI
+- **Touch-optimized shell** — when accessed through the embedded web server from a mobile device, MooshieUI now renders a native-feeling mobile layout with bottom tab navigation (Generate / Gallery / Model Hub / Artists / Settings) instead of the desktop side panels. Activation is automatic via user-agent detection and can be overridden from Settings.
+- **Mobile generate page** — vertical layout with a 3-segment pill mode switcher (txt2img / img2img / inpaint) in the top bar, large preview area, prompt history strip below the preview, and a floating bottom dock containing the generate button and a chevron to expand/collapse the parameters bottom sheet.
+- **Side rail extras panel** — LoRAs, Checkpoints, Session images, Styles, Schedule, and Compare are now reachable from a 48-px vertical icon rail on the generate page, each opening as a full-height bottom sheet.
+- **Mobile gallery & lightbox** — touch-friendly grid with a filters bottom sheet (board / sort), pinch-to-zoom lightbox, and an action sheet (Send to Generate / Use for Upscale / Copy / Download / Delete).
+- **Mobile settings page** — language picker, "Use desktop layout" pill toggle, generation defaults sliders (Steps, CFG), account sign-out, and About section.
+
+### Polish & Fixes
+- **Integer-only progress percentages** — generation progress no longer displays repeating decimals like `33.333%`; values are rounded to whole percent.
+- **Artist gallery error diagnostics** — `JSON.parse` failures now surface the URL, content-type, and a preview of the response body instead of an opaque parse error.
+- **Mobile artist gallery** — wired the missing `manifestUrl` prop so the artist tab loads correctly in browser mode.
+- **i18n coverage** — every new mobile UI string is routed through the locale system; 22 new keys added to `en.ts` with English-fallback stubs synced to all 11 other locales. Duplicate locale keys were removed from `it.ts`, `ja.ts`, `ko.ts`, `ru.ts`, `zh.ts`, and `zh-tw.ts` (translated values restored).
+
+---
+
+## What's New in v1.1.0
+
+### Refine Button (SwarmUI-style)
+- **One-click image refinement** — the **Refine** button on the preview panel now runs a SwarmUI-style second pass over the generated image without regenerating it from scratch. The output is uploaded to ComfyUI, fed directly into the upscale chain, and processed at low denoise — sharpening detail and adding texture while preserving the original composition completely.
+- **No redundant sampling** — `refine_only` mode skips the main img2img KSampler/VAE round-trip; only the upscale chain (VAEEncodeTiled → optional TiledDiffusion / SoftGuidance → KSampler at `upscale_denoise` → VAEDecodeTiled) runs.
+- **Reliable image sourcing** — previously the button passed a blob/preview URL directly as `LoadImage` input, causing a `value_not_in_list` validation error (surfaced as "a model or VAE may not be configured correctly"). It now fetches the bytes from the displayed preview URL and uploads them to ComfyUI's `input/` folder before queuing.
+- **Respects Refiner settings** — scale factor, denoise strength, step count, tiling, SoftGuidance multiplier, and quality-only prompts are all taken from the Refiner panel.
+- **ControlNet disabled for refine pass** — re-conditioning a refine pass against the original control input is rarely intended and is suppressed automatically.
+
+### Model Selection Consistency Fix
+- **Displayed model = loaded model** — switching from a split-model (e.g. Anima Preview 3) to a regular checkpoint in the Checkpoint Gallery now correctly clears `useSplitModel`, `diffusionModel`, `clipModel`, and `clipType`. Previously, selecting a checkpoint while a split model was active left those fields set, so the workflow loaded the old Anima diffusion/CLIP/VAE files while the UI showed the new checkpoint name.
+
+### Terminal Log Panel (Developer Mode)
+- **Live log viewer** — a scrollable terminal log panel is now available in the Settings page under Developer Mode (unlock with 10 taps on the version number). Streams the last N Rust log lines via `get_log_buffer` and a live `log:line` event subscription, with a copy-to-clipboard button. Gated behind developer mode so it doesn't surface in normal use.
+
+---
+
+## What's New in v1.0.9
+
+### Account-Based Preference Sync
+- **Cross-device settings sync** — user preferences are now stored server-side per account, so switching OS or device with the same MooshieUI login yields the same configuration. Synced state includes: generation parameters, prompt history, prompt presets, artist styles, artist favourites, gallery boards, autocomplete settings, accessibility options, and locale.
+- **Seamless sync on login** — on startup or login, MooshieUI fetches the server snapshot and applies it to all stores. If no server snapshot exists yet, the current local state is seeded to the server.
+- **Debounced background push** — every settings save triggers a debounced 2-second sync push to the server, collapsing rapid consecutive saves into a single request.
+- **Desktop mode unaffected** — sync is only active in browser/LAN mode; the Tauri desktop app continues to use local-only persistence as before.
+
+### New Tauri Command
+- **`get_compute_capability`** — exposes the host GPU's CUDA compute capability as a float (e.g. `8.9` for RTX 4090), used for model compatibility hints in the UI.
+
+---
+
+## What's New in v1.0.8
+
+### New Features
+- **Artist Styles** — bundle artist tags (with per-tag weights + overall multiplier and optional thumbnails) into reusable styles. Activating a style injects its tags into the positive prompt non-destructively at generation time. Styles support duplicate, JSON export/import, and click-to-deactivate badges above the prompt.
+- **Prompt Presets** — non-artist prompt variables with three activation modes: **Prepend**, **Append**, and **Wildcard** (splits content on commas/newlines and picks one entry per generation). Active presets show as badges with ↑/↓/🎲 indicators.
+- **Styles tab in the bottom panel** — the Styles + Prompt Presets manager is now a dedicated bottom-panel tab with a live active-count badge, replacing the previous floating modal.
+- **Prompt Scheduling builder** — new **Schedule** tab in the bottom panel with a GUI for all four scheduling syntaxes (`<fromto[N]:A || B>`, `<from:N>...</from>`, `<to:N>...</to>`, `<range:A:B>...</range>`): text fields + sliders with a live preview and plain-English "applies from X% to Y%" description. Actions to append to positive/negative prompt or copy to clipboard, plus a collapsible syntax cheat-sheet.
+
+### Autocomplete Improvements
+- **Anima-aware artist autocomplete in Style editor** — artist search now uses the active model's tag list (Anima tags for Anima-architecture models, Danbooru for everything else) and adds/strips the `@` prefix to match each architecture's convention.
+- **Full autocomplete in Preset editor** — preset content uses the same `PromptTextarea` as the main prompt (tag autocomplete, scheduling highlight, NAI brackets, Ctrl+↑/↓ weights).
+
+### i18n
+- Added `bottom_panel.tab.styles` and `bottom_panel.tab.schedule` keys across all 11 supported locales.
+
+---
+
+## What's New in v1.0.7
+
+### Critical Fixes
+- **Desktop app launches again (fixes #102, #124)** — v1.0.6 shipped a regression where the installed app closed instantly on Windows (and would have panicked on any desktop platform). The prompt-cleanup reactor and stuck-worker watchdog in `webserver.rs` were swapped from `tauri::async_runtime::spawn` to `tokio::spawn` to unblock the server-only Docker build, but those reactors are started from Tauri's synchronous `.setup()` hook, which runs *before* any Tokio runtime is entered on that thread — so `tokio::spawn` panicked with "there is no reactor running" and killed the process during startup. The spawns are now cfg-gated: desktop builds use `tauri::async_runtime::spawn` (Tauri's runtime handle, works outside a runtime context), while the headless server build (which always calls these from `#[tokio::main]`) keeps using `tokio::spawn`. No other behavioural changes.
+
+---
+
+## What's New in v1.0.6
+
+### Build Fixes
+- **Docker image publish restored** — the `build-server` job (which produces the headless Linux server binary that the Docker image wraps) was failing because three `tauri::` references leaked into the server-only build path, which doesn't link the `tauri` crate. The `#[tauri::command]` attribute on `load_gallery_image_png` is now gated behind `#[cfg(feature = "desktop")]`, and the two `tauri::async_runtime::spawn` calls in the prompt-queue cleanup reactor and stuck-worker watchdog (in `webserver.rs`) have been swapped for `tokio::spawn`. No user-visible changes; the desktop installers are functionally identical to v1.0.5.
+
+---
+
+## What's New in v1.0.5
+
+### Bug Fixes
+- **Browser mode no longer shows "Not found"** — production installs of MooshieUI couldn't serve the UI in browser mode because the frontend `dist/` directory isn't unpacked next to the installed binary. The embedded web server now falls back to assets compiled into the binary at build time (via `rust-embed`), so opening the browser-mode URL works on every install, not just dev checkouts.
+- **Diagnostic logs now include frontend + Rust state** — the "Export Diagnostic Logs" button in Settings previously only captured ComfyUI's stderr. Exported logs now also contain a bounded ring buffer of Rust-side `log::info!`/`warn!`/`error!` output plus a capture of the frontend console (including uncaught errors and unhandled promise rejections). This is critical for diagnosing "button does nothing" bug reports on Windows app mode where users can't open dev tools.
+
+---
+
+## What's New in v1.0.4
+
+### Features
+- **JPEG XL (JXL) output support** — generated images can now be saved as `.jxl`, cutting file sizes roughly in half at visually-lossless quality compared to PNG while preserving full metadata. Available as a new format option alongside PNG/JPEG/WebP.
+- **Artist Gallery i18n** — the full Artist Gallery page, favourites manager, hover previews, and related prompts are now translated into every supported locale (de, es, fr, it, ja, ko, pt, ru, zh, zh-tw) instead of being English-only.
+- **Parallel multi-file model downloads** — when installing split-file models like Anima Preview 3, the diffusion model, text encoder, and VAE now download in parallel with a dedicated progress bar per file that stays visible (with a green ✓) until the whole batch completes. Previously the single shared progress bar blanked out between files, making it look like later downloads had been dropped.
+
+### Bug Fixes
+- **"Generation was lost" toast no longer misfires on long queues** — queuing 20+ images would sometimes raise `A Generation was lost due to a connection issue` for pending prompts that were still healthy. The reconciler was comparing activity timestamps against `undefined` (after `enqueue` upgraded an SSE-injected placeholder and dropped `enqueuedAt`), producing `NaN` time differences that bypassed the 30-second grace guard. Both `enqueue()` and `restoreFromSnapshot()` now preserve/stamp `enqueuedAt` correctly, and the reconciler falls back to `enqueuedAt` when no live activity has been recorded yet.
+- **Python install recovers from partial extracts** — the one-click setup wizard no longer fails with `failed to create file '...\Lib\EXTERNALLY-MANAGED': The system cannot find the path specified (os error 3)` when a previous run was interrupted mid-extract. The installer now pre-scans `python/cpython-*/` for a missing `python.exe`/`Lib` directory, purges partial extracts before retrying, and falls back to `uv python install --reinstall 3.11` if uv still refuses to re-extract.
+- **Artist favourite chips appear in app mode** — typing `@artist_name` in the prompt now surfaces the same favourite heart chips in the Tauri desktop app that already worked in server/browser mode. Direct `fetch` calls to `cdn.mooshieblob.com` were being blocked by the webview's CORS enforcement, so the artist-tag search index silently failed to load. Those JSON fetches are now proxied through a new `cdn_proxy_fetch` Tauri command that reuses the shared reqwest client (scoped to the Mooshieblob CDN origin only — not an open proxy).
+
+---
+
+## What's New in v1.0.3
+
+### Bug Fixes
+- **Visual double-queue on single generate fixed** — the queue counter no longer shows 2 when only 1 image is being generated. An SSE `queue_update` event could arrive before the HTTP response from `/prompt`, causing the same prompt_id to be inserted twice in the pending queue (once by `restoreFromSnapshot` and again by `enqueue`). `enqueue` is now idempotent by `promptId`: if an entry already exists (e.g. injected by the SSE snapshot), it's upgraded in place with the real params/mode instead of appending a duplicate.
+
+---
+
+## What's New in v1.0.2
+
+### Bug Fixes
+- **Double-queue on single generate fixed** — queuing one image no longer results in two generations. The Generate button now has an in-flight guard that prevents re-submission while a request is in progress, closing a race window between the button click and the server response.
+- **Crash in progress store fixed** — `completePrompt` no longer throws `TypeError: can't access property "seed", params is null` when a prompt was restored from the server queue snapshot after a page refresh. Restored prompts have `params: null` by design; the seed is now read safely.
+- **Reconciler no longer loops on null-params prompts** — the crash above prevented the restored prompt from being removed from the pending list, causing the reconciler to retry completion every 5 seconds indefinitely. Both issues are resolved together.
+
+---
+
+## What's New in v1.0.0
+
+### Bug Fixes
+- **Cancel + requeue no longer triggers a false error** — cancelling the active generation (left-click Cancel) and immediately requeuing previously caused the reconciler to fire a spurious error toast and corrupt the progress state. The cancelled prompt is now removed from the pending queue immediately so the reconciler never acts on it.
+- **Admin queue-clear no longer leaves stale reconciler timestamps** — when a moderator or admin clears the queue via the Settings panel, `promptLastActivity` is now flushed alongside the pending prompt list, preventing ghost reconciler completions.
+
+---
+
+## What's New in v0.9.9
 
 ### Silent Generation Recovery After Reconnect
 - **Images are no longer silently lost on reconnect** — if the SSE connection dropped mid-generation, output images could vanish with no error and no toast. A server-side cache now preserves each output image's temp filename keyed by prompt ID. If the reconciler detects a completed generation with no locally tracked images, it automatically fetches the cached images from the server and finalises the output as normal.

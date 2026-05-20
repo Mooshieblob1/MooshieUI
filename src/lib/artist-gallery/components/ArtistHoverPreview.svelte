@@ -2,6 +2,7 @@
   import { createArtistGalleryStore } from "../store.svelte.js";
   import type { ArtistEntry } from "../types.js";
   import { cachedSrc } from "../imageCache.js";
+  import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
     manifestUrl: string;
@@ -57,7 +58,7 @@
     />
   {:else}
     <span class="px-2 text-center text-[10px] text-neutral-500">
-      no preview
+      {locale.t('artist_gallery.no_preview')}
     </span>
   {/if}
 </div>

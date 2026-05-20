@@ -6,18 +6,9 @@
  * - While captured, ALL scroll wheel events (anywhere on page) adjust the slider.
  * - Click anywhere else to release capture.
  * - Adds `.scroll-captured` class on the wrapper while active.
- *
- * Works with smoothScroll: captured elements set a global flag that
- * smoothScroll checks before intercepting wheel events.
  */
 
-/** Global flag: when set, smoothScroll should not intercept wheel events. */
 let capturedElement: HTMLElement | null = null;
-
-export function getScrollCapturedElement(): HTMLElement | null {
-  return capturedElement;
-}
-
 export function scrollCapture(node: HTMLElement) {
   let captured = false;
 

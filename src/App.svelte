@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, startHeartbeat, getAuthToken, setAuthToken, setAuthUser, authHeaders, wasRememberMe } from "./lib/utils/ipc.js";
+  import { useMobileLayout } from "./lib/utils/device.js";
   import SetupWizard from "./lib/components/setup/SetupWizard.svelte";
+  import MobileApp from "./lib/components/mobile/MobileApp.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
   import ModelHubPage from "./lib/components/modelhub/ModelHubPage.svelte";
@@ -10,7 +12,8 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { getOutputImage, uploadImageBytes, loadGalleryImage, getConfig, readImageMetadata, getQueue, recoverPromptOutputs } from "./lib/utils/api.js";
+  import { getOutputImage, uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
+  import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput } from "./lib/utils/galleryActions.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
@@ -22,8 +25,11 @@
   import { downloads } from "./lib/stores/downloads.svelte.js";
   import { compare } from "./lib/stores/compare.svelte.js";
   import { artistInsert } from "./lib/stores/artistInsert.svelte.js";
+  import { styles as stylesStore } from "./lib/stores/styles.svelte.js";
+  import { notifications } from "./lib/stores/notifications.svelte.js";
+  import NotificationBell from "./lib/components/ui/NotificationBell.svelte";
   import logoUrl from "./lib/assets/logo.png";
-  import { smoothScroll } from "./lib/utils/smoothScroll.js";
+
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
   import ContextMenu from "./lib/components/ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
@@ -43,17 +49,28 @@
   let lastProgressEventAt = 0;
 
   /** Images received via WebSocket during generation, keyed by prompt_id. */
-  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string }>>();
+  let pendingOutputImages = new Map<string, Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>>();
   /** In-flight output_image fetch promises per prompt_id (for SSE race-condition avoidance). */
   let pendingOutputFetches = new Map<string, Promise<void>[]>();
   /** Wait for pending fetches with a hard time limit to prevent hanging. */
   const FETCH_TIMEOUT_MS = 30_000;
+  const GENERATION_DONE_TOAST_VISIBLE_MS = 6_000;
+  const GENERATION_DONE_TOAST_EXIT_MS = 220;
+  type PrimaryPage = "generate" | "gallery" | "modelhub" | "artists" | "settings";
+  type GenerationDoneToast = {
+    id: number;
+    imageUrl: string;
+    leaving: boolean;
+  };
   async function awaitFetchesWithTimeout(fetches: Promise<void>[]): Promise<void> {
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, FETCH_TIMEOUT_MS));
     await Promise.race([Promise.allSettled(fetches), timeout]);
   }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
   let sseReconnectHandler: (() => void) | null = null;
+  let generationDoneToastTimer: ReturnType<typeof setTimeout> | null = null;
+  let generationDoneToastClearTimer: ReturnType<typeof setTimeout> | null = null;
+  let generationDoneToastSeq = 0;
   /** Timestamp of the most recent SSE event per prompt — prevents false reconciliation. */
   let promptLastActivity = new Map<string, number>();
 
@@ -67,7 +84,7 @@
   let lbPanStartY = 0;
   let lbPanStartOffsetX = 0;
   let lbPanStartOffsetY = 0;
-  let lbImgEl: HTMLImageElement | null = null;
+  let lbImgEl = $state<HTMLImageElement | null>(null);
   let lbRafId = 0;
 
   function applyLightboxTransform(smooth = false) {
@@ -303,17 +320,7 @@
 
   async function upscaleImage(image: OutputImage) {
     try {
-      // Load image bytes from gallery or output
-      let bytes: number[];
-      if (image.gallery_filename) {
-        bytes = await loadGalleryImage(image.gallery_filename);
-      } else {
-        bytes = await getOutputImage(image.filename, image.subfolder);
-      }
-
-      // Upload to ComfyUI input folder
-      const response = await uploadImageBytes(bytes, image.filename);
-      generation.inputImage = response.name;
+      generation.inputImage = await uploadOutputImageForGenerationInput(image, "refine_input.png");
       generation.mode = "img2img";
       generation.upscaleEnabled = true;
       currentPage = "generate";
@@ -330,20 +337,18 @@
     mode: "img2img" | "inpainting",
   ) {
     try {
-      let bytes: number[];
-      if (image.gallery_filename) {
-        bytes = await loadGalleryImage(image.gallery_filename);
-      } else {
-        bytes = await getOutputImage(image.filename, image.subfolder);
-      }
+      const source = await loadOutputImageForGenerationInput(
+        image,
+        mode === "inpainting" ? "inpaint_input.png" : "img2img_input.png",
+      );
 
       const normalized =
         mode === "inpainting"
-          ? await normalizeImageBytes(bytes, image.filename || "inpaint_input.png")
+          ? await normalizeImageBytes(source.bytes, source.filename)
           : null;
 
-      const uploadBytes = normalized ? normalized.bytes : bytes;
-      const uploadFilename = normalized ? normalized.filename : image.filename;
+      const uploadBytes = normalized ? normalized.bytes : source.bytes;
+      const uploadFilename = normalized ? normalized.filename : source.filename;
 
       const response = await uploadImageBytes(uploadBytes, uploadFilename);
       generation.inputImage = response.name;
@@ -392,6 +397,20 @@
     await loadImageForMode(image, "inpainting");
   }
 
+  async function inpaintLightboxPreview() {
+    if (!gallery.lightboxUrl) return;
+    await loadImageForMode(
+      {
+        filename: `preview_${Date.now()}.png`,
+        subfolder: "",
+        type: "output",
+        prompt_id: "preview-lightbox",
+        url: gallery.lightboxUrl,
+      },
+      "inpainting",
+    );
+  }
+
   function navigateLightbox(direction: "prev" | "next") {
     if (!gallery.selectedImage) return;
     // Try sorted gallery images first, fall back to session images for bottom panel
@@ -428,9 +447,10 @@
   }
 
   let setupComplete = $state<boolean | null>(null); // null = loading
-  let currentPage = $state<"generate" | "gallery" | "modelhub" | "artists" | "settings">(
-    "generate"
-  );
+  let currentPage = $state<PrimaryPage>("generate");
+  let mobileCurrentTab = $state<PrimaryPage>("generate");
+  let mobileGenerateNavigationVersion = $state(0);
+  let generationDoneToast = $state<GenerationDoneToast | null>(null);
 
   // Auth gate state (browser mode LAN access)
   let authRequired = $state(false);
@@ -562,6 +582,7 @@
   }
   let versionTapCount = $state(0);
   let startupStatus = $state<string>("");
+  let startupStatusKind = $state<"idle" | "manual" | "starting" | "connecting" | "error">("idle");
 
   let galleryImagesPerRow = $state(5);
   let gallerySortBy = $state<"date" | "name" | "size">("date");
@@ -1068,21 +1089,27 @@
     mode: "txt2img" | "img2img" | "inpainting",
     wasUpscaled: boolean,
     params: GenerationParams | null,
-    images: Array<{ blob: Blob; url: string; tempFilename?: string }>,
+    images: Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>,
   ) {
     if (images.length === 0) return;
 
-    const newImages: OutputImage[] = images.map((img, i) => ({
-      filename: `${promptId}_${i}.png`,
-      subfolder: "",
-      type: "output",
-      prompt_id: promptId,
-      generation_mode: mode,
-      is_upscaled: wasUpscaled,
-      url: img.url,
-      file_size_bytes: img.blob.size,
-      generated_at_ms: Date.now(),
-    }));
+    const newImages: OutputImage[] = images.map((img, i) => {
+      const ext = img.blob.type === "image/jxl" ? "jxl" : "png";
+      return {
+        filename: `${promptId}_${i}.${ext}`,
+        subfolder: "",
+        type: "output",
+        prompt_id: promptId,
+        generation_mode: mode,
+        is_upscaled: wasUpscaled,
+        url: img.url,
+        sessionBlob: img.blob,
+        tempFilename: img.tempFilename,
+        displayTempFilename: img.displayTempFilename,
+        file_size_bytes: img.blob.size,
+        generated_at_ms: Date.now(),
+      };
+    });
 
     gallery.addImages(newImages);
     progress.setLastOutputForMode(mode, newImages[0]?.url ?? null);
@@ -1109,8 +1136,113 @@
     // Pass blobs and temp filenames so persistImages can use the most efficient path
     const blobs = images.map((img) => img.blob);
     const tempFilenames = images.map((img) => img.tempFilename);
+    console.log("[finalizeOutputImages] images:", newImages.length, "blob[0].type:", blobs[0]?.type, "blob[0].size:", blobs[0]?.size, "filename[0]:", newImages[0]?.filename);
     gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
+    showGenerationDoneToast(newImages);
+
+    // If a style was just applied to the prompt and it doesn't have a thumbnail yet,
+    // automatically assign this generation's primary image to it.
+    if (stylesStore.pendingStyleForThumbnail) {
+      const styleId = stylesStore.pendingStyleForThumbnail;
+      stylesStore.pendingStyleForThumbnail = null; // Clear immediately
+      if (newImages.length === 0) return;
+
+      const firstImage = newImages[0];
+      const persistPromise = gallery.getPersistPromise(firstImage);
+      if (persistPromise) {
+        persistPromise.then(async (galleryFilename) => {
+          if (!galleryFilename) return;
+          // Resolve to a proper URL for this platform (thumbnail:// or https://thumbnail.localhost/ on Windows)
+          let thumbnail = galleryFilename;
+          try {
+            if (isTauri) {
+              const { convertFileSrc } = await import("@tauri-apps/api/core");
+              thumbnail = convertFileSrc(galleryFilename, "thumbnail");
+            } else if (isBrowserMode) {
+              thumbnail = `/internal-api/_gallery_image/${galleryFilename}`;
+            }
+          } catch { /* keep raw filename as fallback */ }
+          stylesStore.updateStyle(styleId, { thumbnail });
+        });
+      } else if (firstImage.gallery_filename) {
+        // Already persisted synchronously (rare) — resolve URL the same way
+        (async () => {
+          let thumbnail = firstImage.gallery_filename!;
+          try {
+            if (isTauri) {
+              const { convertFileSrc } = await import("@tauri-apps/api/core");
+              thumbnail = convertFileSrc(thumbnail, "thumbnail");
+            } else if (isBrowserMode) {
+              thumbnail = `/internal-api/_gallery_image/${thumbnail}`;
+            }
+          } catch { /* keep raw filename */ }
+          stylesStore.updateStyle(styleId, { thumbnail });
+        })();
+      }
+    }
   }
+
+  function clearGenerationDoneToastTimers() {
+    if (generationDoneToastTimer) clearTimeout(generationDoneToastTimer);
+    if (generationDoneToastClearTimer) clearTimeout(generationDoneToastClearTimer);
+    generationDoneToastTimer = null;
+    generationDoneToastClearTimer = null;
+  }
+
+  function viewingGeneratePage(): boolean {
+    return useMobileLayout ? mobileCurrentTab === "generate" : currentPage === "generate";
+  }
+
+  function dismissGenerationDoneToast() {
+    if (!generationDoneToast || generationDoneToast.leaving) return;
+    if (generationDoneToastTimer) clearTimeout(generationDoneToastTimer);
+    generationDoneToastTimer = null;
+    generationDoneToast = { ...generationDoneToast, leaving: true };
+    generationDoneToastClearTimer = setTimeout(() => {
+      generationDoneToast = null;
+      generationDoneToastClearTimer = null;
+    }, GENERATION_DONE_TOAST_EXIT_MS);
+  }
+
+  function showGenerationDoneToast(images: OutputImage[]) {
+    if (images.length === 0 || viewingGeneratePage()) return;
+    const image = images.find((candidate) => candidate.url) ?? images[0];
+    if (!image?.url) return;
+
+    notifications.addLocalNotification({
+      title: locale.t("generation.toast.image_ready"),
+      body: images.length > 1
+        ? locale.t("generation.notification.images_ready_body", { count: images.length })
+        : locale.t("generation.notification.image_ready_body"),
+      kind: "success",
+    });
+
+    clearGenerationDoneToastTimers();
+    generationDoneToast = {
+      id: ++generationDoneToastSeq,
+      imageUrl: image.url,
+      leaving: false,
+    };
+    generationDoneToastTimer = setTimeout(
+      dismissGenerationDoneToast,
+      GENERATION_DONE_TOAST_VISIBLE_MS,
+    );
+  }
+
+  function openGenerateFromDoneToast() {
+    currentPage = "generate";
+    if (useMobileLayout) {
+      mobileCurrentTab = "generate";
+      mobileGenerateNavigationVersion += 1;
+    }
+    dismissGenerationDoneToast();
+  }
+
+  $effect(() => {
+    if (generationDoneToast && viewingGeneratePage()) {
+      dismissGenerationDoneToast();
+    }
+  });
 
   /**
    * Embed metadata into a temp image on the server and upgrade the blob URL.
@@ -1149,6 +1281,10 @@
       // Revoke old blob URL and update the image
       const oldUrl = image.url;
       image.url = newUrl;
+      image.sessionBlob = newBlob;
+      image.tempFilename = newTempFilename;
+      image.displayTempFilename = undefined;
+      image.file_size_bytes = newBlob.size;
 
       // If the lightbox is showing this image's old blob URL, upgrade it
       if (gallery.lightboxOpen && gallery.lightboxUrl === oldUrl) {
@@ -1159,10 +1295,15 @@
       // load the revoked blob URL via displayImage / lastOutputImage.
       if (oldUrl) {
         progress.replaceOutputUrl(oldUrl, newUrl);
-        URL.revokeObjectURL(oldUrl);
+        window.setTimeout(() => {
+          if (!gallery.sessionImages.some((img) => img.url === oldUrl)) {
+            URL.revokeObjectURL(oldUrl);
+          }
+        }, 30_000);
       }
 
       // Trigger Svelte reactivity so lazyThumbnail actions pick up the new URL
+      gallery.images = [...gallery.images];
       gallery.sessionImages = [...gallery.sessionImages];
     } catch (e) {
       // Non-critical — the image is still visible, just without embedded metadata
@@ -1336,6 +1477,7 @@
 
     loadGalleryPrefs();
     downloads.init();
+    notifications.startPolling();
 
     // Check auth for browser mode LAN access (before any ipcInvoke calls)
     const authOk = await checkAuth();
@@ -1354,12 +1496,30 @@
     await initApp();
   });
 
-  async function onSetupDone() {
+  async function onSetupDone(selectedMode: "app" | "browser") {
+    if (isTauri && selectedMode === "browser") {
+      try {
+        console.log("Setup selected browser mode, switching UI now...");
+        startupStatus = locale.t("app.status.connecting");
+        startupStatusKind = "connecting";
+        await ipcInvoke("switch_to_browser_mode");
+        return;
+      } catch (e) {
+        console.error("Failed to switch to browser mode after setup:", e);
+        const message = locale.t("app.status.failed_to_start", { message: String(e) });
+        setupComplete = true;
+        await initApp();
+        startupStatus = message;
+        startupStatusKind = "error";
+        gallery.showToast(message, "error", true);
+        return;
+      }
+    }
     setupComplete = true;
     await initApp();
   }
 
-  let autoStartEnabled = true; // will be read from config
+  let autoStartEnabled = $state(true); // will be read from config
 
   async function initApp() {
     // Apply UI preferences (theme, font scale) immediately
@@ -1382,6 +1542,7 @@
         connection.connected = event.payload.connected;
         if (event.payload.connected) {
           startupStatus = "";
+          startupStatusKind = "idle";
           models.refresh().then(() => {
             generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
           });
@@ -1390,6 +1551,7 @@
       ipcListen("comfyui:server_ready", async () => {
         console.log("Server ready event received");
         startupStatus = "";
+        startupStatusKind = "idle";
         // Load models now that server is up
         try {
           await models.refresh();
@@ -1404,7 +1566,10 @@
       }),
       ipcListen("comfyui:server_error", (event: any) => {
         console.error("Server error:", event.payload);
-        startupStatus = `Failed to start: ${event.payload?.error || "unknown error"}`;
+        startupStatus = locale.t("app.status.failed_to_start", {
+          message: event.payload?.error || locale.t("app.status.unknown_error"),
+        });
+        startupStatusKind = "error";
       }),
       ipcListen("comfyui:progress", (event: any) => {
         const data = event.payload;
@@ -1423,6 +1588,11 @@
       ipcListen("mooshie:queue_update", (event: any) => {
         const data = event.payload;
         if (data.prompt_id && data.position != null && data.total != null) {
+          // Restore the prompt to pendingPrompts if this is an initial burst after
+          // a page refresh (the in-memory queue was lost but the server still has it).
+          if (!progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) {
+            progress.restoreFromSnapshot([data.prompt_id]);
+          }
           // Reset before each new batch (detected by total changing or position 0)
           if (data.position === 0 || data.total !== progress.queueTotal) {
             progress.resetQueuePosition();
@@ -1430,8 +1600,17 @@
           progress.updateQueuePosition(data.prompt_id, data.position, data.total);
         }
       }),
+      ipcListen("mooshie:server_progress", (event: any) => {
+        const data = event.payload;
+        if (data.active && data.max > 0) {
+          progress.updateServerProgress(data.value, data.max);
+        } else {
+          progress.clearServerProgress();
+        }
+      }),
       ipcListen("mooshie:queue_cleared", (_event: any) => {
         // Admin/mod cleared the queue — cancel all pending state on this client
+        promptLastActivity.clear();
         progress.cancelAll();
         compare.clearGridBatch();
       }),
@@ -1468,6 +1647,7 @@
         // must register the promise *synchronously* so that the executing
         // node=null handler can await it before consuming pendingOutputImages.
         const data = event.payload;
+        console.log("[output_image] event received — format:", data.format, "temp_filename:", data.temp_filename, "display_temp:", data.display_temp_filename, "jxl_image?:", !!data.jxl_image, "image?:", !!data.image, "isGenerating:", progress.isGenerating);
         if (!progress.isGenerating) return;
         // Filter by prompt_id — reject events for other users' prompts
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
@@ -1500,38 +1680,129 @@
           let blob: Blob;
           let url: string;
           let tempFilename: string | undefined;
+          let displayTempFilename: string | undefined;
+          const isJxl = data.format === "jxl";
 
           if (data.temp_filename) {
             tempFilename = data.temp_filename;
-            // SSE/browser path: fetch image from temp endpoint (avoids multi-MB SSE payloads)
             try {
-              const resp = await fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`, {
-                headers: authHeaders(),
-              });
-              if (!resp.ok) {
-                console.error("[output_image] failed to fetch temp image:", resp.status);
-                return;
+              if (isTauri) {
+                // Tauri desktop: no HTTP server — read temp files via invoke().
+                // For JXL the event also carries display_temp_filename (WebP/PNG copy).
+                if (isJxl) {
+                  const displayFilename = data.display_temp_filename as string | undefined;
+                  displayTempFilename = displayFilename;
+                  console.log("[output_image] JXL temp path — jxl:", data.temp_filename, "display:", displayFilename, "display_format:", data.display_format);
+                  const [jxlRaw, displayRaw] = await Promise.all([
+                    readTempImage(data.temp_filename),
+                    displayFilename ? readTempImage(displayFilename) : Promise.resolve(null as number[] | null),
+                  ]);
+                  console.log("[output_image] readTempImage done — jxlRaw:", jxlRaw?.length, "displayRaw:", displayRaw?.length ?? "null");
+                  blob = new Blob([new Uint8Array(jxlRaw)], { type: "image/jxl" });
+                  if (displayRaw && displayRaw.length > 0) {
+                    const displayMime = data.display_format === "webp" ? "image/webp" : "image/png";
+                    url = URL.createObjectURL(new Blob([new Uint8Array(displayRaw)], { type: displayMime }));
+                    console.log("[output_image] display blob URL created, mime:", displayMime, "size:", displayRaw.length);
+                  } else {
+                    // No display copy — reuse last preview frame for display
+                    url = progress.displayImage ?? "";
+                    console.log("[output_image] no display copy, using displayImage:", url ? "present" : "EMPTY");
+                  }
+                } else {
+                  const rawBytes = await readTempImage(data.temp_filename);
+                  blob = new Blob([new Uint8Array(rawBytes)], { type: "image/png" });
+                  url = URL.createObjectURL(blob);
+                }
+              } else {
+                // SSE/browser path: fetch image from temp endpoint (avoids multi-MB SSE payloads)
+                if (isJxl) {
+                  // Fetch raw JXL for gallery save (?raw=true skips transcoding)
+                  // and display copy (pre-built WebP/PNG from display_temp_filename,
+                  // or server-side transcode as fallback).
+                  const displayFilename = data.display_temp_filename as string | undefined;
+                  displayTempFilename = displayFilename;
+                  const displayUrl = displayFilename
+                    ? `/internal-api/_temp_image/${encodeURIComponent(displayFilename)}`
+                    : `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}?format=webp`;
+                  const [canonicalResp, displayResp] = await Promise.all([
+                    fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}?raw=true`, {
+                      headers: authHeaders(),
+                    }),
+                    fetch(displayUrl, { headers: authHeaders() }),
+                  ]);
+                  if (!canonicalResp.ok) {
+                    console.error(
+                      "[output_image] JXL fetch failed:",
+                      canonicalResp.status,
+                      displayResp.status,
+                    );
+                    return;
+                  }
+                  blob = new Blob([await canonicalResp.arrayBuffer()], { type: "image/jxl" });
+                  if (displayResp.ok) {
+                    const displayBlob = await displayResp.blob();
+                    url = URL.createObjectURL(displayBlob);
+                  } else {
+                    console.warn(
+                      "[output_image] JXL display fetch failed; keeping canonical output:",
+                      displayResp.status,
+                    );
+                    url = progress.displayImage ?? "";
+                  }
+                } else {
+                  const resp = await fetch(
+                    `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`,
+                    { headers: authHeaders() },
+                  );
+                  if (!resp.ok) {
+                    console.error("[output_image] failed to fetch temp image:", resp.status);
+                    return;
+                  }
+                  blob = await resp.blob();
+                  url = URL.createObjectURL(blob);
+                }
               }
-              blob = await resp.blob();
-              url = URL.createObjectURL(blob);
             } catch (e) {
-              console.error("[output_image] failed to fetch temp image:", e);
+              console.error("[output_image] failed to read temp image:", e);
               return;
             }
           } else if (data.image) {
-            // Tauri path: decode inline base64
+            // Tauri path: decode inline base64.
+            // For JXL output: `data.image` is the WebP display copy (WebView2
+            // can't decode JXL), and `data.jxl_image` is the canonical lossless
+            // JXL bytes for gallery saving. For PNG output: `data.image` is the PNG.
             const raw = atob(data.image);
             const bytes = new Uint8Array(raw.length);
             for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-            blob = new Blob([bytes], { type: "image/png" });
-            url = URL.createObjectURL(blob);
+            const displayMime = data.display_format === "webp" ? "image/webp" : "image/png";
+            const displayBlob = new Blob([bytes], { type: displayMime });
+            url = URL.createObjectURL(displayBlob);
+
+            if (isJxl && data.jxl_image) {
+              // Use the JXL bytes as the canonical save blob (lossless)
+              const jxlRaw = atob(data.jxl_image);
+              const jxlBytes = new Uint8Array(jxlRaw.length);
+              for (let i = 0; i < jxlRaw.length; i++) jxlBytes[i] = jxlRaw.charCodeAt(i);
+              blob = new Blob([jxlBytes], { type: "image/jxl" });
+            } else {
+              blob = displayBlob;
+            }
+          } else if (isJxl && data.jxl_image) {
+            // JXL-only fallback: no display copy (WebP/PNG encode both failed in Rust).
+            // Save the JXL to gallery anyway; preview stays on the last blurry frame.
+            console.warn("[output_image] JXL has no display copy — saving to gallery only");
+            const jxlRaw = atob(data.jxl_image);
+            const jxlBytes = new Uint8Array(jxlRaw.length);
+            for (let i = 0; i < jxlRaw.length; i++) jxlBytes[i] = jxlRaw.charCodeAt(i);
+            blob = new Blob([jxlBytes], { type: "image/jxl" });
+            url = progress.displayImage ?? "";
           } else {
             console.warn("[output_image] event has neither temp_filename nor image");
             return;
           }
 
           const arr = pendingOutputImages.get(pid) ?? [];
-          arr.push({ blob, url, tempFilename });
+          arr.push({ blob, url, tempFilename, displayTempFilename });
           pendingOutputImages.set(pid, arr);
         })();
 
@@ -1642,8 +1913,12 @@
         for (const p of progress.pendingPrompts) {
           // Skip prompts that received an SSE event within the last 30s —
           // they're clearly still alive even if the queue query missed them.
-          const lastEvent = promptLastActivity.get(p.promptId) ?? 0;
-          if (now - lastEvent < 10_000) continue;
+          // Fall back to enqueuedAt so brand-new prompts (not yet in ComfyUI's
+          // queue because submission is async) are also guarded for 30s.
+          // If both are missing (shouldn't happen, but defensive), treat as
+          // just-enqueued so we don't immediately fire "generation lost".
+          const lastEvent = promptLastActivity.get(p.promptId) ?? p.enqueuedAt ?? now;
+          if (now - lastEvent < 30_000) continue;
 
           if (!allPromptIds.has(p.promptId)) {
             console.warn(`[reconcile] Prompt ${p.promptId} no longer in ComfyUI queue — completing`);
@@ -1700,9 +1975,7 @@
       if (progress.isGenerating && connection.connected) {
         // Reset last-activity timestamps so the reconciler doesn't skip prompts
         for (const p of progress.pendingPrompts) {
-          if (!promptLastActivity.has(p.promptId)) {
-            promptLastActivity.set(p.promptId, 0);
-          }
+          promptLastActivity.set(p.promptId, 0);
         }
       }
     };
@@ -1717,11 +1990,13 @@
         const result = await ipcInvoke<string>("start_comfyui");
         console.log("start_comfyui returned:", result);
         if (result === "spawned") {
-          startupStatus = "Starting ComfyUI...";
-        } else if (result === "already_running") {
+          startupStatus = locale.t("app.status.starting_comfyui");
+          startupStatusKind = "starting";
+        } else if (result === "already_running" || result === "skipped") {
           // SSE EventSource may not be connected yet, so the broadcast
           // comfyui:server_ready event could be lost. Handle it directly.
-          startupStatus = "Connecting...";
+          startupStatus = locale.t("app.status.connecting");
+          startupStatusKind = "connecting";
           try {
             await models.refresh();
             console.log("Models loaded (already running):", models.checkpoints);
@@ -1730,16 +2005,19 @@
               generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
             }
             startupStatus = "";
+            startupStatusKind = "idle";
           } catch (e) {
             console.error("Model refresh failed (already running):", e);
           }
         }
       } catch (e) {
         console.error("Failed to start ComfyUI:", e);
-        startupStatus = `Failed to start: ${e}`;
+        startupStatus = locale.t("app.status.failed_to_start", { message: String(e) });
+        startupStatusKind = "error";
       }
     } else {
-      startupStatus = "ComfyUI not started (auto-start disabled)";
+      startupStatus = locale.t("app.status.auto_start_disabled");
+      startupStatusKind = "manual";
     }
 
     // Load persisted gallery images from disk (independent of server status)
@@ -1799,6 +2077,7 @@
   onDestroy(() => {
     if (reconcileIntervalId) clearInterval(reconcileIntervalId);
     if (sseReconnectHandler) window.removeEventListener("mooshie:sse-reconnected", sseReconnectHandler);
+    clearGenerationDoneToastTimers();
   });
 </script>
 
@@ -1892,8 +2171,15 @@
   </div>
 {:else if !setupComplete}
   <SetupWizard onSetupComplete={onSetupDone} />
+{:else if useMobileLayout}
+  <MobileApp
+    canUseModelhub={canUseModelhub}
+    navigationTarget="generate"
+    navigationVersion={mobileGenerateNavigationVersion}
+    onTabChange={(tab) => (mobileCurrentTab = tab)}
+  />
 {:else}
-<div class="flex h-full bg-neutral-950 text-neutral-100 {visionSimClass}">
+<div class="flex h-full bg-neutral-950 text-neutral-100 md:gap-3 md:p-3 {visionSimClass}">
   <!-- SVG filters for color vision simulation -->
   <svg style="display: none">
     <defs>
@@ -1911,30 +2197,53 @@
 
   <!-- Sidebar -->
   <nav
-    class="flex flex-col w-14 bg-neutral-900 border-r border-neutral-800 items-stretch px-1.5 py-3 gap-1.5"
+    class="flex w-14 shrink-0 flex-col items-stretch gap-1.5 border-r border-neutral-800 bg-neutral-900 px-1.5 py-3 md:rounded-2xl md:border md:shadow-2xl md:shadow-black/30"
   >
-    <button
-      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
-      'generate'
-        ? 'bg-indigo-600 text-white'
-        : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
-      onclick={() => (currentPage = "generate")}
-      title={locale.t('nav.generate')}
-    >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        class="w-4.5 h-4.5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        ><path d="M12 19l7-7 3 3-7 7-3-3z" /><path
-          d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"
-        /><path d="M2 2l7.586 7.586" /><circle cx="11" cy="11" r="2" /></svg
+    <div class="relative mx-auto">
+      <button
+        class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
+        'generate'
+          ? 'bg-indigo-600 text-white'
+          : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+        onclick={() => (currentPage = "generate")}
+        title={locale.t('nav.generate')}
       >
-    </button>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class="w-4.5 h-4.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          ><path d="M12 19l7-7 3 3-7 7-3-3z" /><path
+            d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"
+          /><path d="M2 2l7.586 7.586" /><circle cx="11" cy="11" r="2" /></svg
+        >
+      </button>
+      {#if progress.isGenerating}
+        <div
+          class="absolute -top-1 -right-1 min-w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center px-0.5 pointer-events-none
+            {progress.queuePosition !== null && progress.queuePosition > 0 ? 'bg-amber-500 text-black' : 'bg-indigo-400 text-white animate-pulse'}"
+          title={progress.phaseLabel}
+        >
+          {#if progress.queuePosition !== null && progress.queuePosition > 0}
+            #{progress.queuePosition + 1}
+          {:else}
+            ●
+          {/if}
+        </div>
+      {/if}
+      {#if progress.isGenerating && progress.totalSteps > 0 && currentPage !== "generate"}
+        <div class="absolute bottom-0 left-0.5 right-0.5 h-0.5 bg-neutral-700 rounded-full overflow-hidden pointer-events-none">
+          <div
+            class="h-full rounded-full transition-[width] duration-200 {progress.wasUpscaled && progress.samplingPass >= 2 ? 'bg-emerald-400' : 'bg-indigo-400'}"
+            style="width: {progress.percentage}%"
+          ></div>
+        </div>
+      {/if}
+    </div>
     <button
       class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
       'gallery'
@@ -2033,6 +2342,8 @@
       >
     </button>
 
+    <NotificationBell />
+
     <!-- Connection status dot -->
     <div
       class="w-3 h-3 rounded-full mb-2 mx-auto transition-colors {connection.connected
@@ -2065,28 +2376,46 @@
   </nav>
 
   <!-- Main content -->
-  <main class="flex-1 overflow-hidden flex flex-col">
+  <main class="flex min-w-0 flex-1 flex-col overflow-hidden md:rounded-2xl md:border md:border-neutral-800 md:bg-neutral-900 md:p-1 md:shadow-2xl md:shadow-black/30">
     <UpdateNotification {userRole} />
     <DownloadBanner />
     {#if startupStatus && !connection.connected}
       <div class="flex items-center gap-2 px-4 py-2 bg-amber-900/30 border-b border-amber-800/50 text-amber-200 text-sm">
-        {#if !autoStartEnabled && !startupStatus.startsWith("Starting") && !startupStatus.startsWith("Connecting")}
+        {#if startupStatusKind === "manual" || startupStatusKind === "error"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           {startupStatus}
           <button
             class="ml-2 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs transition-colors cursor-pointer"
             onclick={async () => {
               try {
-                startupStatus = "Starting ComfyUI...";
+                startupStatus = locale.t("app.status.starting_comfyui");
+                startupStatusKind = "starting";
                 const result = await ipcInvoke<string>("start_comfyui");
-                if (result === "spawned") startupStatus = "Starting ComfyUI...";
-                else if (result === "already_running") startupStatus = "Connecting...";
+                if (result === "spawned") {
+                  startupStatus = locale.t("app.status.starting_comfyui");
+                  startupStatusKind = "starting";
+                } else if (result === "already_running" || result === "skipped") {
+                  startupStatus = locale.t("app.status.connecting");
+                  startupStatusKind = "connecting";
+                  try {
+                    await models.refresh();
+                    if (models.checkpoints.length > 0) {
+                      connection.connected = true;
+                      generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
+                    }
+                    startupStatus = "";
+                    startupStatusKind = "idle";
+                  } catch (refreshError) {
+                    console.error("Model refresh failed (already running):", refreshError);
+                  }
+                }
               } catch (e) {
-                startupStatus = `Failed to start: ${e}`;
+                startupStatus = locale.t("app.status.failed_to_start", { message: String(e) });
+                startupStatusKind = "error";
               }
             }}
           >
-            Start ComfyUI
+            {locale.t("app.start_comfyui")}
           </button>
         {:else}
           <div class="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
@@ -2094,11 +2423,11 @@
         {/if}
       </div>
     {/if}
-    <div class="flex-1 overflow-hidden">
+    <div class="flex-1 overflow-hidden md:min-h-0 md:rounded-xl md:bg-neutral-950">
     {#if currentPage === "generate"}
       <GenerationPage />
     {:else if currentPage === "gallery"}
-      <div class="p-6 h-full overflow-y-auto will-change-scroll" use:smoothScroll>
+      <div class="p-6 h-full overflow-y-auto will-change-scroll">
         {#if gallery.loading}
           <div class="flex items-center justify-center h-full text-neutral-500">
             {locale.t("gallery.loading")}
@@ -2206,7 +2535,7 @@
                   <button onclick={() => (galleryView = "large")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'large' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.large_icons")}</button>
                   <button onclick={() => (galleryView = "small")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'small' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.small_icons")}</button>
                   <button onclick={() => (galleryView = "details")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'details' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.detailed_view")}</button>
-                  <button onclick={rescanGalleryMetadata} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200" title={locale.t("gallery.rescan_tooltip")}>
+                  <button onclick={rescanGalleryMetadata} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200" title={locale.t("gallery.rescan_tooltip")}> 
                     {locale.t("gallery.rescan_metadata")}
                   </button>
                   <button
@@ -2258,15 +2587,15 @@
                               <option value={board}>{board}</option>
                             {/each}
                           </select>
+                          {#if generation.manualSaveMode && !image.gallery_filename}
+                            <button class="px-2 py-1 text-[11px] rounded bg-indigo-700 hover:bg-indigo-600 text-neutral-100" onclick={() => saveToDir(image)}>{locale.t("gallery.save_to_folder")}</button>
+                          {/if}
                           <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => img2imgImage(image)}>{locale.t("gallery.i2i")}</button>
                           <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => inpaintImage(image)}>{locale.t("gallery.inpaint")}</button>
                           {#if !image.is_upscaled}
                             <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => upscaleImage(image)}>{locale.t("gallery.upscale")}</button>
                           {/if}
                           <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100 disabled:opacity-50 disabled:cursor-not-allowed" disabled={gallery.saving} onclick={() => gallery.saveImageAs(image)}>{gallery.saving ? locale.t("gallery.saving") : locale.t("gallery.save")}</button>
-                          {#if generation.manualSaveMode && !image.gallery_filename}
-                            <button class="px-2 py-1 text-[11px] rounded bg-indigo-700 hover:bg-indigo-600 text-neutral-100" onclick={() => saveToDir(image)}>{locale.t("gallery.save_to_folder")}</button>
-                          {/if}
                           <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.copyToClipboard(image)}>{locale.t("gallery.copy")}</button>
                           <button class="px-2 py-1 text-[11px] rounded bg-red-900/80 hover:bg-red-800 text-neutral-100" onclick={() => gallery.deleteImage(image)}>{locale.t("gallery.delete")}</button>
                         </div>
@@ -2305,6 +2634,13 @@
                             </div>
                           {/if}
                         {/if}
+                        {#if generation.manualSaveMode && !image.gallery_filename}
+                          <div class="absolute top-0 right-0 pt-1 pr-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                            <button class="w-7 h-7 flex items-center justify-center rounded bg-indigo-700/90 hover:bg-indigo-600 text-neutral-100 shadow pointer-events-auto shrink-0" title={locale.t('gallery.save_to_folder')} onclick={(e) => { e.stopPropagation(); saveToDir(image); }}>
+                              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                            </button>
+                          </div>
+                        {/if}
                         {#if viewColumns(galleryView) <= 5}
                           <div class="absolute bottom-0 inset-x-0 flex justify-center items-center gap-1 px-1.5 pb-1.5 pt-6 opacity-0 group-hover:opacity-100 transition-opacity bg-linear-to-t from-black/80 to-transparent pointer-events-none">
                             <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black text-[11px] font-bold shadow pointer-events-auto shrink-0" title={locale.t('gallery.img2img')} onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
@@ -2319,11 +2655,6 @@
                             <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow pointer-events-auto shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" disabled={gallery.saving} title={locale.t('gallery.save_as')} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>
                               <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                             </button>
-                            {#if generation.manualSaveMode && !image.gallery_filename}
-                              <button class="w-7 h-7 flex items-center justify-center rounded bg-indigo-700/90 hover:bg-indigo-600 text-neutral-100 shadow pointer-events-auto shrink-0" title={locale.t('gallery.save_to_folder')} onclick={(e) => { e.stopPropagation(); saveToDir(image); }}>
-                                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
-                              </button>
-                            {/if}
                             <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow pointer-events-auto shrink-0" title={locale.t('gallery.copy')} onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}>
                               <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                             </button>
@@ -2376,7 +2707,7 @@
     {#if gallery.selectedImage}
       <div class="h-full flex shrink-0" style="width: {metadataPanelCollapsed ? 36 : metadataPanelWidth}px;">
         {#if !metadataPanelCollapsed}
-          <div class="flex-1 h-full overflow-y-auto bg-neutral-900/95 p-4 text-xs text-neutral-200 select-text" style="min-width: 0;" use:smoothScroll>
+          <div class="flex-1 h-full overflow-y-auto bg-neutral-900/95 p-4 text-xs text-neutral-200 select-text" style="min-width: 0;">
             <div class="flex items-center justify-between gap-2 mb-3">
               <span class="font-semibold text-sm text-neutral-100">{locale.t("gallery.image_info")}</span>
               <div class="flex items-center gap-1">
@@ -2489,7 +2820,7 @@
         </button>
       {/if}
 
-      <!-- Action buttons (only for gallery images, not preview URLs) -->
+      <!-- Action buttons -->
       {#if gallery.selectedImage}
       <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-neutral-900/70 backdrop-blur-sm rounded-xl px-2 py-1.5 border border-neutral-700/50">
         <!-- Generation group -->
@@ -2593,6 +2924,18 @@
       </div>
       {/if}
 
+      {#if !gallery.selectedImage && gallery.lightboxUrl}
+        <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-neutral-900/70 backdrop-blur-sm rounded-xl px-2 py-1.5 border border-neutral-700/50">
+          <button
+            title={locale.t("gallery.inpaint")}
+            class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+            onclick={inpaintLightboxPreview}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+          </button>
+        </div>
+      {/if}
+
       {#if gallery.lightboxUrl}
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <img
@@ -2617,6 +2960,43 @@
       {/if}
     </div>
   </div>
+{/if}
+
+{#if generationDoneToast}
+  {#key generationDoneToast.id}
+    <div class="fixed bottom-5 right-4 z-80 w-[min(22rem,calc(100vw-2rem))] md:right-5">
+      <div
+        class="generation-done-toast flex items-center gap-3 rounded-xl border border-neutral-700 bg-neutral-900/95 p-2 shadow-2xl shadow-black/40 backdrop-blur-sm {generationDoneToast.leaving ? 'generation-done-toast-out' : 'generation-done-toast-in'}"
+      >
+        <button
+          type="button"
+          class="flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 text-left transition-colors hover:bg-neutral-800/70 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          onclick={openGenerateFromDoneToast}
+          aria-label={locale.t("generation.toast.image_ready")}
+        >
+          <img
+            src={generationDoneToast.imageUrl}
+            alt=""
+            class="h-14 w-14 shrink-0 rounded-lg border border-neutral-700 object-cover bg-neutral-950"
+          />
+          <span class="min-w-0">
+            <span class="block truncate text-sm font-semibold text-neutral-100">
+              {locale.t("generation.toast.image_ready")}
+            </span>
+            <span class="block truncate text-xs text-neutral-400">{locale.t("nav.generate")}</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-neutral-800 hover:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          onclick={dismissGenerationDoneToast}
+          aria-label={locale.t("common.dismiss_notification")}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+    </div>
+  {/key}
 {/if}
 
 <!-- Toast notification -->

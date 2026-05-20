@@ -111,10 +111,30 @@ pub enum StartResult {
     Skipped,
 }
 
+/// Mark the legacy single-worker (the auto-created default worker when
+/// `gpu_workers` is empty, or any worker whose port matches the legacy
+/// `server_port`) as `Idle` so `GpuManager::submit_prompt` can dispatch to
+/// it.  Safe to call multiple times.  No-op for workers already Idle /
+/// Running, or explicitly Disabled.
+async fn mark_legacy_worker_idle(state: &AppState) {
+    use super::gpu_manager::WorkerStatus;
+    let port = state.config.read().await.server_port;
+    for worker in &state.gpu_manager.workers {
+        if worker.port != port {
+            continue;
+        }
+        let mut status = worker.status.write().await;
+        if matches!(*status, WorkerStatus::Stopped | WorkerStatus::Error) {
+            *status = WorkerStatus::Idle;
+        }
+        state.gpu_manager.worker_available.notify_one();
+    }
+}
+
 /// Spawn the ComfyUI process (or detect an already-running one).
 /// Returns immediately — does NOT wait for the server to become ready.
 pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppError> {
-    let config = state.config.read().await;
+    let config = state.config.read().await.clone();
 
     // Deploy bundled custom nodes whenever we have a valid ComfyUI path,
     // regardless of server mode — the user may have started ComfyUI externally
@@ -126,20 +146,41 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         if main_exists {
             super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
                 .map_err(AppError::ProcessSpawnFailed)?;
+            super::nodes::ensure_required_controlnet_nodes(&config.comfyui_path, &config.venv_path)
+                .await
+                .map_err(AppError::ProcessSpawnFailed)?;
         }
     }
 
     if config.server_mode != ServerMode::AutoLaunch {
+        // Remote mode: assume the configured worker is reachable and mark it
+        // idle so `submit_prompt` can dispatch to it.  If the server is
+        // actually down, the POST /prompt will surface the error. If it is
+        // reachable, verify the MooshieUI node required by every workflow now.
+        let health_url = format!("{}/system_stats", config.server_url);
+        if state.http_client.get(&health_url).send().await.is_ok() {
+            super::nodes::verify_required_mooshie_nodes(&state.http_client, &config.server_url)
+                .await
+                .map_err(AppError::ProcessSpawnFailed)?;
+        }
+        mark_legacy_worker_idle(state).await;
         return Ok(StartResult::Skipped);
     }
 
     // Check if something is already listening on the target port (e.g. a container)
     let health_url = format!("{}/system_stats", config.server_url);
     if state.http_client.get(&health_url).send().await.is_ok() {
+        super::nodes::verify_required_mooshie_nodes(&state.http_client, &config.server_url)
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
+        super::nodes::verify_required_controlnet_nodes(&state.http_client, &config.server_url)
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
         log::info!(
             "ComfyUI already running at {}, skipping spawn",
             config.server_url
         );
+        mark_legacy_worker_idle(state).await;
         return Ok(StartResult::AlreadyRunning);
     }
 
@@ -496,7 +537,8 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
 /// Also checks if the child process has exited early (crash), and if so,
 /// reads the stderr log for diagnostic information.
 pub async fn wait_for_ready(state: &AppState, timeout_secs: u64) -> Result<(), AppError> {
-    let url = format!("{}/system_stats", state.base_url().await);
+    let base_url = state.base_url().await;
+    let url = format!("{}/system_stats", base_url);
     let iterations = timeout_secs * 2; // 500ms per iteration
 
     for i in 0..iterations {
@@ -504,6 +546,13 @@ pub async fn wait_for_ready(state: &AppState, timeout_secs: u64) -> Result<(), A
 
         // Check if the server is responding
         if state.http_client.get(&url).send().await.is_ok() {
+            super::nodes::verify_required_mooshie_nodes(&state.http_client, &base_url)
+                .await
+                .map_err(AppError::ProcessSpawnFailed)?;
+            super::nodes::verify_required_controlnet_nodes(&state.http_client, &base_url)
+                .await
+                .map_err(AppError::ProcessSpawnFailed)?;
+            mark_legacy_worker_idle(state).await;
             return Ok(());
         }
 
@@ -612,7 +661,7 @@ pub async fn stop_comfyui_process(state: &AppState) -> Result<(), AppError> {
 }
 
 /// Find and kill any process listening on the given port.
-async fn kill_process_on_port(port: u16) {
+pub async fn kill_process_on_port(port: u16) {
     #[cfg(target_os = "linux")]
     {
         // fuser -k sends SIGKILL to all processes using the port
@@ -682,7 +731,7 @@ pub async fn start_worker_process(
     state: &AppState,
     worker: &Arc<GpuWorker>,
 ) -> Result<(), AppError> {
-    let config = state.config.read().await;
+    let config = state.config.read().await.clone();
 
     // Deploy custom nodes (same as single-process path)
     if !config.comfyui_path.is_empty() {
@@ -691,6 +740,9 @@ pub async fn start_worker_process(
             .exists();
         if main_exists {
             super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
+                .map_err(AppError::ProcessSpawnFailed)?;
+            super::nodes::ensure_required_controlnet_nodes(&config.comfyui_path, &config.venv_path)
+                .await
                 .map_err(AppError::ProcessSpawnFailed)?;
         }
     }
@@ -702,6 +754,12 @@ pub async fn start_worker_process(
     // Check if something is already listening on the worker's port
     let health_url = format!("{}/system_stats", worker.base_url);
     if state.http_client.get(&health_url).send().await.is_ok() {
+        super::nodes::verify_required_mooshie_nodes(&state.http_client, &worker.base_url)
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
+        super::nodes::verify_required_controlnet_nodes(&state.http_client, &worker.base_url)
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
         log::info!(
             "Worker {} (GPU {}): ComfyUI already running at {}",
             worker.id,
@@ -858,6 +916,22 @@ pub async fn wait_for_worker_ready(
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         if state.http_client.get(&url).send().await.is_ok() {
+            if let Err(e) =
+                super::nodes::verify_required_mooshie_nodes(&state.http_client, &worker.base_url)
+                    .await
+            {
+                let mut status = worker.status.write().await;
+                *status = WorkerStatus::Error;
+                return Err(AppError::ProcessSpawnFailed(e));
+            }
+            if let Err(e) =
+                super::nodes::verify_required_controlnet_nodes(&state.http_client, &worker.base_url)
+                    .await
+            {
+                let mut status = worker.status.write().await;
+                *status = WorkerStatus::Error;
+                return Err(AppError::ProcessSpawnFailed(e));
+            }
             let mut status = worker.status.write().await;
             *status = WorkerStatus::Idle;
             log::info!(

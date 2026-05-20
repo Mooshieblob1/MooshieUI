@@ -3,9 +3,14 @@ pub mod comfyui;
 pub mod commands;
 pub mod config;
 pub mod error;
+pub mod gallery_index;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod interrogator;
+pub mod jxl;
+pub mod log_buffer;
 pub mod metadata;
+pub mod model_requests;
+pub mod notifications;
 #[cfg(feature = "desktop")]
 pub mod setup;
 pub mod state;
@@ -89,6 +94,11 @@ fn fix_wayland_appimage_env() {
 pub fn run() {
     use tauri::{Manager, RunEvent};
 
+    // Enable Rust log output in desktop mode. A ring-buffer logger is used
+    // (instead of plain env_logger) so the diagnostics export can include
+    // recent Rust-side logs even when the user has no dev console access.
+    log_buffer::init();
+
     // Fix WebKitGTK scroll jank and rendering glitches on NVIDIA + Wayland.
     // The DMA-BUF renderer is broken with NVIDIA proprietary drivers.
     #[cfg(target_os = "linux")]
@@ -118,6 +128,15 @@ pub fn run() {
         .setup(move |_app| {
             // Clean up and create temp image directory
             temp_images::init();
+
+            // Start the shared cleanup reactors unconditionally so workers
+            // get released after each prompt completes, even in pure Tauri
+            // desktop mode where the embedded web server is not started.
+            {
+                let shared_state: Arc<AppState> = _app.state::<Arc<AppState>>().inner().clone();
+                webserver::spawn_prompt_cleanup_reactor(shared_state.clone());
+                webserver::spawn_stuck_worker_watchdog(shared_state);
+            }
 
             // Store the AppHandle so the web server can show/hide the window later.
             {
@@ -153,7 +172,10 @@ pub fn run() {
                 if !lan_enabled {
                     let state_for_watchdog = shared_state.clone();
                     tauri::async_runtime::spawn(async move {
-                        webserver::start_heartbeat_watchdog(state_for_watchdog, 10);
+                        // 120s: browsers throttle background setInterval to ~1 min;
+                        // we need a timeout well above that to avoid killing the
+                        // process while generation is running in a background tab.
+                        webserver::start_heartbeat_watchdog(state_for_watchdog, 120);
                     });
                 }
 
@@ -321,6 +343,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::server::start_comfyui,
             commands::server::stop_comfyui,
+            commands::server::kill_port_process,
             commands::server::check_server_health,
             commands::api::get_models,
             commands::api::get_samplers,
@@ -328,6 +351,7 @@ pub fn run() {
             commands::api::get_queue,
             commands::api::get_history,
             commands::api::interrupt_generation,
+            commands::api::clear_all_queues,
             commands::api::delete_queue_item,
             commands::api::upload_image,
             commands::api::upload_image_bytes,
@@ -335,14 +359,22 @@ pub fn run() {
             commands::api::get_client_id,
             commands::api::download_model,
             commands::api::get_model_install_dirs,
+            commands::api::list_model_files,
+            commands::api::delete_model_file,
+            commands::api::move_model_file,
             commands::api::open_directory,
             commands::api::save_image_file,
+            commands::api::save_text_file,
             commands::api::embed_png_metadata_bytes,
             commands::api::save_to_gallery,
             commands::api::save_to_gallery_bytes,
+            commands::api::save_to_gallery_temp,
             commands::api::list_gallery_images,
             commands::api::list_gallery_image_entries,
             commands::api::load_gallery_image,
+            commands::api::load_gallery_image_display,
+            commands::api::load_gallery_image_png,
+            commands::api::read_temp_image,
             commands::api::get_gallery_image_path,
             commands::api::delete_gallery_image,
             commands::api::rename_gallery_image,
@@ -351,6 +383,7 @@ pub fn run() {
             commands::api::find_model_by_hash,
             commands::api::hash_model_file,
             commands::api::civitai_lookup_hash,
+            commands::api::cdn_proxy_fetch,
             commands::api::civitai_search_models,
             commands::api::civitai_list_architectures,
             commands::api::read_modelspec,
@@ -362,6 +395,7 @@ pub fn run() {
             commands::api::fetch_release_notes,
             commands::api::import_image_directory,
             commands::api::export_logs,
+            commands::api::append_frontend_logs,
             commands::api::check_node_available,
             commands::api::is_custom_node_installed,
             commands::api::install_custom_node,
@@ -369,6 +403,7 @@ pub fn run() {
             commands::websocket::connect_ws,
             commands::websocket::disconnect_ws,
             commands::workflow::generate,
+            commands::workflow::generate_controlnet_preprocessor_preview,
             commands::config::get_config,
             commands::config::update_config,
             commands::config::get_gallery_path,

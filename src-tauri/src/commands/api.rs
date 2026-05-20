@@ -94,7 +94,26 @@ pub async fn get_embeddings(state: State<'_, Arc<AppState>>) -> Result<Vec<Strin
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_queue(state: State<'_, Arc<AppState>>) -> Result<QueueInfo, AppError> {
-    state.get_queue_info().await
+    let mut info = state.get_queue_info().await?;
+    // Augment with internal fair-queue positions so the Settings Queue section
+    // works in Tauri desktop mode (raw ComfyUI /queue has no queue_positions).
+    let queue_positions: Vec<serde_json::Value> = {
+        let queue = state.prompt_queue.queue.read().unwrap();
+        let total = queue.len();
+        queue
+            .iter()
+            .enumerate()
+            .map(|(pos, (id, _owner))| {
+                serde_json::json!({
+                    "prompt_id": id,
+                    "position": pos,
+                    "total": total,
+                })
+            })
+            .collect()
+    };
+    info.queue_positions = queue_positions;
+    Ok(info)
 }
 
 #[cfg(feature = "desktop")]
@@ -108,8 +127,21 @@ pub async fn get_history(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-pub async fn interrupt_generation(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
-    state.interrupt().await
+pub async fn interrupt_generation(
+    state: State<'_, Arc<AppState>>,
+    prompt_id: Option<String>,
+) -> Result<(), AppError> {
+    if let Some(prompt_id) = prompt_id {
+        state.interrupt_prompt(Some(prompt_id.as_str())).await
+    } else {
+        state.interrupt_user_prompts(None).await
+    }
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn clear_all_queues(state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
+    state.interrupt_user_prompts(None).await
 }
 
 #[cfg(feature = "desktop")]
@@ -156,10 +188,361 @@ pub async fn get_client_id(state: State<'_, Arc<AppState>>) -> Result<String, Ap
     Ok(state.client_id.clone())
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 pub struct ModelInstallDir {
     pub path: String,
     pub label: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct ManagedModelFile {
+    pub category: String,
+    pub filename: String,
+    pub directory: String,
+    pub directory_label: String,
+    pub path: String,
+    pub size_bytes: u64,
+    pub modified_ms: u64,
+}
+
+const MANAGED_MODEL_EXTENSIONS: &[&str] = &[
+    "safetensors",
+    "ckpt",
+    "pt",
+    "pth",
+    "bin",
+    "gguf",
+    "onnx",
+    "sft",
+];
+
+pub(crate) fn is_safe_path_component(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed != value {
+        return false;
+    }
+
+    let path = std::path::Path::new(trimmed);
+    let mut components = path.components();
+    matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none()
+}
+
+pub(crate) fn is_safe_relative_model_path(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed != value {
+        return false;
+    }
+
+    let path = std::path::Path::new(trimmed);
+    !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+fn is_managed_model_file(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            let ext = ext.to_ascii_lowercase();
+            MANAGED_MODEL_EXTENSIONS.contains(&ext.as_str())
+        })
+        .unwrap_or(false)
+}
+
+fn known_model_subdirs() -> Vec<&'static str> {
+    [
+        "checkpoints",
+        "loras",
+        "vae",
+        "upscale_models",
+        "embeddings",
+        "controlnet",
+        "clip",
+        "unet",
+        "diffusion_models",
+        "text_encoders",
+        "ultralytics",
+    ]
+    .iter()
+    .flat_map(|category| category_subdirs(category).iter().copied())
+    .collect()
+}
+
+fn is_structured_model_dir(path: &std::path::Path) -> bool {
+    known_model_subdirs()
+        .iter()
+        .any(|subdir| path.join(subdir).is_dir())
+}
+
+fn classify_flat_model_dir(path: &std::path::Path) -> &'static str {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if name.contains("lora") || name.contains("lycoris") {
+        "loras"
+    } else if name.contains("checkpoint")
+        || name.contains("ckpt")
+        || name.contains("stable-diffusion")
+        || name.contains("stablediffusion")
+    {
+        "checkpoints"
+    } else if name.contains("vae") {
+        "vae"
+    } else if name.contains("upscale") || name.contains("esrgan") {
+        "upscale_models"
+    } else if name.contains("controlnet") || name.contains("control_net") {
+        "controlnet"
+    } else if name.contains("embed") || name.contains("textual") {
+        "embeddings"
+    } else if name.contains("ultralytic") || name.contains("face") {
+        "ultralytics"
+    } else if name.contains("clip")
+        || name.contains("text_encoder")
+        || name.contains("text-encoder")
+    {
+        "text_encoders"
+    } else if name.contains("unet") || name.contains("diffusion") {
+        "diffusion_models"
+    } else {
+        "loras"
+    }
+}
+
+fn push_model_install_dir(
+    dirs: &mut Vec<ModelInstallDir>,
+    seen: &mut BTreeSet<String>,
+    path: std::path::PathBuf,
+    label: String,
+) {
+    let display_path = path.to_string_lossy().to_string();
+    let key = display_path.to_lowercase();
+    if seen.insert(key) {
+        dirs.push(ModelInstallDir {
+            path: display_path,
+            label,
+        });
+    }
+}
+
+pub(crate) fn model_install_dirs_for_config(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+) -> Result<Vec<ModelInstallDir>, AppError> {
+    if !is_safe_path_component(category) || category_subdirs(category).is_empty() {
+        return Err(AppError::Other("Invalid model category".into()));
+    }
+
+    let mut dirs: Vec<ModelInstallDir> = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    if !comfyui_path.is_empty() {
+        let primary = std::path::Path::new(comfyui_path)
+            .join("models")
+            .join(category);
+        let label = std::path::Path::new(comfyui_path)
+            .file_name()
+            .map(|n| format!("App ({})", n.to_string_lossy()))
+            .unwrap_or_else(|| "App".to_string());
+        push_model_install_dir(&mut dirs, &mut seen, primary, label);
+    }
+
+    if let Some(extra) = extra_model_paths {
+        for line in extra.lines().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            let base = std::path::Path::new(line);
+            let base_label = base
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| line.to_string());
+
+            if is_structured_model_dir(base) {
+                for subdir in category_subdirs(category) {
+                    let candidate = base.join(subdir);
+                    if candidate.is_dir() {
+                        let label = if category_subdirs(category).len() > 1 {
+                            format!("{} / {}", base_label, subdir)
+                        } else {
+                            base_label.clone()
+                        };
+                        push_model_install_dir(&mut dirs, &mut seen, candidate, label);
+                    }
+                }
+            } else if classify_flat_model_dir(base) == category {
+                push_model_install_dir(&mut dirs, &mut seen, base.to_path_buf(), base_label);
+            }
+        }
+    }
+
+    Ok(dirs)
+}
+
+fn relative_model_filename(root: &std::path::Path, path: &std::path::Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn modified_ms(metadata: &std::fs::Metadata) -> u64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn collect_model_files_from_dir(
+    category: &str,
+    dir: &ModelInstallDir,
+    root: &std::path::Path,
+    current: &std::path::Path,
+    files: &mut Vec<ManagedModelFile>,
+) -> Result<(), AppError> {
+    for entry in std::fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        let metadata = entry.metadata()?;
+        if file_type.is_dir() {
+            collect_model_files_from_dir(category, dir, root, &path, files)?;
+        } else if file_type.is_file() && is_managed_model_file(&path) {
+            let filename = relative_model_filename(root, &path);
+            if !is_safe_relative_model_path(&filename) {
+                continue;
+            }
+            files.push(ManagedModelFile {
+                category: category.to_string(),
+                filename,
+                directory: dir.path.clone(),
+                directory_label: dir.label.clone(),
+                path: path.to_string_lossy().to_string(),
+                size_bytes: metadata.len(),
+                modified_ms: modified_ms(&metadata),
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn list_model_files_for_config(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+) -> Result<Vec<ManagedModelFile>, AppError> {
+    let dirs = model_install_dirs_for_config(comfyui_path, extra_model_paths, category)?;
+    let mut files = Vec::new();
+    for dir in &dirs {
+        let root = std::path::Path::new(&dir.path);
+        if root.is_dir() {
+            collect_model_files_from_dir(category, dir, root, root, &mut files)?;
+        }
+    }
+    files.sort_by(|a, b| {
+        a.filename
+            .to_lowercase()
+            .cmp(&b.filename.to_lowercase())
+            .then_with(|| a.directory_label.cmp(&b.directory_label))
+    });
+    Ok(files)
+}
+
+fn find_known_model_dir(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+    directory: &str,
+) -> Result<ModelInstallDir, AppError> {
+    model_install_dirs_for_config(comfyui_path, extra_model_paths, category)?
+        .into_iter()
+        .find(|dir| dir.path == directory)
+        .ok_or_else(|| AppError::Other("Unknown model directory".into()))
+}
+
+fn model_file_path_in_dir(directory: &str, filename: &str) -> Result<std::path::PathBuf, AppError> {
+    if !is_safe_relative_model_path(filename) {
+        return Err(AppError::Other("Invalid model filename".into()));
+    }
+    Ok(std::path::Path::new(directory).join(std::path::Path::new(filename)))
+}
+
+pub(crate) fn delete_model_file_for_config(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+    filename: &str,
+    directory: &str,
+) -> Result<(), AppError> {
+    let dir = find_known_model_dir(comfyui_path, extra_model_paths, category, directory)?;
+    let path = model_file_path_in_dir(&dir.path, filename)?;
+    if !is_managed_model_file(&path) {
+        return Err(AppError::Other("Unsupported model file type".into()));
+    }
+    if !path.is_file() {
+        return Err(AppError::Other("Model file not found".into()));
+    }
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+pub(crate) fn move_model_file_for_config(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+    filename: &str,
+    source_directory: &str,
+    target_directory: &str,
+) -> Result<(), AppError> {
+    let source_dir =
+        find_known_model_dir(comfyui_path, extra_model_paths, category, source_directory)?;
+    let target_dir =
+        find_known_model_dir(comfyui_path, extra_model_paths, category, target_directory)?;
+    let source = model_file_path_in_dir(&source_dir.path, filename)?;
+    let target = model_file_path_in_dir(&target_dir.path, filename)?;
+
+    if source == target {
+        return Err(AppError::Other(
+            "Choose a different destination directory".into(),
+        ));
+    }
+    if !is_managed_model_file(&source) {
+        return Err(AppError::Other("Unsupported model file type".into()));
+    }
+    if !source.is_file() {
+        return Err(AppError::Other("Model file not found".into()));
+    }
+    if target.exists() {
+        return Err(AppError::Other(
+            "A model with that name already exists in the destination".into(),
+        ));
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    match std::fs::rename(&source, &target) {
+        Ok(()) => Ok(()),
+        Err(rename_error) => {
+            std::fs::copy(&source, &target).map_err(|copy_error| {
+                AppError::Other(format!(
+                    "Failed to move model: {}; copy fallback failed: {}",
+                    rename_error, copy_error
+                ))
+            })?;
+            std::fs::remove_file(&source)?;
+            Ok(())
+        }
+    }
 }
 
 /// Returns all directories where a model of the given category can be installed.
@@ -176,45 +559,79 @@ pub async fn get_model_install_dirs(
     let extra_model_paths = config.extra_model_paths.clone();
     drop(config);
 
-    let mut dirs: Vec<ModelInstallDir> = Vec::new();
+    model_install_dirs_for_config(&comfyui_path, extra_model_paths.as_deref(), &category)
+}
 
-    // Primary: {comfyui_path}/models/{category}
-    if !comfyui_path.is_empty() {
-        let primary = std::path::Path::new(&comfyui_path)
-            .join("models")
-            .join(&category);
-        let label = std::path::Path::new(&comfyui_path)
-            .file_name()
-            .map(|n| format!("App ({})", n.to_string_lossy()))
-            .unwrap_or_else(|| "App".to_string());
-        dirs.push(ModelInstallDir {
-            path: primary.to_string_lossy().to_string(),
-            label,
-        });
-    }
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn list_model_files(
+    state: State<'_, Arc<AppState>>,
+    category: String,
+) -> Result<Vec<ManagedModelFile>, AppError> {
+    let config = state.config.read().await;
+    let comfyui_path = config.comfyui_path.clone();
+    let extra_model_paths = config.extra_model_paths.clone();
+    drop(config);
 
-    // Extra paths: each line is a root that contains {category} subdirectories
-    if let Some(extra) = extra_model_paths {
-        for line in extra.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let extra_dir = std::path::Path::new(line).join(&category);
-            if extra_dir.exists() {
-                let label = std::path::Path::new(line)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| line.to_string());
-                dirs.push(ModelInstallDir {
-                    path: extra_dir.to_string_lossy().to_string(),
-                    label,
-                });
-            }
-        }
-    }
+    tokio::task::spawn_blocking(move || {
+        list_model_files_for_config(&comfyui_path, extra_model_paths.as_deref(), &category)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Model list task failed: {}", e)))?
+}
 
-    Ok(dirs)
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn delete_model_file(
+    state: State<'_, Arc<AppState>>,
+    category: String,
+    filename: String,
+    directory: String,
+) -> Result<(), AppError> {
+    let config = state.config.read().await;
+    let comfyui_path = config.comfyui_path.clone();
+    let extra_model_paths = config.extra_model_paths.clone();
+    drop(config);
+
+    tokio::task::spawn_blocking(move || {
+        delete_model_file_for_config(
+            &comfyui_path,
+            extra_model_paths.as_deref(),
+            &category,
+            &filename,
+            &directory,
+        )
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Model delete task failed: {}", e)))?
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn move_model_file(
+    state: State<'_, Arc<AppState>>,
+    category: String,
+    filename: String,
+    source_directory: String,
+    target_directory: String,
+) -> Result<(), AppError> {
+    let config = state.config.read().await;
+    let comfyui_path = config.comfyui_path.clone();
+    let extra_model_paths = config.extra_model_paths.clone();
+    drop(config);
+
+    tokio::task::spawn_blocking(move || {
+        move_model_file_for_config(
+            &comfyui_path,
+            extra_model_paths.as_deref(),
+            &category,
+            &filename,
+            &source_directory,
+            &target_directory,
+        )
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Model move task failed: {}", e)))?
 }
 
 /// Opens a directory in the OS file explorer.
@@ -255,6 +672,39 @@ pub async fn open_directory(path: String) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Proxy a GET request to the Mooshieblob CDN and return the response body as
+/// text. Used by the Tauri desktop app for JSON fetches (artist gallery
+/// manifest, shards, search index) that would otherwise be blocked by the
+/// webview's CORS enforcement. Only the hardcoded CDN origin is reachable —
+/// this is NOT an open proxy.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn cdn_proxy_fetch(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<String, AppError> {
+    // Strip any leading slashes to keep the joined URL well-formed.
+    let clean = path.trim_start_matches('/');
+    let url = format!("https://cdn.mooshieblob.com/{}", clean);
+    let resp = state
+        .http_client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| AppError::Other(format!("CDN fetch failed: {}", e)))?;
+    if !resp.status().is_success() {
+        return Err(AppError::ApiError {
+            status: resp.status().as_u16(),
+            message: format!("CDN returned {} for {}", resp.status(), clean),
+        });
+    }
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| AppError::Other(format!("CDN body read failed: {}", e)))?;
+    Ok(body)
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn download_model(
@@ -282,6 +732,13 @@ pub async fn download_model(
 #[tauri::command]
 pub async fn save_image_file(image_bytes: Vec<u8>, path: String) -> Result<(), AppError> {
     std::fs::write(&path, &image_bytes)?;
+    Ok(())
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn save_text_file(content: String, path: String) -> Result<(), AppError> {
+    tokio::fs::write(&path, content).await?;
     Ok(())
 }
 
@@ -342,6 +799,30 @@ pub async fn save_to_gallery_bytes(
     )
 }
 
+/// Save a temp image to the gallery (avoids re-serialising large byte arrays
+/// through the IPC bridge — the temp file is already on disk).
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn save_to_gallery_temp(
+    temp_filename: String,
+    filename: String,
+    prompt_id: String,
+    mode: Option<String>,
+    metadata: Option<std::collections::HashMap<String, String>>,
+    metadata_mode: Option<String>,
+) -> Result<String, AppError> {
+    let bytes = crate::temp_images::load(&temp_filename)
+        .ok_or_else(|| AppError::Other(format!("Temp image not found: {}", temp_filename)))?;
+    save_to_gallery_inner(
+        &bytes,
+        &filename,
+        &prompt_id,
+        mode.as_deref(),
+        metadata.as_ref(),
+        metadata_mode.as_deref(),
+    )
+}
+
 pub fn save_to_gallery_inner(
     bytes: &[u8],
     filename: &str,
@@ -361,13 +842,25 @@ pub fn save_to_gallery_inner(
         _ => "unknown",
     };
 
-    let gallery_filename = format!("{}__{}__{}", prompt_id, normalized_mode, filename);
+    // Gallery filename uses the detected container extension, not whatever
+    // the frontend guessed. This keeps PNG / JXL gallery files honest even if
+    // the caller passed a stale filename.
+    let detected_format = crate::metadata::detect_format(bytes);
+    let base = match filename.rsplit_once('.') {
+        Some((stem, _)) => stem,
+        None => filename,
+    };
+    let ext = match detected_format {
+        crate::metadata::ImageFormat::Jxl => "jxl",
+        _ => "png",
+    };
+    let gallery_filename = format!("{}__{}__{}.{}", prompt_id, normalized_mode, base, ext);
     let path = dir.join(&gallery_filename);
 
     let raw_mode = metadata_mode.unwrap_or("text_chunk");
     let mut embed_mode = crate::metadata::MetadataMode::from_str(raw_mode);
 
-    if filename.to_ascii_lowercase().ends_with(".png")
+    if matches!(detected_format, crate::metadata::ImageFormat::Png)
         && embed_mode == crate::metadata::MetadataMode::StealthAlpha
     {
         match crate::metadata::is_png_16bit(bytes) {
@@ -388,30 +881,42 @@ pub fn save_to_gallery_inner(
     }
 
     log::info!(
-        "save_to_gallery_inner: metadata_mode={:?}, effective_embed_mode={:?}, has_metadata={}",
+        "save_to_gallery_inner: format={:?}, metadata_mode={:?}, effective_embed_mode={:?}, has_metadata={}",
+        detected_format,
         raw_mode,
         embed_mode,
         metadata.is_some()
     );
 
-    // If metadata provided and file is PNG, embed it
+    // If metadata provided, embed it using the format-appropriate mechanism.
     let final_bytes = if let Some(meta) = metadata {
-        if filename.to_ascii_lowercase().ends_with(".png") {
-            match crate::metadata::embed_png_metadata(bytes, meta, embed_mode) {
-                Ok(embedded) => embedded,
-                Err(e) => {
-                    log::warn!("Failed to embed metadata: {}, saving without", e);
-                    bytes.to_vec()
+        match detected_format {
+            crate::metadata::ImageFormat::Png => {
+                match crate::metadata::embed_png_metadata(bytes, meta, embed_mode) {
+                    Ok(embedded) => embedded,
+                    Err(e) => {
+                        log::warn!("Failed to embed PNG metadata: {}, saving without", e);
+                        bytes.to_vec()
+                    }
                 }
             }
-        } else {
-            bytes.to_vec()
+            crate::metadata::ImageFormat::Jxl => {
+                match crate::metadata::embed_jxl_metadata(bytes, meta) {
+                    Ok(embedded) => embedded,
+                    Err(e) => {
+                        log::warn!("Failed to embed JXL metadata: {}, saving without", e);
+                        bytes.to_vec()
+                    }
+                }
+            }
+            crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {
         bytes.to_vec()
     };
 
     std::fs::write(&path, &final_bytes)?;
+    crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
     Ok(gallery_filename)
 }
 
@@ -424,7 +929,7 @@ pub async fn read_image_metadata(
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let path = dir.join(&filename);
     let bytes = std::fs::read(&path)?;
-    crate::metadata::read_png_metadata(&bytes).map_err(AppError::Other)
+    crate::metadata::read_image_metadata(&bytes).map_err(AppError::Other)
 }
 
 #[cfg(feature = "desktop")]
@@ -432,7 +937,7 @@ pub async fn read_image_metadata(
 pub async fn read_image_metadata_bytes(
     image_bytes: Vec<u8>,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
-    crate::metadata::read_png_metadata(&image_bytes).map_err(AppError::Other)
+    crate::metadata::read_image_metadata(&image_bytes).map_err(AppError::Other)
 }
 
 #[cfg(feature = "desktop")]
@@ -441,7 +946,7 @@ pub async fn read_image_metadata_path(
     path: String,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
     let bytes = std::fs::read(&path)?;
-    crate::metadata::read_png_metadata(&bytes).map_err(AppError::Other)
+    crate::metadata::read_image_metadata(&bytes).map_err(AppError::Other)
 }
 
 #[cfg(feature = "desktop")]
@@ -460,6 +965,7 @@ pub async fn list_gallery_images() -> Result<Vec<String>, AppError> {
                 || name.ends_with(".jpg")
                 || name.ends_with(".jpeg")
                 || name.ends_with(".webp")
+                || name.ends_with(".jxl")
             {
                 Some((entry.metadata().ok()?.modified().ok()?, name))
             } else {
@@ -487,7 +993,8 @@ pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppE
             if !(name.ends_with(".png")
                 || name.ends_with(".jpg")
                 || name.ends_with(".jpeg")
-                || name.ends_with(".webp"))
+                || name.ends_with(".webp")
+                || name.ends_with(".jxl"))
             {
                 return None;
             }
@@ -524,6 +1031,71 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
     Ok(bytes)
 }
 
+/// Load a gallery image and encode as PNG. JXL files are decoded via jxl-oxide
+/// and re-encoded as PNG. Used when copying/saving/downloading — PNG is the
+/// portable export format that supports metadata embedding.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn load_gallery_image_png(filename: String) -> Result<Vec<u8>, AppError> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(AppError::Other("Invalid filename".into()));
+    }
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    let path = dir.join(&filename);
+    let bytes = std::fs::read(&path)?;
+    if filename.ends_with(".jxl") {
+        let png = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+            let img = decode_gallery_image(&bytes)?;
+            let mut buf = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut buf, image::ImageFormat::Png)
+                .map_err(|e| format!("PNG encode failed: {}", e))?;
+            Ok(buf.into_inner())
+        })
+        .await
+        .map_err(|e| AppError::Other(format!("Task panicked: {}", e)))?
+        .map_err(AppError::Other)?;
+        Ok(png)
+    } else {
+        Ok(bytes)
+    }
+}
+
+/// Load a gallery image for display in the UI. JXL files are transcoded to WebP
+/// so WebView2 (which cannot decode JXL natively) can render them.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn load_gallery_image_display(filename: String) -> Result<Vec<u8>, AppError> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(AppError::Other("Invalid filename".into()));
+    }
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    let path = dir.join(&filename);
+    let bytes = std::fs::read(&path)?;
+    if filename.ends_with(".jxl") {
+        let webp = tokio::task::spawn_blocking(move || transcode_jxl_to_webp(&bytes))
+            .await
+            .map_err(|e| AppError::Other(format!("Task panicked: {}", e)))?
+            .map_err(AppError::Other)?;
+        Ok(webp)
+    } else {
+        Ok(bytes)
+    }
+}
+
+/// Read a file from the temp_images directory.  Used by Tauri desktop mode to
+/// fetch JXL and display-copy (WebP/PNG) bytes after generation — avoids
+/// embedding multi-MB base64 blobs in Tauri events, which silently drops large
+/// payloads.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn read_temp_image(filename: String) -> Result<Vec<u8>, AppError> {
+    // Reuse the same path-traversal guard from temp_images::load.
+    crate::temp_images::load(&filename)
+        .ok_or_else(|| AppError::Other(format!("Temp image not found: {}", filename)))
+}
+
 /// Generate a WebP thumbnail for a gallery image. Used by the `thumbnail://` protocol.
 pub fn generate_thumbnail(
     gallery_dir: &std::path::Path,
@@ -537,8 +1109,7 @@ pub fn generate_thumbnail(
     let path = gallery_dir.join(filename);
     let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;
 
-    let img = image::load_from_memory(&bytes).map_err(|e| format!("Decode failed: {}", e))?;
-
+    let img = decode_gallery_image(&bytes)?;
     let thumb = img.thumbnail(max_size, max_size);
 
     let mut buf = std::io::Cursor::new(Vec::new());
@@ -546,6 +1117,32 @@ pub fn generate_thumbnail(
         .write_to(&mut buf, image::ImageFormat::WebP)
         .map_err(|e| format!("Encode failed: {}", e))?;
 
+    Ok(buf.into_inner())
+}
+
+/// Decode a gallery image (PNG or JXL) into an in-memory `DynamicImage`.
+/// PNGs go through the `image` crate; JXL is decoded by `jxl-oxide` and
+/// promoted to RGBA8 before being wrapped as a `DynamicImage`.
+pub fn decode_gallery_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    match crate::metadata::detect_format(bytes) {
+        crate::metadata::ImageFormat::Jxl => {
+            let decoded =
+                crate::jxl::decode_to_rgba8(bytes).map_err(|e| format!("JXL decode: {}", e))?;
+            let buf = image::RgbaImage::from_raw(decoded.width, decoded.height, decoded.rgba)
+                .ok_or_else(|| "JXL decode produced mismatched buffer size".to_string())?;
+            Ok(image::DynamicImage::ImageRgba8(buf))
+        }
+        _ => image::load_from_memory(bytes).map_err(|e| format!("Decode failed: {}", e)),
+    }
+}
+
+/// Transcode JXL bytes to a lossless WebP suitable for serving to non-JXL
+/// browsers. Returns the WebP bytes.
+pub fn transcode_jxl_to_webp(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let img = decode_gallery_image(bytes)?;
+    let mut buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut buf, image::ImageFormat::WebP)
+        .map_err(|e| format!("WebP encode failed: {}", e))?;
     Ok(buf.into_inner())
 }
 
@@ -573,6 +1170,7 @@ pub async fn delete_gallery_image(filename: String) -> Result<(), AppError> {
     if path.exists() {
         std::fs::remove_file(&path)?;
     }
+    crate::gallery_index::remove(&path);
     Ok(())
 }
 
@@ -901,7 +1499,7 @@ fn native_clipboard_read() -> Result<Vec<u8>, AppError> {
             }
         }
         let _ = std::fs::remove_file(&tmp_path);
-        return Err(AppError::Other("No image in clipboard".into()));
+        Err(AppError::Other("No image in clipboard".into()))
     }
 }
 
@@ -1226,6 +1824,10 @@ pub async fn find_model_by_hash(
     category: String,
     hash: String,
 ) -> Result<Option<String>, AppError> {
+    if !is_safe_path_component(&category) {
+        return Err(AppError::Other("Invalid model category".into()));
+    }
+
     let config = state.config.read().await;
     if config.comfyui_path.is_empty() {
         return Ok(None);
@@ -1278,6 +1880,13 @@ pub async fn hash_model_file(
     category: String,
     filename: String,
 ) -> Result<ModelHashResult, AppError> {
+    if !is_safe_path_component(&category) {
+        return Err(AppError::Other("Invalid model category".into()));
+    }
+    if !is_safe_relative_model_path(&filename) {
+        return Err(AppError::Other("Invalid model filename".into()));
+    }
+
     let config = state.config.read().await;
     if config.comfyui_path.is_empty() {
         return Err(AppError::Other("ComfyUI path not configured".into()));
@@ -1287,7 +1896,7 @@ pub async fn hash_model_file(
         .join(&category)
         .join(&filename);
 
-    if !path.exists() {
+    if !path.is_file() {
         return Err(AppError::Other(format!("File not found: {}", filename)));
     }
     let sha256 = full_sha256(&path)?;
@@ -1567,6 +2176,13 @@ pub async fn read_modelspec(
     category: String,
     filename: String,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    if !is_safe_path_component(&category) {
+        return Err(AppError::Other("Invalid model category".into()));
+    }
+    if !is_safe_relative_model_path(&filename) {
+        return Err(AppError::Other("Invalid model filename".into()));
+    }
+
     let config = state.config.read().await;
     if config.comfyui_path.is_empty() {
         return Err(AppError::Other("ComfyUI path not configured".into()));
@@ -1576,7 +2192,7 @@ pub async fn read_modelspec(
         .join(&category)
         .join(&filename);
 
-    if !path.exists() {
+    if !path.is_file() {
         return Err(AppError::Other(format!("File not found: {}", filename)));
     }
 
@@ -1848,6 +2464,7 @@ pub(crate) fn category_subdirs(category: &str) -> &'static [&'static str] {
             "models/text_encoders",
             "Models/text_encoders",
         ],
+        "ultralytics" => &["ultralytics", "models/ultralytics", "Models/ultralytics"],
         _ => &[],
     }
 }
@@ -1863,6 +2480,10 @@ pub(crate) fn resolve_model_path(
     category: &str,
     filename: &str,
 ) -> Option<std::path::PathBuf> {
+    if !is_safe_path_component(category) || !is_safe_relative_model_path(filename) {
+        return None;
+    }
+
     // Primary ComfyUI directory always uses the canonical category name
     let primary = std::path::Path::new(comfyui_path)
         .join("models")
@@ -1895,6 +2516,28 @@ pub(crate) fn resolve_model_path(
         }
     }
     None
+}
+
+pub(crate) fn validate_lora_files_for_generation(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    loras: &[crate::comfyui::types::LoraParam],
+) -> Result<(), AppError> {
+    for lora in loras {
+        let name = lora.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let path = resolve_model_path(comfyui_path, extra_model_paths, "loras", name)
+            .ok_or_else(|| AppError::InvalidWorkflow(format!("LoRA file not found: '{}'", name)))?;
+        crate::comfyui::client::validate_downloaded_model_file(&path, name).map_err(|e| {
+            AppError::InvalidWorkflow(format!(
+                "LoRA file '{}' is invalid and needs to be re-downloaded: {}",
+                name, e
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 /// Fetch combined LoRA info: hash the file, look up on CivitAI, read ModelSpec.
@@ -2432,7 +3075,7 @@ pub async fn import_image_directory(
         }
 
         // Emit progress every 50 files or on last file
-        if imported % 50 == 0 || i as u32 + 1 == total {
+        if imported.is_multiple_of(50) || i as u32 + 1 == total {
             let _ = app.emit(
                 "import_progress",
                 serde_json::json!({
@@ -2494,8 +3137,15 @@ fn collect_image_files_recursive(
 pub async fn export_logs(
     state: State<'_, Arc<AppState>>,
     destination: String,
+    frontend_logs: Option<Vec<String>>,
 ) -> Result<(), AppError> {
     use std::fmt::Write;
+
+    // Fold any newly-submitted frontend logs into the ring buffer so repeat
+    // exports include previous captures too.
+    if let Some(lines) = frontend_logs {
+        crate::log_buffer::push_frontend_lines(lines);
+    }
 
     let mut output = String::with_capacity(16 * 1024);
 
@@ -2518,6 +3168,15 @@ pub async fn export_logs(
     {
         let config = state.config.read().await;
         let _ = writeln!(output, "=== App Configuration ===");
+        let _ = writeln!(
+            output,
+            "UI mode: {}",
+            if config.browser_mode {
+                "Browser"
+            } else {
+                "App"
+            }
+        );
         let _ = writeln!(output, "Server mode: {:?}", config.server_mode);
         let _ = writeln!(output, "Server URL: {}", config.server_url);
         let _ = writeln!(output, "Server port: {}", config.server_port);
@@ -2628,8 +3287,42 @@ pub async fn export_logs(
         }
     }
 
+    // Rust-side log ring buffer (captured by log_buffer::RingLogger)
+    let rust_lines = crate::log_buffer::snapshot_rust();
+    if !rust_lines.is_empty() {
+        let _ = writeln!(output);
+        let _ = writeln!(output, "=== Rust Log (last {} lines) ===", rust_lines.len());
+        for line in &rust_lines {
+            let _ = writeln!(output, "{}", line);
+        }
+    }
+
+    // Frontend console ring buffer (captured by src/lib/utils/log-buffer.ts)
+    let frontend_lines = crate::log_buffer::snapshot_frontend();
+    if !frontend_lines.is_empty() {
+        let _ = writeln!(output);
+        let _ = writeln!(
+            output,
+            "=== Frontend Console (last {} lines) ===",
+            frontend_lines.len()
+        );
+        for line in &frontend_lines {
+            let _ = writeln!(output, "{}", line);
+        }
+    }
+
     // Write to destination
     std::fs::write(&destination, &output)?;
+    Ok(())
+}
+
+/// Append a batch of frontend console log lines to the in-memory diagnostics
+/// ring buffer. Called opportunistically by the UI so that exported logs
+/// include frontend state even when a crash prevents exporting normally.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn append_frontend_logs(lines: Vec<String>) -> Result<(), AppError> {
+    crate::log_buffer::push_frontend_lines(lines);
     Ok(())
 }
 
@@ -2964,6 +3657,11 @@ fn detect_compute_capability() -> Option<f32> {
         .lines()
         .filter_map(|line| line.trim().parse::<f32>().ok())
         .reduce(f32::max)
+}
+
+/// Public accessor for browser-mode command dispatch.
+pub fn detect_compute_capability_pub() -> Option<f32> {
+    detect_compute_capability()
 }
 
 /// Install (or uninstall) an attention backend package in the venv.

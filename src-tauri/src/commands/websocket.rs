@@ -12,7 +12,7 @@ pub async fn connect_ws(
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), AppError> {
     let event_tx = state.event_tx.clone();
-    websocket::connect_websocket(app_handle, &state, event_tx).await
+    websocket::connect_websocket(app_handle, Arc::clone(&state), event_tx).await
 }
 
 #[tauri::command]

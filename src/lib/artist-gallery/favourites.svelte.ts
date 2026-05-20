@@ -13,6 +13,8 @@ const STORAGE_KEY = "mooshieui.artist-gallery.favourites.v1";
 const EXPORT_KIND = "mooshieui.artist-gallery.favourites";
 const EXPORT_VERSION = 1;
 
+import { triggerSync } from "../utils/syncTrigger.js";
+
 export interface FavouriteCategory {
   id: string;
   name: string;
@@ -117,6 +119,7 @@ class ArtistFavouritesStore {
         categories: this.categories,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      triggerSync();
     } catch (e) {
       console.error("artist-gallery favourites: save failed", e);
     }
@@ -334,6 +337,33 @@ class ArtistFavouritesStore {
     this.favourites = mergedFavs;
     this.saveSettings();
     return { added, updated, categoriesAdded };
+  }
+
+  /** Collect favourites state for server-side sync. */
+  collectPrefs(): unknown {
+    return {
+      version: EXPORT_VERSION,
+      favourites: Object.values(this.favourites),
+      categories: this.categories,
+    };
+  }
+
+  /** Apply favourites from the server. Replaces local storage and re-hydrates. */
+  applyServerPrefs(data: any): void {
+    try {
+      if (data) {
+        this.hydrate(data as Partial<PersistedState>);
+        // Persist server state locally as well
+        const payload: PersistedState = {
+          version: EXPORT_VERSION,
+          favourites: Object.values(this.favourites),
+          categories: this.categories,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      }
+    } catch (e) {
+      console.error("artist-gallery favourites: applyServerPrefs failed", e);
+    }
   }
 }
 
