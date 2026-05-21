@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v1.3.6
+
+### Release / CI
+- **Docker publish fix**: release workflow now frees runner disk space before building the GHCR server image, fixing v1.3.5 CI failures caused by `No space left on device` during the CUDA/PyTorch Docker build.
+
+---
+
 ## What's New in v1.3.5
 
 ### Model picker
