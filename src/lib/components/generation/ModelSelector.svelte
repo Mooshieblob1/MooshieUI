@@ -567,10 +567,78 @@
     );
   });
 
+  /** Diffusion/UNET files already covered by a curated recommended entry */
+  const recommendedDiffusionFilenames = $derived(() => {
+    return new Set(
+      recommendedModels
+        .filter((r) => r.splitModel)
+        .flatMap((r) => {
+          const f = r.splitModel!.diffusionModel;
+          const names = [f.filename];
+          if (f.hash) {
+            const resolved = hashResolved[`${f.category}::${f.hash}`];
+            if (resolved) names.push(resolved);
+          }
+          return names;
+        })
+    );
+  });
+
+  /** Pair text encoder + CLIPLoader type for a manually picked diffusion/UNET file */
+  function pickSplitModelClip(
+    diffusionModel: string,
+    encoders: string[],
+  ): { clip: string; clipType: string } {
+    const dm = diffusionModel.toLowerCase();
+    const looksAnimaOrQwen =
+      dm.includes("anima") || dm.includes("qwen") || dm.includes("wan") || dm.includes("yume");
+    if (looksAnimaOrQwen) {
+      const preferred =
+        encoders.find((e) => e.toLowerCase().includes("qwen_3_06b")) ??
+        encoders.find((e) => e.toLowerCase().includes("qwen"));
+      if (preferred) return { clip: preferred, clipType: "wan" };
+    }
+    if (dm.includes("flux") || dm.includes("klein")) {
+      const qwen8 = encoders.find((e) => {
+        const n = e.toLowerCase();
+        return n.includes("qwen_3_8b") || n.includes("fp4mixed");
+      });
+      if (qwen8) return { clip: qwen8, clipType: "qwen_image" };
+    }
+    if (encoders.length > 0) return { clip: encoders[0], clipType: "wan" };
+    return { clip: "", clipType: "wan" };
+  }
+
+  function pickSplitModelVae(diffusionModel: string, vaes: string[]): string {
+    if (vaes.length === 0) return "";
+    const dm = diffusionModel.toLowerCase();
+    const looksAnimaOrQwen =
+      dm.includes("anima") || dm.includes("qwen") || dm.includes("wan") || dm.includes("yume");
+    const looksFlux = dm.includes("flux") || dm.includes("klein");
+
+    if (looksAnimaOrQwen) {
+      const qwen = vaes.find((v) => v.toLowerCase().includes("qwen"));
+      if (qwen) return qwen;
+    }
+    if (looksFlux) {
+      const flux = vaes.find((v) => v.toLowerCase().includes("flux"));
+      if (flux) return flux;
+    }
+    return vaes.find((v) => v.toLowerCase().includes("sdxl_vae")) ?? vaes[0];
+  }
+
   /** Combine installed checkpoints + recommended models into a single filtered list */
   const filteredItems = $derived(() => {
     const q = checkpointSearch.toLowerCase();
-    const items: { type: "checkpoint" | "recommended"; label: string; value: string; rec?: RecommendedModel; installed: boolean; size?: string; gateHint?: string }[] = [];
+    const items: {
+      type: "checkpoint" | "recommended" | "diffusion";
+      label: string;
+      value: string;
+      rec?: RecommendedModel;
+      installed: boolean;
+      size?: string;
+      gateHint?: string;
+    }[] = [];
 
     // Add recommended models first
     for (const rec of recommendedModels) {
@@ -613,6 +681,20 @@
       }
     }
 
+    // Locally installed diffusion/UNET weights not in the curated list (e.g. custom Anima fine-tunes)
+    const excludedDiffusion = recommendedDiffusionFilenames();
+    for (const dm of models.diffusionModels) {
+      if (excludedDiffusion.has(dm)) continue;
+      if (!q || dm.toLowerCase().includes(q)) {
+        items.push({
+          type: "diffusion",
+          label: dm,
+          value: dm,
+          installed: true,
+        });
+      }
+    }
+
     return items;
   });
 
@@ -626,6 +708,20 @@
     generation.applyModelSpecificPreset(name);
     checkpointSearch = "";
     showCheckpointDropdown = false;
+  }
+
+  /** Use a diffusion/UNET file discovered on disk (not in the curated recommended list). */
+  function selectCustomDiffusion(filename: string) {
+    showCheckpointDropdown = false;
+    checkpointSearch = "";
+    const { clip, clipType } = pickSplitModelClip(filename, models.textEncoders);
+    generation.useSplitModel = true;
+    generation.diffusionModel = filename;
+    generation.clipModel = clip || null;
+    generation.clipType = clipType;
+    generation.vae = pickSplitModelVae(filename, models.vaes);
+    generation.checkpoint = filename;
+    generation.applyModelSpecificPreset(filename);
   }
 
   async function selectRecommended(rec: RecommendedModel) {
@@ -863,6 +959,13 @@
                 {#if item.size}
                   <span class="text-[10px] text-neutral-500 shrink-0">{item.size}</span>
                 {/if}
+              </button>
+            {:else if item.type === "diffusion"}
+              <button
+                class="w-full text-left px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700 truncate"
+                onclick={() => selectCustomDiffusion(item.value)}
+              >
+                {item.label}
               </button>
             {:else}
               <button

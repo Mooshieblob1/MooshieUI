@@ -1,3 +1,13 @@
+## What's New in v1.3.5
+
+### Model picker
+- **Custom diffusion/UNET models in the checkpoint list**: locally installed files under `diffusion_models/` (and `unet/`) that are not curated presets—such as custom Anima fine-tunes—now appear in the generation model dropdown and wire up split-model CLIP/VAE automatically.
+
+### External ComfyUI
+- **Startup recovery**: improved detection and recovery when another ComfyUI instance is already bound to your port, with clearer server/build parity for headless mode.
+
+---
+
 ## What's New in v1.3.4
 
 ### Release Fix

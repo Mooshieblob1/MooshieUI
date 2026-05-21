@@ -9,7 +9,7 @@ use crate::state::AppState;
 fn is_optional_model_category(category: &str) -> bool {
     matches!(
         category,
-        "diffusion_models" | "text_encoders" | "clip" | "controlnet" | "ultralytics"
+        "diffusion_models" | "unet" | "text_encoders" | "clip" | "controlnet" | "ultralytics"
     )
 }
 

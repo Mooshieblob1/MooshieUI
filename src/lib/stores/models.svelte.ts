@@ -22,7 +22,7 @@ class ModelsStore {
       // layout) or `clip/` (legacy ComfyUI / Forge layout). Fetch both and
       // merge so the picker doesn't miss encoders in the legacy directory
       // (e.g. `qwen_3_8b_fp4mixed.safetensors` placed under `clip/`).
-      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, textEncoders, clipEncoders, controlnetModels, ultralyticsModels] =
+      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, unetModels, textEncoders, clipEncoders, controlnetModels, ultralyticsModels] =
         await Promise.all([
           getModels("checkpoints"),
           getModels("vae"),
@@ -31,6 +31,8 @@ class ModelsStore {
           getEmbeddings(),
           getModels("upscale_models"),
           getModels("diffusion_models").catch(() => [] as string[]),
+          // ComfyUI also exposes UNET/diffusion weights under `unet/` on some installs.
+          getModels("unet").catch(() => [] as string[]),
           getModels("text_encoders").catch(() => [] as string[]),
           getModels("clip").catch(() => [] as string[]),
           getModels("controlnet").catch(() => [] as string[]),
@@ -47,7 +49,7 @@ class ModelsStore {
       this.schedulers = samplerInfo.schedulers;
       this.embeddings = embeddings;
       this.upscaleModels = upscaleModels;
-      this.diffusionModels = diffusionModels;
+      this.diffusionModels = Array.from(new Set([...diffusionModels, ...unetModels]));
       // De-duplicate by basename — ComfyUI sometimes returns the same file under
       // both `clip` and `text_encoders` when both directories are mapped.
       this.textEncoders = Array.from(new Set([...textEncoders, ...clipEncoders]));
