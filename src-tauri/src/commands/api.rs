@@ -2311,6 +2311,14 @@ fn infer_architecture_from_keys(header: &serde_json::Map<String, Value>) -> Opti
         return Some("hunyuandit".to_string());
     }
 
+    // Wan 2.1 / Anima (DiT transformer blocks with cross-attn — not classic UNet)
+    let has_wan_blocks = keys.iter().any(|k| {
+        k.starts_with("blocks.") && (k.contains(".cross_attn.") || k.contains(".self_attn."))
+    });
+    if has_wan_blocks {
+        return Some("wan2.1".to_string());
+    }
+
     // Stable Cascade: has "down_blocks" + "up_blocks" with "clip_txt_mapper"
     if keys.iter().any(|k| k.contains("clip_txt_mapper")) {
         return Some("stable_cascade".to_string());

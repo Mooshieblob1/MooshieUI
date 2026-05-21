@@ -3,7 +3,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { downloadModel, findModelByHash, hashModelFile, readModelSpec, type ModelSpec, getComputeCapability } from "../../utils/api.js";
+  import { downloadModel, findModelByHash, hashModelFile, readModelSpec, lookupCivitaiBaseModel, type ModelSpec, getComputeCapability } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
   import { onMount, onDestroy } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
@@ -295,23 +295,31 @@
     modelSpecUnavailable = false;
     try {
       const spec = await readModelSpec(category, filename);
+      let civitaiBaseModel: string | null = null;
+      if (spec?.hash) {
+        civitaiBaseModel = await lookupCivitaiBaseModel(spec.hash);
+      }
       if (spec && Object.keys(spec).length > 0) {
         modelSpec = spec;
-        // Update generation store with authoritative architecture from modelspec
-        if (spec.architecture) {
-          generation.modelspecArchitecture = spec.architecture;
-        } else {
-          generation.modelspecArchitecture = null;
-        }
+        generation.applyModelMetadata({
+          modelspecArchitecture: spec.architecture ?? null,
+          civitaiBaseModel,
+        });
       } else {
         modelSpec = null;
         modelSpecUnavailable = true;
-        generation.modelspecArchitecture = null;
+        generation.applyModelMetadata({
+          modelspecArchitecture: null,
+          civitaiBaseModel,
+        });
       }
     } catch {
       modelSpec = null;
       modelSpecUnavailable = true;
-      generation.modelspecArchitecture = null;
+      generation.applyModelMetadata({
+        modelspecArchitecture: null,
+        civitaiBaseModel: null,
+      });
     } finally {
       modelSpecLoading = false;
     }
@@ -591,7 +599,11 @@
   ): { clip: string; clipType: string } {
     const dm = diffusionModel.toLowerCase();
     const looksAnimaOrQwen =
-      dm.includes("anima") || dm.includes("qwen") || dm.includes("wan") || dm.includes("yume");
+      generation.isAnima ||
+      dm.includes("anima") ||
+      dm.includes("qwen") ||
+      dm.includes("wan") ||
+      dm.includes("yume");
     if (looksAnimaOrQwen) {
       const preferred =
         encoders.find((e) => e.toLowerCase().includes("qwen_3_06b")) ??
@@ -613,7 +625,11 @@
     if (vaes.length === 0) return "";
     const dm = diffusionModel.toLowerCase();
     const looksAnimaOrQwen =
-      dm.includes("anima") || dm.includes("qwen") || dm.includes("wan") || dm.includes("yume");
+      generation.isAnima ||
+      dm.includes("anima") ||
+      dm.includes("qwen") ||
+      dm.includes("wan") ||
+      dm.includes("yume");
     const looksFlux = dm.includes("flux") || dm.includes("klein");
 
     if (looksAnimaOrQwen) {
@@ -705,6 +721,7 @@
     generation.clipModel = null;
     generation.clipType = null;
     generation.checkpoint = name;
+    generation.applyModelMetadata({ modelspecArchitecture: null, civitaiBaseModel: null });
     generation.applyModelSpecificPreset(name);
     checkpointSearch = "";
     showCheckpointDropdown = false;

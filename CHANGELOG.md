@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v1.3.7
+
+### Model detection
+- **Anima-family model detection**: custom Wan/Anima fine-tunes (e.g. `animayume`) are recognized via filename heuristics, ModelSpec/Wan tensor layout, and CivitAI hash `baseModel` lookup — Anima autocomplete tags and `@artist` prompts apply automatically when metadata loads.
+
+---
+
 ## What's New in v1.3.6
 
 ### Release / CI

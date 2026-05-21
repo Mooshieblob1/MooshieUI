@@ -3,6 +3,7 @@ import { triggerSync } from "../utils/syncTrigger.js";
 import { parseScheduledPrompt } from "../utils/promptSchedule.js";
 import type { LoraEntry } from "../types/index.js";
 import { autocomplete } from "./autocomplete.svelte.js";
+import { signalsIndicateAnima } from "../utils/modelFamily.js";
 import { styles } from "./styles.svelte.js";
 import { promptPresets } from "./promptPresets.svelte.js";
 
@@ -289,6 +290,8 @@ class GenerationStore {
 
   /** Architecture detected from modelspec metadata, or null if not yet read. */
   modelspecArchitecture = $state<string | null>(null);
+  /** CivitAI `baseModel` from hash lookup — used to detect Anima fine-tunes without "anima" in the filename. */
+  civitaiBaseModel = $state<string | null>(null);
 
   get mode(): GenerationMode {
     return this._mode;
@@ -410,9 +413,37 @@ class GenerationStore {
     return this.isSd3 || this.isFlux || this.isAuraFlow || this.isMugen || this.isNanosaur;
   }
 
+  private modelFamilySignals() {
+    return {
+      filename: this.diffusionModel ?? this.checkpoint,
+      modelspecArchitecture: this.modelspecArchitecture,
+      civitaiBaseModel: this.civitaiBaseModel,
+    };
+  }
+
+  /**
+   * Apply modelspec / CivitAI metadata after async load and refresh autocomplete tags.
+   */
+  applyModelMetadata(meta: {
+    modelspecArchitecture?: string | null;
+    civitaiBaseModel?: string | null;
+  }) {
+    if (meta.modelspecArchitecture !== undefined) {
+      this.modelspecArchitecture = meta.modelspecArchitecture;
+    }
+    if (meta.civitaiBaseModel !== undefined) {
+      this.civitaiBaseModel = meta.civitaiBaseModel;
+    }
+    autocomplete.notifyModelChanged(this.isAnima);
+  }
+
   /** Detect the base model architecture from modelspec (authoritative) or filename (fallback). */
   get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "sd3" | "flux" | "pony" | "auraflow" | "pixart" | "hunyuandit" | "cascade" | "kolors" | "mugen" | "nanosaur" | "anima" | "unknown" {
     const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
+
+    if (signalsIndicateAnima(this.modelFamilySignals())) {
+      return "anima";
+    }
 
     // 1. Use modelspec architecture if available (definitive)
     if (this.modelspecArchitecture) {
@@ -420,7 +451,7 @@ class GenerationStore {
       // Nanosaur (custom DiT — check before other heuristics)
       if (name.includes("nanosaur")) return "nanosaur";
       // Anima (Wan2.1 fine-tune with AnimaLLLite)
-      if (name.includes("anima") || arch.includes("anima")) return "anima";
+      if (name.includes("anima") || arch.includes("anima") || arch.includes("wan")) return "anima";
       // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
       if (name.includes("mugen")) return "mugen";
       // Illustrious/NoobAI family (they report as SDXL arch but need special ControlNets)
@@ -450,7 +481,7 @@ class GenerationStore {
     // Nanosaur (custom DiT — check before other heuristics)
     if (name.includes("nanosaur")) return "nanosaur";
     // Anima (Wan2.1 fine-tune with AnimaLLLite)
-    if (name.includes("anima")) return "anima";
+    if (name.includes("anima") || name.includes("yume")) return "anima";
     // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
     if (name.includes("mugen")) return "mugen";
     // Illustrious/NoobAI/vpred SDXL variants
@@ -596,7 +627,14 @@ class GenerationStore {
     const name = (modelName ?? this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
     if (!name) return;
 
-    const isAnima = name.includes("anima") || name.includes("qwen") || name.includes("wan");
+    const isAnima =
+      signalsIndicateAnima({
+        filename: modelName ?? this.diffusionModel ?? this.checkpoint,
+        modelspecArchitecture: this.modelspecArchitecture,
+        civitaiBaseModel: this.civitaiBaseModel,
+      }) ||
+      name.includes("qwen") ||
+      name.includes("wan");
     autocomplete.notifyModelChanged(isAnima);
 
     // Nanosaur — custom 1.2B DiT, flow matching, euler/simple, CFG 7

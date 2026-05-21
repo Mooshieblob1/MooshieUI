@@ -203,6 +203,17 @@ export async function civitaiLookupHash(
   return ipcInvoke("civitai_lookup_hash", { hash });
 }
 
+/** CivitAI `baseModel` for a version hash, or null if not found / lookup failed. */
+export async function lookupCivitaiBaseModel(hash: string): Promise<string | null> {
+  try {
+    const data = await civitaiLookupHash(hash);
+    const bm = data.baseModel;
+    return typeof bm === "string" ? bm : null;
+  } catch {
+    return null;
+  }
+}
+
 export type CivitaiModelType =
   | "Checkpoint"
   | "LORA"
