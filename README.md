@@ -1,8 +1,10 @@
 # MooshieUI
 
-> ⚠️ **Work in Progress** - MooshieUI is under active development. Some features are incomplete or may have rough edges. Contributions and feedback are welcome!
+MooshieUI is a beginner-friendly interface for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) that now runs in two modes:
+- **Desktop app mode** via Tauri (Windows/Linux, macOS source build)
+- **Browser/server mode** via the built-in web server (LAN/Docker friendly, mobile-friendly UI)
 
-A modern, beginner-friendly desktop frontend for [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Built with **Svelte 5** + **Tauri** (Rust), MooshieUI hides ComfyUI's node-graph complexity behind a clean, intuitive interface - no workflow editing required.
+Built with **Svelte 5** + **Rust**, it hides ComfyUI's node-graph complexity behind a clean, guided workflow so you can generate without hand-editing graphs.
 
 ![License](https://img.shields.io/github/license/Mooshieblob1/MooshieUI?v=2)
 
@@ -15,8 +17,6 @@ A modern, beginner-friendly desktop frontend for [ComfyUI](https://github.com/co
 ---
 
 ## ✨ Features
-
-> Features marked with ✅ are implemented. Features marked with 🔧 work but need polish.
 
 ### 🎨 Three Generation Modes
 
@@ -92,7 +92,7 @@ Hover over any generated image to reveal an **Upscale** button - instantly upsca
 - **Image Management** - Rename, delete, copy to clipboard, and upscale from the gallery
 - **Generation Mode Labels** - Each image shows whether it was created via txt2img, img2img, or inpainting
 
-### � Compare Grid (XYZ Grid)
+### Compare Grid (XYZ Grid)
 
 - **Multi-cell comparison** - create a grid of cells in the Compare tab (bottom panel), each with its own generation parameters; tweak prompts, checkpoints, samplers, seeds, or any setting per cell
 - **Grid generation** - pressing Generate queues all cells sequentially with a shared random seed for consistent side-by-side comparison
@@ -100,7 +100,7 @@ Hover over any generated image to reveal an **Upscale** button - instantly upsca
 - **Spreadsheet naming** - cells use A1/B1/C1 labels with position-stable colors
 - **Add/remove columns & rows** - new cells clone the adjacent neighbor for quick parameter variation
 
-### �📊 Real-Time Progress
+### Real-Time Progress
 
 - **Live Preview** - See the image as it's being generated (latent previews streamed via WebSocket)
 - **Phase Labels** - "Generating...", "Upscaling...", or "Preparing..." with step counter
@@ -197,7 +197,7 @@ MooshieUI
 
 **How it works:**
 1. User adjusts settings in the Svelte UI
-2. On "Generate", settings are sent to the Rust backend via Tauri `invoke()`
+2. On "Generate", settings are sent to the Rust backend through the app IPC bridge (`ipcInvoke()` in desktop mode, HTTP/SSE in browser mode)
 3. Rust builds a ComfyUI workflow JSON from templates (no node graph exposed)
 4. Workflow is submitted to ComfyUI's `/prompt` API
 5. WebSocket streams progress/previews back to the UI in real-time
@@ -227,6 +227,26 @@ The installer shows real-time terminal output streamed as a matrix-style backdro
 **No Python, no pip, no manual configuration required.** Everything is self-contained in the app's data directory.
 
 > **Disk space:** ~5–10 GB (Python + PyTorch + ComfyUI). Installation takes 5–15 minutes depending on your internet connection.
+
+### Self-Host / Server Mode (Docker)
+
+MooshieUI can run as a headless server that serves the same web UI over your network.
+
+```bash
+# Optional: configure credentials/ports
+cp .env.example .env
+
+# Build and run
+docker compose up -d --build
+```
+
+Then open `http://localhost:3200` (or your configured `MOOSHIEUI_PORT`).
+
+The default `docker-compose.yml` includes:
+- Persistent app data volume (`mooshie-data`)
+- Optional mounted models directory (`MODELS_PATH`)
+- Admin bootstrap via `MOOSHIEUI_ADMIN_USER` / `MOOSHIEUI_ADMIN_PASS`
+- NVIDIA GPU reservation for Docker hosts with NVIDIA runtime support
 
 ### macOS (Manual Build From Source)
 
@@ -334,93 +354,25 @@ Custom ComfyUI nodes for the **Nanosaur** 1.2B DiT architecture:
 
 ---
 
-## 🚧 Roadmap
+## Roadmap
 
-### Done
-- [x] **Image upload** for img2img and inpainting modes
-- [x] **Inpainting canvas** - paint masks directly on images in the UI
-- [x] **Queue management page** - view and cancel queued generations
-- [x] **Settings page** - configure ComfyUI connection, paths, defaults, and extra args
-- [x] **Gallery upscale button** - upscale any image from the gallery grid or lightbox
-- [x] **Anima Base v1.0 support** - auto-download split model (diffusion + CLIP + VAE), quality prompt injection, optimized defaults
-- [x] **ΣIH-1.5 support** - auto-download checkpoint + VAE on selection, with file size display
-- [x] **CFG++ auto-detect** - soft-sets CFG to 1.4 when selecting CFG++ samplers
-- [x] **Info tooltips** - hover (?) icons explain technical settings in plain English
-- [x] **Collapsible settings sections** - with search bar to filter settings
-- [x] **Live generation preview** - latent previews streamed via WebSocket during KSampler
-- [x] **Phase-aware progress** - shows "Generating..." / "Upscaling..." / "Preparing..." with step counters
-- [x] **5D latent tiled diffusion** - MultiDiffusion/SpotDiffusion compatible with Anima (COSMOS) models
-- [x] **Lightbox zoom & dismiss** - scroll-wheel zoom at cursor, Escape/click-outside to close, pan with left or middle mouse
-- [x] **Clipboard copy as file** - copies gallery images as file references (preserves format & metadata)
-- [x] **Windows & Linux builds** - cross-platform CI releases (Windows .msi/.exe, Linux .deb/.AppImage)
-- [x] **Hash-based model detection** - SHA256/AutoV2 hash identification with CivitAI API integration, models recognized even if renamed
-- [x] **Installer UX overhaul** - streamed terminal backdrop, per-step progress bars, download progress with bytes/total, no separate terminal windows
-- [x] **Persistent gallery** - images saved to disk across sessions with rename, delete, and management
-- [x] **Gallery boards** - organize images into named boards/folders
-- [x] **Version display** - app version shown in sidebar below connection status
-- [x] **Download progress** - real-time progress bars with file size for all model downloads (checkpoints, VAEs, upscale models)
-- [x] **Drag & drop** - drop images and masks directly into img2img/inpainting inputs
-- [x] **Image metadata (SwarmUI-compatible)** - embed generation params as SwarmUI JSON into PNG text chunks, read them in lightbox with resizable side panel, backward-compatible with A1111 format
-- [x] **Prompt history & favorites** - auto-saves generated prompts with quick reload and starring
-- [x] **Style presets (Fooocus-style)** - one-click style modifiers for beginner-friendly prompting
-- [x] **Shared model directory** - point to an external/shared models folder from settings
-- [x] **Model-specific presets** - auto-applies defaults based on detected model architecture
-- [x] **Model Hub** - browse CivitAI models with image previews and metadata directly in the app; download with one click; HuggingFace direct URL support; NSFW content filtering with blurred badges; API key setup with guided instructions; expanded base model filters (NoobAI, Pony, Illustrious, SD 3.5, Flux, etc.)
-- [x] **ModelSpec support** - reads Stability AI ModelSpec metadata from safetensors headers; displays model title, author, architecture, resolution, trigger phrases (click to add to prompt), tags, and usage hints in the model selector
-- [x] **Native clipboard** - copies images via native OS clipboard (Wayland `wl-copy` and X11 `xclip` with automatic detection)
-- [x] **Auto-update** - check for and apply MooshieUI updates in-app
-- [x] **ControlNet support** - depth, canny, pose, and other control methods with preset-based and custom modes, image upload/paste/drag-drop, preprocessor installation, strength/start/end controls (SD 1.5, SDXL, Illustrious/NoobAI, Flux, SD3.5)
-- [x] **Dark & light mode** - toggle between dark and light themes in settings
-- [x] **Draggable two-column layout** - drag sections between left/right columns and reorder them; layout persists across sessions
-- [x] **Manual ComfyUI start** - optional toggle to start ComfyUI manually instead of on app launch
-- [x] **Movable installation** - relocate the ComfyUI data directory to another drive from settings
-- [x] **Face Fix (FaceDetailer)** - built-in lightweight face detection and re-denoising using YOLOv8, bundled as a custom node (no Impact Pack dependency); configurable denoise, steps, guide size, and detector model with auto-download
-- [x] **Batch queue** - queue multiple generations with different settings
-- [x] **Streaming final outputs** - final PNGs stream over WebSocket via `MooshieSaveImage` (no output fetch disk round-trip)
-- [x] **16-bit output mode** - selectable 8-bit/16-bit PNG output in generation settings
-- [x] **Metadata modes** - `Text Chunk`, `Stealth Alpha`, and `Both` with 16-bit compatibility upgrade to `Both`
-- [x] **Metadata reuse actions** - lightbox actions for `Reuse Settings`, `Remix`, and `Reuse Seed`
-- [x] **Preview tips carousel** - idle preview area shows rotating, auto-cycling tips with manual navigation
-- [x] **Metadata drag-and-drop import** - drag images onto generation sections to import specific settings, or drop on preview to apply all; Ctrl+V paste supported; auto-strips duplicate quality tags
-- [x] **Face fix auto-setup** - auto-downloads detection model and installs ultralytics on first use
-- [x] **Seed recall** - toggling off random seed recalls the last generated seed
+### Recently Shipped
+- [x] **Dual-mode runtime** - desktop app mode and browser/server mode share the same UI and generation pipeline.
+- [x] **LAN + Docker deployment** - run MooshieUI as a hosted web app for phones, tablets, and other machines on your network.
+- [x] **Mobile UI shell** - dedicated mobile flow for browser sessions.
+- [x] **Compare Grid (XYZ)** - side-by-side parameter sweeps with stitched output labels.
+- [x] **Model Manager** - list, move, and delete local models from Settings.
+- [x] **Robust startup recovery** - clearer handling for external ComfyUI port conflicts and missing custom-node scenarios.
+- [x] **Better browser-mode reliability** - safer temp image handling, JXL persistence fixes, and reconnect recovery.
+- [x] **Admin/network controls** - proxy and PyPI mirror support for installs in restricted network environments.
+- [x] **ControlNet resiliency** - ControlNet node/package setup failures no longer block core generation startup.
 
-- [x] **Localization** - 11 languages with 860+ keys, full parity across all locales, instant switching
-- [x] **Guidance nodes** - Soft Guidance (CFG Rescale) and Smart Guidance (Positive-Biased Adaptive) for hallucination-free upscaling
-- [x] **13 model architectures** - auto-detection with optimal presets for SD1.5, SDXL, Illustrious, SD3, Flux, Pony, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, Kolors, Mugen, Nanosaur
-- [x] **Accelerated model detection** - Turbo/Lightning/LCM/Hyper variants auto-detected with reduced steps and CFG
-- [x] **Rectified flow scheduling** - SD3, Flux, AuraFlow, Mugen, Nanosaur, Stable Cascade auto-inject correct ModelSampling nodes
-- [x] **FluxGuidance** - automatic guidance node injection for Flux Dev (skipped for Schnell)
-- [x] **Pony quality tags** - auto-applied score-based tags, customizable in Settings
-- [x] **Flux & SD3 ControlNet** - presets for XLabs-AI and Stability official controlnets
-- [x] **BF16 VAE auto-detection** - Blackwell GPUs auto-apply `--bf16-vae` to prevent fp16 overflow
-- [x] **NaN guard** - detects and clamps NaN values in VAE output to prevent black images
-- [x] **CUDA 13.0 for Blackwell** - auto-detects compute capability ≥ 12.0 and installs cu130 PyTorch
-- [x] **VRAM flush on interrupt** - calls `/free` endpoint after cancel to prevent corrupted state
-- [x] **Wayland AppImage fix** - auto-detects Wayland sessions and preloads libwayland for WebKitGTK
-- [x] **AMD multi-GPU fix** - correct ROCm architecture detection for RDNA 4 on mixed iGPU/dGPU systems
-- [x] **Gallery import** - import image output folders from ComfyUI, SwarmUI, or any other tool with duplicate detection
-- [x] **Export diagnostic logs** - single-file export with ComfyUI log, GPU info, and app configuration
-- [x] **SwarmUI metadata compatibility** - auto-strips inline syntax from imported SwarmUI image metadata
-- [x] **Info tips toggle** - hide/show tooltip icons via Settings → Accessibility
-- [x] **Native clipboard image paste** - reads images directly from OS clipboard via Tauri command
-- [x] **Compare grid** - XYZ grid comparison with per-cell parameters, shared seed generation, auto-stitching with diff labels and watermark
-- [x] **Mugen support** - Flux2VAE SDXL architecture with 128-channel latents and rectified flow scheduling
-- [x] **Nanosaur support** - 1.2B DiT with 96-channel VAE, custom nodes for model loading and inference
-- [x] **Face fix compositing fix** - smooth cosine falloff blending replaces hard-cutoff mask compositing
-- [x] **Scroll-to-adjust sliders** - click-to-capture scroll wheel for all range inputs with glow indicator
-- [x] **Artist Gallery** - portable module for browsing Anima-preview artist tags with persistent favorites, CDN previews, and category filtering
-- [x] **Model Manager** - manage local model files directly from Settings (move, delete, list)
-- [x] **Generation Toast Notifications** - get notified when generation finishes while away, supported on desktop and mobile UI
-- [x] **Mobile UI** - dedicated bottom-sheet mobile shell for browser sessions
-
-### To Do
-- [ ] **Theme customization** - custom accent colors and themes
-- [ ] **Video generation** - AnimateDiff / COSMOS video workflows
-- [ ] **Training UI** - LoRA training from within the app
-- [ ] **Plugin system** - extend MooshieUI with custom panels and features
-- [x] **Cloud rendering** - the LAN/browser mode allows any device on the network to submit generations to the host GPU; combined with Docker deployment, this effectively enables remote/cloud GPU offloading without a dedicated cloud rendering backend
-- [x] **PWA Support** - MooshieUI ships a built-in web server with full browser-mode support; users can self-host via Docker (`docker-compose.yml` included) and access the UI from any browser, functioning as a hosted web app with multi-user accounts and per-user galleries
+### Next Up
+- [ ] **Theme customization** - custom accent colors and additional theme presets.
+- [ ] **Video workflows** - AnimateDiff/COSMOS video generation support.
+- [ ] **Training UX** - in-app LoRA training flows.
+- [ ] **Plugin system** - extensible panel/plugin architecture for advanced users.
+- [ ] **Model + prompt workflow polish** - keep improving metadata import/remix and batch/queue ergonomics.
 
 ---
 
@@ -430,19 +382,20 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 ---
 
-## ️ Tech Stack
+## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
 | Frontend | Svelte 5, TypeScript 5, Tailwind CSS 4 |
-| Desktop | Tauri v2 (Rust) |
+| Runtime modes | Tauri desktop app + axum headless web server |
 | State | Svelte 5 runes (`$state`, `$derived`) - class-based singleton stores |
 | Canvas | Konva + svelte-konva (inpainting editor, mask painting) |
-| Persistence | `@tauri-apps/plugin-store` (JSON) |
-| Backend API | ComfyUI REST + WebSocket (proxied via Rust) |
+| Persistence | Tauri Store (JSON) + SQLite (`rusqlite`) |
+| Backend API bridge | `ipcInvoke()` / `ipcListen()` (desktop IPC + browser HTTP/SSE routing) |
+| ComfyUI transport | REST + WebSocket via Rust backend |
 | HTTP Client | reqwest (Rust) - shared connection pool |
-| WebSocket | tokio-tungstenite → Tauri event bridge |
-| Inference | ONNX Runtime (`ort` crate) - WD EVA02 image tagger (Describe feature) |
+| WebSocket/SSE | tokio-tungstenite + tokio-stream event fanout |
+| Inference | ONNX Runtime (`ort` crate) for WD EVA02 image interrogation/tagging |
 | Model API | CivitAI REST API (hash-based model lookup), HuggingFace |
 | Autocomplete | Danbooru + Anima tag databases (~100k tags) |
 | i18n | 11 languages, 860+ keys, runtime switching |
@@ -518,7 +471,7 @@ This project is licensed under the [MIT License](LICENSE).
 ### Rust Crates
 - [reqwest](https://docs.rs/reqwest) - HTTP client for ComfyUI API and model downloads
 - [tokio-tungstenite](https://docs.rs/tokio-tungstenite) - WebSocket client for real-time progress streaming
-- [ort](https://docs.rs/ort) - ONNX Runtime bindings for WD EVA02 tagger inference (Describe feature)
+- [ort](https://docs.rs/ort) - ONNX Runtime bindings for WD EVA02 image interrogation/tag inference
 - [image](https://docs.rs/image) - Image processing (PNG, JPEG, WebP)
 - [serde](https://serde.rs/) / [serde_json](https://docs.rs/serde_json) - Serialization for ComfyUI workflow JSON and config persistence
 
