@@ -186,7 +186,10 @@ const fr: Record<string, string> = {
   "settings.connection.server_url": "URL du serveur",
   "settings.connection.port": "Port",
   "settings.connection.network_proxy": "Proxy réseau (git / pip)",
-  "settings.connection.network_proxy_desc": "Facultatif. Utilisé lorsque MooshieUI clone des nœuds personnalisés ControlNet ou installe leurs dépendances Python. Exemple : http://127.0.0.1:7890. Laissez vide pour utiliser les paramètres système par défaut.",
+  "settings.connection.network_proxy_desc": "Facultatif. Utilisé lorsque MooshieUI clone des nœuds personnalisés ControlNet via git. Exemple : http://127.0.0.1:7890. Laissez vide pour utiliser les paramètres système par défaut.",
+  "settings.connection.pip_index_url": "Miroir PyPI (pip)",
+  "settings.connection.pip_index_url_desc": "Facultatif. Utilisé pour toutes les installations pip/uv. Si pypi.org est lent, indiquez un miroir tel que https://pypi.tuna.tsinghua.edu.cn/simple. Peut être combiné avec le proxy ci-dessus.",
+  "settings.connection.pip_index_placeholder": "https://pypi.tuna.tsinghua.edu.cn/simple",
 
   // Apparence
   "settings.appearance.title": "Apparence",

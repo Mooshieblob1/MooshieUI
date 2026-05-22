@@ -174,7 +174,11 @@ const en: Record<string, string> = {
   "settings.connection.port": "Port",
   "settings.connection.network_proxy": "Network proxy (git / pip)",
   "settings.connection.network_proxy_desc":
-    "Optional. Used when MooshieUI clones ControlNet custom nodes or installs their Python requirements. Example: http://127.0.0.1:7890. Leave empty to use system defaults.",
+    "Optional. Used when MooshieUI clones ControlNet custom nodes or installs their Python requirements via git. Example: http://127.0.0.1:7890. Leave empty to use system defaults.",
+  "settings.connection.pip_index_url": "PyPI mirror (pip)",
+  "settings.connection.pip_index_url_desc":
+    "Optional. Used for all pip/uv installs (ControlNet node requirements, optional packages). In regions where pypi.org is slow, set a mirror such as https://pypi.tuna.tsinghua.edu.cn/simple. Works together with the proxy above.",
+  "settings.connection.pip_index_placeholder": "https://pypi.tuna.tsinghua.edu.cn/simple",
 
   // Appearance
   "settings.appearance.title": "Appearance",

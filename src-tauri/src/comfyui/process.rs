@@ -188,6 +188,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
                 &config.comfyui_path,
                 &config.venv_path,
                 config.network_proxy.as_deref(),
+                config.pip_index_url.as_deref(),
             )
             .await
             .map_err(AppError::ProcessSpawnFailed)?;
@@ -219,7 +220,14 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             super::nodes::verify_required_controlnet_nodes(&state.http_client, &config.server_url)
                 .await;
 
-        if mooshie_ok.is_ok() && controlnet_ok.is_ok() {
+        if mooshie_ok.is_ok() {
+            if let Err(e) = controlnet_ok {
+                log::warn!(
+                    "ComfyUI at {} is running but optional ControlNet nodes are missing: {}",
+                    config.server_url,
+                    e
+                );
+            }
             log::info!(
                 "ComfyUI already running at {}, skipping spawn",
                 config.server_url
@@ -228,10 +236,10 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             return Ok(StartResult::AlreadyRunning);
         }
 
-        // Stale external ComfyUI: nodes were deployed to disk but the running process
-        // never loaded them. Kill the listener and spawn a managed instance below.
+        // Stale external ComfyUI: MooshieUI nodes were deployed to disk but the running
+        // process never loaded them. Kill the listener and spawn a managed instance below.
         log::warn!(
-            "ComfyUI at {} is missing required nodes — freeing port {} and spawning managed ComfyUI",
+            "ComfyUI at {} is missing required MooshieUI nodes — freeing port {} and spawning managed ComfyUI",
             config.server_url,
             config.server_port
         );
@@ -239,7 +247,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             log::warn!("Mooshie node verification: {}", e);
         }
         if let Err(e) = controlnet_ok {
-            log::warn!("ControlNet node verification: {}", e);
+            log::warn!("ControlNet node verification (optional): {}", e);
         }
         wait_for_port_free(state, &health_url, config.server_port).await;
     }
@@ -609,9 +617,14 @@ pub async fn wait_for_ready(state: &AppState, timeout_secs: u64) -> Result<(), A
             super::nodes::verify_required_mooshie_nodes(&state.http_client, &base_url)
                 .await
                 .map_err(AppError::ProcessSpawnFailed)?;
-            super::nodes::verify_required_controlnet_nodes(&state.http_client, &base_url)
-                .await
-                .map_err(AppError::ProcessSpawnFailed)?;
+            if let Err(e) =
+                super::nodes::verify_required_controlnet_nodes(&state.http_client, &base_url).await
+            {
+                log::warn!(
+                    "ControlNet custom nodes not loaded at startup (optional): {}",
+                    e
+                );
+            }
             mark_legacy_worker_idle(state).await;
             return Ok(());
         }
@@ -798,6 +811,7 @@ pub async fn start_worker_process(
                 &config.comfyui_path,
                 &config.venv_path,
                 config.network_proxy.as_deref(),
+                config.pip_index_url.as_deref(),
             )
             .await
             .map_err(AppError::ProcessSpawnFailed)?;
@@ -817,7 +831,16 @@ pub async fn start_worker_process(
             super::nodes::verify_required_controlnet_nodes(&state.http_client, &worker.base_url)
                 .await;
 
-        if mooshie_ok.is_ok() && controlnet_ok.is_ok() {
+        if mooshie_ok.is_ok() {
+            if let Err(e) = controlnet_ok {
+                log::warn!(
+                    "Worker {} (GPU {}): optional ControlNet nodes missing at {}: {}",
+                    worker.id,
+                    worker.gpu_index,
+                    worker.base_url,
+                    e
+                );
+            }
             log::info!(
                 "Worker {} (GPU {}): ComfyUI already running at {}",
                 worker.id,
@@ -832,7 +855,7 @@ pub async fn start_worker_process(
         }
 
         log::warn!(
-            "Worker {} (GPU {}): stale ComfyUI at {} — freeing port {}",
+            "Worker {} (GPU {}): ComfyUI at {} missing MooshieUI nodes — freeing port {}",
             worker.id,
             worker.gpu_index,
             worker.base_url,
@@ -996,9 +1019,11 @@ pub async fn wait_for_worker_ready(
                 super::nodes::verify_required_controlnet_nodes(&state.http_client, &worker.base_url)
                     .await
             {
-                let mut status = worker.status.write().await;
-                *status = WorkerStatus::Error;
-                return Err(AppError::ProcessSpawnFailed(e));
+                log::warn!(
+                    "Worker {}: ControlNet custom nodes not loaded (optional): {}",
+                    worker.id,
+                    e
+                );
             }
             let mut status = worker.status.write().await;
             *status = WorkerStatus::Idle;

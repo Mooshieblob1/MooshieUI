@@ -74,6 +74,9 @@ pub struct AppConfig {
     /// Optional HTTP(S) proxy for git clone and pip when installing ControlNet custom nodes.
     /// Example: `http://127.0.0.1:7890`. Also applied via HTTP_PROXY / HTTPS_PROXY env vars.
     pub network_proxy: Option<String>,
+    /// Optional PyPI index URL for pip/uv installs (e.g. a regional mirror).
+    /// Example: `https://pypi.tuna.tsinghua.edu.cn/simple`
+    pub pip_index_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -119,6 +122,7 @@ impl Default for AppConfig {
             attention_backend: "default".to_string(),
             gpu_workers: vec![],
             network_proxy: None,
+            pip_index_url: None,
         }
     }
 }
@@ -262,10 +266,12 @@ pub fn load_persisted_config() -> AppConfig {
 }
 
 pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
-    match &mut config.network_proxy {
-        Some(p) if p.trim().is_empty() => config.network_proxy = None,
-        Some(p) => *p = p.trim().to_string(),
-        None => {}
+    for field in [&mut config.network_proxy, &mut config.pip_index_url] {
+        match field {
+            Some(p) if p.trim().is_empty() => *field = None,
+            Some(p) => *p = p.trim().to_string(),
+            None => {}
+        }
     }
 }
 

@@ -1609,15 +1609,17 @@ pub async fn install_custom_node(
     git_url: String,
     node_name: String,
 ) -> Result<(), AppError> {
-    let (comfyui_path, venv_path, network_proxy) = {
+    let (comfyui_path, venv_path, network_proxy, pip_index_url) = {
         let config = state.config.read().await;
         (
             config.comfyui_path.clone(),
             config.venv_path.clone(),
             config.network_proxy.clone(),
+            config.pip_index_url.clone(),
         )
     };
     let network_proxy = network_proxy.as_deref();
+    let pip_index_url = pip_index_url.as_deref();
     let custom_nodes_dir = std::path::Path::new(&comfyui_path).join("custom_nodes");
     let target_dir = custom_nodes_dir.join(&node_name);
 
@@ -1704,7 +1706,12 @@ pub async fn install_custom_node(
                 .env("VIRTUAL_ENV", &venv_path)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
-            crate::comfyui::nodes::apply_network_proxy(&mut cmd, network_proxy);
+            crate::comfyui::nodes::apply_pip_install_options(
+                &mut cmd,
+                true,
+                network_proxy,
+                pip_index_url,
+            );
             cmd.spawn()
                 .map_err(|e| AppError::Other(format!("uv pip install failed to start: {}", e)))?
         } else {
@@ -1718,7 +1725,12 @@ pub async fn install_custom_node(
             cmd.args(["install", "-r", &req_file.to_string_lossy()])
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
-            crate::comfyui::nodes::apply_network_proxy(&mut cmd, network_proxy);
+            crate::comfyui::nodes::apply_pip_install_options(
+                &mut cmd,
+                false,
+                network_proxy,
+                pip_index_url,
+            );
             cmd.spawn()
                 .map_err(|e| AppError::Other(format!("pip install failed to start: {}", e)))?
         };
@@ -1783,18 +1795,30 @@ pub async fn install_pip_package(
     state: State<'_, Arc<AppState>>,
     package: String,
 ) -> Result<(), AppError> {
-    let venv_path = {
+    let (venv_path, network_proxy, pip_index_url) = {
         let config = state.config.read().await;
-        config.venv_path.clone()
+        (
+            config.venv_path.clone(),
+            config.network_proxy.clone(),
+            config.pip_index_url.clone(),
+        )
     };
+    let network_proxy = network_proxy.as_deref();
+    let pip_index_url = pip_index_url.as_deref();
 
     let uv_path = resolve_uv_bin(&venv_path);
 
     let output = if uv_path.exists() {
-        tokio::process::Command::new(&uv_path)
-            .args(["pip", "install", &package])
-            .env("VIRTUAL_ENV", &venv_path)
-            .output()
+        let mut cmd = tokio::process::Command::new(&uv_path);
+        cmd.args(["pip", "install", &package])
+            .env("VIRTUAL_ENV", &venv_path);
+        crate::comfyui::nodes::apply_pip_install_options(
+            &mut cmd,
+            true,
+            network_proxy,
+            pip_index_url,
+        );
+        cmd.output()
             .await
             .map_err(|e| AppError::Other(format!("uv pip install failed to start: {}", e)))?
     } else {
@@ -1805,9 +1829,15 @@ pub async fn install_pip_package(
         #[cfg(not(target_os = "windows"))]
         let pip_path = venv_base.join("bin").join("pip");
 
-        tokio::process::Command::new(&pip_path)
-            .args(["install", &package])
-            .output()
+        let mut cmd = tokio::process::Command::new(&pip_path);
+        cmd.args(["install", &package]);
+        crate::comfyui::nodes::apply_pip_install_options(
+            &mut cmd,
+            false,
+            network_proxy,
+            pip_index_url,
+        );
+        cmd.output()
             .await
             .map_err(|e| AppError::Other(format!("pip install failed to start: {}", e)))?
     };

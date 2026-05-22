@@ -2614,8 +2614,10 @@ async fn dispatch_command(
             let target_dir = custom_nodes_dir.join(&node_name);
             let venv_path = config.venv_path.clone();
             let network_proxy = config.network_proxy.clone();
+            let pip_index_url = config.pip_index_url.clone();
             drop(config);
             let network_proxy = network_proxy.as_deref();
+            let pip_index_url = pip_index_url.as_deref();
 
             let emit = |step: &str, message: &str, done: bool| {
                 state.broadcast(
@@ -2665,7 +2667,12 @@ async fn dispatch_command(
                     let mut cmd = tokio::process::Command::new(&uv_path);
                     cmd.args(["pip", "install", "-r", &req_file.to_string_lossy()])
                         .env("VIRTUAL_ENV", &venv_path);
-                    crate::comfyui::nodes::apply_network_proxy(&mut cmd, network_proxy);
+                    crate::comfyui::nodes::apply_pip_install_options(
+                        &mut cmd,
+                        true,
+                        network_proxy,
+                        pip_index_url,
+                    );
                     cmd.status()
                         .await
                         .map_err(|e| format!("uv pip install failed: {}", e))?
@@ -2677,7 +2684,12 @@ async fn dispatch_command(
                     let pip_path = venv_base.join("bin").join("pip");
                     let mut cmd = tokio::process::Command::new(&pip_path);
                     cmd.args(["install", "-r", &req_file.to_string_lossy()]);
-                    crate::comfyui::nodes::apply_network_proxy(&mut cmd, network_proxy);
+                    crate::comfyui::nodes::apply_pip_install_options(
+                        &mut cmd,
+                        false,
+                        network_proxy,
+                        pip_index_url,
+                    );
                     cmd.status()
                         .await
                         .map_err(|e| format!("pip install failed: {}", e))?
@@ -2706,15 +2718,25 @@ async fn dispatch_command(
                 .to_string();
             let config = state.config.read().await;
             let venv_path = config.venv_path.clone();
+            let network_proxy = config.network_proxy.clone();
+            let pip_index_url = config.pip_index_url.clone();
             drop(config);
+            let network_proxy = network_proxy.as_deref();
+            let pip_index_url = pip_index_url.as_deref();
 
             let uv_path = crate::commands::api::resolve_uv_bin_pub(&venv_path);
 
             let output = if uv_path.exists() {
-                tokio::process::Command::new(&uv_path)
-                    .args(["pip", "install", &package])
-                    .env("VIRTUAL_ENV", &venv_path)
-                    .output()
+                let mut cmd = tokio::process::Command::new(&uv_path);
+                cmd.args(["pip", "install", &package])
+                    .env("VIRTUAL_ENV", &venv_path);
+                crate::comfyui::nodes::apply_pip_install_options(
+                    &mut cmd,
+                    true,
+                    network_proxy,
+                    pip_index_url,
+                );
+                cmd.output()
                     .await
                     .map_err(|e| format!("uv pip install failed to start: {}", e))?
             } else {
@@ -2723,11 +2745,17 @@ async fn dispatch_command(
                 let pip_path = venv_base.join("Scripts").join("pip.exe");
                 #[cfg(not(target_os = "windows"))]
                 let pip_path = venv_base.join("bin").join("pip");
-                tokio::process::Command::new(&pip_path)
-                    .args(["install", &package])
-                    .output()
+                let mut cmd = tokio::process::Command::new(&pip_path);
+                cmd.args(["install", &package]);
+                crate::comfyui::nodes::apply_pip_install_options(
+                    &mut cmd,
+                    false,
+                    network_proxy,
+                    pip_index_url,
+                );
+                cmd.output()
                     .await
-                    .map_err(|e| format!("pip install failed to start: {}", e))?
+                    .map_err(|e| format!("uv pip install failed to start: {}", e))?
             };
 
             if !output.status.success() {

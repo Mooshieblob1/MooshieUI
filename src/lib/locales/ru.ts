@@ -185,7 +185,10 @@ const ru: Record<string, string> = {
   "settings.connection.server_url": "URL сервера",
   "settings.connection.port": "Порт",
   "settings.connection.network_proxy": "Сетевой прокси (git / pip)",
-  "settings.connection.network_proxy_desc": "Необязательно. Используется, когда MooshieUI клонирует пользовательские узлы ControlNet или устанавливает их зависимости Python. Пример: http://127.0.0.1:7890. Оставьте пустым для системных настроек по умолчанию.",
+  "settings.connection.network_proxy_desc": "Необязательно. Используется, когда MooshieUI клонирует пользовательские узлы ControlNet через git. Пример: http://127.0.0.1:7890. Оставьте пустым для системных настроек по умолчанию.",
+  "settings.connection.pip_index_url": "Зеркало PyPI (pip)",
+  "settings.connection.pip_index_url_desc": "Необязательно. Используется для всех установок pip/uv. Если pypi.org медленный, укажите зеркало, например https://pypi.tuna.tsinghua.edu.cn/simple. Можно использовать вместе с прокси выше.",
+  "settings.connection.pip_index_placeholder": "https://pypi.tuna.tsinghua.edu.cn/simple",
 
   "settings.appearance.title": "Внешний вид",
   "settings.appearance.theme": "Тема",

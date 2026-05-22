@@ -1515,6 +1515,17 @@
               />
               <p class="text-xs text-neutral-500 mt-1">{locale.t('settings.connection.network_proxy_desc')}</p>
             </div>
+            <div>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.pip_index_url')}</label>
+              <input
+                type="text"
+                bind:value={config.pip_index_url}
+                oninput={checkRestartNeeded}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                placeholder={locale.t('settings.connection.pip_index_placeholder')}
+              />
+              <p class="text-xs text-neutral-500 mt-1">{locale.t('settings.connection.pip_index_url_desc')}</p>
+            </div>
           </div>
           </div>
           {/if}

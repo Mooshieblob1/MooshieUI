@@ -185,7 +185,10 @@ const zh: Record<string, string> = {
   "settings.connection.server_url": "服务器网址",
   "settings.connection.port": "连接端口",
   "settings.connection.network_proxy": "网络代理（git / pip）",
-  "settings.connection.network_proxy_desc": "可选。MooshieUI 克隆 ControlNet 自定义节点或安装其 Python 依赖时使用。示例：http://127.0.0.1:7890。留空则使用系统默认设置。",
+  "settings.connection.network_proxy_desc": "可选。MooshieUI 通过 git 克隆 ControlNet 自定义节点时使用。示例：http://127.0.0.1:7890。留空则使用系统默认设置。",
+  "settings.connection.pip_index_url": "PyPI 镜像（pip）",
+  "settings.connection.pip_index_url_desc": "可选。用于所有 pip/uv 安装（ControlNet 节点依赖、可选包）。在 pypi.org 较慢的地区可填写镜像，例如 https://pypi.tuna.tsinghua.edu.cn/simple。可与上方代理同时使用。",
+  "settings.connection.pip_index_placeholder": "https://pypi.tuna.tsinghua.edu.cn/simple",
 
   "settings.appearance.title": "外观",
   "settings.appearance.theme": "主题",

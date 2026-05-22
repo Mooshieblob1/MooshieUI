@@ -15,6 +15,7 @@
 
 const STORAGE_KEY = "mooshieui.styles.v1";
 const ACTIVE_KEY = "mooshieui.styles.active.v1";
+const EXPORT_VERSION = 1;
 
 import { triggerSync } from "../utils/syncTrigger.js";
 
@@ -471,7 +472,7 @@ class StylesStore {
       if (Array.isArray(data?.styles)) {
         const sanitized = data.styles.map(sanitizeStyle).filter(Boolean) as ArtistStyle[];
         this.styles = sanitized;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, styles: sanitized }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: EXPORT_VERSION, styles: sanitized }));
       }
       if (Array.isArray(data?.activeIds)) {
         const ids = new Set(this.styles.map((s) => s.id));

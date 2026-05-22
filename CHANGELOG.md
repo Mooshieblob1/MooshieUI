@@ -1,5 +1,16 @@
 # Changelog
 
+## What's New in v1.3.8
+
+### Settings & pip installs
+- **PyPI mirror URL**: optional `pip_index_url` in Settings → Connection for pip/uv installs (ControlNet node requirements, custom nodes, optional packages); works together with the existing network proxy.
+
+### ComfyUI startup
+- **ControlNet nodes optional**: missing ControlNet custom nodes no longer block ComfyUI startup or kill an external instance on your port; failures are logged as warnings and core MooshieUI generation still works.
+- **Resilient ControlNet setup**: per-package install failures during ControlNet node deployment are logged instead of aborting the whole ensure step.
+
+---
+
 ## What's New in v1.3.7
 
 ### Model detection

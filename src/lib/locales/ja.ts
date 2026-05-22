@@ -186,7 +186,10 @@ const ja: Record<string, string> = {
   "settings.connection.server_url": "サーバーURL",
   "settings.connection.port": "ポート",
   "settings.connection.network_proxy": "ネットワークプロキシ（git / pip）",
-  "settings.connection.network_proxy_desc": "任意。MooshieUI が ControlNet カスタムノードをクローンしたり Python 依存関係をインストールする際に使用します。例: http://127.0.0.1:7890。空欄の場合はシステムの既定値を使用します。",
+  "settings.connection.network_proxy_desc": "任意。MooshieUI が ControlNet カスタムノードを git でクローンする際に使用します。例: http://127.0.0.1:7890。空欄の場合はシステムの既定値を使用します。",
+  "settings.connection.pip_index_url": "PyPI ミラー（pip）",
+  "settings.connection.pip_index_url_desc": "任意。すべての pip/uv インストールに使用します。pypi.org が遅い場合は https://pypi.tuna.tsinghua.edu.cn/simple などのミラーを指定できます。上のプロキシと併用できます。",
+  "settings.connection.pip_index_placeholder": "https://pypi.tuna.tsinghua.edu.cn/simple",
 
   // 外観
   "settings.appearance.title": "外観",

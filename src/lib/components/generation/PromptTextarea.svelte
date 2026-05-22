@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";

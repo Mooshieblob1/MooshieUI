@@ -177,6 +177,7 @@ pub async fn ensure_required_controlnet_nodes(
     comfyui_path: &str,
     venv_path: &str,
     network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
 ) -> Result<(), String> {
     let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
     std::fs::create_dir_all(&custom_nodes).map_err(|e| {
@@ -187,11 +188,36 @@ pub async fn ensure_required_controlnet_nodes(
         )
     })?;
 
+    let mut failures = Vec::new();
     for package in REQUIRED_CONTROLNET_PACKAGES {
-        ensure_custom_node_package(&custom_nodes, venv_path, network_proxy, *package).await?;
+        if let Err(e) = ensure_custom_node_package(
+            &custom_nodes,
+            venv_path,
+            network_proxy,
+            pip_index_url,
+            *package,
+        )
+        .await
+        {
+            log::warn!(
+                "ControlNet custom node '{}' setup failed (optional): {}",
+                package.name,
+                e
+            );
+            failures.push(format!("{}: {}", package.name, e));
+        }
     }
 
-    log::info!("Ensured required ControlNet custom node packages");
+    if failures.is_empty() {
+        log::info!("Ensured required ControlNet custom node packages");
+    } else {
+        log::warn!(
+            "Some ControlNet custom node packages could not be installed ({}). \
+             Core MooshieUI generation still works; built-in ControlNet presets may fail until these install. \
+             If pip timed out, set Settings → Connection → PyPI mirror URL (e.g. Tsinghua) in addition to any proxy.",
+            failures.join("; ")
+        );
+    }
     Ok(())
 }
 
@@ -310,6 +336,7 @@ async fn ensure_custom_node_package(
     custom_nodes: &Path,
     venv_path: &str,
     network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
     package: RequiredCustomNodePackage,
 ) -> Result<(), String> {
     let target_dir = custom_nodes.join(package.name);
@@ -338,6 +365,7 @@ async fn ensure_custom_node_package(
             &target_dir,
             venv_path,
             network_proxy,
+            pip_index_url,
             package.name,
         )
         .await?;
@@ -351,6 +379,23 @@ pub(crate) fn apply_network_proxy(cmd: &mut tokio::process::Command, network_pro
         cmd.env("HTTP_PROXY", proxy)
             .env("HTTPS_PROXY", proxy)
             .env("ALL_PROXY", proxy);
+    }
+}
+
+/// Apply proxy env vars and an optional PyPI index to a pip or uv pip command.
+pub(crate) fn apply_pip_install_options(
+    cmd: &mut tokio::process::Command,
+    use_uv: bool,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+) {
+    apply_network_proxy(cmd, network_proxy);
+    if let Some(url) = pip_index_url.map(str::trim).filter(|s| !s.is_empty()) {
+        if use_uv {
+            cmd.arg("--index-url").arg(url);
+        } else {
+            cmd.args(["-i", url]);
+        }
     }
 }
 
@@ -383,6 +428,7 @@ async fn install_requirements_if_needed(
     target_dir: &Path,
     venv_path: &str,
     network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
     package_name: &str,
 ) -> Result<(), String> {
     let req_hash = file_sha256(requirements)?;
@@ -406,7 +452,9 @@ async fn install_requirements_if_needed(
         package_name
     );
 
-    let mut command = if let Some(uv_path) = find_uv_bin(venv_path).await {
+    let uv_path = find_uv_bin(venv_path).await;
+    let use_uv = uv_path.is_some();
+    let mut command = if let Some(uv_path) = uv_path {
         let mut command = tokio::process::Command::new(uv_path);
         command
             .args(["pip", "install", "-r"])
@@ -419,7 +467,7 @@ async fn install_requirements_if_needed(
         command
     };
 
-    apply_network_proxy(&mut command, network_proxy);
+    apply_pip_install_options(&mut command, use_uv, network_proxy, pip_index_url);
     let output = command
         .output()
         .await

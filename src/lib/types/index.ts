@@ -164,6 +164,8 @@ export interface AppConfig {
   attention_backend: string;
   /** HTTP(S) proxy for git/pip when installing ControlNet custom nodes (optional). */
   network_proxy: string | null;
+  /** PyPI index URL for pip/uv installs, e.g. a regional mirror (optional). */
+  pip_index_url: string | null;
 }
 
 export interface QueueInfo {

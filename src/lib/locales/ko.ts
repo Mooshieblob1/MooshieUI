@@ -185,7 +185,10 @@ const ko: Record<string, string> = {
   "settings.connection.server_url": "서버 URL",
   "settings.connection.port": "포트",
   "settings.connection.network_proxy": "네트워크 프록시 (git / pip)",
-  "settings.connection.network_proxy_desc": "선택 사항. MooshieUI가 ControlNet 커스텀 노드를 복제하거나 Python 종속성을 설치할 때 사용됩니다. 예: http://127.0.0.1:7890. 비워 두면 시스템 기본값을 사용합니다.",
+  "settings.connection.network_proxy_desc": "선택 사항. MooshieUI가 git으로 ControlNet 커스텀 노드를 복제할 때 사용됩니다. 예: http://127.0.0.1:7890. 비워 두면 시스템 기본값을 사용합니다.",
+  "settings.connection.pip_index_url": "PyPI 미러(pip)",
+  "settings.connection.pip_index_url_desc": "선택 사항. 모든 pip/uv 설치에 사용됩니다. pypi.org가 느리면 https://pypi.tuna.tsinghua.edu.cn/simple 같은 미러를 설정하세요. 위 프록시와 함께 사용할 수 있습니다.",
+  "settings.connection.pip_index_placeholder": "https://pypi.tuna.tsinghua.edu.cn/simple",
 
   "settings.appearance.title": "외관",
   "settings.appearance.theme": "테마",
