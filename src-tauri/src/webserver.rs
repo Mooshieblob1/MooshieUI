@@ -2755,7 +2755,7 @@ async fn dispatch_command(
                 );
                 cmd.output()
                     .await
-                    .map_err(|e| format!("uv pip install failed to start: {}", e))?
+                    .map_err(|e| format!("pip install failed to start: {}", e))?
             };
 
             if !output.status.success() {
