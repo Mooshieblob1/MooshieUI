@@ -53,6 +53,18 @@
   let selectedLora = $state<string | null>(null);
   let imageIndex = $state<Record<string, number>>({});
   let searchQuery = $state("");
+  let loraInfoAccessBlocked = $state<string | null>(null);
+
+  function isAccessDeniedError(message: string): boolean {
+    const text = message.toLowerCase();
+    return (
+      text.includes(" 403") ||
+      text.includes("status 403") ||
+      text.includes("forbidden") ||
+      text.includes("permission") ||
+      text.includes("access to the model hub")
+    );
+  }
 
   function saveCache() {
     try {
@@ -107,6 +119,7 @@
   let fetching = false;
 
   function enqueueFetch(filename: string) {
+    if (loraInfoAccessBlocked) return;
     if (cache[filename] || loading[filename] || fetchedSet.has(filename)) return;
     fetchedSet.add(filename);
     fetchQueue.push(filename);
@@ -136,13 +149,19 @@
         saveCache();
       }
     } catch (e) {
-      errors = { ...errors, [filename]: String(e) };
+      const message = e instanceof Error ? e.message : String(e);
+      errors = { ...errors, [filename]: message };
+      if (isAccessDeniedError(message)) {
+        loraInfoAccessBlocked = message;
+        fetchQueue = [];
+      }
     } finally {
       loading = { ...loading, [filename]: false };
     }
   }
 
   function refetchLora(filename: string) {
+    loraInfoAccessBlocked = null;
     fetchedSet.delete(filename);
     delete cache[filename];
     cache = { ...cache };
@@ -269,6 +288,23 @@
     </div>
   </div>
 
+  {#if loraInfoAccessBlocked}
+    <div class="mx-2 mb-1.5 rounded border border-amber-700/50 bg-amber-950/40 px-2 py-1.5 text-[11px] text-amber-200">
+      <div class="flex items-center justify-between gap-2">
+        <p class="truncate" title={loraInfoAccessBlocked}>{loraInfoAccessBlocked}</p>
+        <button
+          type="button"
+          class="shrink-0 text-amber-100 underline hover:text-white"
+          onclick={() => {
+            loraInfoAccessBlocked = null;
+          }}
+        >
+          {locale.t("common.retry")}
+        </button>
+      </div>
+    </div>
+  {/if}
+
   {#if models.loras.length === 0}
     <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
       <p>{locale.t('lora.no_loras')}</p>
@@ -284,6 +320,7 @@
         {@const info = getInfo(loraName)}
         {@const isLoading = loading[loraName]}
         {@const error = errors[loraName]}
+        {@const accessDenied = !!error && isAccessDeniedError(error)}
         {@const imgUrl = currentImageUrl(loraName)}
         {@const resolvedUrl = imgUrl ? (resolvedImages[imgUrl] ?? null) : null}
         {@const imgCount = info?.civitai_images?.length ?? 0}
@@ -347,7 +384,13 @@
             {:else if error}
               <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                <span class="text-[10px] text-neutral-600 text-center" title={error}>{error.includes('not found') ? error : locale.t('lora.not_on_civitai')}</span>
+                <span class="text-[10px] text-neutral-600 text-center" title={error}>
+                  {error.includes('not found')
+                    ? error
+                    : accessDenied
+                      ? error
+                      : locale.t('lora.not_on_civitai')}
+                </span>
                 <button
                   class="text-[10px] text-indigo-400 hover:text-indigo-300"
                   onclick={(e) => { e.stopPropagation(); refetchLora(loraName); }}

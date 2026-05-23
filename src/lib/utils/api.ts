@@ -599,6 +599,10 @@ export async function installPipPackage(packageName: string): Promise<void> {
   return ipcInvoke("install_pip_package", { package: packageName });
 }
 
+export async function checkPythonImport(module: string): Promise<boolean> {
+  return ipcInvoke("check_python_import", { module });
+}
+
 export interface AttentionBackendStatus {
   current: string;
   venv_packages: string[];

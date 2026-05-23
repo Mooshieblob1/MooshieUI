@@ -183,8 +183,6 @@ const MODELHUB_COMMANDS: &[&str] = &[
     "civitai_lookup_hash",
     "download_model",
     "get_model_install_dirs",
-    "get_lora_civitai_info",
-    "get_checkpoint_civitai_info",
 ];
 
 fn is_modelhub_command(command: &str) -> bool {
@@ -2811,6 +2809,21 @@ async fn dispatch_command(
             }
             log::info!("Installed pip package (browser mode): {}", package);
             Ok(serde_json::json!(null))
+        }
+        "check_python_import" => {
+            let module = args["module"].as_str().ok_or("Missing module")?.to_string();
+            let config = state.config.read().await;
+            let venv_path = config.venv_path.clone();
+            drop(config);
+
+            let python_path = crate::commands::api::resolve_venv_python_bin(&venv_path);
+            let output = tokio::process::Command::new(&python_path)
+                .args(["-c", &format!("import {}", module)])
+                .output()
+                .await
+                .map_err(|e| format!("python import check failed to start: {}", e))?;
+
+            Ok(serde_json::json!(output.status.success()))
         }
 
         // --- Model info (server has filesystem access to models) ---

@@ -1,5 +1,21 @@
 # Changelog
 
+## What's New in v1.3.10
+
+### Characters and LoRA metadata stability
+- **Animadex search hardening**: character and facet lookups now debounce more aggressively, cancel stale in-flight requests, and avoid short facet-query spam to reduce 429 rate limits.
+- **LoRA metadata flood protection**: LoRA gallery now detects access-denied responses, stops queueing repeated failing requests, and shows a clear retryable warning state instead of log spam.
+- **Browser auth parity for metadata lookup**: `get_lora_civitai_info` and checkpoint metadata lookup are no longer gated behind Model Hub access, so authenticated users can load local model metadata without 403s.
+
+### Generation dependency verification
+- **Face Detailer dependency check**: added backend `check_python_import` plumbing and frontend validation so MooshieUI verifies `ultralytics` imports successfully after install before continuing generation.
+- **Improved generation error messaging**: generation failures now surface localized, explicit error text.
+
+### Release workflow resilience
+- **Immutable release handling**: release workflow now tolerates immutable GitHub release assets by skipping clobber failures only for that case while still failing on real upload errors.
+
+---
+
 ## What's New in v1.3.9
 
 ### Mobile UI (browser / LAN)

@@ -82,6 +82,8 @@
 
   let searchDebounce: number | null = null;
   let facetDebounce: Partial<Record<CharacterFilterFacetName, number>> = {};
+  let searchController: AbortController | null = null;
+  let facetControllers: Partial<Record<CharacterFilterFacetName, AbortController>> = {};
   let searchSeq = 0;
 
   let scrollContainer = $state<HTMLDivElement | null>(null);
@@ -101,6 +103,8 @@
 
   async function runSearch(targetPage = 1) {
     const seq = ++searchSeq;
+    searchController?.abort();
+    searchController = new AbortController();
     loading = true;
     error = null;
     page = targetPage;
@@ -112,7 +116,7 @@
         page: targetPage,
         filters: filterSnapshot(),
         lorasOnly,
-      });
+      }, searchController.signal);
       if (seq !== searchSeq) return;
       results = data.results;
       total = data.total;
@@ -120,6 +124,7 @@
       lightboxIndex = -1;
     } catch (err) {
       if (seq !== searchSeq) return;
+      if (err instanceof DOMException && err.name === "AbortError") return;
       error = err instanceof Error ? err.message : String(err);
       results = [];
     } finally {
@@ -152,12 +157,24 @@
   }
 
   async function reloadFacetOptions(name: CharacterFilterFacetName) {
+    facetControllers[name]?.abort();
+    const controller = new AbortController();
+    facetControllers[name] = controller;
     try {
-      const data = await searchCharacterFacet(name, facetQuery[name] ?? "");
+      const data = await searchCharacterFacet(
+        name,
+        facetQuery[name] ?? "",
+        controller.signal,
+      );
       facetOptions = { ...facetOptions, [name]: data.values };
       facetTotals = { ...facetTotals, [name]: data.total };
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       /* keep current list */
+    } finally {
+      if (facetControllers[name] === controller) {
+        facetControllers[name] = undefined;
+      }
     }
   }
 
@@ -166,7 +183,7 @@
     searchDebounce = window.setTimeout(() => {
       void runSearch(targetPage);
       searchDebounce = null;
-    }, 150);
+    }, 320);
   }
 
   function onQueryInput(value: string) {
@@ -227,11 +244,12 @@
   function onFacetSearchInput(name: CharacterFilterFacetName, value: string) {
     facetQuery = { ...facetQuery, [name]: value };
     if (!SEARCHABLE_FACETS.has(name)) return;
+    if (value.trim().length > 0 && value.trim().length < 2) return;
     if (facetDebounce[name] !== undefined) window.clearTimeout(facetDebounce[name]);
     facetDebounce[name] = window.setTimeout(() => {
       void reloadFacetOptions(name);
       facetDebounce[name] = undefined;
-    }, 220);
+    }, 360);
   }
 
   function toggleFacetCollapsed(name: CharacterFilterFacetName) {
@@ -270,6 +288,10 @@
     void loadFacets().then(() => runSearch(1));
     return () => {
       if (searchDebounce !== null) window.clearTimeout(searchDebounce);
+      searchController?.abort();
+      for (const name of CHARACTER_FILTER_FACETS) {
+        facetControllers[name]?.abort();
+      }
     };
   });
 </script>

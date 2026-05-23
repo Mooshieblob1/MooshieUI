@@ -3,7 +3,14 @@
   import { progress } from "../../stores/progress.svelte.js";
   import { canvas } from "../../stores/canvas.svelte.js";
   import { compare } from "../../stores/compare.svelte.js";
-  import { generate, interruptGeneration, deleteQueueItem, installPipPackage, downloadModel } from "../../utils/api.js";
+  import {
+    generate,
+    interruptGeneration,
+    deleteQueueItem,
+    installPipPackage,
+    downloadModel,
+    checkPythonImport,
+  } from "../../utils/api.js";
   import { models } from "../../stores/models.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -42,6 +49,15 @@
 
   async function submitGeneration(params: GenerationParams): Promise<string> {
     return trackGeneration(params, await requestGeneration(params));
+  }
+
+  async function ensureFacefixPythonDependency() {
+    if (isBrowserMode) return;
+    await installPipPackage("ultralytics==8.4.34");
+    const importOk = await checkPythonImport("ultralytics");
+    if (!importOk) {
+      throw new Error("Face Detailer dependency check failed: unable to import ultralytics.");
+    }
   }
 
   function finishSubmitRun(runToken: number) {
@@ -114,9 +130,7 @@
           generation.facefixDetector = detector;
           await models.refresh();
         }
-        if (!isBrowserMode) {
-          await installPipPackage("ultralytics==8.4.34");
-        }
+        await ensureFacefixPythonDependency();
       }
 
       // Anima models produce poor results below 1024 — clamp to 1024² area preserving aspect ratio
@@ -140,7 +154,8 @@
     } catch (e) {
       if (runToken === submitRunToken) {
         console.error("Generation failed:", e);
-        errorMsg = String(e);
+        const message = e instanceof Error ? e.message : String(e);
+        errorMsg = locale.t("generation.error_failed_message", { message });
       }
     } finally {
       finishSubmitRun(runToken);

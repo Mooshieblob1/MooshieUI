@@ -1620,6 +1620,20 @@ pub fn resolve_uv_bin_pub(venv_path: &str) -> std::path::PathBuf {
     resolve_uv_bin(venv_path)
 }
 
+/// Resolve the Python executable path from the venv path.
+pub fn resolve_venv_python_bin(venv_path: &str) -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        std::path::Path::new(venv_path)
+            .join("Scripts")
+            .join("python.exe")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::path::Path::new(venv_path).join("bin").join("python")
+    }
+}
+
 /// Check if a custom node package is installed on disk (directory exists in custom_nodes/).
 #[cfg(feature = "desktop")]
 #[tauri::command]
@@ -1887,6 +1901,28 @@ pub async fn install_pip_package(
 
     log::info!("Installed pip package: {}", package);
     Ok(())
+}
+
+/// Verify that a Python module can be imported inside the ComfyUI virtual environment.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn check_python_import(
+    state: State<'_, Arc<AppState>>,
+    module: String,
+) -> Result<bool, AppError> {
+    let venv_path = {
+        let config = state.config.read().await;
+        config.venv_path.clone()
+    };
+
+    let python_path = resolve_venv_python_bin(&venv_path);
+    let output = tokio::process::Command::new(&python_path)
+        .args(["-c", &format!("import {}", module)])
+        .output()
+        .await
+        .map_err(|e| AppError::Other(format!("python import check failed to start: {}", e)))?;
+
+    Ok(output.status.success())
 }
 
 /// Search for a model file by SHA256 hash (full or AutoV2) within a model category directory.

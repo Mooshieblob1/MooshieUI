@@ -401,6 +401,7 @@ pub fn run() {
             commands::api::is_custom_node_installed,
             commands::api::install_custom_node,
             commands::api::install_pip_package,
+            commands::api::check_python_import,
             commands::websocket::connect_ws,
             commands::websocket::disconnect_ws,
             commands::workflow::generate,

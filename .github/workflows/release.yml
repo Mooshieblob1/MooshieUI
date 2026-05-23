@@ -198,10 +198,20 @@ jobs:
               --repo "${{ github.repository }}" \
               --title "MooshieUI ${TAG}" \
               --notes-file /tmp/release-body.md
-            gh release upload "${TAG}" \
+            upload_log="$(mktemp)"
+            if ! gh release upload "${TAG}" \
               --repo "${{ github.repository }}" \
               --clobber \
-              /tmp/release-files/*
+              /tmp/release-files/* >"${upload_log}" 2>&1; then
+              if grep -qi "immutable release" "${upload_log}"; then
+                echo "Release ${TAG} is immutable; keeping existing release assets."
+              else
+                cat "${upload_log}"
+                rm -f "${upload_log}"
+                exit 1
+              fi
+            fi
+            rm -f "${upload_log}"
           else
             gh release create "${TAG}" \
               --repo "${{ github.repository }}" \

@@ -12,9 +12,9 @@ function apiUrl(path: string): string {
   return `${ANIMADEX_ORIGIN}api/characters${path}`;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
+async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const fetchFn = animadexFetch ?? globalThis.fetch.bind(globalThis);
-  const res = await fetchFn(url, { credentials: "omit" });
+  const res = await fetchFn(url, { credentials: "omit", signal });
   if (!res.ok) {
     throw new Error(`animadex: ${url} returned ${res.status}`);
   }
@@ -40,9 +40,10 @@ function buildSearchParams(params: CharacterSearchParams): string {
 
 export async function searchCharacters(
   params: CharacterSearchParams,
+  signal?: AbortSignal,
 ): Promise<CharacterSearchResponse> {
   const qs = buildSearchParams(params);
-  return fetchJson<CharacterSearchResponse>(apiUrl(`/search?${qs}`));
+  return fetchJson<CharacterSearchResponse>(apiUrl(`/search?${qs}`), signal);
 }
 
 export async function loadCharacterFacets(): Promise<CharacterFacetsResponse> {
@@ -52,7 +53,8 @@ export async function loadCharacterFacets(): Promise<CharacterFacetsResponse> {
 export async function searchCharacterFacet(
   facet: CharacterFilterFacetName,
   query: string,
+  signal?: AbortSignal,
 ): Promise<FacetSearchResponse> {
   const q = encodeURIComponent(query.trim());
-  return fetchJson<FacetSearchResponse>(apiUrl(`/facet/${facet}?q=${q}`));
+  return fetchJson<FacetSearchResponse>(apiUrl(`/facet/${facet}?q=${q}`), signal);
 }
