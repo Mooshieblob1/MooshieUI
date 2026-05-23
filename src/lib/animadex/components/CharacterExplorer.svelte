@@ -244,8 +244,8 @@
   function onFacetSearchInput(name: CharacterFilterFacetName, value: string) {
     facetQuery = { ...facetQuery, [name]: value };
     if (!SEARCHABLE_FACETS.has(name)) return;
-    if (value.trim().length > 0 && value.trim().length < 2) return;
     if (facetDebounce[name] !== undefined) window.clearTimeout(facetDebounce[name]);
+    if (value.trim().length > 0 && value.trim().length < 2) return;
     facetDebounce[name] = window.setTimeout(() => {
       void reloadFacetOptions(name);
       facetDebounce[name] = undefined;

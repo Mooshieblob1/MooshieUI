@@ -1634,6 +1634,18 @@ pub fn resolve_venv_python_bin(venv_path: &str) -> std::path::PathBuf {
     }
 }
 
+/// Validate a Python module name for `python -c "import <module>"`.
+pub fn is_valid_python_module_name(module: &str) -> bool {
+    let module = module.trim();
+    !module.is_empty()
+        && !module.starts_with('.')
+        && !module.ends_with('.')
+        && !module.contains("..")
+        && module
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+}
+
 /// Check if a custom node package is installed on disk (directory exists in custom_nodes/).
 #[cfg(feature = "desktop")]
 #[tauri::command]
@@ -1910,6 +1922,11 @@ pub async fn check_python_import(
     state: State<'_, Arc<AppState>>,
     module: String,
 ) -> Result<bool, AppError> {
+    let module = module.trim().to_string();
+    if !is_valid_python_module_name(&module) {
+        return Err(AppError::Other("Invalid module name".into()));
+    }
+
     let venv_path = {
         let config = state.config.read().await;
         config.venv_path.clone()

@@ -53,6 +53,7 @@
 
   async function ensureFacefixPythonDependency() {
     if (isBrowserMode) return;
+    if (await checkPythonImport("ultralytics")) return;
     await installPipPackage("ultralytics==8.4.34");
     const importOk = await checkPythonImport("ultralytics");
     if (!importOk) {

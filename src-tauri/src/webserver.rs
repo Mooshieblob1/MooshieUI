@@ -2811,7 +2811,14 @@ async fn dispatch_command(
             Ok(serde_json::json!(null))
         }
         "check_python_import" => {
-            let module = args["module"].as_str().ok_or("Missing module")?.to_string();
+            let module = args["module"]
+                .as_str()
+                .ok_or("Missing module")?
+                .trim()
+                .to_string();
+            if !crate::commands::api::is_valid_python_module_name(&module) {
+                return Err("Invalid module name".into());
+            }
             let config = state.config.read().await;
             let venv_path = config.venv_path.clone();
             drop(config);
