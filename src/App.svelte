@@ -6,6 +6,7 @@
   import MobileApp from "./lib/components/mobile/MobileApp.svelte";
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
+  import GalleryPage from "./lib/components/gallery/GalleryPage.svelte";
   import ModelHubPage from "./lib/components/modelhub/ModelHubPage.svelte";
   import { ArtistGalleryPage } from "./lib/artist-gallery/index.js";
   import { connection } from "./lib/stores/connection.svelte.js";
@@ -25,6 +26,9 @@
   import { downloads } from "./lib/stores/downloads.svelte.js";
   import { compare } from "./lib/stores/compare.svelte.js";
   import { artistInsert } from "./lib/stores/artistInsert.svelte.js";
+  import { characterInsert } from "./lib/stores/characterInsert.svelte.js";
+  import CharacterInsertModal from "./lib/animadex/components/CharacterInsertModal.svelte";
+  import type { AnimadexCharacter } from "./lib/animadex/types.js";
   import { styles as stylesStore } from "./lib/stores/styles.svelte.js";
   import { notifications } from "./lib/stores/notifications.svelte.js";
   import NotificationBell from "./lib/components/ui/NotificationBell.svelte";
@@ -61,7 +65,7 @@
   const FETCH_TIMEOUT_MS = 30_000;
   const GENERATION_DONE_TOAST_VISIBLE_MS = 6_000;
   const GENERATION_DONE_TOAST_EXIT_MS = 220;
-  type PrimaryPage = "generate" | "gallery" | "modelhub" | "artists" | "settings";
+  type PrimaryPage = "generate" | "gallery" | "modelhub" | "artists" | "characters" | "settings";
   type GenerationDoneToast = {
     id: number;
     imageUrl: string;
@@ -702,6 +706,18 @@
     if (!artistInsert.pending) {
       currentPage = "generate";
     }
+  }
+
+  function handleCharacterInsert(character: AnimadexCharacter) {
+    characterInsert.request(character);
+    if (!characterInsert.pending) {
+      currentPage = "generate";
+    }
+  }
+
+  function finishCharacterInsert() {
+    characterInsert.dismiss();
+    currentPage = "generate";
   }
 
   function applyArtistTag(withAt: string, mode: "add" | "replace") {
@@ -2186,6 +2202,7 @@
 {:else if useMobileLayout}
   <MobileApp
     canUseModelhub={canUseModelhub}
+    {userRole}
     navigationTarget="generate"
     navigationVersion={mobileGenerateNavigationVersion}
     onTabChange={(tab) => (mobileCurrentTab = tab)}
@@ -2405,7 +2422,7 @@
       }}
     />
     {#if startupStatus && !connection.connected}
-      <div class="flex items-center gap-2 px-4 py-2 bg-amber-900/30 border-b border-amber-800/50 text-amber-200 text-sm">
+      <div class="mb-1 flex shrink-0 items-center gap-2 rounded-[var(--app-panel-radius)] border border-amber-800/60 bg-amber-950/85 px-4 py-2.5 text-sm text-amber-100 shadow-lg shadow-black/20 backdrop-blur-sm">
         {#if startupStatusKind === "manual" || startupStatusKind === "error"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           {startupStatus}
@@ -2452,260 +2469,14 @@
     {#if currentPage === "generate"}
       <GenerationPage />
     {:else if currentPage === "gallery"}
-      <div class="p-6 h-full overflow-y-auto will-change-scroll">
-        {#if gallery.loading}
-          <div class="flex items-center justify-center h-full text-neutral-500">
-            {locale.t("gallery.loading")}
-          </div>
-        {:else if gallery.images.length === 0}
-          <div
-            class="flex items-center justify-center h-full text-neutral-500"
-          >
-            {locale.t("gallery.empty_generate")}
-          </div>
-        {:else}
-          <div class="space-y-4">
-            {#if gallery.hasExpiry}
-              <div class="px-4 py-3 rounded-xl bg-amber-900/30 border border-amber-700/50 text-amber-300 text-sm flex items-start gap-3">
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                <div>
-                  <p class="font-medium text-amber-200">{locale.t('gallery.expiry_warning')}</p>
-                  <p class="text-amber-400/80 text-xs mt-1">{locale.t('gallery.expiry_hint')}</p>
-                  {#if gallery.expiringWithin24h > 0}
-                    <p class="text-amber-200 text-xs mt-1 font-semibold">{locale.t('gallery.expiry_soon', { count: String(gallery.expiringWithin24h) })}</p>
-                  {/if}
-                  {#if gallery.storageInfo}
-                    <p class="text-amber-400/60 text-xs mt-1">{locale.t('gallery.storage_usage')}: {gallery.storageLabel}</p>
-                  {/if}
-                </div>
-              </div>
-            {/if}
-            <div class="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 space-y-3">
-              <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 items-end">
-                <div class="lg:col-span-2">
-                  <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.images_per_row")} {viewColumns(galleryView)}</div>
-                  <input
-                    type="range"
-                    bind:value={galleryImagesPerRow}
-                    min="2"
-                    max="8"
-                    step="1"
-                    class="w-full accent-indigo-500"
-                    disabled={galleryView === "details"}
-                  />
-                </div>
-                <div>
-                  <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.sort_by")}</div>
-                  <select bind:value={gallerySortBy} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
-                    <option value="date">{locale.t("gallery.sort_date")}</option>
-                    <option value="name">{locale.t("gallery.sort_name")}</option>
-                    <option value="size">{locale.t("gallery.sort_size")}</option>
-                  </select>
-                </div>
-                <div>
-                  <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.group_by")}</div>
-                  <select bind:value={galleryGroupBy} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
-                    <option value="none">{locale.t("gallery.group_none")}</option>
-                    <option value="date">{locale.t("gallery.group_date")}</option>
-                    <option value="month">{locale.t("gallery.group_month")}</option>
-                    <option value="mode">{locale.t("gallery.group_mode")}</option>
-                    <option value="prompt">{locale.t("gallery.group_prompt")}</option>
-                    <option value="board">{locale.t("gallery.group_board")}</option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="grid grid-cols-1 lg:grid-cols-4 gap-3 items-end">
-                <div>
-                  <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.board_filter")}</div>
-                  <select bind:value={galleryBoardFilter} class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-200">
-                    <option value="all">{locale.t("gallery.all_boards")}</option>
-                    <option value="Unsorted">{locale.t("gallery.unsorted")}</option>
-                    {#each gallery.boards as board}
-                      <option value={board}>{board}</option>
-                    {/each}
-                  </select>
-                </div>
-                <div class="lg:col-span-3">
-                  <div class="text-xs text-neutral-400 mb-1">{locale.t("gallery.create_board")}</div>
-                  <div class="flex items-center gap-2">
-                    <input
-                      type="text"
-                      bind:value={newBoardName}
-                      class="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-2 text-sm text-neutral-100 placeholder-neutral-500"
-                      placeholder={locale.t("gallery.placeholder_board")}
-                    />
-                    <button
-                      class="px-3 py-2 text-xs rounded border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
-                      onclick={addBoard}
-                      disabled={!newBoardName.trim()}
-                    >
-                      {locale.t("gallery.add")}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <div class="text-xs text-neutral-400 mb-2">{locale.t("gallery.view")}</div>
-                <div class="flex flex-wrap gap-2">
-                  <button
-                    onclick={() => (gallerySortDir = gallerySortDir === "asc" ? "desc" : "asc")}
-                    class="px-3 py-1.5 text-xs rounded border transition-colors border-neutral-700 text-neutral-300 hover:border-neutral-500"
-                    title={locale.t("gallery.toggle_sort")}
-                  >
-                    {gallerySortDir === "asc" ? locale.t("gallery.ascending") : locale.t("gallery.descending")}
-                  </button>
-                  <button onclick={() => (galleryView = "huge")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'huge' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.huge_icons")}</button>
-                  <button onclick={() => (galleryView = "large")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'large' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.large_icons")}</button>
-                  <button onclick={() => (galleryView = "small")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'small' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.small_icons")}</button>
-                  <button onclick={() => (galleryView = "details")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'details' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.detailed_view")}</button>
-                  <button onclick={rescanGalleryMetadata} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200" title={locale.t("gallery.rescan_tooltip")}> 
-                    {locale.t("gallery.rescan_metadata")}
-                  </button>
-                  <button
-                    onclick={sortGalleryByArtist}
-                    disabled={gallery.autoSorting}
-                    class="px-3 py-1.5 text-xs rounded border transition-colors border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={locale.t("gallery.sort_by_artist_tooltip")}
-                  >
-                    {gallery.autoSorting ? locale.t("gallery.sort_by_artist_running") : locale.t("gallery.sort_by_artist")}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {#each galleryGroupsVisible as group}
-              <section class="space-y-2">
-                {#if galleryGroupBy === "date"}
-                  <h3 class="text-sm text-neutral-300 font-medium">{group.label}</h3>
-                {:else if galleryGroupBy === "month" || galleryGroupBy === "mode" || galleryGroupBy === "prompt" || galleryGroupBy === "board"}
-                  <h3 class="text-sm text-neutral-300 font-medium">{group.label}</h3>
-                {/if}
-
-                {#if galleryView === "details"}
-                  <div class="rounded-xl border border-neutral-800 overflow-hidden">
-                    <div class="grid grid-cols-[72px_1fr_150px_120px_320px] gap-2 px-3 py-2 bg-neutral-900 text-[11px] uppercase tracking-wide text-neutral-500 border-b border-neutral-800">
-                      <div>{locale.t("gallery.col_preview")}</div>
-                      <div>{locale.t("gallery.col_name")}</div>
-                      <div>{locale.t("gallery.col_date")}</div>
-                      <div>{locale.t("gallery.col_size")}</div>
-                      <div>{locale.t("gallery.col_actions")}</div>
-                    </div>
-                    {#each group.images as image}
-                      <div class="grid grid-cols-[72px_1fr_150px_120px_320px] gap-2 px-3 py-2 items-center border-b border-neutral-900/80 last:border-b-0" oncontextmenu={(e) => openContextMenu(e, image)}>
-                        <button class="w-14 h-14 rounded border border-neutral-800 overflow-hidden" onclick={() => gallery.openLightbox(image)}>
-                          <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} class="w-full h-full object-cover" />
-                        </button>
-                        <div class="text-sm text-neutral-200 truncate" title={image.filename}>{image.filename}</div>
-                        <div class="text-xs text-neutral-400">{formatDate(image.generated_at_ms)}</div>
-                        <div class="text-xs text-neutral-400">{formatBytes(image.file_size_bytes)}</div>
-                        <div class="flex flex-wrap gap-1">
-                          <select
-                            class="px-2 py-1 text-[11px] rounded bg-neutral-800 border border-neutral-700 text-neutral-200"
-                            value={boardLabel(image)}
-                            onchange={(e) => assignBoard(image, (e.target as HTMLSelectElement).value)}
-                            title={locale.t("gallery.assign_board")}
-                          >
-                            <option value="Unsorted">{locale.t("gallery.unsorted")}</option>
-                            {#each gallery.boards as board}
-                              <option value={board}>{board}</option>
-                            {/each}
-                          </select>
-                          {#if generation.manualSaveMode && !image.gallery_filename}
-                            <button class="px-2 py-1 text-[11px] rounded bg-indigo-700 hover:bg-indigo-600 text-neutral-100" onclick={() => saveToDir(image)}>{locale.t("gallery.save_to_folder")}</button>
-                          {/if}
-                          <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => img2imgImage(image)}>{locale.t("gallery.i2i")}</button>
-                          <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => inpaintImage(image)}>{locale.t("gallery.inpaint")}</button>
-                          {#if !image.is_upscaled}
-                            <button class="px-2 py-1 text-[11px] rounded bg-[#FFCC00] hover:bg-[#FFDD4D] text-black font-semibold" onclick={() => upscaleImage(image)}>{locale.t("gallery.upscale")}</button>
-                          {/if}
-                          <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100 disabled:opacity-50 disabled:cursor-not-allowed" disabled={gallery.saving} onclick={() => gallery.saveImageAs(image)}>{gallery.saving ? locale.t("gallery.saving") : locale.t("gallery.save")}</button>
-                          <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.copyToClipboard(image)}>{locale.t("gallery.copy")}</button>
-                          <button class="px-2 py-1 text-[11px] rounded bg-red-900/80 hover:bg-red-800 text-neutral-100" onclick={() => gallery.deleteImage(image)}>{locale.t("gallery.delete")}</button>
-                        </div>
-                      </div>
-                    {/each}
-                  </div>
-                {:else}
-                  <div
-                    class="grid gap-3"
-                    style="grid-template-columns: repeat({viewColumns(galleryView)}, minmax(0, 1fr));"
-                  >
-                    {#each group.images as image}
-                      <div class="group relative rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors {galleryView === 'huge' ? 'aspect-4/3' : galleryView === 'small' ? 'aspect-square' : 'aspect-square'}" oncontextmenu={(e) => openContextMenu(e, image)}>
-                        <button
-                          class="w-full h-full"
-                          onclick={() => gallery.openLightbox(image)}
-                        >
-                          <img
-                            use:lazyThumbnail={{ image, size: thumbSize }}
-                            alt={image.filename}
-                            class="w-full h-full object-cover"
-                          />
-                        </button>
-                        <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"></div>
-                        <div class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200 pointer-events-none">
-                          {boardLabel(image)}
-                        </div>
-                        {#if galleryView !== 'small'}
-                          {@const artist = gallery.primaryArtist(image)}
-                          {#if artist}
-                            <div
-                              class="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-red-900/80 text-[10px] text-red-200 pointer-events-none truncate max-w-[60%]"
-                              title={locale.t("gallery.artist_detected", { tag: artist.tag })}
-                            >
-                              @{artist.slug}
-                            </div>
-                          {/if}
-                        {/if}
-                        {#if generation.manualSaveMode && !image.gallery_filename}
-                          <div class="absolute top-0 right-0 pt-1 pr-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                            <button class="w-7 h-7 flex items-center justify-center rounded bg-indigo-700/90 hover:bg-indigo-600 text-neutral-100 shadow pointer-events-auto shrink-0" title={locale.t('gallery.save_to_folder')} onclick={(e) => { e.stopPropagation(); saveToDir(image); }}>
-                              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
-                            </button>
-                          </div>
-                        {/if}
-                        {#if viewColumns(galleryView) <= 5}
-                          <div class="absolute bottom-0 inset-x-0 flex justify-center items-center gap-1 px-1.5 pb-1.5 pt-6 opacity-0 group-hover:opacity-100 transition-opacity bg-linear-to-t from-black/80 to-transparent pointer-events-none">
-                            <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black text-[11px] font-bold shadow pointer-events-auto shrink-0" title={locale.t('gallery.img2img')} onclick={(e) => { e.stopPropagation(); img2imgImage(image); }}>I2I</button>
-                            <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow pointer-events-auto shrink-0" title={locale.t('gallery.inpaint')} onclick={(e) => { e.stopPropagation(); inpaintImage(image); }}>
-                              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                            </button>
-                            {#if !image.is_upscaled}
-                              <button class="w-7 h-7 flex items-center justify-center rounded bg-[#FFCC00]/95 hover:bg-[#FFCC00] text-black shadow pointer-events-auto shrink-0" title={locale.t('gallery.upscale')} onclick={(e) => { e.stopPropagation(); upscaleImage(image); }}>
-                                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-                              </button>
-                            {/if}
-                            <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow pointer-events-auto shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" disabled={gallery.saving} title={locale.t('gallery.save_as')} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>
-                              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                            </button>
-                            <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow pointer-events-auto shrink-0" title={locale.t('gallery.copy')} onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}>
-                              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                            </button>
-                            <button class="w-7 h-7 flex items-center justify-center rounded bg-red-900/80 hover:bg-red-800 text-red-300 hover:text-red-200 shadow pointer-events-auto shrink-0" title={locale.t('gallery.delete')} onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}>
-                              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                            </button>
-                          </div>
-                        {/if}
-                      </div>
-                    {/each}
-                  </div>
-                {/if}
-              </section>
-            {/each}
-            {#if galleryRenderLimit < galleryTotalCount}
-              <div use:loadMoreGallery class="h-4 w-full"></div>
-            {/if}
-          </div>
-        {/if}
-      </div>
+      <GalleryPage onSwitchToGenerate={() => (currentPage = "generate")} />
     {:else if currentPage === "modelhub"}
       <ModelHubPage />
     {:else if currentPage === "artists"}
       <ArtistGalleryPage
         manifestUrl={connection.artistGalleryManifestUrl}
         oninsertTag={handleArtistTagInsert}
+        oninsertCharacter={handleCharacterInsert}
       />
     {:else if currentPage === "settings"}
       <SettingsPage {userRole} />
@@ -2991,7 +2762,7 @@
   {#key generationDoneToast.id}
     <div class="fixed bottom-5 right-4 z-80 w-[min(22rem,calc(100vw-2rem))] md:right-5">
       <div
-        class="generation-done-toast flex items-center gap-3 rounded-xl border border-neutral-700 bg-neutral-900/95 p-2 shadow-2xl shadow-black/40 backdrop-blur-sm {generationDoneToast.leaving ? 'generation-done-toast-out' : 'generation-done-toast-in'}"
+        class="generation-done-toast flex items-center gap-3 rounded-[var(--app-panel-radius)] border border-neutral-700 bg-neutral-900/95 p-2 shadow-2xl shadow-black/40 backdrop-blur-sm {generationDoneToast.leaving ? 'generation-done-toast-out' : 'generation-done-toast-in'}"
       >
         <button
           type="button"
@@ -3028,10 +2799,10 @@
 {#if gallery.toast}
   {@const type = gallery.toast.type}
   <div
-    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-60 px-4 py-2 text-sm rounded-lg shadow-lg border animate-fade-in flex items-center gap-2
-    {type === 'success' ? 'bg-green-800/90 border-green-700 text-green-100' : 
-     type === 'error' ? 'bg-red-800/90 border-red-700 text-red-100' :
-     'bg-neutral-800 text-neutral-100 border-neutral-700'}"
+    class="fixed bottom-6 left-1/2 z-60 flex -translate-x-1/2 animate-fade-in items-center gap-2 rounded-[var(--app-panel-radius)] border px-4 py-2.5 text-sm shadow-2xl shadow-black/40 backdrop-blur-sm
+    {type === 'success' ? 'border-green-700/80 bg-green-950/95 text-green-100' : 
+     type === 'error' ? 'border-red-700/80 bg-red-950/95 text-red-100' :
+     'border-neutral-700 bg-neutral-900/95 text-neutral-100'}"
   >
     {#if type === 'success'}
       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
@@ -3054,6 +2825,8 @@
 />
 
 <!-- Interrogate modal (from gallery/lightbox) -->
+
+<CharacterInsertModal onapplied={finishCharacterInsert} />
 
 <!-- Artist tag conflict dialog -->
 {#if artistInsertPending}

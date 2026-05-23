@@ -158,10 +158,10 @@
 </script>
 
 {#if updateState !== "idle" && !dismissed}
-  <div class="flex items-center gap-3 px-4 py-2 border-b text-sm
+  <div class="mb-1 flex shrink-0 items-center gap-3 rounded-[var(--app-panel-radius)] border px-4 py-2.5 text-sm shadow-lg shadow-black/20 backdrop-blur-sm
     {updateState === 'error' || updateState === 'version_mismatch'
-      ? 'bg-red-900/30 border-red-800/50 text-red-200'
-      : 'bg-indigo-900/30 border-indigo-800/50 text-indigo-200'}">
+      ? 'border-red-800/60 bg-red-950/85 text-red-100'
+      : 'border-indigo-800/60 bg-indigo-950/85 text-indigo-100'}">
 
     {#if updateState === "available"}
       <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">

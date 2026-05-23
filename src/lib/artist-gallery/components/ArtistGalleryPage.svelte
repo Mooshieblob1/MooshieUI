@@ -8,14 +8,32 @@
   import ArtistLightbox from "./ArtistLightbox.svelte";
   import FavouritesManager from "./FavouritesManager.svelte";
   import { proxiedCdnUrl } from "../../utils/cdnFetch.js";
+  import { CharacterExplorer } from "../../animadex/index.js";
+  import type { AnimadexCharacter } from "../../animadex/types.js";
+
+  type ExplorerTab = "artists" | "characters";
 
   interface Props {
     manifestUrl: string;
+    /** Initial explorer tab when mounting this page. */
+    initialTab?: ExplorerTab;
     /** Optional integrator hook for "Insert tag into prompt" in the lightbox. */
     oninsertTag?: (tag: string) => void;
+    /** Insert character tags into the positive prompt (opens chooser modal). */
+    oninsertCharacter?: (character: AnimadexCharacter) => void;
   }
 
-  let { manifestUrl, oninsertTag }: Props = $props();
+  let { manifestUrl, initialTab = "artists", oninsertTag, oninsertCharacter }: Props = $props();
+
+  let explorerTab = $state<ExplorerTab>("artists");
+  let lastInitialTab = $state<ExplorerTab>("artists");
+
+  $effect(() => {
+    if (initialTab !== lastInitialTab) {
+      lastInitialTab = initialTab;
+      explorerTab = initialTab;
+    }
+  });
 
   const store = createArtistGalleryStore(manifestUrl);
 
@@ -385,6 +403,28 @@
 </script>
 
 <div class="flex h-full w-full flex-col overflow-hidden bg-neutral-950 text-neutral-100">
+  <div class="flex-none border-b border-neutral-800 bg-neutral-900/80 px-4 pt-3">
+    <div class="mb-3 flex gap-1 rounded-lg border border-neutral-800 bg-neutral-950/80 p-1 w-fit">
+      <button
+        type="button"
+        class="rounded-md px-3 py-1 text-xs font-medium transition-colors {explorerTab === 'artists' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
+        onclick={() => (explorerTab = 'artists')}
+      >
+        {locale.t('artist_gallery.tab_artists')}
+      </button>
+      <button
+        type="button"
+        class="rounded-md px-3 py-1 text-xs font-medium transition-colors {explorerTab === 'characters' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
+        onclick={() => (explorerTab = 'characters')}
+      >
+        {locale.t('artist_gallery.tab_characters')}
+      </button>
+    </div>
+  </div>
+
+  {#if explorerTab === 'characters'}
+    <CharacterExplorer oninsertCharacter={oninsertCharacter} />
+  {:else}
   <header class="flex-none border-b border-neutral-800 bg-neutral-900/60 px-4 py-3">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
@@ -796,7 +836,6 @@
       {/if}
     {/if}
   </div>
-</div>
 
 {#if active}
   <ArtistLightbox
@@ -864,3 +903,5 @@
     </div>
   </div>
 {/if}
+  {/if}
+</div>

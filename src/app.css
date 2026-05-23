@@ -3,6 +3,10 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
+  /* Match desktop shell: outer md:rounded-2xl, inner md:rounded-xl */
+  --app-shell-radius: 1rem;
+  --app-panel-radius: 0.75rem;
+
   --theme-accent-foreground: #111111;
 
   --color-neutral-50: #fafafa;
@@ -234,6 +238,18 @@ option:checked {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #404040; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #525252; }
+
+/* Mobile shell: hide scrollbars; touch scrolling still works */
+.mobile-shell,
+.mobile-shell * {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.mobile-shell *::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
 
 /* Prevent WebKitGTK from intercepting range-slider drags as OS drag-drop gestures. */
 input[type="range"] {

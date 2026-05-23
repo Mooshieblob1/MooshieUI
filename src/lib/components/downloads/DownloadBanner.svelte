@@ -15,7 +15,7 @@
 </script>
 
 {#if downloads.hasActive}
-  <div class="shrink-0 bg-neutral-900/95 border-b border-neutral-800">
+  <div class="mb-1 shrink-0 overflow-hidden rounded-[var(--app-panel-radius)] border border-neutral-700 bg-neutral-900/95 shadow-lg shadow-black/20 backdrop-blur-sm">
     {#each [...downloads.active.values()] as dl (dl.filename)}
       {@const percent = dl.total > 0 ? Math.round((dl.downloaded / dl.total) * 100) : 0}
       <div class="flex items-center gap-3 px-4 py-1.5">

@@ -18,7 +18,23 @@
   import { marked } from "marked";
   import { clearArtistImageCache, getArtistImageCacheCount } from "../../artist-gallery/imageCache.js";
 
-  let { userRole = "admin" }: { userRole?: string } = $props();
+  interface Props {
+    userRole?: string;
+    mobileFriendly?: boolean;
+  }
+
+  let { userRole = "admin", mobileFriendly = false }: Props = $props();
+
+  let settingsScrollEl = $state<HTMLDivElement | null>(null);
+  let showScrollToTop = $state(false);
+
+  function onSettingsScroll() {
+    showScrollToTop = (settingsScrollEl?.scrollTop ?? 0) > 240;
+  }
+
+  function scrollSettingsToTop() {
+    settingsScrollEl?.scrollTo({ top: 0, behavior: "smooth" });
+  }
   const isAdmin = $derived(userRole === "admin");
   const canManageServer = $derived(userRole === "admin" || userRole === "moderator");
 
@@ -1092,15 +1108,19 @@
   {/if}
 
   <!-- Scrollable content -->
-  <div class="flex-1 overflow-y-auto p-6">
-    <div class="columns-1 lg:columns-2 xl:columns-3 gap-4">
+  <div
+    class="flex-1 overflow-y-auto {mobileFriendly ? 'p-4' : 'p-6'}"
+    bind:this={settingsScrollEl}
+    onscroll={onSettingsScroll}
+  >
+    <div class="columns-1 {mobileFriendly ? '' : 'lg:columns-2 xl:columns-3'} gap-4">
       {#if loading}
         <div class="flex items-center justify-center py-12 text-neutral-500">
           <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
         </div>
       {:else if config}
-        <!-- Browser / App Mode Switch (admin only) -->
-        {#if isAdmin && sectionVisible("appMode")}
+        <!-- Browser / App Mode Switch (admin only; hidden on mobile — users are already in browser mode) -->
+        {#if isAdmin && sectionVisible("appMode") && !mobileFriendly}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
           <div class="p-5 space-y-3">
             <div class="flex items-center justify-between">
@@ -3048,7 +3068,20 @@
 {/if}
 
 {#if showModelManager}
-  <ModelManagerModal onclose={() => (showModelManager = false)} />
+  <ModelManagerModal mobileFriendly={mobileFriendly} onclose={() => (showModelManager = false)} />
+{/if}
+
+{#if mobileFriendly && showScrollToTop}
+  <button
+    type="button"
+    onclick={scrollSettingsToTop}
+    class="fixed left-4 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/95 text-neutral-200 shadow-lg backdrop-blur transition-colors hover:border-indigo-500 hover:bg-neutral-800 hover:text-white active:scale-95"
+    style="bottom: calc(env(safe-area-inset-bottom) + 4.5rem);"
+    title={locale.t("common.go_to_top")}
+    aria-label={locale.t("common.go_to_top")}
+  >
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+  </button>
 {/if}
 
 {#if showQualityTagsWarning}

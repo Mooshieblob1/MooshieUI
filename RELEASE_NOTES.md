@@ -1,3 +1,20 @@
+## What's New in v1.3.9
+
+### Mobile UI (browser / LAN)
+- **Desktop parity on phone**: Generate, Gallery, and Settings reuse the same pages as desktop via a shared `mobileFriendly` layout — new desktop settings and generation sections appear on mobile automatically.
+- **Generate panels**: swipeable left/right/bottom panels with drag handles that stay fixed while you scroll panel content; mode switcher stays on one line.
+- **Mobile shell**: Characters tab, hidden scrollbars, settings **Go to top** button, app/browser mode switch hidden on mobile, full-screen **Model Manager** with card layout.
+
+### Characters (Animadex)
+- **Characters browser** in Artist Gallery (desktop and mobile) with search, facets, and lightbox.
+- **Insert into prompt** flow with duplicate detection and solo/multi-character handling.
+- **Animadex proxy** on the embedded server and Tauri desktop for CORS-safe character API access.
+
+### Gallery
+- **Shared `GalleryPage`** component used by desktop and mobile instead of duplicated markup.
+
+---
+
 ## What's New in v1.3.8
 
 ### Settings & pip installs

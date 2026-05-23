@@ -508,6 +508,11 @@ pub async fn start_server(
         .route("/internal-api/_gpu_stats", get(gpu_stats_handler))
         // CDN proxy — serves assets from cdn.mooshieblob.com to avoid CORS issues
         .route("/internal-api/_cdn/{*path}", get(cdn_proxy_handler))
+        // Animadex characters API proxy (read-only, api/characters/* only)
+        .route(
+            "/internal-api/_animadex/{*path}",
+            get(animadex_proxy_handler),
+        )
         // Generic IPC command proxy
         .route("/internal-api/{command}", post(command_handler))
         // Static file serving (frontend)
@@ -1411,6 +1416,48 @@ async fn gpu_stats_handler(
             format!("Failed to get GPU stats: {}", e),
         )
             .into_response(),
+    }
+}
+
+/// Animadex API proxy — characters search/facets only.
+async fn animadex_proxy_handler(
+    AxumState(state): AxumState<SharedState>,
+    Path(path): Path<String>,
+    uri: axum::http::Uri,
+) -> Response {
+    let clean = path.trim_start_matches('/');
+    if !clean.starts_with("api/characters/") {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let mut target_url = format!("https://animadex.net/{}", clean);
+    if let Some(query) = uri.query() {
+        target_url.push('?');
+        target_url.push_str(query);
+    }
+    match state.app.http_client.get(&target_url).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let content_type = resp
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .cloned();
+            let body = match resp.bytes().await {
+                Ok(b) => b,
+                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+            };
+            let mut response = (status, body).into_response();
+            response.headers_mut().insert(
+                axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                "*".parse().unwrap(),
+            );
+            if let Some(ct) = content_type {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::CONTENT_TYPE, ct);
+            }
+            response
+        }
+        Err(_) => StatusCode::BAD_GATEWAY.into_response(),
     }
 }
 

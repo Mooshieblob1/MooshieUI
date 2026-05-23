@@ -384,6 +384,7 @@ pub fn run() {
             commands::api::hash_model_file,
             commands::api::civitai_lookup_hash,
             commands::api::cdn_proxy_fetch,
+            commands::api::animadex_proxy_fetch,
             commands::api::civitai_search_models,
             commands::api::civitai_list_architectures,
             commands::api::read_modelspec,

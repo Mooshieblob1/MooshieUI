@@ -41,8 +41,14 @@
     type DroppableSectionId,
   } from "../../utils/metadataImport.js";
 
-  const DIMENSIONS_LAYOUT_KEY = "mooshieui.generation.dimensions.layout.v1";
-  const SECTION_LAYOUT_KEY = "mooshieui.generation.sections.layout.v1";
+  interface Props {
+    mobileFriendly?: boolean;
+  }
+  let { mobileFriendly = false }: Props = $props();
+
+  const storageSuffix = mobileFriendly ? ".mobile" : ".desktop";
+  const DIMENSIONS_LAYOUT_KEY = `mooshieui.generation.dimensions.layout.v1${storageSuffix}`;
+  const SECTION_LAYOUT_KEY = `mooshieui.generation.sections.layout.v1${storageSuffix}`;
 
   type SectionId =
     | "dimensions"
@@ -289,7 +295,7 @@
   const leftRenderSections = $derived(leftSections.filter((id) => id !== draggingSection));
   const rightRenderSections = $derived(rightSections.filter((id) => id !== draggingSection));
 
-  const COLLAPSE_KEY = "mooshieui.generation.sections.collapsed.v1";
+  const COLLAPSE_KEY = `mooshieui.generation.sections.collapsed.v1${storageSuffix}`;
 
   function loadCollapseState(): Record<string, boolean> {
     try {
@@ -708,7 +714,7 @@
     interrogateError = null;
     interrogateImageUrl = image.thumbnailUrl || image.url || null;
 
-    const unlistenDownload = await listen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+    const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
       (event) => {
         if (event.payload.done) {
@@ -719,7 +725,7 @@
       }
     );
 
-    const unlistenStage = await listen<string>("interrogator:stage", (event) => {
+    const unlistenStage = await ipcListen("interrogator:stage", (event) => {
       interrogateStage = event.payload;
     });
 
@@ -750,7 +756,7 @@
     }
   }
 
-  const PANEL_LAYOUT_KEY = "mooshieui.panelLayout.v1";
+  const PANEL_LAYOUT_KEY = `mooshieui.panelLayout.v1${storageSuffix}`;
 
   function loadPanelLayout() {
     try {
@@ -799,6 +805,11 @@
   let bottomHeightBeforeCollapse = BOTTOM_DEFAULT;
 
   function toggleLeftPanel() {
+    if (mobileFriendly) {
+      setMobilePanel("left", leftCollapsed);
+      mobileLeftPeek = null;
+      return;
+    }
     if (leftCollapsed) {
       leftWidth = leftWidthBeforeCollapse;
       leftCollapsed = false;
@@ -809,6 +820,11 @@
   }
 
   function toggleRightPanel() {
+    if (mobileFriendly) {
+      setMobilePanel("right", rightCollapsed);
+      mobileRightPeek = null;
+      return;
+    }
     if (rightCollapsed) {
       rightWidth = rightWidthBeforeCollapse;
       rightCollapsed = false;
@@ -819,6 +835,11 @@
   }
 
   function toggleBottomPanel() {
+    if (mobileFriendly) {
+      setMobilePanel("bottom", bottomCollapsed);
+      mobileBottomPeek = null;
+      return;
+    }
     if (bottomCollapsed) {
       bottomHeight = bottomHeightBeforeCollapse;
       bottomCollapsed = false;
@@ -833,8 +854,152 @@
   let dragStartY = 0;
   let dragStartWidth = 0;
   let dragStartHeight = 0;
+  let mobileHandleDrag = $state<"left" | "right" | "bottom" | null>(null);
+  let mobileHandleStartX = 0;
+  let mobileHandleStartY = 0;
+  let mobileHandleStartProgress = 0;
+  let mobileLeftPeek = $state<number | null>(null);
+  let mobileRightPeek = $state<number | null>(null);
+  let mobileBottomPeek = $state<number | null>(null);
+  const MOBILE_SNAP_THRESHOLD = 0.38;
+
+  function panelProgress(panel: "left" | "right" | "bottom"): number {
+    if (panel === "left") return mobileLeftPeek ?? (leftCollapsed ? 0 : 1);
+    if (panel === "right") return mobileRightPeek ?? (rightCollapsed ? 0 : 1);
+    return mobileBottomPeek ?? (bottomCollapsed ? 0 : 1);
+  }
+
+  // Pixel width of the visible "peek" portion of a mobile panel handle when the panel is fully closed.
+  // The handle (the thin grab bar with `···`) is rendered inside the panel container, positioned at the
+  // edge that faces the viewport; this is how much of the panel container we leave visible so the user
+  // can grab the handle to drag the panel open.
+  const MOBILE_HANDLE_PEEK_PX = 14;
+
+  function mobilePanelTransform(panel: "left" | "right" | "bottom"): string {
+    // When another panel is actively being dragged, slide this panel fully off-screen so its handle
+    // (the visual indicator) is hidden. This satisfies the "hide the other 2 indicators when sliding
+    // a panel" requirement without adding extra reactive state.
+    const otherDragging = mobileHandleDrag !== null && mobileHandleDrag !== panel;
+    if (otherDragging) {
+      if (panel === "left") return "translateX(-100%)";
+      if (panel === "right") return "translateX(100%)";
+      return "translateY(100%)";
+    }
+    const p = panelProgress(panel);
+    const closed = 1 - p;
+    if (panel === "left") {
+      // Left panel: at progress=0 push container left by (100% - peek) so only the right-edge handle is visible.
+      return `translateX(calc(${(-closed * 100).toFixed(3)}% + ${(closed * MOBILE_HANDLE_PEEK_PX).toFixed(3)}px))`;
+    }
+    if (panel === "right") {
+      // Right panel mirrors the left.
+      return `translateX(calc(${(closed * 100).toFixed(3)}% - ${(closed * MOBILE_HANDLE_PEEK_PX).toFixed(3)}px))`;
+    }
+    // Bottom panel: container is anchored from top=4rem (just under the mode switcher) to bottom=(4rem + safe-area)
+    // so the bottom navigation bar stays visible. At progress=0 we translate the container down by
+    // (containerHeight - handlePeek) so only the top handle peeks above the bottom nav.
+    return `translateY(calc(${(closed * 100).toFixed(3)}% - ${(closed * MOBILE_HANDLE_PEEK_PX).toFixed(3)}px))`;
+  }
+
+  function mobilePanelTransition(panel: "left" | "right" | "bottom"): string {
+    // Disable the CSS transition while the user is actively dragging this panel so the panel tracks
+    // the finger 1:1. After release, snap with a quick ease-out.
+    return mobileHandleDrag === panel ? "none" : "transform 180ms ease-out";
+  }
+
+  function mobilePanelZIndex(panel: "left" | "right" | "bottom"): number {
+    // Whichever panel is being dragged or is open gets stacked above the others so its handle isn't
+    // obscured by a sibling panel's handle layer.
+    if (mobileHandleDrag === panel) return 45;
+    if (panelProgress(panel) > 0.01) return 42;
+    return 40;
+  }
+
+  function setMobilePanel(panel: "left" | "right" | "bottom", open: boolean) {
+    if (panel === "left") {
+      leftCollapsed = !open;
+      if (open) {
+        rightCollapsed = true;
+        bottomCollapsed = true;
+      }
+      return;
+    }
+    if (panel === "right") {
+      rightCollapsed = !open;
+      if (open) {
+        leftCollapsed = true;
+        bottomCollapsed = true;
+      }
+      return;
+    }
+    bottomCollapsed = !open;
+    if (open) {
+      leftCollapsed = true;
+      rightCollapsed = true;
+    }
+  }
+
+  function onMobileHandleDown(panel: "left" | "right" | "bottom", e: PointerEvent) {
+    e.preventDefault();
+    mobileHandleDrag = panel;
+    mobileHandleStartX = e.clientX;
+    mobileHandleStartY = e.clientY;
+    mobileHandleStartProgress = panelProgress(panel);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  }
+
+  /** Ignore cross-axis movement so a vertical scroll gesture on side handles doesn't drag the panel. */
+  function mobileHandleAxisLocked(panel: "left" | "right" | "bottom", deltaX: number, deltaY: number): boolean {
+    const ax = Math.abs(deltaX);
+    const ay = Math.abs(deltaY);
+    if (panel === "bottom") return ay > 6 && ay >= ax;
+    return ax > 6 && ax >= ay;
+  }
+
+  function onMobileHandleMove(panel: "left" | "right" | "bottom", e: PointerEvent) {
+    if (mobileHandleDrag !== panel) return;
+    const deltaX = e.clientX - mobileHandleStartX;
+    const deltaY = e.clientY - mobileHandleStartY;
+    if (!mobileHandleAxisLocked(panel, deltaX, deltaY)) return;
+    const viewportW = Math.max(window.innerWidth, 1);
+    const viewportH = Math.max(window.innerHeight, 1);
+
+    if (panel === "left") {
+      const progress = Math.min(1, Math.max(0, mobileHandleStartProgress + deltaX / viewportW));
+      mobileLeftPeek = progress;
+      return;
+    }
+    if (panel === "right") {
+      const progress = Math.min(1, Math.max(0, mobileHandleStartProgress - deltaX / viewportW));
+      mobileRightPeek = progress;
+      return;
+    }
+    const progress = Math.min(1, Math.max(0, mobileHandleStartProgress - deltaY / viewportH));
+    mobileBottomPeek = progress;
+  }
+
+  function onMobileHandleUp(panel: "left" | "right" | "bottom", _e: PointerEvent) {
+    if (mobileHandleDrag !== panel) return;
+    const progress = panelProgress(panel);
+    mobileHandleDrag = null;
+    setMobilePanel(panel, progress >= MOBILE_SNAP_THRESHOLD);
+    mobileLeftPeek = null;
+    mobileRightPeek = null;
+    mobileBottomPeek = null;
+  }
+
+  function onMobileHandleCancel(panel: "left" | "right" | "bottom") {
+    if (mobileHandleDrag !== panel) return;
+    const progress = panelProgress(panel);
+    mobileHandleDrag = null;
+    setMobilePanel(panel, progress >= MOBILE_SNAP_THRESHOLD);
+    mobileLeftPeek = null;
+    mobileRightPeek = null;
+    mobileBottomPeek = null;
+  }
 
   function onDividerDown(side: "left" | "right" | "bottom", e: MouseEvent) {
+    if (mobileFriendly) return;
     dragging = side;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
@@ -1156,6 +1321,13 @@
   }
 
   onMount(() => {
+    if (mobileFriendly) {
+      // Mobile starts with side panels collapsed, but keeps full desktop controls available.
+      leftCollapsed = true;
+      rightCollapsed = true;
+      bottomCollapsed = true;
+    }
+
     pasteHandler = async (e: ClipboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
@@ -1784,14 +1956,60 @@
     onmouseup={onPointerUp}
     onmouseleave={onPointerUp}
   >
+    {#if mobileFriendly}
+      <div class="fixed top-2 left-1/2 -translate-x-1/2 z-50 w-[min(96vw,34rem)] px-2">
+        <div class="w-full flex gap-1 bg-neutral-900 rounded-lg p-1 border border-neutral-700 shadow">
+          {#each modes as mode}
+            <button
+              onclick={() => {
+                generation.mode = mode.id;
+                if (mode.id !== "inpainting") canvas.isCanvasMode = false;
+              }}
+              class="min-w-0 flex-1 whitespace-nowrap text-[11px] leading-none px-2.5 py-2 rounded-md transition-colors {generation.mode === mode.id
+                ? 'bg-neutral-700 text-white'
+                : 'text-neutral-400 hover:text-neutral-200'}"
+            >
+              {mode.label()}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     {#if leftHasSections || controlsSide === "left" || draggingSection}
-      {#if !leftCollapsed}
+      {#if !leftCollapsed || mobileFriendly}
         <div
           bind:this={leftColumnRef}
-          class="overflow-y-auto overflow-x-hidden px-3 pt-2 flex flex-col gap-2 shrink-0 border-r {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
-          style="width: {leftWidth}px{compare.enabled ? `; --compare-color: ${compare.activeColor}` : ''}"
+          class="{mobileFriendly
+            ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
+            : 'overflow-y-auto overflow-x-hidden px-3 pt-2 flex flex-col gap-2 shrink-0 border-r'} {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
+          style={mobileFriendly
+            ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("left")}; transition: ${mobilePanelTransition("left")}; z-index: ${mobilePanelZIndex("left")};${compare.enabled ? ` --compare-color: ${compare.activeColor};` : ""}`
+            : `width: ${leftWidth}px${compare.enabled ? `; --compare-color: ${compare.activeColor}` : ""}`}
         >
-        {#if controlsSide === "left"}
+        {#if mobileFriendly}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            role="button"
+            tabindex="0"
+            onpointerdown={(e) => onMobileHandleDown("left", e)}
+            onpointermove={(e) => onMobileHandleMove("left", e)}
+            onpointerup={(e) => onMobileHandleUp("left", e)}
+            onpointercancel={() => onMobileHandleCancel("left")}
+            ondblclick={toggleLeftPanel}
+            class="absolute right-0 top-24 bottom-4 z-20 w-3.5 rounded-l-full border border-neutral-700/80 bg-neutral-800/90 hover:bg-indigo-700/70 transition-colors touch-none flex items-center justify-center"
+            title={leftCollapsed ? locale.t('generation.panel.expand_left') : locale.t('generation.panel.collapse_left')}
+            aria-label={leftCollapsed ? locale.t('generation.panel.expand_left') : locale.t('generation.panel.collapse_left')}
+          >
+            <div class="flex flex-col gap-1 text-neutral-300">
+              <span class="block w-1 h-1 rounded-full bg-current"></span>
+              <span class="block w-1 h-1 rounded-full bg-current"></span>
+              <span class="block w-1 h-1 rounded-full bg-current"></span>
+            </div>
+          </div>
+        {/if}
+        <div class="{mobileFriendly ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden pl-3 pr-5 pt-20 pb-6 flex flex-col gap-2' : 'contents'}">
+        {#if controlsSide === "left" && !mobileFriendly}
           <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-2 pt-2 pb-2">
             <div class="flex gap-1.5 items-center">
               <div class="flex gap-1 bg-neutral-900 rounded-lg p-1 flex-1">
@@ -1855,10 +2073,11 @@
           </div>
         {/if}
         </div>
+        </div>
       {/if}
     {/if}
 
-    {#if leftHasSections || controlsSide === "left" || draggingSection}
+    {#if !mobileFriendly && (leftHasSections || controlsSide === "left" || draggingSection)}
       <!-- Left divider with collapse button -->
       <div class="relative shrink-0 flex flex-col items-center">
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1888,32 +2107,34 @@
       <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
         <!-- Preview area -->
         <div
-          class="relative flex-1 min-h-0 p-6 flex flex-col gap-4 overflow-y-auto"
+          class="relative flex-1 min-h-0 p-6 {mobileFriendly ? 'pt-20' : ''} flex flex-col gap-4 overflow-y-auto"
         >
           <ProgressBar />
           <PreviewImage />
         </div>
 
         <!-- Bottom panel (LoRAs / Images / Prompts) -->
-        <div class="relative shrink-0 flex items-center">
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="h-1 flex-1 cursor-row-resize hover:bg-indigo-500/40 transition-colors {dragging === 'bottom' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
-            onmousedown={(e) => onDividerDown("bottom", e)}
-            ondblclick={resetBottomHeight}
-            title={locale.t('generation.drag_to_resize')}
-          ></div>
-          <button
-            onclick={toggleBottomPanel}
-            class="absolute left-1/2 -translate-x-1/2 bottom-0 z-20 h-6 w-12 flex items-center justify-center rounded-t border border-b-0 transition-colors {bottomCollapsed
-              ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
-              : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
-            title={bottomCollapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {bottomCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-          </button>
-        </div>
-        {#if !bottomCollapsed}
+        {#if !mobileFriendly}
+          <div class="relative shrink-0 flex items-center">
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="h-1 flex-1 cursor-row-resize hover:bg-indigo-500/40 transition-colors {dragging === 'bottom' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
+              onmousedown={(e) => onDividerDown("bottom", e)}
+              ondblclick={resetBottomHeight}
+              title={locale.t('generation.drag_to_resize')}
+            ></div>
+            <button
+              onclick={toggleBottomPanel}
+              class="absolute left-1/2 -translate-x-1/2 bottom-0 z-20 h-6 w-12 flex items-center justify-center rounded-t border border-b-0 transition-colors {bottomCollapsed
+                ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
+                : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
+              title={bottomCollapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {bottomCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+          </div>
+        {/if}
+        {#if !bottomCollapsed && !mobileFriendly}
           <div
             class="overflow-hidden shrink-0 min-w-0 border-t border-neutral-800/50"
             style="height: {bottomHeight}px"
@@ -1924,7 +2145,7 @@
       </div>
     {/if}
 
-    {#if rightHasSections || controlsSide === "right" || draggingSection}
+    {#if !mobileFriendly && (rightHasSections || controlsSide === "right" || draggingSection)}
       <!-- Right divider with collapse button -->
       <div class="relative shrink-0 flex flex-col items-center">
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1946,13 +2167,39 @@
       </div>
     {/if}
 
-    {#if (rightHasSections || controlsSide === "right" || draggingSection) && !rightCollapsed}
+    {#if (rightHasSections || controlsSide === "right" || draggingSection) && (!rightCollapsed || mobileFriendly)}
       <div
         bind:this={rightColumnRef}
-        class="overflow-y-auto p-3 space-y-2 shrink-0 border-l {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
-        style="width: {rightWidth}px{compare.enabled ? `; --compare-color: ${compare.activeColor}` : ''}"
+        class="{mobileFriendly
+          ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
+          : 'overflow-y-auto p-3 space-y-2 shrink-0 border-l'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
+        style={mobileFriendly
+          ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("right")}; transition: ${mobilePanelTransition("right")}; z-index: ${mobilePanelZIndex("right")};${compare.enabled ? ` --compare-color: ${compare.activeColor};` : ""}`
+          : `width: ${rightWidth}px${compare.enabled ? `; --compare-color: ${compare.activeColor}` : ""}`}
       >
-        {#if controlsSide === "right"}
+        {#if mobileFriendly}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            role="button"
+            tabindex="0"
+            onpointerdown={(e) => onMobileHandleDown("right", e)}
+            onpointermove={(e) => onMobileHandleMove("right", e)}
+            onpointerup={(e) => onMobileHandleUp("right", e)}
+            onpointercancel={() => onMobileHandleCancel("right")}
+            ondblclick={toggleRightPanel}
+            class="absolute left-0 top-24 bottom-4 z-20 w-3.5 rounded-r-full border border-neutral-700/80 bg-neutral-800/90 hover:bg-indigo-700/70 transition-colors touch-none flex items-center justify-center"
+            title={rightCollapsed ? locale.t('generation.panel.expand_right') : locale.t('generation.panel.collapse_right')}
+            aria-label={rightCollapsed ? locale.t('generation.panel.expand_right') : locale.t('generation.panel.collapse_right')}
+          >
+            <div class="flex flex-col gap-1 text-neutral-300">
+              <span class="block w-1 h-1 rounded-full bg-current"></span>
+              <span class="block w-1 h-1 rounded-full bg-current"></span>
+              <span class="block w-1 h-1 rounded-full bg-current"></span>
+            </div>
+          </div>
+        {/if}
+        <div class="{mobileFriendly ? 'flex-1 min-h-0 overflow-y-auto pl-5 pr-3 pt-20 pb-6 space-y-2' : 'contents'}">
+        {#if controlsSide === "right" && !mobileFriendly}
           <div class="sticky top-0 z-10 bg-neutral-950 -mx-3 px-3 -mt-3 pt-3 pb-2">
             <div class="flex gap-1.5 items-center">
               <div class="flex gap-1 bg-neutral-900 rounded-lg p-1 flex-1">
@@ -2015,9 +2262,53 @@
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
         {/if}
+        </div>
       </div>
     {/if}
   </div>
+
+  {#if mobileFriendly}
+    <!--
+      Mobile bottom panel — always rendered so the grab handle stays in the DOM throughout a drag.
+      The OUTER mask is a stable, transparent, pointer-events:none clipping region between the mode
+      switcher and the bottom navigation. The INNER content (handle + BottomPanel) is what actually
+      translates: when closed, only the handle peeks at the bottom of the mask area (just above the
+      nav); when open, it slides up to fill the mask. Because the mask itself never moves, the
+      panel's background can't slide over the bottom navigation.
+    -->
+    <div
+      class="fixed left-0 right-0 overflow-hidden pointer-events-none"
+      style="top: 4rem; bottom: calc(env(safe-area-inset-bottom) + 4rem); z-index: {mobilePanelZIndex('bottom')};"
+    >
+      <div
+        class="absolute inset-0 bg-neutral-950 pointer-events-auto flex flex-col will-change-transform shadow-[0_-8px_24px_rgba(0,0,0,0.4)]"
+        style="transform: {mobilePanelTransform('bottom')}; transition: {mobilePanelTransition('bottom')};"
+      >
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          role="button"
+          tabindex="0"
+          onpointerdown={(e) => onMobileHandleDown("bottom", e)}
+          onpointermove={(e) => onMobileHandleMove("bottom", e)}
+          onpointerup={(e) => onMobileHandleUp("bottom", e)}
+          onpointercancel={() => onMobileHandleCancel("bottom")}
+          ondblclick={toggleBottomPanel}
+          class="shrink-0 mx-8 h-3.5 rounded-b-full border border-neutral-700/80 bg-neutral-800/90 hover:bg-indigo-700/70 transition-colors touch-none flex items-center justify-center"
+          title={bottomCollapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
+          aria-label={bottomCollapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
+        >
+          <div class="flex gap-1 text-neutral-300">
+            <span class="block w-1 h-1 rounded-full bg-current"></span>
+            <span class="block w-1 h-1 rounded-full bg-current"></span>
+            <span class="block w-1 h-1 rounded-full bg-current"></span>
+          </div>
+        </div>
+        <div class="flex-1 min-h-0 border-t border-neutral-800/50 overflow-hidden">
+          <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} oncontextmenu={handleSessionContextMenu} />
+        </div>
+      </div>
+    </div>
+  {/if}
 
   {#if draggingSection && dragCloneHtml}
     <div

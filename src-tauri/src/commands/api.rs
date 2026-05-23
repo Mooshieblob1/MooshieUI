@@ -705,6 +705,41 @@ pub async fn cdn_proxy_fetch(
     Ok(body)
 }
 
+/// Proxy a GET request to animadex.net (characters API only). Used by the Tauri
+/// desktop app for JSON fetches that would otherwise be blocked by CORS.
+/// Only paths under `api/characters/` are allowed — not an open proxy.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn animadex_proxy_fetch(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<String, AppError> {
+    let clean = path.trim_start_matches('/');
+    if !clean.starts_with("api/characters/") {
+        return Err(AppError::Other(
+            "animadex proxy: path must start with api/characters/".into(),
+        ));
+    }
+    let url = format!("https://animadex.net/{}", clean);
+    let resp = state
+        .http_client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| AppError::Other(format!("Animadex fetch failed: {}", e)))?;
+    if !resp.status().is_success() {
+        return Err(AppError::ApiError {
+            status: resp.status().as_u16(),
+            message: format!("Animadex returned {} for {}", resp.status(), clean),
+        });
+    }
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| AppError::Other(format!("Animadex body read failed: {}", e)))?;
+    Ok(body)
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn download_model(

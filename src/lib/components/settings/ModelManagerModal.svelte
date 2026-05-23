@@ -13,6 +13,7 @@
 
   interface Props {
     onclose: () => void;
+    mobileFriendly?: boolean;
   }
 
   interface ModelCategory {
@@ -20,7 +21,7 @@
     label: () => string;
   }
 
-  let { onclose }: Props = $props();
+  let { onclose, mobileFriendly = false }: Props = $props();
 
   const categories: ModelCategory[] = [
     { id: "checkpoints", label: () => locale.t("settings.paths.open_folder.checkpoints") },
@@ -183,15 +184,15 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div
-  class="fixed inset-0 z-80 flex items-center justify-center bg-neutral-950 p-6"
-  onclick={(e) => { if (e.target === e.currentTarget) onclose(); }}
+  class="fixed inset-0 z-80 flex bg-neutral-950 {mobileFriendly ? 'flex-col p-0' : 'items-center justify-center p-6'}"
+  onclick={(e) => { if (e.target === e.currentTarget && !mobileFriendly) onclose(); }}
   onkeydown={handleKeydown}
   role="dialog"
   aria-modal="true"
   tabindex="-1"
 >
-  <div class="flex h-[min(760px,92vh)] w-[min(1140px,96vw)] items-stretch gap-3">
-    <aside class="hidden w-44 shrink-0 flex-col rounded-2xl border border-neutral-700 bg-neutral-900 p-2 shadow-2xl sm:flex">
+  <div class="flex min-h-0 w-full {mobileFriendly ? 'h-full flex-col' : 'h-[min(760px,92vh)] w-[min(1140px,96vw)] items-stretch gap-3'}">
+    <aside class="{mobileFriendly ? 'hidden' : 'hidden sm:flex'} w-44 shrink-0 flex-col rounded-2xl border border-neutral-700 bg-neutral-900 p-2 shadow-2xl">
       <nav class="flex-1 space-y-0.5 overflow-y-auto">
         {#each categories as category}
           <button
@@ -207,14 +208,39 @@
       </nav>
     </aside>
 
-    <div class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-800 shadow-2xl">
-      <div class="flex items-center justify-between rounded-t-2xl border-b border-neutral-700 bg-neutral-800 px-5 py-4">
-        <div>
-          <h2 class="text-base font-semibold text-neutral-100">{locale.t("settings.models.title")}</h2>
-          <p class="text-xs text-neutral-500">{files.length} {locale.t("settings.models.files")} · {locale.formatBytes(totalSize)}</p>
+    <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden {mobileFriendly ? 'rounded-none border-0' : 'rounded-2xl border border-neutral-700'} bg-neutral-800 shadow-2xl">
+      <div class="shrink-0 border-b border-neutral-700 bg-neutral-800 {mobileFriendly ? 'px-4 py-3 pt-[max(env(safe-area-inset-top),0.75rem)]' : 'rounded-t-2xl px-5 py-4'}">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <h2 class="text-base font-semibold text-neutral-100">{locale.t("settings.models.title")}</h2>
+            <p class="text-xs text-neutral-500">{files.length} {locale.t("settings.models.files")} · {locale.formatBytes(totalSize)}</p>
+          </div>
+          <button
+            type="button"
+            onclick={onclose}
+            class="shrink-0 rounded-lg p-2 text-neutral-400 transition-colors hover:bg-neutral-700 hover:text-neutral-100"
+            title={locale.t("common.close")}
+            aria-label={locale.t("common.close")}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
         </div>
-        <div class="flex items-center gap-2">
-          <div class="flex gap-1 overflow-x-auto sm:hidden">
+        {#if mobileFriendly}
+          <div class="mt-3 -mx-1 flex gap-1.5 overflow-x-auto overscroll-x-contain pb-1">
+            {#each categories as category}
+              <button
+                type="button"
+                onclick={() => selectCategory(category.id)}
+                class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors {activeCategory === category.id
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-neutral-700 text-neutral-300'}"
+              >
+                {category.label()}
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <div class="mt-2 flex gap-1 overflow-x-auto sm:hidden">
             {#each categories as category}
               <button
                 type="button"
@@ -227,37 +253,30 @@
               </button>
             {/each}
           </div>
-          <button
-            type="button"
-            onclick={onclose}
-            class="rounded-lg p-2 text-neutral-400 transition-colors hover:bg-neutral-700 hover:text-neutral-100"
-            title={locale.t("common.close")}
-            aria-label={locale.t("common.close")}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-          </button>
-        </div>
+        {/if}
       </div>
 
-      <div class="flex flex-wrap items-center gap-2 border-b border-neutral-700 bg-neutral-900 px-4 py-3">
-        <div class="min-w-0 flex-1">
+      <div class="flex shrink-0 flex-col gap-2 border-b border-neutral-700 bg-neutral-900 px-4 py-3 {mobileFriendly ? '' : 'sm:flex-row sm:flex-wrap sm:items-center'}">
+        <div class="min-w-0">
           <p class="text-sm font-medium text-neutral-200">{categoryLabel(activeCategory)}</p>
           <p class="text-[10px] text-neutral-500">{installDirs.length} {locale.t("settings.models.directories")}</p>
         </div>
-        <input
-          type="search"
-          bind:value={search}
-          class="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 transition-colors focus:border-indigo-500 focus:outline-none sm:w-72"
-          placeholder={locale.t("settings.models.search")}
-        />
-        <button
-          type="button"
-          onclick={() => loadCategory()}
-          disabled={loading || busy}
-          class="rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-xs text-neutral-300 transition-colors hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-50"
-        >
-          {locale.t("settings.models.refresh")}
-        </button>
+        <div class="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
+          <input
+            type="search"
+            bind:value={search}
+            class="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2.5 text-sm text-neutral-100 placeholder-neutral-500 transition-colors focus:border-indigo-500 focus:outline-none"
+            placeholder={locale.t("settings.models.search")}
+          />
+          <button
+            type="button"
+            onclick={() => loadCategory()}
+            disabled={loading || busy}
+            class="shrink-0 rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-sm text-neutral-300 transition-colors hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-50"
+          >
+            {locale.t("settings.models.refresh")}
+          </button>
+        </div>
       </div>
 
       {#if loadError}
@@ -268,7 +287,7 @@
         <div class="mx-4 mt-3 rounded-xl border border-green-800 bg-green-950 px-3 py-2 text-sm text-green-300">{notice}</div>
       {/if}
 
-      <div class="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3 {mobileFriendly && !moveTarget && !deleteTarget ? 'pb-[max(env(safe-area-inset-bottom),0.75rem)]' : ''}">
         {#if loading}
           <div class="flex h-full items-center justify-center text-sm text-neutral-500">
             <div class="mr-2 h-4 w-4 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></div>
@@ -277,6 +296,41 @@
         {:else if filteredFiles.length === 0}
           <div class="flex h-full items-center justify-center text-sm text-neutral-500">
             {locale.t("settings.models.empty")}
+          </div>
+        {:else if mobileFriendly}
+          <div class="space-y-2">
+            {#each filteredFiles as file (`${file.directory}:${file.filename}`)}
+              {@const moveDirs = availableMoveDirs(file)}
+              <div class="rounded-xl border border-neutral-700 bg-neutral-900 p-3">
+                <p class="break-all text-sm font-medium text-neutral-100">{file.filename}</p>
+                <p class="mt-1 text-xs text-neutral-500">{file.directory_label}</p>
+                <p class="mt-0.5 break-all text-[10px] text-neutral-600">{file.directory}</p>
+                <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-400">
+                  <span class="tabular-nums">{locale.formatBytes(file.size_bytes)}</span>
+                  <span class="text-neutral-600">·</span>
+                  <span>{formatModified(file.modified_ms)}</span>
+                </div>
+                <div class="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    onclick={() => beginMove(file)}
+                    disabled={moveDirs.length === 0 || busy}
+                    class="min-h-10 flex-1 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-300 transition-colors active:bg-neutral-700 disabled:opacity-40"
+                    title={moveDirs.length === 0 ? locale.t("settings.models.no_move_target") : locale.t("settings.models.move")}
+                  >
+                    {locale.t("settings.models.move")}
+                  </button>
+                  <button
+                    type="button"
+                    onclick={() => beginDelete(file)}
+                    disabled={busy}
+                    class="min-h-10 flex-1 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-300 transition-colors active:bg-neutral-700 hover:border-red-500 hover:text-red-300 disabled:opacity-40"
+                  >
+                    {locale.t("common.delete")}
+                  </button>
+                </div>
+              </div>
+            {/each}
           </div>
         {:else}
           <div class="overflow-x-auto rounded-xl border border-neutral-700 bg-neutral-900">
@@ -319,25 +373,26 @@
 
       {#if moveTarget}
         {@const moveDirs = availableMoveDirs(moveTarget)}
-        <div class="rounded-b-2xl border-t border-neutral-700 bg-neutral-900 px-4 py-3">
-          <div class="flex flex-wrap items-center gap-3">
+        <div class="shrink-0 border-t border-neutral-700 bg-neutral-900 px-4 py-3 {mobileFriendly ? 'pb-[max(env(safe-area-inset-bottom),0.75rem)]' : 'rounded-b-2xl'}">
+          <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <div class="min-w-0 flex-1">
               <p class="truncate text-sm text-neutral-200">{locale.t("settings.models.move_title", { name: moveTarget.filename })}</p>
               {#if actionError}<p class="mt-1 text-xs text-red-300">{actionError}</p>{/if}
             </div>
             <select
               bind:value={moveDestination}
-              class="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 focus:border-indigo-500 focus:outline-none sm:w-72"
+              class="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2.5 text-sm text-neutral-100 focus:border-indigo-500 focus:outline-none sm:w-72"
             >
               {#each moveDirs as dir}
                 <option value={dir.path}>{dir.label}</option>
               {/each}
             </select>
+            <div class="flex gap-2 sm:contents">
             <button
               type="button"
               onclick={() => (moveTarget = null)}
               disabled={busy}
-              class="rounded-lg border border-neutral-700 px-3 py-2 text-xs text-neutral-300 transition-colors hover:border-neutral-500 hover:text-neutral-100 disabled:opacity-50"
+              class="min-h-10 flex-1 rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-300 transition-colors hover:border-neutral-500 hover:text-neutral-100 disabled:opacity-50 sm:flex-none"
             >
               {locale.t("common.cancel")}
             </button>
@@ -345,27 +400,29 @@
               type="button"
               onclick={confirmMove}
               disabled={busy || moveDirs.length === 0 || !moveDestination}
-              class="rounded-lg bg-indigo-600 px-3 py-2 text-xs text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+              class="min-h-10 flex-1 rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 sm:flex-none"
             >
               {busy ? locale.t("common.saving") : locale.t("settings.models.move")}
             </button>
+            </div>
           </div>
         </div>
       {/if}
 
       {#if deleteTarget}
-        <div class="rounded-b-2xl border-t border-red-900 bg-red-950 px-4 py-3">
-          <div class="flex flex-wrap items-center gap-3">
+        <div class="shrink-0 border-t border-red-900 bg-red-950 px-4 py-3 {mobileFriendly ? 'pb-[max(env(safe-area-inset-bottom),0.75rem)]' : 'rounded-b-2xl'}">
+          <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <div class="min-w-0 flex-1">
               <p class="truncate text-sm text-red-100">{locale.t("settings.models.delete_title", { name: deleteTarget.filename })}</p>
               <p class="text-xs text-red-300">{deleteTarget.directory_label}</p>
               {#if actionError}<p class="mt-1 text-xs text-red-300">{actionError}</p>{/if}
             </div>
+            <div class="flex gap-2 sm:contents">
             <button
               type="button"
               onclick={() => (deleteTarget = null)}
               disabled={busy}
-              class="rounded-lg border border-neutral-700 px-3 py-2 text-xs text-neutral-300 transition-colors hover:border-neutral-500 hover:text-neutral-100 disabled:opacity-50"
+              class="min-h-10 flex-1 rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-300 transition-colors hover:border-neutral-500 hover:text-neutral-100 disabled:opacity-50 sm:flex-none"
             >
               {locale.t("common.cancel")}
             </button>
@@ -373,10 +430,11 @@
               type="button"
               onclick={confirmDelete}
               disabled={busy}
-              class="rounded-lg bg-red-600 px-3 py-2 text-xs text-white transition-colors hover:bg-red-500 disabled:opacity-50"
+              class="min-h-10 flex-1 rounded-lg bg-red-600 px-3 py-2 text-sm text-white transition-colors hover:bg-red-500 disabled:opacity-50 sm:flex-none"
             >
               {busy ? locale.t("common.saving") : locale.t("common.delete")}
             </button>
+            </div>
           </div>
         </div>
       {/if}
