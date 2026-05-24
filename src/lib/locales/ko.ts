@@ -154,6 +154,8 @@ const ko: Record<string, string> = {
   "setup.scanning_model_dirs": "기존 모델 디렉토리 검색 중...",
   "setup.footer": "MooshieUI — ComfyUI의 친근한 인터페이스",
   "setup.advanced_options": "고급 옵션",
+  "setup.connection_section": "연결(선택 사항)",
+  "setup.connection_hint": "git 또는 pip 다운로드가 네트워크 제한으로 실패할 때 사용하세요. 예: 프록시 http://127.0.0.1:7890, PyPI 미러 https://pypi.tuna.tsinghua.edu.cn/simple.",
   "setup.attention_desc": "더 빠른 생성을 위한 최적화된 Attention 백엔드를 선택하세요 (NVIDIA Ampere+ 권장).",
   "setup.attention.default": "기본값 (PyTorch SDPA)",
   "setup.attention.default_desc": "PyTorch 내장 Attention — 모든 GPU에서 작동, 추가 설치 불필요.",

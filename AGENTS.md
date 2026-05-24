@@ -42,4 +42,5 @@ cargo clippy                 # Rust lint (run in src-tauri/)
 - **Cursor config**: [`.cursor/README.md`](.cursor/README.md)
   - **Skills:** `push`, `release`, `pre-commit-check`, `add-tauri-command`, `add-generation-param`, `workflow-template-builder` — [`.cursor/skills/`](.cursor/skills/)
   - **Rules:** always-on + file-scoped (mirrors `.roo/rules-*`) — [`.cursor/rules/`](.cursor/rules/)
-- **Existing AI rules**: [`GEMINI.md`](GEMINI.md), [`.github/copilot-instructions.md`](.github/copilot-instructions.md), [`.github/instructions/`](.github/instructions/), [`.github/agents/`](.github/agents/), [`.roo/commands/`](.roo/commands/)
+- **Existing AI rules**: [`GEMINI.md`](GEMINI.md), [`.github/copilot-instructions.md`](.github/copilot-instructions.md), [`.github/instructions/`](.github/instructions/) (including [`mooshieui.instructions.md`](.github/instructions/mooshieui.instructions.md)), [`.github/agents/`](.github/agents/), [`.roo/commands/`](.roo/commands/)
+- **Project docs**: [`docs/README.md`](docs/README.md) — bot triage, feature research, superpowers plans/specs

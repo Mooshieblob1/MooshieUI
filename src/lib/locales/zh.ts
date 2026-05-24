@@ -154,6 +154,8 @@ const zh: Record<string, string> = {
   "setup.scanning_model_dirs": "正在扫描现有模型目录...",
   "setup.footer": "MooshieUI — ComfyUI 的新手友好界面",
   "setup.advanced_options": "高级选项",
+  "setup.connection_section": "网络连接（可选）",
+  "setup.connection_hint": "如果 git 或 pip 下载因网络限制失败，请在此填写。中国大陆用户常用：代理 http://127.0.0.1:7890，PyPI 镜像 https://pypi.tuna.tsinghua.edu.cn/simple。",
   "setup.attention_desc": "选择优化的Attention后端以加快生成速度（推荐 NVIDIA Ampere+）。",
   "setup.attention.default": "默认 (PyTorch SDPA)",
   "setup.attention.default_desc": "PyTorch 内置Attention — 支持所有GPU，无需额外安装。",

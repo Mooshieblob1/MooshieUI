@@ -21,7 +21,8 @@
 ## Primary Reference Documentation
 
 - [`GEMINI.md`](GEMINI.md) and [`.github/copilot-instructions.md`](.github/copilot-instructions.md) are the primary AI assistant documentation.
-- [`.github/instructions/`](.github/instructions/) has per-layer conventions: `svelte-components.instructions.md`, `svelte-stores.instructions.md`, `tauri-backend.instructions.md`.
+- [`.github/instructions/`](.github/instructions/) has per-layer conventions: `svelte-components.instructions.md`, `svelte-stores.instructions.md`, `tauri-backend.instructions.md`, and full-stack reference [`mooshieui.instructions.md`](.github/instructions/mooshieui.instructions.md).
+- [`docs/README.md`](docs/README.md) indexes project docs: [`docs/BOT_REVIEW_TRIAGE.md`](docs/BOT_REVIEW_TRIAGE.md), [`docs/FEATURE_RESEARCH.md`](docs/FEATURE_RESEARCH.md), [`docs/superpowers/`](docs/superpowers/).
 - [`.github/prompts/release.prompt.md`](.github/prompts/release.prompt.md) and [`.github/prompts/add-generation-param.prompt.md`](.github/prompts/add-generation-param.prompt.md) document specific workflows.
 - [`.github/agents/pre-commit-check.agent.md`](.github/agents/pre-commit-check.agent.md) defines the automated pre-commit validation rules.
 

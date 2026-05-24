@@ -18,6 +18,9 @@
   let detectedGpu = $state("cpu");
   let attentionBackend = $state("default");
   let showAdvanced = $state(false);
+  let showConnection = $state(false);
+  let networkProxy = $state("");
+  let pipIndexUrl = $state("");
   let gpuLabel = $derived(
     gpu === "nvidia"
       ? locale.t("setup.gpu.nvidia")
@@ -223,6 +226,8 @@
         gpuType: gpu,
         installPath: installPath || null,
         attentionBackend: gpu === "nvidia" && attentionBackend !== "default" ? attentionBackend : null,
+        networkProxy: networkProxy.trim() || null,
+        pipIndexUrl: pipIndexUrl.trim() || null,
       });
 
       // If user selected model directories, save them to config
@@ -486,6 +491,43 @@
             <p class="text-[10px] text-neutral-600">{locale.t('setup.scanning_model_dirs')}</p>
           </div>
         {/if}
+
+        <!-- Connection (optional proxy / PyPI mirror for restricted networks) -->
+        <div class="mb-6 rounded-lg border border-neutral-800 bg-neutral-950/50 overflow-hidden">
+          <button
+            type="button"
+            class="w-full flex items-center justify-between p-3 text-xs text-neutral-400 hover:text-neutral-300 transition-colors cursor-pointer"
+            onclick={() => showConnection = !showConnection}
+          >
+            <span>{locale.t('setup.connection_section')}</span>
+            <svg class="w-3.5 h-3.5 transition-transform {showConnection ? '' : '-rotate-90'}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          {#if showConnection}
+          <div class="px-3 pb-3 space-y-3">
+            <p class="text-[10px] text-neutral-500">{locale.t('setup.connection_hint')}</p>
+            <div>
+              <label class="block text-[10px] text-neutral-400 mb-1">{locale.t('settings.connection.network_proxy')}</label>
+              <input
+                type="text"
+                bind:value={networkProxy}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500"
+                placeholder={locale.t('settings.connection.proxy_placeholder')}
+              />
+              <p class="text-[10px] text-neutral-600 mt-1">{locale.t('settings.connection.network_proxy_desc')}</p>
+            </div>
+            <div>
+              <label class="block text-[10px] text-neutral-400 mb-1">{locale.t('settings.connection.pip_index_url')}</label>
+              <input
+                type="text"
+                bind:value={pipIndexUrl}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500"
+                placeholder={locale.t('settings.connection.pip_index_placeholder')}
+              />
+              <p class="text-[10px] text-neutral-600 mt-1">{locale.t('settings.connection.pip_index_url_desc')}</p>
+            </div>
+          </div>
+          {/if}
+        </div>
 
         <div class="text-xs text-neutral-500 mb-4 space-y-1">
           <p>{locale.t('setup.will_install')}</p>

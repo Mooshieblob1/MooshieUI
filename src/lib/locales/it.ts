@@ -154,6 +154,8 @@ const it: Record<string, string> = {
   "setup.scanning_model_dirs": "Ricerca delle directory dei modelli...",
   "setup.footer": "MooshieUI — Un'interfaccia amichevole per ComfyUI",
   "setup.advanced_options": "Opzioni avanzate",
+  "setup.connection_section": "Connessione (facoltativo)",
+  "setup.connection_hint": "Usa questi campi se i download git o pip falliscono per restrizioni di rete. Esempio: proxy http://127.0.0.1:7890 e mirror PyPI https://pypi.tuna.tsinghua.edu.cn/simple.",
   "setup.attention_desc": "Scegli un backend di attenzione ottimizzato per una generazione più veloce (consigliato NVIDIA Ampere+).",
   "setup.attention.default": "Predefinito (PyTorch SDPA)",
   "setup.attention.default_desc": "Attenzione PyTorch integrata — funziona su tutte le GPU, nessuna installazione aggiuntiva.",

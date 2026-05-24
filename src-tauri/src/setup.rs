@@ -97,6 +97,24 @@ fn uv_download_url() -> &'static str {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+struct SetupNetworkOpts {
+    network_proxy: Option<String>,
+    pip_index_url: Option<String>,
+}
+
+impl SetupNetworkOpts {
+    fn from_options(network_proxy: Option<String>, pip_index_url: Option<String>) -> Self {
+        Self {
+            network_proxy: network_proxy
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            pip_index_url: pip_index_url
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        }
+    }
+}
+
 /// Apply CREATE_NO_WINDOW flag on Windows to prevent console popups.
 #[cfg(target_os = "windows")]
 fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
@@ -162,6 +180,54 @@ async fn run_logged(
 
     if !status.success() {
         return Err(format!("{} exited with status {}", program, status));
+    }
+    Ok(())
+}
+
+async fn run_command_logged(
+    app: &AppHandle,
+    mut cmd: tokio::process::Command,
+) -> Result<(), String> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    hide_window(&mut cmd);
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn command: {}", e))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let app_out = app.clone();
+    let app_err = app.clone();
+
+    let out_task = tokio::spawn(async move {
+        if let Some(out) = stdout {
+            let mut lines = BufReader::new(out).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                emit_log(&app_out, &line);
+            }
+        }
+    });
+
+    let err_task = tokio::spawn(async move {
+        if let Some(err) = stderr {
+            let mut lines = BufReader::new(err).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                emit_log(&app_err, &line);
+            }
+        }
+    });
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("Command wait failed: {}", e))?;
+
+    out_task.await.ok();
+    err_task.await.ok();
+
+    if !status.success() {
+        return Err(format!("Command exited with status {}", status));
     }
     Ok(())
 }
@@ -606,7 +672,13 @@ async fn detect_gpu_type() -> String {
     }
 }
 
-async fn uv_pip(app: &AppHandle, base: &Path, args: &[&str]) -> Result<(), String> {
+async fn uv_pip(
+    app: &AppHandle,
+    base: &Path,
+    args: &[&str],
+    net: &SetupNetworkOpts,
+    apply_pip_mirror: bool,
+) -> Result<(), String> {
     let uv = uv_bin(base);
     let python = venv_python(base);
     let python_dir = base.join("python");
@@ -614,17 +686,28 @@ async fn uv_pip(app: &AppHandle, base: &Path, args: &[&str]) -> Result<(), Strin
     let python_str = python.to_string_lossy().to_string();
     let python_dir_str = python_dir.to_string_lossy().to_string();
 
-    let mut cmd_args: Vec<&str> = vec!["pip", "install", "--python", &python_str];
-    cmd_args.extend_from_slice(args);
+    let mut cmd = tokio::process::Command::new(uv);
+    cmd.arg("pip")
+        .arg("install")
+        .arg("--python")
+        .arg(&python_str)
+        .args(args)
+        .env("UV_PYTHON_INSTALL_DIR", &python_dir_str);
 
-    run_logged(
-        app,
-        uv.to_str().unwrap(),
-        &cmd_args,
-        &[("UV_PYTHON_INSTALL_DIR", &python_dir_str)],
-    )
-    .await
-    .map_err(|_| format!("pip install failed for: {}", args.join(" ")))
+    if apply_pip_mirror {
+        crate::comfyui::nodes::apply_pip_install_options(
+            &mut cmd,
+            true,
+            net.network_proxy.as_deref(),
+            net.pip_index_url.as_deref(),
+        );
+    } else {
+        crate::comfyui::nodes::apply_network_proxy(&mut cmd, net.network_proxy.as_deref());
+    }
+
+    run_command_logged(app, cmd)
+        .await
+        .map_err(|_| format!("pip install failed for: {}", args.join(" ")))
 }
 
 /// Detect the AMD GPU architecture string (e.g. "gfx1100", "gfx1201") by reading
@@ -768,7 +851,12 @@ fn nvidia_pytorch_index_url() -> &'static str {
     "https://download.pytorch.org/whl/cu128"
 }
 
-async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result<(), String> {
+async fn step_install_pytorch(
+    app: &AppHandle,
+    base: &Path,
+    gpu: &str,
+    net: &SetupNetworkOpts,
+) -> Result<(), String> {
     // Spawn a heartbeat so the user sees activity during the long, silent download.
     // uv produces no line output while downloading multi-GB CUDA wheels.
     let app_hb = app.clone();
@@ -808,6 +896,8 @@ async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result
                     "--index-url",
                     index_url,
                 ],
+                net,
+                false,
             )
             .await
         }
@@ -833,6 +923,8 @@ async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result
                     "--extra-index-url",
                     "https://pypi.org/simple/",
                 ],
+                net,
+                false,
             )
             .await
         }
@@ -849,10 +941,21 @@ async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result
                     "--extra-index-url",
                     "https://pypi.org/simple/",
                 ],
+                net,
+                false,
             )
             .await
         }
-        "mps" => uv_pip(app, base, &["torch", "torchvision", "torchaudio"]).await,
+        "mps" => {
+            uv_pip(
+                app,
+                base,
+                &["torch", "torchvision", "torchaudio"],
+                net,
+                false,
+            )
+            .await
+        }
         _ => {
             uv_pip(
                 app,
@@ -866,6 +969,8 @@ async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result
                     "--extra-index-url",
                     "https://pypi.org/simple/",
                 ],
+                net,
+                false,
             )
             .await
         }
@@ -875,7 +980,11 @@ async fn step_install_pytorch(app: &AppHandle, base: &Path, gpu: &str) -> Result
     result
 }
 
-async fn step_install_deps(app: &AppHandle, base: &Path) -> Result<(), String> {
+async fn step_install_deps(
+    app: &AppHandle,
+    base: &Path,
+    net: &SetupNetworkOpts,
+) -> Result<(), String> {
     let requirements = base.join("comfyui").join("requirements.txt");
     let uv = uv_bin(base);
     let python = venv_python(base);
@@ -885,14 +994,24 @@ async fn step_install_deps(app: &AppHandle, base: &Path) -> Result<(), String> {
     let python_dir_str = python_dir.to_string_lossy().to_string();
     let req_str = requirements.to_string_lossy().to_string();
 
-    run_logged(
-        app,
-        uv.to_str().unwrap(),
-        &["pip", "install", "--python", &python_str, "-r", &req_str],
-        &[("UV_PYTHON_INSTALL_DIR", &python_dir_str)],
-    )
-    .await
-    .map_err(|_| "Failed to install ComfyUI dependencies".to_string())
+    let mut cmd = tokio::process::Command::new(uv);
+    cmd.arg("pip")
+        .arg("install")
+        .arg("--python")
+        .arg(&python_str)
+        .arg("-r")
+        .arg(&req_str)
+        .env("UV_PYTHON_INSTALL_DIR", &python_dir_str);
+    crate::comfyui::nodes::apply_pip_install_options(
+        &mut cmd,
+        true,
+        net.network_proxy.as_deref(),
+        net.pip_index_url.as_deref(),
+    );
+
+    run_command_logged(app, cmd)
+        .await
+        .map_err(|_| "Failed to install ComfyUI dependencies".to_string())
 }
 
 fn step_install_custom_nodes(base: &Path) -> Result<(), String> {
@@ -924,11 +1043,12 @@ async fn step_install_attention_backend(
     app: &AppHandle,
     base: &Path,
     backend: &str,
+    net: &SetupNetworkOpts,
 ) -> Result<(), String> {
     match backend {
         "sage_v1" => {
             emit_log(app, "Installing SageAttention v1 (pure Triton)...");
-            uv_pip(app, base, &["sageattention==1.0.6"]).await
+            uv_pip(app, base, &["sageattention==1.0.6"], net, true).await
         }
         "sage_v2" => {
             emit_log(app, "Installing SageAttention v2 (CUDA kernels)...");
@@ -936,16 +1056,18 @@ async fn step_install_attention_backend(
                 app,
                 base,
                 &["sageattention>=2.0.0,<3.0.0", "--no-build-isolation"],
+                net,
+                true,
             )
             .await
         }
         "flash_v1" => {
             emit_log(app, "Installing FlashAttention v1...");
-            uv_pip(app, base, &["flash-attn<2.0"]).await
+            uv_pip(app, base, &["flash-attn<2.0"], net, true).await
         }
         "flash_v2" => {
             emit_log(app, "Installing FlashAttention v2...");
-            uv_pip(app, base, &["flash-attn"]).await
+            uv_pip(app, base, &["flash-attn"], net, true).await
         }
         _ => Ok(()),
     }
@@ -1587,11 +1709,15 @@ fn copy_dir_recursive_inner(
 #[tauri::command]
 pub async fn reinstall_pytorch(
     app: AppHandle,
-    _state: tauri::State<'_, Arc<AppState>>,
+    state: tauri::State<'_, Arc<AppState>>,
     index_url: Option<String>,
 ) -> Result<(), String> {
     let base = data_dir(&app)?;
     let gpu = detect_gpu_type().await;
+    let net = {
+        let config = state.config.read().await;
+        SetupNetworkOpts::from_options(config.network_proxy.clone(), config.pip_index_url.clone())
+    };
 
     let url = match index_url {
         Some(ref url) => url.as_str(),
@@ -1638,7 +1764,7 @@ pub async fn reinstall_pytorch(
         }
     });
 
-    let install_result = uv_pip(&app, &base, &args).await;
+    let install_result = uv_pip(&app, &base, &args, &net, false).await;
     heartbeat.abort();
     install_result?;
     emit(&app, "done", "PyTorch reinstalled successfully.", 100);
@@ -1652,7 +1778,10 @@ pub async fn run_setup(
     gpu_type: Option<String>,
     install_path: Option<String>,
     attention_backend: Option<String>,
+    network_proxy: Option<String>,
+    pip_index_url: Option<String>,
 ) -> Result<(), String> {
+    let net = SetupNetworkOpts::from_options(network_proxy.clone(), pip_index_url.clone());
     // If user chose a custom install path, save it as the bootstrap pointer
     // before anything else so all subsequent path resolution uses it.
     if let Some(ref path) = install_path {
@@ -1709,11 +1838,11 @@ pub async fn run_setup(
         ),
         50,
     );
-    step_install_pytorch(&app, &base, &gpu).await?;
+    step_install_pytorch(&app, &base, &gpu, &net).await?;
 
     // 6. Install ComfyUI deps
     emit(&app, "deps", "Installing ComfyUI dependencies...", 75);
-    step_install_deps(&app, &base).await?;
+    step_install_deps(&app, &base, &net).await?;
 
     // 7. Custom nodes
     emit(&app, "nodes", "Installing MooshieUI custom nodes...", 85);
@@ -1731,7 +1860,7 @@ pub async fn run_setup(
             &format!("Installing attention backend ({})...", attention),
             88,
         );
-        if let Err(e) = step_install_attention_backend(&app, &base, &attention).await {
+        if let Err(e) = step_install_attention_backend(&app, &base, &attention, &net).await {
             // Non-fatal: log warning and fall back to default
             log::warn!(
                 "Attention backend install failed, falling back to default: {}",
@@ -1764,6 +1893,8 @@ pub async fn run_setup(
         cfg.venv_path = base.join("venv").to_string_lossy().to_string();
         cfg.vram_mode = vram_mode.to_string();
         cfg.attention_backend = attention;
+        cfg.network_proxy = net.network_proxy.clone();
+        cfg.pip_index_url = net.pip_index_url.clone();
         cfg.setup_complete = true;
         config::save_config(&cfg)?;
     }

@@ -154,6 +154,8 @@ const ja: Record<string, string> = {
   "setup.scanning_model_dirs": "既存のモデルディレクトリをスキャン中...",
   "setup.footer": "MooshieUI — ComfyUIのフレンドリーなインターフェース",
   "setup.advanced_options": "詳細設定",
+  "setup.connection_section": "接続（任意）",
+  "setup.connection_hint": "git や pip のダウンロードがネットワーク制限で失敗する場合に設定してください。例: プロキシ http://127.0.0.1:7890、PyPI ミラー https://pypi.tuna.tsinghua.edu.cn/simple。",
   "setup.attention_desc": "高速生成のための最適化されたAttentionバックエンドを選択（NVIDIA Ampere+推奨）。",
   "setup.attention.default": "デフォルト (PyTorch SDPA)",
   "setup.attention.default_desc": "PyTorch組み込みAttention — 全GPU対応、追加インストール不要。",

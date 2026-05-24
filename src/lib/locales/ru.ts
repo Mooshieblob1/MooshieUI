@@ -154,6 +154,8 @@ const ru: Record<string, string> = {
   "setup.scanning_model_dirs": "Поиск существующих каталогов моделей...",
   "setup.footer": "MooshieUI — Дружественный интерфейс для ComfyUI",
   "setup.advanced_options": "Дополнительные настройки",
+  "setup.connection_section": "Подключение (необязательно)",
+  "setup.connection_hint": "Используйте, если загрузки git или pip не проходят из-за сетевых ограничений. Пример: прокси http://127.0.0.1:7890 и зеркало PyPI https://pypi.tuna.tsinghua.edu.cn/simple.",
   "setup.attention_desc": "Выберите оптимизированный бэкенд внимания для более быстрой генерации (рекомендуется NVIDIA Ampere+).",
   "setup.attention.default": "По умолчанию (PyTorch SDPA)",
   "setup.attention.default_desc": "Встроенный Attention PyTorch — работает на всех GPU, дополнительная установка не требуется.",
