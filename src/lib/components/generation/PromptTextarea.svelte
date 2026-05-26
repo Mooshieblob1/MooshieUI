@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
+  import { on } from "svelte/events";
   import { autocomplete, type TagEntry } from "../../stores/autocomplete.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
-  import { connection } from "../../stores/connection.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
-  import ArtistHoverPreview from "../../artist-gallery/components/ArtistHoverPreview.svelte";
   import { renderHighlightedPrompt, hasSchedulingTags, hasPresetTokens } from "../../utils/promptSchedule.js";
 
   interface Props {
@@ -38,14 +37,13 @@
   let showSuggestions = $state(false);
   let dropdownTop = $state(0);
   let dropdownLeft = $state(0);
-  let artistPreviewLeft = $state(0);
-  let suggestionTimer: number | null = null;
+  let suggestionTimer: ReturnType<typeof setTimeout> | null = null;
 
   const DROPDOWN_WIDTH = 320; // w-80
   const DROPDOWN_MAX_HEIGHT = 240; // max-h-60
-  const ARTIST_PREVIEW_WIDTH = 320;
   const VIEWPORT_MARGIN = 8;
   const PANEL_GAP = 8;
+  const SUGGEST_DEBOUNCE_MS = 60;
 
   // Undo/redo stacks for autocomplete insertions
   let undoStack = $state<string[]>([]);
@@ -193,19 +191,6 @@
     const maxTop = Math.max(VIEWPORT_MARGIN, viewportHeight - VIEWPORT_MARGIN - DROPDOWN_MAX_HEIGHT);
     const desiredDropdownTop = rect.top;
     dropdownTop = Math.min(Math.max(desiredDropdownTop, minTop), maxTop);
-
-    const outerPreviewLeft = isLeftPanel
-      ? dropdownLeft + DROPDOWN_WIDTH + PANEL_GAP
-      : dropdownLeft - ARTIST_PREVIEW_WIDTH - PANEL_GAP;
-    const innerPreviewLeft = isLeftPanel
-      ? dropdownLeft - ARTIST_PREVIEW_WIDTH - PANEL_GAP
-      : dropdownLeft + DROPDOWN_WIDTH + PANEL_GAP;
-    const outerHasRoom = isLeftPanel
-      ? outerPreviewLeft + ARTIST_PREVIEW_WIDTH <= viewportWidth - VIEWPORT_MARGIN
-      : outerPreviewLeft >= VIEWPORT_MARGIN;
-    const desiredPreviewLeft = outerHasRoom ? outerPreviewLeft : innerPreviewLeft;
-    const maxPreviewLeft = Math.max(VIEWPORT_MARGIN, viewportWidth - VIEWPORT_MARGIN - ARTIST_PREVIEW_WIDTH);
-    artistPreviewLeft = Math.min(Math.max(desiredPreviewLeft, VIEWPORT_MARGIN), maxPreviewLeft);
   }
 
   function acceptSuggestion(tag: TagEntry) {
@@ -440,31 +425,32 @@
     });
   }
 
+  function scheduleUpdateSuggestions() {
+    if (suggestionTimer !== null) {
+      clearTimeout(suggestionTimer);
+    }
+    suggestionTimer = setTimeout(() => {
+      suggestionTimer = null;
+      updateSuggestions();
+    }, SUGGEST_DEBOUNCE_MS);
+  }
+
   function handleInput() {
-    // Clear redo stack on manual edits (standard undo behavior)
     redoStack = [];
     syncSelectionRange();
-
-    if (suggestionTimer !== null) {
-      window.clearTimeout(suggestionTimer);
-    }
-
-    suggestionTimer = window.setTimeout(() => {
-      updateSuggestions();
-      suggestionTimer = null;
-    }, 20);
+    scheduleUpdateSuggestions();
   }
 
   function handleClick() {
     requestAnimationFrame(() => {
       syncSelectionRange();
-      updateSuggestions();
+      scheduleUpdateSuggestions();
     });
   }
 
   function handleBlur() {
     if (suggestionTimer !== null) {
-      window.clearTimeout(suggestionTimer);
+      clearTimeout(suggestionTimer);
       suggestionTimer = null;
     }
 
@@ -512,17 +498,55 @@
 
   onDestroy(() => {
     if (suggestionTimer !== null) {
-      window.clearTimeout(suggestionTimer);
+      clearTimeout(suggestionTimer);
+      suggestionTimer = null;
     }
     resizeObserver?.disconnect();
   });
 
-  /** Teleport to body so the dropdown is not clipped by side-panel overflow-x-hidden. */
+  /** Teleport overlays to body so fixed positioning escapes panel overflow/transform containers. */
   function portal(node: HTMLElement) {
     document.body.appendChild(node);
     return {
       destroy() {
         node.remove();
+      },
+    };
+  }
+
+  // Portalled dropdown nodes cannot rely on delegated listeners, so bind directly.
+  function bindCategoryButton(node: HTMLButtonElement, value: number | null) {
+    const offMouseDown = on(node, "mousedown", (e) => e.preventDefault());
+    const offClick = on(node, "click", () => {
+      categoryFilter = value;
+    });
+    return {
+      update(nextValue: number | null) {
+        value = nextValue;
+      },
+      destroy() {
+        offMouseDown();
+        offClick();
+      },
+    };
+  }
+
+  function bindSuggestionButton(node: HTMLButtonElement, initial: { tag: TagEntry; index: number }) {
+    let current = initial;
+    const offMouseDown = on(node, "mousedown", (e) => {
+      e.preventDefault();
+      acceptSuggestion(current.tag);
+    });
+    const offMouseEnter = on(node, "mouseenter", () => {
+      selectedIndex = current.index;
+    });
+    return {
+      update(next: { tag: TagEntry; index: number }) {
+        current = next;
+      },
+      destroy() {
+        offMouseDown();
+        offMouseEnter();
       },
     };
   }
@@ -539,10 +563,14 @@
   });
 
   $effect(() => {
+    // Only re-run when categoryFilter changes; avoid re-tracking value/showSuggestions
+    // (handleInput already drives updateSuggestions on typing).
     categoryFilter;
-    if (showSuggestions) {
-      updateSuggestions();
-    }
+    untrack(() => {
+      if (showSuggestions) {
+        updateSuggestions();
+      }
+    });
   });
 </script>
 
@@ -574,7 +602,7 @@
         onmousedown={(e) => e.preventDefault()}
         onclick={() => wrapSelection("brace")}
       >
-        {"{}"}
+        &#123;&#125;
       </button>
       <button
         type="button"
@@ -583,7 +611,7 @@
         onmousedown={(e) => e.preventDefault()}
         onclick={() => wrapSelection("bracket")}
       >
-        {"[]"}
+        []
       </button>
     </div>
   {/if}
@@ -619,26 +647,25 @@
     >
       <div class="sticky top-0 z-10 border-b border-neutral-700 bg-neutral-800/95 p-2 backdrop-blur-sm">
         <div class="flex flex-wrap gap-1">
-          {#each categoryOptions as option}
+          {#each categoryOptions as option (option.value ?? "all")}
             <button
               type="button"
               class="rounded-full border px-2 py-0.5 text-[10px] transition-colors cursor-pointer {categoryFilter === option.value
                 ? 'border-indigo-500/60 bg-indigo-500/15 text-indigo-200'
                 : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}"
-              onmousedown={(e) => e.preventDefault()}
-              onclick={() => { categoryFilter = option.value; }}
+              use:bindCategoryButton={option.value}
             >
               {option.label}
             </button>
           {/each}
         </div>
       </div>
-      {#each suggestions as tag, i}
+      {#each suggestions as tag, i (tag.n)}
         <button
+          type="button"
           class="w-full text-left px-3 py-1.5 text-sm flex items-center justify-between gap-2 transition-colors cursor-pointer
             {i === selectedIndex ? 'bg-indigo-600/40 text-white' : 'text-neutral-300 hover:bg-neutral-700'}"
-          onmousedown={(e) => { e.preventDefault(); acceptSuggestion(tag); }}
-          onmouseenter={() => { selectedIndex = i; }}
+          use:bindSuggestionButton={{ tag, index: i }}
         >
           <span class={CATEGORY_COLORS[tag.c] ?? "text-neutral-300"}>
             {formatTagForDisplay(tag.n)}
@@ -647,17 +674,5 @@
         </button>
       {/each}
     </div>
-    {#if suggestions[selectedIndex]?.c === 1 && connection.artistGalleryManifestUrl}
-      <div
-        use:portal
-        class="fixed z-[200] pointer-events-none"
-        style="top: {dropdownTop}px; left: {artistPreviewLeft}px;"
-      >
-        <ArtistHoverPreview
-          manifestUrl={connection.artistGalleryManifestUrl}
-          slugOrTag={suggestions[selectedIndex].n}
-        />
-      </div>
-    {/if}
   {/if}
 </div>

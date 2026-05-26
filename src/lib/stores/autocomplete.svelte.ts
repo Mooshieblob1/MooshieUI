@@ -1,7 +1,6 @@
 import { ipcStore } from "../utils/ipc.js";
 import { triggerSync } from "../utils/syncTrigger.js";
 import builtinTags from "../assets/danbooru-tags.json";
-import animaTags from "../assets/anima-tags.json";
 
 export interface TagEntry {
   n: string; // name
@@ -19,10 +18,12 @@ interface SearchEntry {
 }
 
 const STORE_KEY = "autocomplete-settings";
+const danbooruTags = builtinTags as TagEntry[];
 
 class AutocompleteStore {
   /** Active tag list used for suggestions */
-  tags = $state<TagEntry[]>(builtinTags as TagEntry[]);
+  // Large tag lists are always replaced wholesale, so raw state avoids deep proxying cost.
+  tags = $state.raw<TagEntry[]>(danbooruTags);
   /** Max number of suggestions shown in dropdown */
   maxResults = $state(20);
   /** Source mode: "builtin" | "url" | "file" */
@@ -41,7 +42,17 @@ class AutocompleteStore {
   private _storeReady = false;
   private _customTags: TagEntry[] | null = null;
   private _searchEntries: SearchEntry[] = [];
+  /** First-character bucket index on names. Lets prefix queries skip 90%+ of the corpus. */
+  private _nameFirstChar: Map<string, SearchEntry[]> = new Map();
+  /** First-character bucket index on aliases. */
+  private _aliasFirstChar: Map<string, SearchEntry[]> = new Map();
+  /** Bumps every rebuild so a stale chunked build can abort itself. */
+  private _indexVersion = 0;
   private _isAnima = false;
+  private _animaTags: TagEntry[] | null = null;
+  private _animaTagsPromise: Promise<TagEntry[]> | null = null;
+  // Ignore slower builtin swaps if the model/source changed before a lazy import resolved.
+  private _builtinSwapToken = 0;
 
   constructor() {
     this.rebuildSearchIndex(this.tags);
@@ -51,17 +62,145 @@ class AutocompleteStore {
     return text.toLowerCase().trim().replace(/\s+/g, "_").replace(/\\/g, "");
   }
 
-  private rebuildSearchIndex(tags: TagEntry[]) {
-    this._searchEntries = tags.map((tag) => ({
-      tag,
-      nameLower: tag.n.toLowerCase(),
-      aliasesLower: tag.a?.map((alias) => alias.toLowerCase()) ?? [],
-    }));
+  /** Build a single tag → SearchEntry slot and bucket it into the supplied indexes. */
+  private indexOne(
+    tag: TagEntry,
+    nameBuckets: Map<string, SearchEntry[]>,
+    aliasBuckets: Map<string, SearchEntry[]>,
+  ): SearchEntry {
+    const nameLower = tag.n.toLowerCase();
+    const aliasesLower = tag.a ? tag.a.map((alias) => alias.toLowerCase()) : [];
+    const entry: SearchEntry = { tag, nameLower, aliasesLower };
+
+    if (nameLower.length > 0) {
+      const key = nameLower.charAt(0);
+      let bucket = nameBuckets.get(key);
+      if (!bucket) {
+        bucket = [];
+        nameBuckets.set(key, bucket);
+      }
+      bucket.push(entry);
+    }
+
+    if (aliasesLower.length > 0) {
+      const seen = new Set<string>();
+      for (const alias of aliasesLower) {
+        if (alias.length === 0) continue;
+        const key = alias.charAt(0);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        let bucket = aliasBuckets.get(key);
+        if (!bucket) {
+          bucket = [];
+          aliasBuckets.set(key, bucket);
+        }
+        bucket.push(entry);
+      }
+    }
+
+    return entry;
+  }
+
+  /**
+   * Build the search index. For small corpora this is synchronous so existing
+   * call sites stay simple. For large corpora (>20k entries — i.e. Anima/custom
+   * lists) the work is split across event-loop turns so we never block the main
+   * thread with a 100–300 ms freeze when the user is mid-keystroke. Searches
+   * keep working against the previous index until the new one swaps in atomically.
+   */
+  private rebuildSearchIndex(tags: TagEntry[]): void {
+    const version = ++this._indexVersion;
+    const SYNC_THRESHOLD = 20000;
+    const nameBuckets = new Map<string, SearchEntry[]>();
+    const aliasBuckets = new Map<string, SearchEntry[]>();
+
+    if (tags.length <= SYNC_THRESHOLD) {
+      const entries: SearchEntry[] = new Array(tags.length);
+      for (let i = 0; i < tags.length; i++) {
+        entries[i] = this.indexOne(tags[i], nameBuckets, aliasBuckets);
+      }
+      this._searchEntries = entries;
+      this._nameFirstChar = nameBuckets;
+      this._aliasFirstChar = aliasBuckets;
+      return;
+    }
+
+    const entries: SearchEntry[] = new Array(tags.length);
+    const CHUNK = 8000;
+    const buildChunk = (start: number) => {
+      if (version !== this._indexVersion) return;
+      const end = Math.min(start + CHUNK, tags.length);
+      for (let i = start; i < end; i++) {
+        entries[i] = this.indexOne(tags[i], nameBuckets, aliasBuckets);
+      }
+      if (end < tags.length) {
+        setTimeout(() => buildChunk(end), 0);
+        return;
+      }
+      if (version !== this._indexVersion) return;
+      this._searchEntries = entries;
+      this._nameFirstChar = nameBuckets;
+      this._aliasFirstChar = aliasBuckets;
+    };
+    buildChunk(0);
   }
 
   private setTags(tags: TagEntry[]) {
     this.tags = tags;
     this.rebuildSearchIndex(tags);
+  }
+
+  private cancelBuiltinSwap() {
+    this._builtinSwapToken += 1;
+  }
+
+  private async loadAnimaTags(): Promise<TagEntry[]> {
+    if (this._animaTags) {
+      return this._animaTags;
+    }
+
+    if (!this._animaTagsPromise) {
+      this._animaTagsPromise = import("../assets/anima-tags.json")
+        .then((module) => {
+          this._animaTags = module.default as TagEntry[];
+          return this._animaTags;
+        })
+        .catch((error) => {
+          this._animaTagsPromise = null;
+          throw error;
+        });
+    }
+
+    return this._animaTagsPromise;
+  }
+
+  private async syncBuiltinTags() {
+    if (this.sourceMode !== "builtin") return;
+
+    const swapToken = ++this._builtinSwapToken;
+    const isAnima = this._isAnima;
+
+    if (!isAnima) {
+      if (swapToken !== this._builtinSwapToken || this.sourceMode !== "builtin" || this._isAnima !== isAnima) {
+        return;
+      }
+      this.setTags(danbooruTags);
+      return;
+    }
+
+    try {
+      const tags = await this.loadAnimaTags();
+      if (swapToken !== this._builtinSwapToken || this.sourceMode !== "builtin" || this._isAnima !== isAnima) {
+        return;
+      }
+      this.setTags(tags);
+    } catch (e) {
+      if (swapToken !== this._builtinSwapToken || this.sourceMode !== "builtin" || this._isAnima !== isAnima) {
+        return;
+      }
+      console.error("Failed to load Anima autocomplete tags:", e);
+      this.setTags(danbooruTags);
+    }
   }
 
   private insertTopByCount(list: TagEntry[], tag: TagEntry, limit: number) {
@@ -85,24 +224,66 @@ class AutocompleteStore {
     if (!normalizedQuery) return [];
 
     const safeLimit = Math.max(1, Math.min(50, limit));
-    const prefixMatches: TagEntry[] = [];
-    const containsMatches: TagEntry[] = [];
-    const aliasMatches: TagEntry[] = [];
+    const firstChar = normalizedQuery.charAt(0);
+    // "contains" scans the entire corpus; gate it to ≥3 chars to keep typing responsive.
+    const allowContains = normalizedQuery.length >= 3;
 
-    for (const entry of this._searchEntries) {
-      if (categoryFilter !== null && entry.tag.c !== categoryFilter) {
-        continue;
-      }
-      if (entry.nameLower.startsWith(normalizedQuery)) {
-        this.insertTopByCount(prefixMatches, entry.tag, safeLimit);
-      } else if (entry.nameLower.includes(normalizedQuery)) {
-        this.insertTopByCount(containsMatches, entry.tag, safeLimit);
-      } else if (entry.aliasesLower.some((alias) => alias.startsWith(normalizedQuery) || alias.includes(normalizedQuery))) {
-        this.insertTopByCount(aliasMatches, entry.tag, safeLimit);
+    const prefixMatches: TagEntry[] = [];
+    const aliasMatches: TagEntry[] = [];
+    const containsMatches: TagEntry[] = [];
+    const seenNames = new Set<string>();
+
+    // Prefix match: scan only the first-char bucket (small slice of the corpus).
+    const nameBucket = this._nameFirstChar.get(firstChar);
+    if (nameBucket) {
+      for (let i = 0; i < nameBucket.length; i++) {
+        const entry = nameBucket[i];
+        if (categoryFilter !== null && entry.tag.c !== categoryFilter) continue;
+        if (entry.nameLower.startsWith(normalizedQuery)) {
+          this.insertTopByCount(prefixMatches, entry.tag, safeLimit);
+          seenNames.add(entry.tag.n);
+        }
       }
     }
 
-    const combined = [...prefixMatches, ...containsMatches, ...aliasMatches];
+    // Alias prefix match: same first-char bucket on aliases.
+    const aliasBucket = this._aliasFirstChar.get(firstChar);
+    if (aliasBucket && prefixMatches.length < safeLimit) {
+      for (let i = 0; i < aliasBucket.length; i++) {
+        const entry = aliasBucket[i];
+        if (seenNames.has(entry.tag.n)) continue;
+        if (categoryFilter !== null && entry.tag.c !== categoryFilter) continue;
+        const aliases = entry.aliasesLower;
+        let matched = false;
+        for (let a = 0; a < aliases.length; a++) {
+          if (aliases[a].startsWith(normalizedQuery)) {
+            matched = true;
+            break;
+          }
+        }
+        if (matched) {
+          this.insertTopByCount(aliasMatches, entry.tag, safeLimit);
+          seenNames.add(entry.tag.n);
+        }
+      }
+    }
+
+    // Substring match: only when we still need more results AND the query is long
+    // enough to be meaningful. This is the only path that scans the full corpus.
+    if (allowContains && prefixMatches.length + aliasMatches.length < safeLimit) {
+      const all = this._searchEntries;
+      for (let i = 0; i < all.length; i++) {
+        const entry = all[i];
+        if (seenNames.has(entry.tag.n)) continue;
+        if (categoryFilter !== null && entry.tag.c !== categoryFilter) continue;
+        if (entry.nameLower.includes(normalizedQuery)) {
+          this.insertTopByCount(containsMatches, entry.tag, safeLimit);
+          seenNames.add(entry.tag.n);
+        }
+      }
+    }
+
+    const combined = [...prefixMatches, ...aliasMatches, ...containsMatches];
     return combined.slice(0, safeLimit);
   }
 
@@ -118,6 +299,7 @@ class AutocompleteStore {
         if (saved.sourceFileName) this.sourceFileName = saved.sourceFileName;
         const customTags = Array.isArray(saved.customTags) ? saved.customTags : null;
         if (this.sourceMode !== "builtin") {
+          this.cancelBuiltinSwap();
           if (customTags && customTags.length > 0) {
             this._customTags = customTags;
             this.setTags(customTags);
@@ -127,15 +309,14 @@ class AutocompleteStore {
             this.sourceMode = "builtin";
             this.sourceUrl = "";
             this.sourceFileName = "";
-            this.setTags(this._isAnima ? (animaTags as TagEntry[]) : (builtinTags as TagEntry[]));
+            await this.syncBuiltinTags();
           }
         } else if (customTags) {
           this._customTags = customTags;
         }
-        // Apply model-aware builtin tags after settings load
-        if (this.sourceMode === "builtin" && this._isAnima) {
-          this.setTags(animaTags as TagEntry[]);
-        }
+      }
+      if (this.sourceMode === "builtin") {
+        await this.syncBuiltinTags();
       }
     } catch (e) {
       console.error("Failed to load autocomplete settings:", e);
@@ -202,6 +383,7 @@ class AutocompleteStore {
 
   /** Load tags from a URL */
   async loadFromUrl(url: string) {
+    this.cancelBuiltinSwap();
     this.loading = true;
     this.error = null;
     try {
@@ -225,6 +407,7 @@ class AutocompleteStore {
 
   /** Load tags from uploaded file content */
   async loadFromFile(text: string, fileName: string) {
+    this.cancelBuiltinSwap();
     this.loading = true;
     this.error = null;
     try {
@@ -246,11 +429,11 @@ class AutocompleteStore {
   /** Reset to built-in tags (model-aware: Anima gets its own tag list) */
   async resetToBuiltin() {
     this._customTags = null;
-    this.setTags(this._isAnima ? (animaTags as TagEntry[]) : (builtinTags as TagEntry[]));
     this.sourceMode = "builtin";
     this.sourceUrl = "";
     this.sourceFileName = "";
     this.error = null;
+    await this.syncBuiltinTags();
     await this.saveSettings();
   }
 
@@ -259,7 +442,9 @@ class AutocompleteStore {
     if (this._isAnima === isAnima) return;
     this._isAnima = isAnima;
     if (this.sourceMode === "builtin") {
-      this.setTags(isAnima ? (animaTags as TagEntry[]) : (builtinTags as TagEntry[]));
+      void this.syncBuiltinTags();
+    } else {
+      this.cancelBuiltinSwap();
     }
   }
 

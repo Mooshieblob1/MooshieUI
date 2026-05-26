@@ -27,7 +27,7 @@
     failed = false;
     try {
       await store.init();
-      entry = await store.client.getArtist(key);
+      entry = await store.client.getArtistDirect(key);
       failed = !entry || !entry.hasImage;
     } catch {
       entry = null;

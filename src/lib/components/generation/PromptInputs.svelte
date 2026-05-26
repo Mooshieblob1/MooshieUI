@@ -2,7 +2,6 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
-  import { connection } from "../../stores/connection.svelte.js";
   import { artistFavourites } from "../../artist-gallery/favourites.svelte.js";
   import { detectArtistsInPrompt } from "../../artist-gallery/detection.js";
   import { styles } from "../../stores/styles.svelte.js";
@@ -29,16 +28,10 @@
   const negativeSegments = $derived(hasNegativeSchedule ? parseScheduledPrompt(generation.negativePrompt).segments : []);
   let schedulePanelOpen = $state(true);
 
-  // Lazy-load the artist tag index so typing an artist in the prompt without
-  // ever opening the gallery still lights up the heart chip.
-  $effect(() => {
-    if (!gallery.artistIndexReady && connection.artistGalleryManifestUrl) {
-      void gallery.loadArtistIndex(connection.artistGalleryManifestUrl);
-    }
-  });
-
   /** Artist tags detected in the current positive prompt. */
   const detectedArtists = $derived.by(() => {
+    // Avoid fetching the ~6 MB artist index just for prompt heart chips.
+    // If the gallery loads it elsewhere later, these chips still light up.
     if (!gallery.artistIndexReady || gallery.artistTagIndex.size === 0) return [];
     return detectArtistsInPrompt(generation.positivePrompt, gallery.artistTagIndex);
   });
@@ -69,7 +62,7 @@
         bind:value={generation.stylePreset}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
       >
-        {#each generation.stylePresetOptions as preset}
+        {#each generation.stylePresetOptions as preset (preset.id)}
           <option value={preset.id}>{preset.label}</option>
         {/each}
       </select>

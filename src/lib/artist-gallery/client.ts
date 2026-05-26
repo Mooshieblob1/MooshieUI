@@ -119,12 +119,19 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
     if (!slugOrTag) return null;
     const trimmed = slugOrTag.trim();
     let slug = trimmed;
-    let bucket = bucketForSlug(slug);
 
-    // If caller handed a raw tag ("@dairi" / "dairi"), try direct bucket first;
-    // fall back to the search index for indirect resolution.
-    const shard = await loadShard(bucket).catch(() => null);
-    if (shard?.entries[slug]) return shard.entries[slug];
+    // Keep raw slug lookup intact, but also try the normalized tag form directly
+    // before falling back to the large search index.
+    const directSlugs = [trimmed];
+    const normalized = normalizeTag(trimmed);
+    if (normalized && normalized !== trimmed) {
+      directSlugs.push(normalized);
+    }
+
+    for (const directSlug of directSlugs) {
+      const shard = await loadShard(bucketForSlug(directSlug)).catch(() => null);
+      if (shard?.entries[directSlug]) return shard.entries[directSlug];
+    }
 
     // Resolve through the search index.
     await loadSearchIndex();
@@ -132,9 +139,25 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
     const resolvedSlug = tagToSlug.get(key) ?? tagToSlug.get(trimmed.toLowerCase());
     if (!resolvedSlug) return null;
     slug = resolvedSlug;
-    bucket = slugToBucket.get(slug) ?? bucketForSlug(slug);
+    const bucket = slugToBucket.get(slug) ?? bucketForSlug(slug);
     const shard2 = await loadShard(bucket);
     return shard2.entries[slug] ?? null;
+  }
+
+  async function getArtistDirect(slugOrTag: string): Promise<ArtistEntry | null> {
+    if (!slugOrTag) return null;
+    const trimmed = slugOrTag.trim();
+    const directSlugs = [trimmed];
+    const normalized = normalizeTag(trimmed);
+    if (normalized && normalized !== trimmed) {
+      directSlugs.push(normalized);
+    }
+
+    for (const directSlug of directSlugs) {
+      const shard = await loadShard(bucketForSlug(directSlug)).catch(() => null);
+      if (shard?.entries[directSlug]) return shard.entries[directSlug];
+    }
+    return null;
   }
 
   function normalizeQuery(text: string): string {
@@ -179,6 +202,7 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
     loadManifest,
     loadShard,
     getArtist,
+    getArtistDirect,
     loadSearchIndex,
     search,
     invalidate,

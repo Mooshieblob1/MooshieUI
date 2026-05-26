@@ -3493,7 +3493,8 @@
     <h3 class="text-sm font-medium text-neutral-200">{locale.t('settings.lan.storage_limit_title', { user: storageTargetUser })}</h3>
     <p class="text-xs text-neutral-400">{locale.t('settings.lan.storage_limit_desc')}</p>
     <input
-      type="number"
+      type="text"
+      inputmode="decimal"
       min="0.1"
       max="100"
       step="0.1"

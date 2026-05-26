@@ -1,8 +1,38 @@
+<script module lang="ts">
+  type AnimaTag = { n: string; c: number };
+
+  let animaArtistTagLookupPromise: Promise<Record<string, string>> | null = null;
+
+  function normalizeArtistTagForLookup(tagName: string): string {
+    return tagName.toLowerCase().replace(/ /g, "_").replace(/@/g, "");
+  }
+
+  async function getAnimaArtistTagLookup(): Promise<Record<string, string>> {
+    if (!animaArtistTagLookupPromise) {
+      animaArtistTagLookupPromise = import("../../assets/anima-tags.json")
+        .then((module) => {
+          const lookup: Record<string, string> = {};
+          for (const tag of module.default as AnimaTag[]) {
+            if (tag.c === 1) {
+              lookup[normalizeArtistTagForLookup(tag.n)] = tag.n;
+            }
+          }
+          return lookup;
+        })
+        .catch((error) => {
+          animaArtistTagLookupPromise = null;
+          throw error;
+        });
+    }
+
+    return animaArtistTagLookupPromise;
+  }
+</script>
+
 <script lang="ts">
   import type { InterrogationResult, TagResult } from "../../types/index.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import animaTags from "../../assets/anima-tags.json";
 
   interface Props {
     result: InterrogationResult | null;
@@ -95,32 +125,38 @@
   });
 
   /** Format an artist tag for Anima models with @ prefix */
-  function formatArtistTagForAnima(tagName: string): string {
-    // Cross-reference against anima tag list
-    const normalized = tagName.toLowerCase().replace(/ /g, "_");
-    const animaMatch = (animaTags as { n: string; c: number }[]).find(
-      (t) => t.c === 1 && t.n.toLowerCase().replace(/@/g, "") === normalized
-    );
+  function formatArtistTagForAnima(tagName: string, lookup?: Record<string, string>): string {
+    const normalized = normalizeArtistTagForLookup(tagName);
+    const animaMatch = lookup?.[normalized];
     if (animaMatch) {
-      return animaMatch.n;
+      return animaMatch;
     }
     // Not in anima list — format with @ prefix and escape parens
     const escaped = normalized.replace(/\(/g, "\\(").replace(/\)/g, "\\)");
     return `@${escaped}`;
   }
 
-  function handleApply() {
+  async function handleApply() {
     if (!result) return;
 
     const isAnima = generation.isAnima;
     const artistTags: string[] = [];
     const otherTags: string[] = [];
+    let animaArtistTagLookup: Record<string, string> | undefined;
+
+    if (isAnima && result.artist_tags.some((tag) => checkedArtist[tag.name])) {
+      try {
+        animaArtistTagLookup = await getAnimaArtistTagLookup();
+      } catch {
+        animaArtistTagLookup = undefined;
+      }
+    }
 
     // Collect checked artist tags
     for (const tag of result.artist_tags) {
       if (checkedArtist[tag.name]) {
         if (isAnima) {
-          artistTags.push(formatArtistTagForAnima(tag.name));
+          artistTags.push(formatArtistTagForAnima(tag.name, animaArtistTagLookup));
         } else {
           artistTags.push(tag.name.replace(/_/g, " "));
         }

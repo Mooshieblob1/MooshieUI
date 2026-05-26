@@ -87,10 +87,6 @@ export class ArtistGalleryStore {
         );
       }
       this.manifest = manifest;
-      // Kick off the search index fetch early; it drives typeahead and getArtist fallback.
-      this.client.loadSearchIndex().catch((err) => {
-        console.error("artist-gallery: search index load failed", err);
-      });
     } catch (err) {
       this.manifestError = err instanceof Error ? err.message : String(err);
     } finally {

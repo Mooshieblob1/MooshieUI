@@ -72,6 +72,8 @@ export interface ArtistGalleryClient {
   loadShard(bucket: string): Promise<ArtistShard>;
   /** Resolve an artist entry by slug or raw tag ("@dairi"). Returns null if unknown. */
   getArtist(slugOrTag: string): Promise<ArtistEntry | null>;
+  /** Resolve only by direct shard lookup. Does not load the large search index fallback. */
+  getArtistDirect(slugOrTag: string): Promise<ArtistEntry | null>;
   loadSearchIndex(): Promise<ArtistSearchHit[]>;
   /** Prefix + contains + alias ranking mirrors src/lib/stores/autocomplete.svelte.ts. */
   search(query: string, opts?: SearchOptions): Promise<ArtistSearchHit[]>;

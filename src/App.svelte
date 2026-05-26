@@ -2117,9 +2117,8 @@
     // Load persisted gallery images from disk (independent of server status)
     gallery.loadFromDisk();
 
-    // Warm the artist-tag detection index in the background so thumbnail
-    // badges and "Sort by artist" work without an explicit fetch later.
-    void gallery.loadArtistIndex(connection.artistGalleryManifestUrl);
+    // Skip warming the large artist index during startup so prompt input stays responsive.
+    // Artist-specific affordances can wait until a gallery flow actually needs the index.
   }
 
   $effect(() => {
