@@ -16,6 +16,8 @@ const ORT_VERSION: &str = "1.24.2";
 
 #[cfg(target_os = "linux")]
 const ORT_LIB_NAME: &str = "libonnxruntime.so";
+#[cfg(target_os = "macos")]
+const ORT_LIB_NAME: &str = "libonnxruntime.dylib";
 #[cfg(target_os = "windows")]
 const ORT_LIB_NAME: &str = "onnxruntime.dll";
 
@@ -573,6 +575,21 @@ fn ort_download_info() -> (String, &'static str) {
             "ort_runtime.tgz",
         )
     }
+    #[cfg(target_os = "macos")]
+    {
+        let arch = if cfg!(target_arch = "aarch64") {
+            "arm64"
+        } else {
+            "x86_64"
+        };
+        (
+            format!(
+                "https://github.com/microsoft/onnxruntime/releases/download/v{}/onnxruntime-osx-{}-{}.tgz",
+                ORT_VERSION, arch, ORT_VERSION
+            ),
+            "ort_runtime.tgz",
+        )
+    }
     #[cfg(target_os = "windows")]
     {
         (
@@ -611,6 +628,42 @@ fn extract_ort_library(
             if let Some(name) = path.file_name() {
                 let name = name.to_string_lossy();
                 if name.starts_with("libonnxruntime.so.1.") {
+                    entry.unpack(dest).map_err(|e| {
+                        AppError::InterrogatorError(format!("Failed to extract library: {}", e))
+                    })?;
+                    return Ok(());
+                }
+            }
+        }
+        Err(AppError::InterrogatorError(
+            "ONNX Runtime library not found in archive".into(),
+        ))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let file = std::fs::File::open(archive_path)?;
+        let decoder = flate2::read::GzDecoder::new(file);
+        let mut archive = tar::Archive::new(decoder);
+
+        for entry in archive
+            .entries()
+            .map_err(|e| AppError::InterrogatorError(format!("Failed to read tar: {}", e)))?
+        {
+            let mut entry = entry.map_err(|e| {
+                AppError::InterrogatorError(format!("Failed to read tar entry: {}", e))
+            })?;
+            let path = entry
+                .path()
+                .map_err(|e| AppError::InterrogatorError(format!("Invalid path: {}", e)))?;
+
+            // Look for the versioned .dylib file (e.g. libonnxruntime.1.24.2.dylib)
+            if let Some(name) = path.file_name() {
+                let name = name.to_string_lossy();
+                if name.starts_with("libonnxruntime.")
+                    && name.ends_with(".dylib")
+                    && name != "libonnxruntime.dylib"
+                {
                     entry.unpack(dest).map_err(|e| {
                         AppError::InterrogatorError(format!("Failed to extract library: {}", e))
                     })?;

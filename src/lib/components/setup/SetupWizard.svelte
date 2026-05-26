@@ -10,10 +10,11 @@
     onSetupComplete: (mode: "app" | "browser") => void;
   } = $props();
 
-  let phase = $state<"detecting" | "ready" | "installing" | "choose-mode" | "done" | "error">(
+  let phase = $state<"detecting" | "ready" | "installing" | "validating-remote" | "choose-mode" | "done" | "error">(
     "detecting"
   );
   let chosenMode = $state<"app" | "browser">("app");
+  let setupMode = $state<"local" | "remote">("local");
   let gpu = $state("cpu");
   let detectedGpu = $state("cpu");
   let attentionBackend = $state("default");
@@ -21,6 +22,8 @@
   let showConnection = $state(false);
   let networkProxy = $state("");
   let pipIndexUrl = $state("");
+  let remoteServerUrl = $state("");
+  let remoteChecklist = $state<string[]>([]);
   let gpuLabel = $derived(
     gpu === "nvidia"
       ? locale.t("setup.gpu.nvidia")
@@ -103,9 +106,10 @@
     locale.detectSystemLocale();
 
     // Detect GPU and get default install path in parallel
-    const [detectedGpuResult, installPathResult] = await Promise.allSettled([
+    const [detectedGpuResult, installPathResult, configResult] = await Promise.allSettled([
       ipcInvoke<string>("detect_gpu"),
       ipcInvoke<string>("get_install_path"),
+      ipcInvoke<any>("get_config"),
     ]);
 
     if (detectedGpuResult.status === "fulfilled") {
@@ -114,6 +118,12 @@
     }
     if (installPathResult.status === "fulfilled") {
       defaultInstallPath = installPathResult.value;
+    }
+    if (configResult.status === "fulfilled") {
+      remoteServerUrl = configResult.value?.server_url ?? "";
+      if (configResult.value?.server_mode === "remote") {
+        setupMode = "remote";
+      }
     }
 
     // Scan for existing model directories in background
@@ -214,6 +224,15 @@
     selectedModelDirs = next;
   }
 
+  function normalizeRemoteServerUrl(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      throw new Error(locale.t("settings.connection.server_url"));
+    }
+    const normalized = new URL(trimmed).toString();
+    return normalized.replace(/\/+$/, "");
+  }
+
   async function startInstall() {
     phase = "installing";
     progressPercent = 0;
@@ -249,9 +268,54 @@
     }
   }
 
+  async function validateRemoteSetup() {
+    phase = "validating-remote";
+    progressPercent = 25;
+    progressMessage = locale.t("setup.remote_validating");
+    errorMessage = "";
+    remoteChecklist = [];
+    let originalConfig: any = null;
+    try {
+      const normalizedUrl = normalizeRemoteServerUrl(remoteServerUrl);
+      originalConfig = await ipcInvoke<any>("get_config");
+      const remoteConfig = {
+        ...originalConfig,
+        server_mode: "remote",
+        server_url: normalizedUrl,
+        setup_complete: true,
+      };
+      await ipcInvoke("update_config", { config: remoteConfig });
+      progressPercent = 60;
+      await ipcInvoke("check_server_health");
+      progressPercent = 85;
+      await ipcInvoke("start_comfyui");
+      progressPercent = 100;
+      phase = "choose-mode";
+    } catch (e: any) {
+      try {
+        if (originalConfig) {
+          await ipcInvoke("update_config", { config: originalConfig });
+        }
+      } catch {
+        // Keep the original validation error if config rollback also fails.
+      }
+      const message = typeof e === "string" ? e : e?.message || "Unknown error";
+      errorMessage = message;
+      if (message.includes("has not loaded required MooshieUI custom nodes")) {
+        remoteChecklist = [
+          locale.t("setup.remote_missing_nodes_install"),
+          locale.t("setup.remote_missing_nodes_restart"),
+          locale.t("setup.remote_missing_nodes_retry"),
+        ];
+      }
+      phase = "error";
+    }
+  }
+
   function retry() {
     phase = "ready";
     errorMessage = "";
+    remoteChecklist = [];
   }
 
   function stepStatus(stepId: string): "done" | "active" | "pending" {
@@ -263,7 +327,7 @@
 
 <div class="relative flex items-center justify-center h-full bg-neutral-950 text-neutral-100 overflow-hidden">
   <!-- Terminal background overlay (visible during installation) -->
-  {#if phase === "installing" || phase === "choose-mode" || phase === "done" || phase === "error"}
+  {#if phase === "installing" || phase === "validating-remote" || phase === "choose-mode" || phase === "done" || phase === "error"}
     <div
       bind:this={logContainer}
       class="absolute inset-0 overflow-y-auto p-4 pt-6 font-mono text-[11px] leading-relaxed text-green-500/25 pointer-events-none select-none"
@@ -322,6 +386,51 @@
           {locale.t("setup.intro")}
         </p>
 
+        <div class="mb-6 rounded-lg border border-neutral-800 bg-neutral-950/50 p-2">
+          <div class="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onclick={() => setupMode = "local"}
+              class="rounded-lg border px-3 py-2 text-left text-sm transition-colors cursor-pointer {setupMode === 'local'
+                ? 'border-indigo-500/50 bg-indigo-600/15 text-indigo-300'
+                : 'border-neutral-700 bg-neutral-900/50 text-neutral-300 hover:border-neutral-600'}"
+            >
+              {locale.t('setup.mode_local')}
+            </button>
+            <button
+              type="button"
+              onclick={() => setupMode = "remote"}
+              class="rounded-lg border px-3 py-2 text-left text-sm transition-colors cursor-pointer {setupMode === 'remote'
+                ? 'border-indigo-500/50 bg-indigo-600/15 text-indigo-300'
+                : 'border-neutral-700 bg-neutral-900/50 text-neutral-300 hover:border-neutral-600'}"
+            >
+              {locale.t('setup.mode_remote')}
+            </button>
+          </div>
+        </div>
+
+        {#if setupMode === "remote"}
+          <div class="mb-6 rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-3">
+            <p class="text-sm text-neutral-200">{locale.t('setup.remote_desc')}</p>
+            <div>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.server_url')}</label>
+              <input
+                type="text"
+                bind:value={remoteServerUrl}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500"
+                placeholder={locale.t('settings.connection.server_url_placeholder')}
+              />
+            </div>
+            <button
+              type="button"
+              onclick={validateRemoteSetup}
+              class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 rounded-lg font-semibold transition-colors cursor-pointer"
+              disabled={!remoteServerUrl.trim()}
+            >
+              {locale.t('setup.remote_validate')}
+            </button>
+          </div>
+        {:else}
         <!-- GPU Selection -->
         <div class="mb-6">
           {#if gpu === "mps"}
@@ -406,9 +515,11 @@
                 </button>
               {/each}
             </div>
-            {#if attentionBackend === "sage_v2" || attentionBackend === "flash_v2"}
+            <div class="rounded-lg border border-neutral-800 bg-neutral-900/50 p-2.5 space-y-1.5">
+              <p class="text-[10px] text-neutral-500">{locale.t('setup.attention.install_target')}</p>
+              <p class="text-[10px] text-neutral-500">{locale.t('setup.attention.external_env')}</p>
               <p class="text-[10px] text-amber-400/80">{locale.t('setup.attention.compile_warning')}</p>
-            {/if}
+            </div>
           </div>
           {/if}
         </div>
@@ -550,29 +661,32 @@
         >
           {locale.t('setup.install_button')}
         </button>
-      {:else if phase === "installing"}
+        {/if}
+      {:else if phase === "installing" || phase === "validating-remote"}
         <h2 class="text-xl font-semibold mb-4">{locale.t('setup.progress_title')}</h2>
 
         <!-- Step checklist -->
-        <div class="space-y-1.5 mb-5">
-          {#each visibleSteps as step}
-            {@const status = stepStatus(step.id)}
-            <div class="flex items-center gap-2.5 text-xs">
-              {#if status === "done"}
-                <div class="w-4 h-4 rounded-full bg-green-600 flex items-center justify-center shrink-0">
-                  <svg class="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                </div>
-                <span class="text-neutral-500 line-through">{step.label}</span>
-              {:else if status === "active"}
-                <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0"></div>
-                <span class="text-indigo-300 font-medium">{step.label}</span>
-              {:else}
-                <div class="w-4 h-4 rounded-full border border-neutral-700 shrink-0"></div>
-                <span class="text-neutral-600">{step.label}</span>
-              {/if}
-            </div>
-          {/each}
-        </div>
+        {#if phase === "installing"}
+          <div class="space-y-1.5 mb-5">
+            {#each visibleSteps as step}
+              {@const status = stepStatus(step.id)}
+              <div class="flex items-center gap-2.5 text-xs">
+                {#if status === "done"}
+                  <div class="w-4 h-4 rounded-full bg-green-600 flex items-center justify-center shrink-0">
+                    <svg class="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  </div>
+                  <span class="text-neutral-500 line-through">{step.label}</span>
+                {:else if status === "active"}
+                  <div class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0"></div>
+                  <span class="text-indigo-300 font-medium">{step.label}</span>
+                {:else}
+                  <div class="w-4 h-4 rounded-full border border-neutral-700 shrink-0"></div>
+                  <span class="text-neutral-600">{step.label}</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
 
         <!-- Overall progress bar -->
         <div class="mb-1">
@@ -675,6 +789,17 @@
               {errorMessage}
             </p>
           </div>
+
+          {#if remoteChecklist.length > 0}
+            <div class="bg-neutral-900 border border-neutral-800 rounded-lg p-3 mb-4 text-left">
+              <p class="text-sm font-medium text-neutral-100 mb-2">{locale.t('setup.remote_missing_nodes_title')}</p>
+              <ul class="list-disc list-inside space-y-1 text-[11px] text-neutral-300">
+                {#each remoteChecklist as item}
+                  <li>{item}</li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
 
           <!-- Show last few log lines for context -->
           {#if logLines.length > 0}

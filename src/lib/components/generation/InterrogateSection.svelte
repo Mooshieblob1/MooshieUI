@@ -4,7 +4,8 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import InterrogateModal from "./InterrogateModal.svelte";
   import { interrogateImage, interrogateImagePath, interrogateClipboard, readClipboardImage } from "../../utils/api.js";
-  import { ipcListen, isTauri, isBrowserMode } from "../../utils/ipc.js";
+  import { ipcListen, isTauri, isBrowserMode, ipcOpenFileDialog } from "../../utils/ipc.js";
+  import { handleMetadataImport, handleMetadataImportPath } from "../../utils/metadataImport.js";
   import type { InterrogationResult } from "../../types/index.js";
 
   // Interrogation state
@@ -222,6 +223,28 @@
     await interrogatePath(selected);
   }
 
+  async function handleImportMetadataFromFile() {
+    if (isTauri) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }],
+      });
+      if (!selected) return;
+
+      await handleMetadataImportPath(selected, "all");
+      return;
+    }
+
+    const file = await ipcOpenFileDialog({
+      accept: "image/png,image/jpeg,image/webp",
+      multiple: false,
+    });
+    if (!file) return;
+
+    await handleMetadataImport(file, "all");
+  }
+
   function handleInterrogateUpload(event: Event) {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
@@ -320,6 +343,15 @@
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
       {locale.t('generation.interrogate.select_image')}
+    </button>
+    <span class="text-neutral-700">|</span>
+    <button
+      type="button"
+      onclick={handleImportMetadataFromFile}
+      class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors flex items-center gap-1"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15h6"/><path d="M9 18h6"/></svg>
+      {locale.t('common.import')} {locale.t('generation.sampler.metadata')}
     </button>
   </div>
   <p class="text-[10px] text-neutral-600 mt-2">{locale.t('generation.interrogate.drop_hint')}</p>

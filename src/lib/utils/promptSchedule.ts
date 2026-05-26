@@ -292,3 +292,146 @@ export function hasPresetTokens(raw: string): boolean {
   PRESET_TOKEN_REGEX.lastIndex = 0;
   return PRESET_TOKEN_REGEX.test(raw);
 }
+
+export interface PositiveRegionPrompt {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const REGION_TAG_REGEX =
+  /<region:(\d*\.?\d+)\s*,\s*(\d*\.?\d+)\s*,\s*(\d*\.?\d+)\s*,\s*(\d*\.?\d+)>([\s\S]*?)<\/region>/gi;
+
+/**
+ * Parse syntax-first regional prompt tags:
+ *   <region:x1,y1,x2,y2>text</region>
+ * where coordinates are normalized 0..1 fractions.
+ */
+export function parseRegionalPrompt(raw: string): {
+  baseText: string;
+  regions: PositiveRegionPrompt[];
+} {
+  const regions: PositiveRegionPrompt[] = [];
+  let baseText = "";
+  let lastIndex = 0;
+  REGION_TAG_REGEX.lastIndex = 0;
+
+  let match: RegExpExecArray | null;
+  while ((match = REGION_TAG_REGEX.exec(raw)) !== null) {
+    baseText += raw.slice(lastIndex, match.index);
+    lastIndex = match.index + match[0].length;
+
+    const x1 = parseFloat(match[1]);
+    const y1 = parseFloat(match[2]);
+    const x2 = parseFloat(match[3]);
+    const y2 = parseFloat(match[4]);
+    const text = match[5].trim();
+
+    if (!text) continue;
+    if (
+      !Number.isFinite(x1) ||
+      !Number.isFinite(y1) ||
+      !Number.isFinite(x2) ||
+      !Number.isFinite(y2)
+    ) {
+      continue;
+    }
+    if (x1 < 0 || y1 < 0 || x2 > 1 || y2 > 1 || x2 <= x1 || y2 <= y1) {
+      continue;
+    }
+    regions.push({
+      text,
+      x: x1,
+      y: y1,
+      width: x2 - x1,
+      height: y2 - y1,
+    });
+  }
+
+  baseText += raw.slice(lastIndex);
+  baseText = baseText
+    .replace(/,\s*,/g, ",")
+    .replace(/^\s*,\s*/, "")
+    .replace(/\s*,\s*$/, "")
+    .trim();
+
+  return { baseText, regions };
+}
+
+export function hasRegionalTags(raw: string): boolean {
+  if (!raw || !raw.includes("<region:")) return false;
+  REGION_TAG_REGEX.lastIndex = 0;
+  return REGION_TAG_REGEX.test(raw);
+}
+
+function formatLoraTagStrength(strength: number): string {
+  const s = Number.isFinite(strength) ? Math.max(0, Math.min(2, strength)) : 1;
+  if (Math.abs(s - Math.round(s)) < 1e-6) return String(Math.round(s));
+  return s.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function promptContainsLoraTag(prompt: string, loraName: string): boolean {
+  const trimmed = loraName.trim();
+  if (!trimmed) return false;
+  const re = new RegExp(`<lora:\\s*${escapeRegExp(trimmed)}\\s*:`, "i");
+  return re.test(prompt);
+}
+
+/**
+ * Shared positive context for regional CLIP encodes: main prompt, schedule segments,
+ * and `<lora:name:strength>` tags for enabled LoRAs not already in the prompt.
+ */
+export function buildRegionalContextPrompt(
+  baseText: string,
+  segments: Array<{ text: string }>,
+  loras: Array<{ name: string; enabled?: boolean; strength_clip?: number }>,
+): string {
+  const parts: string[] = [];
+  const seen = new Set<string>();
+
+  const pushPart = (value: string): void => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    parts.push(trimmed);
+  };
+
+  pushPart(baseText);
+  for (const segment of segments) {
+    pushPart(segment.text);
+  }
+
+  let combined = parts.join(", ");
+  for (const lora of loras) {
+    if (lora.enabled === false || !lora.name?.trim()) continue;
+    if (promptContainsLoraTag(combined, lora.name)) continue;
+    const strength = formatLoraTagStrength(lora.strength_clip ?? 1);
+    const tag = `<lora:${lora.name.trim()}:${strength}>`;
+    combined = combined ? `${combined}, ${tag}` : tag;
+  }
+
+  return combined;
+}
+
+/**
+ * Merge global prompt context with a region's local prompt for area conditioning.
+ * Keeps region-only text in the UI; call this when building generation params.
+ */
+export function mergeRegionalPromptText(contextPrompt: string, regionText: string): string {
+  const context = contextPrompt.trim();
+  const local = regionText.trim();
+  if (!local) return context;
+  if (!context) return local;
+  if (local.includes(context) || context.includes(local)) {
+    return local.length >= context.length ? local : `${context}, ${local}`;
+  }
+  return `${context}, ${local}`;
+}

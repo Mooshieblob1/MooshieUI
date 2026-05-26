@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AppConfig, QueueInfo } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
@@ -69,6 +69,11 @@
   // Attention backend state
   let attentionInstalling = $state(false);
   let attentionError = $state<string | null>(null);
+  let attentionStatus = $state<AttentionBackendStatus | null>(null);
+  let attentionStatusLoading = $state(false);
+  let attentionStatusError = $state<string | null>(null);
+  let attentionStatusVenvPath = $state<string | null>(null);
+  let workersDetecting = $state(false);
 
   // Gallery import state
   let importBusy = $state(false);
@@ -85,6 +90,54 @@
   let clearQueueDone = $state(false);
   let clearQueueError = $state<string | null>(null);
   let showClearQueueConfirm = $state(false);
+
+  function ensureGpuWorkers() {
+    if (!config) return;
+    if (!Array.isArray(config.gpu_workers)) config.gpu_workers = [];
+  }
+
+  function addGpuWorker() {
+    if (!config) return;
+    ensureGpuWorkers();
+    config.gpu_workers = [
+      ...config.gpu_workers,
+      {
+        gpu_index: config.gpu_workers.length,
+        port: null,
+        enabled: true,
+        label: null,
+        vram_mode: null,
+      },
+    ];
+    autoSave();
+  }
+
+  function removeGpuWorker(index: number) {
+    if (!config) return;
+    ensureGpuWorkers();
+    config.gpu_workers = config.gpu_workers.filter((_, i) => i !== index);
+    autoSave();
+  }
+
+  async function autoDetectGpuWorkers() {
+    if (!config) return;
+    workersDetecting = true;
+    try {
+      const stats = await getGpuStats();
+      if (stats.length > 0) {
+        config.gpu_workers = stats.map((gpu) => ({
+          gpu_index: gpu.index,
+          port: gpu.worker?.port ?? config!.server_port + gpu.index,
+          enabled: true,
+          label: gpu.name,
+          vram_mode: null,
+        }));
+        autoSave();
+      }
+    } finally {
+      workersDetecting = false;
+    }
+  }
 
   async function handleClearQueue() {
     clearQueueBusy = true;
@@ -103,6 +156,8 @@
 
   // Mode switching state
   let switchingMode = $state(false);
+  /** After a successful switch, which mode we landed in (for status text). */
+  let modeSwitchResult = $state<"browser" | "app" | null>(null);
   let showModelManager = $state(false);
 
   // Queue viewer state (live-polling when settings page is open)
@@ -453,6 +508,7 @@
   async function switchUiMode() {
     if (!config) return;
     switchingMode = true;
+    modeSwitchResult = null;
     const newMode = !config.browser_mode;
     console.log("[switchUiMode] isTauri:", isTauri, "isBrowserMode:", isBrowserMode, "config.browser_mode:", config.browser_mode, "newMode:", newMode);
     try {
@@ -462,6 +518,7 @@
         await ipcInvoke("switch_to_browser_mode");
         console.log("[switchUiMode] switch_to_browser_mode succeeded");
         config.browser_mode = true;
+        modeSwitchResult = "browser";
       } else if (isTauri && !newMode) {
         // App mode, user wants to stay in app mode? Shouldn't happen but log it
         console.warn("[switchUiMode] already in app mode (isTauri=true, newMode=false)");
@@ -472,7 +529,7 @@
         const result = await ipcInvoke("switch_to_app_mode");
         console.log("[switchUiMode] switch_to_app_mode result:", JSON.stringify(result));
         config.browser_mode = false;
-        switchingMode = true; // keep the message visible
+        modeSwitchResult = "app";
       } else if (!isTauri && isBrowserMode && newMode) {
         // Already in browser mode wanting browser mode? Shouldn't happen
         console.warn("[switchUiMode] already in browser mode");
@@ -484,6 +541,7 @@
     } catch (e) {
       console.error("[switchUiMode] FAILED:", e);
       switchingMode = false;
+      modeSwitchResult = null;
     }
   }
 
@@ -929,9 +987,24 @@
     snapshotRestartFields();
   }
 
+  async function refreshAttentionStatus() {
+    if (!config) return;
+    attentionStatusLoading = true;
+    attentionStatusError = null;
+    attentionStatusVenvPath = config.venv_path;
+    try {
+      attentionStatus = await checkAttentionBackend();
+    } catch (e: any) {
+      attentionStatusError = typeof e === "string" ? e : e.message || "Failed to check attention backend";
+    } finally {
+      attentionStatusLoading = false;
+    }
+  }
+
   onMount(async () => {
     try {
       await loadConfig();
+      await refreshAttentionStatus();
     } catch (e) {
       error = `Failed to load config: ${e}`;
     } finally {
@@ -1007,6 +1080,7 @@
       config.attention_backend = previousBackend;
     } finally {
       attentionInstalling = false;
+      void refreshAttentionStatus();
     }
   }
 
@@ -1020,6 +1094,7 @@
       saved = true;
       snapshotRestartFields();
       checkRestartNeeded();
+      void refreshAttentionStatus();
       setTimeout(() => (saved = false), 2000);
     } catch (e) {
       error = `Failed to save: ${e}`;
@@ -1145,9 +1220,13 @@
             </div>
             {#if switchingMode}
               <p class="text-xs text-amber-400">
-                {config.browser_mode
-                  ? locale.t('settings.app_mode.switched_to_app')
-                  : locale.t('settings.app_mode.switching_to_browser')}
+                {#if modeSwitchResult === "browser"}
+                  {locale.t('settings.app_mode.switched_to_browser')}
+                {:else if modeSwitchResult === "app"}
+                  {locale.t('settings.app_mode.switched_to_app')}
+                {:else}
+                  {locale.t('settings.app_mode.switching_to_browser')}
+                {/if}
               </p>
             {/if}
             {#if config.browser_mode}
@@ -1546,6 +1625,40 @@
               />
               <p class="text-xs text-neutral-500 mt-1">{locale.t('settings.connection.pip_index_url_desc')}</p>
             </div>
+            <div class="col-span-3">
+              <label class="block text-xs text-neutral-400 mb-1">Output filename template</label>
+              <input
+                type="text"
+                bind:value={config.output_filename_template}
+                oninput={checkRestartNeeded}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                placeholder={`{prompt_id}__{mode}__{model}__{seed}`}
+              />
+              <p class="text-xs text-neutral-500 mt-1">
+                Keys: {`{prompt_id}`}, {`{mode}`}, {`{index}`}, {`{date}`}, {`{time}`}, {`{model}`}, {`{seed}`}
+              </p>
+            </div>
+            <div class="col-span-3">
+              <label class="block text-xs text-neutral-400 mb-1">Webhook URL</label>
+              <input
+                type="text"
+                bind:value={config.webhook_url}
+                oninput={checkRestartNeeded}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                placeholder="https://example.com/webhooks/mooshie"
+              />
+              <div class="mt-2 flex flex-wrap gap-4 text-xs text-neutral-400">
+                <label class="inline-flex items-center gap-2">
+                  <input type="checkbox" bind:checked={config.webhook_include_sensitive} class="accent-indigo-500" />
+                  Include prompt/metadata
+                </label>
+                <label class="inline-flex items-center gap-2">
+                  <input type="checkbox" bind:checked={config.webhook_allow_private_targets} class="accent-indigo-500" />
+                  Allow localhost/private targets
+                </label>
+              </div>
+              <p class="text-xs text-neutral-500 mt-1">Enabled event: <code>image_saved</code> (async retry with backoff).</p>
+            </div>
           </div>
           </div>
           {/if}
@@ -1741,6 +1854,53 @@
             {:else}
               <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.performance.attention_note')}</p>
             {/if}
+
+            <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2 mt-2">
+              <p class="text-[10px] text-neutral-500">{locale.t('settings.performance.attention_status_desc')}</p>
+
+              <div class="space-y-1.5 text-[11px]">
+                <div class="flex items-start gap-2">
+                  <span class="w-32 shrink-0 text-neutral-500">{locale.t('settings.paths.venv')}</span>
+                  <span class="min-w-0 break-all font-mono text-neutral-300">
+                    {attentionStatusVenvPath || locale.t('common.none')}
+                  </span>
+                </div>
+
+                <div class="flex items-start gap-2">
+                  <span class="w-32 shrink-0 text-neutral-500">{locale.t('settings.performance.attention_installed_packages')}</span>
+                  <span class="min-w-0 break-all text-neutral-200">
+                    {#if attentionStatusLoading && !attentionStatus}
+                      {locale.t('common.loading')}
+                    {:else if attentionStatus?.venv_packages.length}
+                      {attentionStatus.venv_packages.join(", ")}
+                    {:else}
+                      {locale.t('common.none')}
+                    {/if}
+                  </span>
+                </div>
+
+                <div class="flex items-start gap-2">
+                  <span class="w-32 shrink-0 text-neutral-500">{locale.t('settings.performance.attention_compute_capability')}</span>
+                  <span class="text-neutral-200">
+                    {#if attentionStatusLoading && !attentionStatus}
+                      {locale.t('common.loading')}
+                    {:else if attentionStatus?.compute_capability != null}
+                      {attentionStatus.compute_capability.toFixed(1)}
+                    {:else}
+                      {locale.t('settings.performance.attention_not_detected')}
+                    {/if}
+                  </span>
+                </div>
+              </div>
+
+              {#if attentionStatusError}
+                <p class="text-[10px] text-red-400">{attentionStatusError}</p>
+              {/if}
+
+              <p class="text-[10px] text-neutral-500">{locale.t('settings.performance.attention_install_target')}</p>
+              <p class="text-[10px] text-amber-400/80">{locale.t('settings.performance.attention_external_env')}</p>
+              <p class="text-[10px] text-amber-400/80">{locale.t('setup.attention.compile_warning')}</p>
+            </div>
           </div>
 
           <div class="flex items-start gap-3">
@@ -1936,7 +2096,70 @@
           </button>
 
           {#if !collapsed.gpu}
-          <div class="px-5 pb-5">
+          <div class="px-5 pb-5 space-y-4">
+            {#if config}
+              <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-3">
+                <div class="flex items-center justify-between">
+                  <p class="text-xs text-neutral-300">GPU worker config</p>
+                  <div class="flex items-center gap-2">
+                    <button
+                      type="button"
+                      class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:border-indigo-500"
+                      onclick={addGpuWorker}
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:border-indigo-500 disabled:opacity-50"
+                      onclick={autoDetectGpuWorkers}
+                      disabled={workersDetecting}
+                    >
+                      {workersDetecting ? "Detecting..." : "Auto-detect"}
+                    </button>
+                  </div>
+                </div>
+                {#if !config.gpu_workers || config.gpu_workers.length === 0}
+                  <p class="text-[11px] text-neutral-500">No workers configured. Single-worker mode is used by default.</p>
+                {:else}
+                  <div class="space-y-2">
+                    {#each config.gpu_workers as worker, idx}
+                      <div class="grid grid-cols-12 gap-2 items-center rounded border border-neutral-800 bg-neutral-900/60 p-2">
+                        <label class="col-span-2 text-[10px] text-neutral-400">
+                          GPU
+                          <input type="number" bind:value={worker.gpu_index} oninput={() => autoSave()} class="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100" />
+                        </label>
+                        <label class="col-span-2 text-[10px] text-neutral-400">
+                          Port
+                          <input type="number" bind:value={worker.port} oninput={() => autoSave()} class="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100" />
+                        </label>
+                        <label class="col-span-4 text-[10px] text-neutral-400">
+                          Label
+                          <input type="text" bind:value={worker.label} oninput={() => autoSave()} class="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100" />
+                        </label>
+                        <label class="col-span-2 text-[10px] text-neutral-400">
+                          VRAM
+                          <select bind:value={worker.vram_mode} onchange={() => autoSave()} class="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100">
+                            <option value="">default</option>
+                            <option value="high">high</option>
+                            <option value="normal">normal</option>
+                            <option value="low">low</option>
+                            <option value="none">none</option>
+                          </select>
+                        </label>
+                        <div class="col-span-2 flex items-center justify-end gap-2">
+                          <label class="inline-flex items-center gap-1 text-[10px] text-neutral-300">
+                            <input type="checkbox" bind:checked={worker.enabled} onchange={() => autoSave()} class="accent-indigo-500" />
+                            On
+                          </label>
+                          <button type="button" class="text-xs text-red-300 hover:text-red-200" onclick={() => removeGpuWorker(idx)}>Delete</button>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
             <GpuStatusPanel />
           </div>
           {/if}

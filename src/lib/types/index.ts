@@ -28,12 +28,44 @@ export interface PromptSegment {
   end: number;
 }
 
+export interface PositiveRegion {
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  strength: number;
+}
+
+export type RegionalPromptShape = "box" | "circle" | "lasso";
+
+/** How regional prompts are applied in txt2img. */
+export type RegionalPromptStrategy = "conditioning" | "inpaint_chain";
+
+export interface RegionalPromptPoint {
+  x: number;
+  y: number;
+}
+
+export interface RegionalPromptSelection {
+  id: string;
+  shape: RegionalPromptShape;
+  text: string;
+  strength: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  points?: RegionalPromptPoint[];
+}
+
 export interface GenerationParams {
   mode: "txt2img" | "img2img" | "inpainting";
   positive_prompt: string;
   negative_prompt: string;
   positive_segments: PromptSegment[];
   negative_segments: PromptSegment[];
+  positive_regions?: PositiveRegion[];
   /** Raw prompt text with scheduling tags intact, for metadata embedding */
   raw_positive_prompt: string;
   /** Raw prompt text with scheduling tags intact, for metadata embedding */
@@ -79,6 +111,19 @@ export interface GenerationParams {
   output_bit_depth: string;
   /** Storage format for this generation: "png" (default) or "jxl". */
   output_format: string;
+  /** Anima Untwisting RoPE style transfer (txt2img only). */
+  style_transfer_enabled?: boolean;
+  style_reference_image?: string | null;
+  style_transfer_low_scale_end?: number;
+  style_transfer_high_scale_start?: number;
+  style_transfer_beta?: number;
+  style_transfer_adain_strength?: number;
+  style_transfer_rf_mode?: string;
+  style_transfer_gamma?: number;
+  style_transfer_gamma_curve?: number;
+  style_transfer_norm_strength?: number;
+  style_transfer_pmi_alpha?: number;
+  style_transfer_megapixels?: number;
 }
 
 export interface OutputImage {
@@ -162,10 +207,24 @@ export interface AppConfig {
   ui_server_port: number;
   lan_enabled: boolean;
   attention_backend: string;
+  gpu_workers: Array<{
+    gpu_index: number;
+    port: number | null;
+    enabled: boolean;
+    label: string | null;
+    vram_mode: string | null;
+  }>;
   /** HTTP(S) proxy for git/pip when installing ControlNet custom nodes (optional). */
   network_proxy: string | null;
   /** PyPI index URL for pip/uv installs, e.g. a regional mirror (optional). */
   pip_index_url: string | null;
+  /** Optional gallery output filename template. */
+  output_filename_template: string | null;
+  /** Optional webhook endpoint URL for generation lifecycle events. */
+  webhook_url: string | null;
+  webhook_events: string[];
+  webhook_include_sensitive: boolean;
+  webhook_allow_private_targets: boolean;
 }
 
 export interface QueueInfo {

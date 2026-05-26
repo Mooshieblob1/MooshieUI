@@ -264,7 +264,13 @@ impl GpuManager {
         });
 
         let url = format!("{}/prompt", worker.base_url);
-        let resp = self.http_client.post(&url).json(&body).send().await;
+        let resp = self
+            .http_client
+            .post(&url)
+            .json(&body)
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await;
 
         match resp {
             Ok(r) if r.status().is_success() => {
@@ -455,7 +461,7 @@ pub struct WorkerStatusInfo {
 /// Detect available NVIDIA GPUs via nvidia-smi.
 /// Returns Vec<(index, name, vram_mb)>.
 pub fn detect_gpus() -> Vec<(u32, String, u64)> {
-    let output = std::process::Command::new("nvidia-smi")
+    let output = crate::comfyui::process::std_command_no_window("nvidia-smi")
         .args([
             "--query-gpu=index,name,memory.total",
             "--format=csv,noheader,nounits",

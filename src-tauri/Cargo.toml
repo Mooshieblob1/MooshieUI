@@ -82,5 +82,8 @@ rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 webkit2gtk = { version = "=2.0.2", optional = true }
 tar = "0.4"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+tar = "0.4"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 zip = "8"

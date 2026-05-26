@@ -267,7 +267,7 @@ class CanvasStore {
     let maskLayerMeta = this.layers.find((l) => l.type === "mask");
     if (!maskLayerMeta) {
       const newId = this.addLayer("mask", "Inpaint Mask");
-      maskLayerMeta = this.layers.find((l) => l.id === newId) ?? null;
+      maskLayerMeta = this.layers.find((l) => l.id === newId) ?? undefined;
     }
     if (!maskLayerMeta) return false;
 

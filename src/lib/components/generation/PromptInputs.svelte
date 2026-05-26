@@ -9,15 +9,20 @@
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
-  import { parseScheduledPrompt, hasSchedulingTags } from "../../utils/promptSchedule.js";
+  import { parseScheduledPrompt, hasRegionalTags, hasSchedulingTags } from "../../utils/promptSchedule.js";
 
   interface Props {
     showHistory?: boolean;
+    onOpenRegionalPrompt?: () => void;
   }
 
-  let { showHistory = true }: Props = $props();
+  let { showHistory = true, onOpenRegionalPrompt }: Props = $props();
 
   const hasPositiveSchedule = $derived(hasSchedulingTags(generation.positivePrompt));
+  const regionalPromptingSupported = $derived(generation.supportsRegionalPrompting);
+  const hasRegionalPrompting = $derived(
+    hasRegionalTags(generation.positivePrompt) || generation.regionalPrompts.length > 0,
+  );
   const hasNegativeSchedule = $derived(hasSchedulingTags(generation.negativePrompt));
   const hasAnySchedule = $derived(hasPositiveSchedule || hasNegativeSchedule);
   const positiveSegments = $derived(hasPositiveSchedule ? parseScheduledPrompt(generation.positivePrompt).segments : []);
@@ -133,6 +138,25 @@
       {/each}
       </div>
     </div>
+    <div class="mb-1 flex justify-end">
+      <button
+        type="button"
+        disabled={!regionalPromptingSupported}
+        onclick={() => {
+          if (!regionalPromptingSupported) {
+            gallery.showToast(locale.t("generation.regional.unsupported"), "warning");
+            return;
+          }
+          onOpenRegionalPrompt?.();
+        }}
+        class="rounded-lg border px-2 py-0.5 text-[10px] transition-colors disabled:cursor-not-allowed {regionalPromptingSupported
+          ? 'border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-indigo-500 hover:text-indigo-200'
+          : 'border-neutral-800 bg-neutral-950 text-neutral-500'}"
+        title={!regionalPromptingSupported ? locale.t("generation.regional.unsupported") : undefined}
+      >
+        {locale.t("generation.regional.button", { count: String(generation.regionalPrompts.length) })}
+      </button>
+    </div>
     {#if generation.isAnima}
       <div class="text-[10px] text-amber-400/80 mb-1">{locale.t('generation.prompts.anima_artist_tip')}</div>
     {/if}
@@ -143,6 +167,11 @@
       minHeight="min-h-25"
       storageKey="mooshieui.promptHeight.positive"
     />
+    {#if hasRegionalPrompting && !regionalPromptingSupported}
+      <p class="mt-1 text-[10px] text-amber-300">
+        {locale.t("generation.regional.unsupported")}
+      </p>
+    {/if}
   </div>
 
   <div class="transition-opacity {generation.isFlux ? 'opacity-40 pointer-events-none' : ''}">

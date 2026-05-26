@@ -45,11 +45,14 @@ pub async fn generate(
     };
 
     let workflow = templates::build_workflow(&params, seed);
+    crate::comfyui::process::mark_legacy_worker_idle(state.inner()).await;
     log::info!(
-        "generate: output_format={}, output_bit_depth={}, mode={}",
+        "generate: output_format={}, output_bit_depth={}, mode={}, architecture={}, positive_regions={}",
         params.output_format,
         params.output_bit_depth,
         params.mode,
+        params.model_architecture,
+        params.positive_regions.len(),
     );
     if params.controlnet.as_ref().is_some_and(|cn| cn.enabled)
         || params.facefix_enabled

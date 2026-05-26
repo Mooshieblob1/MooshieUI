@@ -517,8 +517,12 @@
       class="relative w-10 h-5 rounded-full transition-colors {generation.controlnetEnabled
         ? 'bg-indigo-600'
         : 'bg-neutral-700'}"
-      onclick={() =>
-        (generation.controlnetEnabled = !generation.controlnetEnabled)}
+      onclick={() => {
+        const next = !generation.controlnetEnabled;
+        generation.controlnetEnabled = next;
+        if (next) generation.styleTransferEnabled = false;
+        generation.saveSettings();
+      }}
       role="switch"
       aria-checked={generation.controlnetEnabled}
     >

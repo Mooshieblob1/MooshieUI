@@ -12,6 +12,19 @@ struct RequiredCustomNodePackage {
     verify_nodes: &'static [&'static str],
 }
 
+const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
+    RequiredCustomNodePackage {
+        name: "ComfyUi-Untwisting-RoPE",
+        git_url: "https://github.com/BigStationW/ComfyUi-Untwisting-RoPE.git",
+        verify_nodes: &["RFInversion", "UntwistingRoPE"],
+    },
+    RequiredCustomNodePackage {
+        name: "ComfyUi-Scale-Image-to-Total-Pixels-Advanced",
+        git_url: "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git",
+        verify_nodes: &["ImageScaleToTotalPixelsX"],
+    },
+];
+
 const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[
     RequiredCustomNodePackage {
         name: "comfyui_controlnet_aux",
@@ -38,6 +51,10 @@ pub const MISSING_MOOSHIE_NODES_MARKER: &str = "has not loaded required MooshieU
 
 /// Substring present in [`verify_required_controlnet_nodes`] error output.
 pub const MISSING_CONTROLNET_NODES_MARKER: &str = "Required ControlNet custom nodes failed to load";
+
+/// Substring present in [`verify_required_style_transfer_nodes`] error output.
+pub const MISSING_STYLE_TRANSFER_NODES_MARKER: &str =
+    "Required style transfer custom nodes failed to load";
 
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveImage",
@@ -221,6 +238,55 @@ pub async fn ensure_required_controlnet_nodes(
     Ok(())
 }
 
+/// Ensure Untwisting RoPE and related style-transfer custom nodes are present.
+/// Failures are logged as warnings and do not block core startup.
+pub async fn ensure_required_style_transfer_nodes(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+) -> Result<(), String> {
+    let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
+    std::fs::create_dir_all(&custom_nodes).map_err(|e| {
+        format!(
+            "Failed to create ComfyUI custom_nodes directory at '{}': {}",
+            custom_nodes.display(),
+            e
+        )
+    })?;
+
+    let mut failures = Vec::new();
+    for package in STYLE_TRANSFER_PACKAGES {
+        if let Err(e) = ensure_custom_node_package(
+            &custom_nodes,
+            venv_path,
+            network_proxy,
+            pip_index_url,
+            *package,
+        )
+        .await
+        {
+            log::warn!(
+                "Style transfer custom node '{}' setup failed (optional): {}",
+                package.name,
+                e
+            );
+            failures.push(format!("{}: {}", package.name, e));
+        }
+    }
+
+    if failures.is_empty() {
+        log::info!("Ensured required style transfer custom node packages");
+    } else {
+        log::warn!(
+            "Some style transfer custom node packages could not be installed ({}). \
+             Anima Untwisting RoPE style transfer is unavailable until these install.",
+            failures.join("; ")
+        );
+    }
+    Ok(())
+}
+
 /// Verify that ComfyUI actually loaded every custom node class required by the
 /// built-in ControlNet presets. Directory presence alone is not enough because
 /// custom-node import failures leave the class missing from /object_info.
@@ -245,6 +311,32 @@ pub async fn verify_required_controlnet_nodes(
     Err(format!(
         "{}: {}. Check the ComfyUI log for custom-node import errors.",
         MISSING_CONTROLNET_NODES_MARKER,
+        missing.join(", ")
+    ))
+}
+
+/// Verify style-transfer node classes (Untwisting RoPE + image scaler).
+pub async fn verify_required_style_transfer_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+) -> Result<(), String> {
+    let mut missing = Vec::new();
+
+    for attempt in 0..5 {
+        missing = missing_required_style_transfer_nodes(http_client, base_url).await?;
+        if missing.is_empty() {
+            log::info!("Verified required style transfer custom node classes");
+            return Ok(());
+        }
+
+        if attempt < 4 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    Err(format!(
+        "{}: {}. Check the ComfyUI log for custom-node import errors.",
+        MISSING_STYLE_TRANSFER_NODES_MARKER,
         missing.join(", ")
     ))
 }
@@ -317,6 +409,8 @@ pub fn server_error_payload(error: &str, port: u16) -> serde_json::Value {
         "missing_mooshie_nodes"
     } else if error.contains(MISSING_CONTROLNET_NODES_MARKER) {
         "missing_controlnet_nodes"
+    } else if error.contains(MISSING_STYLE_TRANSFER_NODES_MARKER) {
+        "missing_style_transfer_nodes"
     } else if error.contains("exited with") || error.contains("process exited") {
         "crashed"
     } else {
@@ -568,9 +662,24 @@ async fn missing_required_controlnet_nodes(
     http_client: &reqwest::Client,
     base_url: &str,
 ) -> Result<Vec<String>, String> {
+    missing_packages_nodes(http_client, base_url, REQUIRED_CONTROLNET_PACKAGES).await
+}
+
+async fn missing_required_style_transfer_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+) -> Result<Vec<String>, String> {
+    missing_packages_nodes(http_client, base_url, STYLE_TRANSFER_PACKAGES).await
+}
+
+async fn missing_packages_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+    packages: &[RequiredCustomNodePackage],
+) -> Result<Vec<String>, String> {
     let mut missing = Vec::new();
 
-    for package in REQUIRED_CONTROLNET_PACKAGES {
+    for package in packages {
         for node_class in package.verify_nodes {
             if !object_info_has_node_class(http_client, base_url, node_class).await? {
                 missing.push(format!("{} ({})", node_class, package.name));

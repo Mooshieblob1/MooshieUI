@@ -127,6 +127,36 @@ pub async fn get_history(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+pub async fn recover_prompt_outputs(
+    state: State<'_, Arc<AppState>>,
+    prompt_id: String,
+) -> Result<Value, AppError> {
+    let ids = state.prompt_queue.related_ids(&prompt_id);
+    let mut cached = Vec::new();
+    {
+        let mut outputs = state.output_image_cache.write().unwrap();
+        for id in &ids {
+            if let Some(files) = outputs.remove(id) {
+                cached.extend(files);
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    cached.retain(|f| seen.insert(f.clone()));
+    let mut images: Vec<serde_json::Value> = cached
+        .into_iter()
+        .map(|f| serde_json::json!({ "temp_filename": f }))
+        .collect();
+    // Regional inpaint chains may cache multiple outputs per prompt; use the latest.
+    if images.len() > 1 {
+        let last = images.pop().unwrap();
+        images = vec![last];
+    }
+    Ok(serde_json::json!({ "images": images }))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 pub async fn interrupt_generation(
     state: State<'_, Arc<AppState>>,
     prompt_id: Option<String>,
@@ -803,20 +833,31 @@ pub async fn save_to_gallery(
     metadata_mode: Option<String>,
 ) -> Result<String, AppError> {
     let bytes = state.get_output_image_bytes(&filename, &subfolder).await?;
-    save_to_gallery_inner(
+    let saved = save_to_gallery_inner(
         &bytes,
         &filename,
         &prompt_id,
         mode.as_deref(),
         metadata.as_ref(),
         metadata_mode.as_deref(),
-    )
+    )?;
+    let payload = serde_json::json!({
+        "filename": saved,
+        "prompt_id": prompt_id,
+        "mode": mode,
+        "source_filename": filename,
+        "metadata": metadata,
+    });
+    state.broadcast("mooshie:image_saved", payload.clone());
+    let _ = state.dispatch_webhook_event("image_saved", payload).await;
+    Ok(saved)
 }
 
 /// Save raw image bytes (from WebSocket) directly to the gallery with optional embedded metadata.
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_to_gallery_bytes(
+    state: State<'_, Arc<AppState>>,
     image_bytes: Vec<u8>,
     filename: String,
     prompt_id: String,
@@ -824,14 +865,24 @@ pub async fn save_to_gallery_bytes(
     metadata: Option<std::collections::HashMap<String, String>>,
     metadata_mode: Option<String>,
 ) -> Result<String, AppError> {
-    save_to_gallery_inner(
+    let saved = save_to_gallery_inner(
         &image_bytes,
         &filename,
         &prompt_id,
         mode.as_deref(),
         metadata.as_ref(),
         metadata_mode.as_deref(),
-    )
+    )?;
+    let payload = serde_json::json!({
+        "filename": saved,
+        "prompt_id": prompt_id,
+        "mode": mode,
+        "source_filename": filename,
+        "metadata": metadata,
+    });
+    state.broadcast("mooshie:image_saved", payload.clone());
+    let _ = state.dispatch_webhook_event("image_saved", payload).await;
+    Ok(saved)
 }
 
 /// Save a temp image to the gallery (avoids re-serialising large byte arrays
@@ -839,6 +890,7 @@ pub async fn save_to_gallery_bytes(
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_to_gallery_temp(
+    state: State<'_, Arc<AppState>>,
     temp_filename: String,
     filename: String,
     prompt_id: String,
@@ -848,14 +900,122 @@ pub async fn save_to_gallery_temp(
 ) -> Result<String, AppError> {
     let bytes = crate::temp_images::load(&temp_filename)
         .ok_or_else(|| AppError::Other(format!("Temp image not found: {}", temp_filename)))?;
-    save_to_gallery_inner(
+    let saved = save_to_gallery_inner(
         &bytes,
         &filename,
         &prompt_id,
         mode.as_deref(),
         metadata.as_ref(),
         metadata_mode.as_deref(),
-    )
+    )?;
+    let payload = serde_json::json!({
+        "filename": saved,
+        "prompt_id": prompt_id,
+        "mode": mode,
+        "source_filename": filename,
+        "metadata": metadata,
+    });
+    state.broadcast("mooshie:image_saved", payload.clone());
+    let _ = state.dispatch_webhook_event("image_saved", payload).await;
+    Ok(saved)
+}
+
+fn sanitize_filename_component(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .replace("..", "_")
+        .trim_matches('_')
+        .to_string()
+}
+
+fn parse_index_from_base(base: &str) -> String {
+    let mut digits = String::new();
+    for ch in base.chars().rev() {
+        if ch.is_ascii_digit() {
+            digits.insert(0, ch);
+        } else {
+            break;
+        }
+    }
+    if digits.is_empty() {
+        "0".to_string()
+    } else {
+        digits
+    }
+}
+
+fn template_value(
+    key: &str,
+    prompt_id: &str,
+    mode: &str,
+    base: &str,
+    metadata: Option<&std::collections::HashMap<String, String>>,
+) -> String {
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    match key {
+        "prompt_id" => prompt_id.to_string(),
+        "mode" => mode.to_string(),
+        "index" => parse_index_from_base(base),
+        // Kept simple and dependency-free; Unix timestamp is stable and sortable.
+        "date" => now_secs.to_string(),
+        "time" => now_secs.to_string(),
+        "model" => metadata
+            .and_then(|m| {
+                m.get("checkpoint")
+                    .or_else(|| m.get("model"))
+                    .or_else(|| m.get("model_name"))
+            })
+            .cloned()
+            .unwrap_or_else(|| "unknown-model".to_string()),
+        "seed" => metadata
+            .and_then(|m| m.get("seed"))
+            .cloned()
+            .unwrap_or_else(|| "0".to_string()),
+        _ => String::new(),
+    }
+}
+
+fn render_output_filename_base(
+    template: Option<&str>,
+    prompt_id: &str,
+    mode: &str,
+    base: &str,
+    metadata: Option<&std::collections::HashMap<String, String>>,
+) -> String {
+    if let Some(tpl) = template.map(str::trim).filter(|s| !s.is_empty()) {
+        let mut out = tpl.to_string();
+        for key in [
+            "prompt_id",
+            "mode",
+            "index",
+            "date",
+            "time",
+            "model",
+            "seed",
+        ] {
+            let token = format!("{{{}}}", key);
+            let value =
+                sanitize_filename_component(&template_value(key, prompt_id, mode, base, metadata));
+            out = out.replace(&token, &value);
+        }
+        let cleaned = sanitize_filename_component(&out);
+        if !cleaned.is_empty() {
+            return cleaned;
+        }
+    }
+    sanitize_filename_component(&format!("{}__{}__{}", prompt_id, mode, base))
 }
 
 pub fn save_to_gallery_inner(
@@ -889,7 +1049,15 @@ pub fn save_to_gallery_inner(
         crate::metadata::ImageFormat::Jxl => "jxl",
         _ => "png",
     };
-    let gallery_filename = format!("{}__{}__{}.{}", prompt_id, normalized_mode, base, ext);
+    let cfg = crate::config::load_persisted_config();
+    let rendered_base = render_output_filename_base(
+        cfg.output_filename_template.as_deref(),
+        prompt_id,
+        normalized_mode,
+        base,
+        metadata,
+    );
+    let gallery_filename = format!("{}.{}", rendered_base, ext);
     let path = dir.join(&gallery_filename);
 
     let raw_mode = metadata_mode.unwrap_or("text_chunk");

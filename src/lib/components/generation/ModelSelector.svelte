@@ -517,6 +517,7 @@
     generation.loras = generation.loras.map((l, i) =>
       i === index ? { ...l, name } : l
     );
+    generation.saveSettings();
     showLoraDropdown = null;
     loraSearches = { ...loraSearches, [index]: "" };
   }
@@ -1120,7 +1121,10 @@
         {/if}
       </div>
       <button
-        onclick={() => generation.addLora()}
+        onclick={() => {
+          generation.addLora();
+          generation.saveSettings();
+        }}
         class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
       >
         {locale.t('generation.model.add_lora')}
@@ -1138,7 +1142,10 @@
             class="relative w-8 h-4 rounded-full transition-colors shrink-0 {lora.enabled
               ? 'bg-indigo-600'
               : 'bg-neutral-700'}"
-            onclick={() => generation.toggleLora(i)}
+            onclick={() => {
+              generation.toggleLora(i);
+              generation.saveSettings();
+            }}
             role="switch"
             aria-checked={lora.enabled}
             title={lora.enabled ? "Disable" : "Enable"}
@@ -1186,7 +1193,10 @@
           </div>
 
           <button
-            onclick={() => generation.removeLora(i)}
+            onclick={() => {
+              generation.removeLora(i);
+              generation.saveSettings();
+            }}
             class="text-neutral-500 hover:text-red-400 transition-colors text-sm leading-none shrink-0"
             title={locale.t('common.remove')}
           >
@@ -1205,6 +1215,7 @@
               <input
                 type="range"
                 bind:value={lora.strength_model}
+                oninput={() => generation.saveSettings()}
                 min="0"
                 max="2"
                 step="0.05"
@@ -1219,6 +1230,7 @@
               <input
                 type="range"
                 bind:value={lora.strength_clip}
+                oninput={() => generation.saveSettings()}
                 min="0"
                 max="2"
                 step="0.05"

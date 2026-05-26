@@ -265,7 +265,17 @@ pub fn spawn_prompt_cleanup_reactor(state: Arc<AppState>) {
                                         &pid[..8.min(pid.len())],
                                         owner.as_deref().unwrap_or("admin"),
                                     );
-                                    if let Some(wid) = cleanup_state.prompt_queue.finish(&pid) {
+                                    let finished = cleanup_state.prompt_queue.finish(&pid);
+                                    if finished.is_none() {
+                                        if let Some(raw_pid) =
+                                            evt.payload.get("prompt_id").and_then(|v| v.as_str())
+                                        {
+                                            cleanup_state
+                                                .prompt_queue
+                                                .park_deferred_finish(raw_pid);
+                                        }
+                                    }
+                                    if let Some(wid) = finished {
                                         cleanup_state.gpu_manager.mark_worker_idle(wid).await;
                                     }
                                     let alias_pid = pid.clone();
@@ -513,10 +523,25 @@ pub async fn start_server(
         )
         // Generic IPC command proxy
         .route("/internal-api/{command}", post(command_handler))
-        // Static file serving (frontend)
-        .fallback(get(move |req: axum::extract::Request| {
+        // Static file serving (frontend). In debug builds, prefer the Vite dev
+        // server (port 1420) when it is running so browser mode works during
+        // `pnpm tauri dev` instead of serving a stale `dist/` bundle.
+        .fallback(get({
             let dist = dist_dir.clone();
-            async move { serve_static(dist, req).await }
+            let http_client = web_state.app.http_client.clone();
+            let vite_dev_proxy =
+                cfg!(debug_assertions) && is_vite_dev_server_running(&http_client).await;
+            if vite_dev_proxy {
+                log::info!(
+                    "Browser mode UI: proxying to Vite dev server at {}",
+                    dev_vite_origin()
+                );
+            }
+            move |req: axum::extract::Request| {
+                let dist = dist.clone();
+                let http_client = http_client.clone();
+                async move { serve_static_or_dev(dist, http_client, vite_dev_proxy, req).await }
+            }
         }))
         // Images sent as JSON arrays of numbers inflate ~4x, so allow large bodies
         .layer(axum::extract::DefaultBodyLimit::max(256 * 1024 * 1024))
@@ -758,6 +783,145 @@ async fn serve_static(dist_dir: PathBuf, req: axum::extract::Request) -> Respons
     (StatusCode::NOT_FOUND, "Not Found").into_response()
 }
 
+#[cfg(debug_assertions)]
+fn dev_vite_origin() -> &'static str {
+    "http://127.0.0.1:1420"
+}
+
+#[cfg(not(debug_assertions))]
+fn dev_vite_origin() -> &'static str {
+    ""
+}
+
+/// True when `pnpm tauri dev` has Vite listening on port 1420.
+async fn is_vite_dev_server_running(client: &reqwest::Client) -> bool {
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = client;
+        return false;
+    }
+    #[cfg(debug_assertions)]
+    {
+        client
+            .get(format!("{}/", dev_vite_origin()))
+            .timeout(Duration::from_millis(800))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+    }
+}
+
+async fn serve_static_or_dev(
+    dist_dir: PathBuf,
+    http_client: reqwest::Client,
+    vite_dev_proxy: bool,
+    req: axum::extract::Request,
+) -> Response {
+    if vite_dev_proxy {
+        let fallback_uri = req.uri().clone();
+        if let Some(resp) = proxy_vite_dev_request(&http_client, req).await {
+            return resp;
+        }
+        log::warn!("Vite dev proxy failed; falling back to on-disk dist");
+        let fallback_req = axum::http::Request::builder()
+            .uri(fallback_uri)
+            .body(axum::body::Body::empty())
+            .unwrap_or_else(|_| axum::extract::Request::new(axum::body::Body::empty()));
+        return serve_static(dist_dir, fallback_req).await;
+    }
+    serve_static(dist_dir, req).await
+}
+
+#[cfg(debug_assertions)]
+async fn proxy_vite_dev_request(
+    client: &reqwest::Client,
+    req: axum::extract::Request,
+) -> Option<Response> {
+    use axum::body::Body;
+
+    let (parts, body) = req.into_parts();
+    let path_and_query = parts
+        .uri
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or("/");
+    let url = format!("{}{}", dev_vite_origin(), path_and_query);
+
+    let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes()).ok()?;
+    let body_bytes = axum::body::to_bytes(body, usize::MAX).await.ok()?;
+
+    let mut builder = client
+        .request(method, &url)
+        .timeout(Duration::from_secs(30));
+    for (name, value) in parts.headers.iter() {
+        let name_str = name.as_str();
+        if matches!(
+            name_str,
+            "host" | "connection" | "transfer-encoding" | "content-length"
+        ) {
+            continue;
+        }
+        if let Ok(v) = value.to_str() {
+            builder = builder.header(name_str, v);
+        }
+    }
+    if !body_bytes.is_empty() {
+        builder = builder.body(body_bytes.to_vec());
+    }
+
+    let upstream = builder.send().await.ok()?;
+    let status =
+        StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let mut response = Response::builder().status(status);
+
+    let mut content_type = None;
+    for (name, value) in upstream.headers().iter() {
+        let name_str = name.as_str();
+        if matches!(
+            name_str,
+            "connection" | "transfer-encoding" | "content-length"
+        ) {
+            continue;
+        }
+        if name_str.eq_ignore_ascii_case("content-type") {
+            content_type = value.to_str().ok().map(|s| s.to_string());
+        }
+        if let Ok(v) = value.to_str() {
+            response = response.header(name_str, v);
+        }
+    }
+
+    let bytes = upstream.bytes().await.ok()?;
+    let is_html = content_type
+        .as_deref()
+        .map(|ct| ct.to_ascii_lowercase().starts_with("text/html"))
+        .unwrap_or(false);
+    let body = if is_html {
+        inject_browser_mode_flag(&String::from_utf8_lossy(&bytes)).into_bytes()
+    } else {
+        bytes.to_vec()
+    };
+
+    response.body(Body::from(body)).ok()
+}
+
+#[cfg(not(debug_assertions))]
+async fn proxy_vite_dev_request(
+    _client: &reqwest::Client,
+    _req: axum::extract::Request,
+) -> Option<Response> {
+    None
+}
+
+fn inject_browser_mode_flag(html: &str) -> String {
+    html.replacen(
+        "<head>",
+        "<head><script>window.__MOOSHIE_BROWSER_MODE__=true;</script>",
+        1,
+    )
+}
+
 /// Build an HTTP response for a static asset. Injects the browser-mode flag
 /// into HTML payloads so the frontend IPC layer routes through HTTP instead
 /// of Tauri.
@@ -767,13 +931,7 @@ fn build_asset_response(rel_path: &str, contents: Vec<u8>) -> Response {
         .to_string();
 
     let contents = if mime == "text/html" {
-        let html = String::from_utf8_lossy(&contents);
-        let injected = html.replacen(
-            "<head>",
-            "<head><script>window.__MOOSHIE_BROWSER_MODE__=true;</script>",
-            1,
-        );
-        injected.into_bytes()
+        inject_browser_mode_flag(&String::from_utf8_lossy(&contents)).into_bytes()
     } else {
         contents
     };
@@ -1049,12 +1207,10 @@ async fn heartbeat_stop_handler(AxumState(state): AxumState<SharedState>) -> Sta
     {
         return StatusCode::OK;
     }
-    // Cancel any in-progress generation before the watchdog fires and exits.
-    // Best-effort: ignore errors (ComfyUI may not be running).
+    // Cancel any in-progress generation. Do not backdate last_heartbeat: sendBeacon
+    // also fires on refresh/navigation, which would kill browser mode before the
+    // new page can post its first heartbeat. The 120s watchdog handles real tab close.
     let _ = state.app.gpu_manager.interrupt(None).await;
-    // Set heartbeat to epoch so the watchdog triggers immediately
-    let mut hb = state.app.last_heartbeat.lock().await;
-    *hb = std::time::Instant::now() - Duration::from_secs(3600);
     StatusCode::OK
 }
 
@@ -1867,8 +2023,22 @@ async fn dispatch_command(
                 let q = state.prompt_queue.queue.read().unwrap();
                 q.iter().map(|(pid, _)| pid.clone()).collect()
             };
+            const SUBMISSION_SHIELD_SECS: u64 = 120;
             for pid in tracked {
                 if !known.contains(&pid) {
+                    // Shield unreconciled placeholders only while submission is
+                    // still in flight. If submit_prompt hangs past this window,
+                    // drop the synthetic entry so the frontend reconciler can
+                    // surface "generation lost" instead of staying on Preparing.
+                    if pid.starts_with("gen-")
+                        && !state.prompt_queue.is_placeholder_bound(&pid)
+                        && state
+                            .prompt_queue
+                            .insert_age_secs(&pid)
+                            .is_some_and(|age| age > SUBMISSION_SHIELD_SECS)
+                    {
+                        continue;
+                    }
                     pending.push(serde_json::json!([0, pid, {}, {}, []]));
                 }
             }
@@ -1925,17 +2095,28 @@ async fn dispatch_command(
             // populates output_image_cache whenever it sees a comfyui:output_image
             // broadcast — so even if the SSE client missed the event, the image
             // temp file was already saved.
-            let placeholder_id = args["promptId"].as_str().ok_or("Missing promptId")?;
-            let cached = state
-                .output_image_cache
-                .write()
-                .unwrap()
-                .remove(placeholder_id)
-                .unwrap_or_default();
+            let prompt_id = args["promptId"].as_str().ok_or("Missing promptId")?;
+            let ids = state.prompt_queue.related_ids(prompt_id);
+            let mut cached = Vec::new();
+            {
+                let mut outputs = state.output_image_cache.write().unwrap();
+                for id in &ids {
+                    if let Some(files) = outputs.remove(id) {
+                        cached.extend(files);
+                    }
+                }
+            }
+            let mut seen = std::collections::HashSet::new();
+            cached.retain(|f| seen.insert(f.clone()));
             let images: Vec<serde_json::Value> = cached
                 .into_iter()
                 .map(|f| serde_json::json!({ "temp_filename": f }))
                 .collect();
+            let images = if images.len() > 1 {
+                vec![images.last().cloned().unwrap()]
+            } else {
+                images
+            };
             Ok(serde_json::json!({ "images": images }))
         }
         "interrupt_generation" => {
@@ -2178,6 +2359,7 @@ async fn dispatch_command(
 
         // --- Generation ---
         "generate" => {
+            crate::comfyui::process::mark_legacy_worker_idle(&state).await;
             let params: crate::comfyui::types::GenerationParams =
                 serde_json::from_value(args["params"].clone())
                     .map_err(|e| format!("Invalid params: {}", e))?;
@@ -2286,6 +2468,10 @@ async fn dispatch_command(
                     }
                 } else {
                     // Direct submission (admin or user's first prompt)
+                    log::info!(
+                        "[gen] submitting placeholder={}",
+                        &bg_placeholder[..bg_placeholder.len().min(12)]
+                    );
                     let timeout = std::time::Duration::from_secs(300);
                     match bg_state
                         .gpu_manager
@@ -2453,6 +2639,7 @@ async fn dispatch_command(
                     }
                 }
             }
+            let output_template = state.config.read().await.output_filename_template.clone();
             let result = save_to_gallery_in_dir(
                 &dir,
                 &bytes,
@@ -2461,7 +2648,17 @@ async fn dispatch_command(
                 mode.as_deref(),
                 metadata.as_ref(),
                 metadata_mode.as_deref(),
+                output_template.as_deref(),
             )?;
+            let payload = serde_json::json!({
+                "filename": result.clone(),
+                "prompt_id": prompt_id,
+                "mode": mode,
+                "source_filename": filename,
+                "metadata": metadata,
+            });
+            state.broadcast("mooshie:image_saved", payload.clone());
+            let _ = state.dispatch_webhook_event("image_saved", payload).await;
             Ok(serde_json::json!(result))
         }
         "save_to_gallery_bytes" => {
@@ -2495,6 +2692,7 @@ async fn dispatch_command(
                     }
                 }
             }
+            let output_template = state.config.read().await.output_filename_template.clone();
             let result = save_to_gallery_in_dir(
                 &dir,
                 &image_bytes,
@@ -2503,7 +2701,17 @@ async fn dispatch_command(
                 mode.as_deref(),
                 metadata.as_ref(),
                 metadata_mode.as_deref(),
+                output_template.as_deref(),
             )?;
+            let payload = serde_json::json!({
+                "filename": result.clone(),
+                "prompt_id": prompt_id,
+                "mode": mode,
+                "source_filename": filename,
+                "metadata": metadata,
+            });
+            state.broadcast("mooshie:image_saved", payload.clone());
+            let _ = state.dispatch_webhook_event("image_saved", payload).await;
             Ok(serde_json::json!(result))
         }
         "save_to_gallery_temp" => {
@@ -2543,6 +2751,7 @@ async fn dispatch_command(
                     }
                 }
             }
+            let output_template = state.config.read().await.output_filename_template.clone();
             let result = save_to_gallery_in_dir(
                 &dir,
                 &bytes,
@@ -2551,7 +2760,17 @@ async fn dispatch_command(
                 mode.as_deref(),
                 metadata.as_ref(),
                 metadata_mode.as_deref(),
+                output_template.as_deref(),
             )?;
+            let payload = serde_json::json!({
+                "filename": result.clone(),
+                "prompt_id": prompt_id,
+                "mode": mode,
+                "source_filename": filename,
+                "metadata": metadata,
+            });
+            state.broadcast("mooshie:image_saved", payload.clone());
+            let _ = state.dispatch_webhook_event("image_saved", payload).await;
             // Keep the temp file available briefly for clients that still hold
             // the temp URL or race a manual save against gallery persistence.
             // Periodic cleanup handles expiry.
@@ -4397,6 +4616,7 @@ fn save_to_gallery_in_dir(
     mode: Option<&str>,
     metadata: Option<&std::collections::HashMap<String, String>>,
     metadata_mode: Option<&str>,
+    output_template: Option<&str>,
 ) -> Result<String, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
 
@@ -4419,13 +4639,118 @@ fn save_to_gallery_in_dir(
         _ => "unknown",
     };
 
-    let gallery_filename = format!("{}__{}__{}", safe_prompt_id, normalized_mode, safe_filename);
+    fn sanitize_component(value: &str) -> String {
+        value
+            .trim()
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
+            .replace("..", "_")
+            .trim_matches('_')
+            .to_string()
+    }
+
+    fn parse_index(base: &str) -> String {
+        let mut digits = String::new();
+        for ch in base.chars().rev() {
+            if ch.is_ascii_digit() {
+                digits.insert(0, ch);
+            } else {
+                break;
+            }
+        }
+        if digits.is_empty() {
+            "0".to_string()
+        } else {
+            digits
+        }
+    }
+
+    fn token_value(
+        key: &str,
+        prompt_id: &str,
+        mode: &str,
+        base: &str,
+        metadata: Option<&std::collections::HashMap<String, String>>,
+    ) -> String {
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        match key {
+            "prompt_id" => prompt_id.to_string(),
+            "mode" => mode.to_string(),
+            "index" => parse_index(base),
+            "date" => now_secs.to_string(),
+            "time" => now_secs.to_string(),
+            "model" => metadata
+                .and_then(|m| {
+                    m.get("checkpoint")
+                        .or_else(|| m.get("model"))
+                        .or_else(|| m.get("model_name"))
+                })
+                .cloned()
+                .unwrap_or_else(|| "unknown-model".to_string()),
+            "seed" => metadata
+                .and_then(|m| m.get("seed"))
+                .cloned()
+                .unwrap_or_else(|| "0".to_string()),
+            _ => String::new(),
+        }
+    }
+
+    let base = std::path::Path::new(&safe_filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("image");
+    let mut rendered_base = String::new();
+    if let Some(tpl) = output_template.map(str::trim).filter(|s| !s.is_empty()) {
+        rendered_base = tpl.to_string();
+        for key in [
+            "prompt_id",
+            "mode",
+            "index",
+            "date",
+            "time",
+            "model",
+            "seed",
+        ] {
+            let token = format!("{{{}}}", key);
+            let value = sanitize_component(&token_value(
+                key,
+                &safe_prompt_id,
+                normalized_mode,
+                base,
+                metadata,
+            ));
+            rendered_base = rendered_base.replace(&token, &value);
+        }
+        rendered_base = sanitize_component(&rendered_base);
+    }
+    if rendered_base.is_empty() {
+        rendered_base = sanitize_component(&format!(
+            "{}__{}__{}",
+            safe_prompt_id, normalized_mode, base
+        ));
+    }
+    let detected_format = crate::metadata::detect_format(bytes);
+    let ext = match detected_format {
+        crate::metadata::ImageFormat::Jxl => "jxl",
+        _ => "png",
+    };
+    let gallery_filename = format!("{}.{}", rendered_base, ext);
     let path = dir.join(&gallery_filename);
 
     let raw_mode = metadata_mode.unwrap_or("text_chunk");
     let mut embed_mode = crate::metadata::MetadataMode::from_str(raw_mode);
 
-    if filename.to_ascii_lowercase().ends_with(".png")
+    if matches!(detected_format, crate::metadata::ImageFormat::Png)
         && embed_mode == crate::metadata::MetadataMode::StealthAlpha
     {
         if let Ok(true) = crate::metadata::is_png_16bit(bytes) {
@@ -4434,11 +4759,15 @@ fn save_to_gallery_in_dir(
     }
 
     let final_bytes = if let Some(meta) = metadata {
-        if filename.to_ascii_lowercase().ends_with(".png") {
-            crate::metadata::embed_png_metadata(bytes, meta, embed_mode)
-                .unwrap_or_else(|_| bytes.to_vec())
-        } else {
-            bytes.to_vec()
+        match detected_format {
+            crate::metadata::ImageFormat::Png => {
+                crate::metadata::embed_png_metadata(bytes, meta, embed_mode)
+                    .unwrap_or_else(|_| bytes.to_vec())
+            }
+            crate::metadata::ImageFormat::Jxl => {
+                crate::metadata::embed_jxl_metadata(bytes, meta).unwrap_or_else(|_| bytes.to_vec())
+            }
+            crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {
         bytes.to_vec()

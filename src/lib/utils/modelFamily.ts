@@ -74,3 +74,22 @@ export function signalsIndicateAnima(signals: ModelFamilySignals): boolean {
   if (civitaiBaseModelIndicatesAnima(signals.civitaiBaseModel)) return true;
   return false;
 }
+
+/** Illustrious / NoobAI / SIH family — must win over generic Anima/Wan CivitAI metadata heuristics. */
+export function filenameIndicatesIllustrious(name: string | null | undefined): boolean {
+  if (!name) return false;
+  const n = name.toLowerCase();
+  return (
+    n.includes("illustrious") ||
+    n.includes("noobai") ||
+    n.includes("noob") ||
+    n.includes("sih")
+  );
+}
+
+export function modelNamesIndicateIllustrious(
+  checkpoint?: string | null,
+  diffusionModel?: string | null,
+): boolean {
+  return filenameIndicatesIllustrious(checkpoint) || filenameIndicatesIllustrious(diffusionModel);
+}

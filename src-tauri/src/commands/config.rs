@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tauri::State;
 
@@ -128,6 +129,15 @@ pub async fn switch_to_browser_mode(
         // even when fallback ports were used.
         let (actual_port, _handle) =
             webserver::start_server(state_for_server, port, lan_enabled).await;
+        if actual_port != port {
+            let mut cfg = state.config.write().await;
+            cfg.ui_server_port = actual_port;
+            save_config(&cfg).map_err(AppError::Other)?;
+            log::info!(
+                "switch_to_browser_mode: persisted fallback ui_server_port={}",
+                actual_port
+            );
+        }
         port = actual_port;
     }
 
@@ -163,14 +173,19 @@ pub async fn switch_to_browser_mode(
         }
     }
 
-    // Hide the Tauri window
-    use tauri::Manager;
-    if let Some(win) = app.get_webview_window("main") {
-        log::info!("switch_to_browser_mode: hiding window");
-        let _ = win.hide();
-    } else {
-        log::warn!("switch_to_browser_mode: no 'main' window to hide");
-    }
+    // Hide the Tauri window after returning — hiding synchronously from an
+    // IPC call made by that same webview can deadlock the invoke on Windows.
+    let app_for_hide = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        use tauri::Manager;
+        if let Some(win) = app_for_hide.get_webview_window("main") {
+            log::info!("switch_to_browser_mode: hiding window");
+            let _ = win.hide();
+        } else {
+            log::warn!("switch_to_browser_mode: no 'main' window to hide");
+        }
+    });
 
     log::info!("switch_to_browser_mode: done");
     Ok(())

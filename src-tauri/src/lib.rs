@@ -350,6 +350,7 @@ pub fn run() {
             commands::api::get_embeddings,
             commands::api::get_queue,
             commands::api::get_history,
+            commands::api::recover_prompt_outputs,
             commands::api::interrupt_generation,
             commands::api::clear_all_queues,
             commands::api::delete_queue_item,

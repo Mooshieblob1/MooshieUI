@@ -164,6 +164,7 @@ pub fn inject_anima_lllite(
     inputs.insert("strength".into(), json!(params.strength));
     inputs.insert("start_percent".into(), json!(params.start_percent));
     inputs.insert("end_percent".into(), json!(params.end_percent));
+    inputs.insert("preserve_wrapper".into(), json!(true));
     if let Some((mask_node, mask_output)) = mask_source {
         inputs.insert("mask".into(), json!([mask_node, mask_output]));
     }
@@ -296,4 +297,69 @@ pub fn build_preprocessor_preview_workflow(image: &str, preprocessor: &str) -> V
     append_preprocessor_preview_save(&mut workflow, &mut next_id, &image_source);
 
     Value::Object(workflow)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_workflow_result() -> WorkflowResult {
+        let mut workflow = Map::new();
+        workflow.insert(
+            "1".into(),
+            json!({
+                "class_type": "KSampler",
+                "inputs": {
+                    "model": ["base-model", 0]
+                }
+            }),
+        );
+
+        WorkflowResult {
+            workflow,
+            next_id: 2,
+            image_output: ("image".into(), 0),
+            model_source: ("base-model".into(), 0),
+            clip_source: ("clip".into(), 0),
+            positive_source: ("positive".into(), 0),
+            negative_source: ("negative".into(), 0),
+            vae_source: ("vae".into(), 0),
+            sampler_id: "1".into(),
+        }
+    }
+
+    fn sample_controlnet() -> ControlNetParam {
+        ControlNetParam {
+            enabled: true,
+            preset: None,
+            controlnet_model: Some("anima-lllite-test.safetensors".into()),
+            image: Some("control.png".into()),
+            preprocessor: None,
+            strength: 1.0,
+            start_percent: 0.0,
+            end_percent: 1.0,
+        }
+    }
+
+    #[test]
+    fn inject_anima_lllite_preserves_wrapper_and_rewires_sampler() {
+        let mut result = sample_workflow_result();
+
+        inject_anima_lllite(&mut result, &sample_controlnet(), None);
+
+        let apply_id = result.model_source.0.clone();
+        let apply_node = result.workflow.get(&apply_id).unwrap();
+        let inputs = apply_node.get("inputs").unwrap();
+
+        assert_eq!(inputs.get("preserve_wrapper").unwrap(), &json!(true));
+        assert_eq!(
+            result
+                .workflow
+                .get(&result.sampler_id)
+                .and_then(|node| node.get("inputs"))
+                .and_then(|inputs| inputs.get("model"))
+                .unwrap(),
+            &json!([apply_id, 0])
+        );
+    }
 }

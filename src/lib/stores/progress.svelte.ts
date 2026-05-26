@@ -88,11 +88,30 @@ class ProgressStore {
       : 0;
   }
 
+  get hasReliableStepProgress(): boolean {
+    if (this.totalSteps <= 0) return false;
+    // Style transfer pipelines (RFInversion + SamplerCustomAdvanced) can run
+    // for a while without regular per-step progress events, which makes the
+    // UI appear frozen at 1/N even though generation is still working.
+    if (this.activePrompt?.params?.style_transfer_enabled && this.currentStep <= 1) {
+      return false;
+    }
+    return true;
+  }
+
   get displayImage() {
     return this.previewImage ?? this.lastOutputImage;
   }
 
+  /** Non-empty while a regional inpaint chain is between ComfyUI steps. */
+  regionalChainStatus: string | null = null;
+
+  setRegionalChainStatus(status: string | null) {
+    this.regionalChainStatus = status;
+  }
+
   get phaseLabel(): string {
+    if (this.regionalChainStatus) return this.regionalChainStatus;
     if (!this.isGenerating) return "";
     // Show queue position if waiting behind other users
     if (this.queuePosition != null && this.queuePosition > 0 && this.totalSteps === 0) {
@@ -102,12 +121,14 @@ class ProgressStore {
       return `Queue position #${pos + 1}`;
     }
     if (this.totalSteps === 0) {
-      // If at position 0 but other users' prompts exist in the global queue,
-      // ComfyUI may still be working on their prompt — show "In queue"
-      if (this.queueTotal > this.queueCount) {
-        return this.queueCount > 1 ? `In queue (${this.queueCount})` : "In queue...";
-      }
+      // Position 0 (or unknown) means this prompt is not waiting behind
+      // another prompt in the queue; avoid misleading "In queue..." labels.
       return this.queueCount > 1 ? `Queued (${this.queueCount})` : "Preparing...";
+    }
+    if (this.activePrompt?.params?.style_transfer_enabled && !this.hasReliableStepProgress) {
+      return this.queueCount > 1
+        ? `Applying style reference... (+${this.queueCount - 1} queued)`
+        : "Applying style reference...";
     }
     if (this.wasUpscaled && this.samplingPass >= 2) {
       return this.queueCount > 1 ? `Upscaling... (+${this.queueCount - 1} queued)` : "Upscaling...";
@@ -305,6 +326,62 @@ class ProgressStore {
   /** Clear server-wide progress indicator (server went idle). */
   clearServerProgress() {
     this.serverProgress = null;
+  }
+
+  /** Temp output filenames keyed by prompt_id (for regional inpaint chain, etc.). */
+  private promptOutputTemps = new Map<string, string>();
+  private promptOutputWaiters = new Map<string, Array<(filename: string) => void>>();
+
+  /** Return a registered temp output filename, if any. */
+  getPromptOutputTemp(promptId: string): string | undefined {
+    return this.promptOutputTemps.get(promptId);
+  }
+
+  /** Register a ComfyUI output temp file as soon as the output_image event arrives. */
+  registerPromptOutput(promptId: string, tempFilename: string): void {
+    const id = promptId.trim();
+    const filename = tempFilename.trim();
+    if (!id || !filename) return;
+    this.promptOutputTemps.set(id, filename);
+    const waiters = this.promptOutputWaiters.get(id);
+    if (waiters) {
+      for (const resolve of waiters) resolve(filename);
+      this.promptOutputWaiters.delete(id);
+    }
+  }
+
+  /** Wait until a temp output filename is registered for a prompt. */
+  waitForPromptOutput(promptId: string, timeoutMs = 600_000): Promise<string> {
+    const existing = this.promptOutputTemps.get(promptId);
+    if (existing) return Promise.resolve(existing);
+
+    return new Promise((resolve, reject) => {
+      const resolveWith = (filename: string) => {
+        clearTimeout(timer);
+        this.promptOutputTemps.set(promptId, filename);
+        resolve(filename);
+      };
+
+      const timer = setTimeout(() => {
+        const waiters = this.promptOutputWaiters.get(promptId);
+        if (waiters) {
+          this.promptOutputWaiters.set(
+            promptId,
+            waiters.filter((entry) => entry !== resolveWith),
+          );
+        }
+        reject(new Error(`No output image found for prompt ${promptId}`));
+      }, timeoutMs);
+
+      const waiters = this.promptOutputWaiters.get(promptId) ?? [];
+      waiters.push(resolveWith);
+      this.promptOutputWaiters.set(promptId, waiters);
+    });
+  }
+
+  clearPromptOutput(promptId: string): void {
+    this.promptOutputTemps.delete(promptId);
+    this.promptOutputWaiters.delete(promptId);
   }
 
   /**

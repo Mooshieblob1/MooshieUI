@@ -38,11 +38,31 @@
   let showSuggestions = $state(false);
   let dropdownTop = $state(0);
   let dropdownLeft = $state(0);
+  let artistPreviewLeft = $state(0);
   let suggestionTimer: number | null = null;
+
+  const DROPDOWN_WIDTH = 320; // w-80
+  const DROPDOWN_MAX_HEIGHT = 240; // max-h-60
+  const ARTIST_PREVIEW_WIDTH = 320;
+  const VIEWPORT_MARGIN = 8;
+  const PANEL_GAP = 8;
 
   // Undo/redo stacks for autocomplete insertions
   let undoStack = $state<string[]>([]);
   let redoStack = $state<string[]>([]);
+  let categoryFilter = $state<number | null>(null);
+  let selectionStart = $state(0);
+  let selectionEnd = $state(0);
+  const hasSelection = $derived(selectionStart !== selectionEnd);
+
+  const categoryOptions = $derived([
+    { value: null, label: locale.t("generation.prompt.category_all") },
+    { value: 0, label: locale.t("generation.prompt.category_general") },
+    { value: 1, label: locale.t("generation.prompt.category_artist") },
+    { value: 3, label: locale.t("generation.prompt.category_copyright") },
+    { value: 4, label: locale.t("generation.prompt.category_character") },
+    { value: 5, label: locale.t("generation.prompt.category_meta") },
+  ]);
 
   const CATEGORY_COLORS: Record<number, string> = {
     0: "text-indigo-300",   // general
@@ -142,7 +162,7 @@
       return;
     }
 
-    const raw = autocomplete.search(searchFragment);
+    const raw = autocomplete.search(searchFragment, autocomplete.maxResults, categoryFilter);
     // Filter out exact matches — don't suggest a tag that's already fully typed
     const normalizedFragment = searchFragment.replace(/_/g, " ").replace(/\\/g, "").toLowerCase();
     suggestions = raw.filter(tag => tag.n.replace(/_/g, " ").toLowerCase() !== normalizedFragment);
@@ -157,9 +177,35 @@
   function positionDropdown() {
     if (!textareaEl) return;
     const rect = textareaEl.getBoundingClientRect();
-    // Position below the textarea
-    dropdownTop = rect.bottom + 4;
-    dropdownLeft = rect.left;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const textareaCenterX = rect.left + rect.width / 2;
+    const isLeftPanel = textareaCenterX < viewportWidth / 2;
+
+    const minLeft = VIEWPORT_MARGIN;
+    const maxLeft = Math.max(VIEWPORT_MARGIN, viewportWidth - VIEWPORT_MARGIN - DROPDOWN_WIDTH);
+    const desiredDropdownLeft = isLeftPanel
+      ? rect.right + PANEL_GAP
+      : rect.left - DROPDOWN_WIDTH - PANEL_GAP;
+    dropdownLeft = Math.min(Math.max(desiredDropdownLeft, minLeft), maxLeft);
+
+    const minTop = VIEWPORT_MARGIN;
+    const maxTop = Math.max(VIEWPORT_MARGIN, viewportHeight - VIEWPORT_MARGIN - DROPDOWN_MAX_HEIGHT);
+    const desiredDropdownTop = rect.top;
+    dropdownTop = Math.min(Math.max(desiredDropdownTop, minTop), maxTop);
+
+    const outerPreviewLeft = isLeftPanel
+      ? dropdownLeft + DROPDOWN_WIDTH + PANEL_GAP
+      : dropdownLeft - ARTIST_PREVIEW_WIDTH - PANEL_GAP;
+    const innerPreviewLeft = isLeftPanel
+      ? dropdownLeft - ARTIST_PREVIEW_WIDTH - PANEL_GAP
+      : dropdownLeft + DROPDOWN_WIDTH + PANEL_GAP;
+    const outerHasRoom = isLeftPanel
+      ? outerPreviewLeft + ARTIST_PREVIEW_WIDTH <= viewportWidth - VIEWPORT_MARGIN
+      : outerPreviewLeft >= VIEWPORT_MARGIN;
+    const desiredPreviewLeft = outerHasRoom ? outerPreviewLeft : innerPreviewLeft;
+    const maxPreviewLeft = Math.max(VIEWPORT_MARGIN, viewportWidth - VIEWPORT_MARGIN - ARTIST_PREVIEW_WIDTH);
+    artistPreviewLeft = Math.min(Math.max(desiredPreviewLeft, VIEWPORT_MARGIN), maxPreviewLeft);
   }
 
   function acceptSuggestion(tag: TagEntry) {
@@ -203,7 +249,66 @@
     requestAnimationFrame(() => {
       textareaEl?.focus();
       textareaEl?.setSelectionRange(cursorPos, cursorPos);
+      syncSelectionRange();
     });
+  }
+
+  function syncSelectionRange() {
+    if (!textareaEl) return;
+    selectionStart = textareaEl.selectionStart;
+    selectionEnd = textareaEl.selectionEnd;
+  }
+
+  function wrapSelection(braceKey: "brace" | "bracket") {
+    if (!textareaEl || selectionStart === selectionEnd) return;
+    const start = selectionStart;
+    const end = selectionEnd;
+    const selected = value.substring(start, end);
+
+    if (braceKey === "bracket" && selected.startsWith("{") && selected.endsWith("}")) {
+      undoStack = [...undoStack, value];
+      redoStack = [];
+      const inner = selected.slice(1, -1);
+      value = value.substring(0, start) + inner + value.substring(end);
+      requestAnimationFrame(() => {
+        textareaEl?.focus();
+        textareaEl?.setSelectionRange(start, start + inner.length);
+        syncSelectionRange();
+      });
+      return;
+    }
+
+    if (braceKey === "brace" && selected.startsWith("[") && selected.endsWith("]")) {
+      undoStack = [...undoStack, value];
+      redoStack = [];
+      const inner = selected.slice(1, -1);
+      value = value.substring(0, start) + inner + value.substring(end);
+      requestAnimationFrame(() => {
+        textareaEl?.focus();
+        textareaEl?.setSelectionRange(start, start + inner.length);
+        syncSelectionRange();
+      });
+      return;
+    }
+
+    const open = braceKey === "brace" ? "{" : "[";
+    const close = braceKey === "brace" ? "}" : "]";
+    const wrapped = `${open}${selected}${close}`;
+    undoStack = [...undoStack, value];
+    redoStack = [];
+    value = value.substring(0, start) + wrapped + value.substring(end);
+    requestAnimationFrame(() => {
+      textareaEl?.focus();
+      textareaEl?.setSelectionRange(start, start + wrapped.length);
+      syncSelectionRange();
+    });
+  }
+
+  function adjustSelectedWeight(delta: number) {
+    if (!textareaEl || selectionStart === selectionEnd) return;
+    undoStack = [...undoStack, value];
+    redoStack = [];
+    adjustWeight(delta, selectionStart, selectionEnd);
   }
 
   function undo() {
@@ -212,6 +317,7 @@
     const prev = undoStack[undoStack.length - 1];
     undoStack = undoStack.slice(0, -1);
     value = prev;
+    requestAnimationFrame(syncSelectionRange);
   }
 
   function redo() {
@@ -220,6 +326,7 @@
     const next = redoStack[redoStack.length - 1];
     redoStack = redoStack.slice(0, -1);
     value = next;
+    requestAnimationFrame(syncSelectionRange);
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -260,47 +367,8 @@
       const end = textareaEl.selectionEnd;
       if (start !== end) {
         e.preventDefault();
-        const selected = value.substring(start, end);
         const braceKey = (e.key === "{" || e.key === "}") ? "brace" : "bracket";
-
-        // If pressing [ or ] and selection is already wrapped in {}, strip one layer of {}
-        if (braceKey === "bracket" && selected.startsWith("{") && selected.endsWith("}")) {
-          // Push current value to undo stack before modifying
-          undoStack = [...undoStack, value];
-          redoStack = [];
-          const inner = selected.slice(1, -1);
-          value = value.substring(0, start) + inner + value.substring(end);
-          requestAnimationFrame(() => {
-            textareaEl?.focus();
-            textareaEl?.setSelectionRange(start, start + inner.length);
-          });
-          return;
-        }
-
-        // If pressing { or } and selection is already wrapped in [], strip one layer of []
-        if (braceKey === "brace" && selected.startsWith("[") && selected.endsWith("]")) {
-          undoStack = [...undoStack, value];
-          redoStack = [];
-          const inner = selected.slice(1, -1);
-          value = value.substring(0, start) + inner + value.substring(end);
-          requestAnimationFrame(() => {
-            textareaEl?.focus();
-            textareaEl?.setSelectionRange(start, start + inner.length);
-          });
-          return;
-        }
-
-        // Normal wrap: surround with the appropriate bracket pair
-        const open = braceKey === "brace" ? "{" : "[";
-        const close = braceKey === "brace" ? "}" : "]";
-        const wrapped = `${open}${selected}${close}`;
-        undoStack = [...undoStack, value];
-        redoStack = [];
-        value = value.substring(0, start) + wrapped + value.substring(end);
-        requestAnimationFrame(() => {
-          textareaEl?.focus();
-          textareaEl?.setSelectionRange(start, start + wrapped.length);
-        });
+        wrapSelection(braceKey);
         return;
       }
     }
@@ -368,12 +436,14 @@
     requestAnimationFrame(() => {
       textareaEl?.focus();
       textareaEl?.setSelectionRange(start, start + newText.length);
+      syncSelectionRange();
     });
   }
 
   function handleInput() {
     // Clear redo stack on manual edits (standard undo behavior)
     redoStack = [];
+    syncSelectionRange();
 
     if (suggestionTimer !== null) {
       window.clearTimeout(suggestionTimer);
@@ -386,7 +456,10 @@
   }
 
   function handleClick() {
-    requestAnimationFrame(updateSuggestions);
+    requestAnimationFrame(() => {
+      syncSelectionRange();
+      updateSuggestions();
+    });
   }
 
   function handleBlur() {
@@ -443,9 +516,77 @@
     }
     resizeObserver?.disconnect();
   });
+
+  /** Teleport to body so the dropdown is not clipped by side-panel overflow-x-hidden. */
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      },
+    };
+  }
+
+  $effect(() => {
+    if (!showSuggestions) return;
+    const reposition = () => positionDropdown();
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  });
+
+  $effect(() => {
+    categoryFilter;
+    if (showSuggestions) {
+      updateSuggestions();
+    }
+  });
 </script>
 
 <div class="relative">
+  {#if hasSelection}
+    <div class="mb-2 flex flex-wrap gap-1.5">
+      <button
+        type="button"
+        class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
+        title={locale.t('generation.prompt.weight_up')}
+        onmousedown={(e) => e.preventDefault()}
+        onclick={() => adjustSelectedWeight(0.05)}
+      >
+        +0.05
+      </button>
+      <button
+        type="button"
+        class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
+        title={locale.t('generation.prompt.weight_down')}
+        onmousedown={(e) => e.preventDefault()}
+        onclick={() => adjustSelectedWeight(-0.05)}
+      >
+        -0.05
+      </button>
+      <button
+        type="button"
+        class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
+        title={locale.t('generation.prompt.wrap_stronger')}
+        onmousedown={(e) => e.preventDefault()}
+        onclick={() => wrapSelection("brace")}
+      >
+        {"{}"}
+      </button>
+      <button
+        type="button"
+        class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
+        title={locale.t('generation.prompt.wrap_weaker')}
+        onmousedown={(e) => e.preventDefault()}
+        onclick={() => wrapSelection("bracket")}
+      >
+        {"[]"}
+      </button>
+    </div>
+  {/if}
   {#if showBackdrop}
     <div
       bind:this={backdropEl}
@@ -464,15 +605,34 @@
     onkeydown={handleKeydown}
     oninput={handleInput}
     onclick={handleClick}
+      onselect={syncSelectionRange}
+      onkeyup={syncSelectionRange}
     onblur={handleBlur}
     onscroll={syncScroll}
   ></textarea>
 
   {#if showSuggestions}
     <div
-      class="fixed z-50 w-80 max-h-60 overflow-y-auto bg-neutral-800 border border-neutral-600 rounded-lg shadow-xl"
+      use:portal
+      class="fixed z-[200] w-80 max-h-60 overflow-y-auto bg-neutral-800 border border-neutral-600 rounded-lg shadow-xl"
       style="top: {dropdownTop}px; left: {dropdownLeft}px;"
     >
+      <div class="sticky top-0 z-10 border-b border-neutral-700 bg-neutral-800/95 p-2 backdrop-blur-sm">
+        <div class="flex flex-wrap gap-1">
+          {#each categoryOptions as option}
+            <button
+              type="button"
+              class="rounded-full border px-2 py-0.5 text-[10px] transition-colors cursor-pointer {categoryFilter === option.value
+                ? 'border-indigo-500/60 bg-indigo-500/15 text-indigo-200'
+                : 'border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:text-neutral-200'}"
+              onmousedown={(e) => e.preventDefault()}
+              onclick={() => { categoryFilter = option.value; }}
+            >
+              {option.label}
+            </button>
+          {/each}
+        </div>
+      </div>
       {#each suggestions as tag, i}
         <button
           class="w-full text-left px-3 py-1.5 text-sm flex items-center justify-between gap-2 transition-colors cursor-pointer
@@ -489,8 +649,9 @@
     </div>
     {#if suggestions[selectedIndex]?.c === 1 && connection.artistGalleryManifestUrl}
       <div
-        class="fixed z-50 pointer-events-none"
-        style="top: {dropdownTop}px; left: {dropdownLeft + 328}px;"
+        use:portal
+        class="fixed z-[200] pointer-events-none"
+        style="top: {dropdownTop}px; left: {artistPreviewLeft}px;"
       >
         <ArtistHoverPreview
           manifestUrl={connection.artistGalleryManifestUrl}

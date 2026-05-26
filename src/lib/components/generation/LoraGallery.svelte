@@ -1,6 +1,10 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
+  import {
+    loraPresets,
+    type LoraPresetApplyMode,
+  } from "../../stores/loraPresets.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { getLoraCivitaiInfo, fetchCachedImage, type LoraCivitaiInfo } from "../../utils/api.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
@@ -53,6 +57,11 @@
   let selectedLora = $state<string | null>(null);
   let imageIndex = $state<Record<string, number>>({});
   let searchQuery = $state("");
+  let selectedPresetId = $state<string>("");
+  let newPresetName = $state("");
+  let applyMode = $state<LoraPresetApplyMode>("replace");
+  let presetStatus = $state<string | null>(null);
+  let presetError = $state<string | null>(null);
   let loraInfoAccessBlocked = $state<string | null>(null);
 
   function isAccessDeniedError(message: string): boolean {
@@ -111,6 +120,84 @@
       ];
     }
     generation.saveSettings();
+  }
+
+  function clearPresetMessages() {
+    presetStatus = null;
+    presetError = null;
+  }
+
+  function createPresetFromCurrent() {
+    clearPresetMessages();
+    const activeStack = generation.loras.filter((lora) => lora.name.trim().length > 0);
+    if (activeStack.length === 0) {
+      presetError = "No LoRAs in current stack.";
+      return;
+    }
+    const fallbackName = `LoRA Preset ${loraPresets.presets.length + 1}`;
+    const created = loraPresets.create(newPresetName.trim() || fallbackName, activeStack);
+    newPresetName = "";
+    selectedPresetId = created.id;
+    presetStatus = `Saved preset "${created.name}"`;
+  }
+
+  function updatePresetFromCurrent() {
+    clearPresetMessages();
+    if (!selectedPresetId) {
+      presetError = "Select a preset first.";
+      return;
+    }
+    const selected = loraPresets.getById(selectedPresetId);
+    if (!selected) {
+      presetError = "Preset not found.";
+      return;
+    }
+    const activeStack = generation.loras.filter((lora) => lora.name.trim().length > 0);
+    if (activeStack.length === 0) {
+      presetError = "No LoRAs in current stack.";
+      return;
+    }
+    loraPresets.update(selected.id, { loras: activeStack });
+    presetStatus = `Updated preset "${selected.name}"`;
+  }
+
+  function applySelectedPreset() {
+    clearPresetMessages();
+    if (!selectedPresetId) {
+      presetError = "Select a preset first.";
+      return;
+    }
+    const result = loraPresets.applyToLoras(
+      generation.loras,
+      selectedPresetId,
+      applyMode,
+      models.loras,
+    );
+    if (!result) {
+      presetError = "Preset not found.";
+      return;
+    }
+    generation.loras = result.loras;
+    generation.saveSettings();
+    if (result.missingNames.length > 0) {
+      presetError = `Applied with missing LoRAs: ${result.missingNames.join(", ")}`;
+    } else {
+      presetStatus = "Preset applied.";
+    }
+  }
+
+  function deleteSelectedPreset() {
+    clearPresetMessages();
+    if (!selectedPresetId) {
+      presetError = "Select a preset first.";
+      return;
+    }
+    const selected = loraPresets.getById(selectedPresetId);
+    if (!selected) return;
+    if (!confirm(`Delete preset "${selected.name}"?`)) return;
+    loraPresets.remove(selected.id);
+    selectedPresetId = "";
+    presetStatus = "Preset deleted.";
   }
 
   // Lazy fetch: only fetch info for visible LoRAs
@@ -267,6 +354,70 @@
 
 <!-- Search + LoRA grid -->
 <div class="flex flex-col h-full">
+  <div class="mx-2 mt-1.5 rounded border border-neutral-800 bg-neutral-900/60 p-2 text-[11px] space-y-2">
+    <p class="text-neutral-400">LoRA Presets</p>
+    <div class="flex items-center gap-2">
+      <select
+        bind:value={selectedPresetId}
+        class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] text-neutral-100 focus:outline-none focus:border-indigo-500"
+      >
+        <option value="">Select preset...</option>
+        {#each loraPresets.presets as preset (preset.id)}
+          <option value={preset.id}>{preset.name}</option>
+        {/each}
+      </select>
+      <select
+        bind:value={applyMode}
+        class="bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] text-neutral-100 focus:outline-none focus:border-indigo-500"
+      >
+        <option value="replace">replace</option>
+        <option value="merge">merge</option>
+      </select>
+      <button
+        type="button"
+        class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:border-indigo-500"
+        onclick={applySelectedPreset}
+      >
+        Apply
+      </button>
+    </div>
+    <div class="flex items-center gap-2">
+      <input
+        type="text"
+        bind:value={newPresetName}
+        placeholder="New preset name (optional)"
+        class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
+      />
+      <button
+        type="button"
+        class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:border-indigo-500"
+        onclick={createPresetFromCurrent}
+      >
+        Save Current
+      </button>
+      <button
+        type="button"
+        class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500"
+        onclick={updatePresetFromCurrent}
+      >
+        Update
+      </button>
+      <button
+        type="button"
+        class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-red-300 hover:border-red-500/50"
+        onclick={deleteSelectedPreset}
+      >
+        Delete
+      </button>
+    </div>
+    {#if presetStatus}
+      <p class="text-emerald-400">{presetStatus}</p>
+    {/if}
+    {#if presetError}
+      <p class="text-amber-300">{presetError}</p>
+    {/if}
+  </div>
+
   <!-- Search bar + size slider -->
   <div class="px-2 pt-1.5 pb-1 shrink-0 flex items-center gap-2">
     <input

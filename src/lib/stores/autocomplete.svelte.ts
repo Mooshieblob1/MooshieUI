@@ -79,7 +79,7 @@ class AutocompleteStore {
     }
   }
 
-  search(queryText: string, limit = this.maxResults): TagEntry[] {
+  search(queryText: string, limit = this.maxResults, categoryFilter: number | null = null): TagEntry[] {
     if (!this.enabled) return [];
     const normalizedQuery = this.normalizeQuery(queryText);
     if (!normalizedQuery) return [];
@@ -90,6 +90,9 @@ class AutocompleteStore {
     const aliasMatches: TagEntry[] = [];
 
     for (const entry of this._searchEntries) {
+      if (categoryFilter !== null && entry.tag.c !== categoryFilter) {
+        continue;
+      }
       if (entry.nameLower.startsWith(normalizedQuery)) {
         this.insertTopByCount(prefixMatches, entry.tag, safeLimit);
       } else if (entry.nameLower.includes(normalizedQuery)) {
@@ -113,11 +116,21 @@ class AutocompleteStore {
         if (saved.sourceMode) this.sourceMode = saved.sourceMode;
         if (saved.sourceUrl) this.sourceUrl = saved.sourceUrl;
         if (saved.sourceFileName) this.sourceFileName = saved.sourceFileName;
-        if (saved.customTags) {
-          this._customTags = saved.customTags;
-          if (this.sourceMode !== "builtin" && this._customTags) {
-            this.setTags(this._customTags);
+        const customTags = Array.isArray(saved.customTags) ? saved.customTags : null;
+        if (this.sourceMode !== "builtin") {
+          if (customTags && customTags.length > 0) {
+            this._customTags = customTags;
+            this.setTags(customTags);
+          } else {
+            // Empty/broken custom list — fall back so autocomplete still works
+            this._customTags = null;
+            this.sourceMode = "builtin";
+            this.sourceUrl = "";
+            this.sourceFileName = "";
+            this.setTags(this._isAnima ? (animaTags as TagEntry[]) : (builtinTags as TagEntry[]));
           }
+        } else if (customTags) {
+          this._customTags = customTags;
         }
         // Apply model-aware builtin tags after settings load
         if (this.sourceMode === "builtin" && this._isAnima) {

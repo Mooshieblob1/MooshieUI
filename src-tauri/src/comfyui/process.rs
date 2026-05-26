@@ -30,10 +30,21 @@ pub(crate) fn parse_netstat_listening_pid(line: &str, port: u16) -> Option<u32> 
     parts.last()?.parse().ok()
 }
 
+/// `std::process::Command` that does not flash a console window on Windows.
+pub(crate) fn std_command_no_window(program: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 /// Detect whether the system has a Blackwell (compute capability 12.x) NVIDIA GPU.
 /// Returns `true` if any installed GPU has compute capability >= 12.0.
 fn has_blackwell_gpu() -> bool {
-    let output = std::process::Command::new("nvidia-smi")
+    let output = std_command_no_window("nvidia-smi")
         .args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"])
         .output();
 
@@ -152,9 +163,8 @@ async fn wait_for_port_free(state: &AppState, health_url: &str, port: u16) {
 /// Mark the legacy single-worker (the auto-created default worker when
 /// `gpu_workers` is empty, or any worker whose port matches the legacy
 /// `server_port`) as `Idle` so `GpuManager::submit_prompt` can dispatch to
-/// it.  Safe to call multiple times.  No-op for workers already Idle /
-/// Running, or explicitly Disabled.
-async fn mark_legacy_worker_idle(state: &AppState) {
+/// it. Safe to call multiple times.
+pub async fn mark_legacy_worker_idle(state: &AppState) {
     use super::gpu_manager::WorkerStatus;
     let port = state.config.read().await.server_port;
     for worker in &state.gpu_manager.workers {
@@ -192,6 +202,14 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             )
             .await
             .map_err(AppError::ProcessSpawnFailed)?;
+            super::nodes::ensure_required_style_transfer_nodes(
+                &config.comfyui_path,
+                &config.venv_path,
+                config.network_proxy.as_deref(),
+                config.pip_index_url.as_deref(),
+            )
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
         }
     }
 
@@ -210,6 +228,33 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         return Ok(StartResult::Skipped);
     }
 
+    let multi_worker_enabled = config.gpu_workers.iter().filter(|w| w.enabled).count() > 1;
+    if multi_worker_enabled {
+        let mut started_any = false;
+        let mut first_error: Option<AppError> = None;
+        for (_worker_id, result) in start_all_workers(state).await {
+            match result {
+                Ok(()) => started_any = true,
+                Err(err) => {
+                    if first_error.is_none() {
+                        first_error = Some(err);
+                    }
+                }
+            }
+        }
+        if !started_any {
+            if let Some(err) = first_error {
+                return Err(err);
+            }
+            return Err(AppError::ProcessSpawnFailed(
+                "No enabled GPU workers could be started".to_string(),
+            ));
+        }
+        // Multi-worker mode: start_comfyui command still waits for the primary
+        // server_url worker readiness and then WS connects as usual.
+        return Ok(StartResult::Spawned);
+    }
+
     // Check if something is already listening on the target port (e.g. a container)
     let health_url = format!("{}/system_stats", config.server_url);
     if comfyui_health_ok(&state.http_client, &health_url).await {
@@ -219,11 +264,23 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         let controlnet_ok =
             super::nodes::verify_required_controlnet_nodes(&state.http_client, &config.server_url)
                 .await;
+        let style_transfer_ok = super::nodes::verify_required_style_transfer_nodes(
+            &state.http_client,
+            &config.server_url,
+        )
+        .await;
 
         if mooshie_ok.is_ok() {
             if let Err(e) = controlnet_ok {
                 log::warn!(
                     "ComfyUI at {} is running but optional ControlNet nodes are missing: {}",
+                    config.server_url,
+                    e
+                );
+            }
+            if let Err(e) = style_transfer_ok {
+                log::warn!(
+                    "ComfyUI at {} is running but optional style transfer nodes are missing: {}",
                     config.server_url,
                     e
                 );
@@ -548,6 +605,12 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         cmd.arg(arg);
     }
 
+    // Force UTF-8 stdio so custom nodes that print Unicode symbols
+    // (e.g. Untwisting-RoPE progress markers) don't crash on Windows
+    // with cp1252/ANSI encoding errors.
+    cmd.env("PYTHONUTF8", "1");
+    cmd.env("PYTHONIOENCODING", "utf-8");
+
     // When running inside an AppImage, the bundled LD_LIBRARY_PATH and LD_PRELOAD
     // can interfere with Python/PyTorch. Clear them for the child process so it
     // uses the system's native libraries (CUDA, ROCm, etc.).
@@ -622,6 +685,15 @@ pub async fn wait_for_ready(state: &AppState, timeout_secs: u64) -> Result<(), A
             {
                 log::warn!(
                     "ControlNet custom nodes not loaded at startup (optional): {}",
+                    e
+                );
+            }
+            if let Err(e) =
+                super::nodes::verify_required_style_transfer_nodes(&state.http_client, &base_url)
+                    .await
+            {
+                log::warn!(
+                    "Style transfer custom nodes not loaded at startup (optional): {}",
                     e
                 );
             }
@@ -815,6 +887,14 @@ pub async fn start_worker_process(
             )
             .await
             .map_err(AppError::ProcessSpawnFailed)?;
+            super::nodes::ensure_required_style_transfer_nodes(
+                &config.comfyui_path,
+                &config.venv_path,
+                config.network_proxy.as_deref(),
+                config.pip_index_url.as_deref(),
+            )
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
         }
     }
 
@@ -830,11 +910,25 @@ pub async fn start_worker_process(
         let controlnet_ok =
             super::nodes::verify_required_controlnet_nodes(&state.http_client, &worker.base_url)
                 .await;
+        let style_transfer_ok = super::nodes::verify_required_style_transfer_nodes(
+            &state.http_client,
+            &worker.base_url,
+        )
+        .await;
 
         if mooshie_ok.is_ok() {
             if let Err(e) = controlnet_ok {
                 log::warn!(
                     "Worker {} (GPU {}): optional ControlNet nodes missing at {}: {}",
+                    worker.id,
+                    worker.gpu_index,
+                    worker.base_url,
+                    e
+                );
+            }
+            if let Err(e) = style_transfer_ok {
+                log::warn!(
+                    "Worker {} (GPU {}): optional style transfer nodes missing at {}: {}",
                     worker.id,
                     worker.gpu_index,
                     worker.base_url,
@@ -944,6 +1038,12 @@ pub async fn start_worker_process(
         cmd.arg(arg);
     }
 
+    // Force UTF-8 stdio so custom nodes that print Unicode symbols
+    // (e.g. Untwisting-RoPE progress markers) don't crash on Windows
+    // with cp1252/ANSI encoding errors.
+    cmd.env("PYTHONUTF8", "1");
+    cmd.env("PYTHONIOENCODING", "utf-8");
+
     // Pin to specific GPU
     cmd.env("CUDA_VISIBLE_DEVICES", worker.gpu_index.to_string());
 
@@ -1021,6 +1121,18 @@ pub async fn wait_for_worker_ready(
             {
                 log::warn!(
                     "Worker {}: ControlNet custom nodes not loaded (optional): {}",
+                    worker.id,
+                    e
+                );
+            }
+            if let Err(e) = super::nodes::verify_required_style_transfer_nodes(
+                &state.http_client,
+                &worker.base_url,
+            )
+            .await
+            {
+                log::warn!(
+                    "Worker {}: style transfer custom nodes not loaded (optional): {}",
                     worker.id,
                     e
                 );

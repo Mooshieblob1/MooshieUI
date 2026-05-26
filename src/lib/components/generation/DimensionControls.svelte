@@ -140,6 +140,15 @@
   const activePreset = $derived(
     presets.find((p) => p.w === aspectW && p.h === aspectH)?.label ?? ""
   );
+
+  /** Fit a w:h ratio into a max bounding box for preset preview chips. */
+  function aspectPreviewSize(w: number, h: number, boxPx = 12): { w: number; h: number } {
+    const ratio = w / h;
+    if (ratio >= 1) {
+      return { w: boxPx, h: Math.max(3, Math.round(boxPx / ratio)) };
+    }
+    return { w: Math.max(3, Math.round(boxPx * ratio)), h: boxPx };
+  }
 </script>
 
 <div class="space-y-3">
@@ -147,13 +156,26 @@
   <div>
     <p class="text-xs text-neutral-400 mb-1.5">{locale.t('generation.dimensions.aspect_ratio')}<InfoTip text={locale.t('generation.dimensions.aspect_ratio_tip')} /></p>
     <div class="flex items-center gap-1 flex-wrap mb-2">
-      {#each presets as preset}
+      {#each presets as preset (preset.label)}
+        {@const preview = aspectPreviewSize(preset.w, preset.h)}
         <button
           onclick={() => applyPreset(preset.w, preset.h)}
-          class="text-xs px-2 py-0.5 rounded transition-colors {activePreset === preset.label
+          class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded transition-colors {activePreset === preset.label
             ? 'bg-indigo-600 text-white'
             : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:bg-neutral-700'}"
+          title={preset.label}
         >
+          <span
+            class="inline-flex h-4 w-4 shrink-0 items-center justify-center overflow-visible"
+            aria-hidden="true"
+          >
+            <span
+              class="box-border rounded-sm border {activePreset === preset.label
+                ? 'border-white/70 bg-white/25'
+                : 'border-neutral-500 bg-neutral-600/50'}"
+              style="width: {preview.w}px; height: {preview.h}px"
+            ></span>
+          </span>
           {preset.label}
         </button>
       {/each}

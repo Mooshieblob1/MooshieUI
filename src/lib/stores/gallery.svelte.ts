@@ -1234,6 +1234,32 @@ class GalleryStore {
       console.error("Failed to fetch storage info:", e);
     }
   }
+
+  /** Collect gallery board preferences for server-side sync. */
+  collectPrefs(): unknown {
+    return {
+      boardAssignments: this.boardAssignments,
+      customBoards: this.customBoards,
+    };
+  }
+
+  /** Apply gallery board preferences fetched from server. */
+  applyServerPrefs(data: any): void {
+    try {
+      if (data?.boardAssignments && typeof data.boardAssignments === "object") {
+        this.boardAssignments = data.boardAssignments as Record<string, string>;
+        this.saveBoardAssignments();
+      }
+      if (Array.isArray(data?.customBoards)) {
+        this.customBoards = data.customBoards.filter(
+          (name: unknown) => typeof name === "string" && !!name && name !== "Unsorted",
+        );
+        this.saveCustomBoards();
+      }
+    } catch (e) {
+      console.error("gallery: applyServerPrefs failed", e);
+    }
+  }
 }
 
 export const gallery = new GalleryStore();

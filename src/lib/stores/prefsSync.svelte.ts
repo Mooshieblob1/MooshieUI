@@ -18,6 +18,7 @@ import { fetchServerPrefs, pushServerPrefs, type UserPrefsData } from "../utils/
 import { generation } from "./generation.svelte.js";
 import { promptPresets } from "./promptPresets.svelte.js";
 import { styles } from "./styles.svelte.js";
+import { loraPresets } from "./loraPresets.svelte.js";
 import { artistFavourites } from "../artist-gallery/favourites.svelte.js";
 import { gallery } from "./gallery.svelte.js";
 import { accessibility } from "./accessibility.svelte.js";
@@ -39,6 +40,7 @@ class PrefsSyncStore {
       prompt_history: generation.collectPromptHistory(),
       prompt_presets: promptPresets.collectPrefs(),
       styles: styles.collectPrefs(),
+      lora_presets: loraPresets.collectPrefs(),
       artist_favourites: artistFavourites.collectPrefs(),
       gallery_boards: gallery.collectPrefs(),
       autocomplete: autocomplete.collectPrefs(),
@@ -60,6 +62,9 @@ class PrefsSyncStore {
     }
     if (prefs.styles) {
       styles.applyServerPrefs(prefs.styles);
+    }
+    if (prefs.lora_presets) {
+      loraPresets.applyServerPrefs(prefs.lora_presets);
     }
     if (prefs.artist_favourites) {
       artistFavourites.applyServerPrefs(prefs.artist_favourites);

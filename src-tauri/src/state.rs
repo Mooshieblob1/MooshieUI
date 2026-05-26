@@ -62,6 +62,8 @@ pub struct PromptQueue {
     /// Placeholder/real prompt ids explicitly canceled while submission may
     /// still be racing. Submission tasks check this before binding aliases.
     cancelled: std::sync::RwLock<std::collections::HashSet<String>>,
+    /// When each prompt_id was enqueued (for submission-timeout detection).
+    inserted_at: std::sync::RwLock<HashMap<String, std::time::Instant>>,
 }
 
 impl Default for PromptQueue {
@@ -81,6 +83,7 @@ impl PromptQueue {
             aliases: std::sync::RwLock::new(HashMap::new()),
             deferred_finishes: std::sync::RwLock::new(std::collections::HashSet::new()),
             cancelled: std::sync::RwLock::new(std::collections::HashSet::new()),
+            inserted_at: std::sync::RwLock::new(HashMap::new()),
         }
     }
 
@@ -96,6 +99,10 @@ impl PromptQueue {
             .write()
             .unwrap()
             .insert(prompt_id.to_string(), username.clone());
+        self.inserted_at
+            .write()
+            .unwrap()
+            .insert(prompt_id.to_string(), std::time::Instant::now());
 
         let mut queue = self.queue.write().unwrap();
 
@@ -169,7 +176,26 @@ impl PromptQueue {
             .write()
             .unwrap()
             .retain(|(id, _)| id != prompt_id);
+        self.inserted_at.write().unwrap().remove(prompt_id);
         worker_id
+    }
+
+    /// Seconds since this prompt was enqueued, if still tracked.
+    pub fn insert_age_secs(&self, prompt_id: &str) -> Option<u64> {
+        self.inserted_at
+            .read()
+            .unwrap()
+            .get(prompt_id)
+            .map(|t| t.elapsed().as_secs())
+    }
+
+    /// Whether a placeholder has been bound to a ComfyUI prompt id.
+    pub fn is_placeholder_bound(&self, placeholder_id: &str) -> bool {
+        self.aliases
+            .read()
+            .unwrap()
+            .values()
+            .any(|p| p == placeholder_id)
     }
 
     /// Remove a prompt entirely (position + ownership).
@@ -208,6 +234,12 @@ impl PromptQueue {
             .write()
             .unwrap()
             .retain(|real, placeholder| !ids.iter().any(|id| id == real || id == placeholder));
+        {
+            let mut inserted = self.inserted_at.write().unwrap();
+            for id in &ids {
+                inserted.remove(id);
+            }
+        }
         ids
     }
 
@@ -430,6 +462,7 @@ impl PromptQueue {
         self.owners.write().unwrap().clear();
         self.worker_map.write().unwrap().clear();
         self.cancelled.write().unwrap().clear();
+        self.inserted_at.write().unwrap().clear();
     }
 }
 
@@ -474,6 +507,25 @@ pub struct AppState {
     pub notifications: NotificationState,
 }
 
+fn is_private_or_local_host(host: &str) -> bool {
+    let normalized = host.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return true;
+    }
+    if normalized == "localhost" || normalized.ends_with(".local") {
+        return true;
+    }
+    if let Ok(ip) = normalized.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_broadcast()
+            }
+            std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+        };
+    }
+    false
+}
+
 impl AppState {
     pub fn new(config: AppConfig) -> Self {
         let (event_tx, _) = broadcast::channel(1024);
@@ -506,6 +558,76 @@ impl AppState {
     pub async fn base_url(&self) -> String {
         let config = self.config.read().await;
         config.server_url.clone()
+    }
+
+    pub async fn dispatch_webhook_event(
+        &self,
+        event: &str,
+        mut payload: serde_json::Value,
+    ) -> Result<(), String> {
+        let cfg = self.config.read().await.clone();
+        let url = cfg.webhook_url.unwrap_or_default();
+        if url.trim().is_empty() {
+            return Ok(());
+        }
+        if !cfg.webhook_events.iter().any(|evt| evt == event) {
+            return Ok(());
+        }
+        let parsed =
+            reqwest::Url::parse(&url).map_err(|e| format!("Invalid webhook URL: {}", e))?;
+        let host = parsed.host_str().unwrap_or_default();
+        if !cfg.webhook_allow_private_targets && is_private_or_local_host(host) {
+            return Err("Webhook target denied: private/localhost host".to_string());
+        }
+
+        if !cfg.webhook_include_sensitive {
+            if let Some(obj) = payload.as_object_mut() {
+                obj.remove("metadata");
+                obj.remove("positive_prompt");
+                obj.remove("negative_prompt");
+            }
+        }
+
+        payload["event"] = serde_json::Value::String(event.to_string());
+        payload["sent_at"] = serde_json::Value::String(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_else(|_| "0".to_string()),
+        );
+
+        let client = self.http_client.clone();
+        let url_string = parsed.to_string();
+        tokio::spawn(async move {
+            let mut wait_ms = 500_u64;
+            for attempt in 1..=3 {
+                let req = client
+                    .post(&url_string)
+                    .timeout(std::time::Duration::from_secs(8))
+                    .json(&payload)
+                    .send()
+                    .await;
+                match req {
+                    Ok(resp) if resp.status().is_success() => return,
+                    Ok(resp) => {
+                        log::warn!(
+                            "Webhook delivery failed (attempt {}): HTTP {}",
+                            attempt,
+                            resp.status()
+                        );
+                    }
+                    Err(err) => {
+                        log::warn!("Webhook delivery error (attempt {}): {}", attempt, err);
+                    }
+                }
+                if attempt < 3 {
+                    tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                    wait_ms = wait_ms.saturating_mul(2);
+                }
+            }
+        });
+
+        Ok(())
     }
 
     /// Cancel a generation in a worker-aware fashion.

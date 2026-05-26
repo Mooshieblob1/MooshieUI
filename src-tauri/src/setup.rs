@@ -1202,6 +1202,18 @@ pub async fn check_setup(app: AppHandle) -> Result<bool, String> {
     // treat setup as complete. This handles the case where the data directory
     // was moved or the marker file was lost.
     let cfg = config::load_persisted_config();
+    if cfg.setup_complete
+        && matches!(cfg.server_mode, config::ServerMode::Remote)
+        && !cfg.server_url.trim().is_empty()
+    {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join(".setup_complete"), "");
+        log::info!(
+            "Recovered setup state for remote ComfyUI at {}",
+            cfg.server_url
+        );
+        return Ok(true);
+    }
     let comfy_main = Path::new(&cfg.comfyui_path).join("main.py");
     if comfy_main.exists() {
         // Recreate the marker file so future checks are fast

@@ -98,10 +98,16 @@ RUN mkdir -p ${COMFYUI_PATH}/custom_nodes && \
         ${COMFYUI_PATH}/custom_nodes/comfyui_controlnet_aux && \
     git clone --depth=1 https://github.com/kohya-ss/ComfyUI-Anima-LLLite.git \
         ${COMFYUI_PATH}/custom_nodes/ComfyUI-Anima-LLLite && \
+    git clone --depth=1 https://github.com/BigStationW/ComfyUi-Untwisting-RoPE.git \
+        ${COMFYUI_PATH}/custom_nodes/ComfyUi-Untwisting-RoPE && \
+    git clone --depth=1 https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git \
+        ${COMFYUI_PATH}/custom_nodes/ComfyUi-Scale-Image-to-Total-Pixels-Advanced && \
     . ${COMFYUI_PATH}/.venv/bin/activate && \
     for req in \
         ${COMFYUI_PATH}/custom_nodes/comfyui_controlnet_aux/requirements.txt \
-        ${COMFYUI_PATH}/custom_nodes/ComfyUI-Anima-LLLite/requirements.txt; do \
+        ${COMFYUI_PATH}/custom_nodes/ComfyUI-Anima-LLLite/requirements.txt \
+        ${COMFYUI_PATH}/custom_nodes/ComfyUi-Untwisting-RoPE/requirements.txt \
+        ${COMFYUI_PATH}/custom_nodes/ComfyUi-Scale-Image-to-Total-Pixels-Advanced/requirements.txt; do \
         if [ -f "$req" ]; then uv pip install -r "$req"; fi; \
     done
 

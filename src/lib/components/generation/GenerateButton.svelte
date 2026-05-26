@@ -17,6 +17,11 @@
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
   import type { GenerationParams } from "../../types/index.js";
+  import { runRegionalInpaintChain } from "../../utils/regionalInpaintChain.js";
+  import {
+    suppressRegionalChainGallerySave,
+    clearAllRegionalChainGallerySuppress,
+  } from "../../utils/regionalChainGallery.js";
 
   interface Props {
     canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
@@ -27,8 +32,10 @@
   let isSubmitting = $state(false);
   let orderedRunPromptIds = $state<string[]>([]);
   let orderedRunCancelRequested = $state(false);
+  let regionalChainCancelRequested = $state(false);
   let submitRunToken = 0;
   let orderedRunToken = 0;
+  let regionalChainToken = 0;
   const orderedWildcardRun = $derived(promptPresets.orderedWildcardRun);
   const orderedWildcardRunCount = $derived(compare.enabled && compare.cellCount > 1 ? 0 : (orderedWildcardRun?.count ?? 0));
   const pendingOrderedRunIds = $derived(orderedRunPromptIds.filter((id) => progress.pendingPrompts.some((prompt) => prompt.promptId === id)));
@@ -64,7 +71,25 @@
   function finishSubmitRun(runToken: number) {
     if (runToken === submitRunToken) {
       isSubmitting = false;
+      progress.setRegionalChainStatus(null);
     }
+  }
+
+  function setRegionalChainStep(phase: "base" | "region" | "wait", index: number, total: number) {
+    if (phase === "wait") {
+      progress.setRegionalChainStatus(locale.t("generation.regional.inpaint_chain_waiting"));
+      return;
+    }
+    const key =
+      phase === "base"
+        ? "generation.regional.inpaint_chain_base"
+        : "generation.regional.inpaint_chain_region";
+    progress.setRegionalChainStatus(
+      locale.t(key, {
+        current: String(index + 1),
+        total: String(total),
+      }),
+    );
   }
 
   async function handleGenerate() {
@@ -147,10 +172,106 @@
         return;
       }
 
-      const params = generation.toParams();
-      console.log("[generate] output_format:", params.output_format, "output_bit_depth:", params.output_bit_depth);
+      const regionalPromptingSupported = generation.supportsRegionalPrompting;
+      const useRegionalInpaintChain =
+        regionalPromptingSupported &&
+        generation.effectiveRegionalStrategy === "inpaint_chain";
+      const validRegions = useRegionalInpaintChain
+        ? generation.getValidRegionalSelectionsForInpaint()
+        : generation.regionalPrompts.filter(
+            (r) => r.text.trim() && r.width > 0 && r.height > 0,
+          );
+      const configuredRegions = validRegions.length;
+
+      if (configuredRegions > 0 && !regionalPromptingSupported) {
+        gallery.showToast(locale.t("generation.regional.dropped_warning"), "warning");
+        console.warn(
+          "[regional] Generate skipped",
+          configuredRegions,
+          "GUI region(s); architecture=",
+          generation.detectedArchitecture,
+        );
+      }
+
+      const skippedEmpty = generation.regionalPrompts.length - configuredRegions;
+      if (skippedEmpty > 0) {
+        gallery.showToast(
+          locale.t("generation.regional.empty_skipped_warning", { count: String(skippedEmpty) }),
+          "warning",
+        );
+      }
+
+      console.log(
+        "[generate] output_format:",
+        generation.outputFormat,
+        "output_bit_depth:",
+        generation.outputBitDepth,
+        "regional:",
+        generation.effectiveRegionalStrategy,
+      );
       generation.saveCurrentPromptToHistory();
-      await submitGeneration(params);
+
+      if (useRegionalInpaintChain && configuredRegions > 0) {
+        const chainToken = ++regionalChainToken;
+        regionalChainCancelRequested = false;
+        gallery.showToast(locale.t("generation.regional.inpaint_chain_started"), "info");
+        clearAllRegionalChainGallerySuppress();
+        try {
+          const chainResult = await runRegionalInpaintChain(validRegions, {
+            submit: async (chainParams, ctx) => {
+              const result = await requestGeneration(chainParams);
+              if (!ctx.isFinalOutput) {
+                suppressRegionalChainGallerySave(result.prompt_id);
+              }
+              trackGeneration(chainParams, result);
+              return { promptId: result.prompt_id, seed: result.seed };
+            },
+            onStep: ({ phase, index, total }) => {
+              setRegionalChainStep(phase, index, total);
+              if (phase === "base") {
+                gallery.showToast(
+                  locale.t("generation.regional.inpaint_chain_base", {
+                    current: "1",
+                    total: String(total),
+                  }),
+                  "info",
+                );
+              } else {
+                gallery.showToast(
+                  locale.t("generation.regional.inpaint_chain_region", {
+                    current: String(index + 1),
+                    total: String(total),
+                  }),
+                  "info",
+                );
+              }
+            },
+            onWaitingForOutput: () => setRegionalChainStep("wait", 0, 0),
+            shouldCancel: () =>
+              regionalChainCancelRequested || chainToken !== regionalChainToken,
+          });
+          console.log(
+            "[regional] Inpaint chain finished:",
+            chainResult.regionCount,
+            "region(s)",
+          );
+        } catch (chainError) {
+          if (regionalChainCancelRequested || chainToken !== regionalChainToken) {
+            console.log("[regional] Inpaint chain cancelled");
+          } else {
+            throw chainError;
+          }
+        } finally {
+          clearAllRegionalChainGallerySuppress();
+        }
+      } else {
+        const params = generation.toParams();
+        const sentRegions = params.positive_regions?.length ?? 0;
+        if (sentRegions > 0) {
+          console.log("[regional] Sending", sentRegions, "region(s) via conditioning");
+        }
+        await submitGeneration(params);
+      }
       generation.saveSettings();
     } catch (e) {
       if (runToken === submitRunToken) {

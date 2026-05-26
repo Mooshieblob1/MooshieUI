@@ -2,6 +2,7 @@ pub mod controlnet;
 pub mod facefix;
 pub mod img2img;
 pub mod inpainting;
+pub mod style_transfer;
 pub mod txt2img;
 pub mod upscale;
 
@@ -70,6 +71,46 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         {
             return Err(
                 "The Anima inpainting ControlNet preset requires a mask — please paint a mask before generating.".into(),
+            );
+        }
+    }
+
+    if params.style_transfer_enabled {
+        if !is_anima_architecture(params) {
+            return Err(
+                "Style transfer (Untwisting RoPE) is only supported for Anima models.".into(),
+            );
+        }
+        if params.mode != "txt2img" {
+            return Err(
+                "Style transfer is only available in txt2img mode — switch mode or disable style transfer.".into(),
+            );
+        }
+        if params
+            .style_reference_image
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
+            return Err(
+                "Style transfer is enabled but no style reference image was provided — please upload one.".into(),
+            );
+        }
+        if params.controlnet.as_ref().is_some_and(|cn| cn.enabled) {
+            return Err(
+                "Style transfer cannot be used with ControlNet enabled — disable one of them."
+                    .into(),
+            );
+        }
+        if params.upscale_enabled {
+            return Err(
+                "Style transfer cannot be used with upscale enabled in this version — disable upscale.".into(),
+            );
+        }
+        if params.facefix_enabled {
+            return Err(
+                "Style transfer cannot be used with face fix enabled in this version — disable face fix.".into(),
             );
         }
     }
@@ -256,6 +297,11 @@ pub fn load_model_nodes(
 }
 
 pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
+    if params.style_transfer_enabled && is_anima_architecture(params) {
+        let result = style_transfer::build(params, seed);
+        return finish_workflow(result, params, seed);
+    }
+
     let mut result = match params.mode.as_str() {
         "img2img" => img2img::build(params, seed),
         "inpainting" => inpainting::build(params, seed),
@@ -297,6 +343,10 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
         }
     }
 
+    finish_workflow(result, params, seed)
+}
+
+fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: i64) -> Value {
     let final_image = if params.upscale_enabled {
         upscale::append_upscale_chain(&mut result, params, seed)
     } else {
@@ -492,6 +542,89 @@ pub fn insert_vae_decode(
         );
     }
     (decode_id, next_id + 1)
+}
+
+/// Positive prompt context shared by every regional CLIP encode (main prompt, schedule segments, LoRA tags).
+pub fn build_regional_context_prompt(params: &GenerationParams) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    let base = params.positive_prompt.trim();
+    if !base.is_empty() {
+        parts.push(base.to_string());
+    }
+
+    for segment in &params.positive_segments {
+        let text = segment.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if parts.iter().any(|p| p == text) {
+            continue;
+        }
+        parts.push(text.to_string());
+    }
+
+    let mut combined = parts.join(", ");
+    for lora in &params.loras {
+        if lora.name.trim().is_empty() {
+            continue;
+        }
+        if prompt_contains_lora_tag(&combined, &lora.name) {
+            continue;
+        }
+        let strength = format_lora_tag_strength(lora.strength_clip);
+        let tag = format!("<lora:{}:{}>", lora.name.trim(), strength);
+        if combined.is_empty() {
+            combined = tag;
+        } else {
+            combined.push_str(", ");
+            combined.push_str(&tag);
+        }
+    }
+
+    combined
+}
+
+/// Merge global context with a region's local prompt for area conditioning.
+pub fn merge_regional_encode_text(context: &str, region_text: &str) -> String {
+    let context = context.trim();
+    let local = region_text.trim();
+    if local.is_empty() {
+        return context.to_string();
+    }
+    if context.is_empty() {
+        return local.to_string();
+    }
+    if local.contains(context) || context.contains(local) {
+        return if local.len() >= context.len() {
+            local.to_string()
+        } else {
+            format!("{context}, {local}")
+        };
+    }
+    format!("{context}, {local}")
+}
+
+fn format_lora_tag_strength(strength: f64) -> String {
+    let s = strength.clamp(0.0, 2.0);
+    if (s - s.round()).abs() < f64::EPSILON {
+        format!("{}", s.round() as i32)
+    } else {
+        let formatted = format!("{s:.2}");
+        formatted
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
+}
+
+fn prompt_contains_lora_tag(prompt: &str, lora_name: &str) -> bool {
+    let name = lora_name.trim();
+    if name.is_empty() {
+        return false;
+    }
+    let needle = format!("<lora:{}", name.to_lowercase());
+    prompt.to_lowercase().contains(&needle)
 }
 
 /// Build a conditioning output that combines a base prompt with optional timestep-scheduled segments.

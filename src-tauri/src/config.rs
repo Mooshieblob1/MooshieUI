@@ -77,6 +77,18 @@ pub struct AppConfig {
     /// Optional PyPI index URL for pip/uv installs (e.g. a regional mirror).
     /// Example: `https://pypi.tuna.tsinghua.edu.cn/simple`
     pub pip_index_url: Option<String>,
+    /// Optional gallery output filename template.
+    /// Supported keys: {prompt_id}, {mode}, {index}, {date}, {time}, {model}, {seed}
+    pub output_filename_template: Option<String>,
+    /// Optional webhook URL for generation/image events.
+    pub webhook_url: Option<String>,
+    /// Enabled webhook event names (e.g. "image_saved").
+    #[serde(default)]
+    pub webhook_events: Vec<String>,
+    /// Whether webhook payloads include prompt/metadata fields.
+    pub webhook_include_sensitive: bool,
+    /// Allow localhost/private webhook targets.
+    pub webhook_allow_private_targets: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -123,6 +135,11 @@ impl Default for AppConfig {
             gpu_workers: vec![],
             network_proxy: None,
             pip_index_url: None,
+            output_filename_template: None,
+            webhook_url: None,
+            webhook_events: vec!["image_saved".to_string()],
+            webhook_include_sensitive: false,
+            webhook_allow_private_targets: false,
         }
     }
 }
@@ -266,11 +283,34 @@ pub fn load_persisted_config() -> AppConfig {
 }
 
 pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
-    for field in [&mut config.network_proxy, &mut config.pip_index_url] {
+    for field in [
+        &mut config.network_proxy,
+        &mut config.pip_index_url,
+        &mut config.output_filename_template,
+        &mut config.webhook_url,
+    ] {
         match field {
             Some(p) if p.trim().is_empty() => *field = None,
             Some(p) => *p = p.trim().to_string(),
             None => {}
+        }
+    }
+    for worker in &mut config.gpu_workers {
+        if let Some(label) = &mut worker.label {
+            let trimmed = label.trim().to_string();
+            worker.label = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            };
+        }
+        if let Some(mode) = &mut worker.vram_mode {
+            let trimmed = mode.trim().to_string();
+            worker.vram_mode = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            };
         }
     }
 }

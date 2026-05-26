@@ -1,9 +1,22 @@
 import { ipcStore } from "../utils/ipc.js";
 import { triggerSync } from "../utils/syncTrigger.js";
-import { parseScheduledPrompt } from "../utils/promptSchedule.js";
-import type { LoraEntry } from "../types/index.js";
+import {
+  buildRegionalContextPrompt,
+  mergeRegionalPromptText,
+  parseRegionalPrompt,
+  parseScheduledPrompt,
+} from "../utils/promptSchedule.js";
+import {
+  modelNamesIndicateIllustrious,
+  signalsIndicateAnima,
+} from "../utils/modelFamily.js";
+import type {
+  GenerationParams,
+  LoraEntry,
+  RegionalPromptSelection,
+  RegionalPromptStrategy,
+} from "../types/index.js";
 import { autocomplete } from "./autocomplete.svelte.js";
-import { signalsIndicateAnima } from "../utils/modelFamily.js";
 import { styles } from "./styles.svelte.js";
 import { promptPresets } from "./promptPresets.svelte.js";
 
@@ -13,6 +26,19 @@ const MAX_PROMPT_HISTORY = 100;
 
 export interface GenerationToParamsOptions {
   fixedPresetChoices?: ReadonlyMap<string, string>;
+  /** When false, positive_regions is omitted (regional inpaint chain). */
+  includeConditioningRegions?: boolean;
+  overrides?: Partial<
+    Pick<
+      GenerationParams,
+      | "mode"
+      | "input_image"
+      | "mask_image"
+      | "positive_prompt"
+      | "denoise"
+      | "differential_diffusion"
+    >
+  >;
 }
 
 /**
@@ -257,6 +283,18 @@ class GenerationStore {
   controlnetStrength = $state(1.0);
   controlnetStartPercent = $state(0.0);
   controlnetEndPercent = $state(1.0);
+  styleTransferEnabled = $state(false);
+  styleReferenceImage = $state<string | null>(null);
+  styleTransferLowScaleEnd = $state(1.5);
+  styleTransferHighScaleStart = $state(1.0);
+  styleTransferBeta = $state(50);
+  styleTransferAdainStrength = $state(0.5);
+  styleTransferRfMode = $state("rf_gamma_rk2");
+  styleTransferGamma = $state(0.5);
+  styleTransferGammaCurve = $state(2);
+  styleTransferNormStrength = $state(1);
+  styleTransferPmiAlpha = $state(0.5);
+  styleTransferMegapixels = $state(1.05);
   facefixEnabled = $state(false);
   facefixDetector = $state<string | null>(null);
   facefixDenoise = $state(0.4);
@@ -280,6 +318,9 @@ class GenerationStore {
   manualSaveMode = $state(false);
   /** Directories to auto-save images to when manualSaveMode is enabled. */
   autoSaveDirs = $state<string[]>([]);
+  regionalPrompts = $state<RegionalPromptSelection[]>([]);
+  /** SDXL/Illustrious: conditioning areas vs sequential inpaint. Anima always uses inpaint chain. */
+  regionalPromptStrategy = $state<RegionalPromptStrategy>("conditioning");
 
   /** Whether the developer mode section in Settings has been unlocked (10 version taps). Not persisted. */
   devModeUnlocked = $state(false);
@@ -437,9 +478,73 @@ class GenerationStore {
     autocomplete.notifyModelChanged(this.isAnima);
   }
 
+  /** SDXL/Illustrious area conditioning (ConditioningSetArea). */
+  get supportsRegionalConditioning(): boolean {
+    if (this.mode !== "txt2img") return false;
+    const arch = this.detectedArchitecture;
+    if (arch === "sdxl" || arch === "illustrious") return true;
+    return modelNamesIndicateIllustrious(this.checkpoint, this.diffusionModel);
+  }
+
+  /** Sequential masked inpaint per region (works on Anima + optional SDXL). */
+  get supportsRegionalInpaintChain(): boolean {
+    return this.mode === "txt2img" && (this.isAnima || this.supportsRegionalConditioning);
+  }
+
+  get effectiveRegionalStrategy(): RegionalPromptStrategy {
+    if (!this.supportsRegionalInpaintChain && !this.supportsRegionalConditioning) {
+      return "conditioning";
+    }
+    if (this.isAnima) return "inpaint_chain";
+    if (this.supportsRegionalConditioning && this.regionalPromptStrategy === "conditioning") {
+      return "conditioning";
+    }
+    return "inpaint_chain";
+  }
+
+  get canChooseRegionalStrategy(): boolean {
+    return this.supportsRegionalConditioning && this.supportsRegionalInpaintChain && !this.isAnima;
+  }
+
+  /** txt2img regional prompting (GUI regions + <region> tags). */
+  get supportsRegionalPrompting(): boolean {
+    return this.supportsRegionalConditioning || this.supportsRegionalInpaintChain;
+  }
+
+  /** GUI + inline `<region>` tags with valid geometry and prompt text (for inpaint chain). */
+  getValidRegionalSelectionsForInpaint(): RegionalPromptSelection[] {
+    const fromGui = this.regionalPrompts.filter(
+      (r) => r.text.trim() && r.width > 0 && r.height > 0,
+    );
+    if (fromGui.length > 0) {
+      const seen = new Set<string>();
+      return fromGui.filter((r) => {
+        const key = r.id || `${r.x},${r.y},${r.width},${r.height},${r.text.trim()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+    const parsed = parseRegionalPrompt(this.positivePrompt);
+    return parsed.regions.map((region, index) => ({
+      id: `region-tag-${index}`,
+      shape: "box" as const,
+      text: region.text,
+      strength: 1,
+      x: region.x,
+      y: region.y,
+      width: region.width,
+      height: region.height,
+    }));
+  }
+
   /** Detect the base model architecture from modelspec (authoritative) or filename (fallback). */
   get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "sd3" | "flux" | "pony" | "auraflow" | "pixart" | "hunyuandit" | "cascade" | "kolors" | "mugen" | "nanosaur" | "anima" | "unknown" {
     const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
+
+    if (modelNamesIndicateIllustrious(this.checkpoint, this.diffusionModel)) {
+      return "illustrious";
+    }
 
     if (signalsIndicateAnima(this.modelFamilySignals())) {
       return "anima";
@@ -853,6 +958,18 @@ class GenerationStore {
         if (saved.controlnetStrength !== undefined) this.controlnetStrength = saved.controlnetStrength;
         if (saved.controlnetStartPercent !== undefined) this.controlnetStartPercent = saved.controlnetStartPercent;
         if (saved.controlnetEndPercent !== undefined) this.controlnetEndPercent = saved.controlnetEndPercent;
+        if (saved.styleTransferEnabled !== undefined) this.styleTransferEnabled = saved.styleTransferEnabled;
+        if (saved.styleReferenceImage !== undefined) this.styleReferenceImage = saved.styleReferenceImage;
+        if (saved.styleTransferLowScaleEnd !== undefined) this.styleTransferLowScaleEnd = saved.styleTransferLowScaleEnd;
+        if (saved.styleTransferHighScaleStart !== undefined) this.styleTransferHighScaleStart = saved.styleTransferHighScaleStart;
+        if (saved.styleTransferBeta !== undefined) this.styleTransferBeta = saved.styleTransferBeta;
+        if (saved.styleTransferAdainStrength !== undefined) this.styleTransferAdainStrength = saved.styleTransferAdainStrength;
+        if (saved.styleTransferRfMode !== undefined) this.styleTransferRfMode = saved.styleTransferRfMode;
+        if (saved.styleTransferGamma !== undefined) this.styleTransferGamma = saved.styleTransferGamma;
+        if (saved.styleTransferGammaCurve !== undefined) this.styleTransferGammaCurve = saved.styleTransferGammaCurve;
+        if (saved.styleTransferNormStrength !== undefined) this.styleTransferNormStrength = saved.styleTransferNormStrength;
+        if (saved.styleTransferPmiAlpha !== undefined) this.styleTransferPmiAlpha = saved.styleTransferPmiAlpha;
+        if (saved.styleTransferMegapixels !== undefined) this.styleTransferMegapixels = saved.styleTransferMegapixels;
         if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
         if (saved.facefixDetector !== undefined) this.facefixDetector = saved.facefixDetector;
         if (saved.facefixDenoise !== undefined) this.facefixDenoise = saved.facefixDenoise;
@@ -883,6 +1000,31 @@ class GenerationStore {
         if (saved.customNanosaurNegativeQuality !== undefined) this.customNanosaurNegativeQuality = saved.customNanosaurNegativeQuality;
         if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
         if (Array.isArray(saved.autoSaveDirs)) this.autoSaveDirs = saved.autoSaveDirs;
+        if (saved.regionalPromptStrategy === "conditioning" || saved.regionalPromptStrategy === "inpaint_chain") {
+          this.regionalPromptStrategy = saved.regionalPromptStrategy;
+        }
+        if (Array.isArray(saved.regionalPrompts)) {
+          this.regionalPrompts = saved.regionalPrompts
+            .filter((item: unknown) => !!item && typeof item === "object")
+            .map((item: any) => ({
+              id: typeof item.id === "string" && item.id ? item.id : (crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`),
+              shape: item.shape === "circle" || item.shape === "lasso" ? item.shape : "box",
+              text: typeof item.text === "string" ? item.text : "",
+              strength: typeof item.strength === "number" ? item.strength : 1.0,
+              x: typeof item.x === "number" ? item.x : 0,
+              y: typeof item.y === "number" ? item.y : 0,
+              width: typeof item.width === "number" ? item.width : 0,
+              height: typeof item.height === "number" ? item.height : 0,
+              points: Array.isArray(item.points)
+                ? item.points
+                    .filter((point: unknown) => !!point && typeof point === "object")
+                    .map((point: any) => ({
+                      x: typeof point.x === "number" ? point.x : 0,
+                      y: typeof point.y === "number" ? point.y : 0,
+                    }))
+                : undefined,
+            }));
+        }
         // Migrate: old default was "text_chunk", new default is "both" (stealth + text)
         if (!localStorage.getItem("mooshieui.metadataMode.v2")) {
           this.metadataMode = "both";
@@ -946,6 +1088,18 @@ class GenerationStore {
         controlnetStrength: this.controlnetStrength,
         controlnetStartPercent: this.controlnetStartPercent,
         controlnetEndPercent: this.controlnetEndPercent,
+        styleTransferEnabled: this.styleTransferEnabled,
+        styleReferenceImage: this.styleReferenceImage,
+        styleTransferLowScaleEnd: this.styleTransferLowScaleEnd,
+        styleTransferHighScaleStart: this.styleTransferHighScaleStart,
+        styleTransferBeta: this.styleTransferBeta,
+        styleTransferAdainStrength: this.styleTransferAdainStrength,
+        styleTransferRfMode: this.styleTransferRfMode,
+        styleTransferGamma: this.styleTransferGamma,
+        styleTransferGammaCurve: this.styleTransferGammaCurve,
+        styleTransferNormStrength: this.styleTransferNormStrength,
+        styleTransferPmiAlpha: this.styleTransferPmiAlpha,
+        styleTransferMegapixels: this.styleTransferMegapixels,
         facefixEnabled: this.facefixEnabled,
         facefixDetector: this.facefixDetector,
         facefixDenoise: this.facefixDenoise,
@@ -966,6 +1120,8 @@ class GenerationStore {
         customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
         manualSaveMode: this.manualSaveMode,
         autoSaveDirs: this.autoSaveDirs,
+        regionalPrompts: this.regionalPrompts,
+        regionalPromptStrategy: this.regionalPromptStrategy,
       });
       triggerSync();
     } catch (e) {
@@ -1020,6 +1176,18 @@ class GenerationStore {
       controlnetStrength: this.controlnetStrength,
       controlnetStartPercent: this.controlnetStartPercent,
       controlnetEndPercent: this.controlnetEndPercent,
+      styleTransferEnabled: this.styleTransferEnabled,
+      styleReferenceImage: this.styleReferenceImage,
+      styleTransferLowScaleEnd: this.styleTransferLowScaleEnd,
+      styleTransferHighScaleStart: this.styleTransferHighScaleStart,
+      styleTransferBeta: this.styleTransferBeta,
+      styleTransferAdainStrength: this.styleTransferAdainStrength,
+      styleTransferRfMode: this.styleTransferRfMode,
+      styleTransferGamma: this.styleTransferGamma,
+      styleTransferGammaCurve: this.styleTransferGammaCurve,
+      styleTransferNormStrength: this.styleTransferNormStrength,
+      styleTransferPmiAlpha: this.styleTransferPmiAlpha,
+      styleTransferMegapixels: this.styleTransferMegapixels,
       facefixEnabled: this.facefixEnabled,
       facefixDetector: this.facefixDetector,
       facefixDenoise: this.facefixDenoise,
@@ -1040,6 +1208,8 @@ class GenerationStore {
       customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
       manualSaveMode: this.manualSaveMode,
       autoSaveDirs: this.autoSaveDirs,
+      regionalPrompts: this.regionalPrompts,
+      regionalPromptStrategy: this.regionalPromptStrategy,
     };
   }
 
@@ -1161,25 +1331,112 @@ class GenerationStore {
       }
     }
 
-    // Parse timestep scheduling tags from prompts before NAI weight translation
+    const regionalPromptingSupported = this.supportsRegionalPrompting;
+    const configuredRegionCount = this.regionalPrompts.filter(
+      (r) => r.text.trim() && r.width > 0 && r.height > 0,
+    ).length;
+    if (configuredRegionCount > 0 && !regionalPromptingSupported) {
+      console.warn(
+        "[regional] Dropping",
+        configuredRegionCount,
+        "GUI region(s): unsupported for",
+        this.detectedArchitecture,
+        "mode",
+        this.mode,
+        "checkpoint",
+        this.checkpoint,
+      );
+    }
+    // Parse syntax-first regional prompting tags before schedule parsing, but only
+    // when the current model/mode supports regional prompting. Otherwise keep
+    // tags in the main prompt text so user intent is not silently dropped.
+    const parsedRegions = regionalPromptingSupported
+      ? parseRegionalPrompt(positivePrompt)
+      : { baseText: positivePrompt, regions: [] as Array<{ text: string; x: number; y: number; width: number; height: number }> };
+    positivePrompt = parsedRegions.baseText;
+    const guiRegions = regionalPromptingSupported
+      ? this.regionalPrompts
+        .map((region) => {
+          const x = Math.max(0, Math.min(1, region.x));
+          const y = Math.max(0, Math.min(1, region.y));
+          const maxWidth = Math.max(0, 1 - x);
+          const maxHeight = Math.max(0, 1 - y);
+          const width = Math.max(0, Math.min(maxWidth, region.width));
+          const height = Math.max(0, Math.min(maxHeight, region.height));
+          const text = region.text.trim();
+          if (!text || width <= 0 || height <= 0) return null;
+          return {
+            text,
+            x,
+            y,
+            width,
+            height,
+            strength: Number.isFinite(region.strength) ? Math.max(0, Math.min(2, region.strength)) : 1.0,
+          };
+        })
+        .filter((region): region is NonNullable<typeof region> => region !== null)
+      : [];
+
+    // Parse timestep scheduling tags from prompts before NAI weight translation.
     const parsedPositive = parseScheduledPrompt(positivePrompt);
     const parsedNegative = parseScheduledPrompt(negativePrompt);
 
-    return {
+    const translatedPositiveBase = translateNaiWeightSyntax(parsedPositive.baseText);
+    const translatedPositiveSegments = parsedPositive.segments.map((s) => ({
+      text: translateNaiWeightSyntax(s.text),
+      start: s.start,
+      end: s.end,
+    }));
+    const regionalContext = regionalPromptingSupported
+      ? buildRegionalContextPrompt(
+          translatedPositiveBase,
+          translatedPositiveSegments,
+          this.loras.filter((l) => l.enabled && l.name),
+        )
+      : "";
+
+    const mergeRegionText = (localText: string): string =>
+      regionalPromptingSupported
+        ? mergeRegionalPromptText(regionalContext, localText)
+        : localText;
+
+    const includeConditioningRegions =
+      regionalPromptingSupported &&
+      (options.includeConditioningRegions ??
+        this.effectiveRegionalStrategy === "conditioning");
+
+    const builtRegions = includeConditioningRegions
+      ? parsedRegions.regions.map((region) => ({
+          text: mergeRegionText(region.text),
+          x: region.x,
+          y: region.y,
+          width: region.width,
+          height: region.height,
+          strength: 1.0,
+        })).concat(
+          guiRegions.map((region) => ({
+            text: mergeRegionText(region.text),
+            x: region.x,
+            y: region.y,
+            width: region.width,
+            height: region.height,
+            strength: region.strength,
+          })),
+        )
+      : [];
+
+    const params: GenerationParams = {
       mode: this.mode,
-      positive_prompt: translateNaiWeightSyntax(parsedPositive.baseText),
+      positive_prompt: translatedPositiveBase,
       negative_prompt: translateNaiWeightSyntax(parsedNegative.baseText),
-      positive_segments: parsedPositive.segments.map((s) => ({
-        text: translateNaiWeightSyntax(s.text),
-        start: s.start,
-        end: s.end,
-      })),
+      positive_segments: translatedPositiveSegments,
       negative_segments: parsedNegative.segments.map((s) => ({
         text: translateNaiWeightSyntax(s.text),
         start: s.start,
         end: s.end,
       })),
       raw_positive_prompt: translateNaiWeightSyntax(positivePrompt),
+      positive_regions: builtRegions,
       raw_negative_prompt: translateNaiWeightSyntax(negativePrompt),
       checkpoint: this.checkpoint,
       vae: this.vae || null,
@@ -1243,7 +1500,24 @@ class GenerationStore {
       model_architecture: this.detectedArchitecture,
       output_bit_depth: this.outputBitDepth,
       output_format: this.outputFormat,
+      style_transfer_enabled: this.styleTransferEnabled,
+      style_reference_image: this.styleReferenceImage,
+      style_transfer_low_scale_end: this.styleTransferLowScaleEnd,
+      style_transfer_high_scale_start: this.styleTransferHighScaleStart,
+      style_transfer_beta: this.styleTransferBeta,
+      style_transfer_adain_strength: this.styleTransferAdainStrength,
+      style_transfer_rf_mode: this.styleTransferRfMode,
+      style_transfer_gamma: this.styleTransferGamma,
+      style_transfer_gamma_curve: this.styleTransferGammaCurve,
+      style_transfer_norm_strength: this.styleTransferNormStrength,
+      style_transfer_pmi_alpha: this.styleTransferPmiAlpha,
+      style_transfer_megapixels: this.styleTransferMegapixels,
     };
+
+    if (options.overrides) {
+      Object.assign(params, options.overrides);
+    }
+    return params;
   }
 
   addLora() {

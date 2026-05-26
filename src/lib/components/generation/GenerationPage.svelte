@@ -4,6 +4,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import PromptInputs from "./PromptInputs.svelte";
+  import RegionalPromptModal from "./RegionalPromptModal.svelte";
   import ModelSelector from "./ModelSelector.svelte";
   import SamplerSettings from "./SamplerSettings.svelte";
   import DimensionControls from "./DimensionControls.svelte";
@@ -11,6 +12,7 @@
   import UpscaleSettings from "./UpscaleSettings.svelte";
   import FaceFixSettings from "./FaceFixSettings.svelte";
   import ControlNetSettings from "./ControlNetSettings.svelte";
+  import StyleTransferSettings from "./StyleTransferSettings.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
   import ProgressBar from "../progress/ProgressBar.svelte";
@@ -60,6 +62,7 @@
     | "model"
     | "sampler"
     | "controlnet"
+    | "styleTransfer"
     | "facefix"
     | "upscaleHistory";
 
@@ -80,6 +83,7 @@
   let maskDragOver = $state(false);
   let imagePasteTarget = $state<"input" | "mask" | null>(null);
   let promptsSectionOpen = $state(true);
+  let regionalPromptModalOpen = $state(false);
 
   /** Which section (or "preview") currently has an image dragged over it */
   let metadataDropTarget = $state<string | null>(null);
@@ -96,6 +100,7 @@
     model: "right",
     sampler: "right",
     controlnet: "right",
+    styleTransfer: "right",
     facefix: "right",
     upscaleHistory: "right",
   });
@@ -123,6 +128,7 @@
     "model",
     "sampler",
     "controlnet",
+    "styleTransfer",
     "facefix",
     "upscaleHistory",
   ];
@@ -267,6 +273,7 @@
     if (section === "model") return locale.t('generation.model.title');
     if (section === "sampler") return locale.t('generation.sampler.title');
     if (section === "facefix") return locale.t('generation.facefix.title');
+    if (section === "styleTransfer") return locale.t('generation.style_transfer.title');
     return locale.t('generation.upscale.title');
   }
 
@@ -278,6 +285,7 @@
     if (section === "sampler") return generation.mode !== "inpainting";
     if (section === "upscaleHistory") return generation.mode !== "inpainting";
     if (section === "facefix") return generation.mode !== "inpainting";
+    if (section === "styleTransfer") return generation.isAnima && generation.mode === "txt2img";
     return true;
   }
 
@@ -315,6 +323,7 @@
   let modelSectionOpen = $state(savedCollapse.model !== false);
   let samplerSectionOpen = $state(savedCollapse.sampler !== false);
   let controlnetSectionOpen = $state(savedCollapse.controlnet !== false);
+  let styleTransferSectionOpen = $state(savedCollapse.styleTransfer !== false);
   let facefixSectionOpen = $state(savedCollapse.facefix !== false);
   let postSectionOpen = $state(savedCollapse.upscaleHistory !== false);
 
@@ -329,6 +338,7 @@
       model: modelSectionOpen,
       sampler: samplerSectionOpen,
       controlnet: controlnetSectionOpen,
+      styleTransfer: styleTransferSectionOpen,
       facefix: facefixSectionOpen,
       upscaleHistory: postSectionOpen,
     };
@@ -1440,7 +1450,10 @@
       </div>
       {#if promptsSectionOpen}
         <div class="px-3 pb-2 pt-0.5">
-          <PromptInputs showHistory={false} />
+          <PromptInputs
+            showHistory={false}
+            onOpenRegionalPrompt={() => (regionalPromptModalOpen = true)}
+          />
         </div>
       {/if}
       {#if metadataDropTarget === "prompts"}
@@ -1857,6 +1870,27 @@
     </div>
   {/snippet}
 
+  {#snippet styleTransferSection()}
+    <div bind:this={sectionRefs['styleTransfer']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'styleTransfer' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("styleTransfer")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (styleTransferSectionOpen = !styleTransferSectionOpen)}
+          title={styleTransferSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.style_transfer.title') }) : locale.t('common.expand', { section: locale.t('generation.style_transfer.title') })}
+        >
+          <span class="font-medium">{locale.t('generation.style_transfer.title')}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {styleTransferSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if styleTransferSectionOpen}
+        <div class="px-3 pb-2 pt-0.5 space-y-3">
+          <StyleTransferSettings />
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
   {#snippet facefixSection()}
     <div bind:this={sectionRefs['facefix']} data-drop-section="facefix" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'facefix' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "facefix")}
@@ -1942,6 +1976,8 @@
       {@render samplerSection()}
     {:else if section === "controlnet"}
       {@render controlnetSection()}
+    {:else if section === "styleTransfer"}
+      {@render styleTransferSection()}
     {:else if section === "facefix"}
       {@render facefixSection()}
     {:else if section === "upscaleHistory"}
@@ -2067,7 +2103,7 @@
         {/each}
 
         {#if controlsSide === "left"}
-          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-5">
+          <div class="sticky bottom-0 z-20 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-5">
             <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">{locale.t('generation.generate')}</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
@@ -2172,7 +2208,7 @@
         bind:this={rightColumnRef}
         class="{mobileFriendly
           ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
-          : 'overflow-y-auto p-3 space-y-2 shrink-0 border-l'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
+          : 'overflow-y-auto p-3 flex flex-col gap-2 shrink-0 border-l'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
         style={mobileFriendly
           ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("right")}; transition: ${mobilePanelTransition("right")}; z-index: ${mobilePanelZIndex("right")};${compare.enabled ? ` --compare-color: ${compare.activeColor};` : ""}`
           : `width: ${rightWidth}px${compare.enabled ? `; --compare-color: ${compare.activeColor}` : ""}`}
@@ -2257,7 +2293,7 @@
         {/each}
 
         {#if controlsSide === "right"}
-          <div class="sticky bottom-0 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-5">
+          <div class="sticky bottom-0 z-20 mt-auto border-t border-neutral-800 bg-neutral-950 rounded-t-lg px-3 pt-3 pb-5">
             <h3 class="text-xs text-neutral-400 mb-1.5 font-medium">{locale.t('generation.generate')}</h3>
             <GenerateButton canvasEditorRef={canvasEditorRef} />
           </div>
@@ -2336,4 +2372,8 @@
       error={interrogateError}
       onclose={() => { showInterrogateModal = false; interrogateResult = null; interrogateImageUrl = null; interrogateError = null; }}
     />
+  {/if}
+
+  {#if regionalPromptModalOpen}
+    <RegionalPromptModal onclose={() => (regionalPromptModalOpen = false)} />
   {/if}

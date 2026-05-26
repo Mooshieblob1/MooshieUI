@@ -15,6 +15,7 @@
   import { models } from "./lib/stores/models.svelte.js";
   import { getOutputImage, uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput } from "./lib/utils/galleryActions.js";
+  import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
   import { canvas } from "./lib/stores/canvas.svelte.js";
@@ -590,6 +591,29 @@
     }
   }
   let versionTapCount = $state(0);
+  function handleVersionTap() {
+    if (currentPage !== "settings") return;
+    versionTapCount++;
+    if (versionTapCount >= 10) {
+      versionTapCount = 0;
+      if (generation.devModeUnlocked) {
+        generation.devModeUnlocked = false;
+        generation.devMode = false;
+        gallery.showToast(locale.t("app.dev_mode_disabled"), "info");
+      } else {
+        generation.devModeUnlocked = true;
+        gallery.showToast(locale.t("app.dev_mode_unlocked"), "success");
+      }
+    }
+  }
+
+  function handleLightboxAreaKeydown(e: KeyboardEvent) {
+    if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+      e.preventDefault();
+      gallery.closeLightbox();
+    }
+  }
+
   let startupStatus = $state<string>("");
   let startupStatusKind = $state<"idle" | "manual" | "starting" | "connecting" | "error">("idle");
   let externalComfyOpen = $state(false);
@@ -765,7 +789,7 @@
     interrogateError = null;
     interrogateImageUrl = image.thumbnailUrl || image.url || null;
 
-    const unlistenDownload = await listen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+    const unlistenDownload = await ipcListen<{ downloaded: number; total: number; filename: string; done: boolean }>(
       "interrogator:download_progress",
       (event) => {
         if (event.payload.done) {
@@ -776,7 +800,7 @@
       }
     );
 
-    const unlistenStage = await listen<string>("interrogator:stage", (event) => {
+    const unlistenStage = await ipcListen<string>("interrogator:stage", (event) => {
       interrogateStage = event.payload;
     });
 
@@ -1675,11 +1699,16 @@
         // node=null handler can await it before consuming pendingOutputImages.
         const data = event.payload;
         console.log("[output_image] event received — format:", data.format, "temp_filename:", data.temp_filename, "display_temp:", data.display_temp_filename, "jxl_image?:", !!data.jxl_image, "image?:", !!data.image, "isGenerating:", progress.isGenerating);
+
+        const pid = data.prompt_id ?? progress.activePromptId;
+        if (typeof data.temp_filename === "string" && data.temp_filename.trim() && pid) {
+          progress.registerPromptOutput(pid, data.temp_filename);
+        }
+
         if (!progress.isGenerating) return;
         // Filter by prompt_id — reject events for other users' prompts
         if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
 
-        const pid = data.prompt_id ?? progress.activePromptId;
         if (!pid) return;
 
         if (data.bit_depth === 16) {
@@ -1865,8 +1894,19 @@
           promptLastActivity.delete(promptId);
           if (item) {
             const images = pendingOutputImages.get(promptId) ?? [];
+            for (const img of images) {
+              const tempFn = img.tempFilename?.trim();
+              if (tempFn) progress.registerPromptOutput(promptId, tempFn);
+            }
             pendingOutputImages.delete(promptId);
-            finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images);
+
+            const skipGallery = shouldSuppressRegionalChainGallerySave(promptId);
+            if (skipGallery) {
+              clearRegionalChainGallerySuppress(promptId);
+              console.log("[regional] Skipping gallery save for chain intermediate:", promptId);
+            } else {
+              finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images);
+            }
 
             // Track grid batch completion — stitch when all cells are done
             if (images.length > 0 && compare.isGridPrompt(promptId)) {
@@ -1931,15 +1971,29 @@
       try {
         const q = await getQueue();
         const allPromptIds = new Set<string>();
+        const queueOrder: string[] = [];
         for (const item of [...q.queue_running, ...q.queue_pending]) {
           // ComfyUI queue entries: [number, prompt_id, ...] or {prompt_id: ...}
           const pid = Array.isArray(item)
             ? (item[1] as string)
             : (item as any)?.prompt_id;
-          if (pid) allPromptIds.add(pid);
+          if (pid) {
+            allPromptIds.add(pid);
+            queueOrder.push(pid);
+          }
         }
+        const queueTotal = queueOrder.length;
+        progress.resetQueuePosition();
         const now = Date.now();
         for (const p of progress.pendingPrompts) {
+          // Keep queue position synced from the merged ComfyUI queue, not just
+          // the internal fair-queue tracker. This avoids showing "Preparing..."
+          // while this prompt is waiting behind existing external jobs.
+          const queueIndex = queueOrder.indexOf(p.promptId);
+          if (queueIndex >= 0) {
+            progress.updateQueuePosition(p.promptId, queueIndex, queueTotal);
+          }
+
           // Skip prompts that received an SSE event within the last 30s —
           // they're clearly still alive even if the queue query missed them.
           // Fall back to enqueuedAt so brand-new prompts (not yet in ComfyUI's
@@ -1961,6 +2015,10 @@
             promptLastActivity.delete(p.promptId);
             if (item) {
               let images = pendingOutputImages.get(p.promptId) ?? [];
+              for (const img of images) {
+                const tempFn = img.tempFilename?.trim();
+                if (tempFn) progress.registerPromptOutput(p.promptId, tempFn);
+              }
               pendingOutputImages.delete(p.promptId);
 
               if (images.length === 0) {
@@ -1970,6 +2028,8 @@
                 try {
                   const recovered = await recoverPromptOutputs(p.promptId);
                   for (const imgRef of recovered.images) {
+                    const tempFn = imgRef.temp_filename?.trim();
+                    if (tempFn) progress.registerPromptOutput(p.promptId, tempFn);
                     try {
                       const resp = await fetch(
                         `/internal-api/_temp_image/${encodeURIComponent(imgRef.temp_filename)}`,
@@ -1986,7 +2046,13 @@
               }
 
               if (images.length > 0) {
-                finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images);
+                const skipGallery = shouldSuppressRegionalChainGallerySave(p.promptId);
+                if (skipGallery) {
+                  clearRegionalChainGallerySuppress(p.promptId);
+                  console.log("[regional] Skipping gallery save for chain intermediate:", p.promptId);
+                } else {
+                  finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images);
+                }
               } else {
                 gallery.showToast(locale.t("app.generation_lost"), "error");
               }
@@ -2383,22 +2449,15 @@
       title={connection.connected ? locale.t('nav.connected') : startupStatus || locale.t('nav.disconnected')}
     ></div>
 
-    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
     <span
       class="text-[10px] text-neutral-500 text-center mb-2 select-none cursor-default"
-      onclick={() => {
-        if (currentPage !== 'settings') return;
-        versionTapCount++;
-        if (versionTapCount >= 10) {
-          versionTapCount = 0;
-          if (generation.devModeUnlocked) {
-            generation.devModeUnlocked = false;
-            generation.devMode = false;
-            gallery.showToast(locale.t("app.dev_mode_disabled"), "info");
-          } else {
-            generation.devModeUnlocked = true;
-            gallery.showToast(locale.t("app.dev_mode_unlocked"), "success");
-          }
+      role="button"
+      tabindex="0"
+      onclick={handleVersionTap}
+      onkeydown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          handleVersionTap();
         }
       }}
     >v{appVersion}</span>
@@ -2588,7 +2647,10 @@
     <!-- Image area -->
     <div
       class="flex-1 h-full flex items-center justify-center relative"
+      role="button"
+      tabindex="0"
       onclick={(e) => { if (e.target === e.currentTarget) gallery.closeLightbox(); }}
+      onkeydown={handleLightboxAreaKeydown}
     >
       <!-- Close button -->
       <button

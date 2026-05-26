@@ -69,6 +69,17 @@ pub struct PromptSegment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PositiveRegion {
+    pub text: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    #[serde(default = "default_region_strength")]
+    pub strength: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerationParams {
     pub mode: String,
     pub positive_prompt: String,
@@ -77,6 +88,8 @@ pub struct GenerationParams {
     pub positive_segments: Vec<PromptSegment>,
     #[serde(default)]
     pub negative_segments: Vec<PromptSegment>,
+    #[serde(default)]
+    pub positive_regions: Vec<PositiveRegion>,
     pub checkpoint: String,
     pub vae: Option<String>,
     pub loras: Vec<LoraParam>,
@@ -168,6 +181,36 @@ pub struct GenerationParams {
     /// ComfyUI, encoded to JPEG XL in the Tauri backend).
     #[serde(default = "default_output_format")]
     pub output_format: String,
+    /// Anima Untwisting RoPE training-free style transfer (txt2img only in v1).
+    #[serde(default)]
+    pub style_transfer_enabled: bool,
+    /// ComfyUI input filename for the style reference image.
+    #[serde(default)]
+    pub style_reference_image: Option<String>,
+    /// UntwistingRoPE low_scale_end — primary style strength knob (default 1.5).
+    #[serde(default = "default_style_transfer_low_scale_end")]
+    pub style_transfer_low_scale_end: f64,
+    /// UntwistingRoPE high_scale_start — structure match (default 1.0).
+    #[serde(default = "default_style_transfer_high_scale_start")]
+    pub style_transfer_high_scale_start: f64,
+    #[serde(default = "default_style_transfer_beta")]
+    pub style_transfer_beta: f64,
+    #[serde(default = "default_style_transfer_adain_strength")]
+    pub style_transfer_adain_strength: f64,
+    /// RF inversion mode: linear | rf_gamma | rf_gamma_rk2 | fireflow
+    #[serde(default = "default_style_transfer_rf_mode")]
+    pub style_transfer_rf_mode: String,
+    #[serde(default = "default_style_transfer_gamma")]
+    pub style_transfer_gamma: f64,
+    #[serde(default = "default_style_transfer_gamma_curve")]
+    pub style_transfer_gamma_curve: f64,
+    #[serde(default = "default_style_transfer_norm_strength")]
+    pub style_transfer_norm_strength: f64,
+    #[serde(default = "default_style_transfer_pmi_alpha")]
+    pub style_transfer_pmi_alpha: f64,
+    /// Target megapixels for ImageScaleToTotalPixelsX (default 1.05).
+    #[serde(default = "default_style_transfer_megapixels")]
+    pub style_transfer_megapixels: f64,
 }
 
 fn default_output_bit_depth() -> String {
@@ -176,6 +219,50 @@ fn default_output_bit_depth() -> String {
 
 fn default_output_format() -> String {
     "png".to_string()
+}
+
+fn default_style_transfer_low_scale_end() -> f64 {
+    1.5
+}
+
+fn default_style_transfer_high_scale_start() -> f64 {
+    1.0
+}
+
+fn default_style_transfer_beta() -> f64 {
+    50.0
+}
+
+fn default_style_transfer_adain_strength() -> f64 {
+    0.5
+}
+
+fn default_style_transfer_rf_mode() -> String {
+    "rf_gamma_rk2".to_string()
+}
+
+fn default_style_transfer_gamma() -> f64 {
+    0.5
+}
+
+fn default_style_transfer_gamma_curve() -> f64 {
+    2.0
+}
+
+fn default_style_transfer_norm_strength() -> f64 {
+    1.0
+}
+
+fn default_style_transfer_pmi_alpha() -> f64 {
+    0.5
+}
+
+fn default_style_transfer_megapixels() -> f64 {
+    1.05
+}
+
+fn default_region_strength() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
