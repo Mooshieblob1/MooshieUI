@@ -657,7 +657,7 @@
       bind:value
       {placeholder}
       {rows}
-      class="w-full border border-neutral-700 rounded-lg px-3 py-2 text-sm leading-5 text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors {minHeight} {showBackdrop ? 'bg-transparent' : 'bg-neutral-800'}"
+      class="w-full border border-neutral-700 rounded-lg px-3 py-2 text-sm leading-5 text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors break-words {minHeight} {showBackdrop ? 'bg-transparent' : 'bg-neutral-800'}"
       style="position: relative; z-index: 1; {resizeStyle}{showBackdrop ? 'caret-color: #e5e5e5;' : ''}"
       onkeydown={handleKeydown}
       oninput={handleInput}
@@ -679,7 +679,7 @@
           {#if segment.clickable}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <span
-              class="pointer-events-auto cursor-pointer rounded-[4px] transition-colors [box-decoration-break:clone] [-webkit-box-decoration-break:clone] {selectionStart === segment.start && selectionEnd === segment.end
+              class="pointer-events-auto cursor-pointer rounded-[4px] transition-colors box-decoration-clone {selectionStart === segment.start && selectionEnd === segment.end
                 ? segment.kind === 'weighted'
                   ? 'bg-amber-400/28 shadow-[inset_0_0_0_1px_rgba(252,211,77,0.8),0_0_10px_rgba(251,191,36,0.35)]'
                   : 'bg-indigo-400/24 shadow-[inset_0_0_0_1px_rgba(165,180,252,0.8),0_0_10px_rgba(129,140,248,0.35)]'
