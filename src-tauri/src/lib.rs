@@ -308,7 +308,19 @@ pub fn run() {
                     }
                 };
 
-                let file_path = gallery_dir.join(&filename);
+                let file_path = match commands::api::resolve_gallery_image_path(&gallery_dir, &filename) {
+                    Some(p) => p,
+                    None => {
+                        log::warn!("Gallery image read failed for '{}': not found", filename);
+                        responder.respond(
+                            tauri::http::Response::builder()
+                                .status(404)
+                                .body(b"Not found".to_vec())
+                                .unwrap(),
+                        );
+                        return;
+                    }
+                };
                 match std::fs::read(&file_path) {
                     Ok(data) => {
                         // Detect content type from extension

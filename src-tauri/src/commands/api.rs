@@ -1130,7 +1130,8 @@ pub async fn read_image_metadata(
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = dir.join(&filename);
+    let path = resolve_gallery_image_path(&dir, &filename)
+        .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", filename)))?;
     let bytes = std::fs::read(&path)?;
     crate::metadata::read_image_metadata(&bytes).map_err(AppError::Other)
 }
@@ -1229,7 +1230,8 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
     }
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = dir.join(&filename);
+    let path = resolve_gallery_image_path(&dir, &filename)
+        .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", filename)))?;
     let bytes = std::fs::read(&path)?;
     Ok(bytes)
 }
@@ -1245,7 +1247,8 @@ pub async fn load_gallery_image_png(filename: String) -> Result<Vec<u8>, AppErro
     }
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = dir.join(&filename);
+    let path = resolve_gallery_image_path(&dir, &filename)
+        .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", filename)))?;
     let bytes = std::fs::read(&path)?;
     if filename.ends_with(".jxl") {
         let png = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
@@ -1274,7 +1277,8 @@ pub async fn load_gallery_image_display(filename: String) -> Result<Vec<u8>, App
     }
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = dir.join(&filename);
+    let path = resolve_gallery_image_path(&dir, &filename)
+        .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", filename)))?;
     let bytes = std::fs::read(&path)?;
     if filename.ends_with(".jxl") {
         let webp = tokio::task::spawn_blocking(move || transcode_jxl_to_webp(&bytes))
@@ -1299,17 +1303,44 @@ pub async fn read_temp_image(filename: String) -> Result<Vec<u8>, AppError> {
         .ok_or_else(|| AppError::Other(format!("Temp image not found: {}", filename)))
 }
 
+/// Locate a gallery file under the root gallery dir or `users/{username}/` subdirs.
+pub fn resolve_gallery_image_path(
+    base_dir: &std::path::Path,
+    filename: &str,
+) -> Option<std::path::PathBuf> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return None;
+    }
+    let direct = base_dir.join(filename);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    let users_dir = base_dir.join("users");
+    if !users_dir.is_dir() {
+        return None;
+    }
+    let entries = std::fs::read_dir(&users_dir).ok()?;
+    for entry in entries.flatten() {
+        if !entry.file_type().ok().is_some_and(|ft| ft.is_dir()) {
+            continue;
+        }
+        let candidate = entry.path().join(filename);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 /// Generate a WebP thumbnail for a gallery image. Used by the `thumbnail://` protocol.
 pub fn generate_thumbnail(
     gallery_dir: &std::path::Path,
     filename: &str,
     max_size: u32,
 ) -> Result<Vec<u8>, String> {
-    // Reject path traversal attempts — filename must be a plain basename.
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
-        return Err("Invalid filename".to_string());
-    }
-    let path = gallery_dir.join(filename);
+    let path = resolve_gallery_image_path(gallery_dir, filename).ok_or_else(|| {
+        "Read failed: The system cannot find the file specified.".to_string()
+    })?;
     let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;
 
     let img = decode_gallery_image(&bytes)?;
@@ -1354,13 +1385,8 @@ pub fn transcode_jxl_to_webp(bytes: &[u8]) -> Result<Vec<u8>, String> {
 pub async fn get_gallery_image_path(filename: String) -> Result<String, AppError> {
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = dir.join(&filename);
-    if !path.exists() {
-        return Err(AppError::Other(format!(
-            "Gallery image not found: {}",
-            filename
-        )));
-    }
+    let path = resolve_gallery_image_path(&dir, &filename)
+        .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", filename)))?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -1369,11 +1395,10 @@ pub async fn get_gallery_image_path(filename: String) -> Result<String, AppError
 pub async fn delete_gallery_image(filename: String) -> Result<(), AppError> {
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = dir.join(&filename);
-    if path.exists() {
+    if let Some(path) = resolve_gallery_image_path(&dir, &filename) {
         std::fs::remove_file(&path)?;
+        crate::gallery_index::remove(&path);
     }
-    crate::gallery_index::remove(&path);
     Ok(())
 }
 
@@ -1386,15 +1411,14 @@ pub async fn rename_gallery_image(
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
 
-    let old_path = dir.join(&old_filename);
-    if !old_path.exists() {
-        return Err(AppError::Other(format!(
-            "Gallery image not found: {}",
-            old_filename
-        )));
-    }
+    let old_path = resolve_gallery_image_path(&dir, &old_filename).ok_or_else(|| {
+        AppError::Other(format!("Gallery image not found: {}", old_filename))
+    })?;
 
-    let new_path = dir.join(&new_filename);
+    let new_path = old_path
+        .parent()
+        .ok_or_else(|| AppError::Other("Invalid gallery path".into()))?
+        .join(&new_filename);
     if new_path.exists() {
         return Err(AppError::Other(format!(
             "Target gallery filename already exists: {}",

@@ -93,6 +93,21 @@ async function blobToBytes(blob: Blob): Promise<number[]> {
   return Array.from(new Uint8Array(buffer));
 }
 
+/** True when bytes are a PNG file (not JPEG/WebP mislabeled as PNG). */
+function isPngBytes(bytes: ArrayLike<number>): boolean {
+  return (
+    bytes.length >= 8
+    && bytes[0] === 0x89
+    && bytes[1] === 0x50
+    && bytes[2] === 0x4e
+    && bytes[3] === 0x47
+    && bytes[4] === 0x0d
+    && bytes[5] === 0x0a
+    && bytes[6] === 0x1a
+    && bytes[7] === 0x0a
+  );
+}
+
 function pngBlobFromBytes(bytes: number[]): Blob {
   const buffer = new ArrayBuffer(bytes.length);
   new Uint8Array(buffer).set(bytes);
@@ -703,41 +718,26 @@ class GalleryStore {
         } catch (tempError) {
           console.warn("Temp image fetch failed; falling back to session image:", tempError);
           if (image.url) {
-            bytes = await this._blobUrlToPngBytes(image.url);
+            bytes = await this._fetchUrlToPngBytes(image.url);
           } else if (image.sessionBlob) {
-            bytes = await blobToBytes(image.sessionBlob);
+            bytes = await this._blobToPngBytes(image.sessionBlob);
           } else {
             throw tempError;
           }
         }
       } else if (image.url) {
-        // Session image: WebP (JXL display copy) or PNG blob — canvas-convert to PNG.
-        let blob: Blob | null = null;
-        try {
-          const response = await fetch(image.url);
-          if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
-          blob = await response.blob();
-        } catch {
-          bytes = await this._blobUrlToPngBytes(image.url);
-        }
-        if (blob?.type === "image/webp") {
-          bytes = await this._blobUrlToPngBytes(image.url);
-        } else if (blob) {
-          bytes = await blobToBytes(blob);
-        }
+        bytes = await this._fetchUrlToPngBytes(image.url);
       } else {
         bytes = await getOutputImage(image.filename, image.subfolder);
       }
       if (!bytes) throw new Error("Image bytes unavailable");
 
-      // JXL -> PNG transcode strips embedded metadata. Re-embed from the
-      // in-memory metadata so the exported PNG carries the original prompt /
-      // workflow info (parity with saveImageToDir).
-      if (isJxlExport && image.metadata) {
+      bytes = await this._ensurePngBytes(bytes);
+      if (image.metadata) {
         try {
           bytes = await embedPngMetadataBytes(bytes, image.metadata, generation.metadataMode);
         } catch (e) {
-          console.warn("Failed to embed PNG metadata into JXL export:", e);
+          console.warn("Failed to embed PNG metadata into export:", e);
         }
       }
 
@@ -776,10 +776,8 @@ class GalleryStore {
 
       if (!blob && blobUrl.startsWith("blob:")) {
         saveBytes = await this._blobUrlToPngBytes(blobUrl);
-      } else if (blob?.type === "image/webp") {
-        saveBytes = await this._blobUrlToPngBytes(blobUrl);
       } else if (blob) {
-        saveBytes = await blobToBytes(blob);
+        saveBytes = await this._blobToPngBytes(blob);
       } else {
         throw new Error("Image URL is no longer available");
       }
@@ -827,30 +825,18 @@ class GalleryStore {
           if (image.url) {
             bytes = await this._blobUrlToPngBytes(image.url);
           } else if (image.sessionBlob) {
-            bytes = await blobToBytes(image.sessionBlob);
+            bytes = await this._blobToPngBytes(image.sessionBlob);
           } else {
             throw tempError;
           }
         }
       } else if (image.url) {
-        // Session image (WebP display blob or PNG) — canvas-convert to PNG.
-        let blob: Blob | null = null;
-        try {
-          const response = await fetch(image.url);
-          if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
-          blob = await response.blob();
-        } catch {
-          bytes = await this._blobUrlToPngBytes(image.url);
-        }
-        if (blob?.type === "image/webp") {
-          bytes = await this._blobUrlToPngBytes(image.url);
-        } else if (blob) {
-          bytes = await blobToBytes(blob);
-        }
+        bytes = await this._fetchUrlToPngBytes(image.url);
       } else {
         bytes = await getOutputImage(image.filename, image.subfolder);
       }
       if (!bytes) throw new Error("Image bytes unavailable");
+      bytes = await this._ensurePngBytes(bytes);
       // Use .png extension for JXL exports so the saved file matches its contents.
       const filename = isJxlExport
         ? (image.filename || `image_${Date.now()}.jxl`).replace(/\.jxl$/i, ".png")
@@ -1095,9 +1081,28 @@ class GalleryStore {
     });
   }
 
+  /** Fetch a URL and return PNG bytes (canvas-converts WebP/JPEG/mislabeled blobs). */
+  private async _fetchUrlToPngBytes(url: string): Promise<number[]> {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
+      return this._blobToPngBytes(await response.blob());
+    } catch {
+      return this._blobUrlToPngBytes(url);
+    }
+  }
+
+  /** Ensure bytes are PNG before metadata embed (re-encode JPEG/WebP/mislabeled PNG). */
+  private async _ensurePngBytes(bytes: number[]): Promise<number[]> {
+    if (isPngBytes(bytes)) return bytes;
+    const blob = new Blob([new Uint8Array(bytes)]);
+    return this._blobToPngBytes(blob);
+  }
+
   private async _blobToPngBytes(blob: Blob): Promise<number[]> {
-    if (blob.type === "image/png" || blob.type === "image/jpeg") {
-      return blobToBytes(blob);
+    if (blob.type === "image/png") {
+      const bytes = await blobToBytes(blob);
+      if (isPngBytes(bytes)) return bytes;
     }
     const url = URL.createObjectURL(blob);
     try {
