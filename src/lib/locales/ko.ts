@@ -1039,6 +1039,8 @@ const ko: Record<string, string> = {
   "settings.autocomplete.reset_builtin": "기본 Danbooru 태그로 재설정",
   "settings.autocomplete.enabled": "태그 자동완성 활성화",
   "settings.autocomplete.enabled_desc": "프롬프트 입력 중 태그 제안을 표시합니다.",
+  "settings.autocomplete.clickable_overlay": "클릭 가능한 태그 오버레이 활성화",
+  "settings.autocomplete.clickable_overlay_desc": "빠른 선택을 위해 프롬프트 입력란에 태그와 가중치의 클릭 가능한 하이라이트를 표시합니다. 스케줄 및 프리셋 하이라이트는 별도로 유지됩니다.",
   "settings.interrogator.thresholds_desc": "이미지 인터로게이터(pixai-tagger)의 신뢰도 임계값을 제어합니다. 낮은 값은 더 많은 태그를 반환하고, 높은 값은 더 선택적입니다.",
   "settings.interrogator.more_tags": "태그 늘리기",
   "settings.interrogator.fewer_tags": "태그 줄이기",

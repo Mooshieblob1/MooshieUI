@@ -1039,6 +1039,8 @@ const it: Record<string, string> = {
   "settings.autocomplete.reset_builtin": "Ripristina ai tag Danbooru integrati",
   "settings.autocomplete.enabled": "Abilita completamento automatico tag",
   "settings.autocomplete.enabled_desc": "Mostra suggerimenti di tag durante la digitazione nel campo prompt.",
+  "settings.autocomplete.clickable_overlay": "Abilita overlay cliccabile dei tag",
+  "settings.autocomplete.clickable_overlay_desc": "Mostra evidenziazioni cliccabili per tag e pesi nei campi prompt per una selezione rapida. L'evidenziazione di pianificazioni e preset resta separata.",
   "settings.interrogator.thresholds_desc": "Controlla le soglie di confidenza dell'interrogatore di immagini (pixai-tagger). Valori più bassi restituiscono più tag, valori più alti sono più selettivi.",
   "settings.interrogator.more_tags": "Più tag",
   "settings.interrogator.fewer_tags": "Meno tag",

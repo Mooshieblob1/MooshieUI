@@ -1039,6 +1039,8 @@ const zh: Record<string, string> = {
   "settings.autocomplete.reset_builtin": "重置为内置 Danbooru 标签",
   "settings.autocomplete.enabled": "启用标签自动补全",
   "settings.autocomplete.enabled_desc": "在提示框中输入时显示标签建议。",
+  "settings.autocomplete.clickable_overlay": "启用可点击标签覆盖层",
+  "settings.autocomplete.clickable_overlay_desc": "在提示词输入框中显示可点击的标签和权重高亮，便于快速选中。日程与预设高亮仍然单独保留。",
   "settings.interrogator.thresholds_desc": "控制图像询问器（pixai-tagger）的置信度阈值。较低的值返回更多标签，较高的值更具选择性。",
   "settings.interrogator.more_tags": "更多标签",
   "settings.interrogator.fewer_tags": "更少标签",

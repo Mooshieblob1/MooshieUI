@@ -1,3 +1,25 @@
+## What's New in v1.4.0
+
+### Generation workflows and creative controls
+- **Regional prompting foundations**: introduces new regional prompt tooling and supporting workflow/state plumbing for region-aware prompt composition.
+- **Style transfer path**: adds style transfer template and UI wiring for image style-transfer generation flows.
+- **Generation UX expansion**: broad generation settings/page updates, including improved model/LoRA surfaces and prompt scheduling support.
+
+### Prompt editing and autocomplete
+- **Autocomplete interaction/performance fixes**: improves prompt autocomplete responsiveness and interaction reliability.
+- **Clickable prompt overlay**: prompt boxes now support clickable tag/weight highlight segments for fast text-range selection, with a dedicated settings toggle.
+- **Exact-match suggestion ordering**: exact tag matches are promoted to the top of autocomplete results instead of being filtered out.
+
+### Setup, remote mode, and platform plumbing
+- **Setup and remote onboarding improvements**: setup wizard flow/messages and remote startup path were refined for cleaner first-run setup.
+- **Backend/webserver/tooling updates**: substantial Rust-side command/config/webserver/template changes to support new generation and browser/server behaviors.
+
+### Internationalization and maintenance
+- **Locale coverage updates**: new settings and feature text landed across all supported locale files.
+- **Docs/repo cleanup**: release/PR draft artifacts removed, durable docs reorganized under `docs/`, and guidance documents cleaned up.
+
+---
+
 ## What's New in v1.3.10
 
 ### Characters and LoRA metadata stability

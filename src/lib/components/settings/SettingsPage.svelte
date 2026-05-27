@@ -2638,8 +2638,27 @@
                 onclick={() => { autocomplete.enabled = !autocomplete.enabled; autocomplete.saveSettings(); }}
                 role="switch"
                 aria-checked={autocomplete.enabled}
+                aria-label={locale.t('settings.autocomplete.enabled')}
+                title={locale.t('settings.autocomplete.enabled')}
               >
                 <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {autocomplete.enabled ? 'translate-x-5' : ''}"></span>
+              </button>
+            </label>
+
+            <label class="flex items-center justify-between gap-3 cursor-pointer">
+              <div>
+                <p class="text-sm text-neutral-200">{locale.t('settings.autocomplete.clickable_overlay')}</p>
+                <p class="text-[11px] text-neutral-500 mt-0.5">{locale.t('settings.autocomplete.clickable_overlay_desc')}</p>
+              </div>
+              <button
+                class="relative w-10 h-5 rounded-full transition-colors shrink-0 {autocomplete.clickableOverlayEnabled ? 'bg-indigo-600' : 'bg-neutral-700'}"
+                onclick={() => { autocomplete.clickableOverlayEnabled = !autocomplete.clickableOverlayEnabled; autocomplete.saveSettings(); }}
+                role="switch"
+                aria-checked={autocomplete.clickableOverlayEnabled}
+                aria-label={locale.t('settings.autocomplete.clickable_overlay')}
+                title={locale.t('settings.autocomplete.clickable_overlay')}
+              >
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {autocomplete.clickableOverlayEnabled ? 'translate-x-5' : ''}"></span>
               </button>
             </label>
 

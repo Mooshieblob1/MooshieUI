@@ -1064,6 +1064,8 @@ const ja: Record<string, string> = {
   "settings.autocomplete.reset_builtin": "組み込みDanbooruタグにリセット",
   "settings.autocomplete.enabled": "タグ自動補完を有効にする",
   "settings.autocomplete.enabled_desc": "プロンプト入力中にタグ候補を表示します。",
+  "settings.autocomplete.clickable_overlay": "クリック可能なタグオーバーレイを有効にする",
+  "settings.autocomplete.clickable_overlay_desc": "プロンプト欄でタグと重みのクリック可能なハイライトを表示し、すばやく選択できます。スケジュールとプリセットのハイライトは別のままです。",
   "settings.interrogator.thresholds_desc": "画像インテロゲーター（pixai-tagger）の信頼度しきい値を制御します。低い値はより多くのタグを返し、高い値はより選択的です。",
   "settings.interrogator.more_tags": "タグを増やす",
   "settings.interrogator.fewer_tags": "タグを減らす",

@@ -34,6 +34,8 @@ class AutocompleteStore {
   sourceFileName = $state("");
   /** Whether tag autocomplete is enabled */
   enabled = $state(true);
+  /** Whether prompt textareas show the clickable tag/weight overlay */
+  clickableOverlayEnabled = $state(true);
   /** Whether a custom taglist is currently loading */
   loading = $state(false);
   /** Error message if loading failed */
@@ -232,6 +234,7 @@ class AutocompleteStore {
     const aliasMatches: TagEntry[] = [];
     const containsMatches: TagEntry[] = [];
     const seenNames = new Set<string>();
+    let exactMatch: TagEntry | null = null;
 
     // Prefix match: scan only the first-char bucket (small slice of the corpus).
     const nameBucket = this._nameFirstChar.get(firstChar);
@@ -240,6 +243,9 @@ class AutocompleteStore {
         const entry = nameBucket[i];
         if (categoryFilter !== null && entry.tag.c !== categoryFilter) continue;
         if (entry.nameLower.startsWith(normalizedQuery)) {
+          if (entry.nameLower === normalizedQuery) {
+            exactMatch = entry.tag;
+          }
           this.insertTopByCount(prefixMatches, entry.tag, safeLimit);
           seenNames.add(entry.tag.n);
         }
@@ -284,7 +290,11 @@ class AutocompleteStore {
     }
 
     const combined = [...prefixMatches, ...aliasMatches, ...containsMatches];
-    return combined.slice(0, safeLimit);
+    if (!exactMatch) {
+      return combined.slice(0, safeLimit);
+    }
+
+    return [exactMatch, ...combined.filter((tag) => tag.n !== exactMatch.n)].slice(0, safeLimit);
   }
 
   async loadSettings() {
@@ -293,6 +303,7 @@ class AutocompleteStore {
       const saved = await ipcStore.get<Record<string, any>>(STORE_KEY);
       if (saved) {
         if (saved.enabled === false) this.enabled = false;
+        if (saved.clickableOverlayEnabled === false) this.clickableOverlayEnabled = false;
         if (saved.maxResults) this.maxResults = saved.maxResults;
         if (saved.sourceMode) this.sourceMode = saved.sourceMode;
         if (saved.sourceUrl) this.sourceUrl = saved.sourceUrl;
@@ -328,6 +339,7 @@ class AutocompleteStore {
     try {
       await ipcStore.set(STORE_KEY, {
         enabled: this.enabled,
+        clickableOverlayEnabled: this.clickableOverlayEnabled,
         maxResults: this.maxResults,
         sourceMode: this.sourceMode,
         sourceUrl: this.sourceUrl,
@@ -457,6 +469,7 @@ class AutocompleteStore {
   /** Collect autocomplete settings for server-side sync. */
   collectPrefs(): Record<string, unknown> {
     return {
+      clickableOverlayEnabled: this.clickableOverlayEnabled,
       maxResults: this.maxResults,
       sourceMode: this.sourceMode,
       sourceUrl: this.sourceUrl,

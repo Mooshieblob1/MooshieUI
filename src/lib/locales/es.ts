@@ -1095,6 +1095,8 @@ const es: Record<string, string> = {
   "settings.autocomplete.reset_builtin": "Restablecer a tags Danbooru integrados",
   "settings.autocomplete.enabled": "Activar autocompletado de etiquetas",
   "settings.autocomplete.enabled_desc": "Mostrar sugerencias de etiquetas al escribir en el cuadro de texto.",
+  "settings.autocomplete.clickable_overlay": "Activar superposición clickable de etiquetas",
+  "settings.autocomplete.clickable_overlay_desc": "Muestra resaltados clickables de etiquetas y pesos en los cuadros de prompt para selección rápida. El resaltado de horarios y presets sigue separado.",
   "settings.interrogator.thresholds_desc": "Controla los umbrales de confianza del interrogador de imágenes (pixai-tagger). Valores más bajos devuelven más tags, valores más altos son más selectivos.",
   "settings.interrogator.more_tags": "Más tags",
   "settings.interrogator.fewer_tags": "Menos tags",

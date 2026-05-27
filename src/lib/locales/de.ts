@@ -1055,6 +1055,8 @@ const de: Record<string, string> = {
   "settings.autocomplete.reset_builtin": "Auf integrierte Danbooru-Tags zurücksetzen",
   "settings.autocomplete.enabled": "Tag-Autovervollständigung aktivieren",
   "settings.autocomplete.enabled_desc": "Tag-Vorschläge beim Tippen im Prompt-Feld anzeigen.",
+  "settings.autocomplete.clickable_overlay": "Klickbares Tag-Overlay aktivieren",
+  "settings.autocomplete.clickable_overlay_desc": "Zeigt klickbare Hervorhebungen für Tags und Gewichte in Prompt-Feldern zur schnellen Auswahl. Zeitplan- und Preset-Hervorhebungen bleiben separat.",
   "settings.interrogator.thresholds_desc": "Steuert die Konfidenzschwellen für den Bild-Interrogator (pixai-tagger). Niedrigere Werte geben mehr Tags zurück, höhere Werte sind selektiver.",
   "settings.interrogator.more_tags": "Mehr Tags",
   "settings.interrogator.fewer_tags": "Weniger Tags",

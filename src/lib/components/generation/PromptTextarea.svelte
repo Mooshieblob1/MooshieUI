@@ -6,6 +6,10 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { renderHighlightedPrompt, hasSchedulingTags, hasPresetTokens } from "../../utils/promptSchedule.js";
+  import {
+    getPromptClickableSegments,
+    type PromptClickableSegment,
+  } from "../../utils/promptClickableRanges.js";
 
   interface Props {
     value: string;
@@ -32,6 +36,7 @@
 
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
   let backdropEl = $state<HTMLDivElement | null>(null);
+  let clickOverlayEl = $state<HTMLDivElement | null>(null);
   let suggestions = $state<TagEntry[]>([]);
   let selectedIndex = $state(0);
   let showSuggestions = $state(false);
@@ -160,10 +165,7 @@
       return;
     }
 
-    const raw = autocomplete.search(searchFragment, autocomplete.maxResults, categoryFilter);
-    // Filter out exact matches — don't suggest a tag that's already fully typed
-    const normalizedFragment = searchFragment.replace(/_/g, " ").replace(/\\/g, "").toLowerCase();
-    suggestions = raw.filter(tag => tag.n.replace(/_/g, " ").toLowerCase() !== normalizedFragment);
+    suggestions = autocomplete.search(searchFragment, autocomplete.maxResults, categoryFilter);
     selectedIndex = 0;
     showSuggestions = suggestions.length > 0;
 
@@ -465,11 +467,37 @@
 
   // Reactive: render highlighted HTML for the backdrop overlay
   const highlightedHtml = $derived(showBackdrop ? renderHighlightedPrompt(value, promptPresets.slugs) : "");
+  const clickableSegments = $derived(
+    autocomplete.clickableOverlayEnabled ? getPromptClickableSegments(value) : [],
+  );
+  const showClickableOverlay = $derived(autocomplete.clickableOverlayEnabled && clickableSegments.length > 0);
+
+  function handleClickableSegmentMouseDown(event: MouseEvent, segment: PromptClickableSegment) {
+    if (!textareaEl || !segment.clickable) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (suggestionTimer !== null) {
+      clearTimeout(suggestionTimer);
+      suggestionTimer = null;
+    }
+
+    showSuggestions = false;
+    suggestions = [];
+    textareaEl.focus();
+    textareaEl.setSelectionRange(segment.start, segment.end);
+    syncSelectionRange();
+  }
 
   function syncScroll() {
     if (textareaEl && backdropEl) {
       backdropEl.scrollTop = textareaEl.scrollTop;
       backdropEl.scrollLeft = textareaEl.scrollLeft;
+    }
+    if (textareaEl && clickOverlayEl) {
+      clickOverlayEl.scrollTop = textareaEl.scrollTop;
+      clickOverlayEl.scrollLeft = textareaEl.scrollLeft;
     }
   }
 
@@ -615,29 +643,59 @@
       </button>
     </div>
   {/if}
-  {#if showBackdrop}
-    <div
-      bind:this={backdropEl}
-      class="absolute inset-0 pointer-events-none overflow-hidden rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words border border-transparent"
-      style="color: transparent; z-index: 0;"
-    >{@html highlightedHtml}</div>
-  {/if}
+  <div class="relative">
+    {#if showBackdrop}
+      <div
+        bind:this={backdropEl}
+        class="absolute inset-0 pointer-events-none overflow-hidden rounded-lg px-3 py-2 text-sm leading-5 whitespace-pre-wrap break-words border border-transparent"
+        style="color: transparent; z-index: 0;"
+      >{@html highlightedHtml}</div>
+    {/if}
 
-  <textarea
-    bind:this={textareaEl}
-    bind:value
-    {placeholder}
-    {rows}
-    class="w-full border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors {minHeight} {showBackdrop ? 'bg-transparent' : 'bg-neutral-800'}"
-    style="position: relative; z-index: 1; {resizeStyle}{showBackdrop ? 'caret-color: #e5e5e5;' : ''}"
-    onkeydown={handleKeydown}
-    oninput={handleInput}
-    onclick={handleClick}
-      onselect={syncSelectionRange}
-      onkeyup={syncSelectionRange}
-    onblur={handleBlur}
-    onscroll={syncScroll}
-  ></textarea>
+    <textarea
+      bind:this={textareaEl}
+      bind:value
+      {placeholder}
+      {rows}
+      class="w-full border border-neutral-700 rounded-lg px-3 py-2 text-sm leading-5 text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors {minHeight} {showBackdrop ? 'bg-transparent' : 'bg-neutral-800'}"
+      style="position: relative; z-index: 1; {resizeStyle}{showBackdrop ? 'caret-color: #e5e5e5;' : ''}"
+      onkeydown={handleKeydown}
+      oninput={handleInput}
+      onclick={handleClick}
+        onselect={syncSelectionRange}
+        onkeyup={syncSelectionRange}
+      onblur={handleBlur}
+      onscroll={syncScroll}
+    ></textarea>
+
+    {#if showClickableOverlay}
+      <div
+        bind:this={clickOverlayEl}
+        aria-hidden="true"
+        class="absolute inset-0 overflow-hidden rounded-lg px-3 py-2 text-sm leading-5 whitespace-pre-wrap break-words border border-transparent select-none"
+        style="pointer-events: none; color: transparent; z-index: 2;"
+      >
+        {#each clickableSegments as segment (segment.start + ':' + segment.end + ':' + segment.kind)}
+          {#if segment.clickable}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <span
+              class="pointer-events-auto cursor-pointer rounded-[4px] transition-colors [box-decoration-break:clone] [-webkit-box-decoration-break:clone] {selectionStart === segment.start && selectionEnd === segment.end
+                ? segment.kind === 'weighted'
+                  ? 'bg-amber-400/28 shadow-[inset_0_0_0_1px_rgba(252,211,77,0.8),0_0_10px_rgba(251,191,36,0.35)]'
+                  : 'bg-indigo-400/24 shadow-[inset_0_0_0_1px_rgba(165,180,252,0.8),0_0_10px_rgba(129,140,248,0.35)]'
+                : segment.kind === 'weighted'
+                  ? 'bg-amber-500/16 hover:bg-amber-500/22 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.4)] hover:shadow-[inset_0_0_0_1px_rgba(251,191,36,0.55)]'
+                  : 'hover:bg-indigo-500/18 hover:shadow-[inset_0_0_0_1px_rgba(129,140,248,0.5)]'}"
+              style="color: transparent;"
+              onmousedown={(event) => handleClickableSegmentMouseDown(event, segment)}
+            >{value.slice(segment.start, segment.end)}</span>
+          {:else}
+            <span style="color: transparent;">{value.slice(segment.start, segment.end)}</span>
+          {/if}
+        {/each}
+      </div>
+    {/if}
+  </div>
 
   {#if showSuggestions}
     <div
