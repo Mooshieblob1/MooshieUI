@@ -70,18 +70,19 @@ export const DEFAULT_THEME_TONE_LIGHT: ThemeTone = {
   text: "#111111",
 };
 
-const DEFAULT_THEME_TONE = DEFAULT_THEME_TONE_DARK;
-
-function normalizeThemeTone(input?: Partial<ThemeTone> | null): ThemeTone {
+function normalizeThemeTone(
+  input?: Partial<ThemeTone> | null,
+  defaultTone: ThemeTone = DEFAULT_THEME_TONE_DARK,
+): ThemeTone {
   return {
-    main: typeof input?.main === "string" && input.main.trim() ? input.main : DEFAULT_THEME_TONE.main,
-    sub: typeof input?.sub === "string" && input.sub.trim() ? input.sub : DEFAULT_THEME_TONE.sub,
-    trim: typeof input?.trim === "string" && input.trim.trim() ? input.trim : DEFAULT_THEME_TONE.trim,
+    main: typeof input?.main === "string" && input.main.trim() ? input.main : defaultTone.main,
+    sub: typeof input?.sub === "string" && input.sub.trim() ? input.sub : defaultTone.sub,
+    trim: typeof input?.trim === "string" && input.trim.trim() ? input.trim : defaultTone.trim,
     background:
       typeof input?.background === "string" && input.background.trim()
         ? input.background
-        : DEFAULT_THEME_TONE.background,
-    text: typeof input?.text === "string" && input.text.trim() ? input.text : DEFAULT_THEME_TONE.text,
+        : defaultTone.background,
+    text: typeof input?.text === "string" && input.text.trim() ? input.text : defaultTone.text,
   };
 }
 
@@ -220,8 +221,8 @@ function applyCustomThemeTokens(root: HTMLElement, tone: ThemeTone): void {
 function normalizeThemeProfile(profile: ThemeProfile): ThemeProfile {
   return {
     ...profile,
-    dark: normalizeThemeTone(profile.dark),
-    light: normalizeThemeTone(profile.light),
+    dark: normalizeThemeTone(profile.dark, DEFAULT_THEME_TONE_DARK),
+    light: normalizeThemeTone(profile.light, DEFAULT_THEME_TONE_LIGHT),
     background_fade: clamp01(profile.background_fade),
   };
 }

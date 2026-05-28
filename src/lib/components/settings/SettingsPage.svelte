@@ -1300,17 +1300,21 @@
 
   async function confirmLogoCrop() {
     if (!pendingLogoDataUrl) return;
-    const cropped = await cropSquareLogo(pendingLogoDataUrl, logoCropZoom, logoCropPanX, logoCropPanY);
-    if (logoCropTarget === "draft") {
-      draftThemeLogoImage = cropped;
-    } else {
-      const profile = activeThemeProfile;
-      if (!profile) return;
-      profile.logo_image = cropped;
-      void autoSave();
+    try {
+      const cropped = await cropSquareLogo(pendingLogoDataUrl, logoCropZoom, logoCropPanX, logoCropPanY);
+      if (logoCropTarget === "draft") {
+        draftThemeLogoImage = cropped;
+      } else {
+        const profile = activeThemeProfile;
+        if (!profile) return;
+        profile.logo_image = cropped;
+        void autoSave();
+      }
+      showLogoCropModal = false;
+      pendingLogoDataUrl = null;
+    } catch (err) {
+      themeImportError = String((err as Error)?.message ?? err);
     }
-    showLogoCropModal = false;
-    pendingLogoDataUrl = null;
   }
 
   function addThemeProfile() {
@@ -1325,11 +1329,12 @@
   }
 
   async function fileToDataUrl(file: File): Promise<string> {
-    const buffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]!);
-    return `data:${file.type || "application/octet-stream"};base64,${btoa(binary)}`;
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));
+      reader.readAsDataURL(file);
+    });
   }
 
   async function setProfileImage(kind: "background" | "logo", event: Event) {
@@ -1368,9 +1373,47 @@
     const file = input.files?.[0];
     if (!file) return;
     try {
-      const parsed = JSON.parse(await file.text()) as { themes?: ThemeProfile[] };
+      const parsed = JSON.parse(await file.text()) as { themes?: unknown[] };
       if (!Array.isArray(parsed.themes)) throw new Error("Invalid theme file.");
-      const imported = parsed.themes.map((theme) => ({ ...theme, id: theme.id || `theme_${Date.now()}` }));
+      const imported = parsed.themes.map((theme, index) => {
+        const source = (typeof theme === "object" && theme) ? (theme as Partial<ThemeProfile>) : {};
+        const dark = source.dark ?? {};
+        const light = source.light ?? {};
+        return {
+          id: typeof source.id === "string" && source.id.trim() ? source.id : `theme_${Date.now()}_${index}`,
+          name: typeof source.name === "string" && source.name.trim() ? source.name.trim() : `Imported Theme ${index + 1}`,
+          palette:
+            source.palette === "mooshie" ||
+            source.palette === "nord" ||
+            source.palette === "solarized" ||
+            source.palette === "gruvbox" ||
+            source.palette === "catppuccin" ||
+            source.palette === "custom"
+              ? source.palette
+              : "custom",
+          dark: {
+            main: typeof dark.main === "string" ? dark.main : DEFAULT_THEME_TONE_DARK.main,
+            sub: typeof dark.sub === "string" ? dark.sub : DEFAULT_THEME_TONE_DARK.sub,
+            trim: typeof dark.trim === "string" ? dark.trim : DEFAULT_THEME_TONE_DARK.trim,
+            background: typeof dark.background === "string" ? dark.background : DEFAULT_THEME_TONE_DARK.background,
+            text: typeof dark.text === "string" ? dark.text : DEFAULT_THEME_TONE_DARK.text,
+          },
+          light: {
+            main: typeof light.main === "string" ? light.main : DEFAULT_THEME_TONE_LIGHT.main,
+            sub: typeof light.sub === "string" ? light.sub : DEFAULT_THEME_TONE_LIGHT.sub,
+            trim: typeof light.trim === "string" ? light.trim : DEFAULT_THEME_TONE_LIGHT.trim,
+            background: typeof light.background === "string" ? light.background : DEFAULT_THEME_TONE_LIGHT.background,
+            text: typeof light.text === "string" ? light.text : DEFAULT_THEME_TONE_LIGHT.text,
+          },
+          background_image: typeof source.background_image === "string" ? source.background_image : null,
+          background_fade:
+            typeof source.background_fade === "number" && Number.isFinite(source.background_fade)
+              ? Math.max(0, Math.min(1, source.background_fade))
+              : 0.65,
+          logo_image: typeof source.logo_image === "string" ? source.logo_image : null,
+          hide_branding: Boolean(source.hide_branding),
+        } satisfies ThemeProfile;
+      });
       config.theme_profiles = imported;
       config.theme_profile_id = imported[0]?.id ?? null;
       await autoSave();

@@ -1396,7 +1396,9 @@
       const includeBranding = !brandingHidden();
       const logoSource = resolveThemeLogoUrl();
       const imgElements = await Promise.all(cellImages.map(({ url }) => loadImg(url)));
-      const logoImg = includeBranding ? await loadImg(logoSource) : null;
+      const logoImg = includeBranding
+        ? await loadImg(logoSource).catch(() => loadImg(logoUrl)).catch(() => null)
+        : null;
 
       const cellW = Math.max(...imgElements.map(img => img.naturalWidth));
       const cellH = Math.max(...imgElements.map(img => img.naturalHeight));
