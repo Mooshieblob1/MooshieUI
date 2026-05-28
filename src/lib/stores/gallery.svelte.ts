@@ -114,6 +114,13 @@ function pngBlobFromBytes(bytes: number[]): Blob {
   return new Blob([buffer], { type: "image/png" });
 }
 
+const PNG_SAVE_EXTENSIONS = ["png"];
+const PNG_NORMALIZED_EXTENSION_RE = /\.(jxl|webp|jpe?g)$/i;
+
+function pngNormalizedFilename(filename: string): string {
+  return filename.replace(PNG_NORMALIZED_EXTENSION_RE, ".png");
+}
+
 const GALLERY_BOARDS_KEY = "mooshieui.gallery.boards.v1";
 const GALLERY_BOARD_NAMES_KEY = "mooshieui.gallery.boardNames.v1";
 
@@ -698,10 +705,6 @@ class GalleryStore {
     try {
       let bytes: number[] | null = null;
       const isJxlGallery = image.gallery_filename?.endsWith(".jxl") ?? false;
-      const isJxlExport = isJxlGallery
-        || image.filename.toLowerCase().endsWith(".jxl")
-        || (image.tempFilename?.toLowerCase().endsWith(".jxl") ?? false)
-        || image.sessionBlob?.type === "image/jxl";
       if (image.gallery_filename) {
         // JXL files are transcoded to PNG — universally compatible with metadata support.
         bytes = isJxlGallery
@@ -741,11 +744,8 @@ class GalleryStore {
         }
       }
 
-      // Replace .jxl with .png in the suggested filename — the file is exported as PNG.
-      const defaultFilename = isJxlExport
-        ? image.filename.replace(/\.jxl$/i, ".png")
-        : image.filename;
-      const path = await showSaveDialog(defaultFilename, ["png", "jpg", "jpeg", "webp"]);
+      const defaultFilename = pngNormalizedFilename(image.filename);
+      const path = await showSaveDialog(defaultFilename, PNG_SAVE_EXTENSIONS);
       if (path) {
         await saveImageFile(bytes, path);
       } else {
@@ -783,8 +783,8 @@ class GalleryStore {
       }
 
       // Normalise the default filename extension — always saving as PNG.
-      const pngName = defaultName.replace(/\.(webp|jxl)$/i, ".png");
-      const path = await showSaveDialog(pngName, ["png", "jpg", "jpeg", "webp"]);
+      const pngName = pngNormalizedFilename(defaultName);
+      const path = await showSaveDialog(pngName, PNG_SAVE_EXTENSIONS);
       if (path) {
         await saveImageFile(saveBytes, path);
       } else {
@@ -803,10 +803,6 @@ class GalleryStore {
     try {
       let bytes: number[] | null = null;
       const isJxlGallery = image.gallery_filename?.endsWith(".jxl") ?? false;
-      const isJxlExport = isJxlGallery
-        || image.filename.toLowerCase().endsWith(".jxl")
-        || (image.tempFilename?.toLowerCase().endsWith(".jxl") ?? false)
-        || image.sessionBlob?.type === "image/jxl";
       if (image.gallery_filename) {
         // JXL → PNG so the saved file can be opened anywhere and supports metadata.
         bytes = isJxlGallery
@@ -837,10 +833,7 @@ class GalleryStore {
       }
       if (!bytes) throw new Error("Image bytes unavailable");
       bytes = await this._ensurePngBytes(bytes);
-      // Use .png extension for JXL exports so the saved file matches its contents.
-      const filename = isJxlExport
-        ? (image.filename || `image_${Date.now()}.jxl`).replace(/\.jxl$/i, ".png")
-        : (image.filename || `image_${Date.now()}.png`);
+      const filename = pngNormalizedFilename(image.filename || `image_${Date.now()}.png`);
       if (image.metadata) {
         bytes = await embedPngMetadataBytes(bytes, image.metadata, generation.metadataMode);
       }
