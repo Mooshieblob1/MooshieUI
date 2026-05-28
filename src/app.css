@@ -35,6 +35,15 @@
 
   --accent: var(--theme-accent-500);
   --accent-hover: var(--theme-accent-400);
+  --theme-main: var(--theme-accent-500);
+  --theme-sub: var(--color-neutral-700);
+  --theme-trim: var(--theme-accent-400);
+  --theme-background: var(--color-neutral-950);
+  --theme-text: var(--color-neutral-100);
+  --theme-surface-950: var(--theme-background);
+  --theme-surface-900: color-mix(in srgb, var(--theme-background) 84%, var(--theme-sub) 16%);
+  --theme-surface-800: color-mix(in srgb, var(--theme-background) 72%, var(--theme-sub) 28%);
+  --theme-border-700: color-mix(in srgb, var(--theme-background) 65%, var(--theme-sub) 35%);
 
   /* Remap existing indigo/purple utility usage to the active palette. */
   --color-indigo-50: var(--theme-accent-50);
@@ -180,6 +189,52 @@ html, body, #app {
 
 body {
   font-family: system-ui, -apple-system, sans-serif;
+  background-color: var(--theme-background);
+  color: var(--theme-text);
+  position: relative;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: var(--theme-bg-image, none);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  opacity: calc(1 - var(--theme-bg-fade, 0.6));
+  z-index: -2;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--theme-background) calc(var(--theme-bg-fade, 0.6) * 100%), transparent);
+  z-index: -1;
+}
+
+[class~="bg-neutral-950"] {
+  background-color: var(--theme-background) !important;
+}
+
+html, body, #app {
+  background-color: var(--theme-background);
+}
+
+[class~="bg-neutral-900"] {
+  background-color: var(--theme-surface-900) !important;
+}
+
+[class~="bg-neutral-800"] {
+  background-color: var(--theme-surface-800) !important;
+}
+
+[class~="border-neutral-700"],
+[class~="border-neutral-800"] {
+  border-color: var(--theme-border-700) !important;
 }
 
 /* ─── Dyslexic-friendly font ─── */
@@ -435,6 +490,75 @@ html.light ::-webkit-scrollbar-thumb:hover { background: #a3a3a3; }
 
 html.light .accent-indigo-500 {
   accent-color: var(--theme-accent-500);
+}
+
+html[data-palette="custom"] ::-webkit-scrollbar-thumb {
+  background: var(--color-neutral-700);
+}
+
+html[data-palette="custom"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-neutral-600);
+}
+
+html[data-palette="custom"] .text-neutral-100,
+html[data-palette="custom"] .text-neutral-200 {
+  color: var(--theme-text) !important;
+}
+
+html[data-palette="custom"] .text-neutral-300,
+html[data-palette="custom"] .text-neutral-400,
+html[data-palette="custom"] .text-neutral-500 {
+  color: var(--color-neutral-400) !important;
+}
+
+html[data-palette="custom"] .text-neutral-600,
+html[data-palette="custom"] .text-neutral-700 {
+  color: var(--color-neutral-500) !important;
+}
+
+html[data-palette="custom"] .hover\:text-neutral-200:hover,
+html[data-palette="custom"] .hover\:text-neutral-300:hover {
+  color: var(--theme-text) !important;
+}
+
+html[data-palette="custom"] .bg-indigo-600,
+html[data-palette="custom"] .bg-purple-600 {
+  background-color: var(--theme-accent-600) !important;
+}
+
+html[data-palette="custom"] .bg-indigo-500,
+html[data-palette="custom"] .bg-purple-500,
+html[data-palette="custom"] .bg-indigo-400,
+html[data-palette="custom"] .bg-purple-400 {
+  background-color: var(--theme-accent-500) !important;
+}
+
+html[data-palette="custom"] .hover\:bg-indigo-500:hover,
+html[data-palette="custom"] .hover\:bg-indigo-600:hover,
+html[data-palette="custom"] .hover\:bg-purple-500:hover,
+html[data-palette="custom"] .hover\:bg-purple-600:hover {
+  background-color: var(--theme-accent-600) !important;
+}
+
+html[data-palette="custom"] .text-indigo-300,
+html[data-palette="custom"] .text-indigo-400,
+html[data-palette="custom"] .text-indigo-500,
+html[data-palette="custom"] [class*="text-indigo-"] {
+  color: var(--theme-accent-400) !important;
+}
+
+html[data-palette="custom"] .accent-indigo-500,
+html[data-palette="custom"] input[type="range"] {
+  accent-color: var(--theme-accent-500);
+}
+
+html[data-branding="off"] .mooshie-branding {
+  display: none !important;
+}
+
+/* Custom theme logo is user content — never hide with branding toggle. */
+html[data-branding="off"] .theme-logo-panel {
+  display: flex !important;
 }
 
 /* Light-mode slider rails: keep unfilled area light and readable. */

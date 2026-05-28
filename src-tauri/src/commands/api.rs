@@ -1338,9 +1338,8 @@ pub fn generate_thumbnail(
     filename: &str,
     max_size: u32,
 ) -> Result<Vec<u8>, String> {
-    let path = resolve_gallery_image_path(gallery_dir, filename).ok_or_else(|| {
-        "Read failed: The system cannot find the file specified.".to_string()
-    })?;
+    let path = resolve_gallery_image_path(gallery_dir, filename)
+        .ok_or_else(|| "Read failed: The system cannot find the file specified.".to_string())?;
     let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;
 
     let img = decode_gallery_image(&bytes)?;
@@ -1411,9 +1410,20 @@ pub async fn rename_gallery_image(
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
 
-    let old_path = resolve_gallery_image_path(&dir, &old_filename).ok_or_else(|| {
-        AppError::Other(format!("Gallery image not found: {}", old_filename))
-    })?;
+    let old_path = resolve_gallery_image_path(&dir, &old_filename)
+        .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", old_filename)))?;
+
+    // Disallow path traversal / directory injection in rename target.
+    let new_name_path = std::path::Path::new(&new_filename);
+    let is_single_component = new_name_path.components().count() == 1;
+    let exact_file_name =
+        new_name_path.file_name().and_then(|n| n.to_str()) == Some(new_filename.as_str());
+    if new_filename.trim().is_empty() || !is_single_component || !exact_file_name {
+        return Err(AppError::Other(format!(
+            "Invalid gallery filename for rename: {}",
+            new_filename
+        )));
+    }
 
     let new_path = old_path
         .parent()

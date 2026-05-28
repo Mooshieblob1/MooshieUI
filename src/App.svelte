@@ -34,6 +34,7 @@
   import { notifications } from "./lib/stores/notifications.svelte.js";
   import NotificationBell from "./lib/components/ui/NotificationBell.svelte";
   import logoUrl from "./lib/assets/logo.png";
+  import { applyTheme, getActiveThemeLogoUrl, onThemeApplied } from "./lib/utils/theme.js";
 
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
   import ContextMenu from "./lib/components/ui/ContextMenu.svelte";
@@ -251,13 +252,26 @@
     return tKey ? locale.t(tKey) : key;
   }
 
-  function applyTheme(theme: string) {
-    document.documentElement.classList.toggle("light", theme === "light");
-  }
-
   function applyFontScale(scale: number) {
     document.documentElement.style.setProperty("--font-scale", String(scale));
   }
+
+  function brandingHidden(): boolean {
+    return document.documentElement.dataset.branding === "off";
+  }
+
+  function resolveThemeLogoUrl(): string {
+    return getActiveThemeLogoUrl() ?? logoUrl;
+  }
+
+  let themeLogoUrl = $state(logoUrl);
+
+  $effect(() => {
+    themeLogoUrl = resolveThemeLogoUrl();
+    return onThemeApplied(() => {
+      themeLogoUrl = resolveThemeLogoUrl();
+    });
+  });
 
   async function normalizeImageBytes(
     imageBytes: number[],
@@ -1379,10 +1393,10 @@
         img.src = src;
       });
 
-      const [imgElements, logoImg] = await Promise.all([
-        Promise.all(cellImages.map(({ url }) => loadImg(url))),
-        loadImg(logoUrl),
-      ]);
+      const includeBranding = !brandingHidden();
+      const logoSource = resolveThemeLogoUrl();
+      const imgElements = await Promise.all(cellImages.map(({ url }) => loadImg(url)));
+      const logoImg = includeBranding ? await loadImg(logoSource) : null;
 
       const cellW = Math.max(...imgElements.map(img => img.naturalWidth));
       const cellH = Math.max(...imgElements.map(img => img.naturalHeight));
@@ -1391,11 +1405,11 @@
       const labelFont = `600 ${fontSize}px sans-serif`;
       const labelH = fontSize + 10;
 
-      // Reserve footer space for the watermark below the grid
+      // Reserve footer space for the watermark below the grid (when branding is enabled)
       const wmSize = Math.max(20, Math.round(cellW * 0.045));
       const wmFont = `600 ${Math.round(wmSize * 0.8)}px sans-serif`;
       const wmPad = Math.round(wmSize * 0.5);
-      const footerH = wmSize + wmPad * 2 + wmPad;
+      const footerH = includeBranding ? wmSize + wmPad * 2 + wmPad : 0;
 
       const totalW = cols * cellW + (cols - 1) * gap;
       const totalH = rows * (labelH + cellH) + (rows - 1) * gap + footerH;
@@ -1431,29 +1445,30 @@
         ctx.drawImage(img, x + ox, y + labelH + oy);
       }
 
-      // Single MooshieUI watermark in the footer area below the grid
-      ctx.font = wmFont;
-      const textW = ctx.measureText("MooshieUI").width;
-      const pillW = wmSize + 6 + textW + wmPad * 2;
-      const pillH = wmSize + wmPad;
-      const gridBottom = rows * (labelH + cellH) + (rows - 1) * gap;
-      const pillX = wmPad;
-      const pillY = gridBottom + (footerH - pillH) / 2;
+      if (includeBranding && logoImg) {
+        ctx.font = wmFont;
+        const textW = ctx.measureText("MooshieUI").width;
+        const pillW = wmSize + 6 + textW + wmPad * 2;
+        const pillH = wmSize + wmPad;
+        const gridBottom = rows * (labelH + cellH) + (rows - 1) * gap;
+        const pillX = wmPad;
+        const pillY = gridBottom + (footerH - pillH) / 2;
 
-      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-      ctx.beginPath();
-      ctx.roundRect(pillX, pillY, pillW, pillH, 6);
-      ctx.fill();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+        ctx.beginPath();
+        ctx.roundRect(pillX, pillY, pillW, pillH, 6);
+        ctx.fill();
 
-      const lx = pillX + wmPad;
-      const ly = pillY + (pillH - wmSize) / 2;
-      ctx.drawImage(logoImg, lx, ly, wmSize, wmSize);
+        const lx = pillX + wmPad;
+        const ly = pillY + (pillH - wmSize) / 2;
+        ctx.drawImage(logoImg, lx, ly, wmSize, wmSize);
 
-      ctx.font = wmFont;
-      ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
-      ctx.textAlign = "left";
-      ctx.textBaseline = "middle";
-      ctx.fillText("MooshieUI", lx + wmSize + 6, pillY + pillH / 2);
+        ctx.font = wmFont;
+        ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText("MooshieUI", lx + wmSize + 6, pillY + pillH / 2);
+      }
 
       const gridBlob = await new Promise<Blob>((resolve, reject) => {
         cvs.toBlob(
@@ -1575,7 +1590,7 @@
     // Apply UI preferences (theme, font scale) immediately
     try {
       const cfg = await getConfig();
-      applyTheme(cfg.theme);
+      applyTheme(cfg);
       applyFontScale(cfg.font_scale);
       autoStartEnabled = cfg.auto_start !== false;
       comfyServerUrl = cfg.server_url || `http://127.0.0.1:${cfg.server_port ?? 8188}`;
@@ -2179,8 +2194,8 @@
     <!-- Forced password change screen -->
     <div class="flex items-center justify-center h-full bg-neutral-950">
       <div class="w-80 space-y-4">
-        <div class="flex items-center justify-center gap-3 mb-6">
-          <img src={logoUrl} alt="MooshieUI" class="w-10 h-10 rounded-lg" />
+        <div class="mooshie-branding flex items-center justify-center gap-3 mb-6">
+          <img src={themeLogoUrl} alt="MooshieUI" class="w-10 h-10 aspect-square object-contain rounded-lg" />
           <h1 class="text-xl font-bold text-neutral-100">MooshieUI</h1>
         </div>
         <p class="text-sm text-neutral-400 text-center">{locale.t("auth.password_reset_by_admin")}</p>
@@ -2215,8 +2230,8 @@
   <!-- Login gate for LAN users -->
   <div class="flex items-center justify-center h-full bg-neutral-950">
     <div class="w-80 space-y-4">
-      <div class="flex items-center justify-center gap-3 mb-6">
-        <img src={logoUrl} alt="MooshieUI" class="w-10 h-10 rounded-lg" />
+      <div class="mooshie-branding flex items-center justify-center gap-3 mb-6">
+        <img src={themeLogoUrl} alt="MooshieUI" class="w-10 h-10 aspect-square object-contain rounded-lg" />
         <h1 class="text-xl font-bold text-neutral-100">MooshieUI</h1>
       </div>
       <p class="text-sm text-neutral-400 text-center">{locale.t("auth.sign_in_continue")}</p>
@@ -2289,10 +2304,22 @@
     </defs>
   </svg>
 
-  <!-- Sidebar -->
-  <nav
-    class="flex w-14 shrink-0 flex-col items-stretch gap-1.5 border-r border-neutral-800 bg-neutral-900 px-1.5 py-3 md:rounded-2xl md:border md:shadow-2xl md:shadow-black/30"
-  >
+  <!-- Sidebar column: logo panel + nav -->
+  <div class="flex w-14 shrink-0 flex-col gap-1.5 self-stretch md:gap-3">
+    <div
+      class="theme-logo-panel flex shrink-0 items-center justify-center border-r border-neutral-800 bg-neutral-900 px-1.5 py-2 md:rounded-2xl md:border md:shadow-2xl md:shadow-black/30"
+    >
+      <div
+        class="flex size-8 items-center justify-center rounded-lg bg-neutral-800/60 text-neutral-400"
+        title="Theme logo"
+      >
+        <img src={themeLogoUrl} alt="Theme logo" class="size-7 rounded-md object-contain" />
+      </div>
+    </div>
+
+    <nav
+      class="flex min-h-0 flex-1 flex-col items-stretch gap-1.5 border-r border-neutral-800 bg-neutral-900 px-1.5 py-3 md:rounded-2xl md:border md:shadow-2xl md:shadow-black/30"
+    >
     <div class="relative mx-auto">
       <button
         class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
@@ -2449,7 +2476,7 @@
     ></div>
 
     <span
-      class="text-[10px] text-neutral-500 text-center mb-2 select-none cursor-default"
+      class="mooshie-branding text-[10px] text-neutral-500 text-center mb-2 select-none cursor-default"
       role="button"
       tabindex="0"
       onclick={handleVersionTap}
@@ -2460,7 +2487,8 @@
         }
       }}
     >v{appVersion}</span>
-  </nav>
+    </nav>
+  </div>
 
   <!-- Main content -->
   <main class="flex min-w-0 flex-1 flex-col overflow-hidden md:rounded-2xl md:border md:border-neutral-800 md:bg-neutral-900 md:p-1 md:shadow-2xl md:shadow-black/30">

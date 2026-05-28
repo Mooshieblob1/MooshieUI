@@ -225,6 +225,28 @@ export interface AppConfig {
   webhook_events: string[];
   webhook_include_sensitive: boolean;
   webhook_allow_private_targets: boolean;
+  theme_profile_id: string | null;
+  theme_profiles: ThemeProfile[];
+}
+
+export interface ThemeTone {
+  main: string;
+  sub: string;
+  trim: string;
+  background: string;
+  text: string;
+}
+
+export interface ThemeProfile {
+  id: string;
+  name: string;
+  palette: "mooshie" | "nord" | "solarized" | "gruvbox" | "catppuccin" | "custom";
+  dark: ThemeTone;
+  light: ThemeTone;
+  background_image: string | null;
+  background_fade: number;
+  logo_image: string | null;
+  hide_branding: boolean;
 }
 
 export interface QueueInfo {

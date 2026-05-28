@@ -1,5 +1,24 @@
 # Changelog
 
+## What's New in v1.4.1
+
+### Theme customization and branding
+- **Custom theme creator modal**: adds a dedicated create/edit flow with full dark/light color controls, hex entry, linked tone syncing, and image/logo inputs.
+- **Logo crop workflow**: uploaded theme logos now go through a 1:1 crop step before save so sidebar/app branding renders consistently.
+- **Live theme/logo application**: custom logo and palette updates now propagate reliably across app surfaces, including navigation branding and custom palette token remaps.
+
+### Theme token behavior fixes
+- **Background vs panel separation**: `Background` now controls the canvas/backdrop behind panes while `Sub` controls panel/surface tinting.
+- **Main accent visibility**: `Main` again drives primary accent ramps so button and highlight colors visibly reflect the chosen primary color.
+- **Surface neutrality correction**: panel/border shades now derive from secondary tone instead of text tone to avoid unintended panel color shifts.
+
+### Stability and security hardening
+- **Settings remount stability**: removed the frontend `getConfig` timeout guard that caused false “settings timed out” failures after navigation/theme edits.
+- **Config cloning resilience**: config cache/update paths now use safe cloning fallback to prevent `structuredClone` runtime crashes on non-cloneable reactive objects.
+- **Gallery rename path safety**: backend rename command now rejects invalid target filenames that contain path traversal or directory components.
+
+---
+
 ## What's New in v1.4.0
 
 ### Generation workflows and creative controls

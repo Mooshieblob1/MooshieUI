@@ -13,7 +13,14 @@
   import GpuStatusPanel from "./GpuStatusPanel.svelte";
   import ModelRequestsPanel from "./ModelRequestsPanel.svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
-  import { applyTheme, THEME_PALETTES } from "../../utils/theme.js";
+  import {
+    applyTheme,
+    THEME_PALETTES,
+    THEME_TONE_FIELDS,
+    DEFAULT_THEME_TONE_DARK,
+    DEFAULT_THEME_TONE_LIGHT,
+  } from "../../utils/theme.js";
+  import type { ThemeProfile, ThemeTone } from "../../utils/theme.js";
   import { onMount, onDestroy } from "svelte";
   import { marked } from "marked";
   import { clearArtistImageCache, getArtistImageCacheCount } from "../../artist-gallery/imageCache.js";
@@ -37,6 +44,12 @@
   }
   const isAdmin = $derived(userRole === "admin");
   const canManageServer = $derived(userRole === "admin" || userRole === "moderator");
+
+  const activeThemeProfile = $derived.by(() => {
+    if (!config?.theme_profile_id) return null;
+    const profiles = config.theme_profiles ?? [];
+    return profiles.find((profile) => profile.id === config!.theme_profile_id) ?? null;
+  });
 
   /** Open a directory picker. Returns path string or null. */
   async function openDirectoryDialog(title: string): Promise<string | null> {
@@ -74,6 +87,34 @@
   let attentionStatusError = $state<string | null>(null);
   let attentionStatusVenvPath = $state<string | null>(null);
   let workersDetecting = $state(false);
+  let newThemeName = $state("Custom Theme");
+  let themeImportError = $state<string | null>(null);
+  let themeImportDone = $state(false);
+  let themeExportDone = $state(false);
+  let themeExportError = $state<string | null>(null);
+  let showThemeCreatorModal = $state(false);
+  let draftEditingProfileId = $state<string | null>(null);
+  let settingsLoadError = $state<string | null>(null);
+  let draftThemeName = $state("Custom Theme");
+  let draftThemeDark = $state<ThemeTone>({ ...DEFAULT_THEME_TONE_DARK });
+  let draftThemeLight = $state<ThemeTone>({ ...DEFAULT_THEME_TONE_LIGHT });
+  let draftThemeBackgroundImage = $state<string | null>(null);
+  let draftThemeBackgroundFade = $state(0.65);
+  let draftThemeHideBranding = $state(false);
+  let draftThemeLogoImage = $state<string | null>(null);
+  let draftToneLinked = $state<Record<keyof ThemeTone, boolean>>({
+    main: true,
+    sub: true,
+    trim: true,
+    background: true,
+    text: true,
+  });
+  let showLogoCropModal = $state(false);
+  let pendingLogoDataUrl = $state<string | null>(null);
+  let logoCropZoom = $state(1);
+  let logoCropPanX = $state(0);
+  let logoCropPanY = $state(0);
+  let logoCropTarget = $state<"draft" | "active">("draft");
 
   // Gallery import state
   let importBusy = $state(false);
@@ -940,7 +981,7 @@
   const sections = [
     { key: "appMode", labelKey: "settings.sections.app_mode", keywords: "browser app mode desktop native window web switch ui" },
     { key: "connection", labelKey: "settings.sections.connection", keywords: "server mode url port remote autolaunch" },
-    { key: "appearance", labelKey: "settings.sections.appearance", keywords: "theme dark light font scale size style presets fooocus" },
+    { key: "appearance", labelKey: "settings.sections.appearance", keywords: "theme dark light font scale palette custom create logo background branding import export color" },
     { key: "performance", labelKey: "settings.sections.performance", keywords: "vram mode high low normal keep alive close attention backend sage flash" },
     { key: "quality", labelKey: "settings.sections.quality", keywords: "quality tags auto masterpiece best quality anima illustrious noobai pony nanosaur positive negative prompt" },
     { key: "gpu", labelKey: "settings.sections.gpu", keywords: "gpu vram worker backend multi status utilization temperature power nvidia" },
@@ -974,6 +1015,14 @@
 
   async function loadConfig() {
     config = await getConfig();
+    if (!Array.isArray(config.theme_profiles)) config.theme_profiles = [];
+    config.theme_profile_id ??= null;
+    if (
+      config.theme_profile_id &&
+      !config.theme_profiles.some((profile) => profile.id === config!.theme_profile_id)
+    ) {
+      config.theme_profile_id = null;
+    }
     // Migrate CivitAI API key from ModelHub localStorage if not already in config
     if (!config.civitai_api_key) {
       try {
@@ -985,6 +1034,11 @@
       } catch { /* ignore */ }
     }
     snapshotRestartFields();
+    try {
+      applyTheme(config);
+    } catch (e) {
+      console.error("Failed to apply theme from config:", e);
+    }
   }
 
   async function refreshAttentionStatus() {
@@ -1001,15 +1055,25 @@
     }
   }
 
-  onMount(async () => {
+  async function initSettings() {
+    loading = true;
+    settingsLoadError = null;
     try {
       await loadConfig();
-      await refreshAttentionStatus();
     } catch (e) {
-      error = `Failed to load config: ${e}`;
+      const message = e instanceof Error ? e.message : String(e);
+      settingsLoadError = message;
+      error = `Failed to load config: ${message}`;
+      config = null;
     } finally {
       loading = false;
     }
+  }
+
+  onMount(() => {
+    void initSettings().then(() => {
+      void refreshAttentionStatus();
+    });
     loadInstallPath();
     getGalleryPath().then(p => { galleryPathDisplay = p; }).catch(() => {});
     void loadCacheCount();
@@ -1058,6 +1122,7 @@
   async function autoSave() {
     if (!config) return;
     checkRestartNeeded();
+    applyTheme(config);
     try {
       await updateConfig(config);
     } catch (e) {
@@ -1105,6 +1170,239 @@
 
   function applyFontScale(scale: number) {
     document.documentElement.style.setProperty("--font-scale", String(scale));
+  }
+
+  function normalizeHexColor(input: string): string | null {
+    const value = input.trim().replace(/^#/, "");
+    if (/^[0-9a-fA-F]{6}$/.test(value)) return `#${value.toLowerCase()}`;
+    if (/^[0-9a-fA-F]{3}$/.test(value)) {
+      const expanded = value.split("").map((char) => `${char}${char}`).join("");
+      return `#${expanded.toLowerCase()}`;
+    }
+    return null;
+  }
+
+  function updateDraftTone(mode: "dark" | "light", key: keyof ThemeTone, value: string) {
+    const normalized = normalizeHexColor(value);
+    if (!normalized) return;
+    if (mode === "dark") {
+      draftThemeDark = { ...draftThemeDark, [key]: normalized };
+      if (draftToneLinked[key]) draftThemeLight = { ...draftThemeLight, [key]: normalized };
+    } else {
+      draftThemeLight = { ...draftThemeLight, [key]: normalized };
+      if (draftToneLinked[key]) draftThemeDark = { ...draftThemeDark, [key]: normalized };
+    }
+  }
+
+  function resetThemeCreatorDraft() {
+    draftEditingProfileId = null;
+    draftThemeName = newThemeName.trim() || "Custom Theme";
+    draftThemeDark = { ...DEFAULT_THEME_TONE_DARK };
+    draftThemeLight = { ...DEFAULT_THEME_TONE_LIGHT };
+    draftThemeBackgroundImage = null;
+    draftThemeBackgroundFade = 0.65;
+    draftThemeHideBranding = false;
+    draftThemeLogoImage = null;
+    draftToneLinked = { main: true, sub: true, trim: true, background: true, text: true };
+  }
+
+  function openThemeCreatorModal() {
+    resetThemeCreatorDraft();
+    showThemeCreatorModal = true;
+  }
+
+  function openThemeEditorModal() {
+    const profile = activeThemeProfile;
+    if (!profile) return;
+    draftEditingProfileId = profile.id;
+    draftThemeName = profile.name;
+    draftThemeDark = { ...profile.dark };
+    draftThemeLight = { ...profile.light };
+    draftThemeBackgroundImage = profile.background_image;
+    draftThemeBackgroundFade = profile.background_fade;
+    draftThemeHideBranding = profile.hide_branding;
+    draftThemeLogoImage = profile.logo_image;
+    draftToneLinked = { main: false, sub: false, trim: false, background: false, text: false };
+    showThemeCreatorModal = true;
+  }
+
+  function createThemeProfileFromDraft() {
+    if (!config) return;
+    const profile: ThemeProfile = {
+      id: draftEditingProfileId ?? `theme_${Date.now()}`,
+      name: draftThemeName.trim() || "Custom Theme",
+      palette: "custom",
+      dark: { ...draftThemeDark },
+      light: { ...draftThemeLight },
+      background_image: draftThemeBackgroundImage,
+      background_fade: draftThemeBackgroundFade,
+      logo_image: draftThemeLogoImage,
+      hide_branding: draftThemeHideBranding,
+    };
+
+    if (draftEditingProfileId) {
+      config.theme_profiles = config.theme_profiles.map((existing) =>
+        existing.id === draftEditingProfileId ? profile : existing,
+      );
+      config.theme_profile_id = draftEditingProfileId;
+    } else {
+      config.theme_profiles = [...config.theme_profiles, profile];
+      config.theme_profile_id = profile.id;
+    }
+
+    newThemeName = profile.name;
+    showThemeCreatorModal = false;
+    draftEditingProfileId = null;
+    applyTheme(config);
+    void autoSave();
+  }
+
+  function openLogoCropper(dataUrl: string, target: "draft" | "active") {
+    pendingLogoDataUrl = dataUrl;
+    logoCropZoom = 1;
+    logoCropPanX = 0;
+    logoCropPanY = 0;
+    logoCropTarget = target;
+    showLogoCropModal = true;
+  }
+
+  async function cropSquareLogo(dataUrl: string, zoom: number, panX: number, panY: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => {
+        const sourceWidth = image.naturalWidth;
+        const sourceHeight = image.naturalHeight;
+        const minSide = Math.min(sourceWidth, sourceHeight);
+        const safeZoom = Math.max(1, Math.min(3, zoom));
+        const cropSize = minSide / safeZoom;
+        const maxX = Math.max(0, (sourceWidth - cropSize) / 2);
+        const maxY = Math.max(0, (sourceHeight - cropSize) / 2);
+        const srcX = (sourceWidth - cropSize) / 2 + panX * maxX;
+        const srcY = (sourceHeight - cropSize) / 2 + panY * maxY;
+
+        const canvas = document.createElement("canvas");
+        canvas.width = 512;
+        canvas.height = 512;
+        const context = canvas.getContext("2d");
+        if (!context) {
+          reject(new Error("Failed to create crop canvas."));
+          return;
+        }
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
+        context.drawImage(image, srcX, srcY, cropSize, cropSize, 0, 0, 512, 512);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      image.onerror = () => reject(new Error("Failed to decode selected image."));
+      image.src = dataUrl;
+    });
+  }
+
+  async function confirmLogoCrop() {
+    if (!pendingLogoDataUrl) return;
+    const cropped = await cropSquareLogo(pendingLogoDataUrl, logoCropZoom, logoCropPanX, logoCropPanY);
+    if (logoCropTarget === "draft") {
+      draftThemeLogoImage = cropped;
+    } else {
+      const profile = activeThemeProfile;
+      if (!profile) return;
+      profile.logo_image = cropped;
+      void autoSave();
+    }
+    showLogoCropModal = false;
+    pendingLogoDataUrl = null;
+  }
+
+  function addThemeProfile() {
+    openThemeCreatorModal();
+  }
+
+  function removeActiveThemeProfile() {
+    if (!config || !config.theme_profile_id) return;
+    config.theme_profiles = config.theme_profiles.filter((profile) => profile.id !== config!.theme_profile_id);
+    config.theme_profile_id = null;
+    void autoSave();
+  }
+
+  async function fileToDataUrl(file: File): Promise<string> {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]!);
+    return `data:${file.type || "application/octet-stream"};base64,${btoa(binary)}`;
+  }
+
+  async function setProfileImage(kind: "background" | "logo", event: Event) {
+    const profile = activeThemeProfile;
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!profile || !file) return;
+    const dataUrl = await fileToDataUrl(file);
+    if (kind === "background") {
+      profile.background_image = dataUrl;
+      void autoSave();
+    } else {
+      openLogoCropper(dataUrl, "active");
+    }
+    input.value = "";
+  }
+
+  async function setDraftThemeImage(kind: "background" | "logo", event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    const dataUrl = await fileToDataUrl(file);
+    if (kind === "background") {
+      draftThemeBackgroundImage = dataUrl;
+    } else {
+      openLogoCropper(dataUrl, "draft");
+    }
+    input.value = "";
+  }
+
+  async function importThemeProfiles(event: Event) {
+    if (!config) return;
+    themeImportError = null;
+    themeImportDone = false;
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text()) as { themes?: ThemeProfile[] };
+      if (!Array.isArray(parsed.themes)) throw new Error("Invalid theme file.");
+      const imported = parsed.themes.map((theme) => ({ ...theme, id: theme.id || `theme_${Date.now()}` }));
+      config.theme_profiles = imported;
+      config.theme_profile_id = imported[0]?.id ?? null;
+      await autoSave();
+      themeImportDone = true;
+      setTimeout(() => (themeImportDone = false), 2500);
+    } catch (error: any) {
+      themeImportError = String(error?.message ?? error);
+    } finally {
+      input.value = "";
+    }
+  }
+
+  function exportThemeProfiles() {
+    if (!config) return;
+    themeExportDone = false;
+    themeExportError = null;
+    try {
+      const payload = JSON.stringify({ themes: config.theme_profiles }, null, 2);
+      const blob = new Blob([payload], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "mooshie-themes.json";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      themeExportDone = true;
+      setTimeout(() => (themeExportDone = false), 2500);
+    } catch (error: any) {
+      themeExportError = String(error?.message ?? error);
+    }
   }
 
   async function restartServer() {
@@ -1190,8 +1488,19 @@
   >
     <div class="columns-1 {mobileFriendly ? '' : 'lg:columns-2 xl:columns-3'} gap-4">
       {#if loading}
-        <div class="flex items-center justify-center py-12 text-neutral-500">
+        <div class="flex flex-col items-center justify-center py-12 text-neutral-500 gap-3">
           <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+          <p class="text-xs text-neutral-500">{locale.t("common.loading")}</p>
+        </div>
+      {:else if settingsLoadError}
+        <div class="rounded-xl border border-red-800/50 bg-red-950/30 p-5 space-y-3 break-inside-avoid">
+          <p class="text-sm text-red-200">{locale.t("settings.load_failed")}</p>
+          <p class="text-xs text-red-300/90">{settingsLoadError}</p>
+          <button
+            type="button"
+            class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium cursor-pointer"
+            onclick={() => void initSettings()}
+          >{locale.t("common.retry")}</button>
         </div>
       {:else if config}
         <!-- Browser / App Mode Switch (admin only; hidden on mobile — users are already in browser mode) -->
@@ -1678,6 +1987,8 @@
 
           {#if !collapsed.appearance}
           <div class="px-5 pb-5 space-y-4">
+          <p class="text-xs font-medium text-neutral-300">{locale.t("settings.appearance.builtin_theme")}</p>
+          <p class="text-[10px] text-neutral-500 -mt-2">{locale.t("settings.appearance.builtin_palette_hint")}</p>
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label for="theme-mode" class="block text-xs text-neutral-400 mb-1">{locale.t('settings.appearance.theme')}</label>
@@ -1685,7 +1996,7 @@
                 id="theme-mode"
                 name="theme-mode"
                 bind:value={config.theme}
-                onchange={() => { if (config) { applyTheme(config.theme, config.theme_palette); autoSave(); } }}
+                onchange={() => { if (config) { applyTheme(config); autoSave(); } }}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
               >
                 <option value="dark">{locale.t('settings.appearance.theme_dark')}</option>
@@ -1699,7 +2010,7 @@
                 id="theme-palette"
                 name="theme-palette"
                 bind:value={config.theme_palette}
-                onchange={() => { if (config) { applyTheme(config.theme, config.theme_palette); autoSave(); } }}
+                onchange={() => { if (config) { config.theme_profile_id = null; applyTheme(config); autoSave(); } }}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
               >
                 {#each THEME_PALETTES as palette}
@@ -1724,6 +2035,122 @@
                 class="w-full accent-indigo-500"
               />
             </div>
+          </div>
+
+          {#if config.theme_profile_id}
+            <p class="text-[10px] text-amber-400/90">{locale.t("settings.appearance.custom_theme_active_hint")}</p>
+          {/if}
+
+          <div class="rounded-lg border border-indigo-500/30 bg-neutral-950/80 p-4 space-y-3">
+            <div>
+              <h3 class="text-sm font-medium text-neutral-100">{locale.t("settings.appearance.custom_themes_title")}</h3>
+              <p class="text-[10px] text-neutral-500 mt-1">{locale.t("settings.appearance.custom_themes_desc")}</p>
+            </div>
+
+            {#if (config.theme_profiles ?? []).length === 0}
+              <p class="text-xs text-neutral-400">{locale.t("settings.appearance.no_custom_themes")}</p>
+            {/if}
+
+            <div class="flex flex-col sm:flex-row items-stretch sm:items-end gap-2">
+              <div class="flex-1 min-w-0">
+                <label for="custom-theme-name" class="block text-xs text-neutral-400 mb-1">{locale.t("settings.appearance.custom_theme_name")}</label>
+                <input
+                  id="custom-theme-name"
+                  type="text"
+                  bind:value={newThemeName}
+                  class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100"
+                  placeholder={locale.t("settings.appearance.custom_theme_name_placeholder")}
+                  onkeydown={(e) => { if (e.key === "Enter") openThemeCreatorModal(); }}
+                />
+              </div>
+              <button
+                type="button"
+                class="shrink-0 px-4 py-2 text-sm font-medium rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors cursor-pointer"
+                onclick={openThemeCreatorModal}
+              >{locale.t("settings.appearance.create_theme")}</button>
+            </div>
+
+            <div>
+              <label for="saved-theme-select" class="block text-xs text-neutral-400 mb-1">{locale.t("settings.appearance.saved_themes")}</label>
+              <select
+                id="saved-theme-select"
+                value={config.theme_profile_id ?? "__builtin__"}
+                onchange={(event) => {
+                  if (!config) return;
+                  const value = (event.target as HTMLSelectElement).value;
+                  config.theme_profile_id = value === "__builtin__" ? null : value;
+                  applyTheme(config);
+                  autoSave();
+                }}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100"
+              >
+                <option value="__builtin__">{locale.t("settings.appearance.use_builtin_palette")}</option>
+                {#each config.theme_profiles ?? [] as profile}
+                  <option value={profile.id}>{profile.name}</option>
+                {/each}
+              </select>
+            </div>
+
+            {#if activeThemeProfile}
+              <div class="rounded-lg border border-neutral-800 bg-neutral-900/70 p-2 space-y-2">
+                <div class="text-xs text-neutral-300 font-medium">{locale.t("settings.appearance.theme_preview")}</div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div class="rounded-md border border-neutral-700 p-2 space-y-1" style="background:{activeThemeProfile.dark.background}; color:{activeThemeProfile.dark.text}">
+                    <div class="text-[10px] font-semibold">{locale.t("settings.appearance.dark_preview")}</div>
+                    <div class="h-2 rounded" style="background:{activeThemeProfile.dark.main}"></div>
+                    <div class="h-2 rounded" style="background:{activeThemeProfile.dark.sub}"></div>
+                    <div class="h-2 rounded" style="background:{activeThemeProfile.dark.trim}"></div>
+                  </div>
+                  <div class="rounded-md border border-neutral-700 p-2 space-y-1" style="background:{activeThemeProfile.light.background}; color:{activeThemeProfile.light.text}">
+                    <div class="text-[10px] font-semibold">{locale.t("settings.appearance.light_preview")}</div>
+                    <div class="h-2 rounded" style="background:{activeThemeProfile.light.main}"></div>
+                    <div class="h-2 rounded" style="background:{activeThemeProfile.light.sub}"></div>
+                    <div class="h-2 rounded" style="background:{activeThemeProfile.light.trim}"></div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2 text-[10px] text-neutral-400">
+                  <span>{locale.t("settings.appearance.logo_preview")}</span>
+                  {#if activeThemeProfile.logo_image}
+                    <img src={activeThemeProfile.logo_image} alt="theme logo preview" class="w-6 h-6 rounded object-cover border border-neutral-700" />
+                  {:else}
+                    <span class="text-neutral-500">-</span>
+                  {/if}
+                  <span class="ml-2">{locale.t("settings.appearance.background_preview")}</span>
+                  {#if activeThemeProfile.background_image}
+                    <span class="text-green-400">{locale.t("settings.appearance.status_on")}</span>
+                  {:else}
+                    <span class="text-neutral-500">{locale.t("settings.appearance.status_off")}</span>
+                  {/if}
+                </div>
+              </div>
+
+              <div class="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  class="px-3 py-1.5 text-xs rounded bg-indigo-600 hover:bg-indigo-500 text-white transition-colors cursor-pointer"
+                  onclick={openThemeEditorModal}
+                >{locale.t("settings.appearance.edit_theme")}</button>
+                <button
+                  type="button"
+                  class="px-3 py-1.5 text-xs rounded bg-red-700/70 hover:bg-red-700 text-white transition-colors cursor-pointer"
+                  onclick={removeActiveThemeProfile}
+                >{locale.t("settings.appearance.delete_theme_profile")}</button>
+              </div>
+            {/if}
+
+            <div class="flex gap-2">
+              <button class="px-3 py-1.5 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100 transition-colors cursor-pointer" onclick={exportThemeProfiles}>
+                {locale.t("settings.appearance.export_themes")}
+              </button>
+              <label class="px-3 py-1.5 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100 transition-colors cursor-pointer">
+                {locale.t("settings.appearance.import_themes")}
+                <input type="file" accept=".json,application/json" class="hidden" onchange={importThemeProfiles} />
+              </label>
+            </div>
+            {#if themeImportError}<p class="text-xs text-red-400">{themeImportError}</p>{/if}
+            {#if themeImportDone}<p class="text-xs text-green-400">{locale.t("settings.appearance.themes_imported")}</p>{/if}
+            {#if themeExportError}<p class="text-xs text-red-400">{themeExportError}</p>{/if}
+            {#if themeExportDone}<p class="text-xs text-green-400">{locale.t("settings.appearance.themes_exported")}</p>{/if}
           </div>
 
           <div>
@@ -3173,6 +3600,195 @@
     </div>
   </div>
 </div>
+
+{#if showThemeCreatorModal}
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+  onclick={(e) => { if (e.target === e.currentTarget) showThemeCreatorModal = false; }}
+  onkeydown={(e) => { if (e.key === "Escape") showThemeCreatorModal = false; }}
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="theme-creator-title"
+  tabindex="-1"
+>
+  <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-auto p-5 space-y-4">
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <h3 id="theme-creator-title" class="text-sm font-semibold text-neutral-100">
+          {draftEditingProfileId
+            ? locale.t("settings.appearance.theme_modal_edit_title")
+            : locale.t("settings.appearance.theme_modal_title")}
+        </h3>
+        <p class="text-xs text-neutral-400 mt-1">{locale.t("settings.appearance.theme_modal_desc")}</p>
+      </div>
+      <button
+        type="button"
+        class="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs cursor-pointer"
+        onclick={() => { showThemeCreatorModal = false; }}
+      >{locale.t("common.close")}</button>
+    </div>
+
+    <div>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t("settings.appearance.custom_theme_name")}</label>
+      <input
+        type="text"
+        bind:value={draftThemeName}
+        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100"
+        placeholder={locale.t("settings.appearance.custom_theme_name_placeholder")}
+      />
+    </div>
+
+    <div class="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3 space-y-2">
+      <p class="text-xs text-neutral-300 font-medium">{locale.t("settings.appearance.theme_colors")}</p>
+      <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 text-[11px] text-neutral-500">
+        <div>{locale.t("settings.appearance.dark_preview")}</div>
+        <div>{locale.t("settings.appearance.light_preview")}</div>
+        <div>{locale.t("settings.appearance.link_tones")}</div>
+      </div>
+      {#each THEME_TONE_FIELDS as field}
+        <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2 items-start">
+          <div class="rounded border border-neutral-800 bg-neutral-900 p-2 space-y-1">
+            <label class="block text-[11px] text-neutral-400">{locale.t(field.labelKey)}</label>
+            <div class="flex gap-2">
+              <input
+                type="color"
+                value={draftThemeDark[field.key]}
+                oninput={(event) => updateDraftTone("dark", field.key, (event.target as HTMLInputElement).value)}
+                class="h-9 w-12 rounded border border-neutral-700 bg-neutral-800"
+              />
+              <input
+                type="text"
+                value={draftThemeDark[field.key]}
+                onblur={(event) => updateDraftTone("dark", field.key, (event.target as HTMLInputElement).value)}
+                class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-100"
+                placeholder="#000000"
+              />
+            </div>
+          </div>
+          <div class="rounded border border-neutral-800 bg-neutral-900 p-2 space-y-1">
+            <label class="block text-[11px] text-neutral-400">{locale.t(field.labelKey)}</label>
+            <div class="flex gap-2">
+              <input
+                type="color"
+                value={draftThemeLight[field.key]}
+                oninput={(event) => updateDraftTone("light", field.key, (event.target as HTMLInputElement).value)}
+                class="h-9 w-12 rounded border border-neutral-700 bg-neutral-800"
+              />
+              <input
+                type="text"
+                value={draftThemeLight[field.key]}
+                onblur={(event) => updateDraftTone("light", field.key, (event.target as HTMLInputElement).value)}
+                class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-100"
+                placeholder="#ffffff"
+              />
+            </div>
+          </div>
+          <label class="inline-flex items-center gap-1 text-[11px] text-neutral-400 pt-7">
+            <input type="checkbox" bind:checked={draftToneLinked[field.key]} class="accent-indigo-500" />
+            <span>{locale.t("settings.appearance.link")}</span>
+          </label>
+        </div>
+      {/each}
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div class="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3 space-y-2">
+        <label class="block text-xs text-neutral-400">{locale.t("settings.appearance.background_image")}</label>
+        <input type="file" accept="image/*" onchange={(event) => setDraftThemeImage("background", event)} class="block w-full text-xs text-neutral-300" />
+        <label class="flex items-center justify-between text-xs text-neutral-400">
+          {locale.t("settings.appearance.background_fade")}
+          <span>{Math.round(draftThemeBackgroundFade * 100)}%</span>
+        </label>
+        <input type="range" min="0.35" max="0.95" step="0.05" bind:value={draftThemeBackgroundFade} class="w-full accent-indigo-500" />
+      </div>
+      <div class="rounded-lg border border-neutral-800 bg-neutral-950/60 p-3 space-y-2">
+        <label class="block text-xs text-neutral-400">{locale.t("settings.appearance.logo_image")}</label>
+        <input type="file" accept="image/*" onchange={(event) => setDraftThemeImage("logo", event)} class="block w-full text-xs text-neutral-300" />
+        <div class="h-14 w-14 rounded-lg border border-neutral-700 bg-neutral-900 flex items-center justify-center overflow-hidden">
+          {#if draftThemeLogoImage}
+            <img src={draftThemeLogoImage} alt="draft logo preview" class="h-full w-full object-contain" />
+          {:else}
+            <span class="text-[10px] text-neutral-500">{locale.t("settings.appearance.status_off")}</span>
+          {/if}
+        </div>
+        <p class="text-[10px] text-neutral-500">{locale.t("settings.appearance.logo_crop_hint")}</p>
+      </div>
+    </div>
+
+    <label class="inline-flex items-center gap-2 text-xs text-neutral-300">
+      <input type="checkbox" bind:checked={draftThemeHideBranding} class="accent-indigo-500" />
+      {locale.t("settings.appearance.hide_branding")}
+    </label>
+
+    <div class="flex justify-end gap-2 pt-1">
+      <button
+        type="button"
+        class="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs cursor-pointer"
+        onclick={() => { showThemeCreatorModal = false; }}
+      >{locale.t("common.cancel")}</button>
+      <button
+        type="button"
+        class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium cursor-pointer"
+        onclick={createThemeProfileFromDraft}
+      >{draftEditingProfileId ? locale.t("common.save") : locale.t("settings.appearance.create_theme")}</button>
+    </div>
+  </div>
+</div>
+{/if}
+
+{#if showLogoCropModal && pendingLogoDataUrl}
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+  onclick={(e) => { if (e.target === e.currentTarget) showLogoCropModal = false; }}
+  onkeydown={(e) => { if (e.key === "Escape") showLogoCropModal = false; }}
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="logo-crop-title"
+  tabindex="-1"
+>
+  <div class="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl w-full max-w-md p-5 space-y-3">
+    <h3 id="logo-crop-title" class="text-sm font-semibold text-neutral-100">{locale.t("settings.appearance.logo_crop_title")}</h3>
+    <p class="text-xs text-neutral-400">{locale.t("settings.appearance.logo_crop_desc")}</p>
+
+    <div class="w-56 h-56 mx-auto rounded-xl border border-neutral-700 overflow-hidden bg-neutral-950 relative">
+      <img
+        src={pendingLogoDataUrl}
+        alt="crop source"
+        class="absolute inset-0 w-full h-full object-cover"
+        style="transform: translate({logoCropPanX * 20}%, {logoCropPanY * 20}%) scale({logoCropZoom}); transform-origin: center;"
+      />
+    </div>
+
+    <div class="space-y-2">
+      <label class="block text-xs text-neutral-400">
+        {locale.t("settings.appearance.crop_zoom")}
+        <input type="range" min="1" max="3" step="0.05" bind:value={logoCropZoom} class="w-full mt-1 accent-indigo-500" />
+      </label>
+      <label class="block text-xs text-neutral-400">
+        {locale.t("settings.appearance.crop_horizontal")}
+        <input type="range" min="-1" max="1" step="0.01" bind:value={logoCropPanX} class="w-full mt-1 accent-indigo-500" />
+      </label>
+      <label class="block text-xs text-neutral-400">
+        {locale.t("settings.appearance.crop_vertical")}
+        <input type="range" min="-1" max="1" step="0.01" bind:value={logoCropPanY} class="w-full mt-1 accent-indigo-500" />
+      </label>
+    </div>
+
+    <div class="flex justify-end gap-2">
+      <button
+        type="button"
+        class="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs cursor-pointer"
+        onclick={() => { showLogoCropModal = false; pendingLogoDataUrl = null; }}
+      >{locale.t("common.cancel")}</button>
+      <button
+        type="button"
+        class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium cursor-pointer"
+        onclick={confirmLogoCrop}
+      >{locale.t("settings.appearance.apply_crop")}</button>
+    </div>
+  </div>
+</div>
+{/if}
 
 <!-- About MooshieUI Modal -->
 {#if showAboutModal}

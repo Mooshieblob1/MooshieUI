@@ -622,12 +622,74 @@ export async function installAttentionBackend(backend: string): Promise<void> {
   return ipcInvoke("install_attention_backend", { backend });
 }
 
-export async function getConfig(): Promise<AppConfig> {
-  return ipcInvoke("get_config");
+let configCache: AppConfig | null = null;
+let configLoadPromise: Promise<AppConfig> | null = null;
+let configUpdateChain: Promise<void> = Promise.resolve();
+let pendingConfigWrite: AppConfig | null = null;
+
+function cloneConfig(config: AppConfig): AppConfig {
+  try {
+    return structuredClone(config);
+  } catch {
+    // Fallback for non-cloneable reactive/proxy values.
+    return JSON.parse(JSON.stringify(config)) as AppConfig;
+  }
+}
+
+/** Last known config (clone). Used for instant settings UI on remount. */
+export function getCachedConfig(): AppConfig | null {
+  return configCache ? cloneConfig(configCache) : null;
+}
+
+export function primeConfigCache(config: AppConfig): void {
+  configCache = cloneConfig(config);
+}
+
+async function flushPendingConfigWrite(): Promise<void> {
+  while (pendingConfigWrite) {
+    const toSave = cloneConfig(pendingConfigWrite);
+    pendingConfigWrite = null;
+    await ipcInvoke("update_config", { config: toSave });
+    configCache = toSave;
+  }
+}
+
+export async function getConfig(options?: { force?: boolean }): Promise<AppConfig> {
+  const force = options?.force ?? false;
+  if (!force && configCache) {
+    return cloneConfig(configCache);
+  }
+
+  await configUpdateChain.catch(() => {});
+
+  if (!force && configLoadPromise) {
+    return configLoadPromise.then((c) => cloneConfig(c));
+  }
+
+  const load = ipcInvoke<AppConfig>("get_config")
+    .then((c) => {
+      const plain = cloneConfig(c);
+      configCache = plain;
+      return plain;
+    })
+    .finally(() => {
+      if (configLoadPromise === load) {
+        configLoadPromise = null;
+      }
+    });
+
+  configLoadPromise = load;
+  return load.then((c) => cloneConfig(c));
 }
 
 export async function updateConfig(config: AppConfig): Promise<void> {
-  return ipcInvoke("update_config", { config });
+  const plain = cloneConfig(config);
+  configCache = plain;
+  pendingConfigWrite = plain;
+  configUpdateChain = configUpdateChain
+    .catch(() => {})
+    .then(() => flushPendingConfigWrite());
+  return configUpdateChain;
 }
 
 export async function getGalleryPath(): Promise<string> {

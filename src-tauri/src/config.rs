@@ -22,6 +22,42 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThemeTone {
+    pub main: String,
+    pub sub: String,
+    pub trim: String,
+    pub background: String,
+    pub text: String,
+}
+
+impl Default for ThemeTone {
+    fn default() -> Self {
+        Self {
+            main: "#ffcc00".to_string(),
+            sub: "#404040".to_string(),
+            trim: "#ffd54d".to_string(),
+            background: "#0a0a0a".to_string(),
+            text: "#f5f5f5".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThemeProfile {
+    pub id: String,
+    pub name: String,
+    pub palette: String,
+    #[serde(default)]
+    pub dark: ThemeTone,
+    #[serde(default)]
+    pub light: ThemeTone,
+    pub background_image: Option<String>,
+    pub background_fade: f64,
+    pub logo_image: Option<String>,
+    pub hide_branding: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
     pub server_mode: ServerMode,
@@ -89,6 +125,11 @@ pub struct AppConfig {
     pub webhook_include_sensitive: bool,
     /// Allow localhost/private webhook targets.
     pub webhook_allow_private_targets: bool,
+    /// Active custom theme profile ID. Null = built-in palette only.
+    pub theme_profile_id: Option<String>,
+    /// User-defined custom theme profiles.
+    #[serde(default)]
+    pub theme_profiles: Vec<ThemeProfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -140,6 +181,8 @@ impl Default for AppConfig {
             webhook_events: vec!["image_saved".to_string()],
             webhook_include_sensitive: false,
             webhook_allow_private_targets: false,
+            theme_profile_id: None,
+            theme_profiles: vec![],
         }
     }
 }
@@ -288,6 +331,7 @@ pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
         &mut config.pip_index_url,
         &mut config.output_filename_template,
         &mut config.webhook_url,
+        &mut config.theme_profile_id,
     ] {
         match field {
             Some(p) if p.trim().is_empty() => *field = None,
@@ -311,6 +355,27 @@ pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
             } else {
                 Some(trimmed)
             };
+        }
+    }
+    for profile in &mut config.theme_profiles {
+        profile.name = profile.name.trim().to_string();
+        if profile.name.is_empty() {
+            profile.name = "Custom Theme".to_string();
+        }
+        profile.palette = profile.palette.trim().to_lowercase();
+        if profile.palette.is_empty() {
+            profile.palette = "custom".to_string();
+        }
+        profile.background_fade = profile.background_fade.clamp(0.0, 1.0);
+        match &mut profile.background_image {
+            Some(v) if v.trim().is_empty() => profile.background_image = None,
+            Some(v) => *v = v.trim().to_string(),
+            None => {}
+        }
+        match &mut profile.logo_image {
+            Some(v) if v.trim().is_empty() => profile.logo_image = None,
+            Some(v) => *v = v.trim().to_string(),
+            None => {}
         }
     }
 }
