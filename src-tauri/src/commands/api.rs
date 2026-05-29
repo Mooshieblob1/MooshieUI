@@ -348,6 +348,7 @@ fn classify_flat_model_dir(path: &std::path::Path) -> &'static str {
     } else if name.contains("clip")
         || name.contains("text_encoder")
         || name.contains("text-encoder")
+        || name.contains("textencoder") // StabilityMatrix
     {
         "text_encoders"
     } else if name.contains("unet") || name.contains("diffusion") {
@@ -2808,13 +2809,19 @@ pub(crate) fn category_subdirs(category: &str) -> &'static [&'static str] {
         "unet" => &["unet", "models/unet", "Models/unet"],
         "diffusion_models" => &[
             "diffusion_models",
+            "DiffusionModels",
             "models/diffusion_models",
+            "models/DiffusionModels",
             "Models/diffusion_models",
+            "Models/DiffusionModels",
         ],
         "text_encoders" => &[
             "text_encoders",
+            "TextEncoders",
             "models/text_encoders",
+            "models/TextEncoders",
             "Models/text_encoders",
+            "Models/TextEncoders",
         ],
         "ultralytics" => &["ultralytics", "models/ultralytics", "Models/ultralytics"],
         _ => &[],
