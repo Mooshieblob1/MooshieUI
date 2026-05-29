@@ -486,13 +486,20 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             let yaml_path = std::env::temp_dir().join("mooshieui_extra_model_paths.yaml");
             let mut yaml_content = String::new();
             for (i, dir) in dirs.iter().enumerate() {
-                let dir_path = std::path::Path::new(dir);
+                let dir_path =
+                    crate::commands::api::resolve_extra_model_root(std::path::Path::new(dir));
                 // Escape YAML values: quote paths that contain spaces, colons,
                 // backslashes, or other special characters.
-                let quoted_dir = format!("\"{}\"", dir.replace('\\', "\\\\").replace('"', "\\\""));
+                let quoted_dir = format!(
+                    "\"{}\"",
+                    dir_path
+                        .to_string_lossy()
+                        .replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                );
 
                 // Check if this directory looks structured (has known model subdirs)
-                let is_structured = is_structured_model_dir(dir_path);
+                let is_structured = is_structured_model_dir(&dir_path);
 
                 if is_structured {
                     // Structured directory: scan named subdirectories per category
@@ -578,7 +585,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
                 } else {
                     // Flat directory: infer category from directory name and only
                     // expose "." for that single category to avoid cross-contamination.
-                    let category = classify_flat_model_dir(dir_path);
+                    let category = classify_flat_model_dir(&dir_path);
                     log::info!(
                         "Flat model directory {:?} classified as {:?}",
                         dir,

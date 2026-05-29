@@ -248,6 +248,33 @@ The default `docker-compose.yml` includes:
 - Admin bootstrap via `MOOSHIEUI_ADMIN_USER` / `MOOSHIEUI_ADMIN_PASS`
 - NVIDIA GPU reservation for Docker hosts with NVIDIA runtime support
 
+### Remote / cloud ComfyUI (RunPod, Vast.ai, etc.)
+
+Use this path when you want MooshieUI on your desktop (or another machine) but ComfyUI runs on a cloud GPU.
+
+**1. Deploy the MooshieUI server build on your cloud instance**
+
+The Docker image includes ComfyUI, PyTorch, and all MooshieUI custom nodes pre-installed. This is the supported way to get the required nodes on a remote server. Copying node files by hand is not supported.
+
+```bash
+# On your cloud pod (RunPod, Vast.ai, your own VPS, etc.)
+docker compose up -d --build
+# or: docker pull ghcr.io/mooshieblob1/mooshieui:latest
+```
+
+**2. Expose ComfyUI to your client**
+
+- **Browser-only:** open the MooshieUI web UI at port `3200` on the server. No desktop remote setup needed.
+- **Desktop as a thin client:** expose ComfyUI port `8188` from the pod (RunPod HTTP proxy URLs look like `https://xxxxx-8188.proxy.runpod.net`).
+
+**3. Connect from the MooshieUI desktop app**
+
+On first launch, choose **Remote server** in the setup wizard, paste your public ComfyUI URL, and click **Validate remote server**. MooshieUI skips the local ComfyUI/Python/PyTorch install entirely.
+
+You can change the endpoint later in **Settings → Connection** (Server Mode: Remote).
+
+If validation fails with missing custom nodes, redeploy or update the MooshieUI server build on the cloud instance and fully restart ComfyUI there before retrying.
+
 ### macOS (Manual Build From Source)
 
 macOS prebuilt release artifacts are currently disabled. On macOS, use a source build:

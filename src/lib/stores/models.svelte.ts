@@ -1,4 +1,17 @@
-import { getModels, getSamplers, getEmbeddings } from "../utils/api.js";
+import { getModels, getSamplers, getEmbeddings, listModelFiles } from "../utils/api.js";
+
+/** Merge ComfyUI /models API results with on-disk files from configured paths. */
+async function mergeWithDiskModels(category: string, apiModels: string[]): Promise<string[]> {
+  try {
+    const disk = await listModelFiles(category);
+    const names = disk.map((f) => f.filename);
+    return Array.from(new Set([...apiModels, ...names])).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" }),
+    );
+  } catch {
+    return apiModels;
+  }
+}
 
 class ModelsStore {
   checkpoints = $state<string[]>([]);
@@ -42,19 +55,32 @@ class ModelsStore {
       console.log("ModelsStore: got checkpoints:", checkpoints);
       console.log("ModelsStore: got samplers:", samplerInfo);
 
-      this.checkpoints = checkpoints;
-      this.vaes = vaes;
-      this.loras = loras;
+      const mergedDiffusion = Array.from(new Set([...diffusionModels, ...unetModels]));
+      const mergedEncoders = Array.from(new Set([...textEncoders, ...clipEncoders]));
+
+      [
+        this.checkpoints,
+        this.vaes,
+        this.loras,
+        this.embeddings,
+        this.upscaleModels,
+        this.diffusionModels,
+        this.textEncoders,
+        this.controlnetModels,
+        this.ultralyticsModels,
+      ] = await Promise.all([
+        mergeWithDiskModels("checkpoints", checkpoints),
+        mergeWithDiskModels("vae", vaes),
+        mergeWithDiskModels("loras", loras),
+        mergeWithDiskModels("embeddings", embeddings),
+        mergeWithDiskModels("upscale_models", upscaleModels),
+        mergeWithDiskModels("diffusion_models", mergedDiffusion),
+        mergeWithDiskModels("text_encoders", mergedEncoders),
+        mergeWithDiskModels("controlnet", controlnetModels),
+        mergeWithDiskModels("ultralytics", ultralyticsModels),
+      ]);
       this.samplers = samplerInfo.samplers;
       this.schedulers = samplerInfo.schedulers;
-      this.embeddings = embeddings;
-      this.upscaleModels = upscaleModels;
-      this.diffusionModels = Array.from(new Set([...diffusionModels, ...unetModels]));
-      // De-duplicate by basename — ComfyUI sometimes returns the same file under
-      // both `clip` and `text_encoders` when both directories are mapped.
-      this.textEncoders = Array.from(new Set([...textEncoders, ...clipEncoders]));
-      this.controlnetModels = controlnetModels;
-      this.ultralyticsModels = ultralyticsModels;
     } catch (e) {
       console.error("Failed to refresh models:", e);
     } finally {

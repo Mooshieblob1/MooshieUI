@@ -1916,6 +1916,10 @@
             </select>
           </div>
 
+          {#if config.server_mode === "remote"}
+          <p class="text-xs text-neutral-500">{locale.t('settings.connection.mode_remote_desc')}</p>
+          {/if}
+
           {#if config.server_mode === "autolaunch"}
           <div class="flex items-center justify-between">
             <div>
@@ -1943,6 +1947,9 @@
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
                 placeholder={locale.t('settings.connection.server_url_placeholder')}
               />
+              {#if config.server_mode === "remote"}
+              <p class="text-xs text-neutral-500 mt-1">{locale.t('settings.connection.remote_url_hint')}</p>
+              {/if}
             </div>
             <div>
               <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.port')}<span class="text-amber-400">*</span></label>

@@ -1,3 +1,22 @@
+## What's New in v1.4.2
+
+### Remote / cloud ComfyUI onboarding
+- **Setup wizard remote path**: clearer copy that desktop mode skips local ComfyUI/Python/PyTorch install and connects to a public ComfyUI URL.
+- **Settings connection hints**: remote mode now shows guidance for RunPod-style proxy URLs and the MooshieUI server Docker build requirement.
+- **README cloud section**: new **Remote / cloud ComfyUI** guide for RunPod, Vast.ai, and similar deployments.
+
+### Extra model path resolution
+- **ComfyUI root normalization**: extra model paths pointing at a ComfyUI install root (with nested `models/checkpoints` etc.) now resolve to the `models` folder for structured category scanning, install dirs, and model lookup.
+- **Stability Matrix compatibility**: flat and structured extra paths from Stability Matrix-style layouts are classified correctly at ComfyUI startup.
+
+### Model picker reliability
+- **Disk + API merge**: model lists now merge ComfyUI `/models` API results with on-disk files from configured paths so checkpoints, LoRAs, and other categories show files ComfyUI has not indexed yet.
+
+### Developer tooling
+- **`npm run tauri` wrapper**: detects npm/pnpm/yarn from `npm_config_user_agent` instead of hardcoding pnpm for dev/build invocations.
+
+---
+
 ## What's New in v1.4.1
 
 ### Theme customization and branding

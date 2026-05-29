@@ -306,6 +306,20 @@ fn is_structured_model_dir(path: &std::path::Path) -> bool {
         .any(|subdir| path.join(subdir).is_dir())
 }
 
+/// When the user points at a ComfyUI install root (with `models/checkpoints`
+/// etc. nested one level down), normalize to the `models` folder so structured
+/// category subdirs resolve correctly.
+pub(crate) fn resolve_extra_model_root(path: &std::path::Path) -> std::path::PathBuf {
+    if is_structured_model_dir(path) {
+        return path.to_path_buf();
+    }
+    let nested = path.join("models");
+    if nested.is_dir() && is_structured_model_dir(&nested) {
+        return nested;
+    }
+    path.to_path_buf()
+}
+
 fn classify_flat_model_dir(path: &std::path::Path) -> &'static str {
     let name = path
         .file_name()
@@ -384,13 +398,13 @@ pub(crate) fn model_install_dirs_for_config(
 
     if let Some(extra) = extra_model_paths {
         for line in extra.lines().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            let base = std::path::Path::new(line);
+            let base = resolve_extra_model_root(std::path::Path::new(line));
             let base_label = base
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| line.to_string());
 
-            if is_structured_model_dir(base) {
+            if is_structured_model_dir(&base) {
                 for subdir in category_subdirs(category) {
                     let candidate = base.join(subdir);
                     if candidate.is_dir() {
@@ -402,7 +416,7 @@ pub(crate) fn model_install_dirs_for_config(
                         push_model_install_dir(&mut dirs, &mut seen, candidate, label);
                     }
                 }
-            } else if classify_flat_model_dir(base) == category {
+            } else if classify_flat_model_dir(&base) == category {
                 push_model_install_dir(&mut dirs, &mut seen, base.to_path_buf(), base_label);
             }
         }
@@ -2838,7 +2852,7 @@ pub(crate) fn resolve_model_path(
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
         {
-            let base = std::path::Path::new(dir);
+            let base = resolve_extra_model_root(std::path::Path::new(dir));
             // Try all known subdirectory variants for this category
             for subdir in subdirs {
                 let candidate = base.join(subdir).join(filename);

@@ -3,6 +3,14 @@ import { spawn } from "node:child_process";
 
 const args = process.argv.slice(2);
 
+/** npm, pnpm, or yarn — matches the package manager that invoked this script. */
+function packageManager() {
+  const userAgent = process.env.npm_config_user_agent ?? "";
+  if (userAgent.startsWith("pnpm")) return "pnpm";
+  if (userAgent.startsWith("yarn")) return "yarn";
+  return "npm";
+}
+
 function run(command, commandArgs) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, commandArgs, {
@@ -18,12 +26,25 @@ function run(command, commandArgs) {
   });
 }
 
+async function runBuild(pm) {
+  if (pm === "npm") {
+    await run("npm", ["run", "build"]);
+  } else {
+    await run(pm, ["build"]);
+  }
+}
+
+async function runTauri(pm, tauriArgs) {
+  await run(pm, ["exec", "tauri", ...tauriArgs]);
+}
+
 async function main() {
+  const pm = packageManager();
   const firstArg = args[0]?.toLowerCase();
   if (firstArg === "dev") {
-    await run("pnpm", ["build"]);
+    await runBuild(pm);
   }
-  await run("pnpm", ["exec", "tauri", ...args]);
+  await runTauri(pm, args);
 }
 
 main().catch((error) => {
