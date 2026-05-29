@@ -260,8 +260,12 @@ impl AppState {
                 "unet\\",
                 "diffusion_models/",
                 "diffusion_models\\",
+                "DiffusionModels/", // StabilityMatrix
+                "DiffusionModels\\",
                 "text_encoders/",
                 "text_encoders\\",
+                "TextEncoders/", // StabilityMatrix
+                "TextEncoders\\",
             ],
             "loras" => &[
                 "checkpoints/",

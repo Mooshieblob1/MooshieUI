@@ -75,7 +75,7 @@ fn is_structured_model_dir(path: &std::path::Path) -> bool {
         "checkpoints",
         "Stable-diffusion",
         "Stable-Diffusion",
-        "StableDiffusion",
+        "StableDiffusion", // StabilityMatrix
         "loras",
         "lora",
         "Lora",
@@ -91,11 +91,13 @@ fn is_structured_model_dir(path: &std::path::Path) -> bool {
         "ESRGAN",
         "embeddings",
         "controlnet",
-        "ControlNet",
+        "ControlNet", // StabilityMatrix
         "clip",
         "unet",
         "diffusion_models",
+        "DiffusionModels", // StabilityMatrix
         "text_encoders",
+        "TextEncoders", // StabilityMatrix
     ];
     KNOWN_SUBDIRS.iter().any(|sub| path.join(sub).is_dir())
 }
@@ -570,13 +572,19 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
                             "    dlbackend/comfyui/models/unet\n",
                             "  diffusion_models: |\n",
                             "    diffusion_models\n",
+                            "    DiffusionModels\n",
                             "    models/diffusion_models\n",
+                            "    models/DiffusionModels\n",
                             "    Models/diffusion_models\n",
+                            "    Models/DiffusionModels\n",
                             "    dlbackend/comfyui/models/diffusion_models\n",
                             "  text_encoders: |\n",
                             "    text_encoders\n",
+                            "    TextEncoders\n",
                             "    models/text_encoders\n",
+                            "    models/TextEncoders\n",
                             "    Models/text_encoders\n",
+                            "    Models/TextEncoders\n",
                             "    dlbackend/comfyui/models/text_encoders\n",
                         ),
                         idx = i + 1,
