@@ -2,14 +2,17 @@ import { getModels, getSamplers, getEmbeddings, listModelFiles } from "../utils/
 
 /** Merge ComfyUI /models API results with on-disk files from configured paths. */
 async function mergeWithDiskModels(category: string, apiModels: string[]): Promise<string[]> {
+  const safeApiModels = apiModels ?? [];
   try {
     const disk = await listModelFiles(category);
-    const names = disk.map((f) => f.filename);
-    return Array.from(new Set([...apiModels, ...names])).sort((a, b) =>
+    const names = (disk ?? [])
+      .filter((f) => f && typeof f.filename === "string")
+      .map((f) => f.filename);
+    return Array.from(new Set([...safeApiModels, ...names])).sort((a, b) =>
       a.localeCompare(b, undefined, { sensitivity: "base" }),
     );
   } catch {
-    return apiModels;
+    return safeApiModels;
   }
 }
 
@@ -55,8 +58,8 @@ class ModelsStore {
       console.log("ModelsStore: got checkpoints:", checkpoints);
       console.log("ModelsStore: got samplers:", samplerInfo);
 
-      const mergedDiffusion = Array.from(new Set([...diffusionModels, ...unetModels]));
-      const mergedEncoders = Array.from(new Set([...textEncoders, ...clipEncoders]));
+      const mergedDiffusion = Array.from(new Set([...(diffusionModels ?? []), ...(unetModels ?? [])]));
+      const mergedEncoders = Array.from(new Set([...(textEncoders ?? []), ...(clipEncoders ?? [])]));
 
       [
         this.checkpoints,
