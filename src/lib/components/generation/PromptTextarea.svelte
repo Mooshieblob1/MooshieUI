@@ -5,7 +5,12 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
-  import { renderHighlightedPrompt, hasSchedulingTags, hasPresetTokens } from "../../utils/promptSchedule.js";
+  import {
+    renderHighlightedPrompt,
+    hasSchedulingTags,
+    hasPresetTokens,
+    findPromptInertRangeContaining,
+  } from "../../utils/promptSchedule.js";
   import {
     getPromptClickableSegments,
     type PromptClickableSegment,
@@ -96,23 +101,22 @@
     const pos = textareaEl.selectionStart;
     const text = value;
 
-    // Check if cursor is inside a <fromto[...]...> block — if so, use block
-    // boundaries instead of comma-splitting (commas are part of fromto syntax).
-    const fromtoRe = new RegExp(`${SYNTAX_ANGLE_LOOKBEHIND}<fromto\\[[^\\]]*\\]:[^>]*>`, "g");
-    let ftMatch: RegExpExecArray | null;
-    while ((ftMatch = fromtoRe.exec(text)) !== null) {
-      const ftStart = ftMatch.index;
-      const ftEnd = ftStart + ftMatch[0].length;
-      if (pos > ftStart && pos <= ftEnd) {
-        // Cursor is inside this fromto block — use the whole block as the fragment
-        const token = text.substring(ftStart, ftEnd);
-        const leadingWhitespace = token.match(/^\s*/)?.[0].length ?? 0;
-        const trailingWhitespace = token.match(/\s*$/)?.[0].length ?? 0;
-        const trimmedStart = ftStart + leadingWhitespace;
-        const trimmedEnd = Math.max(trimmedStart, ftEnd - trailingWhitespace);
-        const fragment = text.substring(trimmedStart, trimmedEnd);
-        return { fragment, start: ftStart, end: ftEnd, trimmedStart, trimmedEnd };
-      }
+    // Scheduling, preset, LoRA, and region blocks use commas inside their syntax.
+    const inertRange = findPromptInertRangeContaining(text, pos);
+    if (inertRange) {
+      const token = text.substring(inertRange.start, inertRange.end);
+      const leadingWhitespace = token.match(/^\s*/)?.[0].length ?? 0;
+      const trailingWhitespace = token.match(/\s*$/)?.[0].length ?? 0;
+      const trimmedStart = inertRange.start + leadingWhitespace;
+      const trimmedEnd = Math.max(trimmedStart, inertRange.end - trailingWhitespace);
+      const fragment = text.substring(trimmedStart, trimmedEnd);
+      return {
+        fragment,
+        start: inertRange.start,
+        end: inertRange.end,
+        trimmedStart,
+        trimmedEnd,
+      };
     }
 
     // Find the start of the current tag (after the last comma before cursor)

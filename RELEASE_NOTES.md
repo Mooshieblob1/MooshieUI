@@ -1,3 +1,21 @@
+## What's New in v1.4.3
+
+### Prompt tag selection and highlighting
+- **Schedule block boundaries**: MooshieUI `<from|to|range:…>…</…>` and SwarmUI `<fromto[…]:…>` blocks are treated as inert ranges so commas inside scheduled text no longer break clickable tag selection.
+- **Expression tags (`:<`)**: colon-escaped angle tags (e.g. `:<`) stay clickable alongside schedule syntax, building on the v1.4.2 follow-up parser work.
+- **Weighted tags with `<` in content**: parenthetical weights like `(tag:<broken:1.2)` parse correctly for click-to-select overlays.
+- **Autocomplete in syntax blocks**: prompt autocomplete respects inert schedule, preset, LoRA, and region blocks—not only Swarm `fromto`.
+
+### Model gallery and picker
+- **Checkpoint and LoRA galleries**: richer grid cards with preview navigation, metadata actions, and sorting helpers.
+- **Model selector**: improved dropdown UX and Pony quality-tag quick actions via shared `QualityTagsEditor`.
+- **Stability Matrix paths**: extra model folders from Stability Matrix-style layouts resolve correctly.
+
+### Build and platform
+- **Arch AppImage support**: Linux packaging scripts and Tauri wrapper updates for Arch-based AppImage builds.
+
+---
+
 ## What's New in v1.4.2
 
 ### Remote / cloud ComfyUI onboarding
