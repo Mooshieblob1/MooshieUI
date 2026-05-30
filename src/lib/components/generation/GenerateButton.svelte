@@ -92,15 +92,29 @@
     );
   }
 
+  function isSequentialGenerateRun(): boolean {
+    if (compare.enabled && compare.cellCount > 1) return true;
+    if (orderedWildcardRunCount > 1) return true;
+    const regionalPromptingSupported = generation.supportsRegionalPrompting;
+    const useRegionalInpaintChain =
+      regionalPromptingSupported &&
+      generation.effectiveRegionalStrategy === "inpaint_chain";
+    if (useRegionalInpaintChain) {
+      return generation.getValidRegionalSelectionsForInpaint().length > 0;
+    }
+    return false;
+  }
+
   async function handleGenerate() {
-    if (isSubmitting) return;
+    const sequential = isSequentialGenerateRun();
+    if (sequential && isSubmitting) return;
     const runToken = ++submitRunToken;
-    isSubmitting = true;
+    if (sequential) isSubmitting = true;
     errorMsg = null;
 
     if (!generation.checkpoint) {
       errorMsg = locale.t('generation.error_no_checkpoint');
-      finishSubmitRun(runToken);
+      if (sequential) finishSubmitRun(runToken);
       return;
     }
 
@@ -280,7 +294,7 @@
         errorMsg = locale.t("generation.error_failed_message", { message });
       }
     } finally {
-      finishSubmitRun(runToken);
+      if (sequential) finishSubmitRun(runToken);
     }
   }
 

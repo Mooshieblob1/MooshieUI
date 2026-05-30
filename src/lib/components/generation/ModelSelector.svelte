@@ -64,11 +64,11 @@
 
   const recommendedModels: RecommendedModel[] = [
     {
-      label: "SIH-1.5",
-      size: "~7.5 GB",
+      label: "Juice",
+      size: "~6.9 GB",
       checkpoint: {
-        filename: "SIH-1.5.safetensors",
-        url: "https://huggingface.co/Enferlain/juice/resolve/main/noob/%CE%A3%CE%99%CE%97-1.5.safetensors",
+        filename: "Juice.safetensors",
+        url: "https://huggingface.co/Enferlain/juice/resolve/main/noob/2048/v2/21862-seele_pop3.safetensors",
         category: "checkpoints",
       },
       vaeModel: {
@@ -304,6 +304,7 @@
         generation.applyModelMetadata({
           modelspecArchitecture: spec.architecture ?? null,
           civitaiBaseModel,
+          modelspecPredictionType: spec.prediction_type ?? null,
         });
       } else {
         modelSpec = null;
@@ -311,6 +312,7 @@
         generation.applyModelMetadata({
           modelspecArchitecture: null,
           civitaiBaseModel,
+          modelspecPredictionType: null,
         });
       }
     } catch {
@@ -319,6 +321,7 @@
       generation.applyModelMetadata({
         modelspecArchitecture: null,
         civitaiBaseModel: null,
+        modelspecPredictionType: null,
       });
     } finally {
       modelSpecLoading = false;
@@ -822,7 +825,7 @@
     generation.clipModel = null;
     generation.clipType = null;
     generation.checkpoint = name;
-    generation.applyModelMetadata({ modelspecArchitecture: null, civitaiBaseModel: null });
+    generation.applyModelMetadata({ modelspecArchitecture: null, civitaiBaseModel: null, modelspecPredictionType: null });
     generation.applyModelSpecificPreset(name);
     checkpointSearch = "";
     closeCheckpointDropdown();

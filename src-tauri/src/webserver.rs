@@ -3463,6 +3463,57 @@ async fn dispatch_command(
             let val: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
             Ok(val)
         }
+        "civitai_lookup_image" => {
+            let image_ref = args["imageRef"]
+                .as_str()
+                .or_else(|| args["image_ref"].as_str())
+                .ok_or("Missing imageRef")?
+                .to_string();
+            let image_id =
+                commands::api::parse_civitai_image_id_pub(&image_ref).map_err(|e| e.to_string())?;
+            let api_key = state.config.read().await.civitai_api_key.clone();
+            let url = format!(
+                "https://civitai.com/api/v1/images?imageId={}&withMeta=true",
+                image_id
+            );
+            let mut req = state.http_client.get(&url);
+            if let Some(ref key) = api_key {
+                req = req.header("Authorization", format!("Bearer {}", key));
+            }
+            let resp = req.send().await.map_err(|e| e.to_string())?;
+            let val: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+            Ok(val)
+        }
+        "save_model_sidecar_thumbnail" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            let image_url = args
+                .get("imageUrl")
+                .or_else(|| args.get("image_url"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let gallery_filename = args
+                .get("galleryFilename")
+                .or_else(|| args.get("gallery_filename"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            commands::api::save_model_sidecar_thumbnail_inner(
+                state.as_ref(),
+                &category,
+                &filename,
+                image_url.as_deref(),
+                gallery_filename.as_deref(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
+        }
         "get_lora_civitai_info" | "get_checkpoint_civitai_info" => {
             let filename = args["filename"]
                 .as_str()
@@ -3550,38 +3601,11 @@ async fn dispatch_command(
                     serde_json::json!(modelspec.as_ref().and_then(|m| m.get("trigger_phrase")));
             }
 
-            // Sidecar thumbnail for checkpoints
+            // Sidecar thumbnail (`{stem}.png` beside the model file)
+            if let Some(sidecar) = crate::commands::api::read_model_sidecar_thumbnail_pub(&path) {
+                result["thumbnail_url"] = serde_json::json!(sidecar);
+            }
             if command == "get_checkpoint_civitai_info" {
-                if let (Some(model_dir), Some(stem)) =
-                    (path.parent(), path.file_stem().and_then(|s| s.to_str()))
-                {
-                    let candidates = [
-                        model_dir.join(format!("{}.png", stem)),
-                        model_dir.join(format!("{}.jpg", stem)),
-                        model_dir.join(format!("{}.jpeg", stem)),
-                        model_dir.join(format!("{}.preview.png", stem)),
-                        model_dir.join(format!("{}.preview.jpg", stem)),
-                    ];
-                    for candidate in &candidates {
-                        if candidate.exists() {
-                            if let Ok(bytes) = std::fs::read(candidate) {
-                                use base64::Engine as _;
-                                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                                let mime = match candidate
-                                    .extension()
-                                    .and_then(|e| e.to_str())
-                                    .unwrap_or("")
-                                {
-                                    "jpg" | "jpeg" => "image/jpeg",
-                                    _ => "image/png",
-                                };
-                                result["thumbnail_url"] =
-                                    serde_json::json!(format!("data:{};base64,{}", mime, b64));
-                            }
-                            break;
-                        }
-                    }
-                }
                 result["display_name"] =
                     serde_json::json!(modelspec.as_ref().and_then(|m| m.get("title")));
                 result["base_model"] =

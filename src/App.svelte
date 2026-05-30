@@ -41,7 +41,7 @@
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
-  import { interrogateGalleryImage, interrogateImage } from "./lib/utils/api.js";
+  import { interrogateGalleryImage, interrogateImage, saveModelSidecarThumbnail } from "./lib/utils/api.js";
   import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
@@ -777,11 +777,52 @@
     showContextMenu = true;
   }
 
+  async function setGalleryImageAsModelThumb(
+    image: OutputImage,
+    category: "checkpoints" | "loras",
+    filename: string,
+  ) {
+    if (!image.gallery_filename) {
+      gallery.showToast(locale.t("gallery.persisted_only_thumb"), "warning");
+      return;
+    }
+    try {
+      await saveModelSidecarThumbnail({
+        category,
+        filename,
+        galleryFilename: image.gallery_filename,
+      });
+      gallery.showToast(locale.t("checkpoint.sidecar_saved"), "success");
+    } catch (e) {
+      gallery.showToast(
+        locale.t("checkpoint.sidecar_failed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+        "error",
+      );
+    }
+  }
+
   const contextMenuItems = $derived.by((): ContextMenuItem[] => {
     const image = contextMenuImage;
     if (!image) return [];
-    return [
+    const items: ContextMenuItem[] = [
       { label: locale.t("gallery.get_tags"), action: () => interrogateFromGallery(image) },
+    ];
+    if (generation.checkpoint) {
+      items.push({
+        label: locale.t("gallery.use_as_checkpoint_thumb"),
+        action: () => void setGalleryImageAsModelThumb(image, "checkpoints", generation.checkpoint!),
+      });
+    }
+    const thumbLora = generation.loras.find((l) => l.enabled && l.name)?.name;
+    if (thumbLora) {
+      items.push({
+        label: locale.t("gallery.use_as_lora_thumb"),
+        action: () => void setGalleryImageAsModelThumb(image, "loras", thumbLora),
+      });
+    }
+    items.push(
       { label: "", action: () => {}, separator: true },
       { label: locale.t("gallery.img2img"), action: () => img2imgImage(image) },
       { label: locale.t("gallery.inpaint"), action: () => inpaintImage(image) },
@@ -791,7 +832,8 @@
       { label: locale.t("gallery.copy"), action: () => gallery.copyToClipboard(image) },
       { label: "", action: () => {}, separator: true },
       { label: locale.t("gallery.delete"), action: () => gallery.deleteImage(image), destructive: true },
-    ];
+    );
+    return items;
   });
 
   async function interrogateFromGallery(image: OutputImage) {
@@ -2923,21 +2965,7 @@
     onkeydown={(e) => { if (e.key === 'Escape') artistInsert.dismiss(); }}
   >
     <div class="w-96 max-w-full rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
-      {#if artistInsertPending.duplicate}
-        <h2 class="mb-1 text-sm font-semibold text-neutral-100">{locale.t("artist_insert.tag_duplicate_title")}</h2>
-        <p class="mb-3 text-xs text-neutral-400">
-          {locale.t("artist_insert.tag_duplicate_body", { tag: artistInsertPending.tag })}
-        </p>
-        <div class="flex justify-end gap-2">
-          <button
-            type="button"
-            class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-neutral-500"
-            onclick={() => artistInsert.dismiss()}
-          >
-            {locale.t("common.ok")}
-          </button>
-        </div>
-      {:else}
+      {#if !artistInsertPending.duplicate}
         <h2 class="mb-1 text-sm font-semibold text-neutral-100">{locale.t("artist_insert.artist_duplicate_title")}</h2>
         <p class="mb-3 text-xs text-neutral-400">
           {locale.t("artist_insert.artist_duplicate_body", {

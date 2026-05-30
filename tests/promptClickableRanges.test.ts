@@ -78,3 +78,18 @@ test("leaves scheduling and preset syntax inert while keeping normal tags clicka
     { kind: "tag", clickable: true, text: "green hair" },
   ]);
 });
+
+test("treats colon-escaped expression tags like :< as normal clickable tags", () => {
+  const raw = "1girl, :<, smile";
+  const summary = summarize(getPromptClickableSegments(raw), raw);
+
+  assert.deepEqual(summary, [
+    { kind: "tag", clickable: true, text: "1girl" },
+    { kind: "text", clickable: false, text: "," },
+    { kind: "text", clickable: false, text: " " },
+    { kind: "tag", clickable: true, text: ":<" },
+    { kind: "text", clickable: false, text: "," },
+    { kind: "text", clickable: false, text: " " },
+    { kind: "tag", clickable: true, text: "smile" },
+  ]);
+});

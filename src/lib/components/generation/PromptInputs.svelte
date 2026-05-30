@@ -8,7 +8,6 @@
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
-  import QualityTagsEditor from "../settings/QualityTagsEditor.svelte";
   import { parseScheduledPrompt, hasRegionalTags, hasSchedulingTags } from "../../utils/promptSchedule.js";
 
   interface Props {
@@ -23,16 +22,11 @@
   const hasRegionalPrompting = $derived(
     hasRegionalTags(generation.positivePrompt) || generation.regionalPrompts.length > 0,
   );
-  const qualityTagsSupported = $derived(
-    generation.isAnima || generation.isIllustrious || generation.isPony || generation.isNanosaur,
-  );
-  const qualityTagsApplied = $derived(qualityTagsSupported && generation.autoQualityTags);
   const hasNegativeSchedule = $derived(hasSchedulingTags(generation.negativePrompt));
   const hasAnySchedule = $derived(hasPositiveSchedule || hasNegativeSchedule);
   const positiveSegments = $derived(hasPositiveSchedule ? parseScheduledPrompt(generation.positivePrompt).segments : []);
   const negativeSegments = $derived(hasNegativeSchedule ? parseScheduledPrompt(generation.negativePrompt).segments : []);
   let schedulePanelOpen = $state(true);
-  let showQualityTagsModal = $state(false);
 
   /** Artist tags detected in the current positive prompt. */
   const detectedArtists = $derived.by(() => {
@@ -59,19 +53,6 @@
     });
   }
 
-  function focusOnMount(node: HTMLElement) {
-    node.focus();
-  }
-
-  function toggleQualityTags() {
-    generation.autoQualityTags = !generation.autoQualityTags;
-    generation.saveSettings();
-  }
-
-  function openQualityTagsModalFromContextMenu(event: MouseEvent) {
-    event.preventDefault();
-    showQualityTagsModal = true;
-  }
 </script>
 
 <div class="space-y-2">
@@ -95,20 +76,8 @@
         <label class="text-xs text-neutral-400">{locale.t('generation.prompts.positive')}<InfoTip text={locale.t('generation.prompts.positive_tip')} /></label>
       </div>
       <div class="flex items-center justify-end gap-1.5 flex-wrap min-w-0">
-      {#if qualityTagsSupported}
-        <button
-          type="button"
-          onclick={toggleQualityTags}
-          oncontextmenu={openQualityTagsModalFromContextMenu}
-          class="shrink-0 text-[10px] px-2 py-0.5 rounded-full border transition-colors cursor-pointer {qualityTagsApplied
-            ? 'bg-emerald-600/20 text-emerald-400 border-emerald-600/30 hover:bg-emerald-600/30'
-            : 'bg-red-600/15 text-red-300 border-red-600/30 hover:bg-red-600/25'}"
-          title={locale.t('generation.prompts.quality_badge_hint')}
-        >
-          {qualityTagsApplied
-            ? locale.t('generation.prompts.quality_applied')
-            : locale.t('generation.prompts.quality_disabled')}
-        </button>
+      {#if generation.isAnima || generation.isIllustrious}
+        <span class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">{locale.t('generation.prompts.quality_applied')}</span>
       {/if}
       {#each styles.activeStyles as activeStyle (activeStyle.id)}
         <button
@@ -317,35 +286,3 @@
     </div>
   {/if}
 </div>
-
-{#if showQualityTagsModal}
-  <div
-    use:focusOnMount
-    tabindex="-1"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 outline-none"
-    role="dialog"
-    aria-modal="true"
-    aria-label={locale.t('settings.performance.custom_quality_tags')}
-    onclick={(e) => { if (e.target === e.currentTarget) showQualityTagsModal = false; }}
-    onkeydown={(e) => { if (e.key === 'Escape') showQualityTagsModal = false; }}
-  >
-    <div class="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 p-4 shadow-2xl">
-      <div class="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <h3 class="text-sm font-semibold text-neutral-100">{locale.t('settings.performance.custom_quality_tags')}</h3>
-          <p class="mt-1 text-[10px] text-neutral-500">{locale.t('settings.performance.custom_quality_tags_desc')}</p>
-        </div>
-        <button
-          type="button"
-          onclick={() => { showQualityTagsModal = false; }}
-          class="rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 hover:border-neutral-600 transition-colors"
-        >
-          {locale.t('common.close')}
-        </button>
-      </div>
-      <div class="min-h-0 overflow-y-auto pr-1">
-        <QualityTagsEditor />
-      </div>
-    </div>
-  </div>
-{/if}

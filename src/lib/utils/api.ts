@@ -203,6 +203,27 @@ export async function civitaiLookupHash(
   return ipcInvoke("civitai_lookup_hash", { hash });
 }
 
+/** CivitAI image page URL or numeric image id. Returns API payload with `meta` when available. */
+export async function civitaiLookupImage(
+  imageRef: string,
+): Promise<{ items?: Array<{ meta?: Record<string, unknown>; url?: string }> }> {
+  return ipcInvoke("civitai_lookup_image", { imageRef });
+}
+
+export async function saveModelSidecarThumbnail(opts: {
+  category: "checkpoints" | "loras";
+  filename: string;
+  imageUrl?: string;
+  galleryFilename?: string;
+}): Promise<void> {
+  return ipcInvoke("save_model_sidecar_thumbnail", {
+    category: opts.category,
+    filename: opts.filename,
+    imageUrl: opts.imageUrl,
+    galleryFilename: opts.galleryFilename,
+  });
+}
+
 /** CivitAI `baseModel` for a version hash, or null if not found / lookup failed. */
 export async function lookupCivitaiBaseModel(hash: string): Promise<string | null> {
   try {
@@ -523,6 +544,8 @@ export interface LoraCivitaiImage {
 export interface LoraCivitaiInfo {
   filename: string;
   hash?: string;
+  /** "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or undefined. */
+  thumbnail_url?: string;
   civitai_name?: string;
   civitai_description?: string;
   civitai_model_id?: number;

@@ -10,6 +10,7 @@
     getPromptClickableSegments,
     type PromptClickableSegment,
   } from "../../utils/promptClickableRanges.js";
+  import { SYNTAX_ANGLE_LOOKBEHIND } from "../../utils/promptSyntaxEscape.js";
 
   interface Props {
     value: string;
@@ -97,7 +98,7 @@
 
     // Check if cursor is inside a <fromto[...]...> block — if so, use block
     // boundaries instead of comma-splitting (commas are part of fromto syntax).
-    const fromtoRe = /<fromto\[[^\]]*\]:[^>]*>/g;
+    const fromtoRe = new RegExp(`${SYNTAX_ANGLE_LOOKBEHIND}<fromto\\[[^\\]]*\\]:[^>]*>`, "g");
     let ftMatch: RegExpExecArray | null;
     while ((ftMatch = fromtoRe.exec(text)) !== null) {
       const ftStart = ftMatch.index;
@@ -147,9 +148,9 @@
     // MooshieUI: <from:0.2>tag</from>, <to:0.8>tag</to>, <range:0.2:0.8>tag</range>
     // SwarmUI:   <fromto[0.5]:before, after>
     searchFragment = searchFragment
-      .replace(/^<(?:from|to|range):[\d.]+(?::[\d.]+)?>/i, "")
+      .replace(new RegExp(`^${SYNTAX_ANGLE_LOOKBEHIND}<(?:from|to|range):[\\d.]+(?::[\\d.]+)?>`, "i"), "")
       .replace(/<\/(?:from|to|range)>$/i, "")
-      .replace(/^<fromto\[[\d.]+\]:/i, "")
+      .replace(new RegExp(`^${SYNTAX_ANGLE_LOOKBEHIND}<fromto\\[[\\d.]+\\]:`, "i"), "")
       .replace(/>$/i, "");
 
     if (searchFragment.length < 1) {
@@ -211,14 +212,18 @@
 
     // Detect scheduling wrapper in the current fragment and preserve it
     // MooshieUI XML syntax: <from:0.2>tag</from>
-    const schedPrefixMatch = result.fragment.match(/^(<(from|to|range):[\d.]+(?::[\d.]+)?>)/i);
+    const schedPrefixMatch = result.fragment.match(
+      new RegExp(`^(${SYNTAX_ANGLE_LOOKBEHIND}<(from|to|range):[\\d.]+(?::[\\d.]+)?>)`, "i"),
+    );
     const schedSuffixMatch = result.fragment.match(/(<\/(from|to|range)>)$/i);
     const schedPrefix = schedPrefixMatch?.[1] ?? "";
     const schedType = schedPrefixMatch?.[2] ?? "";
     // Auto-close if there's an open tag but no closing tag yet
     const schedSuffix = schedSuffixMatch?.[1] ?? (schedType ? `</${schedType}>` : "");
     // SwarmUI syntax: <fromto[0.5]:tag — preserve the prefix (no closing tag needed)
-    const swarmPrefixMatch = !schedPrefix ? result.fragment.match(/^(<fromto\[[\d.]+\]:)/i) : null;
+    const swarmPrefixMatch = !schedPrefix
+      ? result.fragment.match(new RegExp(`^(${SYNTAX_ANGLE_LOOKBEHIND}<fromto\\[[\\d.]+\\]:)`, "i"))
+      : null;
     const swarmPrefix = swarmPrefixMatch?.[1] ?? "";
     // Trailing > from SwarmUI second entry (e.g. "blue eyes>")
     const swarmSuffix = !schedSuffix && result.fragment.match(/>$/) ? ">" : "";

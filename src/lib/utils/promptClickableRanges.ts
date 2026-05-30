@@ -17,15 +17,13 @@ interface OpenToken {
   char: "(" | "{" | "[";
 }
 
-const WEIGHT_SUFFIX_RE = /^\d*\.?\d+$/;
+import {
+  hasUnescapedSyntaxAngles,
+  isBackslashEscaped,
+  isSyntaxAngleOpen,
+} from "./promptSyntaxEscape.ts";
 
-function isEscaped(raw: string, index: number): boolean {
-  let slashCount = 0;
-  for (let i = index - 1; i >= 0 && raw[i] === "\\"; i--) {
-    slashCount += 1;
-  }
-  return slashCount % 2 === 1;
-}
+const WEIGHT_SUFFIX_RE = /^\d*\.?\d+$/;
 
 function pushSegment(
   segments: PromptClickableSegment[],
@@ -47,7 +45,7 @@ function isWeightedExpression(raw: string, start: number, end: number): boolean 
   let angleDepth = 0;
 
   for (let i = start + 1; i < end - 1; i++) {
-    if (isEscaped(raw, i)) continue;
+    if (isBackslashEscaped(raw, i)) continue;
 
     const ch = raw[i];
     if (ch === "(") {
@@ -74,7 +72,7 @@ function isWeightedExpression(raw: string, start: number, end: number): boolean 
       braceDepth -= 1;
       continue;
     }
-    if (ch === "<") {
+    if (isSyntaxAngleOpen(raw, i)) {
       angleDepth += 1;
       continue;
     }
@@ -116,10 +114,10 @@ function getWeightedRanges(raw: string): Range[] {
     raw.slice(start + 1, end - 1).trim().length > 0;
 
   for (let i = 0; i < raw.length; i++) {
-    if (isEscaped(raw, i)) continue;
+    if (isBackslashEscaped(raw, i)) continue;
 
     const ch = raw[i];
-    if (ch === "<") {
+    if (isSyntaxAngleOpen(raw, i)) {
       angleDepth += 1;
       continue;
     }
@@ -172,9 +170,9 @@ function getWeightedRanges(raw: string): Range[] {
 function isPlainClickableToken(token: string): boolean {
   const trimmed = token.trim();
   if (!trimmed) return false;
-  if (trimmed.includes("<") || trimmed.includes(">")) return false;
   if (trimmed.toLowerCase().startsWith("@preset:")) return false;
-  return /[A-Za-z0-9_@]/.test(trimmed);
+  if (hasUnescapedSyntaxAngles(trimmed)) return false;
+  return true;
 }
 
 function pushGapSegments(segments: PromptClickableSegment[], raw: string, start: number, end: number) {
@@ -212,7 +210,7 @@ function pushGapSegments(segments: PromptClickableSegment[], raw: string, start:
   };
 
   for (let i = start; i < end; i++) {
-    if (!isEscaped(raw, i)) {
+    if (!isBackslashEscaped(raw, i)) {
       const ch = raw[i];
       if (ch === "(") parenDepth += 1;
       else if (ch === ")" && parenDepth > 0) parenDepth -= 1;
@@ -220,7 +218,7 @@ function pushGapSegments(segments: PromptClickableSegment[], raw: string, start:
       else if (ch === "]" && bracketDepth > 0) bracketDepth -= 1;
       else if (ch === "{") braceDepth += 1;
       else if (ch === "}" && braceDepth > 0) braceDepth -= 1;
-      else if (ch === "<") angleDepth += 1;
+      else if (isSyntaxAngleOpen(raw, i)) angleDepth += 1;
       else if (ch === ">" && angleDepth > 0) angleDepth -= 1;
       else if (
         ch === "," &&

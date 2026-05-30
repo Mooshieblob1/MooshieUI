@@ -8,6 +8,7 @@ import {
 } from "../utils/promptSchedule.js";
 import {
   modelNamesIndicateIllustrious,
+  modelNamesIndicateVpredZsnr,
   signalsIndicateAnima,
 } from "../utils/modelFamily.js";
 import type {
@@ -165,6 +166,35 @@ interface StylePreset {
   negative: string;
 }
 
+/** Signature/watermark tags merged into default negative quality and style presets. */
+export const STANDARD_NEGATIVE_SIGNATURE_TAGS =
+  "watermark, patreon username, patreon logo, artist name, artist logo, copyright name, copyright notice";
+
+function splitPromptTags(text: string): string[] {
+  return text
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
+function appendMissingNegativeTags(base: string): string {
+  const trimmed = base.trim();
+  if (!trimmed) return trimmed;
+
+  const seen = new Set(splitPromptTags(trimmed).map((tag) => tag.toLowerCase()));
+  const merged = [...splitPromptTags(trimmed)];
+
+  for (const tag of splitPromptTags(STANDARD_NEGATIVE_SIGNATURE_TAGS)) {
+    const normalized = tag.toLowerCase();
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      merged.push(tag);
+    }
+  }
+
+  return merged.join(", ");
+}
+
 interface PromptHistoryEntry {
   id: string;
   positivePrompt: string;
@@ -186,49 +216,57 @@ const STYLE_PRESETS: StylePreset[] = [
     id: "anime",
     label: "Anime",
     positive: "anime style, vibrant colors, clean linework, detailed illustration",
-    negative: "photo, realistic skin texture, grainy"
+    negative: appendMissingNegativeTags("photo, realistic skin texture, grainy"),
   },
   {
     id: "cinematic",
     label: "Cinematic",
     positive: "cinematic lighting, dramatic composition, film still, volumetric light",
-    negative: "flat lighting, low contrast"
+    negative: appendMissingNegativeTags("flat lighting, low contrast"),
   },
   {
     id: "photoreal",
     label: "Photoreal",
     positive: "photorealistic, ultra-detailed, natural lighting, high dynamic range",
-    negative: "cartoon, anime, painting, cgi"
+    negative: appendMissingNegativeTags("cartoon, anime, painting, cgi"),
   },
   {
     id: "digital_art",
     label: "Digital Art",
     positive: "digital painting, concept art, painterly details, high detail",
-    negative: "low detail, flat colors"
+    negative: appendMissingNegativeTags("low detail, flat colors"),
   },
   {
     id: "line_art",
     label: "Line Art",
     positive: "line art, clean outlines, monochrome illustration",
-    negative: "heavy shading, photorealistic texture, noisy background"
+    negative: appendMissingNegativeTags("heavy shading, photorealistic texture, noisy background"),
   },
 ];
 
 /** Default quality tags for Anima models */
 export const DEFAULT_ANIMA_POSITIVE_QUALITY = "newest, masterpiece, best quality, score_9, score_8, safe, highres";
-export const DEFAULT_ANIMA_NEGATIVE_QUALITY = "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia";
+export const DEFAULT_ANIMA_NEGATIVE_QUALITY = appendMissingNegativeTags(
+  "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia",
+);
 
 /** Default quality tags for Illustrious/NoobAI family models (SIH, NoobAI vpred, etc.) */
 export const DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY = "best quality, masterpiece, absurdres, newest, very aesthetic";
-export const DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY = "worst quality, bad quality, low quality, lowres, artistic error, bad anatomy, extra fingers, text, signature, watermark, long body, bad hands, cropped, username";
+export const DEFAULT_ILLUSTRIOUS_NEGATIVE_QUALITY = appendMissingNegativeTags(
+  "worst quality, bad quality, low quality, lowres, artistic error, bad anatomy, extra fingers, text, signature, watermark, long body, bad hands, cropped, username",
+);
 
 /** Default quality tags for Pony Diffusion models */
 export const DEFAULT_PONY_POSITIVE_QUALITY = "score_9, score_8_up, score_7_up, source_anime";
-export const DEFAULT_PONY_NEGATIVE_QUALITY = "score_1, score_2, score_3, worst quality, low quality";
+export const DEFAULT_PONY_NEGATIVE_QUALITY = appendMissingNegativeTags(
+  "score_1, score_2, score_3, worst quality, low quality",
+);
 
 /** Default quality tags for Nanosaur models */
 export const DEFAULT_NANOSAUR_POSITIVE_QUALITY = "newest, masterpiece, best quality, absurdres";
-export const DEFAULT_NANOSAUR_NEGATIVE_QUALITY = "oldest, low quality, cartoon, blurry, sketch, monochrome, flat color, text, watermark";
+export const DEFAULT_NANOSAUR_NEGATIVE_QUALITY = appendMissingNegativeTags(
+  "oldest, low quality, cartoon, blurry, sketch, monochrome, flat color, text, watermark",
+);
 
 class GenerationStore {
   _mode = $state<GenerationMode>("txt2img");
@@ -333,6 +371,8 @@ class GenerationStore {
   modelspecArchitecture = $state<string | null>(null);
   /** CivitAI `baseModel` from hash lookup — used to detect Anima fine-tunes without "anima" in the filename. */
   civitaiBaseModel = $state<string | null>(null);
+  /** ModelSpec prediction type (e.g. v-prediction) when available. */
+  modelspecPredictionType = $state<string | null>(null);
 
   get mode(): GenerationMode {
     return this._mode;
@@ -468,6 +508,7 @@ class GenerationStore {
   applyModelMetadata(meta: {
     modelspecArchitecture?: string | null;
     civitaiBaseModel?: string | null;
+    modelspecPredictionType?: string | null;
   }) {
     if (meta.modelspecArchitecture !== undefined) {
       this.modelspecArchitecture = meta.modelspecArchitecture;
@@ -475,7 +516,19 @@ class GenerationStore {
     if (meta.civitaiBaseModel !== undefined) {
       this.civitaiBaseModel = meta.civitaiBaseModel;
     }
+    if (meta.modelspecPredictionType !== undefined) {
+      this.modelspecPredictionType = meta.modelspecPredictionType;
+    }
     autocomplete.notifyModelChanged(this.isAnima);
+  }
+
+  /** True when the selected model needs ModelSamplingDiscrete (v_prediction + zsnr). */
+  get needsVpredZsnrSampling(): boolean {
+    return modelNamesIndicateVpredZsnr(
+      this.checkpoint,
+      this.diffusionModel,
+      this.modelspecPredictionType,
+    );
   }
 
   /** SDXL/Illustrious area conditioning (ConditioningSetArea). */
@@ -560,7 +613,7 @@ class GenerationStore {
       // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
       if (name.includes("mugen")) return "mugen";
       // Illustrious/NoobAI family (they report as SDXL arch but need special ControlNets)
-      if (name.includes("illustrious") || name.includes("noobai") || name.includes("noob") || name.includes("sih")) return "illustrious";
+      if (name.includes("illustrious") || name.includes("noobai") || name.includes("noob") || name.includes("sih") || name.includes("juice") || name.includes("seele")) return "illustrious";
       // Pony (SDXL-based but very different optimal settings)
       if (name.includes("pony")) return "pony";
       // SD3 / SD3.5 family
@@ -590,7 +643,7 @@ class GenerationStore {
     // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
     if (name.includes("mugen")) return "mugen";
     // Illustrious/NoobAI/vpred SDXL variants
-    if (name.includes("illustrious") || name.includes("noobai") || name.includes("noob") || name.includes("sih")) return "illustrious";
+    if (name.includes("illustrious") || name.includes("noobai") || name.includes("noob") || name.includes("sih") || name.includes("juice") || name.includes("seele")) return "illustrious";
     // Pony Diffusion (check before SDXL — pony names often contain "xl")
     if (name.includes("pony")) return "pony";
     // SD3 / SD3.5 family (check before SDXL)
@@ -876,8 +929,8 @@ class GenerationStore {
       return;
     }
 
-    // Standard SDXL (including Illustrious/SIH) — with accelerated variant detection
-    if (name.includes("sdxl") || name.includes("sih") || name.includes("xl")) {
+    // Standard SDXL (including Illustrious/Juice/SIH) — with accelerated variant detection
+    if (name.includes("sdxl") || name.includes("sih") || name.includes("juice") || name.includes("seele") || name.includes("xl")) {
       const isAccel = name.includes("turbo") || name.includes("lightning") || name.includes("lcm") || name.includes("hyper");
       this.steps = isAccel ? 6 : 20;
       this.cfg = isAccel ? 2.0 : 1.4;
@@ -1498,6 +1551,7 @@ class GenerationStore {
       facefix_guide_size: this.facefixGuideSize,
       facefix_max_faces: this.facefixMaxFaces,
       model_architecture: this.detectedArchitecture,
+      needs_vpred_zsnr_sampling: this.needsVpredZsnrSampling,
       output_bit_depth: this.outputBitDepth,
       output_format: this.outputFormat,
       style_transfer_enabled: this.styleTransferEnabled,
@@ -1567,8 +1621,10 @@ class GenerationStore {
     }
     if (this.checkpoint) return;
 
-    // Look for the default SIH checkpoint
-    const defaultCkpt = checkpoints.find((c) => c.includes("SIH-1.5"));
+    // Look for the default Juice checkpoint (SIH successor), then legacy SIH installs
+    const defaultCkpt =
+      checkpoints.find((c) => c.toLowerCase().includes("juice")) ??
+      checkpoints.find((c) => c.includes("SIH-1.5"));
     if (defaultCkpt) {
       this.checkpoint = defaultCkpt;
       this.samplerName = "euler_cfg_pp";

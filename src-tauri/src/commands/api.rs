@@ -348,7 +348,8 @@ fn classify_flat_model_dir(path: &std::path::Path) -> &'static str {
     } else if name.contains("clip")
         || name.contains("text_encoder")
         || name.contains("text-encoder")
-        || name.contains("textencoder") // StabilityMatrix
+        || name.contains("textencoder")
+    // StabilityMatrix
     {
         "text_encoders"
     } else if name.contains("unet") || name.contains("diffusion") {
@@ -2288,6 +2289,166 @@ pub async fn civitai_lookup_hash(
     Ok(data)
 }
 
+/// Parse a CivitAI image id from a numeric string or `https://civitai.com/images/{id}` URL.
+pub(crate) fn parse_civitai_image_id_pub(image_ref: &str) -> Result<u64, AppError> {
+    parse_civitai_image_id(image_ref)
+}
+
+fn parse_civitai_image_id(image_ref: &str) -> Result<u64, AppError> {
+    let trimmed = image_ref.trim();
+    if let Ok(id) = trimmed.parse::<u64>() {
+        return Ok(id);
+    }
+    const MARKER: &str = "/images/";
+    if let Some(pos) = trimmed.find(MARKER) {
+        let rest = &trimmed[pos + MARKER.len()..];
+        let id_str = rest.split(&['/', '?', '#'][..]).next().unwrap_or("").trim();
+        if let Ok(id) = id_str.parse::<u64>() {
+            return Ok(id);
+        }
+    }
+    Err(AppError::Other(format!(
+        "Could not parse CivitAI image id from {:?}",
+        image_ref
+    )))
+}
+
+/// Look up a CivitAI image by id (or image page URL) and return generation metadata when available.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn civitai_lookup_image(
+    state: State<'_, Arc<AppState>>,
+    image_ref: String,
+) -> Result<Value, AppError> {
+    let image_id = parse_civitai_image_id(&image_ref)?;
+    let api_key = state.config.read().await.civitai_api_key.clone();
+    let url = format!(
+        "https://civitai.com/api/v1/images?imageId={}&withMeta=true",
+        image_id
+    );
+    let mut req = state
+        .http_client
+        .get(&url)
+        .header("User-Agent", "MooshieUI/0.5.7");
+    if let Some(key) = api_key.filter(|v| !v.trim().is_empty()) {
+        req = req.bearer_auth(key);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| AppError::Other(format!("CivitAI image lookup failed: {}", e)))?;
+
+    if resp.status() == 404 {
+        return Err(AppError::Other("Image not found on CivitAI".into()));
+    }
+    if !resp.status().is_success() {
+        return Err(AppError::Other(format!(
+            "CivitAI returned status {}",
+            resp.status()
+        )));
+    }
+
+    let data: Value = resp
+        .json()
+        .await
+        .map_err(|e| AppError::Other(format!("Failed to parse CivitAI response: {}", e)))?;
+    Ok(data)
+}
+
+/// Write a PNG sidecar preview next to a checkpoint or LoRA file (`{stem}.png`).
+pub(crate) async fn save_model_sidecar_thumbnail_inner(
+    state: &AppState,
+    category: &str,
+    filename: &str,
+    image_url: Option<&str>,
+    gallery_filename: Option<&str>,
+) -> Result<(), AppError> {
+    let bytes = if let Some(gf) = gallery_filename.filter(|s| !s.is_empty()) {
+        load_gallery_image_png(gf.to_string()).await?
+    } else if let Some(url) = image_url.filter(|s| !s.is_empty()) {
+        let civitai_api_key = state.config.read().await.civitai_api_key.clone();
+        let mut req = state
+            .http_client
+            .get(url)
+            .header("User-Agent", "MooshieUI/0.5.7");
+        if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
+            req = req.bearer_auth(key);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("Image fetch failed: {}", e)))?;
+        if !resp.status().is_success() {
+            return Err(AppError::Other(format!(
+                "Image fetch returned HTTP {}",
+                resp.status()
+            )));
+        }
+        resp.bytes()
+            .await
+            .map_err(|e| AppError::Other(format!("Failed to read image bytes: {}", e)))?
+            .to_vec()
+    } else {
+        return Err(AppError::Other(
+            "Provide image_url or gallery_filename".into(),
+        ));
+    };
+
+    let (comfyui_path, extra_model_paths) = {
+        let config = state.config.read().await;
+        if config.comfyui_path.is_empty() {
+            return Err(AppError::Other("ComfyUI path not configured".into()));
+        }
+        (
+            config.comfyui_path.clone(),
+            config.extra_model_paths.clone(),
+        )
+    };
+
+    let path = resolve_model_path(
+        &comfyui_path,
+        extra_model_paths.as_deref(),
+        category,
+        filename,
+    )
+    .ok_or_else(|| AppError::Other(format!("Model file not found: {}", filename)))?;
+
+    let model_dir = path
+        .parent()
+        .ok_or_else(|| AppError::Other("Model path has no parent directory".into()))?;
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| AppError::Other("Invalid model filename".into()))?;
+
+    let out_path = model_dir.join(format!("{}.png", stem));
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
+    img.save(&out_path)
+        .map_err(|e| AppError::Other(format!("Failed to write sidecar thumbnail: {}", e)))?;
+
+    Ok(())
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn save_model_sidecar_thumbnail(
+    state: State<'_, Arc<AppState>>,
+    category: String,
+    filename: String,
+    image_url: Option<String>,
+    gallery_filename: Option<String>,
+) -> Result<(), AppError> {
+    save_model_sidecar_thumbnail_inner(
+        state.inner(),
+        &category,
+        &filename,
+        image_url.as_deref(),
+        gallery_filename.as_deref(),
+    )
+    .await
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn civitai_search_models(
@@ -2591,9 +2752,11 @@ pub(crate) fn read_safetensors_modelspec(
 
     let mut result = std::collections::HashMap::new();
     for (key, value) in metadata {
-        if let Some(field) = key.strip_prefix("modelspec.") {
-            if let Some(s) = value.as_str() {
+        if let Some(s) = value.as_str() {
+            if let Some(field) = key.strip_prefix("modelspec.") {
                 result.insert(field.to_string(), s.to_string());
+            } else if key == "prediction_type" && !result.contains_key("prediction_type") {
+                result.insert("prediction_type".to_string(), s.to_string());
             }
         }
     }
@@ -2700,11 +2863,45 @@ fn infer_architecture_from_keys(header: &serde_json::Map<String, Value>) -> Opti
     None
 }
 
+/// Read `{stem}.png` / `.jpg` sidecar preview next to a model file, if present.
+pub(crate) fn read_model_sidecar_thumbnail_pub(path: &std::path::Path) -> Option<String> {
+    read_model_sidecar_thumbnail(path)
+}
+
+fn read_model_sidecar_thumbnail(path: &std::path::Path) -> Option<String> {
+    let model_dir = path.parent()?;
+    let stem = path.file_stem()?.to_str()?;
+    let candidates = [
+        model_dir.join(format!("{}.png", stem)),
+        model_dir.join(format!("{}.jpg", stem)),
+        model_dir.join(format!("{}.jpeg", stem)),
+        model_dir.join(format!("{}.preview.png", stem)),
+        model_dir.join(format!("{}.preview.jpg", stem)),
+    ];
+    for candidate in &candidates {
+        if candidate.exists() {
+            if let Ok(bytes) = std::fs::read(candidate) {
+                use base64::Engine as _;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                let mime = match candidate.extension().and_then(|e| e.to_str()).unwrap_or("") {
+                    "jpg" | "jpeg" => "image/jpeg",
+                    _ => "image/png",
+                };
+                return Some(format!("data:{};base64,{}", mime, b64));
+            }
+            break;
+        }
+    }
+    None
+}
+
 /// Combined LoRA information from ModelSpec + CivitAI.
 #[derive(Debug, Serialize)]
 pub struct LoraCivitaiInfo {
     pub filename: String,
     pub hash: Option<String>,
+    /// "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or None.
+    pub thumbnail_url: Option<String>,
     pub civitai_name: Option<String>,
     pub civitai_description: Option<String>,
     pub civitai_model_id: Option<u64>,
@@ -2937,6 +3134,8 @@ pub async fn get_lora_civitai_info(
 
     log::debug!("Resolved LoRA '{}' → {:?}", filename, path);
 
+    let sidecar_thumbnail = read_model_sidecar_thumbnail(&path);
+
     // Read modelspec in parallel-friendly manner (sync I/O in blocking task)
     let modelspec = if filename.ends_with(".safetensors") {
         read_safetensors_modelspec(&path).ok().flatten()
@@ -2968,6 +3167,7 @@ pub async fn get_lora_civitai_info(
     let mut info = LoraCivitaiInfo {
         filename: filename.clone(),
         hash: Some(autov2),
+        thumbnail_url: sidecar_thumbnail,
         civitai_name: None,
         civitai_description: None,
         civitai_model_id: None,
@@ -3057,6 +3257,10 @@ pub async fn get_lora_civitai_info(
                                 })
                         })
                         .collect();
+
+                    if info.thumbnail_url.is_none() {
+                        info.thumbnail_url = info.civitai_images.first().map(|i| i.url.clone());
+                    }
                 }
 
                 // Stats from parent model
@@ -3119,34 +3323,7 @@ pub async fn get_checkpoint_civitai_info(
         None
     };
 
-    // Check for sidecar thumbnails — prefer local preview but do NOT return early;
-    // we still need the hash + CivitAI call for model name, description, and stats.
-    let mut sidecar_thumbnail: Option<String> = None;
-    if let (Some(model_dir), Some(stem)) =
-        (path.parent(), path.file_stem().and_then(|s| s.to_str()))
-    {
-        let candidates = [
-            model_dir.join(format!("{}.png", stem)),
-            model_dir.join(format!("{}.jpg", stem)),
-            model_dir.join(format!("{}.jpeg", stem)),
-            model_dir.join(format!("{}.preview.png", stem)),
-            model_dir.join(format!("{}.preview.jpg", stem)),
-        ];
-        for candidate in &candidates {
-            if candidate.exists() {
-                if let Ok(bytes) = std::fs::read(candidate) {
-                    use base64::Engine as _;
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                    let mime = match candidate.extension().and_then(|e| e.to_str()).unwrap_or("") {
-                        "jpg" | "jpeg" => "image/jpeg",
-                        _ => "image/png",
-                    };
-                    sidecar_thumbnail = Some(format!("data:{};base64,{}", mime, b64));
-                }
-                break; // stop after first readable candidate
-            }
-        }
-    }
+    let sidecar_thumbnail = read_model_sidecar_thumbnail(&path);
 
     let mut info = CheckpointCivitaiInfo {
         filename: filename.clone(),

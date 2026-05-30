@@ -151,6 +151,9 @@ pub struct GenerationParams {
     /// Detected model architecture from the frontend (e.g. "sd3", "sdxl", "sd15", "illustrious", "unknown")
     #[serde(default)]
     pub model_architecture: String,
+    /// When true, patch the model with ModelSamplingDiscrete (v_prediction + zsnr) before sampling.
+    #[serde(default)]
+    pub needs_vpred_zsnr_sampling: bool,
     /// Whether the model uses rectified flow scheduling (detected from filename or architecture)
     #[serde(default)]
     pub uses_rectified_flow: bool,

@@ -6,8 +6,20 @@
     type LoraPresetApplyMode,
   } from "../../stores/loraPresets.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { getLoraCivitaiInfo, fetchCachedImage, type LoraCivitaiInfo } from "../../utils/api.js";
+  import {
+    civitaiLookupImage,
+    fetchCachedImage,
+    getLoraCivitaiInfo,
+    saveModelSidecarThumbnail,
+    type LoraCivitaiInfo,
+  } from "../../utils/api.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
+  import {
+    inferLoraFamily,
+    sortModelFilenames,
+    type ModelGallerySort,
+  } from "../../utils/modelGallerySort.js";
 
   interface Props {
     cardSize?: number;
@@ -16,8 +28,9 @@
 
   let { cardSize = 120, onCardSizeChange }: Props = $props();
 
-  const CACHE_KEY = "mooshieui.lora.civitai.cache.v2";
+  const CACHE_KEY = "mooshieui.lora.civitai.cache.v3";
   const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+  const SORT_KEY = "mooshieui.lora.gallery.sort.v1";
 
   interface CacheEntry {
     data: LoraCivitaiInfo;
@@ -30,6 +43,11 @@
     return !!(d.civitai_name || d.civitai_model_id);
   }
 
+  function hasDisplayThumbnail(entry: CacheEntry): boolean {
+    const d = entry.data;
+    return !!(d.thumbnail_url || (d.civitai_images && d.civitai_images.length > 0));
+  }
+
   // Load cache from localStorage on init
   function loadCache(): Record<string, CacheEntry> {
     if (typeof window === "undefined") return {};
@@ -40,8 +58,8 @@
         const now = Date.now();
         const result: Record<string, CacheEntry> = {};
         for (const [key, entry] of Object.entries(parsed)) {
-          // Drop expired entries and entries with no CivitAI data (stale auth-fail results)
-          if (now - entry.fetchedAt < CACHE_TTL && hasCivitaiData(entry)) {
+          if (now - entry.fetchedAt >= CACHE_TTL) continue;
+          if (hasCivitaiData(entry) || hasDisplayThumbnail(entry)) {
             result[key] = entry;
           }
         }
@@ -57,6 +75,13 @@
   let selectedLora = $state<string | null>(null);
   let imageIndex = $state<Record<string, number>>({});
   let searchQuery = $state("");
+  let civitaiImageRef = $state("");
+  let civitaiImportBusy = $state(false);
+  let sortMode = $state<ModelGallerySort>(
+    (typeof window !== "undefined" &&
+      (localStorage.getItem(SORT_KEY) as ModelGallerySort | null)) ||
+      "name",
+  );
   let selectedPresetId = $state<string>("");
   let newPresetName = $state("");
   let applyMode = $state<LoraPresetApplyMode>("replace");
@@ -81,6 +106,12 @@
     } catch {}
   }
 
+  $effect(() => {
+    try {
+      localStorage.setItem(SORT_KEY, sortMode);
+    } catch {}
+  });
+
   // All available LoRAs, filtered by search
   const filteredLoras = $derived(() => {
     const q = searchQuery.toLowerCase().trim();
@@ -92,16 +123,17 @@
         return display.includes(q) || filename.includes(q);
       });
     }
-    // Sort: enabled first, then alphabetical
     const enabledSet = new Set(
-      generation.loras.filter((l) => l.enabled && l.name).map((l) => l.name)
+      generation.loras.filter((l) => l.enabled && l.name).map((l) => l.name),
     );
-    return [...list].sort((a, b) => {
-      const aEnabled = enabledSet.has(a);
-      const bEnabled = enabledSet.has(b);
-      if (aEnabled !== bEnabled) return aEnabled ? -1 : 1;
-      return displayName(a).localeCompare(displayName(b));
-    });
+    const familyOf = (filename: string) =>
+      inferLoraFamily(filename, cache[filename]?.data);
+    const enabled = list.filter((n) => enabledSet.has(n));
+    const disabled = list.filter((n) => !enabledSet.has(n));
+    return [
+      ...sortModelFilenames(enabled, sortMode, null, displayName, familyOf),
+      ...sortModelFilenames(disabled, sortMode, null, displayName, familyOf),
+    ];
   });
 
   function isLoraEnabled(filename: string): boolean {
@@ -201,14 +233,16 @@
   }
 
   // Lazy fetch: only fetch info for visible LoRAs
-  let fetchedSet = new Set<string>();
   let fetchQueue: string[] = [];
   let fetching = false;
 
   function enqueueFetch(filename: string) {
     if (loraInfoAccessBlocked) return;
-    if (cache[filename] || loading[filename] || fetchedSet.has(filename)) return;
-    fetchedSet.add(filename);
+    if (loading[filename] || fetchQueue.includes(filename)) return;
+    const cached = cache[filename];
+    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL && hasDisplayThumbnail(cached)) {
+      return;
+    }
     fetchQueue.push(filename);
     processFetchQueue();
   }
@@ -232,7 +266,7 @@
       // Only persist to localStorage when CivitAI data was retrieved.
       // Empty results (failed auth, pre-fix) stay in-memory only so they
       // re-fetch fresh next session once an API key is configured.
-      if (info.civitai_name || info.civitai_model_id) {
+      if (info.civitai_name || info.civitai_model_id || info.thumbnail_url?.startsWith("data:")) {
         saveCache();
       }
     } catch (e) {
@@ -249,7 +283,6 @@
 
   function refetchLora(filename: string) {
     loraInfoAccessBlocked = null;
-    fetchedSet.delete(filename);
     delete cache[filename];
     cache = { ...cache };
     saveCache();
@@ -285,31 +318,133 @@
     return base.replace(/\.(safetensors|ckpt|pt|bin)$/i, "");
   }
 
-  function currentImageUrl(filename: string): string | null {
+  function getDisplayImages(filename: string): string[] {
     const info = getInfo(filename);
-    if (!info?.civitai_images?.length) return null;
-    const idx = imageIndex[filename] ?? 0;
-    return info.civitai_images[idx]?.url ?? null;
+    if (!info) return [];
+    const urls: string[] = [];
+    if (info.thumbnail_url) urls.push(info.thumbnail_url);
+    if (info.civitai_images) {
+      for (const img of info.civitai_images) {
+        if (img.url !== info.thumbnail_url) urls.push(img.url);
+      }
+    }
+    return urls;
+  }
+
+  function currentImageUrl(filename: string): string | null {
+    const images = getDisplayImages(filename);
+    if (!images.length) return null;
+    return images[imageIndex[filename] ?? 0] ?? null;
   }
 
   function nextImage(filename: string) {
-    const info = getInfo(filename);
-    if (!info?.civitai_images?.length) return;
+    const images = getDisplayImages(filename);
+    if (images.length <= 1) return;
     const current = imageIndex[filename] ?? 0;
-    const next = (current + 1) % info.civitai_images.length;
+    const next = (current + 1) % images.length;
     imageIndex = { ...imageIndex, [filename]: next };
-    const nextUrl = info.civitai_images[next]?.url;
-    if (nextUrl) resolveImage(nextUrl);
+    const nextUrl = images[next];
+    if (nextUrl && !nextUrl.startsWith("data:")) resolveImage(nextUrl);
   }
 
   function prevImage(filename: string) {
-    const info = getInfo(filename);
-    if (!info?.civitai_images?.length) return;
+    const images = getDisplayImages(filename);
+    if (images.length <= 1) return;
     const current = imageIndex[filename] ?? 0;
-    const prev = current === 0 ? info.civitai_images.length - 1 : current - 1;
+    const prev = current === 0 ? images.length - 1 : current - 1;
     imageIndex = { ...imageIndex, [filename]: prev };
-    const prevUrl = info.civitai_images[prev]?.url;
-    if (prevUrl) resolveImage(prevUrl);
+    const prevUrl = images[prev];
+    if (prevUrl && !prevUrl.startsWith("data:")) resolveImage(prevUrl);
+  }
+
+  async function invalidateLoraCache(filename: string) {
+    delete cache[filename];
+    fetchedSet.delete(filename);
+    cache = { ...cache };
+    await fetchLoraInfo(filename);
+  }
+
+  async function setSidecarFromPreview(loraFilename: string) {
+    const url = currentImageUrl(loraFilename);
+    if (!url) {
+      gallery.showToast(locale.t("checkpoint.no_preview_image"), "warning");
+      return;
+    }
+    try {
+      if (url.startsWith("data:")) {
+        gallery.showToast(locale.t("checkpoint.sidecar_already_local"), "info");
+        return;
+      }
+      await saveModelSidecarThumbnail({
+        category: "loras",
+        filename: loraFilename,
+        imageUrl: url,
+      });
+      await invalidateLoraCache(loraFilename);
+      gallery.showToast(locale.t("checkpoint.sidecar_saved"), "success");
+    } catch (e) {
+      gallery.showToast(
+        locale.t("checkpoint.sidecar_failed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+        "error",
+      );
+    }
+  }
+
+  async function setSidecarFromGallery(loraFilename: string) {
+    const gf = gallery.selectedImage?.gallery_filename;
+    if (!gf) {
+      gallery.showToast(locale.t("model.thumb_no_gallery_image"), "warning");
+      return;
+    }
+    try {
+      await saveModelSidecarThumbnail({
+        category: "loras",
+        filename: loraFilename,
+        galleryFilename: gf,
+      });
+      await invalidateLoraCache(loraFilename);
+      gallery.showToast(locale.t("checkpoint.sidecar_saved"), "success");
+    } catch (e) {
+      gallery.showToast(
+        locale.t("checkpoint.sidecar_failed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+        "error",
+      );
+    }
+  }
+
+  async function importCivitaiImageMeta() {
+    const ref = civitaiImageRef.trim();
+    if (!ref) return;
+    civitaiImportBusy = true;
+    try {
+      const data = await civitaiLookupImage(ref);
+      const item = data.items?.[0];
+      const meta = item?.meta as Record<string, unknown> | undefined;
+      const prompt =
+        (typeof meta?.prompt === "string" && meta.prompt) ||
+        (typeof meta?.positivePrompt === "string" && meta.positivePrompt) ||
+        "";
+      if (!prompt) {
+        gallery.showToast(locale.t("checkpoint.civitai_no_prompt"), "warning");
+        return;
+      }
+      generation.positivePrompt = prompt;
+      generation.saveSettings();
+      gallery.showToast(locale.t("checkpoint.civitai_prompt_imported"), "success");
+    } catch (e) {
+      gallery.showToast(
+        locale.t("checkpoint.civitai_import_failed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+        "error",
+      );
+    } finally {
+      civitaiImportBusy = false;
+    }
   }
 
   function addTriggerWord(word: string) {
@@ -419,7 +554,34 @@
   </div>
 
   <!-- Search bar + size slider -->
-  <div class="px-2 pt-1.5 pb-1 shrink-0 flex items-center gap-2">
+  <div class="px-2 pt-1.5 pb-1 shrink-0 space-y-1">
+    <div class="flex gap-1 items-center">
+      <select
+        bind:value={sortMode}
+        class="shrink-0 rounded border border-neutral-700 bg-neutral-800 px-1.5 py-1 text-[10px] text-neutral-200 focus:outline-none focus:border-indigo-500"
+        title={locale.t('model_gallery.sort_tip')}
+      >
+        <option value="name">{locale.t('model_gallery.sort_name')}</option>
+        <option value="folder">{locale.t('model_gallery.sort_folder')}</option>
+        <option value="family">{locale.t('model_gallery.sort_family')}</option>
+      </select>
+      <input
+        type="text"
+        bind:value={civitaiImageRef}
+        placeholder={locale.t('checkpoint.civitai_image_ref_placeholder')}
+        class="min-w-0 flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[10px] text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
+      />
+      <button
+        type="button"
+        disabled={civitaiImportBusy || !civitaiImageRef.trim()}
+        onclick={() => void importCivitaiImageMeta()}
+        class="shrink-0 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[10px] text-neutral-200 hover:border-indigo-500 disabled:opacity-40"
+        title={locale.t('checkpoint.civitai_image_ref_tip')}
+      >
+        {civitaiImportBusy ? "…" : locale.t('checkpoint.civitai_import_prompt')}
+      </button>
+    </div>
+    <div class="flex items-center gap-2">
     <input
       type="text"
       bind:value={searchQuery}
@@ -436,6 +598,7 @@
         class="w-16 h-4 accent-indigo-500 cursor-pointer"
         title={locale.t('bottom_panel.card_size')}
       />
+    </div>
     </div>
   </div>
 
@@ -473,8 +636,10 @@
         {@const error = errors[loraName]}
         {@const accessDenied = !!error && isAccessDeniedError(error)}
         {@const imgUrl = currentImageUrl(loraName)}
-        {@const resolvedUrl = imgUrl ? (resolvedImages[imgUrl] ?? null) : null}
-        {@const imgCount = info?.civitai_images?.length ?? 0}
+        {@const resolvedUrl = imgUrl
+          ? (imgUrl.startsWith("data:") ? imgUrl : (resolvedImages[imgUrl] ?? null))
+          : null}
+        {@const imgCount = getDisplayImages(loraName).length}
         {@const imgIdx = imageIndex[loraName] ?? 0}
         {@const isSelected = selectedLora === loraName}
         {@const enabled = isLoraEnabled(loraName)}
@@ -507,6 +672,29 @@
                 alt={displayName(loraName)}
                 class="w-full h-full object-cover"
               />
+              <div
+                class="absolute left-1 bottom-1 z-10 flex gap-0.5"
+                onclick={(e) => e.stopPropagation()}
+              >
+                {#if imgUrl && !imgUrl.startsWith("data:")}
+                  <button
+                    type="button"
+                    class="rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-neutral-200 hover:bg-black/90"
+                    title={locale.t('checkpoint.set_sidecar_tip')}
+                    onclick={() => void setSidecarFromPreview(loraName)}
+                  >
+                    {locale.t('checkpoint.set_sidecar')}
+                  </button>
+                {/if}
+                <button
+                  type="button"
+                  class="rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-neutral-200 hover:bg-black/90"
+                  title={locale.t('model.thumb_from_gallery_tip')}
+                  onclick={() => void setSidecarFromGallery(loraName)}
+                >
+                  {locale.t('model.thumb_from_gallery')}
+                </button>
+              </div>
               {#if imgCount > 1}
                 <div class="absolute bottom-1 right-1 bg-black/70 text-[10px] text-neutral-300 px-1.5 py-0.5 rounded-full tabular-nums">
                   {imgIdx + 1}/{imgCount}

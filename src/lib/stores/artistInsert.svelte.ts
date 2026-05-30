@@ -29,7 +29,7 @@ class ArtistInsertStore {
    * Request insertion of an artist tag into the positive prompt.
    *
    * - If there are no existing `@` tags, applies immediately (add).
-   * - If the exact tag is already present, opens the "already in prompt" hint.
+   * - If the exact tag is already present, removes it (toggle, like LoRAs).
    * - If other `@` tags exist, opens the replace/add confirmation modal.
    *
    * The `tag` may be provided with or without a leading `@`.
@@ -47,12 +47,27 @@ class ArtistInsertStore {
       .map((s) => s.trim())
       .filter((s) => s.startsWith("@"));
     if (existingArtistTags.some((t) => t.toLowerCase() === withAt.toLowerCase())) {
-      this.pending = { tag: withAt, existingTags: existingArtistTags, duplicate: true };
+      this.remove(withAt);
+      return;
     } else if (existingArtistTags.length > 0) {
       this.pending = { tag: withAt, existingTags: existingArtistTags, duplicate: false };
     } else {
       this.apply(withAt, "add");
     }
+  }
+
+  /** Remove a single `@` artist tag from the positive prompt (case-insensitive). */
+  remove(withAt: string): void {
+    const target = "@" + escapeParens(withAt.replace(/^@+/, "").replace(/_/g, " ").trim());
+    const existing = generation.positivePrompt.trim();
+    if (!existing) return;
+    const tags = existing.split(",").map((s) => s.trim()).filter(Boolean);
+    const filtered = tags.filter(
+      (t) => !(t.startsWith("@") && t.toLowerCase() === target.toLowerCase()),
+    );
+    generation.positivePrompt = filtered.join(", ");
+    generation.saveSettings();
+    this.pending = null;
   }
 
   apply(withAt: string, mode: "add" | "replace"): void {

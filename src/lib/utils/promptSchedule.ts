@@ -1,4 +1,5 @@
 import type { PromptSegment } from "../types/index.js";
+import { SYNTAX_ANGLE_LOOKBEHIND } from "./promptSyntaxEscape.ts";
 
 /**
  * Regex patterns for scheduling tag types:
@@ -13,10 +14,10 @@ import type { PromptSegment } from "../types/index.js";
  *   Separators: comma, | or ||
  */
 const SCHEDULE_REGEX =
-  /<(from|to|range):(\d+(?:\.\d+)?)(?::(\d+(?:\.\d+)?))?>([ \s\S]*?)<\/\1>/g;
+  new RegExp(`${SYNTAX_ANGLE_LOOKBEHIND}<(from|to|range):(\\d+(?:\\.\\d+)?)(?::(\\d+(?:\\.\\d+)?))?>([ \\s\\S]*?)<\\/\\1>`, "g");
 
 const SWARM_FROMTO_REGEX =
-  /<fromto\[(\d+(?:\.\d+)?)\]:([^>]+)>/g;
+  new RegExp(`${SYNTAX_ANGLE_LOOKBEHIND}<fromto\\[(\\d+(?:\\.\\d+)?)\\]:([^>]+)>`, "g");
 
 /**
  * Combined regex matching both syntaxes.
@@ -24,7 +25,10 @@ const SWARM_FROMTO_REGEX =
  * Numeric values must be valid decimals (e.g. 0.5, 1) — not malformed like 1.2.3.
  */
 const COMBINED_REGEX =
-  /<(?:(from|to|range):(\d+(?:\.\d+)?)(?::(\d+(?:\.\d+)?))?>([ \s\S]*?)<\/\1>|fromto\[(\d+(?:\.\d+)?)\]:([^>]+)>)/g;
+  new RegExp(
+    `${SYNTAX_ANGLE_LOOKBEHIND}<(?:(from|to|range):(\\d+(?:\\.\\d+)?)(?::(\\d+(?:\\.\\d+)?))?>([ \\s\\S]*?)<\\/\\1>|fromto\\[(\\d+(?:\\.\\d+)?)\\]:([^>]+)>)`,
+    "g",
+  );
 
 export interface ParsedPrompt {
   baseText: string;
@@ -301,8 +305,10 @@ export interface PositiveRegionPrompt {
   height: number;
 }
 
-const REGION_TAG_REGEX =
-  /<region:(\d*\.?\d+)\s*,\s*(\d*\.?\d+)\s*,\s*(\d*\.?\d+)\s*,\s*(\d*\.?\d+)>([\s\S]*?)<\/region>/gi;
+const REGION_TAG_REGEX = new RegExp(
+  `${SYNTAX_ANGLE_LOOKBEHIND}<region:(\\d*\\.?\\d+)\\s*,\\s*(\\d*\\.?\\d+)\\s*,\\s*(\\d*\\.?\\d+)\\s*,\\s*(\\d*\\.?\\d+)>([\\s\\S]*?)<\\/region>`,
+  "gi",
+);
 
 /**
  * Parse syntax-first regional prompt tags:

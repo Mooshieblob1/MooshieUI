@@ -10,11 +10,16 @@
   let randomSeed = $derived(generation.seed === -1);
   const activeModelName = $derived((generation.diffusionModel || generation.checkpoint || "").toLowerCase());
   const hasAnimaRecommendation = $derived(generation.isAnima || activeModelName.includes("anima"));
-  const hasSihRecommendation = $derived(activeModelName.includes("sih") || activeModelName.includes("σih"));
+  const hasJuiceRecommendation = $derived(
+    activeModelName.includes("juice") ||
+      activeModelName.includes("seele") ||
+      activeModelName.includes("sih") ||
+      activeModelName.includes("σih"),
+  );
   const hasNanosaurRecommendation = $derived(generation.isNanosaur || activeModelName.includes("nanosaur"));
 
   let animaRecOpen = $state(true);
-  let sihRecOpen = $state(true);
+  let juiceRecOpen = $state(true);
   let nanosaurRecOpen = $state(true);
 
   function recommendedStepRange() {
@@ -73,7 +78,7 @@
     generation.upscaleSteps = Math.ceil(30 / 3);
   }
 
-  function applySihRecommendation() {
+  function applyJuiceRecommendation() {
     generation.steps = 20;
     generation.cfg = 1.4;
     generation.samplerName = "euler_cfg_pp";
@@ -117,21 +122,21 @@
     </div>
   {/if}
 
-  {#if hasSihRecommendation}
+  {#if hasJuiceRecommendation}
     <div class="rounded-lg border border-neutral-700 bg-neutral-900/60 overflow-hidden">
       <button
         class="w-full flex items-center justify-between px-2.5 py-2 text-left"
-        onclick={() => (sihRecOpen = !sihRecOpen)}
+        onclick={() => (juiceRecOpen = !juiceRecOpen)}
       >
-        <p class="text-xs text-neutral-300 font-medium">{locale.t('generation.sampler.sih_recommended')}</p>
-        <svg class="w-3 h-3 text-neutral-500 shrink-0 transition-transform {sihRecOpen ? '' : '-rotate-90'}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        <p class="text-xs text-neutral-300 font-medium">{locale.t('generation.sampler.juice_recommended')}</p>
+        <svg class="w-3 h-3 text-neutral-500 shrink-0 transition-transform {juiceRecOpen ? '' : '-rotate-90'}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
-      {#if sihRecOpen}
+      {#if juiceRecOpen}
         <div class="flex items-start justify-between gap-2 px-2.5 pb-2.5">
-          <p class="text-[11px] text-neutral-400">{locale.t('generation.sampler.sih_hint')}</p>
+          <p class="text-[11px] text-neutral-400">{locale.t('generation.sampler.juice_hint')}</p>
           <button
             class="shrink-0 px-2 py-1 text-[10px] rounded border border-neutral-600 text-neutral-300 hover:border-neutral-500 hover:text-neutral-200 transition-colors"
-            onclick={applySihRecommendation}
+            onclick={applyJuiceRecommendation}
           >
             {locale.t('common.apply')}
           </button>
