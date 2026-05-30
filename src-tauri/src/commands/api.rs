@@ -1255,9 +1255,7 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
 /// Load a gallery image and encode as PNG. JXL files are decoded via jxl-oxide
 /// and re-encoded as PNG. Used when copying/saving/downloading — PNG is the
 /// portable export format that supports metadata embedding.
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn load_gallery_image_png(filename: String) -> Result<Vec<u8>, AppError> {
+pub(crate) async fn load_gallery_image_png_inner(filename: String) -> Result<Vec<u8>, AppError> {
     if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
         return Err(AppError::Other("Invalid filename".into()));
     }
@@ -1281,6 +1279,12 @@ pub async fn load_gallery_image_png(filename: String) -> Result<Vec<u8>, AppErro
     } else {
         Ok(bytes)
     }
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn load_gallery_image_png(filename: String) -> Result<Vec<u8>, AppError> {
+    load_gallery_image_png_inner(filename).await
 }
 
 /// Load a gallery image for display in the UI. JXL files are transcoded to WebP
@@ -2364,7 +2368,7 @@ pub(crate) async fn save_model_sidecar_thumbnail_inner(
     gallery_filename: Option<&str>,
 ) -> Result<(), AppError> {
     let bytes = if let Some(gf) = gallery_filename.filter(|s| !s.is_empty()) {
-        load_gallery_image_png(gf.to_string()).await?
+        load_gallery_image_png_inner(gf.to_string()).await?
     } else if let Some(url) = image_url.filter(|s| !s.is_empty()) {
         let civitai_api_key = state.config.read().await.civitai_api_key.clone();
         let mut req = state
