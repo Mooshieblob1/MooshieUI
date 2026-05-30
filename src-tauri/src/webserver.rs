@@ -3407,35 +3407,9 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            if !crate::commands::api::is_safe_path_component(&category) {
-                return Err("Invalid model category".into());
-            }
-            if !crate::commands::api::is_safe_relative_model_path(&filename) {
-                return Err("Invalid model filename".into());
-            }
-
-            let config = state.config.read().await;
-            if config.comfyui_path.is_empty() {
-                return Err("ComfyUI path not configured".into());
-            }
-            let path = std::path::Path::new(&config.comfyui_path)
-                .join("models")
-                .join(&category)
-                .join(&filename);
-            drop(config);
-
-            if !path.is_file() {
-                return Ok(serde_json::json!(null));
-            }
-            if !filename.ends_with(".safetensors") {
-                return Ok(serde_json::json!(null));
-            }
-            let result = tokio::task::spawn_blocking(move || {
-                crate::commands::api::read_safetensors_modelspec(&path).map_err(|e| e.to_string())
-            })
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e: String| e)?;
+            let result = crate::commands::api::read_modelspec_internal(&state, &category, &filename)
+                .await
+                .map_err(|e| e.to_string())?;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
 

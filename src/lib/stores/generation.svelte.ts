@@ -7,10 +7,10 @@ import {
   parseScheduledPrompt,
 } from "../utils/promptSchedule.js";
 import {
-  modelNamesIndicateIllustrious,
-  modelNamesIndicateVpredZsnr,
   signalsIndicateAnima,
+  signalsIndicateVPred,
 } from "../utils/modelFamily.js";
+import type { ModelFamily } from "../utils/modelFamily.js";
 import type {
   GenerationParams,
   LoraEntry,
@@ -18,6 +18,7 @@ import type {
   RegionalPromptStrategy,
 } from "../types/index.js";
 import { autocomplete } from "./autocomplete.svelte.js";
+import { models } from "./models.svelte.js";
 import { styles } from "./styles.svelte.js";
 import { promptPresets } from "./promptPresets.svelte.js";
 
@@ -40,6 +41,16 @@ export interface GenerationToParamsOptions {
       | "differential_diffusion"
     >
   >;
+}
+
+interface ModelPreset {
+  steps: number;
+  cfg: number;
+  samplerName: string;
+  scheduler: string;
+  width: number;
+  height: number;
+  upscaleDenoise?: number;
 }
 
 /**
@@ -369,13 +380,16 @@ class GenerationStore {
   /** Show the terminal log panel in the sidebar. Not persisted. */
   showTerminalLog = $state(false);
 
-  /** Architecture detected from modelspec metadata, or null if not yet read. */
-  modelspecArchitecture = $state<string | null>(null);
-  /** CivitAI `baseModel` from hash lookup — used to detect Anima fine-tunes without "anima" in the filename. */
-  civitaiBaseModel = $state<string | null>(null);
-  /** ModelSpec prediction type (e.g. v-prediction) when available. */
+  /** Raw ModelSpec prediction type signal (e.g. "v", "epsilon"). */
   modelspecPredictionType = $state<string | null>(null);
-
+  /** Alternate ModelSpec predict key used by some files. */
+  modelspecPredictKey = $state<string | null>(null);
+  /** True when the safetensors header has a top-level `v_pred` entry. */
+  modelspecHeaderVPred = $state(false);
+  /** Model family resolved by the backend from sidecars/CivitAI. */
+  modelFamily = $state<ModelFamily>("unknown");
+  /** Backend-resolved SDXL-like family bucket. */
+  modelIsSdxlLike = $state(false);
   get mode(): GenerationMode {
     return this._mode;
   }
@@ -440,6 +454,16 @@ class GenerationStore {
     return this.detectedArchitecture === "flux";
   }
 
+  /** True when the selected model is a Wan variant. */
+  get isWan(): boolean {
+    return this.detectedArchitecture === "wan";
+  }
+
+  /** True when the selected model is a Qwen variant. */
+  get isQwen(): boolean {
+    return this.detectedArchitecture === "qwen";
+  }
+
   /** True when the selected model is a Pony Diffusion variant. */
   get isPony(): boolean {
     return this.detectedArchitecture === "pony";
@@ -480,15 +504,14 @@ class GenerationStore {
     return this.detectedArchitecture === "nanosaur";
   }
 
-  /** True when the model is an accelerated variant (turbo/lightning/lcm/hyper) needing fewer steps. */
-  get isAccelerated(): boolean {
-    const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
-    return name.includes("turbo") || name.includes("lightning") || name.includes("lcm") || name.includes("hyper");
+  /** True when the model belongs to the SDXL-like family bucket. */
+  get isSdxlLike(): boolean {
+    return this.modelIsSdxlLike;
   }
 
-  /** True when the model uses a 16-channel latent space (SD3, SD3.5, Flux, Anima/WAN). */
+  /** True when the model uses a 16-channel latent space (SD3, Flux, Anima, Wan, Qwen). */
   get needsSd3Latent(): boolean {
-    return this.isSd3 || this.isFlux || this.isAnima;
+    return this.isSd3 || this.isFlux || this.isAnima || this.isWan || this.isQwen;
   }
 
   /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow, Mugen, Nanosaur). */
@@ -496,27 +519,45 @@ class GenerationStore {
     return this.isSd3 || this.isFlux || this.isAuraFlow || this.isMugen || this.isNanosaur;
   }
 
+  /** True when metadata or filename indicates a v-pred SDXL variant. */
+  get isVPred(): boolean {
+    return signalsIndicateVPred(this.modelFamilySignals());
+  }
+
   private modelFamilySignals() {
     return {
       filename: this.diffusionModel ?? this.checkpoint,
-      modelspecArchitecture: this.modelspecArchitecture,
-      civitaiBaseModel: this.civitaiBaseModel,
+      modelspecPredictionType: this.modelspecPredictionType,
+      modelspecPredictKey: this.modelspecPredictKey,
+      headerVPred: this.modelspecHeaderVPred,
+      modelFamily: this.modelFamily,
     };
   }
 
   /**
-   * Apply modelspec / CivitAI metadata after async load and refresh autocomplete tags.
+   * Apply runtime metadata after async load and refresh autocomplete tags.
    */
   applyModelMetadata(meta: {
-    modelspecArchitecture?: string | null;
-    civitaiBaseModel?: string | null;
     modelspecPredictionType?: string | null;
+    modelspecPredictKey?: string | null;
+    modelspecHeaderVPred?: boolean;
+    modelFamily?: ModelFamily | null;
+    modelIsSdxlLike?: boolean;
   }) {
-    if (meta.modelspecArchitecture !== undefined) {
-      this.modelspecArchitecture = meta.modelspecArchitecture;
+    if (meta.modelspecPredictionType !== undefined) {
+      this.modelspecPredictionType = meta.modelspecPredictionType;
     }
-    if (meta.civitaiBaseModel !== undefined) {
-      this.civitaiBaseModel = meta.civitaiBaseModel;
+    if (meta.modelspecPredictKey !== undefined) {
+      this.modelspecPredictKey = meta.modelspecPredictKey;
+    }
+    if (meta.modelspecHeaderVPred !== undefined) {
+      this.modelspecHeaderVPred = meta.modelspecHeaderVPred;
+    }
+    if (meta.modelFamily !== undefined) {
+      this.modelFamily = meta.modelFamily ?? "unknown";
+    }
+    if (meta.modelIsSdxlLike !== undefined) {
+      this.modelIsSdxlLike = meta.modelIsSdxlLike;
     }
     if (meta.modelspecPredictionType !== undefined) {
       this.modelspecPredictionType = meta.modelspecPredictionType;
@@ -524,21 +565,10 @@ class GenerationStore {
     autocomplete.notifyModelChanged(this.isAnima);
   }
 
-  /** True when the selected model needs ModelSamplingDiscrete (v_prediction + zsnr). */
-  get needsVpredZsnrSampling(): boolean {
-    return modelNamesIndicateVpredZsnr(
-      this.checkpoint,
-      this.diffusionModel,
-      this.modelspecPredictionType,
-    );
-  }
-
-  /** SDXL/Illustrious area conditioning (ConditioningSetArea). */
+  /** SDXL-style area conditioning (ConditioningSetArea). */
   get supportsRegionalConditioning(): boolean {
     if (this.mode !== "txt2img") return false;
-    const arch = this.detectedArchitecture;
-    if (arch === "sdxl" || arch === "illustrious") return true;
-    return modelNamesIndicateIllustrious(this.checkpoint, this.diffusionModel);
+    return this.isSdxlLike;
   }
 
   /** Sequential masked inpaint per region (works on Anima + optional SDXL). */
@@ -593,78 +623,9 @@ class GenerationStore {
     }));
   }
 
-  /** Detect the base model architecture from modelspec (authoritative) or filename (fallback). */
-  get detectedArchitecture(): "sdxl" | "illustrious" | "sd15" | "sd3" | "flux" | "pony" | "auraflow" | "pixart" | "hunyuandit" | "cascade" | "kolors" | "mugen" | "nanosaur" | "anima" | "unknown" {
-    const name = (this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
-
-    if (modelNamesIndicateIllustrious(this.checkpoint, this.diffusionModel)) {
-      return "illustrious";
-    }
-
-    if (signalsIndicateAnima(this.modelFamilySignals())) {
-      return "anima";
-    }
-
-    // 1. Use modelspec architecture if available (definitive)
-    if (this.modelspecArchitecture) {
-      const arch = this.modelspecArchitecture.toLowerCase();
-      // Nanosaur (custom DiT — check before other heuristics)
-      if (name.includes("nanosaur")) return "nanosaur";
-      // Anima (Wan2.1 fine-tune with AnimaLLLite)
-      if (name.includes("anima") || arch.includes("anima") || arch.includes("wan")) return "anima";
-      // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
-      if (name.includes("mugen")) return "mugen";
-      // Illustrious/NoobAI family (they report as SDXL arch but need special ControlNets)
-      if (name.includes("illustrious") || name.includes("noobai") || name.includes("noob") || name.includes("sih") || name.includes("juice") || name.includes("seele")) return "illustrious";
-      // Pony (SDXL-based but very different optimal settings)
-      if (name.includes("pony")) return "pony";
-      // SD3 / SD3.5 family
-      if (arch.includes("sd3") || arch.includes("sd-3") || arch.includes("stable-diffusion-3")) return "sd3";
-      // Flux family
-      if (arch.includes("flux")) return "flux";
-      // AuraFlow
-      if (arch.includes("auraflow")) return "auraflow";
-      // PixArt
-      if (arch.includes("pixart")) return "pixart";
-      // HunyuanDiT
-      if (arch.includes("hunyuan")) return "hunyuandit";
-      // Stable Cascade
-      if (arch.includes("cascade") || arch.includes("stable_cascade")) return "cascade";
-      // Kolors
-      if (arch.includes("kolors")) return "kolors";
-      if (arch.includes("xl") || arch.includes("sdxl")) return "sdxl";
-      if (arch.includes("sd-1") || arch.includes("sd1") || arch.includes("v1-")) return "sd15";
-    }
-
-    // 2. Fall back to filename heuristics
-    if (!name) return "unknown";
-    // Nanosaur (custom DiT — check before other heuristics)
-    if (name.includes("nanosaur")) return "nanosaur";
-    // Anima (Wan2.1 fine-tune with AnimaLLLite)
-    if (name.includes("anima") || name.includes("yume")) return "anima";
-    // Mugen (Flux2VAE SDXL — check before noob/illustrious since Mugen traces back to NoobAI)
-    if (name.includes("mugen")) return "mugen";
-    // Illustrious/NoobAI/vpred SDXL variants
-    if (name.includes("illustrious") || name.includes("noobai") || name.includes("noob") || name.includes("sih") || name.includes("juice") || name.includes("seele")) return "illustrious";
-    // Pony Diffusion (check before SDXL — pony names often contain "xl")
-    if (name.includes("pony")) return "pony";
-    // SD3 / SD3.5 family (check before SDXL)
-    if (name.includes("sd3") || name.includes("sd3.5") || name.includes("stable-diffusion-3") || name.includes("stable_diffusion_3")) return "sd3";
-    // Flux family (check before SDXL)
-    if (name.includes("flux")) return "flux";
-    // AuraFlow
-    if (name.includes("auraflow")) return "auraflow";
-    // PixArt
-    if (name.includes("pixart")) return "pixart";
-    // HunyuanDiT
-    if (name.includes("hunyuan")) return "hunyuandit";
-    // Stable Cascade
-    if (name.includes("cascade")) return "cascade";
-    // Kolors
-    if (name.includes("kolors")) return "kolors";
-    if (name.includes("sdxl") || name.includes("xl")) return "sdxl";
-    if (name.includes("1.5") || name.includes("sd15") || name.includes("sd_15")) return "sd15";
-    return "unknown";
+  /** Detect the model family from the backend-resolved family bucket. */
+  get detectedArchitecture(): ModelFamily {
+    return this.modelFamily;
   }
 
   private _storeReady = false;
@@ -783,180 +744,197 @@ class GenerationStore {
     this.savePromptHistory();
   }
 
-  applyModelSpecificPreset(modelName?: string | null) {
-    const name = (modelName ?? this.diffusionModel ?? this.checkpoint ?? "").toLowerCase();
-    if (!name) return;
+  private resolveAvailableOption(options: string[], preferred: string, fallback: string): string {
+    if (options.includes(preferred)) return preferred;
+    if (options.includes(fallback)) return fallback;
+    return options[0] ?? preferred;
+  }
 
-    const isAnima =
-      signalsIndicateAnima({
-        filename: modelName ?? this.diffusionModel ?? this.checkpoint,
-        modelspecArchitecture: this.modelspecArchitecture,
-        civitaiBaseModel: this.civitaiBaseModel,
-      }) ||
-      name.includes("qwen") ||
-      name.includes("wan");
-    autocomplete.notifyModelChanged(isAnima);
+  private applyResolvedPreset(preset: ModelPreset) {
+    this.steps = preset.steps;
+    this.cfg = preset.cfg;
+    this.samplerName = this.resolveAvailableOption(models.samplers, preset.samplerName, "euler");
+    this.scheduler = this.resolveAvailableOption(models.schedulers, preset.scheduler, "normal");
+    this.width = preset.width;
+    this.height = preset.height;
+    this.facefixSteps = Math.ceil(preset.steps / 3);
+    this.upscaleSteps = Math.ceil(preset.steps / 3);
+    if (preset.upscaleDenoise !== undefined) {
+      this.upscaleDenoise = preset.upscaleDenoise;
+    }
+  }
 
-    // Nanosaur — custom 1.2B DiT, flow matching, euler/simple, CFG 7
-    if (name.includes("nanosaur")) {
-      this.steps = 40;
-      this.cfg = 7;
-      this.samplerName = "euler";
-      this.scheduler = "simple";
-      this.width = 896;
-      this.height = 1152;
-      this.facefixSteps = Math.ceil(40 / 3);
-      this.upscaleSteps = 20;
-      this.upscaleDenoise = 0.5;
-      return;
+  applyModelSpecificPreset() {
+    const isAnimaLike = this.isAnima || this.isWan || this.isQwen;
+    autocomplete.notifyModelChanged(isAnimaLike);
+
+    // TODO: restore accelerated variant presets via a real backend/metadata signal
+    // instead of the old filename-based turbo/lightning/lcm/hyper heuristics.
+    let preset: ModelPreset;
+    switch (this.detectedArchitecture) {
+      // Nanosaur uses a custom DiT/VAE combo and prefers a taller default canvas.
+      case "nanosaur":
+        preset = {
+          steps: 40,
+          cfg: 7,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 896,
+          height: 1152,
+          upscaleDenoise: 0.5,
+        };
+        break;
+
+      // SD3 family prefers moderate CFG with SGM uniform scheduling.
+      case "sd3":
+        preset = {
+          steps: 28,
+          cfg: 4.5,
+          samplerName: "euler",
+          scheduler: "sgm_uniform",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // Flux is guidance-distilled, so keep CFG low and scheduler simple.
+      case "flux":
+        preset = {
+          steps: 20,
+          cfg: 1.0,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // AuraFlow defaults target rectified-flow style inference.
+      case "auraflow":
+        preset = {
+          steps: 28,
+          cfg: 3.5,
+          samplerName: "euler",
+          scheduler: "normal",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // PixArt ships best with conservative Euler-based defaults.
+      case "pixart":
+        preset = {
+          steps: 20,
+          cfg: 4.5,
+          samplerName: "euler",
+          scheduler: "normal",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // HunyuanDiT benefits from a higher step/count CFG preset.
+      case "hunyuandit":
+        preset = {
+          steps: 30,
+          cfg: 6.0,
+          samplerName: "euler",
+          scheduler: "normal",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // Stable Cascade keeps a simple scheduler preset for the base stage.
+      case "cascade":
+        preset = {
+          steps: 20,
+          cfg: 4.0,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // Kolors stays in the SDXL-like resolution bucket with a slightly higher CFG.
+      case "kolors":
+        preset = {
+          steps: 25,
+          cfg: 5.0,
+          samplerName: "euler",
+          scheduler: "normal",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // SD 1.5 keeps the smaller canvas and classic DPM++/Karras combo.
+      case "sd15":
+        preset = {
+          steps: 28,
+          cfg: 7.0,
+          samplerName: "dpmpp_2m",
+          scheduler: "karras",
+          width: 512,
+          height: 512,
+        };
+        break;
+
+
+      case "pony":
+        preset = {
+          steps: 25,
+          cfg: 7.0,
+          samplerName: "euler_a",
+          scheduler: "normal",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      case "illustrious":
+        preset = {
+          steps: 30,
+          cfg: 6.0,
+          samplerName: "euler_ancestral",
+          scheduler: "normal",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // Anima, Wan, and Qwen share the same 16-channel latent workflow bucket.
+      case "anima":
+      case "wan":
+      case "qwen":
+        preset = {
+          steps: 30,
+          cfg: 4.0,
+          samplerName: "er_sde",
+          scheduler: "sgm_uniform",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      case "sdxl":
+      case "mugen":
+      case "unknown":
+      default:
+        // Unknown falls back to safe SDXL-like defaults so sampler/scheduler never stay unset.
+        preset = {
+          steps: 30,
+          cfg: 4.0,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+        };
+        break;
     }
 
-    if (isAnima) {
-      this.steps = 30;
-      this.cfg = 4.0;
-      this.samplerName = "er_sde";
-      this.scheduler = "sgm_uniform";
-      this.width = 1024;
-      this.height = 1024;
-      // Face fix and upscale steps are 1/3 of main image steps
-      this.facefixSteps = Math.ceil(30 / 3);
-      this.upscaleSteps = Math.ceil(30 / 3);
-      return;
-    }
-
-    // SD3 / SD3.5 family — 28 steps, moderate CFG, euler sampler
-    if (name.includes("sd3") || name.includes("stable-diffusion-3") || name.includes("stable_diffusion_3")) {
-      const isTurbo = name.includes("turbo");
-      this.steps = isTurbo ? 4 : 28;
-      this.cfg = isTurbo ? 1.2 : 4.5;
-      this.samplerName = "euler";
-      this.scheduler = "sgm_uniform";
-      this.width = 1024;
-      this.height = 1024;
-      this.facefixSteps = Math.ceil(this.steps / 3);
-      this.upscaleSteps = Math.ceil(this.steps / 3);
-      return;
-    }
-
-    // Flux family — euler sampler, low/no CFG (guidance-distilled)
-    if (name.includes("flux")) {
-      const isSchnell = name.includes("schnell");
-      this.steps = isSchnell ? 4 : 20;
-      this.cfg = 1.0;
-      this.samplerName = "euler";
-      this.scheduler = "simple";
-      this.width = 1024;
-      this.height = 1024;
-      this.facefixSteps = Math.ceil(this.steps / 3);
-      this.upscaleSteps = Math.ceil(this.steps / 3);
-      return;
-    }
-
-    // Pony Diffusion — SDXL-based but needs higher CFG and score-based quality tags
-    if (name.includes("pony")) {
-      const isAccel = name.includes("turbo") || name.includes("lightning") || name.includes("lcm") || name.includes("hyper");
-      this.steps = isAccel ? 6 : 25;
-      this.cfg = isAccel ? 2.0 : 7.0;
-      this.samplerName = isAccel ? "euler" : "euler_a";
-      this.scheduler = "normal";
-      this.width = 1024;
-      this.height = 1024;
-      this.facefixSteps = Math.ceil(this.steps / 3);
-      this.upscaleSteps = Math.ceil(this.steps / 3);
-      return;
-    }
-
-    // AuraFlow — rectified flow DiT, shift 1.73
-    if (name.includes("auraflow")) {
-      this.steps = 28;
-      this.cfg = 3.5;
-      this.samplerName = "euler";
-      this.scheduler = "normal";
-      this.width = 1024;
-      this.height = 1024;
-      this.facefixSteps = Math.ceil(28 / 3);
-      this.upscaleSteps = Math.ceil(28 / 3);
-      return;
-    }
-
-    // PixArt — DiT with T5 text encoder
-    if (name.includes("pixart")) {
-      this.steps = 20;
-      this.cfg = 4.5;
-      this.samplerName = "euler";
-      this.scheduler = "normal";
-      this.width = 1024;
-      this.height = 1024;
-      this.facefixSteps = Math.ceil(20 / 3);
-      this.upscaleSteps = Math.ceil(20 / 3);
-      return;
-    }
-
-    // HunyuanDiT — bilingual DiT with CLIP + T5
-    if (name.includes("hunyuan")) {
-      this.steps = 30;
-      this.cfg = 6.0;
-      this.samplerName = "euler";
-      this.scheduler = "normal";
-      this.width = 1024;
-      this.height = 1024;
-      this.facefixSteps = Math.ceil(30 / 3);
-      this.upscaleSteps = Math.ceil(30 / 3);
-      return;
-    }
-
-    // Stable Cascade — multi-stage pipeline
-    if (name.includes("cascade")) {
-      this.steps = 20;
-      this.cfg = 4.0;
-      this.samplerName = "euler";
-      this.scheduler = "simple";
-      this.width = 1024;
-      this.height = 1024;
-      this.facefixSteps = Math.ceil(20 / 3);
-      this.upscaleSteps = Math.ceil(20 / 3);
-      return;
-    }
-
-    // Kolors — SDXL-based with ChatGLM text encoder
-    if (name.includes("kolors")) {
-      this.steps = 25;
-      this.cfg = 5.0;
-      this.samplerName = "euler";
-      this.scheduler = "normal";
-      this.width = 1024;
-      this.height = 1024;
-      this.facefixSteps = Math.ceil(25 / 3);
-      this.upscaleSteps = Math.ceil(25 / 3);
-      return;
-    }
-
-    // Standard SDXL (including Illustrious/Juice/SIH) — with accelerated variant detection
-    if (name.includes("sdxl") || name.includes("sih") || name.includes("juice") || name.includes("seele") || name.includes("xl")) {
-      const isAccel = name.includes("turbo") || name.includes("lightning") || name.includes("lcm") || name.includes("hyper");
-      this.steps = isAccel ? 6 : 20;
-      this.cfg = isAccel ? 2.0 : 1.4;
-      this.samplerName = isAccel ? "euler" : "euler_cfg_pp";
-      this.scheduler = isAccel ? "normal" : "sgm_uniform";
-      this.width = 1024;
-      this.height = 1024;
-      this.facefixSteps = Math.ceil(this.steps / 3);
-      this.upscaleSteps = Math.ceil(this.steps / 3);
-      return;
-    }
-
-    // SD 1.5 — with accelerated variant detection
-    if (name.includes("1.5") || name.includes("sd15") || name.includes("sd_15")) {
-      const isAccel = name.includes("turbo") || name.includes("lightning") || name.includes("lcm") || name.includes("hyper");
-      this.steps = isAccel ? 6 : 28;
-      this.cfg = isAccel ? 2.0 : 7.0;
-      this.samplerName = isAccel ? "euler" : "dpmpp_2m";
-      this.scheduler = isAccel ? "normal" : "karras";
-      this.width = 512;
-      this.height = 512;
-      this.facefixSteps = Math.ceil(this.steps / 3);
-      this.upscaleSteps = Math.ceil(this.steps / 3);
-    }
+    this.applyResolvedPreset(preset);
   }
 
   async loadSettings() {
@@ -1563,7 +1541,7 @@ class GenerationStore {
       facefix_guide_size: this.facefixGuideSize,
       facefix_max_faces: this.facefixMaxFaces,
       model_architecture: this.detectedArchitecture,
-      needs_vpred_zsnr_sampling: this.needsVpredZsnrSampling,
+      is_vpred_model: this.isVPred,
       output_bit_depth: this.outputBitDepth,
       output_format: this.outputFormat,
       style_transfer_enabled: this.styleTransferEnabled,

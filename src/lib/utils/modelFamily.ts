@@ -1,6 +1,5 @@
 /**
- * Shared heuristics for detecting model families (especially Anima / Wan2.1 fine-tunes
- * like animayume that may not include "anima" in the filename).
+ * Shared helpers for model-family detection and related metadata signals.
  */
 
 export type ModelFamily =
@@ -9,6 +8,8 @@ export type ModelFamily =
   | "sd15"
   | "sd3"
   | "flux"
+  | "wan"
+  | "qwen"
   | "pony"
   | "auraflow"
   | "pixart"
@@ -21,79 +22,48 @@ export type ModelFamily =
   | "unknown";
 
 export interface ModelFamilySignals {
-  /** Checkpoint filename, diffusion UNET filename, or curated display label */
+  /** Checkpoint filename or diffusion UNET filename */
   filename?: string | null;
-  modelspecArchitecture?: string | null;
-  /** CivitAI `baseModel` from hash lookup (e.g. "Wan Video 2.1") */
-  civitaiBaseModel?: string | null;
-  /** modelspec.tags comma-separated string */
-  modelspecTags?: string | null;
+  modelspecPredictionType?: string | null;
+  modelspecPredictKey?: string | null;
+  headerVPred?: boolean | null;
+  /** Backend-resolved model family bucket. */
+  modelFamily?: ModelFamily | null;
 }
 
-/** True when CivitAI lists the version under an Anima / Wan video base. */
-export function civitaiBaseModelIndicatesAnima(baseModel: string | null | undefined): boolean {
-  if (!baseModel) return false;
-  const bm = baseModel.toLowerCase();
-  return (
-    bm.includes("anima") ||
-    bm.includes("wan video") ||
-    bm.includes("wan 2") ||
-    bm.includes("wan2") ||
-    bm.includes("wan 2.1") ||
-    bm === "wan"
-  );
-}
-
-/** True when modelspec architecture / tags describe Anima or Wan2.1. */
-export function modelspecIndicatesAnima(
-  architecture: string | null | undefined,
-  tags?: string | null,
-): boolean {
-  const arch = (architecture ?? "").toLowerCase();
-  if (arch.includes("anima") || arch.includes("wan")) return true;
-  const tagStr = (tags ?? "").toLowerCase();
-  if (tagStr.includes("anima")) return true;
-  return false;
-}
-
-/** Filename / label heuristics for local Anima-family checkpoints and UNET files. */
-export function filenameIndicatesAnima(name: string | null | undefined): boolean {
+/** Filename heuristic for v-pred SDXL variants. */
+export function filenameIndicatesVPred(name: string | null | undefined): boolean {
   if (!name) return false;
   const n = name.toLowerCase();
-  if (n.includes("nanosaur") || n.includes("mugen")) return false;
-  if (n.includes("anima")) return true;
-  // Fine-tunes such as animayume_v05.safetensors
-  if (n.includes("yume")) return true;
-  return false;
+  return n.includes("vpred") || n.includes("v-pred");
 }
 
-/** Combined signal — modelspec, CivitAI hash metadata, or filename. */
+/** True when metadata explicitly marks the model as v-pred. */
+export function metadataIndicatesVPred(
+  predictionType: string | null | undefined,
+  predictKey: string | null | undefined,
+  headerVPred?: boolean | null,
+): boolean {
+  if ((predictionType ?? "").trim().toLowerCase() === "v") return true;
+  if ((predictKey ?? "").trim().toLowerCase() === "v") return true;
+  return headerVPred === true;
+}
+
+/** Combined signal — metadata first, then filename fallback. */
+export function signalsIndicateVPred(signals: ModelFamilySignals): boolean {
+  if (
+    metadataIndicatesVPred(
+      signals.modelspecPredictionType,
+      signals.modelspecPredictKey,
+      signals.headerVPred,
+    )
+  ) return true;
+  return filenameIndicatesVPred(signals.filename);
+}
+
+/** Combined signal — backend family/modelspec tags, then filename fallback. */
 export function signalsIndicateAnima(signals: ModelFamilySignals): boolean {
-  if (filenameIndicatesAnima(signals.filename)) return true;
-  if (modelspecIndicatesAnima(signals.modelspecArchitecture, signals.modelspecTags)) return true;
-  if (civitaiBaseModelIndicatesAnima(signals.civitaiBaseModel)) return true;
-  return false;
-}
-
-/** Illustrious / NoobAI / SIH family — must win over generic Anima/Wan CivitAI metadata heuristics. */
-export function filenameIndicatesIllustrious(name: string | null | undefined): boolean {
-  if (!name) return false;
-  const n = name.toLowerCase();
-  return (
-    n.includes("illustrious") ||
-    n.includes("noobai") ||
-    n.includes("noob") ||
-    n.includes("sih") ||
-    n.includes("juice") ||
-    n.includes("seele")
-  );
-}
-
-export function modelNamesIndicateIllustrious(
-  checkpoint?: string | null,
-  diffusionModel?: string | null,
-): boolean {
-  return filenameIndicatesIllustrious(checkpoint) || filenameIndicatesIllustrious(diffusionModel);
+  return signals.modelFamily === "anima";
 }
 
 /** True when ModelSpec or filename indicates v-prediction with zero-terminal SNR scheduling. */

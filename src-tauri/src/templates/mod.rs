@@ -489,6 +489,15 @@ pub fn is_anima_architecture(params: &GenerationParams) -> bool {
     name.contains("anima")
 }
 
+/// Returns true when metadata or filename indicates a v-pred SDXL variant.
+pub fn is_vpred_model(params: &GenerationParams) -> bool {
+    if params.is_vpred_model {
+        return true;
+    }
+    let name = model_name_lower(params);
+    name.contains("vpred") || name.contains("v-pred")
+}
+
 /// Returns true when the model needs a 16-channel latent (SD3, Flux, Anima/WAN).
 pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
     if is_sd3_architecture(params) || is_flux_architecture(params) || is_anima_architecture(params)

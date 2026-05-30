@@ -116,7 +116,7 @@
     generation.clipModel = null;
     generation.clipType = null;
     generation.checkpoint = filename;
-    generation.applyModelSpecificPreset(filename);
+    generation.applyModelSpecificPreset();
     generation.saveSettings();
   }
 

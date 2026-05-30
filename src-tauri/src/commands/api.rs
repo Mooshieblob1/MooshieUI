@@ -2391,13 +2391,9 @@ pub async fn hash_model_file(
     Ok(ModelHashResult { sha256, autov2 })
 }
 
-/// Look up a model on CivitAI by its hash (SHA256 or AutoV2).
-/// Returns the CivitAI model version info if found.
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn civitai_lookup_hash(
-    state: State<'_, Arc<AppState>>,
-    hash: String,
+async fn civitai_lookup_hash_value(
+    state: &Arc<AppState>,
+    hash: &str,
 ) -> Result<Value, AppError> {
     let api_key = state.config.read().await.civitai_api_key.clone();
     let url = format!("https://civitai.com/api/v1/model-versions/by-hash/{}", hash);
@@ -2680,6 +2676,234 @@ pub async fn save_model_sidecar_thumbnail(
     .await
 }
 
+/// Look up a model on CivitAI by its hash (SHA256 or AutoV2).
+/// Returns the CivitAI model version info if found.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn civitai_lookup_hash(
+    state: State<'_, Arc<AppState>>,
+    hash: String,
+) -> Result<Value, AppError> {
+    civitai_lookup_hash_value(state.inner(), &hash).await
+}
+
+fn sidecar_metadata_path(path: &std::path::Path, suffix: &str) -> Option<std::path::PathBuf> {
+    let parent = path.parent()?;
+    let stem = path.file_stem()?.to_str()?;
+    Some(parent.join(format!("{}{}", stem, suffix)))
+}
+
+fn is_sdxl_like_base_model(base_model: &str) -> bool {
+    matches!(
+        model_family_from_base_model(base_model),
+        "sdxl" | "illustrious" | "pony"
+    )
+}
+
+fn model_family_from_base_model(base_model: &str) -> &'static str {
+    let bm = base_model.trim().to_lowercase();
+    if bm.is_empty() {
+        return "unknown";
+    }
+
+    if bm.contains("nanosaur") {
+        return "nanosaur";
+    }
+    if bm.contains("qwen") {
+        return "qwen";
+    }
+    if bm.contains("wan video") || bm.contains("wan 2") || bm.contains("wan2") || bm == "wan" {
+        return "wan";
+    }
+    if bm.contains("anima") {
+        return "anima";
+    }
+    if bm.contains("illustrious") || bm.contains("noobai") {
+        return "illustrious";
+    }
+    if bm.contains("pony") {
+        return "pony";
+    }
+    if bm.contains("stable diffusion 3")
+        || bm.contains("stable-diffusion-3")
+        || bm.contains("stable_diffusion_3")
+        || bm.contains("sd3")
+        || bm.contains("sd 3")
+    {
+        return "sd3";
+    }
+    if bm.contains("flux") {
+        return "flux";
+    }
+    if bm.contains("auraflow") || bm.contains("aura flow") {
+        return "auraflow";
+    }
+    if bm.contains("pixart") {
+        return "pixart";
+    }
+    if bm.contains("hunyuan") {
+        return "hunyuandit";
+    }
+    if bm.contains("cascade") {
+        return "cascade";
+    }
+    if bm.contains("kolors") {
+        return "kolors";
+    }
+    if bm.contains("mugen") {
+        return "mugen";
+    }
+    if bm.contains("stable diffusion xl") || bm.contains("sdxl") || bm.contains("xl 1.0") {
+        return "sdxl";
+    }
+    if bm.contains("stable diffusion 1.5")
+        || bm.contains("sd 1.5")
+        || bm.contains("sd15")
+        || bm.contains("sd_15")
+        || bm.contains("1.5")
+    {
+        return "sd15";
+    }
+
+    "unknown"
+}
+
+fn model_family_from_filename(filename: &str) -> Option<&'static str> {
+    let name = filename.trim().to_lowercase();
+    if name.is_empty() {
+        return None;
+    }
+
+    if name.contains("nanosaur") {
+        return Some("nanosaur");
+    }
+    if name.contains("qwen") {
+        return Some("qwen");
+    }
+    if name == "wan" || name.contains("wan video") || name.contains("wan 2") || name.contains("wan2") {
+        return Some("wan");
+    }
+    if name.contains("anima") {
+        return Some("anima");
+    }
+    if name.contains("noobai") || name.contains("illustrious") {
+        return Some("illustrious");
+    }
+    if name.contains("pony") {
+        return Some("pony");
+    }
+    if name.contains("stable diffusion 3")
+        || name.contains("stable-diffusion-3")
+        || name.contains("stable_diffusion_3")
+        || name.contains("sd3")
+        || name.contains("sd 3")
+    {
+        return Some("sd3");
+    }
+    if name.contains("flux") {
+        return Some("flux");
+    }
+    if name.contains("auraflow") || name.contains("aura flow") {
+        return Some("auraflow");
+    }
+    if name.contains("pixart") {
+        return Some("pixart");
+    }
+    if name.contains("hunyuan") {
+        return Some("hunyuandit");
+    }
+    if name.contains("cascade") {
+        return Some("cascade");
+    }
+    if name.contains("kolors") {
+        return Some("kolors");
+    }
+    if name.contains("mugen") {
+        return Some("mugen");
+    }
+    if name.contains("stable diffusion xl") || name.contains("sdxl") || name.contains("xl 1.0") {
+        return Some("sdxl");
+    }
+    if name.contains("stable diffusion 1.5")
+        || name.contains("sd 1.5")
+        || name.contains("sd15")
+        || name.contains("sd_15")
+        || name.contains("1.5")
+    {
+        return Some("sd15");
+    }
+
+    None
+}
+
+fn read_json_sidecar(path: &std::path::Path) -> Result<Option<Value>, AppError> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(path)?;
+    let value: Value = serde_json::from_str(&text)?;
+    Ok(Some(value))
+}
+
+fn read_comfyui_lora_manager_metadata(
+    model_path: &std::path::Path,
+) -> Result<Option<String>, AppError> {
+    let Some(path) = sidecar_metadata_path(model_path, ".metadata.json") else {
+        return Ok(None);
+    };
+    let Some(json) = read_json_sidecar(&path)? else {
+        return Ok(None);
+    };
+    Ok(json
+        .get("base_model")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            json.get("civitai")
+                .and_then(|v| v.get("baseModel"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        }))
+}
+
+fn read_stability_matrix_metadata(
+    model_path: &std::path::Path,
+) -> Result<Option<String>, AppError> {
+    let Some(path) = sidecar_metadata_path(model_path, ".cm-info.json") else {
+        return Ok(None);
+    };
+    let Some(json) = read_json_sidecar(&path)? else {
+        return Ok(None);
+    };
+    Ok(json
+        .get("BaseModel")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string))
+}
+
+async fn lookup_civitai_base_model_by_hash(
+    state: &Arc<AppState>,
+    hash: &str,
+) -> Result<Option<String>, AppError> {
+    let data = match civitai_lookup_hash_value(state, hash).await {
+        Ok(data) => data,
+        Err(AppError::Other(message)) if message == "Model not found on CivitAI" => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    Ok(data
+        .get("baseModel")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string))
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn civitai_search_models(
@@ -2902,21 +3126,24 @@ pub async fn civitai_list_architectures(
     Ok(architectures.into_iter().collect())
 }
 
-/// Read the ModelSpec metadata from a safetensors file header.
-/// Returns a map of modelspec fields (without the "modelspec." prefix) if present.
-/// When no `modelspec.architecture` is found, infers it from tensor key patterns.
-/// Also computes the AutoV2 hash and includes it as "hash".
+/// Read the small subset of metadata needed at runtime.
+/// `base_model` is resolved from local sidecars first:
+/// 1. `{filename}.metadata.json` (ComfyUI LoRA Manager)
+/// 2. `{filename}.cm-info.json` (Stability Matrix)
+/// 3. fallback to filename-based family detection
+/// 4. fallback to `hash + CivitAI baseModel`
+/// Prediction-related header fields are read only for SDXL-like families
+/// (`sdxl`, `illustrious`/`noobai`, `pony`).
 #[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn read_modelspec(
-    state: State<'_, Arc<AppState>>,
-    category: String,
-    filename: String,
+pub(crate) async fn read_modelspec_internal(
+    state: &Arc<AppState>,
+    category: &str,
+    filename: &str,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
-    if !is_safe_path_component(&category) {
+    if !is_safe_path_component(category) {
         return Err(AppError::Other("Invalid model category".into()));
     }
-    if !is_safe_relative_model_path(&filename) {
+    if !is_safe_relative_model_path(filename) {
         return Err(AppError::Other("Invalid model filename".into()));
     }
 
@@ -2924,28 +3151,132 @@ pub async fn read_modelspec(
     if config.comfyui_path.is_empty() {
         return Err(AppError::Other("ComfyUI path not configured".into()));
     }
-    let path = std::path::Path::new(&config.comfyui_path)
-        .join("models")
-        .join(&category)
-        .join(&filename);
+    let comfyui_path = config.comfyui_path.clone();
+    let extra_model_paths = config.extra_model_paths.clone();
+    drop(config);
 
-    if !path.is_file() {
-        return Ok(None);
-    }
+    let path = resolve_model_path(
+        &comfyui_path,
+        extra_model_paths.as_deref(),
+        category,
+        filename,
+    )
+    .ok_or_else(|| AppError::Other(format!("File not found: {}", filename)))?;
 
-    // Only process .safetensors files
     if !filename.ends_with(".safetensors") {
         return Ok(None);
     }
 
-    let hash_path = path.clone();
-    let mut result = read_safetensors_modelspec(&path)?.unwrap_or_default();
+    let mut result = std::collections::HashMap::new();
+    if let Some(base_model) = read_comfyui_lora_manager_metadata(&path)? {
+        result.insert("base_model".to_string(), base_model);
+    } else if let Some(base_model) = read_stability_matrix_metadata(&path)? {
+        result.insert("base_model".to_string(), base_model);
+    } else if let Some(family) = model_family_from_filename(filename) {
+        result.insert("family".to_string(), family.to_string());
+        result.insert(
+            "is_sdxl_like".to_string(),
+            if matches!(family, "sdxl" | "illustrious" | "pony") {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            },
+        );
+    } else {
+        let hash_path = path.clone();
+        let hash = tokio::task::spawn_blocking(move || full_sha256(&hash_path))
+            .await
+            .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
+        let autov2 = autov2_hash(&hash);
+        result.insert("hash".to_string(), autov2.clone());
+        if let Some(base_model) = lookup_civitai_base_model_by_hash(state, &autov2).await? {
+            result.insert("base_model".to_string(), base_model);
+        }
+    }
 
-    // Compute hash in a blocking task (can take seconds for large files)
-    let hash = tokio::task::spawn_blocking(move || full_sha256(&hash_path))
-        .await
-        .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
-    result.insert("hash".to_string(), autov2_hash(&hash));
+    if result
+        .get("is_sdxl_like")
+        .is_some_and(|value| value == "true")
+        || result
+            .get("base_model")
+            .is_some_and(|base_model| is_sdxl_like_base_model(base_model))
+    {
+        if let Some(runtime_meta) = read_safetensors_runtime_metadata(&path)? {
+            result.extend(runtime_meta);
+        }
+    }
+
+    if !result.contains_key("family") {
+        let family = result
+            .get("base_model")
+            .map(|base_model| model_family_from_base_model(base_model))
+            .unwrap_or("unknown");
+        result.insert("family".to_string(), family.to_string());
+        result.insert(
+            "is_sdxl_like".to_string(),
+            if matches!(family, "sdxl" | "illustrious" | "pony") {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            },
+        );
+    }
+
+    if result.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(result))
+    }
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn read_modelspec(
+    state: State<'_, Arc<AppState>>,
+    category: String,
+    filename: String,
+) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    read_modelspec_internal(state.inner(), &category, &filename).await
+}
+
+/// Parse the safetensors JSON header and extract only the prediction-related
+/// fields used by the frontend runtime path.
+pub(crate) fn read_safetensors_runtime_metadata(
+    path: &std::path::Path,
+) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    let mut file = std::fs::File::open(path)?;
+
+    let mut size_buf = [0u8; 8];
+    file.read_exact(&mut size_buf)?;
+    let header_size = u64::from_le_bytes(size_buf) as usize;
+
+    if header_size > 100 * 1024 * 1024 {
+        return Err(AppError::Other("Safetensors header too large".into()));
+    }
+
+    let mut header_buf = vec![0u8; header_size];
+    file.read_exact(&mut header_buf)?;
+
+    let header: Value = serde_json::from_slice(&header_buf)?;
+
+    let metadata = match header.get("__metadata__") {
+        Some(Value::Object(m)) => m,
+        _ => &serde_json::Map::new(),
+    };
+
+    let mut result = std::collections::HashMap::new();
+    for (field, output_key) in [
+        ("modelspec.prediction_type", "prediction_type"),
+        ("modelspec.predict_key", "predict_key"),
+    ] {
+        if let Some(value) = metadata.get(field).and_then(|v| v.as_str()) {
+            result.insert(output_key.to_string(), value.to_string());
+        }
+    }
+
+    if header.get("v_pred").is_some() {
+        result.insert("header_v_pred".to_string(), "true".to_string());
+    }
 
     if result.is_empty() {
         Ok(None)
@@ -2990,6 +3321,10 @@ pub(crate) fn read_safetensors_modelspec(
                 result.insert("prediction_type".to_string(), s.to_string());
             }
         }
+    }
+
+    if header.get("v_pred").is_some() {
+        result.insert("header_v_pred".to_string(), "true".to_string());
     }
 
     // If no modelspec.architecture, infer from tensor key patterns in the header

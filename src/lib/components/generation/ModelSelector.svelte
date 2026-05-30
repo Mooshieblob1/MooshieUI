@@ -3,11 +3,12 @@
   import { models } from "../../stores/models.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { downloadModel, findModelByHash, hashModelFile, readModelSpec, lookupCivitaiBaseModel, type ModelSpec, getComputeCapability } from "../../utils/api.js";
+  import { downloadModel, findModelByHash, hashModelFile, readModelSpec, getComputeCapability } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
   import { onMount, onDestroy, tick } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
+  import type { ModelFamily } from "../../utils/modelFamily.js";
 
   interface ModelFile {
     filename: string;
@@ -258,73 +259,45 @@
     },
   ];
 
-  let modelSpec = $state<ModelSpec | null>(null);
-  let modelSpecLoading = $state(false);
-  let modelSpecFilename = $state("");
-  let showModelInfo = $state(false);
-
-  /** Strip HTML tags and convert to readable plain text. */
-  function stripHtml(html: string): string {
-    return html
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/p>/gi, "\n")
-      .replace(/<hr\s*\/?>/gi, "\n---\n")
-      .replace(/<a[^>]+href="([^"]*)"[^>]*>[^<]*<\/a>/gi, "$1")
-      .replace(/<[^>]+>/g, "")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-  }
-
-  let modelSpecUnavailable = $state(false);
+  let loadedModelMetadataKey = $state("");
 
   async function loadModelSpec(category: string, filename: string) {
     if (!filename || !filename.endsWith(".safetensors")) {
-      modelSpec = null;
-      modelSpecUnavailable = false;
-      modelSpecFilename = "";
+      loadedModelMetadataKey = "";
+      generation.applyModelMetadata({
+        modelspecPredictionType: null,
+        modelspecPredictKey: null,
+        modelspecHeaderVPred: false,
+        modelFamily: "unknown",
+        modelIsSdxlLike: false,
+      });
       return;
     }
-    if (filename === modelSpecFilename) return;
-    modelSpecFilename = filename;
-    modelSpecLoading = true;
-    modelSpecUnavailable = false;
+    const metadataKey = `${category}::${filename}`;
+    if (metadataKey === loadedModelMetadataKey && generation.modelFamily !== "unknown") return;
+    loadedModelMetadataKey = metadataKey;
     try {
       const spec = await readModelSpec(category, filename);
-      let civitaiBaseModel: string | null = null;
-      if (spec?.hash) {
-        civitaiBaseModel = await lookupCivitaiBaseModel(spec.hash);
-      }
-      if (spec && Object.keys(spec).length > 0) {
-        modelSpec = spec;
-        generation.applyModelMetadata({
-          modelspecArchitecture: spec.architecture ?? null,
-          civitaiBaseModel,
-          modelspecPredictionType: spec.prediction_type ?? null,
-        });
-      } else {
-        modelSpec = null;
-        modelSpecUnavailable = true;
-        generation.applyModelMetadata({
-          modelspecArchitecture: null,
-          civitaiBaseModel,
-          modelspecPredictionType: null,
-        });
+      const family = (spec?.family as ModelFamily | undefined) ?? "unknown";
+      generation.applyModelMetadata({
+        modelspecPredictionType: spec?.prediction_type ?? null,
+        modelspecPredictKey: spec?.predict_key ?? null,
+        modelspecHeaderVPred: spec?.header_v_pred === "true",
+        modelFamily: family,
+        modelIsSdxlLike: spec?.is_sdxl_like === "true",
+      });
+      if (family === "unknown") {
+        loadedModelMetadataKey = "";
       }
     } catch {
-      modelSpec = null;
-      modelSpecUnavailable = true;
+      loadedModelMetadataKey = "";
       generation.applyModelMetadata({
-        modelspecArchitecture: null,
-        civitaiBaseModel: null,
         modelspecPredictionType: null,
+        modelspecPredictKey: null,
+        modelspecHeaderVPred: false,
+        modelFamily: "unknown",
+        modelIsSdxlLike: false,
       });
-    } finally {
-      modelSpecLoading = false;
     }
   }
 
@@ -825,8 +798,14 @@
     generation.clipModel = null;
     generation.clipType = null;
     generation.checkpoint = name;
-    generation.applyModelMetadata({ modelspecArchitecture: null, civitaiBaseModel: null, modelspecPredictionType: null });
-    generation.applyModelSpecificPreset(name);
+    generation.applyModelMetadata({
+      modelspecPredictionType: null,
+      modelspecPredictKey: null,
+      modelspecHeaderVPred: false,
+      modelFamily: "unknown",
+      modelIsSdxlLike: false,
+    });
+    generation.applyModelSpecificPreset();
     checkpointSearch = "";
     closeCheckpointDropdown();
   }
@@ -842,7 +821,7 @@
     generation.clipType = clipType;
     generation.vae = pickSplitModelVae(filename, models.vaes);
     generation.checkpoint = filename;
-    generation.applyModelSpecificPreset(filename);
+    generation.applyModelSpecificPreset();
   }
 
   async function selectRecommended(rec: RecommendedModel) {
@@ -972,7 +951,7 @@
       // Still notify autocomplete about model change (applyModelSpecificPreset won't run)
       autocomplete.notifyModelChanged(generation.isAnima);
     } else {
-      generation.applyModelSpecificPreset(generation.useSplitModel ? generation.diffusionModel : generation.checkpoint);
+      generation.applyModelSpecificPreset();
     }
   }
 
@@ -992,7 +971,17 @@
 <div bind:this={modelSelectorRootEl} class="space-y-3">
   <!-- Checkpoint -->
   <div class="relative">
-    <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.model.checkpoint')}<InfoTip text={locale.t('generation.model.checkpoint_tip')} /></label>
+    <div class="mb-1 flex items-center justify-between gap-2">
+      <label class="block text-xs text-neutral-400">{locale.t('generation.model.checkpoint')}<InfoTip text={locale.t('generation.model.checkpoint_tip')} /></label>
+      {#if generation.detectedArchitecture !== "unknown"}
+        <span
+          class="shrink-0 rounded-full border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-[10px] text-neutral-300"
+          title="Detected model architecture"
+        >
+          {generation.detectedArchitecture}
+        </span>
+      {/if}
+    </div>
     <button
       class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-left text-neutral-100 hover:border-neutral-600 focus:outline-none focus:border-indigo-500 transition-colors truncate flex items-center gap-2"
       onclick={toggleCheckpointDropdown}
@@ -1095,102 +1084,6 @@
           {/each}
         </div>
       </div>
-    {/if}
-
-    <!-- ModelSpec info -->
-    {#if modelSpecUnavailable && !modelSpec}
-      <div class="mt-1.5 text-[11px] text-neutral-600">{locale.t('generation.model.no_modelspec')}</div>
-    {:else if modelSpec}
-      <button
-        class="mt-1.5 w-full flex items-center gap-1.5 text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
-        onclick={() => (showModelInfo = !showModelInfo)}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
-        {showModelInfo ? locale.t('generation.model.hide_model_info') : locale.t('generation.model.show_model_info')}
-        {#if modelSpec.title}
-          <span class="text-neutral-500 truncate">— {modelSpec.title}</span>
-        {/if}
-        <span class="ml-auto px-1 py-0.5 rounded bg-emerald-900/30 text-emerald-400 text-[9px]">{locale.t("generation.model_spec_badge")}</span>
-      </button>
-      {#if showModelInfo}
-        <div class="mt-1.5 bg-neutral-800/60 border border-neutral-700/50 rounded-lg p-2.5 space-y-1.5 text-xs">
-          {#if modelSpec.title}
-            <div class="font-medium text-neutral-200">{modelSpec.title}</div>
-          {/if}
-          {#if modelSpec.author}
-            <div class="text-neutral-500">by {modelSpec.author}</div>
-          {/if}
-          {#if modelSpec.description}
-            <div class="text-neutral-400 text-[11px] whitespace-pre-line max-h-32 overflow-y-auto">{stripHtml(modelSpec.description)}</div>
-          {/if}
-          {#if modelSpec.architecture}
-            <div class="flex gap-2">
-              <span class="text-neutral-500">{locale.t('generation.model.architecture_label')}</span>
-              <span class="text-neutral-300">{modelSpec.architecture}</span>
-            </div>
-          {/if}
-          {#if modelSpec.hash}
-            <div class="flex gap-2 items-center">
-              <span class="text-neutral-500">{locale.t('generation.model.hash_label')}</span>
-              <span class="text-neutral-300 font-mono text-[10px]">{modelSpec.hash}</span>
-              <button
-                class="text-neutral-500 hover:text-neutral-300 transition-colors"
-                title={locale.t('generation.model.copy_hash')}
-                onclick={() => { if (modelSpec?.hash) navigator.clipboard.writeText(modelSpec.hash); }}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z"/><path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5z"/></svg>
-              </button>
-            </div>
-          {/if}
-          {#if modelSpec.resolution}
-            <div class="flex gap-2">
-              <span class="text-neutral-500">{locale.t('generation.model.resolution_label')}</span>
-              <span class="text-neutral-300">{modelSpec.resolution}</span>
-            </div>
-          {/if}
-          {#if modelSpec.prediction_type}
-            <div class="flex gap-2">
-              <span class="text-neutral-500">{locale.t('generation.model.prediction_label')}</span>
-              <span class="text-neutral-300">{modelSpec.prediction_type}</span>
-            </div>
-          {/if}
-          {#if modelSpec.trigger_phrase}
-            <div>
-              <span class="text-neutral-500">{locale.t('generation.model.trigger_phrase_label')}</span>
-              <button
-                class="ml-1.5 text-indigo-400 hover:text-indigo-300 transition-colors"
-                title={locale.t('generation.model.copy_trigger')}
-                onclick={() => {
-                  if (modelSpec?.trigger_phrase && !generation.positivePrompt.includes(modelSpec.trigger_phrase)) {
-                    generation.positivePrompt = generation.positivePrompt
-                      ? `${modelSpec.trigger_phrase}, ${generation.positivePrompt}`
-                      : modelSpec.trigger_phrase;
-                  }
-                }}
-              >
-                {modelSpec.trigger_phrase}
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 inline ml-0.5" viewBox="0 0 20 20" fill="currentColor"><path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z"/><path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5z"/></svg>
-              </button>
-            </div>
-          {/if}
-          {#if modelSpec.usage_hint}
-            <div class="text-neutral-400 text-[11px] italic whitespace-pre-line">{stripHtml(modelSpec.usage_hint)}</div>
-          {/if}
-          {#if modelSpec.tags}
-            <div class="flex flex-wrap gap-1 mt-1">
-              {#each modelSpec.tags.split(",").map(t => t.trim()).filter(Boolean) as tag}
-                <span class="px-1.5 py-0.5 bg-neutral-700/50 text-neutral-400 rounded text-[10px]">{tag}</span>
-              {/each}
-            </div>
-          {/if}
-          {#if modelSpec.license}
-            <div class="flex gap-2 text-[10px]">
-              <span class="text-neutral-600">{locale.t('generation.model.license_label')}</span>
-              <span class="text-neutral-500">{modelSpec.license}</span>
-            </div>
-          {/if}
-        </div>
-      {/if}
     {/if}
   </div>
 
