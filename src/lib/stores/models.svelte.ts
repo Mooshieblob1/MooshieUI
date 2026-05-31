@@ -30,7 +30,7 @@ class ModelsStore {
           getSamplers(),
           getEmbeddings(),
           getModels("upscale_models"),
-          getModels("diffusion_models"),
+          getModels("diffusion_models").catch(() => [] as string[]),
           getModels("text_encoders").catch(() => [] as string[]),
           getModels("clip").catch(() => [] as string[]),
           getModels("controlnet").catch(() => [] as string[]),
