@@ -2709,6 +2709,12 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("nanosaur") {
         return "nanosaur";
     }
+    if bm == "zimageturbo" {
+        return "zit";
+    }
+    if bm == "zimagebase" {
+        return "zib";
+    }
     if bm.contains("qwen") {
         return "qwen";
     }
@@ -2777,6 +2783,29 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if name.contains("nanosaur") {
         return Some("nanosaur");
     }
+    if name.contains("zimageturbo")
+        || name.contains("zimage_turbo")
+        || name.contains("/zit/")
+        || name.contains("\\zit\\")
+        || name.contains("_zit")
+        || name.contains("-zit")
+        || name.contains(" zit")
+        || name.starts_with("zit")
+    {
+        return Some("zit");
+    }
+    if name.contains("zimagebase")
+        || name.contains("zimage_base")
+        || name.contains("/zib/")
+        || name.contains("\\zib\\")
+        || name.contains("_zib")
+        || name.contains("-zib")
+        || name.contains(" zib")
+        || name.starts_with("zib")
+        || (name.contains("zimage") && name.contains("base"))
+    {
+        return Some("zib");
+    }
     if name.contains("qwen") {
         return Some("qwen");
     }
@@ -2840,6 +2869,17 @@ fn turbo_model_variant_from_filename(filename: &str) -> &'static str {
     let name = filename.trim().to_lowercase();
     if name.is_empty() {
         return "none";
+    }
+    if name.contains("zimageturbo")
+        || name.contains("z-image-turbo")
+        || name.contains("/zit/")
+        || name.contains("\\zit\\")
+        || name.contains("_zit")
+        || name.contains("-zit")
+        || name.contains(" zit")
+        || name.starts_with("zit")
+    {
+        return "turbo";
     }
     if name.contains("dmd2") {
         return "dmd2";

@@ -466,6 +466,16 @@ class GenerationStore {
     return this.detectedArchitecture === "flux";
   }
 
+  /** True when the selected model is a Z-Image Base variant. */
+  get isZib(): boolean {
+    return this.detectedArchitecture === "zib";
+  }
+
+  /** True when the selected model is a Z-Image Turbo variant. */
+  get isZit(): boolean {
+    return this.detectedArchitecture === "zit";
+  }
+
   /** True when the selected model is a Wan variant. */
   get isWan(): boolean {
     return this.detectedArchitecture === "wan";
@@ -820,6 +830,30 @@ class GenerationStore {
       case "flux":
         preset = {
           steps: this.modelTurboVariant === "schnell" ? 4 : 20,
+          cfg: 1.0,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // Z-Image Base defaults.
+      case "zib":
+        preset = {
+          steps: 30,
+          cfg: 4.0,
+          samplerName: "euler",
+          scheduler: "normal",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // Z-Image Turbo defaults.
+      case "zit":
+        preset = {
+          steps: 8,
           cfg: 1.0,
           samplerName: "euler",
           scheduler: "simple",
