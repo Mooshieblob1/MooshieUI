@@ -3525,19 +3525,22 @@ pub(crate) async fn read_modelspec_internal(
 
     if category == "diffusion_models" {
         let family = result.get("family").cloned().unwrap_or_else(|| "unknown".to_string());
-        let vaes = state.get_models_list("vae").await?;
-        if let Some(recommended_vae) = recommended_vae_from_available(category, &family, &vaes) {
-            result.insert("recommended_vae".to_string(), recommended_vae);
+        if let Ok(vaes) = state.get_models_list("vae").await {
+            if let Some(recommended_vae) = recommended_vae_from_available(category, &family, &vaes)
+            {
+                result.insert("recommended_vae".to_string(), recommended_vae);
+            }
         }
-        let encoders = state.get_models_list("text_encoders").await?;
-        if let Some((recommended_clip_model, recommended_clip_type)) =
-            recommended_clip_from_available(category, &family, &encoders)
-        {
-            result.insert("recommended_clip_model".to_string(), recommended_clip_model);
-            result.insert(
-                "recommended_clip_type".to_string(),
-                recommended_clip_type.to_string(),
-            );
+        if let Ok(encoders) = state.get_models_list("text_encoders").await {
+            if let Some((recommended_clip_model, recommended_clip_type)) =
+                recommended_clip_from_available(category, &family, &encoders)
+            {
+                result.insert("recommended_clip_model".to_string(), recommended_clip_model);
+                result.insert(
+                    "recommended_clip_type".to_string(),
+                    recommended_clip_type.to_string(),
+                );
+            }
         }
     }
 

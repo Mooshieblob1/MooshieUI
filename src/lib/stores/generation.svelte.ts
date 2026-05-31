@@ -1397,6 +1397,21 @@ class GenerationStore {
   }
 
   toParams(options: GenerationToParamsOptions = {}) {
+    if (this.useSplitModel) {
+      if (!this.diffusionModel) {
+        throw new Error("Split model is selected, but no diffusion model is resolved yet.");
+      }
+      if (!this.clipModel) {
+        throw new Error("Split model text encoder is still loading.");
+      }
+      if (!this.clipType) {
+        throw new Error("Split model text encoder type is still loading.");
+      }
+      if (!this.vae) {
+        throw new Error("Split model VAE is still loading.");
+      }
+    }
+
     const style = this.stylePresetsEnabled
       ? (STYLE_PRESETS.find((preset) => preset.id === this.stylePreset) ?? STYLE_PRESETS[0])
       : STYLE_PRESETS[0];

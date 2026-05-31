@@ -319,6 +319,7 @@
       });
       generation.ensureRecommendedSplitClip(models.textEncoders);
       generation.ensureRecommendedSplitVae(models.vaes);
+      generation.applyModelSpecificPreset();
       if (family === "unknown") {
         loadedModelMetadataKey = "";
       }
@@ -809,9 +810,6 @@
     checkpointSearch = "";
     generation.useSplitModel = true;
     generation.diffusionModel = filename;
-    generation.clipModel = null;
-    generation.clipType = null;
-    generation.vae = "";
     generation.checkpoint = filename;
     await loadModelSpec("diffusion_models", filename);
     generation.applyModelSpecificPreset();
