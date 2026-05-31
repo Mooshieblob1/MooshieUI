@@ -3503,12 +3503,18 @@ async fn dispatch_command(
                 .or_else(|| args.get("gallery_filename"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            let gallery_dir = if gallery_filename.as_deref().is_some_and(|s| !s.is_empty()) {
+                Some(user_gallery_dir(username).ok_or("Cannot find gallery directory")?)
+            } else {
+                None
+            };
             commands::api::save_model_sidecar_thumbnail_inner(
                 state.as_ref(),
                 &category,
                 &filename,
                 image_url.as_deref(),
                 gallery_filename.as_deref(),
+                gallery_dir.as_deref(),
             )
             .await
             .map_err(|e| e.to_string())?;

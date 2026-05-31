@@ -1256,12 +1256,19 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
 /// and re-encoded as PNG. Used when copying/saving/downloading — PNG is the
 /// portable export format that supports metadata embedding.
 pub(crate) async fn load_gallery_image_png_inner(filename: String) -> Result<Vec<u8>, AppError> {
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    load_gallery_image_png_from_dir(&dir, &filename).await
+}
+
+pub(crate) async fn load_gallery_image_png_from_dir(
+    gallery_dir: &std::path::Path,
+    filename: &str,
+) -> Result<Vec<u8>, AppError> {
     if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
         return Err(AppError::Other("Invalid filename".into()));
     }
-    let dir = crate::config::gallery_dir()
-        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = resolve_gallery_image_path(&dir, &filename)
+    let path = resolve_gallery_image_path(gallery_dir, filename)
         .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", filename)))?;
     let bytes = std::fs::read(&path)?;
     if filename.ends_with(".jxl") {
@@ -2317,6 +2324,99 @@ fn parse_civitai_image_id(image_ref: &str) -> Result<u64, AppError> {
     )))
 }
 
+fn is_allowed_civitai_image_host(host: &str) -> bool {
+    matches!(
+        host.to_ascii_lowercase().as_str(),
+        "civitai.com" | "www.civitai.com" | "image.civitai.com" | "cdn.civitai.com"
+    )
+}
+
+fn parse_civitai_image_url(url: &str) -> Result<reqwest::Url, AppError> {
+    let parsed = reqwest::Url::parse(url.trim())
+        .map_err(|e| AppError::Other(format!("Invalid CivitAI image URL: {}", e)))?;
+    if parsed.scheme() != "https" {
+        return Err(AppError::Other("CivitAI image URL must use HTTPS".into()));
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| AppError::Other("CivitAI image URL is missing a host".into()))?;
+    if !is_allowed_civitai_image_host(host) {
+        return Err(AppError::Other(
+            "Only CivitAI image URLs can be used as sidecar thumbnails".into(),
+        ));
+    }
+    Ok(parsed)
+}
+
+async fn fetch_civitai_image_bytes(state: &AppState, url: &str) -> Result<Vec<u8>, AppError> {
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| AppError::Other(format!("Failed to build image fetch client: {}", e)))?;
+    let mut current = parse_civitai_image_url(url)?;
+    let civitai_api_key = state.config.read().await.civitai_api_key.clone();
+
+    for _ in 0..5 {
+        let mut req = client
+            .get(current.clone())
+            .header("User-Agent", "MooshieUI/0.5.7");
+        if let Some(key) = civitai_api_key.as_ref().filter(|v| !v.trim().is_empty()) {
+            req = req.bearer_auth(key);
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("Image fetch failed: {}", e)))?;
+        if resp.status().is_redirection() {
+            let location = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .ok_or_else(|| AppError::Other("Image fetch redirect missing Location".into()))?
+                .to_str()
+                .map_err(|_| AppError::Other("Image fetch redirect Location is invalid".into()))?;
+            current = current
+                .join(location)
+                .map_err(|e| AppError::Other(format!("Image fetch redirect invalid: {}", e)))?;
+            parse_civitai_image_url(current.as_str())?;
+            continue;
+        }
+        if !resp.status().is_success() {
+            return Err(AppError::Other(format!(
+                "Image fetch returned HTTP {}",
+                resp.status()
+            )));
+        }
+        return resp
+            .bytes()
+            .await
+            .map(|bytes| bytes.to_vec())
+            .map_err(|e| AppError::Other(format!("Failed to read image bytes: {}", e)));
+    }
+
+    Err(AppError::Other("Image fetch had too many redirects".into()))
+}
+
+#[cfg(test)]
+mod sidecar_thumbnail_tests {
+    use super::*;
+
+    #[test]
+    fn sidecar_image_url_allows_civitai_image_hosts() {
+        assert!(parse_civitai_image_url("https://image.civitai.com/example.jpeg").is_ok());
+        assert!(parse_civitai_image_url("https://cdn.civitai.com/example.png").is_ok());
+        assert!(parse_civitai_image_url("https://civitai.com/images/123").is_ok());
+    }
+
+    #[test]
+    fn sidecar_image_url_rejects_non_civitai_and_non_https_targets() {
+        assert!(parse_civitai_image_url("http://image.civitai.com/example.jpeg").is_err());
+        assert!(parse_civitai_image_url("http://127.0.0.1:8188/view").is_err());
+        assert!(parse_civitai_image_url("https://169.254.169.254/latest/meta-data").is_err());
+        assert!(parse_civitai_image_url("https://civitai.com.evil.test/example.png").is_err());
+    }
+}
+
 /// Look up a CivitAI image by id (or image page URL) and return generation metadata when available.
 #[cfg(feature = "desktop")]
 #[tauri::command]
@@ -2366,32 +2466,16 @@ pub(crate) async fn save_model_sidecar_thumbnail_inner(
     filename: &str,
     image_url: Option<&str>,
     gallery_filename: Option<&str>,
+    gallery_dir: Option<&std::path::Path>,
 ) -> Result<(), AppError> {
     let bytes = if let Some(gf) = gallery_filename.filter(|s| !s.is_empty()) {
-        load_gallery_image_png_inner(gf.to_string()).await?
+        if let Some(dir) = gallery_dir {
+            load_gallery_image_png_from_dir(dir, gf).await?
+        } else {
+            load_gallery_image_png_inner(gf.to_string()).await?
+        }
     } else if let Some(url) = image_url.filter(|s| !s.is_empty()) {
-        let civitai_api_key = state.config.read().await.civitai_api_key.clone();
-        let mut req = state
-            .http_client
-            .get(url)
-            .header("User-Agent", "MooshieUI/0.5.7");
-        if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
-            req = req.bearer_auth(key);
-        }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| AppError::Other(format!("Image fetch failed: {}", e)))?;
-        if !resp.status().is_success() {
-            return Err(AppError::Other(format!(
-                "Image fetch returned HTTP {}",
-                resp.status()
-            )));
-        }
-        resp.bytes()
-            .await
-            .map_err(|e| AppError::Other(format!("Failed to read image bytes: {}", e)))?
-            .to_vec()
+        fetch_civitai_image_bytes(state, url).await?
     } else {
         return Err(AppError::Other(
             "Provide image_url or gallery_filename".into(),
@@ -2449,6 +2533,7 @@ pub async fn save_model_sidecar_thumbnail(
         &filename,
         image_url.as_deref(),
         gallery_filename.as_deref(),
+        None,
     )
     .await
 }
