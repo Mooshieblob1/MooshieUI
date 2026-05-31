@@ -23,7 +23,8 @@
     hasRegionalTags(generation.positivePrompt) || generation.regionalPrompts.length > 0,
   );
   const qualityTagsSupported = $derived(
-    generation.isAnima || generation.isIllustrious || generation.isPony || generation.isNanosaur,
+    generation.autoQualityTags &&
+      (generation.isAnima || generation.isIllustrious || generation.isPony || generation.isNanosaur),
   );
   const hasNegativeSchedule = $derived(hasSchedulingTags(generation.negativePrompt));
   const hasAnySchedule = $derived(hasPositiveSchedule || hasNegativeSchedule);
