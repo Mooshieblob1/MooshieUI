@@ -408,11 +408,25 @@ pub fn is_sd3_architecture(params: &GenerationParams) -> bool {
 
 /// Returns true when the model is a Flux architecture.
 pub fn is_flux_architecture(params: &GenerationParams) -> bool {
-    if params.model_architecture == "flux" {
+    if matches!(
+        params.model_architecture.as_str(),
+        "flux"
+            | "flux1d"
+            | "flux1s"
+            | "flux1krea"
+            | "chroma"
+    ) {
         return true;
     }
     model_name_lower(params).contains("flux")
 }
+
+/// TODO:
+/// "flux2d"
+/// "flux2klein9b"
+/// "flux2klein9bbase"
+/// "flux2klein4b"
+/// "flux2klein4bbase"
 
 /// Returns true when the model is a Pony Diffusion architecture (SDXL-based).
 pub fn is_pony_architecture(params: &GenerationParams) -> bool {
@@ -926,6 +940,9 @@ fn inject_flux_guidance(result: &mut WorkflowResult, params: &GenerationParams) 
     }
 
     // Skip for Schnell (already guidance-distilled, no guidance needed)
+    if params.model_architecture == "flux1s" {
+        return;
+    }
     let name = model_name_lower(params);
     if name.contains("schnell") {
         return;

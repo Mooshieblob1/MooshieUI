@@ -55,7 +55,6 @@ interface ModelPreset {
 
 type TurboModelVariant =
   | "none"
-  | "schnell"
   | "turbo"
   | "lightning"
   | "lcm"
@@ -375,7 +374,7 @@ class GenerationStore {
   modelFamily = $state<ModelFamily>("unknown");
   /** Backend-resolved SDXL-like family bucket. */
   modelIsSdxlLike = $state(false);
-  /** Backend-resolved turbo/schnell/lightning/lcm/hyper/dmd model variant. */
+  /** Backend-resolved turbo/lightning/lcm/hyper/dmd model variant. */
   modelTurboVariant = $state<TurboModelVariant>("none");
   /** Backend-resolved recommended VAE for split-model pipelines. */
   modelRecommendedVae = $state<string | null>(null);
@@ -442,9 +441,26 @@ class GenerationStore {
     return this.detectedArchitecture === "sd3";
   }
 
-  /** True when the selected model is a Flux variant. */
+  /** True when the selected model is a Flux-family variant. */
   get isFlux(): boolean {
-    return this.detectedArchitecture === "flux";
+    return [
+      "flux",
+      "flux1d",
+      "flux1s",
+      "flux1krea",
+      "chroma",
+    ].includes(this.detectedArchitecture);
+  }
+
+  /** True when the selected model is a Flux.2-family variant. */
+  get isFlux2(): boolean {
+    return [
+      "flux2d",
+      "flux2klein9b",
+      "flux2klein9bbase",
+      "flux2klein4b",
+      "flux2klein4bbase",
+    ].includes(this.detectedArchitecture);
   }
 
   /** True when the selected model is a Z-Image Base variant. */
@@ -615,7 +631,7 @@ class GenerationStore {
     const recommendedLower = recommended.toLowerCase();
     const currentMissing = !!current && !vaes.includes(current);
     const obviousLatentMismatch =
-      (this.isAnima || this.isWan || this.isQwen || this.isFlux) &&
+      (this.isAnima || this.isWan || this.isQwen || this.isFlux || this.isFlux2) &&
       currentLower.includes("sdxl_vae") &&
       currentLower !== recommendedLower;
 
@@ -857,8 +873,23 @@ class GenerationStore {
 
       // Flux is guidance-distilled, so keep CFG low and scheduler simple.
       case "flux":
+      case "flux1d":
+      case "flux1krea":
+      case "chroma":
         preset = {
-          steps: this.modelTurboVariant === "schnell" ? 4 : 20,
+          steps: 20,
+          cfg: 1.0,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // Flux.1 Schnell is a separate distilled family.
+      case "flux1s":
+        preset = {
+          steps: 4,
           cfg: 1.0,
           samplerName: "euler",
           scheduler: "simple",

@@ -306,7 +306,6 @@
         modelIsSdxlLike: spec?.is_sdxl_like === "true",
         modelTurboVariant: (spec?.turbo_model_variant as
           | "none"
-          | "schnell"
           | "turbo"
           | "lightning"
           | "lcm"

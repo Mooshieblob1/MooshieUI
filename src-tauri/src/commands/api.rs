@@ -2709,6 +2709,30 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("nanosaur") {
         return "nanosaur";
     }
+    if bm == "flux.2 klein 9b-base" {
+        return "flux2klein9bbase";
+    }
+    if bm == "flux.2 klein 9b" {
+        return "flux2klein9b";
+    }
+    if bm == "flux.2 klein 4b-base" {
+        return "flux2klein4bbase";
+    }
+    if bm == "flux.2 klein 4b" {
+        return "flux2klein4b";
+    }
+    if bm == "flux.2 d" {
+        return "flux2d";
+    }
+    if bm == "flux.1 krea" {
+        return "flux1krea";
+    }
+    if bm == "flux.1 s" {
+        return "flux1s";
+    }
+    if bm == "flux.1 d" {
+        return "flux1d";
+    }
     if bm == "zimageturbo" {
         return "zit";
     }
@@ -2785,6 +2809,55 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
 
     if name.contains("nanosaur") {
         return Some("nanosaur");
+    }
+    if name.contains("flux.2 klein 9b-base")
+        || name.contains("flux2klein9bbase")
+        || (name.contains("flux") && name.contains("klein") && name.contains("9b") && name.contains("base"))
+    {
+        return Some("flux2klein9bbase");
+    }
+    if name.contains("flux.2 klein 9b")
+        || name.contains("flux2klein9b")
+        || (name.contains("flux") && name.contains("klein") && name.contains("9b"))
+    {
+        return Some("flux2klein9b");
+    }
+    if name.contains("flux.2 klein 4b-base")
+        || name.contains("flux2klein4bbase")
+        || (name.contains("flux") && name.contains("klein") && name.contains("4b") && name.contains("base"))
+    {
+        return Some("flux2klein4bbase");
+    }
+    if name.contains("flux.2 klein 4b")
+        || name.contains("flux2klein4b")
+        || (name.contains("flux") && name.contains("klein") && name.contains("4b"))
+    {
+        return Some("flux2klein4b");
+    }
+    if name.contains("flux.2 d")
+        || name.contains("flux2d")
+        || (name.contains("flux") && name.contains("2") && name.contains("d"))
+    {
+        return Some("flux2d");
+    }
+    if name.contains("flux.1 krea")
+        || name.contains("flux1krea")
+        || (name.contains("flux") && name.contains("krea"))
+    {
+        return Some("flux1krea");
+    }
+    if name.contains("flux.1 s")
+        || name.contains("flux1s")
+        || name.contains("schnell")
+        || (name.contains("flux") && name.contains("1") && name.contains("s"))
+    {
+        return Some("flux1s");
+    }
+    if name.contains("flux.1 d")
+        || name.contains("flux1d")
+        || (name.contains("flux") && name.contains("1") && name.contains("d"))
+    {
+        return Some("flux1d");
     }
     if name.contains("zimageturbo")
         || name.contains("zimage_turbo")
@@ -2893,9 +2966,6 @@ fn turbo_model_variant_from_filename(filename: &str) -> &'static str {
     if name.contains("dmd") {
         return "dmd";
     }
-    if name.contains("schnell") {
-        return "schnell";
-    }
     if name.contains("turbo") {
         return "turbo";
     }
@@ -2952,7 +3022,24 @@ fn recommended_vae_from_available(
         return find_first_vae_matching(vaes, &["qwen"]).or_else(|| vaes.first().cloned());
     }
 
-    if matches!(family, "flux" | "chroma" | "zib" | "zit") {
+    if matches!(
+        family,
+        "flux2d" | "flux2klein9b" | "flux2klein9bbase" | "flux2klein4b" | "flux2klein4bbase"
+    ) {
+        return find_first_vae_matching(vaes, &["flux2-vae", "flux2_vae"])
+            .or_else(|| vaes.first().cloned());
+    }
+
+    if matches!(
+        family,
+        "flux"
+            | "flux1d"
+            | "flux1s"
+            | "flux1krea"
+            | "chroma"
+            | "zib"
+            | "zit"
+    ) {
         return find_first_vae_matching(vaes, &["flux"]).or_else(|| vaes.first().cloned());
     }
 
@@ -2988,6 +3075,40 @@ fn recommended_clip_from_available(
         return Some((preferred, "qwen_image"));
     }
 
+    if family == "flux2d" {
+        let preferred = encoders.iter().find_map(|encoder| {
+            let lower = encoder.to_lowercase();
+            if lower.contains("cow-mistral3-small") {
+                Some(encoder.clone())
+            } else {
+                None
+            }
+        })
+        .or_else(|| encoders.first().cloned())?;
+        return Some((preferred, "flux2"));
+    }
+
+    if matches!(family, "flux2klein9b" | "flux2klein9bbase") {
+        let preferred =
+            find_first_text_encoder_matching(encoders, &[
+                "qwen3_8b",
+                "qwen_3_8b",
+            ])
+            .or_else(|| encoders.first().cloned())?;
+        return Some((preferred, "flux2"));
+    }
+
+    if matches!(family, "flux2klein4b" | "flux2klein4bbase") {
+        let preferred =
+            find_first_text_encoder_matching(encoders, &[
+                "zimage",
+                "qwen3-4b",
+                "qwen34b",
+            ])
+            .or_else(|| encoders.first().cloned())?;
+        return Some((preferred, "flux2"));
+    }
+
     if matches!(family, "zib" | "zit") {
         let preferred =
             find_first_text_encoder_matching(encoders, &[
@@ -2999,7 +3120,7 @@ fn recommended_clip_from_available(
         return Some((preferred, "lumina2"));
     }
 
-    if matches!(family, "flux" | "chroma") {
+    if matches!(family, "flux" | "flux1d" | "flux1s" | "flux1krea" | "chroma") {
         let preferred =
             find_first_text_encoder_matching(encoders, &[
                 "flan_t5_xxl",
