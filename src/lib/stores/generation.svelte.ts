@@ -538,6 +538,10 @@ class GenerationStore {
     return this.isSd3 || this.isFlux || this.isAnima || this.isWan || this.isQwen;
   }
 
+  // TODO:
+  // flux2 uses "Empty Flux 2 Latent"
+  // flux2 uses "Flux2Scheduler"
+
   /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow, Mugen, Nanosaur). */
   get usesRectifiedFlow(): boolean {
     return this.isSd3 || this.isFlux || this.isAuraFlow || this.isMugen || this.isNanosaur;
