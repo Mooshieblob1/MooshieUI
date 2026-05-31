@@ -379,6 +379,10 @@ class GenerationStore {
   modelTurboVariant = $state<TurboModelVariant>("none");
   /** Backend-resolved recommended VAE for split-model pipelines. */
   modelRecommendedVae = $state<string | null>(null);
+  /** Backend-resolved recommended text encoder for split-model pipelines. */
+  modelRecommendedClipModel = $state<string | null>(null);
+  /** Backend-resolved CLIPLoader type for split-model pipelines. */
+  modelRecommendedClipType = $state<string | null>(null);
   get mode(): GenerationMode {
     return this._mode;
   }
@@ -549,6 +553,8 @@ class GenerationStore {
     modelIsSdxlLike?: boolean;
     modelTurboVariant?: TurboModelVariant | null;
     modelRecommendedVae?: string | null;
+    modelRecommendedClipModel?: string | null;
+    modelRecommendedClipType?: string | null;
   }) {
     if (meta.modelspecPredictionType !== undefined) {
       this.modelspecPredictionType = meta.modelspecPredictionType;
@@ -571,7 +577,31 @@ class GenerationStore {
     if (meta.modelRecommendedVae !== undefined) {
       this.modelRecommendedVae = meta.modelRecommendedVae ?? null;
     }
+    if (meta.modelRecommendedClipModel !== undefined) {
+      this.modelRecommendedClipModel = meta.modelRecommendedClipModel ?? null;
+    }
+    if (meta.modelRecommendedClipType !== undefined) {
+      this.modelRecommendedClipType = meta.modelRecommendedClipType ?? null;
+    }
     autocomplete.notifyModelChanged(this.isAnima);
+  }
+
+  ensureRecommendedSplitClip(encoders: string[], save = false): void {
+    if (!this.useSplitModel) return;
+
+    const recommendedModel = this.modelRecommendedClipModel?.trim();
+    const recommendedType = this.modelRecommendedClipType?.trim();
+    if (!recommendedModel || !recommendedType) return;
+
+    const currentModel = this.clipModel?.trim() ?? "";
+    const currentType = this.clipType?.trim() ?? "";
+    const currentMissing = !!currentModel && !encoders.includes(currentModel);
+
+    if (!currentModel || currentMissing || currentType !== recommendedType) {
+      this.clipModel = recommendedModel;
+      this.clipType = recommendedType;
+      if (save) this.saveSettings();
+    }
   }
 
   ensureRecommendedSplitVae(vaes: string[], save = false): void {

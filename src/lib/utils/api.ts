@@ -516,6 +516,8 @@ export interface ModelSpec {
   is_sdxl_like?: string;
   turbo_model_variant?: string;
   recommended_vae?: string;
+  recommended_clip_model?: string;
+  recommended_clip_type?: string;
   hash?: string;
   prediction_type?: string;
   predict_key?: string;

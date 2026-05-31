@@ -2922,6 +2922,23 @@ fn find_first_vae_matching(vaes: &[String], markers: &[&str]) -> Option<String> 
     })
 }
 
+fn find_first_text_encoder_matching(
+    encoders: &[String],
+    markers: &[&str],
+) -> Option<String> {
+    encoders.iter().find_map(|encoder| {
+        let lower = encoder.to_lowercase();
+        if !lower.ends_with(".safetensors") {
+            return None;
+        }
+        if markers.iter().any(|marker| lower.contains(marker)) {
+            Some(encoder.clone())
+        } else {
+            None
+        }
+    })
+}
+
 fn recommended_vae_from_available(
     category: &str,
     family: &str,
@@ -2940,6 +2957,59 @@ fn recommended_vae_from_available(
     }
 
     find_first_vae_matching(vaes, &["sdxl"]).or_else(|| vaes.first().cloned())
+}
+
+fn recommended_clip_from_available(
+    category: &str,
+    family: &str,
+    encoders: &[String],
+) -> Option<(String, &'static str)> {
+    if category != "diffusion_models" || encoders.is_empty() {
+        return None;
+    }
+
+    if family == "anima" {
+        let preferred =
+            find_first_text_encoder_matching(encoders, &[
+                "qwen_3_06b_base",
+                "qwen_3_06b",
+            ])
+            .or_else(|| encoders.first().cloned())?;
+        return Some((preferred, "stable_diffusion"));
+    }
+
+    if matches!(family, "qwen" | "wan") {
+        let preferred =
+            find_first_text_encoder_matching(encoders, &[
+                "qwen2.5-vl",
+                "qwen_2.5_vl",
+            ])
+            .or_else(|| encoders.first().cloned())?;
+        return Some((preferred, "qwen_image"));
+    }
+
+    if matches!(family, "zib" | "zit") {
+        let preferred =
+            find_first_text_encoder_matching(encoders, &[
+                "zimage",
+                "qwen3-4b",
+                "qwen34b",
+            ])
+            .or_else(|| encoders.first().cloned())?;
+        return Some((preferred, "lumina2"));
+    }
+
+    if matches!(family, "flux" | "chroma") {
+        let preferred =
+            find_first_text_encoder_matching(encoders, &[
+                "flan_t5_xxl",
+                "t5_xxl",
+            ])
+            .or_else(|| encoders.first().cloned())?;
+        return Some((preferred, "flux"));
+    }
+
+    Some((encoders.first()?.clone(), "wan"))
 }
 
 fn read_json_sidecar(path: &std::path::Path) -> Result<Option<Value>, AppError> {
@@ -3337,6 +3407,16 @@ pub(crate) async fn read_modelspec_internal(
         let vaes = state.get_models_list("vae").await?;
         if let Some(recommended_vae) = recommended_vae_from_available(category, &family, &vaes) {
             result.insert("recommended_vae".to_string(), recommended_vae);
+        }
+        let encoders = state.get_models_list("text_encoders").await?;
+        if let Some((recommended_clip_model, recommended_clip_type)) =
+            recommended_clip_from_available(category, &family, &encoders)
+        {
+            result.insert("recommended_clip_model".to_string(), recommended_clip_model);
+            result.insert(
+                "recommended_clip_type".to_string(),
+                recommended_clip_type.to_string(),
+            );
         }
     }
 

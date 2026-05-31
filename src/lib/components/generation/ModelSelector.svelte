@@ -283,6 +283,8 @@
         modelIsSdxlLike: false,
         modelTurboVariant: "none",
         modelRecommendedVae: null,
+        modelRecommendedClipModel: null,
+        modelRecommendedClipType: null,
       });
       return;
     }
@@ -313,7 +315,10 @@
           | "dmd2"
           | undefined) ?? "none",
         modelRecommendedVae: spec?.recommended_vae ?? null,
+        modelRecommendedClipModel: spec?.recommended_clip_model ?? null,
+        modelRecommendedClipType: spec?.recommended_clip_type ?? null,
       });
+      generation.ensureRecommendedSplitClip(models.textEncoders);
       generation.ensureRecommendedSplitVae(models.vaes);
       if (family === "unknown") {
         loadedModelMetadataKey = "";
@@ -331,6 +336,8 @@
         modelIsSdxlLike: false,
         modelTurboVariant: "none",
         modelRecommendedVae: null,
+        modelRecommendedClipModel: null,
+        modelRecommendedClipType: null,
       });
     }
   }
@@ -629,35 +636,6 @@
     );
   });
 
-  /** Pair text encoder + CLIPLoader type for a manually picked diffusion model file */
-  function pickSplitModelClip(
-    diffusionModel: string,
-    encoders: string[],
-  ): { clip: string; clipType: string } {
-    const dm = diffusionModel.toLowerCase();
-    const looksAnimaOrQwen =
-      generation.isAnima ||
-      dm.includes("anima") ||
-      dm.includes("qwen") ||
-      dm.includes("wan") ||
-      dm.includes("yume");
-    if (looksAnimaOrQwen) {
-      const preferred =
-        encoders.find((e) => e.toLowerCase().includes("qwen_3_06b")) ??
-        encoders.find((e) => e.toLowerCase().includes("qwen"));
-      if (preferred) return { clip: preferred, clipType: "wan" };
-    }
-    if (dm.includes("flux") || dm.includes("klein")) {
-      const qwen8 = encoders.find((e) => {
-        const n = e.toLowerCase();
-        return n.includes("qwen_3_8b") || n.includes("fp4mixed");
-      });
-      if (qwen8) return { clip: qwen8, clipType: "qwen_image" };
-    }
-    if (encoders.length > 0) return { clip: encoders[0], clipType: "wan" };
-    return { clip: "", clipType: "wan" };
-  }
-
   interface DropdownItem {
     type: "checkpoint" | "recommended" | "diffusion";
     label: string;
@@ -818,6 +796,8 @@
       modelIsSdxlLike: false,
       modelTurboVariant: "none",
       modelRecommendedVae: null,
+      modelRecommendedClipModel: null,
+      modelRecommendedClipType: null,
     });
     generation.applyModelSpecificPreset();
     checkpointSearch = "";
@@ -828,11 +808,10 @@
   async function selectCustomDiffusion(filename: string) {
     closeCheckpointDropdown();
     checkpointSearch = "";
-    const { clip, clipType } = pickSplitModelClip(filename, models.textEncoders);
     generation.useSplitModel = true;
     generation.diffusionModel = filename;
-    generation.clipModel = clip || null;
-    generation.clipType = clipType;
+    generation.clipModel = null;
+    generation.clipType = null;
     generation.vae = "";
     generation.checkpoint = filename;
     await loadModelSpec("diffusion_models", filename);
