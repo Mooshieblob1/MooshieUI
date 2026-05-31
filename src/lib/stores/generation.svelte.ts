@@ -7,6 +7,7 @@ import {
   parseScheduledPrompt,
 } from "../utils/promptSchedule.js";
 import {
+  MODEL_FAMILIES,
   signalsIndicateAnima,
   signalsIndicateVPred,
 } from "../utils/modelFamily.js";
@@ -61,6 +62,10 @@ type TurboModelVariant =
   | "hyper"
   | "dmd"
   | "dmd2";
+
+function isModelFamily(value: unknown): value is ModelFamily {
+  return typeof value === "string" && MODEL_FAMILIES.includes(value as ModelFamily);
+}
 
 /**
  * Translate NAI-style weight brackets to ComfyUI (tag:weight) syntax.
@@ -382,6 +387,8 @@ class GenerationStore {
   modelRecommendedClipModel = $state<string | null>(null);
   /** Backend-resolved CLIPLoader type for split-model pipelines. */
   modelRecommendedClipType = $state<string | null>(null);
+  /** Manual per-model family override keyed by `category::filename`. */
+  modelFamilyOverrides = $state<Record<string, ModelFamily>>({});
   get mode(): GenerationMode {
     return this._mode;
   }
@@ -604,6 +611,21 @@ class GenerationStore {
       this.modelRecommendedClipType = meta.modelRecommendedClipType ?? null;
     }
     autocomplete.notifyModelChanged(this.isAnima);
+  }
+
+  getModelFamilyOverride(modelKey: string): ModelFamily | null {
+    return this.modelFamilyOverrides[modelKey] ?? null;
+  }
+
+  setModelFamilyOverride(modelKey: string, family: ModelFamily | null): void {
+    const next = { ...this.modelFamilyOverrides };
+    if (!family) {
+      delete next[modelKey];
+    } else {
+      next[modelKey] = family;
+    }
+    this.modelFamilyOverrides = next;
+    this.saveSettings();
   }
 
   ensureRecommendedSplitClip(encoders: string[], save = false): void {
@@ -1150,6 +1172,13 @@ class GenerationStore {
         if (saved.customPonyNegativeQuality !== undefined) this.customPonyNegativeQuality = saved.customPonyNegativeQuality;
         if (saved.customNanosaurPositiveQuality !== undefined) this.customNanosaurPositiveQuality = saved.customNanosaurPositiveQuality;
         if (saved.customNanosaurNegativeQuality !== undefined) this.customNanosaurNegativeQuality = saved.customNanosaurNegativeQuality;
+        if (saved.modelFamilyOverrides && typeof saved.modelFamilyOverrides === "object") {
+          this.modelFamilyOverrides = Object.fromEntries(
+            Object.entries(saved.modelFamilyOverrides as Record<string, unknown>).filter(
+              ([key, value]) => !!key && isModelFamily(value) && value !== "unknown",
+            ),
+          ) as Record<string, ModelFamily>;
+        }
         if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
         if (Array.isArray(saved.autoSaveDirs)) this.autoSaveDirs = saved.autoSaveDirs;
         if (saved.regionalPromptStrategy === "conditioning" || saved.regionalPromptStrategy === "inpaint_chain") {
@@ -1272,6 +1301,7 @@ class GenerationStore {
         customPonyNegativeQuality: this.customPonyNegativeQuality,
         customNanosaurPositiveQuality: this.customNanosaurPositiveQuality,
         customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
+        modelFamilyOverrides: this.modelFamilyOverrides,
         manualSaveMode: this.manualSaveMode,
         autoSaveDirs: this.autoSaveDirs,
         regionalPrompts: this.regionalPrompts,

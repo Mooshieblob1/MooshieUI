@@ -1,35 +1,11 @@
 import type { CheckpointCivitaiInfo, LoraCivitaiInfo } from "./api.js";
-import {
-  civitaiBaseModelIndicatesAnima,
-  filenameIndicatesAnima,
-  filenameIndicatesIllustrious,
-  type ModelFamily,
-} from "./modelFamily.js";
+import { MODEL_FAMILIES } from "./modelFamily.js";
+import type { ModelFamily } from "./modelFamily.js";
 
 export type ModelGallerySort = "name" | "folder" | "family";
 
-const FAMILY_ORDER: ModelFamily[] = [
-  "anima",
-  "illustrious",
-  "pony",
-  "sdxl",
-  "sd15",
-  "flux",
-  "flux1d",
-  "flux1s",
-  "flux1krea",
-  "flux2d",
-  "flux2klein9b",
-  "flux2klein9bbase",
-  "flux2klein4b",
-  "flux2klein4bbase",
-  "chroma",
-  "zib",
-  "zit",
-  "sd3",
-  "nanosaur",
-  "mugen",
-  "unknown",
+export const FAMILY_ORDER: ModelFamily[] = [
+  ...MODEL_FAMILIES,
 ];
 
 /** Parent folder path for a ComfyUI model filename (empty string = root of category). */

@@ -8,6 +8,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
+  import { MODEL_FAMILIES } from "../../utils/modelFamily.js";
   import type { ModelFamily } from "../../utils/modelFamily.js";
 
   interface ModelFile {
@@ -261,6 +262,12 @@
 
   let loadedModelMetadataKey = $state("");
   let latestModelMetadataRequestId = 0;
+  let isModelMetadataLoading = $state(false);
+  let showArchitecturePicker = $state(false);
+
+  function familyIsSdxlLike(family: ModelFamily): boolean {
+    return ["sdxl", "illustrious", "pony", "mugen"].includes(family);
+  }
 
   function currentModelMetadataKey(): string {
     if (generation.useSplitModel && generation.diffusionModel) {
@@ -272,9 +279,57 @@
     return "";
   }
 
+  function currentFamilyOverride(): ModelFamily | null {
+    const modelKey = currentModelMetadataKey();
+    return modelKey ? generation.getModelFamilyOverride(modelKey) : null;
+  }
+
+  function architectureBadgeLabel(): string {
+    if (!currentModelMetadataKey()) return "";
+    const manualOverride = currentFamilyOverride();
+    if (manualOverride) return manualOverride;
+    if (isModelMetadataLoading) return "detecting...";
+    return generation.detectedArchitecture === "unknown" ? "undefined" : generation.detectedArchitecture;
+  }
+
+  function applyCurrentModelFamilyOverride(family: ModelFamily | null): void {
+    const modelKey = currentModelMetadataKey();
+    if (!modelKey) return;
+
+    latestModelMetadataRequestId += 1;
+    isModelMetadataLoading = false;
+    showArchitecturePicker = false;
+    generation.setModelFamilyOverride(modelKey, family);
+
+    if (family) {
+      loadedModelMetadataKey = modelKey;
+      generation.applyModelMetadata({
+        modelspecPredictionType: null,
+        modelspecPredictKey: null,
+        modelspecHeaderVPred: false,
+        modelFamily: family,
+        modelIsSdxlLike: familyIsSdxlLike(family),
+        modelTurboVariant: "none",
+        modelRecommendedVae: null,
+        modelRecommendedClipModel: null,
+        modelRecommendedClipType: null,
+      });
+      generation.applyModelSpecificPreset();
+      return;
+    }
+
+    loadedModelMetadataKey = "";
+    if (generation.useSplitModel && generation.diffusionModel) {
+      loadModelSpec("diffusion_models", generation.diffusionModel);
+    } else if (generation.checkpoint) {
+      loadModelSpec("checkpoints", generation.checkpoint);
+    }
+  }
+
   async function loadModelSpec(category: string, filename: string) {
     if (!filename || !filename.endsWith(".safetensors")) {
       loadedModelMetadataKey = "";
+      isModelMetadataLoading = false;
       generation.applyModelMetadata({
         modelspecPredictionType: null,
         modelspecPredictKey: null,
@@ -289,8 +344,27 @@
       return;
     }
     const metadataKey = `${category}::${filename}`;
+    const manualOverride = generation.getModelFamilyOverride(metadataKey);
+    if (manualOverride) {
+      loadedModelMetadataKey = metadataKey;
+      isModelMetadataLoading = false;
+      generation.applyModelMetadata({
+        modelspecPredictionType: null,
+        modelspecPredictKey: null,
+        modelspecHeaderVPred: false,
+        modelFamily: manualOverride,
+        modelIsSdxlLike: familyIsSdxlLike(manualOverride),
+        modelTurboVariant: "none",
+        modelRecommendedVae: null,
+        modelRecommendedClipModel: null,
+        modelRecommendedClipType: null,
+      });
+      generation.applyModelSpecificPreset();
+      return;
+    }
     if (metadataKey === loadedModelMetadataKey && generation.modelFamily !== "unknown") return;
     const requestId = ++latestModelMetadataRequestId;
+    isModelMetadataLoading = true;
     try {
       const spec = await readModelSpec(category, filename);
       if (requestId !== latestModelMetadataRequestId) return;
@@ -298,6 +372,7 @@
 
       const family = (spec?.family as ModelFamily | undefined) ?? "unknown";
       loadedModelMetadataKey = metadataKey;
+      isModelMetadataLoading = false;
       generation.applyModelMetadata({
         modelspecPredictionType: spec?.prediction_type ?? null,
         modelspecPredictKey: spec?.predict_key ?? null,
@@ -328,6 +403,7 @@
       if (currentModelMetadataKey() !== metadataKey) return;
 
       loadedModelMetadataKey = "";
+      isModelMetadataLoading = false;
       generation.applyModelMetadata({
         modelspecPredictionType: null,
         modelspecPredictKey: null,
@@ -347,6 +423,8 @@
       loadModelSpec("diffusion_models", generation.diffusionModel);
     } else if (generation.checkpoint) {
       loadModelSpec("checkpoints", generation.checkpoint);
+    } else {
+      isModelMetadataLoading = false;
     }
   });
 
@@ -359,6 +437,7 @@
   let downloadError = $state("");
   let modelSelectorRootEl = $state<HTMLDivElement | null>(null);
   let checkpointDropdownListEl = $state<HTMLDivElement | null>(null);
+  let architecturePickerEl = $state<HTMLDivElement | null>(null);
 
   /**
    * Detected NVIDIA compute capability. `null` until probed; remains `null`
@@ -483,6 +562,9 @@
   function handleDocumentPointerDown(event: PointerEvent) {
     const target = event.target;
     if (!(target instanceof Node)) return;
+    if (showArchitecturePicker && architecturePickerEl && !architecturePickerEl.contains(target)) {
+      showArchitecturePicker = false;
+    }
     if (modelSelectorRootEl?.contains(target)) return;
     showCheckpointDropdown = false;
     showLoraDropdown = null;
@@ -490,6 +572,7 @@
 
   function handleDocumentKeydown(event: KeyboardEvent) {
     if (event.key !== "Escape") return;
+    showArchitecturePicker = false;
     showCheckpointDropdown = false;
     showLoraDropdown = null;
   }
@@ -964,13 +1047,37 @@
   <div class="relative">
     <div class="mb-1 flex items-center justify-between gap-2">
       <label class="block text-xs text-neutral-400">{locale.t('generation.model.checkpoint')}<InfoTip text={locale.t('generation.model.checkpoint_tip')} /></label>
-      {#if generation.detectedArchitecture !== "unknown"}
-        <span
-          class="shrink-0 rounded-full border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-[10px] text-neutral-300"
-          title="Detected model architecture"
-        >
-          {generation.detectedArchitecture}
-        </span>
+      {#if currentModelMetadataKey()}
+        <div bind:this={architecturePickerEl} class="relative shrink-0">
+          <button
+            type="button"
+            class="rounded-full border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-[10px] text-neutral-300 hover:border-neutral-600"
+            title="Detected model architecture"
+            onclick={() => showArchitecturePicker = !showArchitecturePicker}
+          >
+            {architectureBadgeLabel()}
+          </button>
+          {#if showArchitecturePicker}
+            <div class="absolute right-0 top-[calc(100%+6px)] z-20 min-w-40 rounded-lg border border-neutral-700 bg-neutral-900 p-2 shadow-xl">
+              <button
+                type="button"
+                class="mb-1 w-full rounded px-2 py-1 text-left text-xs text-neutral-300 hover:bg-neutral-800"
+                onclick={() => applyCurrentModelFamilyOverride(null)}
+              >
+                Auto
+              </button>
+              {#each MODEL_FAMILIES.filter((family) => family !== "unknown") as family}
+                <button
+                  type="button"
+                  class="block w-full rounded px-2 py-1 text-left text-xs text-neutral-300 hover:bg-neutral-800"
+                  onclick={() => applyCurrentModelFamilyOverride(family)}
+                >
+                  {family}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
       {/if}
     </div>
     <button

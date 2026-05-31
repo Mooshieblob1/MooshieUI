@@ -2,35 +2,38 @@
  * Shared helpers for model-family detection and related metadata signals.
  */
 
-export type ModelFamily =
-  | "sdxl"
-  | "illustrious"
-  | "sd15"
-  | "sd3"
-  | "flux"
-  | "flux1d"
-  | "flux1s"
-  | "flux1krea"
-  | "flux2d"
-  | "flux2klein9b"
-  | "flux2klein9bbase"
-  | "flux2klein4b"
-  | "flux2klein4bbase"
-  | "chroma"
-  | "zib"
-  | "zit"
-  | "wan"
-  | "qwen"
-  | "pony"
-  | "auraflow"
-  | "pixart"
-  | "hunyuandit"
-  | "cascade"
-  | "kolors"
-  | "mugen"
-  | "nanosaur"
-  | "anima"
-  | "unknown";
+export const MODEL_FAMILIES = [
+  "anima",
+  "sdxl",
+  "illustrious",
+  "pony",
+  "sd15",
+  "sd3",
+  "flux",
+  "flux1d",
+  "flux1s",
+  "flux1krea",
+  "flux2d",
+  "flux2klein9b",
+  "flux2klein9bbase",
+  "flux2klein4b",
+  "flux2klein4bbase",
+  "chroma",
+  "zib",
+  "zit",
+  "wan",
+  "qwen",
+  "auraflow",
+  "pixart",
+  "hunyuandit",
+  "cascade",
+  "kolors",
+  "mugen",
+  "nanosaur",
+  "unknown",
+] as const;
+
+export type ModelFamily = typeof MODEL_FAMILIES[number];
 
 export interface ModelFamilySignals {
   /** Checkpoint filename or diffusion UNET filename */

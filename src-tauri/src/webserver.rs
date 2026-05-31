@@ -3414,6 +3414,7 @@ async fn dispatch_command(
         }
 
         // --- CivitAI ---
+        // TODO: refactor src-tauri/src/commands/api.rs and src-tauri/src/webserver.rs
         "civitai_search_models" => {
             let params: crate::commands::api::CivitaiSearchParams =
                 serde_json::from_value(args["params"].clone())
