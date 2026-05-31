@@ -8,6 +8,7 @@ export type ModelFamily =
   | "sd15"
   | "sd3"
   | "flux"
+  | "chroma"
   | "zib"
   | "zit"
   | "wan"

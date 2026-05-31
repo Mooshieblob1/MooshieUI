@@ -2738,6 +2738,9 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     {
         return "sd3";
     }
+    if bm.contains("chroma") {
+        return "chroma";
+    }
     if bm.contains("flux") {
         return "flux";
     }
@@ -2829,6 +2832,9 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     {
         return Some("sd3");
     }
+    if name.contains("chroma") {
+        return Some("chroma");
+    }
     if name.contains("flux") {
         return Some("flux");
     }
@@ -2903,6 +2909,38 @@ fn turbo_model_variant_from_filename(filename: &str) -> &'static str {
         return "hyper";
     }
     "none"
+}
+
+fn find_first_vae_matching(vaes: &[String], markers: &[&str]) -> Option<String> {
+    vaes.iter().find_map(|vae| {
+        let lower = vae.to_lowercase();
+        if markers.iter().any(|marker| lower.contains(marker)) {
+            Some(vae.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn recommended_vae_from_available(
+    category: &str,
+    filename: &str,
+    family: &str,
+    vaes: &[String],
+) -> Option<String> {
+    if category != "diffusion_models" || vaes.is_empty() {
+        return None;
+    }
+
+    if matches!(family, "anima" | "qwen" | "wan") {
+        return find_first_vae_matching(vaes, &["qwen"]).or_else(|| vaes.first().cloned());
+    }
+
+    if matches!(family, "flux" | "chroma" | "zib" | "zit") {
+        return find_first_vae_matching(vaes, &["flux"]).or_else(|| vaes.first().cloned());
+    }
+
+    find_first_vae_matching(vaes, &["sdxl"]).or_else(|| vaes.first().cloned())
 }
 
 fn read_json_sidecar(path: &std::path::Path) -> Result<Option<Value>, AppError> {
@@ -3293,6 +3331,16 @@ pub(crate) async fn read_modelspec_internal(
                 "false".to_string()
             },
         );
+    }
+
+    if category == "diffusion_models" {
+        let family = result.get("family").cloned().unwrap_or_else(|| "unknown".to_string());
+        let vaes = state.get_models_list("vae").await?;
+        if let Some(recommended_vae) =
+            recommended_vae_from_available(category, filename, &family, &vaes)
+        {
+            result.insert("recommended_vae".to_string(), recommended_vae);
+        }
     }
 
     if result.is_empty() {

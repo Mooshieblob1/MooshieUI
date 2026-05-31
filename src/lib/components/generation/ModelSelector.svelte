@@ -271,6 +271,7 @@
         modelFamily: "unknown",
         modelIsSdxlLike: false,
         modelTurboVariant: "none",
+        modelRecommendedVae: null,
       });
       return;
     }
@@ -296,7 +297,9 @@
           | "dmd"
           | "dmd2"
           | undefined) ?? "none",
+        modelRecommendedVae: spec?.recommended_vae ?? null,
       });
+      generation.ensureRecommendedSplitVae(models.vaes);
       if (family === "unknown") {
         loadedModelMetadataKey = "";
       }
@@ -309,6 +312,7 @@
         modelFamily: "unknown",
         modelIsSdxlLike: false,
         modelTurboVariant: "none",
+        modelRecommendedVae: null,
       });
     }
   }
@@ -636,28 +640,6 @@
     return { clip: "", clipType: "wan" };
   }
 
-  function pickSplitModelVae(diffusionModel: string, vaes: string[]): string {
-    if (vaes.length === 0) return "";
-    const dm = diffusionModel.toLowerCase();
-    const looksAnimaOrQwen =
-      generation.isAnima ||
-      dm.includes("anima") ||
-      dm.includes("qwen") ||
-      dm.includes("wan") ||
-      dm.includes("yume");
-    const looksFlux = dm.includes("flux") || dm.includes("klein");
-
-    if (looksAnimaOrQwen) {
-      const qwen = vaes.find((v) => v.toLowerCase().includes("qwen"));
-      if (qwen) return qwen;
-    }
-    if (looksFlux) {
-      const flux = vaes.find((v) => v.toLowerCase().includes("flux"));
-      if (flux) return flux;
-    }
-    return vaes.find((v) => v.toLowerCase().includes("sdxl_vae")) ?? vaes[0];
-  }
-
   interface DropdownItem {
     type: "checkpoint" | "recommended" | "diffusion";
     label: string;
@@ -817,6 +799,7 @@
       modelFamily: "unknown",
       modelIsSdxlLike: false,
       modelTurboVariant: "none",
+      modelRecommendedVae: null,
     });
     generation.applyModelSpecificPreset();
     checkpointSearch = "";
@@ -824,7 +807,7 @@
   }
 
   /** Use a diffusion model file discovered on disk (not in the curated recommended list). */
-  function selectCustomDiffusion(filename: string) {
+  async function selectCustomDiffusion(filename: string) {
     closeCheckpointDropdown();
     checkpointSearch = "";
     const { clip, clipType } = pickSplitModelClip(filename, models.textEncoders);
@@ -832,8 +815,9 @@
     generation.diffusionModel = filename;
     generation.clipModel = clip || null;
     generation.clipType = clipType;
-    generation.vae = pickSplitModelVae(filename, models.vaes);
+    generation.vae = "";
     generation.checkpoint = filename;
+    await loadModelSpec("diffusion_models", filename);
     generation.applyModelSpecificPreset();
   }
 
