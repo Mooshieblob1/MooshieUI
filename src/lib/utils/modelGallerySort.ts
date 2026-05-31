@@ -28,54 +28,18 @@ export function modelFolderPath(filename: string): string {
   return idx >= 0 ? normalized.slice(0, idx) : "";
 }
 
-function familyFromBaseModelLabel(label: string | null | undefined): ModelFamily | null {
-  if (!label) return null;
-  const bm = label.toLowerCase();
-  if (civitaiBaseModelIndicatesAnima(label)) return "anima";
-  if (bm.includes("illustrious") || bm.includes("noob")) return "illustrious";
-  if (bm.includes("pony")) return "pony";
-  if (bm.includes("sdxl")) return "sdxl";
-  if (bm.includes("sd 1.5") || bm.includes("sd1.5") || bm === "sd 1.5") return "sd15";
-  if (bm.includes("flux")) return "flux";
-  if (bm.includes("sd 3") || bm.includes("sd3")) return "sd3";
-  return null;
-}
-
 export function inferCheckpointFamily(
-  filename: string,
-  info?: Pick<CheckpointCivitaiInfo, "base_model" | "modelspec_architecture"> | null,
+  _filename: string,
+  info?: Pick<CheckpointCivitaiInfo, "family"> | null,
 ): ModelFamily {
-  const fromCivitai = familyFromBaseModelLabel(info?.base_model);
-  if (fromCivitai) return fromCivitai;
-  if (filenameIndicatesIllustrious(filename)) return "illustrious";
-  if (filenameIndicatesAnima(filename)) return "anima";
-  const arch = (info?.modelspec_architecture ?? "").toLowerCase();
-  if (arch.includes("anima") || arch.includes("wan")) return "anima";
-  const n = filename.toLowerCase();
-  if (n.includes("pony")) return "pony";
-  if (n.includes("flux")) return "flux";
-  if (n.includes("sdxl")) return "sdxl";
-  if (n.includes("sd15") || n.includes("sd1.5")) return "sd15";
-  if (n.includes("nanosaur")) return "nanosaur";
-  return "unknown";
+  return (info?.family as ModelFamily | undefined) ?? "unknown";
 }
 
 export function inferLoraFamily(
-  filename: string,
-  info?: Pick<LoraCivitaiInfo, "civitai_base_model" | "modelspec_architecture"> | null,
+  _filename: string,
+  info?: Pick<LoraCivitaiInfo, "family"> | null,
 ): ModelFamily {
-  const fromCivitai = familyFromBaseModelLabel(info?.civitai_base_model);
-  if (fromCivitai) return fromCivitai;
-  if (filenameIndicatesIllustrious(filename)) return "illustrious";
-  if (filenameIndicatesAnima(filename)) return "anima";
-  const arch = (info?.modelspec_architecture ?? "").toLowerCase();
-  if (arch.includes("anima") || arch.includes("wan")) return "anima";
-  const n = filename.toLowerCase();
-  if (n.includes("pony")) return "pony";
-  if (n.includes("flux")) return "flux";
-  if (n.includes("sdxl")) return "sdxl";
-  if (n.includes("sd15") || n.includes("sd1.5")) return "sd15";
-  return "unknown";
+  return (info?.family as ModelFamily | undefined) ?? "unknown";
 }
 
 function familyRank(family: ModelFamily): number {

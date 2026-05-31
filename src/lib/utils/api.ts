@@ -538,6 +538,7 @@ export interface LoraCivitaiImage {
 export interface LoraCivitaiInfo {
   filename: string;
   hash?: string;
+  family?: string;
   /** "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or undefined. */
   thumbnail_url?: string;
   civitai_name?: string;
@@ -563,6 +564,7 @@ export interface CheckpointCivitaiInfo {
   hash?: string;
   display_name?: string;
   base_model?: string;
+  family?: string;
   /** "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or undefined. */
   thumbnail_url?: string;
   civitai_model_id?: number;

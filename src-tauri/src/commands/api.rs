@@ -3466,6 +3466,7 @@ fn read_model_sidecar_thumbnail(path: &std::path::Path) -> Option<String> {
 pub struct LoraCivitaiInfo {
     pub filename: String,
     pub hash: Option<String>,
+    pub family: Option<String>,
     /// "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or None.
     pub thumbnail_url: Option<String>,
     pub civitai_name: Option<String>,
@@ -3501,6 +3502,7 @@ pub struct CheckpointCivitaiInfo {
     pub hash: Option<String>,
     pub display_name: Option<String>,
     pub base_model: Option<String>,
+    pub family: Option<String>,
     /// "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or None.
     pub thumbnail_url: Option<String>,
     pub civitai_model_id: Option<u64>,
@@ -3701,6 +3703,7 @@ pub async fn get_lora_civitai_info(
     log::debug!("Resolved LoRA '{}' → {:?}", filename, path);
 
     let sidecar_thumbnail = read_model_sidecar_thumbnail(&path);
+    let resolved_modelspec = read_modelspec_internal(state.inner(), "loras", &filename).await?;
 
     // Read modelspec in parallel-friendly manner (sync I/O in blocking task)
     let modelspec = if filename.ends_with(".safetensors") {
@@ -3733,6 +3736,9 @@ pub async fn get_lora_civitai_info(
     let mut info = LoraCivitaiInfo {
         filename: filename.clone(),
         hash: Some(autov2),
+        family: resolved_modelspec
+            .as_ref()
+            .and_then(|m| m.get("family").cloned()),
         thumbnail_url: sidecar_thumbnail,
         civitai_name: None,
         civitai_description: None,
@@ -3890,14 +3896,19 @@ pub async fn get_checkpoint_civitai_info(
     };
 
     let sidecar_thumbnail = read_model_sidecar_thumbnail(&path);
+    let resolved_modelspec = read_modelspec_internal(state.inner(), "checkpoints", &filename).await?;
 
     let mut info = CheckpointCivitaiInfo {
         filename: filename.clone(),
         hash: None,
         display_name: modelspec.as_ref().and_then(|m| m.get("title").cloned()),
-        base_model: modelspec
+        base_model: resolved_modelspec
             .as_ref()
-            .and_then(|m| m.get("architecture").cloned()),
+            .and_then(|m| m.get("base_model").cloned())
+            .or_else(|| modelspec.as_ref().and_then(|m| m.get("architecture").cloned())),
+        family: resolved_modelspec
+            .as_ref()
+            .and_then(|m| m.get("family").cloned()),
         thumbnail_url: sidecar_thumbnail,
         civitai_model_id: None,
         civitai_version_id: None,
