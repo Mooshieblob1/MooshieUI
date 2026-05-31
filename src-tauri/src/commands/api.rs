@@ -2924,7 +2924,6 @@ fn find_first_vae_matching(vaes: &[String], markers: &[&str]) -> Option<String> 
 
 fn recommended_vae_from_available(
     category: &str,
-    filename: &str,
     family: &str,
     vaes: &[String],
 ) -> Option<String> {
@@ -3336,9 +3335,7 @@ pub(crate) async fn read_modelspec_internal(
     if category == "diffusion_models" {
         let family = result.get("family").cloned().unwrap_or_else(|| "unknown".to_string());
         let vaes = state.get_models_list("vae").await?;
-        if let Some(recommended_vae) =
-            recommended_vae_from_available(category, filename, &family, &vaes)
-        {
+        if let Some(recommended_vae) = recommended_vae_from_available(category, &family, &vaes) {
             result.insert("recommended_vae".to_string(), recommended_vae);
         }
     }

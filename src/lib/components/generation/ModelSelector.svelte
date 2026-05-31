@@ -260,6 +260,17 @@
   ];
 
   let loadedModelMetadataKey = $state("");
+  let latestModelMetadataRequestId = 0;
+
+  function currentModelMetadataKey(): string {
+    if (generation.useSplitModel && generation.diffusionModel) {
+      return `diffusion_models::${generation.diffusionModel}`;
+    }
+    if (generation.checkpoint) {
+      return `checkpoints::${generation.checkpoint}`;
+    }
+    return "";
+  }
 
   async function loadModelSpec(category: string, filename: string) {
     if (!filename || !filename.endsWith(".safetensors")) {
@@ -277,10 +288,14 @@
     }
     const metadataKey = `${category}::${filename}`;
     if (metadataKey === loadedModelMetadataKey && generation.modelFamily !== "unknown") return;
-    loadedModelMetadataKey = metadataKey;
+    const requestId = ++latestModelMetadataRequestId;
     try {
       const spec = await readModelSpec(category, filename);
+      if (requestId !== latestModelMetadataRequestId) return;
+      if (currentModelMetadataKey() !== metadataKey) return;
+
       const family = (spec?.family as ModelFamily | undefined) ?? "unknown";
+      loadedModelMetadataKey = metadataKey;
       generation.applyModelMetadata({
         modelspecPredictionType: spec?.prediction_type ?? null,
         modelspecPredictKey: spec?.predict_key ?? null,
@@ -304,6 +319,9 @@
         loadedModelMetadataKey = "";
       }
     } catch {
+      if (requestId !== latestModelMetadataRequestId) return;
+      if (currentModelMetadataKey() !== metadataKey) return;
+
       loadedModelMetadataKey = "";
       generation.applyModelMetadata({
         modelspecPredictionType: null,
