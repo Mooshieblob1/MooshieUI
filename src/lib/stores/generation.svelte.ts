@@ -53,6 +53,16 @@ interface ModelPreset {
   upscaleDenoise?: number;
 }
 
+type TurboModelVariant =
+  | "none"
+  | "schnell"
+  | "turbo"
+  | "lightning"
+  | "lcm"
+  | "hyper"
+  | "dmd"
+  | "dmd2";
+
 /**
  * Translate NAI-style weight brackets to ComfyUI (tag:weight) syntax.
  * - {text} → (text:1.05)   — each layer multiplies by 1.05
@@ -390,6 +400,8 @@ class GenerationStore {
   modelFamily = $state<ModelFamily>("unknown");
   /** Backend-resolved SDXL-like family bucket. */
   modelIsSdxlLike = $state(false);
+  /** Backend-resolved turbo/schnell/lightning/lcm/hyper/dmd model variant. */
+  modelTurboVariant = $state<TurboModelVariant>("none");
   get mode(): GenerationMode {
     return this._mode;
   }
@@ -509,6 +521,11 @@ class GenerationStore {
     return this.modelIsSdxlLike;
   }
 
+  /** True when the selected model uses a fast/turbo-style variant preset. */
+  get hasTurboModelVariant(): boolean {
+    return this.modelTurboVariant !== "none";
+  }
+
   /** True when the model uses a 16-channel latent space (SD3, Flux, Anima, Wan, Qwen). */
   get needsSd3Latent(): boolean {
     return this.isSd3 || this.isFlux || this.isAnima || this.isWan || this.isQwen;
@@ -543,6 +560,7 @@ class GenerationStore {
     modelspecHeaderVPred?: boolean;
     modelFamily?: ModelFamily | null;
     modelIsSdxlLike?: boolean;
+    modelTurboVariant?: TurboModelVariant | null;
   }) {
     if (meta.modelspecPredictionType !== undefined) {
       this.modelspecPredictionType = meta.modelspecPredictionType;
@@ -558,6 +576,9 @@ class GenerationStore {
     }
     if (meta.modelIsSdxlLike !== undefined) {
       this.modelIsSdxlLike = meta.modelIsSdxlLike;
+    }
+    if (meta.modelTurboVariant !== undefined) {
+      this.modelTurboVariant = meta.modelTurboVariant ?? "none";
     }
     if (meta.modelspecPredictionType !== undefined) {
       this.modelspecPredictionType = meta.modelspecPredictionType;
@@ -768,8 +789,6 @@ class GenerationStore {
     const isAnimaLike = this.isAnima || this.isWan || this.isQwen;
     autocomplete.notifyModelChanged(isAnimaLike);
 
-    // TODO: restore accelerated variant presets via a real backend/metadata signal
-    // instead of the old filename-based turbo/lightning/lcm/hyper heuristics.
     let preset: ModelPreset;
     switch (this.detectedArchitecture) {
       // Nanosaur uses a custom DiT/VAE combo and prefers a taller default canvas.
@@ -788,8 +807,8 @@ class GenerationStore {
       // SD3 family prefers moderate CFG with SGM uniform scheduling.
       case "sd3":
         preset = {
-          steps: 28,
-          cfg: 4.5,
+          steps: this.modelTurboVariant === "turbo" ? 4 : 28,
+          cfg: this.modelTurboVariant === "turbo" ? 1.2 : 4.5,
           samplerName: "euler",
           scheduler: "sgm_uniform",
           width: 1024,
@@ -800,7 +819,7 @@ class GenerationStore {
       // Flux is guidance-distilled, so keep CFG low and scheduler simple.
       case "flux":
         preset = {
-          steps: 20,
+          steps: this.modelTurboVariant === "schnell" ? 4 : 20,
           cfg: 1.0,
           samplerName: "euler",
           scheduler: "simple",
@@ -872,10 +891,10 @@ class GenerationStore {
       // SD 1.5 keeps the smaller canvas and classic DPM++/Karras combo.
       case "sd15":
         preset = {
-          steps: 28,
-          cfg: 7.0,
-          samplerName: "dpmpp_2m",
-          scheduler: "karras",
+          steps: this.hasTurboModelVariant ? 6 : 28,
+          cfg: this.hasTurboModelVariant ? 2.0 : 7.0,
+          samplerName: this.hasTurboModelVariant ? "euler" : "dpmpp_2m",
+          scheduler: this.hasTurboModelVariant ? "normal" : "karras",
           width: 512,
           height: 512,
         };
@@ -884,9 +903,9 @@ class GenerationStore {
 
       case "pony":
         preset = {
-          steps: 25,
-          cfg: 7.0,
-          samplerName: "euler_a",
+          steps: this.hasTurboModelVariant ? 6 : 25,
+          cfg: this.hasTurboModelVariant ? 2.0 : 7.0,
+          samplerName: this.hasTurboModelVariant ? "euler" : "euler_a",
           scheduler: "normal",
           width: 1024,
           height: 1024,
@@ -895,9 +914,9 @@ class GenerationStore {
 
       case "illustrious":
         preset = {
-          steps: 30,
-          cfg: 6.0,
-          samplerName: "euler_ancestral",
+          steps: this.hasTurboModelVariant ? 6 : 30,
+          cfg: this.hasTurboModelVariant ? 2.0 : 6.0,
+          samplerName: this.hasTurboModelVariant ? "euler" : "euler_ancestral",
           scheduler: "normal",
           width: 1024,
           height: 1024,
@@ -924,10 +943,10 @@ class GenerationStore {
       default:
         // Unknown falls back to safe SDXL-like defaults so sampler/scheduler never stay unset.
         preset = {
-          steps: 30,
-          cfg: 4.0,
+          steps: this.hasTurboModelVariant ? 6 : 30,
+          cfg: this.hasTurboModelVariant ? 2.0 : 4.0,
           samplerName: "euler",
-          scheduler: "simple",
+          scheduler: this.hasTurboModelVariant ? "normal" : "simple",
           width: 1024,
           height: 1024,
         };

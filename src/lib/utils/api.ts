@@ -514,6 +514,7 @@ export interface ModelSpec {
   base_model?: string;
   family?: string;
   is_sdxl_like?: string;
+  turbo_model_variant?: string;
   hash?: string;
   prediction_type?: string;
   predict_key?: string;

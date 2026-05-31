@@ -270,6 +270,7 @@
         modelspecHeaderVPred: false,
         modelFamily: "unknown",
         modelIsSdxlLike: false,
+        modelTurboVariant: "none",
       });
       return;
     }
@@ -285,6 +286,16 @@
         modelspecHeaderVPred: spec?.header_v_pred === "true",
         modelFamily: family,
         modelIsSdxlLike: spec?.is_sdxl_like === "true",
+        modelTurboVariant: (spec?.turbo_model_variant as
+          | "none"
+          | "schnell"
+          | "turbo"
+          | "lightning"
+          | "lcm"
+          | "hyper"
+          | "dmd"
+          | "dmd2"
+          | undefined) ?? "none",
       });
       if (family === "unknown") {
         loadedModelMetadataKey = "";
@@ -297,6 +308,7 @@
         modelspecHeaderVPred: false,
         modelFamily: "unknown",
         modelIsSdxlLike: false,
+        modelTurboVariant: "none",
       });
     }
   }
@@ -804,6 +816,7 @@
       modelspecHeaderVPred: false,
       modelFamily: "unknown",
       modelIsSdxlLike: false,
+      modelTurboVariant: "none",
     });
     generation.applyModelSpecificPreset();
     checkpointSearch = "";
