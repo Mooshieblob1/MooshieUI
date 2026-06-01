@@ -1,16 +1,33 @@
 import { getModels, getSamplers, getEmbeddings, listModelFiles } from "../utils/api.js";
 
-/** Merge ComfyUI /models API results with on-disk files from configured paths. */
+function modelBasename(filename: string): string {
+  const normalized = filename.replace(/\\/g, "/");
+  const slash = normalized.lastIndexOf("/");
+  return slash >= 0 ? normalized.slice(slash + 1) : normalized;
+}
+
+/**
+ * Merge ComfyUI API model names with on-disk files from extra paths.
+ * API entries win when basename matches; disk-only files are appended once.
+ */
 async function mergeWithDiskModels(category: string, apiModels: string[]): Promise<string[]> {
   const safeApiModels = apiModels ?? [];
   try {
     const disk = await listModelFiles(category);
-    const names = (disk ?? [])
+    const diskNames = (disk ?? [])
       .filter((f) => f && typeof f.filename === "string")
       .map((f) => f.filename);
-    return Array.from(new Set([...safeApiModels, ...names])).sort((a, b) =>
-      a.localeCompare(b, undefined, { sensitivity: "base" }),
-    );
+
+    const apiBasenames = new Set(safeApiModels.map(modelBasename));
+    const merged = [...safeApiModels];
+    for (const name of diskNames) {
+      const base = modelBasename(name);
+      if (!apiBasenames.has(base)) {
+        merged.push(name);
+        apiBasenames.add(base);
+      }
+    }
+    return merged.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   } catch {
     return safeApiModels;
   }

@@ -94,6 +94,7 @@ export interface GenerationParams {
   upscale_steps: number;
   upscale_tile_size: number;
   upscale_tiling: boolean;
+  upscale_fast_refine?: boolean;
   upscale_soft_guidance: boolean;
   upscale_soft_guidance_multiplier: number;
   smart_guidance: boolean;

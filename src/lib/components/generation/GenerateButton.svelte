@@ -22,6 +22,7 @@
     suppressRegionalChainGallerySave,
     clearAllRegionalChainGallerySuppress,
   } from "../../utils/regionalChainGallery.js";
+  import { checkStyleTransferNodesReady } from "../../utils/styleTransferNodes.js";
 
   interface Props {
     canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
@@ -39,6 +40,19 @@
   const orderedWildcardRun = $derived(promptPresets.orderedWildcardRun);
   const orderedWildcardRunCount = $derived(compare.enabled && compare.cellCount > 1 ? 0 : (orderedWildcardRun?.count ?? 0));
   const pendingOrderedRunIds = $derived(orderedRunPromptIds.filter((id) => progress.pendingPrompts.some((prompt) => prompt.promptId === id)));
+
+  const generateButtonTitle = $derived.by(() => {
+    if (orderedWildcardRunCount > 1) {
+      return locale.t("generation.generate_ordered_tip", {
+        count: orderedWildcardRunCount,
+        name: orderedWildcardRun?.presetName ?? "",
+      });
+    }
+    if (progress.isGenerating) {
+      return locale.t("generation.generate_queue_tip", { count: progress.queueCount });
+    }
+    return locale.t("generation.generate_tip");
+  });
 
   async function requestGeneration(params: GenerationParams) {
     const result = await generate(params);
@@ -116,6 +130,22 @@
       errorMsg = locale.t('generation.error_no_checkpoint');
       if (sequential) finishSubmitRun(runToken);
       return;
+    }
+
+    if (generation.styleTransferEnabled) {
+      if (!generation.styleReferenceImage?.trim()) {
+        errorMsg = locale.t("generation.style_transfer.no_reference");
+        gallery.showToast(locale.t("generation.style_transfer.no_reference"), "error");
+        if (sequential) finishSubmitRun(runToken);
+        return;
+      }
+      const nodesReady = await checkStyleTransferNodesReady();
+      if (!nodesReady) {
+        errorMsg = locale.t("generation.style_transfer.nodes_missing_generate");
+        gallery.showToast(locale.t("generation.style_transfer.nodes_missing_generate"), "error");
+        if (sequential) finishSubmitRun(runToken);
+        return;
+      }
     }
 
     try {
@@ -484,7 +514,7 @@
   <button
     onclick={handleGenerate}
     disabled={!canGenerate}
-    title={orderedWildcardRunCount > 1 ? locale.t('generation.generate_ordered_tip', { count: orderedWildcardRunCount, name: orderedWildcardRun?.presetName ?? '' }) : ''}
+    title={generateButtonTitle}
     class="flex-1 py-3 rounded-xl font-semibold text-sm transition-colors
       {canGenerate
         ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20'

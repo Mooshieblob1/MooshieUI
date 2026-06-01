@@ -1,5 +1,22 @@
 # Changelog
 
+## What's New in v1.4.4
+
+### Community feedback (issue #232)
+- **Fast refine**: optional Refiner path that skips tiled diffusion and tiled VAE for a quicker upscale when you have enough VRAM (with an Anima warning in the UI).
+- **Artist favourites**: clicking a favourite artist again removes their tag when the prompt uses underscores vs spaces in the gallery name.
+- **Style transfer**: Generate is blocked with a clear message when Untwisting RoPE / Scale-Image nodes are missing; ComfyUI execution errors surface in the UI.
+- **Model previews**: Civitai checkpoint/LoRA cards add Tags, Img2img, and Style ref actions; empty cards show a Thumb/Gallery hint.
+- **Generation queue**: tooltips explain that **Generate (+N)** means jobs already queued and that you can click again to add another.
+
+### Model picker and UI polish
+- **Duplicate models**: merging extra disk folders dedupes by basename and prefers ComfyUI API paths (#242).
+- **LoRA dropdown**: long names wrap instead of truncating (#240).
+- **Quality tags**: badge and auto-tags cover Pony and Nanosaur as well as Anima/Illustrious (#241).
+- **Browser mode**: sidecar thumbnail saves use the shared gallery PNG loader (#237).
+
+---
+
 ## What's New in v1.4.3
 
 ### Prompt tag selection and highlighting

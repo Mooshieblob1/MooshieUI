@@ -20,6 +20,7 @@
     sortModelFilenames,
     type ModelGallerySort,
   } from "../../utils/modelGallerySort.js";
+  import ModelPreviewActions from "./ModelPreviewActions.svelte";
 
   interface Props {
     cardSize?: number;
@@ -647,7 +648,7 @@
         <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
         <div
           use:lazyFetch={loraName}
-          class="aspect-[3/4] flex flex-col rounded-lg border bg-neutral-900/60 overflow-hidden transition-colors cursor-pointer {enabled
+          class="aspect-[3/4] flex flex-col rounded-lg border bg-neutral-900/60 overflow-hidden transition-colors cursor-pointer group {enabled
             ? 'border-indigo-500/60 ring-1 ring-indigo-500/20'
             : isSelected ? 'border-neutral-600' : 'border-neutral-800 hover:border-neutral-700'}"
           onclick={() => { selectedLora = loraName; toggleLoraByName(loraName); }}
@@ -672,6 +673,9 @@
                 alt={displayName(loraName)}
                 class="w-full h-full object-cover"
               />
+              {#if imgUrl}
+                <ModelPreviewActions imageUrl={imgUrl} modelLabel={displayName(loraName)} />
+              {/if}
               <div
                 class="absolute left-1 bottom-1 z-10 flex gap-0.5"
                 onclick={(e) => e.stopPropagation()}
@@ -738,8 +742,9 @@
                 </button>
               </div>
             {:else}
-              <div class="absolute inset-0 flex items-center justify-center">
+              <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-2">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-neutral-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                <p class="text-[9px] text-neutral-600 text-center leading-snug">{locale.t('model.thumb_empty_hint')}</p>
               </div>
             {/if}
           </div>

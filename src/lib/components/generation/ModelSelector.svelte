@@ -1280,7 +1280,7 @@
                   {#each filteredLorasForIndex(i) as l}
                     <button
                       data-selected={isLoraSelected(i, l) ? "true" : undefined}
-                      class="w-full text-left px-2 py-1 text-xs truncate transition-colors {isLoraSelected(i, l) ? 'bg-indigo-500/15 ring-1 ring-inset ring-indigo-500/40 text-indigo-200' : 'text-neutral-200 hover:bg-neutral-700'}"
+                      class="w-full text-left px-2 py-1 text-xs whitespace-normal break-words leading-snug transition-colors {isLoraSelected(i, l) ? 'bg-indigo-500/15 ring-1 ring-inset ring-indigo-500/40 text-indigo-200' : 'text-neutral-200 hover:bg-neutral-700'}"
                       onclick={() => selectLora(i, l)}
                     >
                       {l}

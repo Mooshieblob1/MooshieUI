@@ -297,6 +297,7 @@ class GenerationStore {
   upscaleSteps = $state(15);
   upscaleTileSize = $state(1024);
   upscaleTiling = $state(true);
+  upscaleFastRefine = $state(false);
   upscaleSoftGuidance = $state(true);
   upscaleSoftGuidanceMultiplier = $state(0.4);
   smartGuidance = $state(false);
@@ -993,6 +994,7 @@ class GenerationStore {
         if (saved.upscaleSteps !== undefined) this.upscaleSteps = saved.upscaleSteps;
         if (saved.upscaleTileSize !== undefined) this.upscaleTileSize = saved.upscaleTileSize;
         if (saved.upscaleTiling !== undefined) this.upscaleTiling = saved.upscaleTiling;
+        if (saved.upscaleFastRefine !== undefined) this.upscaleFastRefine = saved.upscaleFastRefine;
         if (saved.upscaleSoftGuidance !== undefined) this.upscaleSoftGuidance = saved.upscaleSoftGuidance;
         if (saved.upscaleSoftGuidanceMultiplier !== undefined) this.upscaleSoftGuidanceMultiplier = saved.upscaleSoftGuidanceMultiplier;
         if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
@@ -1123,6 +1125,7 @@ class GenerationStore {
         upscaleSteps: this.upscaleSteps,
         upscaleTileSize: this.upscaleTileSize,
         upscaleTiling: this.upscaleTiling,
+        upscaleFastRefine: this.upscaleFastRefine,
         upscaleSoftGuidance: this.upscaleSoftGuidance,
         upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
         smartGuidance: this.smartGuidance,
@@ -1211,6 +1214,7 @@ class GenerationStore {
       upscaleSteps: this.upscaleSteps,
       upscaleTileSize: this.upscaleTileSize,
       upscaleTiling: this.upscaleTiling,
+      upscaleFastRefine: this.upscaleFastRefine,
       upscaleSoftGuidance: this.upscaleSoftGuidance,
       upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
       smartGuidance: this.smartGuidance,
@@ -1368,7 +1372,11 @@ class GenerationStore {
     // Build quality-only prompts for tiled upscale (reduces tile seam artifacts)
     let upscalePositivePrompt: string | null = null;
     let upscaleNegativePrompt: string | null = null;
-    if (this.upscaleEnabled && this.upscaleTiling && this.autoQualityTags) {
+    const upscaleUsesTiling =
+      this.upscaleEnabled &&
+      !this.upscaleFastRefine &&
+      (this.upscaleTiling || this.useSplitModel);
+    if (upscaleUsesTiling && this.autoQualityTags) {
       if (this.isAnima) {
         upscalePositivePrompt = this.customAnimaPositiveQuality;
         upscaleNegativePrompt = this.customAnimaNegativeQuality;
@@ -1521,6 +1529,7 @@ class GenerationStore {
       upscale_steps: this.upscaleSteps,
       upscale_tile_size: this.upscaleTileSize,
       upscale_tiling: this.upscaleTiling,
+      upscale_fast_refine: this.upscaleFastRefine,
       upscale_soft_guidance: this.upscaleSoftGuidance,
       upscale_soft_guidance_multiplier: this.upscaleSoftGuidanceMultiplier,
       smart_guidance: this.smartGuidance,

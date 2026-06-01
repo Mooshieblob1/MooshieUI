@@ -22,6 +22,15 @@ function escapeParens(s: string): string {
   return s.replace(/(\\?)([()])/g, (_, esc, paren) => (esc ? esc + paren : "\\" + paren));
 }
 
+/** Canonical form for comparing or inserting `@` artist tags. */
+function normalizeArtistTag(tag: string): string {
+  return "@" + escapeParens(tag.replace(/^@+/, "").replace(/_/g, " ").trim());
+}
+
+function artistTagsMatch(a: string, b: string): boolean {
+  return normalizeArtistTag(a).toLowerCase() === normalizeArtistTag(b).toLowerCase();
+}
+
 class ArtistInsertStore {
   pending = $state<ArtistInsertPending | null>(null);
 
@@ -39,14 +48,13 @@ class ArtistInsertStore {
     // escape any unescaped parens (so `artist (tag)` becomes `artist \(tag\)`),
     // then re-prefix with @. Already-escaped parens are left as-is so prompts
     // round-trip correctly through the scheduler/highlight parser.
-    const cleaned = escapeParens(tag.replace(/^@+/, "").replace(/_/g, " ").trim());
-    const withAt = "@" + cleaned;
+    const withAt = normalizeArtistTag(tag);
     const existing = generation.positivePrompt.trim();
     const existingArtistTags = existing
       .split(",")
       .map((s) => s.trim())
       .filter((s) => s.startsWith("@"));
-    if (existingArtistTags.some((t) => t.toLowerCase() === withAt.toLowerCase())) {
+    if (existingArtistTags.some((t) => artistTagsMatch(t, withAt))) {
       this.remove(withAt);
       return;
     } else if (existingArtistTags.length > 0) {
@@ -58,12 +66,12 @@ class ArtistInsertStore {
 
   /** Remove a single `@` artist tag from the positive prompt (case-insensitive). */
   remove(withAt: string): void {
-    const target = "@" + escapeParens(withAt.replace(/^@+/, "").replace(/_/g, " ").trim());
+    const target = normalizeArtistTag(withAt);
     const existing = generation.positivePrompt.trim();
     if (!existing) return;
     const tags = existing.split(",").map((s) => s.trim()).filter(Boolean);
     const filtered = tags.filter(
-      (t) => !(t.startsWith("@") && t.toLowerCase() === target.toLowerCase()),
+      (t) => !(t.startsWith("@") && artistTagsMatch(t, target)),
     );
     generation.positivePrompt = filtered.join(", ");
     generation.saveSettings();
@@ -74,7 +82,7 @@ class ArtistInsertStore {
     // Defensive: normalize underscores → spaces and escape unescaped parens
     // in case a caller passes a raw danbooru-style tag rather than going
     // through request().
-    const cleaned = "@" + escapeParens(withAt.replace(/^@+/, "").replace(/_/g, " ").trim());
+    const cleaned = normalizeArtistTag(withAt);
     const existing = generation.positivePrompt.trim();
     let newPrompt: string;
     if (mode === "replace") {

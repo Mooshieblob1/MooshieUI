@@ -22,6 +22,10 @@
   const hasRegionalPrompting = $derived(
     hasRegionalTags(generation.positivePrompt) || generation.regionalPrompts.length > 0,
   );
+  const qualityTagsSupported = $derived(
+    generation.autoQualityTags &&
+      (generation.isAnima || generation.isIllustrious || generation.isPony || generation.isNanosaur),
+  );
   const hasNegativeSchedule = $derived(hasSchedulingTags(generation.negativePrompt));
   const hasAnySchedule = $derived(hasPositiveSchedule || hasNegativeSchedule);
   const positiveSegments = $derived(hasPositiveSchedule ? parseScheduledPrompt(generation.positivePrompt).segments : []);
@@ -76,7 +80,7 @@
         <label class="text-xs text-neutral-400">{locale.t('generation.prompts.positive')}<InfoTip text={locale.t('generation.prompts.positive_tip')} /></label>
       </div>
       <div class="flex items-center justify-end gap-1.5 flex-wrap min-w-0">
-      {#if generation.isAnima || generation.isIllustrious}
+      {#if qualityTagsSupported}
         <span class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">{locale.t('generation.prompts.quality_applied')}</span>
       {/if}
       {#each styles.activeStyles as activeStyle (activeStyle.id)}

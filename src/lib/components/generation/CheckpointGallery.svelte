@@ -14,6 +14,7 @@
     sortModelFilenames,
     type ModelGallerySort,
   } from "../../utils/modelGallerySort.js";
+  import ModelPreviewActions from "./ModelPreviewActions.svelte";
 
   const CACHE_KEY = "mooshieui.checkpoint.civitai.cache.v3";
   const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
@@ -358,7 +359,7 @@
         <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
         <div
           use:lazyFetch={name}
-          class="aspect-[3/4] flex flex-col rounded-lg border bg-neutral-900/60 overflow-hidden transition-all text-left cursor-pointer {isActive
+          class="aspect-[3/4] flex flex-col rounded-lg border bg-neutral-900/60 overflow-hidden transition-all text-left cursor-pointer group {isActive
             ? 'border-indigo-500/60 ring-1 ring-indigo-500/20'
             : 'border-neutral-800 hover:border-neutral-600'}"
           title={name}
@@ -381,6 +382,7 @@
                 class="w-full h-full object-cover"
                 loading="lazy"
               />
+              <ModelPreviewActions imageUrl={imgUrl} modelLabel={displayName(name)} />
               <div
                 class="absolute left-1 bottom-1 z-10 flex gap-0.5"
                 onclick={(e) => e.stopPropagation()}
@@ -434,7 +436,7 @@
                 <div class="w-4 h-4 border-2 border-neutral-600 border-t-indigo-500 rounded-full animate-spin"></div>
               </div>
             {:else}
-              <div class="absolute inset-0 flex items-center justify-center">
+              <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-2">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   class="w-8 h-8 {isActive ? 'text-indigo-700' : 'text-neutral-700'}"
@@ -449,6 +451,7 @@
                   <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
                   <line x1="12" y1="22.08" x2="12" y2="12"/>
                 </svg>
+                <p class="text-[9px] text-neutral-600 text-center leading-snug">{locale.t('model.thumb_empty_hint')}</p>
               </div>
             {/if}
           </div>
