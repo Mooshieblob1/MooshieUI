@@ -592,6 +592,8 @@ const es: Record<string, string> = {
   "generation.model.copy_trigger": "Copiar frase de activación al prompt",
   "generation.model.hash_label": "Hash:",
   "generation.model.copy_hash": "Copiar hash al portapapeles",
+  "generation.model.architecture_detecting": "Detectando...",
+  "generation.model.architecture_picker_title": "Arquitectura del modelo detectada",
   "generation.model.license_label": "Licencia:",
 
   // Entradas de imagen

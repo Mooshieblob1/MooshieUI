@@ -553,6 +553,8 @@ const ru: Record<string, string> = {
   "generation.model.copy_trigger": "Скопировать триггерную фразу в промпт",
   "generation.model.hash_label": "Хеш:",
   "generation.model.copy_hash": "Скопировать хеш в буфер обмена",
+  "generation.model.architecture_detecting": "Определение...",
+  "generation.model.architecture_picker_title": "Определённая архитектура модели",
   "generation.model.license_label": "Лицензия:",
 
   "generation.image.title": "Входные изображения",

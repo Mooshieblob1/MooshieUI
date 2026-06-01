@@ -553,6 +553,8 @@ const it: Record<string, string> = {
   "generation.model.copy_trigger": "Copia la frase di attivazione nel prompt",
   "generation.model.hash_label": "Hash:",
   "generation.model.copy_hash": "Copia hash negli appunti",
+  "generation.model.architecture_detecting": "Rilevamento...",
+  "generation.model.architecture_picker_title": "Architettura del modello rilevata",
   "generation.model.license_label": "Licenza:",
 
   "generation.image.title": "Input immagine",

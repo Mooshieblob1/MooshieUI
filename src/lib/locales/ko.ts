@@ -553,6 +553,8 @@ const ko: Record<string, string> = {
   "generation.model.copy_trigger": "트리거 구문을 프롬프트에 복사",
   "generation.model.hash_label": "해시:",
   "generation.model.copy_hash": "해시를 클립보드에 복사",
+  "generation.model.architecture_detecting": "감지 중...",
+  "generation.model.architecture_picker_title": "감지된 모델 아키텍처",
   "generation.model.license_label": "라이선스:",
 
   "generation.image.title": "이미지 입력",

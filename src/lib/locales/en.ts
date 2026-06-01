@@ -621,6 +621,8 @@ const en: Record<string, string> = {
   "generation.model.copy_trigger": "Copy trigger phrase to prompt",
   "generation.model.hash_label": "Hash:",
   "generation.model.copy_hash": "Copy hash to clipboard",
+  "generation.model.architecture_detecting": "Detecting...",
+  "generation.model.architecture_picker_title": "Detected model architecture",
   "generation.model.license_label": "License:",
 
   // Image inputs

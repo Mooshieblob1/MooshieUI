@@ -288,7 +288,7 @@
     if (!currentModelMetadataKey()) return "";
     const manualOverride = currentFamilyOverride();
     if (manualOverride) return manualOverride;
-    if (isModelMetadataLoading) return "detecting...";
+    if (isModelMetadataLoading) return locale.t("generation.model.architecture_detecting");
     return generation.detectedArchitecture === "unknown" ? "undefined" : generation.detectedArchitecture;
   }
 
@@ -1052,7 +1052,7 @@
           <button
             type="button"
             class="rounded-full border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-[10px] text-neutral-300 hover:border-neutral-600"
-            title="Detected model architecture"
+            title={locale.t("generation.model.architecture_picker_title")}
             onclick={() => showArchitecturePicker = !showArchitecturePicker}
           >
             {architectureBadgeLabel()}

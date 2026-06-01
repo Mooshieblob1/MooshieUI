@@ -567,6 +567,8 @@ const ja: Record<string, string> = {
   "generation.model.copy_trigger": "トリガーフレーズをプロンプトにコピー",
   "generation.model.hash_label": "ハッシュ:",
   "generation.model.copy_hash": "ハッシュをクリップボードにコピー",
+  "generation.model.architecture_detecting": "検出中...",
+  "generation.model.architecture_picker_title": "検出されたモデルアーキテクチャ",
   "generation.model.license_label": "ライセンス:",
 
   // 画像入力

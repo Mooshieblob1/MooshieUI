@@ -569,6 +569,8 @@ const de: Record<string, string> = {
   "generation.model.copy_trigger": "Auslösephrase in den Prompt kopieren",
   "generation.model.hash_label": "Hash:",
   "generation.model.copy_hash": "Hash in Zwischenablage kopieren",
+  "generation.model.architecture_detecting": "Erkennung...",
+  "generation.model.architecture_picker_title": "Erkannte Modellarchitektur",
   "generation.model.license_label": "Lizenz:",
 
   "generation.image.title": "Bildeingabe",

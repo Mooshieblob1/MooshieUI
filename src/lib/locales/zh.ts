@@ -553,6 +553,8 @@ const zh: Record<string, string> = {
   "generation.model.copy_trigger": "将触发词复制到提示词",
   "generation.model.hash_label": "哈希:",
   "generation.model.copy_hash": "复制哈希到剪贴板",
+  "generation.model.architecture_detecting": "检测中...",
+  "generation.model.architecture_picker_title": "已检测的模型架构",
   "generation.model.license_label": "许可证:",
 
   "generation.image.title": "图像输入",

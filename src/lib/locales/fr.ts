@@ -567,6 +567,8 @@ const fr: Record<string, string> = {
   "generation.model.copy_trigger": "Copier la phrase de déclenchement dans le prompt",
   "generation.model.hash_label": "Hash :",
   "generation.model.copy_hash": "Copier le hash dans le presse-papiers",
+  "generation.model.architecture_detecting": "Détection...",
+  "generation.model.architecture_picker_title": "Architecture du modèle détectée",
   "generation.model.license_label": "Licence :",
 
   // Entrées d'image
