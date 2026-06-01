@@ -1366,6 +1366,23 @@
     input.value = "";
   }
 
+  function makeUniqueThemeProfileId(baseId: string, usedIds: Set<string>): string {
+    const base = baseId.trim() || `theme_${Date.now()}`;
+    if (!usedIds.has(base)) {
+      usedIds.add(base);
+      return base;
+    }
+
+    let suffix = 1;
+    let candidate = `${base}_${suffix}`;
+    while (usedIds.has(candidate)) {
+      suffix += 1;
+      candidate = `${base}_${suffix}`;
+    }
+    usedIds.add(candidate);
+    return candidate;
+  }
+
   async function importThemeProfiles(event: Event) {
     if (!config) return;
     themeImportError = null;
@@ -1376,12 +1393,18 @@
     try {
       const parsed = JSON.parse(await file.text()) as { themes?: unknown[] };
       if (!Array.isArray(parsed.themes)) throw new Error("Invalid theme file.");
+      if (parsed.themes.length === 0) throw new Error("Theme file does not contain any themes.");
+      const existingProfiles = Array.isArray(config.theme_profiles) ? config.theme_profiles : [];
+      const usedIds = new Set(existingProfiles.map((profile) => profile.id));
       const imported = parsed.themes.map((theme, index) => {
         const source = (typeof theme === "object" && theme) ? (theme as Partial<ThemeProfile>) : {};
         const dark = source.dark ?? {};
         const light = source.light ?? {};
         return {
-          id: typeof source.id === "string" && source.id.trim() ? source.id : `theme_${Date.now()}_${index}`,
+          id: makeUniqueThemeProfileId(
+            typeof source.id === "string" && source.id.trim() ? source.id : `theme_${Date.now()}_${index}`,
+            usedIds,
+          ),
           name: typeof source.name === "string" && source.name.trim() ? source.name.trim() : `Imported Theme ${index + 1}`,
           palette:
             source.palette === "mooshie" ||
@@ -1415,7 +1438,7 @@
           hide_branding: Boolean(source.hide_branding),
         } satisfies ThemeProfile;
       });
-      config.theme_profiles = imported;
+      config.theme_profiles = [...existingProfiles, ...imported];
       config.theme_profile_id = imported[0]?.id ?? null;
       await autoSave();
       themeImportDone = true;
