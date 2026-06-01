@@ -14,8 +14,8 @@ permissions:
   contents: write
   packages: write
 
-# NUC runner only for official releases triggered by Mooshieblob1 on the upstream repo.
-# Forks and other actors fall back to GitHub-hosted Ubuntu (same as before).
+# NUC runner only for build-server + docker-publish on official Mooshieblob1 releases.
+# Desktop build (Linux + Windows) always uses GitHub-hosted runners.
 env:
   USE_NUC_RUNNER: ${{ github.repository == 'Mooshieblob1/MooshieUI' && github.actor == 'Mooshieblob1' }}
 
@@ -25,28 +25,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            self_hosted: true
-            runner: '["self-hosted","mooshie-nuc","linux"]'
-            hosted_runner: ubuntu-22.04
-            artifact_target_root: src-tauri/target
-          - target: x86_64-pc-windows-msvc
-            self_hosted: false
-            runner: windows-latest
-            artifact_target_root: src-tauri/target
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
 
-    runs-on: ${{ matrix.self_hosted && github.repository == 'Mooshieblob1/MooshieUI' && github.actor == 'Mooshieblob1' && fromJSON(matrix.runner) || (matrix.self_hosted && matrix.hosted_runner || matrix.runner) }}
+    runs-on: ${{ matrix.platform }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Prepare local build caches (NUC)
-        if: matrix.self_hosted == true && env.USE_NUC_RUNNER == 'true'
-        run: mkdir -p /home/blob/ci-cache/mooshieui/target /home/blob/ci-cache/npm
-
       - name: Install Linux dependencies
-        if: matrix.self_hosted == true && env.USE_NUC_RUNNER != 'true'
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -60,17 +51,10 @@ jobs:
             libsoup-3.0-dev
 
       - name: Setup Node.js
-        if: matrix.self_hosted != true || env.USE_NUC_RUNNER != 'true'
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 20
           cache: npm
-
-      - name: Setup Node.js (self-hosted)
-        if: matrix.self_hosted == true && env.USE_NUC_RUNNER == 'true'
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 20
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
@@ -79,16 +63,11 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Rust cache
-        if: matrix.self_hosted != true || env.USE_NUC_RUNNER != 'true'
         uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
 
       - name: Install frontend dependencies
-        env:
-          CARGO_HOME: ${{ matrix.self_hosted && env.USE_NUC_RUNNER == 'true' && '/home/blob/.cargo' || '' }}
-          CARGO_TARGET_DIR: ${{ matrix.self_hosted && env.USE_NUC_RUNNER == 'true' && '/home/blob/ci-cache/mooshieui/target' || '' }}
-          npm_config_cache: ${{ matrix.self_hosted && env.USE_NUC_RUNNER == 'true' && '/home/blob/ci-cache/npm' || '' }}
         run: npm ci
 
       - name: Audit npm dependencies
@@ -96,18 +75,12 @@ jobs:
         continue-on-error: true
 
       - name: Audit Rust dependencies
-        env:
-          CARGO_HOME: ${{ matrix.self_hosted && env.USE_NUC_RUNNER == 'true' && '/home/blob/.cargo' || '' }}
-          CARGO_TARGET_DIR: ${{ matrix.self_hosted && env.USE_NUC_RUNNER == 'true' && '/home/blob/ci-cache/mooshieui/target' || '' }}
         run: cargo install cargo-audit --locked && cd src-tauri && cargo audit
         continue-on-error: true
 
       - name: Build Tauri app (Linux)
         if: runner.os != 'Windows'
         env:
-          CARGO_HOME: ${{ matrix.self_hosted && env.USE_NUC_RUNNER == 'true' && '/home/blob/.cargo' || '' }}
-          CARGO_TARGET_DIR: ${{ matrix.self_hosted && env.USE_NUC_RUNNER == 'true' && '/home/blob/ci-cache/mooshieui/target' || '' }}
-          npm_config_cache: ${{ matrix.self_hosted && env.USE_NUC_RUNNER == 'true' && '/home/blob/ci-cache/npm' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build --target ${{ matrix.target }}
@@ -123,7 +96,7 @@ jobs:
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: artifacts-${{ matrix.target }}
-          path: ${{ matrix.self_hosted && env.USE_NUC_RUNNER == 'true' && '/home/blob/ci-cache/mooshieui/target' || matrix.artifact_target_root }}/${{ matrix.target }}/release/bundle/
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/
           if-no-files-found: warn
 
   release:
