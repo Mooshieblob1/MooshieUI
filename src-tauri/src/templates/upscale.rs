@@ -61,28 +61,47 @@ pub fn append_upscale_chain(
         (scale_id, 0)
     };
 
-    // Step 2: Tiled VAE Encode
-    let tiled_encode_id = next_id.to_string();
-    workflow.insert(
-        tiled_encode_id.clone(),
-        json!({
-            "class_type": "VAEEncodeTiled",
-            "inputs": {
-                "pixels": [upscaled_image.0, upscaled_image.1],
-                "vae": [result.vae_source.0.clone(), result.vae_source.1],
-                "tile_size": params.upscale_tile_size,
-                "overlap": 64,
-                "temporal_size": 64,
-                "temporal_overlap": 8
-            }
-        }),
-    );
-    *next_id += 1;
+    // Fast refine skips MultiDiffusion and tiled VAE (user opt-in; may OOM on Anima).
+    // Otherwise split models (Anima/COSMOS) require tiled diffusion for 5D latents.
+    let use_tiling = !params.upscale_fast_refine
+        && (params.upscale_tiling || params.use_split_model);
+    let use_tiled_vae = !params.upscale_fast_refine
+        && (params.upscale_tiling || params.use_split_model);
 
-    // Step 3: Apply Tiled Diffusion
-    // For split models (Anima/COSMOS): always use tiled diffusion — required for 5D latents.
-    // For standard models: optional, controlled by user toggle.
-    let use_tiling = params.upscale_tiling || params.use_split_model;
+    let latent_source: (String, u32) = if use_tiled_vae {
+        let tiled_encode_id = next_id.to_string();
+        workflow.insert(
+            tiled_encode_id.clone(),
+            json!({
+                "class_type": "VAEEncodeTiled",
+                "inputs": {
+                    "pixels": [upscaled_image.0, upscaled_image.1],
+                    "vae": [result.vae_source.0.clone(), result.vae_source.1],
+                    "tile_size": params.upscale_tile_size,
+                    "overlap": 64,
+                    "temporal_size": 64,
+                    "temporal_overlap": 8
+                }
+            }),
+        );
+        *next_id += 1;
+        (tiled_encode_id, 0)
+    } else {
+        let encode_id = next_id.to_string();
+        workflow.insert(
+            encode_id.clone(),
+            json!({
+                "class_type": "VAEEncode",
+                "inputs": {
+                    "pixels": [upscaled_image.0, upscaled_image.1],
+                    "vae": [result.vae_source.0.clone(), result.vae_source.1]
+                }
+            }),
+        );
+        *next_id += 1;
+        (encode_id, 0)
+    };
+
     let model_for_sampler = if use_tiling {
         let tiled_model_id = next_id.to_string();
         workflow.insert(
@@ -104,8 +123,7 @@ pub fn append_upscale_chain(
         (result.model_source.0.clone(), result.model_source.1)
     };
 
-    // Step 3b: Apply Soft Guidance (CFG rescaling) to prevent hallucination during upscale.
-    // Rescales the CFG vector so quality-only tags guide gently without generating new content.
+    // Apply Soft Guidance (CFG rescaling) to prevent hallucination during upscale.
     let model_after_soft = if params.upscale_soft_guidance {
         let soft_id = next_id.to_string();
         workflow.insert(
@@ -124,9 +142,7 @@ pub fn append_upscale_chain(
         model_for_sampler.clone()
     };
 
-    // Step 4: For tiled upscales, use quality-only prompts to reduce tile seam artifacts.
-    // When upscale_positive_prompt / upscale_negative_prompt are provided, create dedicated
-    // CLIPTextEncode nodes instead of reusing the full creative prompt conditioning.
+    // For tiled upscales, use quality-only prompts to reduce tile seam artifacts.
     let (pos_source, neg_source) = if use_tiling {
         if let (Some(ref pos_text), Some(ref neg_text)) = (
             &params.upscale_positive_prompt,
@@ -182,7 +198,7 @@ pub fn append_upscale_chain(
                 "model": [model_after_soft.0, model_after_soft.1],
                 "positive": [pos_source.0, pos_source.1],
                 "negative": [neg_source.0, neg_source.1],
-                "latent_image": [tiled_encode_id, 0],
+                "latent_image": [latent_source.0.clone(), latent_source.1],
                 "seed": seed + 1,
                 "steps": params.upscale_steps,
                 "cfg": params.cfg / 2.0,
@@ -194,23 +210,37 @@ pub fn append_upscale_chain(
     );
     *next_id += 1;
 
-    // Step 5: Tiled VAE Decode
-    let tiled_decode_id = next_id.to_string();
-    workflow.insert(
-        tiled_decode_id.clone(),
-        json!({
-            "class_type": "VAEDecodeTiled",
-            "inputs": {
-                "samples": [sampler_id, 0],
-                "vae": [result.vae_source.0.clone(), result.vae_source.1],
-                "tile_size": params.upscale_tile_size,
-                "overlap": 64,
-                "temporal_size": 64,
-                "temporal_overlap": 8
-            }
-        }),
-    );
-    *next_id += 1;
-
-    (tiled_decode_id, 0)
+    if use_tiled_vae {
+        let tiled_decode_id = next_id.to_string();
+        workflow.insert(
+            tiled_decode_id.clone(),
+            json!({
+                "class_type": "VAEDecodeTiled",
+                "inputs": {
+                    "samples": [sampler_id, 0],
+                    "vae": [result.vae_source.0.clone(), result.vae_source.1],
+                    "tile_size": params.upscale_tile_size,
+                    "overlap": 64,
+                    "temporal_size": 64,
+                    "temporal_overlap": 8
+                }
+            }),
+        );
+        *next_id += 1;
+        (tiled_decode_id, 0)
+    } else {
+        let decode_id = next_id.to_string();
+        workflow.insert(
+            decode_id.clone(),
+            json!({
+                "class_type": "VAEDecode",
+                "inputs": {
+                    "samples": [sampler_id, 0],
+                    "vae": [result.vae_source.0.clone(), result.vae_source.1]
+                }
+            }),
+        );
+        *next_id += 1;
+        (decode_id, 0)
+    }
 }

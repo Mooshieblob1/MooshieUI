@@ -115,6 +115,9 @@ pub struct GenerationParams {
     pub upscale_steps: u32,
     pub upscale_tile_size: u32,
     pub upscale_tiling: bool,
+    /// Skip MultiDiffusion and tiled VAE during refine (faster; may OOM on Anima).
+    #[serde(default)]
+    pub upscale_fast_refine: bool,
     /// "Refine" mode — when true with mode="img2img", skip the main img2img
     /// KSampler/VAE round-trip and feed the loaded input image directly into
     /// the upscale chain. Mirrors SwarmUI's "Refine Image" button: a single

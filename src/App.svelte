@@ -43,6 +43,12 @@
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
   import { interrogateGalleryImage, interrogateImage, saveModelSidecarThumbnail } from "./lib/utils/api.js";
   import {
+    fetchModelPreviewImageBytes,
+    uploadModelPreviewImage,
+    type ModelPreviewActionDetail,
+  } from "./lib/utils/modelPreviewImage.js";
+  import { isStyleTransferExecutionError } from "./lib/utils/styleTransferNodes.js";
+  import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
   } from "./lib/utils/comfyStartup.js";
@@ -79,6 +85,7 @@
   }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
   let sseReconnectHandler: (() => void) | null = null;
+  let modelPreviewActionHandler: ((event: Event) => void) | null = null;
   let generationDoneToastTimer: ReturnType<typeof setTimeout> | null = null;
   let generationDoneToastClearTimer: ReturnType<typeof setTimeout> | null = null;
   let generationDoneToastSeq = 0;
@@ -835,6 +842,100 @@
     );
     return items;
   });
+
+  async function interrogateFromPreviewUrl(url: string) {
+    showInterrogateModal = true;
+    interrogateLoading = true;
+    interrogateResult = null;
+    interrogateStage = null;
+    interrogateDownloadProgress = null;
+    interrogateError = null;
+    interrogateImageUrl = url.startsWith("data:") ? url : null;
+
+    const unlistenDownload = await ipcListen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+      "interrogator:download_progress",
+      (event) => {
+        if (event.payload.done) {
+          interrogateDownloadProgress = null;
+        } else {
+          interrogateDownloadProgress = event.payload;
+        }
+      },
+    );
+
+    const unlistenStage = await ipcListen<string>("interrogator:stage", (event) => {
+      interrogateStage = event.payload;
+    });
+
+    try {
+      const { bytes } = await fetchModelPreviewImageBytes(url, "model_preview.png");
+      const uint8 = new Uint8Array(bytes);
+      let binary = "";
+      for (let i = 0; i < uint8.length; i++) {
+        binary += String.fromCharCode(uint8[i]);
+      }
+      interrogateResult = await interrogateImage(btoa(binary));
+      if (!interrogateImageUrl && url.startsWith("http")) {
+        interrogateImageUrl = url;
+      }
+    } catch (e) {
+      console.error("Interrogation failed:", e);
+      interrogateError = e instanceof Error ? e.message : String(e);
+    } finally {
+      interrogateLoading = false;
+      interrogateStage = null;
+      unlistenDownload();
+      unlistenStage();
+    }
+  }
+
+  async function img2imgFromPreviewUrl(url: string) {
+    try {
+      const name = await uploadModelPreviewImage(url, "model_preview.png");
+      generation.inputImage = name;
+      canvas.clearMask();
+      generation.maskImage = null;
+      generation.mode = "img2img";
+      currentPage = "generate";
+      gallery.showToast(locale.t("gallery.toast.loaded_img2img"), "success");
+    } catch (e) {
+      console.error("Failed to load preview for img2img:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
+    }
+  }
+
+  async function setStyleReferenceFromPreviewUrl(url: string) {
+    try {
+      const name = await uploadModelPreviewImage(url, "style_reference.png");
+      generation.styleReferenceImage = name;
+      generation.styleTransferEnabled = true;
+      generation.controlnetEnabled = false;
+      generation.upscaleEnabled = false;
+      generation.facefixEnabled = false;
+      generation.mode = "txt2img";
+      if (!["euler_ancestral", "euler_a"].includes(generation.samplerName)) {
+        generation.samplerName = "euler_ancestral";
+      }
+      generation.saveSettings();
+      currentPage = "generate";
+      gallery.showToast(locale.t("generation.style_transfer.reference_loaded"), "success");
+    } catch (e) {
+      console.error("Failed to load style reference:", e);
+      gallery.showToast(locale.t("generation.style_transfer.upload_error"), "error");
+    }
+  }
+
+  async function handleModelPreviewAction(event: Event) {
+    const detail = (event as CustomEvent<ModelPreviewActionDetail>).detail;
+    if (!detail?.imageUrl) return;
+    if (detail.type === "interrogate") {
+      await interrogateFromPreviewUrl(detail.imageUrl);
+    } else if (detail.type === "img2img") {
+      await img2imgFromPreviewUrl(detail.imageUrl);
+    } else if (detail.type === "style_reference") {
+      await setStyleReferenceFromPreviewUrl(detail.imageUrl);
+    }
+  }
 
   async function interrogateFromGallery(image: OutputImage) {
     showInterrogateModal = true;
@@ -1988,7 +2089,9 @@
         // Build a user-visible error message from the raw error string
         const rawErr = String(data.error ?? "");
         let toastMsg = locale.t("generation.toast.failed");
-        if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
+        if (isStyleTransferExecutionError(rawErr)) {
+          toastMsg = locale.t("generation.style_transfer.execution_failed");
+        } else if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
           toastMsg = locale.t("generation.toast.failed_validation");
         } else {
           try {
@@ -2113,7 +2216,13 @@
                   finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images);
                 }
               } else {
-                gallery.showToast(locale.t("app.generation_lost"), "error");
+                const failedStyleTransfer = item.params?.style_transfer_enabled;
+                gallery.showToast(
+                  failedStyleTransfer
+                    ? locale.t("generation.style_transfer.failed_no_output")
+                    : locale.t("app.generation_lost"),
+                  "error",
+                );
               }
             }
           }
@@ -2135,6 +2244,11 @@
     };
     sseReconnectHandler = handleSseReconnect;
     window.addEventListener("mooshie:sse-reconnected", handleSseReconnect);
+
+    modelPreviewActionHandler = (event: Event) => {
+      void handleModelPreviewAction(event);
+    };
+    window.addEventListener("mooshie:model-preview-action", modelPreviewActionHandler);
 
     // Start ComfyUI server — returns immediately, background task handles readiness
     // The backend will auto-connect WebSocket and emit comfyui:server_ready when done
@@ -2229,6 +2343,9 @@
   onDestroy(() => {
     if (reconcileIntervalId) clearInterval(reconcileIntervalId);
     if (sseReconnectHandler) window.removeEventListener("mooshie:sse-reconnected", sseReconnectHandler);
+    if (modelPreviewActionHandler) {
+      window.removeEventListener("mooshie:model-preview-action", modelPreviewActionHandler);
+    }
     clearGenerationDoneToastTimers();
   });
 </script>
