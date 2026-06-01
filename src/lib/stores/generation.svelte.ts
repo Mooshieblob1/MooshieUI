@@ -888,8 +888,8 @@ class GenerationStore {
       // SD3 family prefers moderate CFG with SGM uniform scheduling.
       case "sd3":
         preset = {
-          steps: this.modelTurboVariant === "turbo" ? 4 : 28,
-          cfg: this.modelTurboVariant === "turbo" ? 1.2 : 4.5,
+          steps: this.modelTurboVariant === "turbo" ? 6 : 28,
+          cfg: this.modelTurboVariant === "turbo" ? 1.0 : 4.5,
           samplerName: "euler",
           scheduler: "sgm_uniform",
           width: 1024,
@@ -1011,8 +1011,8 @@ class GenerationStore {
       // SD 1.5 keeps the smaller canvas and classic DPM++/Karras combo.
       case "sd15":
         preset = {
-          steps: this.hasTurboModelVariant ? 6 : 28,
-          cfg: this.hasTurboModelVariant ? 2.0 : 7.0,
+          steps: this.hasTurboModelVariant ? 8 : 20,
+          cfg: this.hasTurboModelVariant ? 1.5 : 5.0,
           samplerName: this.hasTurboModelVariant ? "euler" : "dpmpp_2m",
           scheduler: this.hasTurboModelVariant ? "normal" : "karras",
           width: 512,
@@ -1023,8 +1023,8 @@ class GenerationStore {
 
       case "pony":
         preset = {
-          steps: this.hasTurboModelVariant ? 6 : 25,
-          cfg: this.hasTurboModelVariant ? 2.0 : 7.0,
+          steps: this.hasTurboModelVariant ? 10 : 25,
+          cfg: this.hasTurboModelVariant ? 1.0 : 6.0,
           samplerName: this.hasTurboModelVariant ? "euler" : "euler_a",
           scheduler: "normal",
           width: 1024,
@@ -1034,10 +1034,10 @@ class GenerationStore {
 
       case "illustrious":
         preset = {
-          steps: this.hasTurboModelVariant ? 6 : 30,
-          cfg: this.hasTurboModelVariant ? 2.0 : 6.0,
-          samplerName: this.hasTurboModelVariant ? "euler" : "euler_ancestral",
-          scheduler: "normal",
+          steps: this.hasTurboModelVariant ? 10 : 20,
+          cfg: this.hasTurboModelVariant ? 1.0 : 5.0,
+          samplerName: this.hasTurboModelVariant ? "euler" : "euler_cfg_pp",
+          scheduler: this.hasTurboModelVariant ? "normal" : "sgm_uniform",
           width: 1024,
           height: 1024,
         };
@@ -1061,12 +1061,11 @@ class GenerationStore {
       case "mugen":
       case "unknown":
       default:
-        // Unknown falls back to safe SDXL-like defaults so sampler/scheduler never stay unset.
         preset = {
-          steps: this.hasTurboModelVariant ? 6 : 30,
-          cfg: this.hasTurboModelVariant ? 2.0 : 4.0,
-          samplerName: "euler",
-          scheduler: this.hasTurboModelVariant ? "normal" : "simple",
+          steps: this.hasTurboModelVariant ? 10 : 20,
+          cfg: this.hasTurboModelVariant ? 1.0 : 5.0,
+          samplerName: this.hasTurboModelVariant ? "euler" : "euler_cfg_pp",
+          scheduler: this.hasTurboModelVariant ? "normal" : "sgm_uniform",
           width: 1024,
           height: 1024,
         };
