@@ -310,9 +310,9 @@ pub fn run() {
 
                 let file_path =
                     match commands::api::resolve_gallery_image_path(&gallery_dir, &filename) {
-                        Some(p) => p,
-                        None => {
-                            log::warn!("Gallery image read failed for '{}': not found", filename);
+                        Ok(p) => p,
+                        Err(e) => {
+                            log::warn!("Gallery image read failed for '{}': {}", filename, e);
                             responder.respond(
                                 tauri::http::Response::builder()
                                     .status(404)

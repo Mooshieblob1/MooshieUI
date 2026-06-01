@@ -1147,7 +1147,7 @@ pub async fn read_image_metadata(
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let path = resolve_gallery_image_path(&dir, &filename)
-        .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", filename)))?;
+        .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
     let bytes = std::fs::read(&path)?;
     crate::metadata::read_image_metadata(&bytes).map_err(AppError::Other)
 }
@@ -1247,7 +1247,7 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let path = resolve_gallery_image_path(&dir, &filename)
-        .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", filename)))?;
+        .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
     let bytes = std::fs::read(&path)?;
     Ok(bytes)
 }
@@ -1269,7 +1269,7 @@ pub(crate) async fn load_gallery_image_png_from_dir(
         return Err(AppError::Other("Invalid filename".into()));
     }
     let path = resolve_gallery_image_path(gallery_dir, filename)
-        .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", filename)))?;
+        .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
     let bytes = std::fs::read(&path)?;
     if filename.ends_with(".jxl") {
         let png = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
@@ -1305,7 +1305,7 @@ pub async fn load_gallery_image_display(filename: String) -> Result<Vec<u8>, App
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let path = resolve_gallery_image_path(&dir, &filename)
-        .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", filename)))?;
+        .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
     let bytes = std::fs::read(&path)?;
     if filename.ends_with(".jxl") {
         let webp = tokio::task::spawn_blocking(move || transcode_jxl_to_webp(&bytes))
@@ -1330,33 +1330,157 @@ pub async fn read_temp_image(filename: String) -> Result<Vec<u8>, AppError> {
         .ok_or_else(|| AppError::Other(format!("Temp image not found: {}", filename)))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GalleryPathResolveError {
+    InvalidFilename,
+    NotFound,
+    Ambiguous,
+}
+
+impl std::fmt::Display for GalleryPathResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidFilename => write!(f, "Invalid filename"),
+            Self::NotFound => write!(f, "Gallery image not found"),
+            Self::Ambiguous => write!(f, "Ambiguous gallery filename"),
+        }
+    }
+}
+
+pub fn validate_gallery_filename(filename: &str) -> Result<(), GalleryPathResolveError> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(GalleryPathResolveError::InvalidFilename);
+    }
+    Ok(())
+}
+
 /// Locate a gallery file under the root gallery dir or `users/{username}/` subdirs.
+///
+/// Desktop IPC does not carry a username, so a basename that appears in more
+/// than one gallery location is unsafe to resolve. Fail closed instead of
+/// picking a filesystem-dependent match that could load or delete another
+/// user's image.
 pub fn resolve_gallery_image_path(
     base_dir: &std::path::Path,
     filename: &str,
-) -> Option<std::path::PathBuf> {
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
-        return None;
-    }
+) -> Result<std::path::PathBuf, GalleryPathResolveError> {
+    validate_gallery_filename(filename)?;
+
+    let mut matches = Vec::new();
     let direct = base_dir.join(filename);
     if direct.is_file() {
-        return Some(direct);
+        matches.push(direct);
     }
+
     let users_dir = base_dir.join("users");
-    if !users_dir.is_dir() {
-        return None;
-    }
-    let entries = std::fs::read_dir(&users_dir).ok()?;
-    for entry in entries.flatten() {
-        if !entry.file_type().ok().is_some_and(|ft| ft.is_dir()) {
-            continue;
+    if users_dir.is_dir() {
+        let mut user_dirs: Vec<_> = std::fs::read_dir(&users_dir)
+            .map_err(|_| GalleryPathResolveError::NotFound)?
+            .flatten()
+            .filter_map(|entry| {
+                if entry.file_type().ok().is_some_and(|ft| ft.is_dir()) {
+                    Some(entry.path())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        user_dirs.sort();
+
+        for user_dir in user_dirs {
+            let candidate = user_dir.join(filename);
+            if candidate.is_file() {
+                matches.push(candidate);
+            }
         }
-        let candidate = entry.path().join(filename);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
     }
-    None
+
+    match matches.len() {
+        0 => Err(GalleryPathResolveError::NotFound),
+        1 => Ok(matches.remove(0)),
+        _ => Err(GalleryPathResolveError::Ambiguous),
+    }
+}
+
+#[cfg(test)]
+mod gallery_path_tests {
+    use super::*;
+    use std::{fs, path::PathBuf};
+
+    fn temp_gallery_dir(name: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time should be after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "mooshieui-gallery-path-{}-{}-{}",
+            name,
+            std::process::id(),
+            unique
+        ));
+        fs::create_dir_all(&dir).expect("create temp gallery dir");
+        dir
+    }
+
+    #[test]
+    fn resolves_unique_user_gallery_file() {
+        let dir = temp_gallery_dir("unique-user");
+        let user_dir = dir.join("users").join("alice");
+        fs::create_dir_all(&user_dir).expect("create user dir");
+        let image = user_dir.join("image.png");
+        fs::write(&image, b"png").expect("write image");
+
+        let resolved = resolve_gallery_image_path(&dir, "image.png").expect("resolve image");
+
+        assert_eq!(resolved, image);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_duplicate_user_gallery_basenames() {
+        let dir = temp_gallery_dir("duplicate-users");
+        let alice = dir.join("users").join("alice");
+        let bob = dir.join("users").join("bob");
+        fs::create_dir_all(&alice).expect("create alice dir");
+        fs::create_dir_all(&bob).expect("create bob dir");
+        fs::write(alice.join("image.png"), b"alice").expect("write alice image");
+        fs::write(bob.join("image.png"), b"bob").expect("write bob image");
+
+        let err = resolve_gallery_image_path(&dir, "image.png").expect_err("should be ambiguous");
+
+        assert_eq!(err, GalleryPathResolveError::Ambiguous);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_root_and_user_gallery_basename_collision() {
+        let dir = temp_gallery_dir("root-user-collision");
+        let user_dir = dir.join("users").join("alice");
+        fs::create_dir_all(&user_dir).expect("create user dir");
+        fs::write(dir.join("image.png"), b"root").expect("write root image");
+        fs::write(user_dir.join("image.png"), b"alice").expect("write user image");
+
+        let err = resolve_gallery_image_path(&dir, "image.png").expect_err("should be ambiguous");
+
+        assert_eq!(err, GalleryPathResolveError::Ambiguous);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_gallery_filenames_with_path_segments() {
+        assert_eq!(
+            validate_gallery_filename("../image.png"),
+            Err(GalleryPathResolveError::InvalidFilename)
+        );
+        assert_eq!(
+            validate_gallery_filename("alice/image.png"),
+            Err(GalleryPathResolveError::InvalidFilename)
+        );
+        assert_eq!(
+            validate_gallery_filename("alice\\image.png"),
+            Err(GalleryPathResolveError::InvalidFilename)
+        );
+    }
 }
 
 /// Generate a WebP thumbnail for a gallery image. Used by the `thumbnail://` protocol.
@@ -1366,7 +1490,7 @@ pub fn generate_thumbnail(
     max_size: u32,
 ) -> Result<Vec<u8>, String> {
     let path = resolve_gallery_image_path(gallery_dir, filename)
-        .ok_or_else(|| "Read failed: The system cannot find the file specified.".to_string())?;
+        .map_err(|e| format!("Read failed: {}", e))?;
     let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;
 
     let img = decode_gallery_image(&bytes)?;
@@ -1412,7 +1536,7 @@ pub async fn get_gallery_image_path(filename: String) -> Result<String, AppError
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
     let path = resolve_gallery_image_path(&dir, &filename)
-        .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", filename)))?;
+        .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -1421,9 +1545,13 @@ pub async fn get_gallery_image_path(filename: String) -> Result<String, AppError
 pub async fn delete_gallery_image(filename: String) -> Result<(), AppError> {
     let dir = crate::config::gallery_dir()
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    if let Some(path) = resolve_gallery_image_path(&dir, &filename) {
-        std::fs::remove_file(&path)?;
-        crate::gallery_index::remove(&path);
+    match resolve_gallery_image_path(&dir, &filename) {
+        Ok(path) => {
+            std::fs::remove_file(&path)?;
+            crate::gallery_index::remove(&path);
+        }
+        Err(GalleryPathResolveError::NotFound) => {}
+        Err(e) => return Err(AppError::Other(format!("{}: {}", e, filename))),
     }
     Ok(())
 }
@@ -1438,7 +1566,9 @@ pub async fn rename_gallery_image(
         .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
 
     let old_path = resolve_gallery_image_path(&dir, &old_filename)
-        .ok_or_else(|| AppError::Other(format!("Gallery image not found: {}", old_filename)))?;
+        .map_err(|e| AppError::Other(format!("{}: {}", e, old_filename)))?;
+    validate_gallery_filename(&new_filename)
+        .map_err(|e| AppError::Other(format!("{}: {}", e, new_filename)))?;
 
     // Disallow path traversal / directory injection in rename target.
     let new_name_path = std::path::Path::new(&new_filename);
