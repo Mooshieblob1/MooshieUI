@@ -8,7 +8,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
-  import { MODEL_FAMILIES } from "../../utils/modelFamily.js";
+  import { MODEL_FAMILIES, TURBO_MODEL_VARIANTS } from "../../utils/modelFamily.js";
   import type { ModelFamily } from "../../utils/modelFamily.js";
 
   interface ModelFile {
@@ -379,15 +379,9 @@
         modelspecHeaderVPred: spec?.header_v_pred === "true",
         modelFamily: family,
         modelIsSdxlLike: spec?.is_sdxl_like === "true",
-        modelTurboVariant: (spec?.turbo_model_variant as
-          | "none"
-          | "turbo"
-          | "lightning"
-          | "lcm"
-          | "hyper"
-          | "dmd"
-          | "dmd2"
-          | undefined) ?? "none",
+        modelTurboVariant: TURBO_MODEL_VARIANTS.includes(spec?.turbo_model_variant as any)
+          ? spec!.turbo_model_variant
+          : "none",
         modelRecommendedVae: spec?.recommended_vae ?? null,
         modelRecommendedClipModel: spec?.recommended_clip_model ?? null,
         modelRecommendedClipType: spec?.recommended_clip_type ?? null,

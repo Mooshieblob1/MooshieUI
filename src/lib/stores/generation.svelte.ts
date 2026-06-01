@@ -8,9 +8,10 @@ import {
 } from "../utils/promptSchedule.js";
 import {
   MODEL_FAMILIES,
+  TURBO_MODEL_VARIANTS,
   signalsIndicateVPred,
 } from "../utils/modelFamily.js";
-import type { ModelFamily } from "../utils/modelFamily.js";
+import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import type {
   GenerationParams,
   LoraEntry,
@@ -52,15 +53,6 @@ interface ModelPreset {
   height: number;
   upscaleDenoise?: number;
 }
-
-type TurboModelVariant =
-  | "none"
-  | "turbo"
-  | "lightning"
-  | "lcm"
-  | "hyper"
-  | "dmd"
-  | "dmd2";
 
 function isModelFamily(value: unknown): value is ModelFamily {
   return typeof value === "string" && MODEL_FAMILIES.includes(value as ModelFamily);

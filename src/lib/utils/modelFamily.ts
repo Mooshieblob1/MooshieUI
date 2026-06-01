@@ -35,6 +35,18 @@ export const MODEL_FAMILIES = [
 
 export type ModelFamily = typeof MODEL_FAMILIES[number];
 
+export const TURBO_MODEL_VARIANTS = [
+  "none",
+  "turbo",
+  "lightning",
+  "lcm",
+  "hyper",
+  "dmd",
+  "dmd2",
+] as const;
+
+export type TurboModelVariant = typeof TURBO_MODEL_VARIANTS[number];
+
 export interface ModelFamilySignals {
   /** Checkpoint filename or diffusion UNET filename */
   filename?: string | null;
