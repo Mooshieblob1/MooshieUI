@@ -3142,6 +3142,7 @@ fn read_json_sidecar(path: &std::path::Path) -> Result<Option<Value>, AppError> 
     Ok(Some(value))
 }
 
+/// https://github.com/willmiao/ComfyUI-Lora-Manager
 fn read_comfyui_lora_manager_metadata(
     model_path: &std::path::Path,
 ) -> Result<Option<String>, AppError> {
@@ -3151,8 +3152,8 @@ fn read_comfyui_lora_manager_metadata(
     let Some(json) = read_json_sidecar(&path)? else {
         return Ok(None);
     };
-    Ok(
-        json.get("base_model")
+    Ok(json
+            .get("base_model")
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("unknown"))
@@ -3164,10 +3165,31 @@ fn read_comfyui_lora_manager_metadata(
                     .map(str::trim)
                     .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("unknown"))
                     .map(str::to_string)
-            }),
-    )
+            }))
 }
 
+/// - https://github.com/AUTOMATIC1111/st/able-diffusion-webui
+/// - https://github.com/lllyasviel/st/able-diffusion-webui-forge
+/// - https://github.com/Haoming02/sd/-webui-forge-classic/tree/neo
+/// via https://github.com/butaixianran/Stable-Diffusion-Webui-Civitai-Helper
+fn read_forge_metadata(
+    model_path: &std::path::Path,
+) -> Result<Option<String>, AppError> {
+    let Some(path) = sidecar_metadata_path(model_path, ".civitai.info") else {
+        return Ok(None);
+    };
+    let Some(json) = read_json_sidecar(&path)? else {
+        return Ok(None);
+    };
+    Ok(json
+        .get("baseModel")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string))
+}
+
+/// https://github.com/LykosAI/StabilityMatrix
 fn read_stability_matrix_metadata(
     model_path: &std::path::Path,
 ) -> Result<Option<String>, AppError> {
@@ -3472,6 +3494,8 @@ pub(crate) async fn read_modelspec_internal(
         turbo_model_variant_from_filename(filename).to_string(),
     );
     if let Some(base_model) = read_comfyui_lora_manager_metadata(&path)? {
+        result.insert("base_model".to_string(), base_model);
+    } else if let Some(base_model) = read_forge_metadata(&path)? {
         result.insert("base_model".to_string(), base_model);
     } else if let Some(base_model) = read_stability_matrix_metadata(&path)? {
         result.insert("base_model".to_string(), base_model);
