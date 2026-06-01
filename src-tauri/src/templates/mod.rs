@@ -508,15 +508,25 @@ pub fn is_vpred_model(params: &GenerationParams) -> bool {
     params.is_vpred_model
 }
 
-/// Returns true when the model needs a 16-channel latent (SD3, Flux, Anima/WAN).
+/// Returns true when the resolved architecture uses a 16-channel latent bucket.
 pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
-    if is_sd3_architecture(params) || is_flux_architecture(params) || is_anima_architecture(params)
-    {
-        return true;
-    }
-    let name = model_name_lower(params);
-    name.contains("anima") || name.contains("wan")
+    matches!(
+        params.model_architecture.as_str(),
+        "sd3"
+            | "flux"
+            | "flux1d"
+            | "flux1s"
+            | "flux1krea"
+            | "chroma"
+            | "zib"
+            | "zit"
+            | "qwen"
+    )
 }
+
+  /// TODO:
+  /// flux2 uses "Empty Flux 2 Latent"
+  /// flux2 uses "Flux2Scheduler" - adding this would be fairly complex, because it is not compatible with the current scheduler UI and would require a separate workflow path.
 
 /// Lowercase model name for heuristic checks.
 fn model_name_lower(params: &GenerationParams) -> String {
