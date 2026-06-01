@@ -35,7 +35,7 @@ jobs:
             runner: windows-latest
             artifact_target_root: src-tauri/target
 
-    runs-on: ${{ matrix.self_hosted && env.USE_NUC_RUNNER == 'true' && fromJSON(matrix.runner) || (matrix.self_hosted && matrix.hosted_runner || matrix.runner) }}
+    runs-on: ${{ matrix.self_hosted && github.repository == 'Mooshieblob1/MooshieUI' && github.actor == 'Mooshieblob1' && fromJSON(matrix.runner) || (matrix.self_hosted && matrix.hosted_runner || matrix.runner) }}
 
     steps:
       - name: Checkout
@@ -256,7 +256,7 @@ jobs:
   # Headless server binary (no webkit / Tauri deps required)
   # -------------------------------------------------------------------------
   build-server:
-    runs-on: ${{ env.USE_NUC_RUNNER == 'true' && fromJSON('["self-hosted","mooshie-nuc","linux"]') || 'ubuntu-22.04' }}
+    runs-on: ${{ github.repository == 'Mooshieblob1/MooshieUI' && github.actor == 'Mooshieblob1' && fromJSON('["self-hosted","mooshie-nuc","linux"]') || 'ubuntu-22.04' }}
 
     steps:
       - name: Checkout
@@ -303,7 +303,7 @@ jobs:
   # -------------------------------------------------------------------------
   docker-publish:
     needs: build-server
-    runs-on: ${{ env.USE_NUC_RUNNER == 'true' && fromJSON('["self-hosted","mooshie-nuc","linux"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'Mooshieblob1/MooshieUI' && github.actor == 'Mooshieblob1' && fromJSON('["self-hosted","mooshie-nuc","linux"]') || 'ubuntu-latest' }}
 
     steps:
       - name: Prepare local Docker build cache (NUC)
