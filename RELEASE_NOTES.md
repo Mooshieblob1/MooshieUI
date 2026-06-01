@@ -1,3 +1,17 @@
+## What's New in v1.4.5
+
+### Fixes and maintenance
+- **PNG export**: saved files use the correct `.png` extension (#221).
+- **Theme import**: existing themes are preserved when importing a theme pack (#224).
+- **Browser mode**: sidecar thumbnail saves are scoped to the gallery and no longer accept unsafe paths (#238).
+
+### Docs and CI
+- **Contributing**: added `CONTRIBUTING.md` and a README link (#245).
+- **Release CI**: Linux desktop build, server binary, and Docker image publish on the `blobnuc` self-hosted runner for official Mooshieblob1 releases; forks and other actors stay on GitHub-hosted runners (#247).
+- **Deps**: `@sveltejs/vite-plugin-svelte` 6.2.4 (#208).
+
+---
+
 ## What's New in v1.4.4
 
 ### Community feedback (issue #232)
