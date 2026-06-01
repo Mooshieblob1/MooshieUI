@@ -8,7 +8,6 @@ import {
 } from "../utils/promptSchedule.js";
 import {
   MODEL_FAMILIES,
-  signalsIndicateAnima,
   signalsIndicateVPred,
 } from "../utils/modelFamily.js";
 import type { ModelFamily } from "../utils/modelFamily.js";

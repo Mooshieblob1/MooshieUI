@@ -78,8 +78,3 @@ export function signalsIndicateVPred(signals: ModelFamilySignals): boolean {
   ) return true;
   return filenameIndicatesVPred(signals.filename);
 }
-
-/** Combined signal — backend family/modelspec tags, then filename fallback. */
-export function signalsIndicateAnima(signals: ModelFamilySignals): boolean {
-  return signals.modelFamily === "anima";
-}
