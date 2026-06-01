@@ -2693,11 +2693,8 @@ fn sidecar_metadata_path(path: &std::path::Path, suffix: &str) -> Option<std::pa
     Some(parent.join(format!("{}{}", stem, suffix)))
 }
 
-fn is_sdxl_like_base_model(base_model: &str) -> bool {
-    matches!(
-        model_family_from_base_model(base_model),
-        "sdxl" | "illustrious" | "pony"
-    )
+fn is_sdxl_like_family(family: &str) -> bool {
+    matches!(family, "sdxl" | "illustrious" | "pony")
 }
 
 fn model_family_from_base_model(base_model: &str) -> &'static str {
@@ -3647,7 +3644,7 @@ pub(crate) async fn read_modelspec_internal(
         result.insert("family".to_string(), family.to_string());
         result.insert(
             "is_sdxl_like".to_string(),
-            if matches!(family, "sdxl" | "illustrious" | "pony") {
+            if is_sdxl_like_family(family) {
                 "true".to_string()
             } else {
                 "false".to_string()
@@ -3670,7 +3667,7 @@ pub(crate) async fn read_modelspec_internal(
         .is_some_and(|value| value == "true")
         || result
             .get("base_model")
-            .is_some_and(|base_model| is_sdxl_like_base_model(base_model))
+            .is_some_and(|base_model| is_sdxl_like_family(model_family_from_base_model(base_model)))
     {
         if let Some(runtime_meta) = read_safetensors_runtime_metadata(&path)? {
             result.extend(runtime_meta);
@@ -3685,7 +3682,7 @@ pub(crate) async fn read_modelspec_internal(
         result.insert("family".to_string(), family.to_string());
         result.insert(
             "is_sdxl_like".to_string(),
-            if matches!(family, "sdxl" | "illustrious" | "pony") {
+            if is_sdxl_like_family(family) {
                 "true".to_string()
             } else {
                 "false".to_string()
