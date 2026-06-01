@@ -3,7 +3,7 @@ use std::io::Read;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 #[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter, State};
@@ -3145,27 +3145,87 @@ fn read_json_sidecar(path: &std::path::Path) -> Result<Option<Value>, AppError> 
 /// https://github.com/willmiao/ComfyUI-Lora-Manager
 fn read_comfyui_lora_manager_metadata(
     model_path: &std::path::Path,
-) -> Result<Option<String>, AppError> {
+) -> Result<Option<Value>, AppError> {
     let Some(path) = sidecar_metadata_path(model_path, ".metadata.json") else {
         return Ok(None);
     };
     let Some(json) = read_json_sidecar(&path)? else {
         return Ok(None);
     };
-    Ok(json
+    Ok(Some(json!({
+        "baseModel": json
             .get("base_model")
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("unknown"))
-            .map(str::to_string)
             .or_else(|| {
                 json.get("civitai")
                     .and_then(|v| v.get("baseModel"))
                     .and_then(|v| v.as_str())
                     .map(str::trim)
                     .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("unknown"))
-                    .map(str::to_string)
-            }))
+            }),
+        "name": json
+            .get("model_name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .or_else(|| {
+                json.get("civitai")
+                    .and_then(|v| v.get("model"))
+                    .and_then(|v| v.get("name"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+            }),
+        "versionName": json
+            .get("civitai")
+            .and_then(|v| v.get("name"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+        "modelId": json
+            .get("civitai")
+            .and_then(|v| v.get("modelId"))
+            .and_then(|v| v.as_u64()),
+        "createdAt": json
+            .get("civitai")
+            .and_then(|v| v.get("createdAt"))
+            .and_then(|v| v.as_str()),
+        "updatedAt": json
+            .get("civitai")
+            .and_then(|v| v.get("updatedAt"))
+            .and_then(|v| v.as_str()),
+        "publishedAt": json
+            .get("civitai")
+            .and_then(|v| v.get("publishedAt"))
+            .and_then(|v| v.as_str()),
+        "creatorUsername": json
+            .get("civitai")
+            .and_then(|v| v.get("creator"))
+            .and_then(|v| v.get("username"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+        "trainedWords": json
+            .get("civitai")
+            .and_then(|v| v.get("trainedWords"))
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        "images": json
+            .get("civitai")
+            .and_then(|v| v.get("images"))
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        "tags": json
+            .get("tags")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        "modelDescription": json
+            .get("modelDescription")
+            .cloned()
+            .unwrap_or(Value::Null),
+    })))
 }
 
 /// - https://github.com/AUTOMATIC1111/st/able-diffusion-webui
@@ -3174,37 +3234,105 @@ fn read_comfyui_lora_manager_metadata(
 /// via https://github.com/butaixianran/Stable-Diffusion-Webui-Civitai-Helper
 fn read_forge_metadata(
     model_path: &std::path::Path,
-) -> Result<Option<String>, AppError> {
+) -> Result<Option<Value>, AppError> {
     let Some(path) = sidecar_metadata_path(model_path, ".civitai.info") else {
         return Ok(None);
     };
     let Some(json) = read_json_sidecar(&path)? else {
         return Ok(None);
     };
-    Ok(json
-        .get("baseModel")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(str::to_string))
+    Ok(Some(json!({
+        "baseModel": json
+            .get("baseModel")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+        "name": json
+            .get("model")
+            .and_then(|v| v.get("name"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+        "versionName": json
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+        "modelId": json.get("modelId").and_then(|v| v.as_u64()),
+        "createdAt": json.get("createdAt").and_then(|v| v.as_str()),
+        "updatedAt": json.get("updatedAt").and_then(|v| v.as_str()),
+        "publishedAt": json.get("publishedAt").and_then(|v| v.as_str()),
+        "creatorUsername": json
+            .get("creator")
+            .and_then(|v| v.get("username"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+        "trainedWords": json
+            .get("trainedWords")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        "images": json
+            .get("images")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        "tags": json
+            .get("model")
+            .and_then(|v| v.get("tags"))
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        "modelDescription": json
+            .get("model")
+            .and_then(|v| v.get("description"))
+            .cloned()
+            .unwrap_or(Value::Null),
+    })))
 }
 
 /// https://github.com/LykosAI/StabilityMatrix
 fn read_stability_matrix_metadata(
     model_path: &std::path::Path,
-) -> Result<Option<String>, AppError> {
+) -> Result<Option<Value>, AppError> {
     let Some(path) = sidecar_metadata_path(model_path, ".cm-info.json") else {
         return Ok(None);
     };
     let Some(json) = read_json_sidecar(&path)? else {
         return Ok(None);
     };
-    Ok(json
-        .get("BaseModel")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("other"))
-        .map(str::to_string))
+    Ok(Some(json!({
+        "baseModel": json
+            .get("BaseModel")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("other")),
+        "name": json
+            .get("ModelName")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+        "versionName": json
+            .get("VersionName")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+        "modelId": json.get("ModelId").and_then(|v| v.as_u64()),
+        "createdAt": Value::Null,
+        "updatedAt": Value::Null,
+        "publishedAt": Value::Null,
+        "trainedWords": json
+            .get("TrainedWords")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        "images": Value::Array(Vec::new()),
+        "tags": json
+            .get("Tags")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        "modelDescription": json
+            .get("ModelDescription")
+            .cloned()
+            .unwrap_or(Value::Null),
+    })))
 }
 
 async fn lookup_civitai_base_model_by_hash(
@@ -3450,9 +3578,10 @@ pub async fn civitai_list_architectures(
 /// Read the small subset of metadata needed at runtime.
 /// `base_model` is resolved from local sidecars first:
 /// 1. `{filename}.metadata.json` (ComfyUI LoRA Manager)
-/// 2. `{filename}.cm-info.json` (Stability Matrix)
-/// 3. fallback to filename-based family detection
-/// 4. fallback to `hash + CivitAI baseModel`
+/// 2. `{filename}.civitai.info` (Forge / A1111 Civitai Helper)
+/// 3. `{filename}.cm-info.json` (Stability Matrix)
+/// 4. fallback to filename-based family detection
+/// 5. fallback to `hash + CivitAI baseModel`
 /// Prediction-related header fields are read only for SDXL-like families
 /// (`sdxl`, `illustrious`/`noobai`, `pony`).
 #[cfg(feature = "desktop")]
@@ -3493,11 +3622,26 @@ pub(crate) async fn read_modelspec_internal(
         "turbo_model_variant".to_string(),
         turbo_model_variant_from_filename(filename).to_string(),
     );
-    if let Some(base_model) = read_comfyui_lora_manager_metadata(&path)? {
+    if let Some(base_model) = read_comfyui_lora_manager_metadata(&path)?
+        .as_ref()
+        .and_then(|v| v.get("baseModel"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+    {
         result.insert("base_model".to_string(), base_model);
-    } else if let Some(base_model) = read_forge_metadata(&path)? {
+    } else if let Some(base_model) = read_forge_metadata(&path)?
+        .as_ref()
+        .and_then(|v| v.get("baseModel"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+    {
         result.insert("base_model".to_string(), base_model);
-    } else if let Some(base_model) = read_stability_matrix_metadata(&path)? {
+    } else if let Some(base_model) = read_stability_matrix_metadata(&path)?
+        .as_ref()
+        .and_then(|v| v.get("baseModel"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+    {
         result.insert("base_model".to_string(), base_model);
     } else if let Some(family) = model_family_from_filename(filename) {
         result.insert("family".to_string(), family.to_string());
