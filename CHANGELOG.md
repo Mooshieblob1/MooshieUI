@@ -1,5 +1,59 @@
 # Changelog
 
+## What's New in v1.4.4
+
+### Community feedback (issue #232)
+- **Fast refine**: optional Refiner path that skips tiled diffusion and tiled VAE for a quicker upscale when you have enough VRAM (with an Anima warning in the UI).
+- **Artist favourites**: clicking a favourite artist again removes their tag when the prompt uses underscores vs spaces in the gallery name.
+- **Style transfer**: Generate is blocked with a clear message when Untwisting RoPE / Scale-Image nodes are missing; ComfyUI execution errors surface in the UI.
+- **Model previews**: Civitai checkpoint/LoRA cards add Tags, Img2img, and Style ref actions; empty cards show a Thumb/Gallery hint.
+- **Generation queue**: tooltips explain that **Generate (+N)** means jobs already queued and that you can click again to add another.
+
+### Model picker and UI polish
+- **Duplicate models**: merging extra disk folders dedupes by basename and prefers ComfyUI API paths (#242).
+- **LoRA dropdown**: long names wrap instead of truncating (#240).
+- **Quality tags**: badge and auto-tags cover Pony and Nanosaur as well as Anima/Illustrious (#241).
+- **Browser mode**: sidecar thumbnail saves use the shared gallery PNG loader (#237).
+
+---
+
+## What's New in v1.4.3
+
+### Prompt tag selection and highlighting
+- **Schedule block boundaries**: MooshieUI `<from|to|range:…>…</…>` and SwarmUI `<fromto[…]:…>` blocks are treated as inert ranges so commas inside scheduled text no longer break clickable tag selection.
+- **Expression tags (`:<`)**: colon-escaped angle tags (e.g. `:<`) stay clickable alongside schedule syntax, building on the v1.4.2 follow-up parser work.
+- **Weighted tags with `<` in content**: parenthetical weights like `(tag:<broken:1.2)` parse correctly for click-to-select overlays.
+- **Autocomplete in syntax blocks**: prompt autocomplete respects inert schedule, preset, LoRA, and region blocks—not only Swarm `fromto`.
+
+### Model gallery and picker
+- **Checkpoint and LoRA galleries**: richer grid cards with preview navigation, metadata actions, and sorting helpers.
+- **Model selector**: improved dropdown UX and Pony quality-tag quick actions via shared `QualityTagsEditor`.
+- **Stability Matrix paths**: extra model folders from Stability Matrix-style layouts resolve correctly.
+
+### Build and platform
+- **Arch AppImage support**: Linux packaging scripts and Tauri wrapper updates for Arch-based AppImage builds.
+
+---
+
+## What's New in v1.4.2
+
+### Remote / cloud ComfyUI onboarding
+- **Setup wizard remote path**: clearer copy that desktop mode skips local ComfyUI/Python/PyTorch install and connects to a public ComfyUI URL.
+- **Settings connection hints**: remote mode now shows guidance for RunPod-style proxy URLs and the MooshieUI server Docker build requirement.
+- **README cloud section**: new **Remote / cloud ComfyUI** guide for RunPod, Vast.ai, and similar deployments.
+
+### Extra model path resolution
+- **ComfyUI root normalization**: extra model paths pointing at a ComfyUI install root (with nested `models/checkpoints` etc.) now resolve to the `models` folder for structured category scanning, install dirs, and model lookup.
+- **Stability Matrix compatibility**: flat and structured extra paths from Stability Matrix-style layouts are classified correctly at ComfyUI startup.
+
+### Model picker reliability
+- **Disk + API merge**: model lists now merge ComfyUI `/models` API results with on-disk files from configured paths so checkpoints, LoRAs, and other categories show files ComfyUI has not indexed yet.
+
+### Developer tooling
+- **`npm run tauri` wrapper**: detects npm/pnpm/yarn from `npm_config_user_agent` instead of hardcoding pnpm for dev/build invocations.
+
+---
+
 ## What's New in v1.4.1
 
 ### Theme customization and branding

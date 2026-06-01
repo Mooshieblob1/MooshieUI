@@ -94,6 +94,7 @@ export interface GenerationParams {
   upscale_steps: number;
   upscale_tile_size: number;
   upscale_tiling: boolean;
+  upscale_fast_refine?: boolean;
   upscale_soft_guidance: boolean;
   upscale_soft_guidance_multiplier: number;
   smart_guidance: boolean;
@@ -108,6 +109,8 @@ export interface GenerationParams {
   clip_type: string | null;
   controlnet: ControlNetPayload | null;
   model_architecture: string;
+  /** Inject ModelSamplingDiscrete (v_prediction + zsnr) before KSampler. */
+  needs_vpred_zsnr_sampling?: boolean;
   output_bit_depth: string;
   /** Storage format for this generation: "png" (default) or "jxl". */
   output_format: string;

@@ -2,10 +2,23 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { getCheckpointCivitaiInfo, type CheckpointCivitaiInfo } from "../../utils/api.js";
+  import {
+    civitaiLookupImage,
+    getCheckpointCivitaiInfo,
+    saveModelSidecarThumbnail,
+    type CheckpointCivitaiInfo,
+  } from "../../utils/api.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
+  import {
+    inferCheckpointFamily,
+    sortModelFilenames,
+    type ModelGallerySort,
+  } from "../../utils/modelGallerySort.js";
+  import ModelPreviewActions from "./ModelPreviewActions.svelte";
 
-  const CACHE_KEY = "mooshieui.checkpoint.civitai.cache.v2";
+  const CACHE_KEY = "mooshieui.checkpoint.civitai.cache.v3";
   const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+  const SORT_KEY = "mooshieui.checkpoint.gallery.sort.v1";
 
   interface CacheEntry {
     data: CheckpointCivitaiInfo;
@@ -18,6 +31,11 @@
     return !!(d.civitai_model_id || d.civitai_version_id);
   }
 
+  function hasDisplayThumbnail(entry: CacheEntry): boolean {
+    const d = entry.data;
+    return !!(d.thumbnail_url || (d.civitai_images && d.civitai_images.length > 0));
+  }
+
   function loadCache(): Record<string, CacheEntry> {
     if (typeof window === "undefined") return {};
     try {
@@ -27,8 +45,8 @@
         const now = Date.now();
         const result: Record<string, CacheEntry> = {};
         for (const [key, entry] of Object.entries(parsed)) {
-          // Drop expired entries and entries with no CivitAI data (stale auth-fail results)
-          if (now - entry.fetchedAt < CACHE_TTL && hasCivitaiData(entry)) result[key] = entry;
+          if (now - entry.fetchedAt >= CACHE_TTL) continue;
+          if (hasCivitaiData(entry) || hasDisplayThumbnail(entry)) result[key] = entry;
         }
         return result;
       }
@@ -38,11 +56,23 @@
 
   let civitaiCache = $state<Record<string, CacheEntry>>(loadCache());
   let loading = $state<Record<string, boolean>>({});
-  let fetchedSet = new Set<string>();
   let fetchQueue: string[] = [];
   let fetching = false;
 
   let searchQuery = $state("");
+  let civitaiImageRef = $state("");
+  let civitaiImportBusy = $state(false);
+  let sortMode = $state<ModelGallerySort>(
+    (typeof window !== "undefined" &&
+      (localStorage.getItem(SORT_KEY) as ModelGallerySort | null)) ||
+      "name",
+  );
+
+  $effect(() => {
+    try {
+      localStorage.setItem(SORT_KEY, sortMode);
+    } catch {}
+  });
 
   function saveCache() {
     try {
@@ -59,12 +89,13 @@
         return display.includes(q) || name.toLowerCase().includes(q);
       });
     }
-    return [...list].sort((a, b) => {
-      const aActive = a === generation.checkpoint;
-      const bActive = b === generation.checkpoint;
-      if (aActive !== bActive) return aActive ? -1 : 1;
-      return displayName(a).localeCompare(displayName(b));
-    });
+    return sortModelFilenames(
+      list,
+      sortMode,
+      generation.checkpoint,
+      displayName,
+      (filename) => inferCheckpointFamily(filename, civitaiCache[filename]?.data),
+    );
   });
 
   function displayName(filename: string): string {
@@ -90,8 +121,11 @@
   }
 
   function enqueueFetch(filename: string) {
-    if (civitaiCache[filename] || loading[filename] || fetchedSet.has(filename)) return;
-    fetchedSet.add(filename);
+    if (loading[filename] || fetchQueue.includes(filename)) return;
+    const cached = civitaiCache[filename];
+    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL && hasDisplayThumbnail(cached)) {
+      return;
+    }
     fetchQueue.push(filename);
     processFetchQueue();
   }
@@ -114,7 +148,7 @@
       // Only persist to localStorage when CivitAI data was retrieved.
       // Empty results (failed auth, pre-fix) stay in-memory only so they
       // re-fetch fresh next session once an API key is configured.
-      if (info.civitai_model_id || info.civitai_version_id) {
+      if (info.civitai_model_id || info.civitai_version_id || info.thumbnail_url?.startsWith("data:")) {
         saveCache();
       }
     } catch {
@@ -178,6 +212,91 @@
     imageIndex = { ...imageIndex, [filename]: current === 0 ? images.length - 1 : current - 1 };
   }
 
+  async function setSidecarFromGallery(checkpointFilename: string) {
+    const gf = gallery.selectedImage?.gallery_filename;
+    if (!gf) {
+      gallery.showToast(locale.t("model.thumb_no_gallery_image"), "warning");
+      return;
+    }
+    try {
+      await saveModelSidecarThumbnail({
+        category: "checkpoints",
+        filename: checkpointFilename,
+        galleryFilename: gf,
+      });
+      delete civitaiCache[checkpointFilename];
+      await fetchInfo(checkpointFilename);
+      gallery.showToast(locale.t("checkpoint.sidecar_saved"), "success");
+    } catch (e) {
+      gallery.showToast(
+        locale.t("checkpoint.sidecar_failed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+        "error",
+      );
+    }
+  }
+
+  async function setSidecarFromPreview(checkpointFilename: string) {
+    const url = currentImageUrl(checkpointFilename);
+    if (!url) {
+      gallery.showToast(locale.t("checkpoint.no_preview_image"), "warning");
+      return;
+    }
+    try {
+      if (url.startsWith("data:")) {
+        gallery.showToast(locale.t("checkpoint.sidecar_already_local"), "info");
+        return;
+      }
+      await saveModelSidecarThumbnail({
+        category: "checkpoints",
+        filename: checkpointFilename,
+        imageUrl: url,
+      });
+      delete civitaiCache[checkpointFilename];
+      await fetchInfo(checkpointFilename);
+      gallery.showToast(locale.t("checkpoint.sidecar_saved"), "success");
+    } catch (e) {
+      gallery.showToast(
+        locale.t("checkpoint.sidecar_failed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+        "error",
+      );
+    }
+  }
+
+  async function importCivitaiImageMeta() {
+    const ref = civitaiImageRef.trim();
+    if (!ref) return;
+    civitaiImportBusy = true;
+    try {
+      const data = await civitaiLookupImage(ref);
+      const item = data.items?.[0];
+      const meta = item?.meta as Record<string, unknown> | undefined;
+      const prompt =
+        (typeof meta?.prompt === "string" && meta.prompt) ||
+        (typeof meta?.positivePrompt === "string" && meta.positivePrompt) ||
+        "";
+      if (!prompt) {
+        gallery.showToast(locale.t("checkpoint.civitai_no_prompt"), "warning");
+        return;
+      }
+      generation.positivePrompt = prompt;
+      generation.saveSettings();
+      gallery.showToast(locale.t("checkpoint.civitai_prompt_imported"), "success");
+    } catch (e) {
+      gallery.showToast(
+        locale.t("checkpoint.civitai_import_failed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+        "error",
+      );
+    } finally {
+      civitaiImportBusy = false;
+    }
+  }
+
   function formatCount(n: number | undefined): string {
     if (n == null) return "";
     if (n >= 1_000_000) return `${locale.formatDecimalTrimmed(n / 1_000_000, 1)}M`;
@@ -188,13 +307,39 @@
 
 <div class="flex flex-col h-full">
   <!-- Search bar -->
-  <div class="px-2 pt-1.5 pb-1 shrink-0">
+  <div class="px-2 pt-1.5 pb-1 shrink-0 space-y-1">
     <input
       type="text"
       bind:value={searchQuery}
       placeholder={locale.t('checkpoint.search_placeholder')}
       class="w-full bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
     />
+    <div class="flex gap-1 items-center">
+      <select
+        bind:value={sortMode}
+        class="shrink-0 rounded border border-neutral-700 bg-neutral-800 px-1.5 py-1 text-[10px] text-neutral-200 focus:outline-none focus:border-indigo-500"
+        title={locale.t('model_gallery.sort_tip')}
+      >
+        <option value="name">{locale.t('model_gallery.sort_name')}</option>
+        <option value="folder">{locale.t('model_gallery.sort_folder')}</option>
+        <option value="family">{locale.t('model_gallery.sort_family')}</option>
+      </select>
+      <input
+        type="text"
+        bind:value={civitaiImageRef}
+        placeholder={locale.t('checkpoint.civitai_image_ref_placeholder')}
+        class="min-w-0 flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[10px] text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
+      />
+      <button
+        type="button"
+        disabled={civitaiImportBusy || !civitaiImageRef.trim()}
+        onclick={() => void importCivitaiImageMeta()}
+        class="shrink-0 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[10px] text-neutral-200 hover:border-indigo-500 disabled:opacity-40"
+        title={locale.t('checkpoint.civitai_image_ref_tip')}
+      >
+        {civitaiImportBusy ? "…" : locale.t('checkpoint.civitai_import_prompt')}
+      </button>
+    </div>
   </div>
 
   {#if filteredCheckpoints().length === 0}
@@ -214,7 +359,7 @@
         <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
         <div
           use:lazyFetch={name}
-          class="aspect-[3/4] flex flex-col rounded-lg border bg-neutral-900/60 overflow-hidden transition-all text-left cursor-pointer {isActive
+          class="aspect-[3/4] flex flex-col rounded-lg border bg-neutral-900/60 overflow-hidden transition-all text-left cursor-pointer group {isActive
             ? 'border-indigo-500/60 ring-1 ring-indigo-500/20'
             : 'border-neutral-800 hover:border-neutral-600'}"
           title={name}
@@ -237,6 +382,30 @@
                 class="w-full h-full object-cover"
                 loading="lazy"
               />
+              <ModelPreviewActions imageUrl={imgUrl} modelLabel={displayName(name)} />
+              <div
+                class="absolute left-1 bottom-1 z-10 flex gap-0.5"
+                onclick={(e) => e.stopPropagation()}
+              >
+                {#if imgUrl && !imgUrl.startsWith("data:")}
+                  <button
+                    type="button"
+                    class="rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-neutral-200 hover:bg-black/90"
+                    title={locale.t('checkpoint.set_sidecar_tip')}
+                    onclick={() => void setSidecarFromPreview(name)}
+                  >
+                    {locale.t('checkpoint.set_sidecar')}
+                  </button>
+                {/if}
+                <button
+                  type="button"
+                  class="rounded bg-black/70 px-1.5 py-0.5 text-[9px] text-neutral-200 hover:bg-black/90"
+                  title={locale.t('model.thumb_from_gallery_tip')}
+                  onclick={() => void setSidecarFromGallery(name)}
+                >
+                  {locale.t('model.thumb_from_gallery')}
+                </button>
+              </div>
               {#if imgCount > 1}
                 <div class="absolute bottom-1 right-1 bg-black/70 text-[10px] text-neutral-300 px-1.5 py-0.5 rounded-full tabular-nums">
                   {imgIdx + 1}/{imgCount}
@@ -267,7 +436,7 @@
                 <div class="w-4 h-4 border-2 border-neutral-600 border-t-indigo-500 rounded-full animate-spin"></div>
               </div>
             {:else}
-              <div class="absolute inset-0 flex items-center justify-center">
+              <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-2">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   class="w-8 h-8 {isActive ? 'text-indigo-700' : 'text-neutral-700'}"
@@ -282,6 +451,7 @@
                   <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
                   <line x1="12" y1="22.08" x2="12" y2="12"/>
                 </svg>
+                <p class="text-[9px] text-neutral-600 text-center leading-snug">{locale.t('model.thumb_empty_hint')}</p>
               </div>
             {/if}
           </div>

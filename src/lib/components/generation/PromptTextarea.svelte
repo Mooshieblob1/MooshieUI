@@ -5,11 +5,17 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
-  import { renderHighlightedPrompt, hasSchedulingTags, hasPresetTokens } from "../../utils/promptSchedule.js";
+  import {
+    renderHighlightedPrompt,
+    hasSchedulingTags,
+    hasPresetTokens,
+    findPromptInertRangeContaining,
+  } from "../../utils/promptSchedule.js";
   import {
     getPromptClickableSegments,
     type PromptClickableSegment,
   } from "../../utils/promptClickableRanges.js";
+  import { SYNTAX_ANGLE_LOOKBEHIND } from "../../utils/promptSyntaxEscape.js";
 
   interface Props {
     value: string;
@@ -95,23 +101,22 @@
     const pos = textareaEl.selectionStart;
     const text = value;
 
-    // Check if cursor is inside a <fromto[...]...> block — if so, use block
-    // boundaries instead of comma-splitting (commas are part of fromto syntax).
-    const fromtoRe = /<fromto\[[^\]]*\]:[^>]*>/g;
-    let ftMatch: RegExpExecArray | null;
-    while ((ftMatch = fromtoRe.exec(text)) !== null) {
-      const ftStart = ftMatch.index;
-      const ftEnd = ftStart + ftMatch[0].length;
-      if (pos > ftStart && pos <= ftEnd) {
-        // Cursor is inside this fromto block — use the whole block as the fragment
-        const token = text.substring(ftStart, ftEnd);
-        const leadingWhitespace = token.match(/^\s*/)?.[0].length ?? 0;
-        const trailingWhitespace = token.match(/\s*$/)?.[0].length ?? 0;
-        const trimmedStart = ftStart + leadingWhitespace;
-        const trimmedEnd = Math.max(trimmedStart, ftEnd - trailingWhitespace);
-        const fragment = text.substring(trimmedStart, trimmedEnd);
-        return { fragment, start: ftStart, end: ftEnd, trimmedStart, trimmedEnd };
-      }
+    // Scheduling, preset, LoRA, and region blocks use commas inside their syntax.
+    const inertRange = findPromptInertRangeContaining(text, pos);
+    if (inertRange) {
+      const token = text.substring(inertRange.start, inertRange.end);
+      const leadingWhitespace = token.match(/^\s*/)?.[0].length ?? 0;
+      const trailingWhitespace = token.match(/\s*$/)?.[0].length ?? 0;
+      const trimmedStart = inertRange.start + leadingWhitespace;
+      const trimmedEnd = Math.max(trimmedStart, inertRange.end - trailingWhitespace);
+      const fragment = text.substring(trimmedStart, trimmedEnd);
+      return {
+        fragment,
+        start: inertRange.start,
+        end: inertRange.end,
+        trimmedStart,
+        trimmedEnd,
+      };
     }
 
     // Find the start of the current tag (after the last comma before cursor)
@@ -147,9 +152,9 @@
     // MooshieUI: <from:0.2>tag</from>, <to:0.8>tag</to>, <range:0.2:0.8>tag</range>
     // SwarmUI:   <fromto[0.5]:before, after>
     searchFragment = searchFragment
-      .replace(/^<(?:from|to|range):[\d.]+(?::[\d.]+)?>/i, "")
+      .replace(new RegExp(`^${SYNTAX_ANGLE_LOOKBEHIND}<(?:from|to|range):[\\d.]+(?::[\\d.]+)?>`, "i"), "")
       .replace(/<\/(?:from|to|range)>$/i, "")
-      .replace(/^<fromto\[[\d.]+\]:/i, "")
+      .replace(new RegExp(`^${SYNTAX_ANGLE_LOOKBEHIND}<fromto\\[[\\d.]+\\]:`, "i"), "")
       .replace(/>$/i, "");
 
     if (searchFragment.length < 1) {
@@ -211,14 +216,18 @@
 
     // Detect scheduling wrapper in the current fragment and preserve it
     // MooshieUI XML syntax: <from:0.2>tag</from>
-    const schedPrefixMatch = result.fragment.match(/^(<(from|to|range):[\d.]+(?::[\d.]+)?>)/i);
+    const schedPrefixMatch = result.fragment.match(
+      new RegExp(`^(${SYNTAX_ANGLE_LOOKBEHIND}<(from|to|range):[\\d.]+(?::[\\d.]+)?>)`, "i"),
+    );
     const schedSuffixMatch = result.fragment.match(/(<\/(from|to|range)>)$/i);
     const schedPrefix = schedPrefixMatch?.[1] ?? "";
     const schedType = schedPrefixMatch?.[2] ?? "";
     // Auto-close if there's an open tag but no closing tag yet
     const schedSuffix = schedSuffixMatch?.[1] ?? (schedType ? `</${schedType}>` : "");
     // SwarmUI syntax: <fromto[0.5]:tag — preserve the prefix (no closing tag needed)
-    const swarmPrefixMatch = !schedPrefix ? result.fragment.match(/^(<fromto\[[\d.]+\]:)/i) : null;
+    const swarmPrefixMatch = !schedPrefix
+      ? result.fragment.match(new RegExp(`^(${SYNTAX_ANGLE_LOOKBEHIND}<fromto\\[[\\d.]+\\]:)`, "i"))
+      : null;
     const swarmPrefix = swarmPrefixMatch?.[1] ?? "";
     // Trailing > from SwarmUI second entry (e.g. "blue eyes>")
     const swarmSuffix = !schedSuffix && result.fragment.match(/>$/) ? ">" : "";

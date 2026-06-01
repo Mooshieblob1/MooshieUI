@@ -41,7 +41,13 @@
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
-  import { interrogateGalleryImage, interrogateImage } from "./lib/utils/api.js";
+  import { interrogateGalleryImage, interrogateImage, saveModelSidecarThumbnail } from "./lib/utils/api.js";
+  import {
+    fetchModelPreviewImageBytes,
+    uploadModelPreviewImage,
+    type ModelPreviewActionDetail,
+  } from "./lib/utils/modelPreviewImage.js";
+  import { isStyleTransferExecutionError } from "./lib/utils/styleTransferNodes.js";
   import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
@@ -79,6 +85,7 @@
   }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
   let sseReconnectHandler: (() => void) | null = null;
+  let modelPreviewActionHandler: ((event: Event) => void) | null = null;
   let generationDoneToastTimer: ReturnType<typeof setTimeout> | null = null;
   let generationDoneToastClearTimer: ReturnType<typeof setTimeout> | null = null;
   let generationDoneToastSeq = 0;
@@ -777,11 +784,52 @@
     showContextMenu = true;
   }
 
+  async function setGalleryImageAsModelThumb(
+    image: OutputImage,
+    category: "checkpoints" | "loras",
+    filename: string,
+  ) {
+    if (!image.gallery_filename) {
+      gallery.showToast(locale.t("gallery.persisted_only_thumb"), "warning");
+      return;
+    }
+    try {
+      await saveModelSidecarThumbnail({
+        category,
+        filename,
+        galleryFilename: image.gallery_filename,
+      });
+      gallery.showToast(locale.t("checkpoint.sidecar_saved"), "success");
+    } catch (e) {
+      gallery.showToast(
+        locale.t("checkpoint.sidecar_failed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+        "error",
+      );
+    }
+  }
+
   const contextMenuItems = $derived.by((): ContextMenuItem[] => {
     const image = contextMenuImage;
     if (!image) return [];
-    return [
+    const items: ContextMenuItem[] = [
       { label: locale.t("gallery.get_tags"), action: () => interrogateFromGallery(image) },
+    ];
+    if (generation.checkpoint) {
+      items.push({
+        label: locale.t("gallery.use_as_checkpoint_thumb"),
+        action: () => void setGalleryImageAsModelThumb(image, "checkpoints", generation.checkpoint!),
+      });
+    }
+    const thumbLora = generation.loras.find((l) => l.enabled && l.name)?.name;
+    if (thumbLora) {
+      items.push({
+        label: locale.t("gallery.use_as_lora_thumb"),
+        action: () => void setGalleryImageAsModelThumb(image, "loras", thumbLora),
+      });
+    }
+    items.push(
       { label: "", action: () => {}, separator: true },
       { label: locale.t("gallery.img2img"), action: () => img2imgImage(image) },
       { label: locale.t("gallery.inpaint"), action: () => inpaintImage(image) },
@@ -791,8 +839,103 @@
       { label: locale.t("gallery.copy"), action: () => gallery.copyToClipboard(image) },
       { label: "", action: () => {}, separator: true },
       { label: locale.t("gallery.delete"), action: () => gallery.deleteImage(image), destructive: true },
-    ];
+    );
+    return items;
   });
+
+  async function interrogateFromPreviewUrl(url: string) {
+    showInterrogateModal = true;
+    interrogateLoading = true;
+    interrogateResult = null;
+    interrogateStage = null;
+    interrogateDownloadProgress = null;
+    interrogateError = null;
+    interrogateImageUrl = url.startsWith("data:") ? url : null;
+
+    const unlistenDownload = await ipcListen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+      "interrogator:download_progress",
+      (event) => {
+        if (event.payload.done) {
+          interrogateDownloadProgress = null;
+        } else {
+          interrogateDownloadProgress = event.payload;
+        }
+      },
+    );
+
+    const unlistenStage = await ipcListen<string>("interrogator:stage", (event) => {
+      interrogateStage = event.payload;
+    });
+
+    try {
+      const { bytes } = await fetchModelPreviewImageBytes(url, "model_preview.png");
+      const uint8 = new Uint8Array(bytes);
+      let binary = "";
+      for (let i = 0; i < uint8.length; i++) {
+        binary += String.fromCharCode(uint8[i]);
+      }
+      interrogateResult = await interrogateImage(btoa(binary));
+      if (!interrogateImageUrl && url.startsWith("http")) {
+        interrogateImageUrl = url;
+      }
+    } catch (e) {
+      console.error("Interrogation failed:", e);
+      interrogateError = e instanceof Error ? e.message : String(e);
+    } finally {
+      interrogateLoading = false;
+      interrogateStage = null;
+      unlistenDownload();
+      unlistenStage();
+    }
+  }
+
+  async function img2imgFromPreviewUrl(url: string) {
+    try {
+      const name = await uploadModelPreviewImage(url, "model_preview.png");
+      generation.inputImage = name;
+      canvas.clearMask();
+      generation.maskImage = null;
+      generation.mode = "img2img";
+      currentPage = "generate";
+      gallery.showToast(locale.t("gallery.toast.loaded_img2img"), "success");
+    } catch (e) {
+      console.error("Failed to load preview for img2img:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
+    }
+  }
+
+  async function setStyleReferenceFromPreviewUrl(url: string) {
+    try {
+      const name = await uploadModelPreviewImage(url, "style_reference.png");
+      generation.styleReferenceImage = name;
+      generation.styleTransferEnabled = true;
+      generation.controlnetEnabled = false;
+      generation.upscaleEnabled = false;
+      generation.facefixEnabled = false;
+      generation.mode = "txt2img";
+      if (!["euler_ancestral", "euler_a"].includes(generation.samplerName)) {
+        generation.samplerName = "euler_ancestral";
+      }
+      generation.saveSettings();
+      currentPage = "generate";
+      gallery.showToast(locale.t("generation.style_transfer.reference_loaded"), "success");
+    } catch (e) {
+      console.error("Failed to load style reference:", e);
+      gallery.showToast(locale.t("generation.style_transfer.upload_error"), "error");
+    }
+  }
+
+  async function handleModelPreviewAction(event: Event) {
+    const detail = (event as CustomEvent<ModelPreviewActionDetail>).detail;
+    if (!detail?.imageUrl) return;
+    if (detail.type === "interrogate") {
+      await interrogateFromPreviewUrl(detail.imageUrl);
+    } else if (detail.type === "img2img") {
+      await img2imgFromPreviewUrl(detail.imageUrl);
+    } else if (detail.type === "style_reference") {
+      await setStyleReferenceFromPreviewUrl(detail.imageUrl);
+    }
+  }
 
   async function interrogateFromGallery(image: OutputImage) {
     showInterrogateModal = true;
@@ -1946,7 +2089,9 @@
         // Build a user-visible error message from the raw error string
         const rawErr = String(data.error ?? "");
         let toastMsg = locale.t("generation.toast.failed");
-        if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
+        if (isStyleTransferExecutionError(rawErr)) {
+          toastMsg = locale.t("generation.style_transfer.execution_failed");
+        } else if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
           toastMsg = locale.t("generation.toast.failed_validation");
         } else {
           try {
@@ -2071,7 +2216,13 @@
                   finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images);
                 }
               } else {
-                gallery.showToast(locale.t("app.generation_lost"), "error");
+                const failedStyleTransfer = item.params?.style_transfer_enabled;
+                gallery.showToast(
+                  failedStyleTransfer
+                    ? locale.t("generation.style_transfer.failed_no_output")
+                    : locale.t("app.generation_lost"),
+                  "error",
+                );
               }
             }
           }
@@ -2093,6 +2244,11 @@
     };
     sseReconnectHandler = handleSseReconnect;
     window.addEventListener("mooshie:sse-reconnected", handleSseReconnect);
+
+    modelPreviewActionHandler = (event: Event) => {
+      void handleModelPreviewAction(event);
+    };
+    window.addEventListener("mooshie:model-preview-action", modelPreviewActionHandler);
 
     // Start ComfyUI server — returns immediately, background task handles readiness
     // The backend will auto-connect WebSocket and emit comfyui:server_ready when done
@@ -2187,6 +2343,9 @@
   onDestroy(() => {
     if (reconcileIntervalId) clearInterval(reconcileIntervalId);
     if (sseReconnectHandler) window.removeEventListener("mooshie:sse-reconnected", sseReconnectHandler);
+    if (modelPreviewActionHandler) {
+      window.removeEventListener("mooshie:model-preview-action", modelPreviewActionHandler);
+    }
     clearGenerationDoneToastTimers();
   });
 </script>
@@ -2579,11 +2738,6 @@
   <div
     class="lightbox-backdrop fixed inset-0 bg-black/90 z-50 flex {visionSimClass}"
     role="dialog"
-    onkeydown={(e) => {
-      if (e.key === "Escape") gallery.closeLightbox();
-      if (e.key === "ArrowLeft") navigateLightbox("prev");
-      if (e.key === "ArrowRight") navigateLightbox("next");
-    }}
     tabindex="-1"
     use:focusOnMount
   >
@@ -2928,21 +3082,7 @@
     onkeydown={(e) => { if (e.key === 'Escape') artistInsert.dismiss(); }}
   >
     <div class="w-96 max-w-full rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
-      {#if artistInsertPending.duplicate}
-        <h2 class="mb-1 text-sm font-semibold text-neutral-100">{locale.t("artist_insert.tag_duplicate_title")}</h2>
-        <p class="mb-3 text-xs text-neutral-400">
-          {locale.t("artist_insert.tag_duplicate_body", { tag: artistInsertPending.tag })}
-        </p>
-        <div class="flex justify-end gap-2">
-          <button
-            type="button"
-            class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-neutral-500"
-            onclick={() => artistInsert.dismiss()}
-          >
-            {locale.t("common.ok")}
-          </button>
-        </div>
-      {:else}
+      {#if !artistInsertPending.duplicate}
         <h2 class="mb-1 text-sm font-semibold text-neutral-100">{locale.t("artist_insert.artist_duplicate_title")}</h2>
         <p class="mb-3 text-xs text-neutral-400">
           {locale.t("artist_insert.artist_duplicate_body", {

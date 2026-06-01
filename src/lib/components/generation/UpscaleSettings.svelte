@@ -284,7 +284,7 @@
     </div>
 
     <!-- Tiling toggle -->
-    {#if generation.isAnima}
+    {#if generation.isAnima && !generation.upscaleFastRefine}
       <div class="flex items-center gap-2">
         <input
           type="checkbox"
@@ -296,7 +296,7 @@
           {locale.t('generation.upscale.tiling_forced_label')}<InfoTip text={locale.t('generation.upscale.tiling_forced_tip')} />
         </label>
       </div>
-    {:else}
+    {:else if !generation.upscaleFastRefine}
       <div class="flex items-center gap-2">
         <input
           type="checkbox"
@@ -310,8 +310,24 @@
       </div>
     {/if}
 
+    <!-- Fast refine (skip MultiDiffusion / tiled VAE) -->
+    <div class="flex items-center gap-2">
+      <input
+        type="checkbox"
+        id="upscale-fast-refine"
+        bind:checked={generation.upscaleFastRefine}
+        class="w-4 h-4 accent-indigo-500 rounded"
+      />
+      <label for="upscale-fast-refine" class="text-xs text-neutral-400">
+        {locale.t('generation.upscale.fast_refine_label')}<InfoTip text={locale.t('generation.upscale.fast_refine_tip')} />
+      </label>
+    </div>
+    {#if generation.upscaleFastRefine && generation.isAnima}
+      <p class="text-[11px] text-amber-500/90">{locale.t('generation.upscale.fast_refine_anima_warning')}</p>
+    {/if}
+
     <!-- Tile Size (shown when tiling enabled or forced for Anima) -->
-    {#if generation.upscaleTiling || generation.isAnima}
+    {#if (generation.upscaleTiling || generation.isAnima) && !generation.upscaleFastRefine}
     <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.upscale.tile_size')}<InfoTip text={locale.t('generation.upscale.tile_size_tip')} /></span>
