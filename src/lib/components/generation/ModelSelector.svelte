@@ -281,7 +281,7 @@
 
   function currentFamilyOverride(): ModelFamily | null {
     const modelKey = currentModelMetadataKey();
-    return modelKey ? generation.getModelFamilyOverride(modelKey) : null;
+    return modelKey ? generation.modelFamilyOverrides[modelKey] ?? null : null;
   }
 
   function architectureBadgeLabel(): string {
@@ -344,7 +344,7 @@
       return;
     }
     const metadataKey = `${category}::${filename}`;
-    const manualOverride = generation.getModelFamilyOverride(metadataKey);
+    const manualOverride = generation.modelFamilyOverrides[metadataKey] ?? null;
     if (manualOverride) {
       loadedModelMetadataKey = metadataKey;
       isModelMetadataLoading = false;

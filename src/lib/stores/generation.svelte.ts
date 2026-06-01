@@ -544,11 +544,6 @@ class GenerationStore {
     return this.isSd3 || this.isFlux || this.isAuraFlow || this.isMugen || this.isNanosaur;
   }
 
-  /** True when metadata or filename indicates a v-pred SDXL variant. */
-  get isVPred(): boolean {
-    return signalsIndicateVPred(this.modelFamilySignals());
-  }
-
   private modelFamilySignals() {
     return {
       filename: this.diffusionModel ?? this.checkpoint,
@@ -601,10 +596,6 @@ class GenerationStore {
       this.modelRecommendedClipType = meta.modelRecommendedClipType ?? null;
     }
     autocomplete.notifyModelChanged(this.isAnima);
-  }
-
-  getModelFamilyOverride(modelKey: string): ModelFamily | null {
-    return this.modelFamilyOverrides[modelKey] ?? null;
   }
 
   setModelFamilyOverride(modelKey: string, family: ModelFamily | null): void {
@@ -1692,7 +1683,7 @@ class GenerationStore {
       facefix_guide_size: this.facefixGuideSize,
       facefix_max_faces: this.facefixMaxFaces,
       model_architecture: this.detectedArchitecture,
-      is_vpred_model: this.isVPred,
+      is_vpred_model: signalsIndicateVPred(this.modelFamilySignals()),
       output_bit_depth: this.outputBitDepth,
       output_format: this.outputFormat,
       style_transfer_enabled: this.styleTransferEnabled,
