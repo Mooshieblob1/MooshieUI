@@ -1,4 +1,16 @@
 import type { PromptSegment } from "../types/index.js";
+import {
+  PROMPT_PRESET_TOKEN_REGEX,
+  PROMPT_REGION_TAG_REGEX,
+  PROMPT_SCHEDULE_REGEX,
+} from "./promptInertRanges.js";
+
+export {
+  findPromptInertRangeContaining,
+  getPromptInertRanges,
+  isInsidePromptInertRange,
+  type PromptTextRange,
+} from "./promptInertRanges.js";
 
 /**
  * Regex patterns for scheduling tag types:
@@ -12,19 +24,7 @@ import type { PromptSegment } from "../types/index.js";
  * - <fromto[0.5]:before, after>  — "before" from 0% to 50%, "after" from 50% to 100%
  *   Separators: comma, | or ||
  */
-const SCHEDULE_REGEX =
-  /<(from|to|range):(\d+(?:\.\d+)?)(?::(\d+(?:\.\d+)?))?>([ \s\S]*?)<\/\1>/g;
-
-const SWARM_FROMTO_REGEX =
-  /<fromto\[(\d+(?:\.\d+)?)\]:([^>]+)>/g;
-
-/**
- * Combined regex matching both syntaxes.
- * Used for highlight rendering and tag detection (single-pass over text).
- * Numeric values must be valid decimals (e.g. 0.5, 1) — not malformed like 1.2.3.
- */
-const COMBINED_REGEX =
-  /<(?:(from|to|range):(\d+(?:\.\d+)?)(?::(\d+(?:\.\d+)?))?>([ \s\S]*?)<\/\1>|fromto\[(\d+(?:\.\d+)?)\]:([^>]+)>)/g;
+const COMBINED_REGEX = PROMPT_SCHEDULE_REGEX;
 
 export interface ParsedPrompt {
   baseText: string;
@@ -242,7 +242,7 @@ export function renderHighlightedPrompt(raw: string, knownPresetSlugs?: Readonly
 }
 
 /** Match `@preset:<slug>` directives. Slug = lowercase alnum + underscore. */
-const PRESET_TOKEN_REGEX = /@preset:([a-z0-9_]+)/gi;
+const PRESET_TOKEN_REGEX = PROMPT_PRESET_TOKEN_REGEX;
 
 /**
  * Highlight `@preset:<slug>` tokens within an arbitrary plain-text segment.
@@ -301,8 +301,7 @@ export interface PositiveRegionPrompt {
   height: number;
 }
 
-const REGION_TAG_REGEX =
-  /<region:(\d*\.?\d+)\s*,\s*(\d*\.?\d+)\s*,\s*(\d*\.?\d+)\s*,\s*(\d*\.?\d+)>([\s\S]*?)<\/region>/gi;
+const REGION_TAG_REGEX = PROMPT_REGION_TAG_REGEX;
 
 /**
  * Parse syntax-first regional prompt tags:

@@ -34,13 +34,20 @@
   import { notifications } from "./lib/stores/notifications.svelte.js";
   import NotificationBell from "./lib/components/ui/NotificationBell.svelte";
   import logoUrl from "./lib/assets/logo.png";
+  import { applyTheme, getActiveThemeLogoUrl, onThemeApplied } from "./lib/utils/theme.js";
 
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
   import ContextMenu from "./lib/components/ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
-  import { interrogateGalleryImage, interrogateImage } from "./lib/utils/api.js";
+  import { interrogateGalleryImage, interrogateImage, saveModelSidecarThumbnail } from "./lib/utils/api.js";
+  import {
+    fetchModelPreviewImageBytes,
+    uploadModelPreviewImage,
+    type ModelPreviewActionDetail,
+  } from "./lib/utils/modelPreviewImage.js";
+  import { isStyleTransferExecutionError } from "./lib/utils/styleTransferNodes.js";
   import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
@@ -78,6 +85,7 @@
   }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
   let sseReconnectHandler: (() => void) | null = null;
+  let modelPreviewActionHandler: ((event: Event) => void) | null = null;
   let generationDoneToastTimer: ReturnType<typeof setTimeout> | null = null;
   let generationDoneToastClearTimer: ReturnType<typeof setTimeout> | null = null;
   let generationDoneToastSeq = 0;
@@ -251,13 +259,26 @@
     return tKey ? locale.t(tKey) : key;
   }
 
-  function applyTheme(theme: string) {
-    document.documentElement.classList.toggle("light", theme === "light");
-  }
-
   function applyFontScale(scale: number) {
     document.documentElement.style.setProperty("--font-scale", String(scale));
   }
+
+  function brandingHidden(): boolean {
+    return document.documentElement.dataset.branding === "off";
+  }
+
+  function resolveThemeLogoUrl(): string {
+    return getActiveThemeLogoUrl() ?? logoUrl;
+  }
+
+  let themeLogoUrl = $state(logoUrl);
+
+  $effect(() => {
+    themeLogoUrl = resolveThemeLogoUrl();
+    return onThemeApplied(() => {
+      themeLogoUrl = resolveThemeLogoUrl();
+    });
+  });
 
   async function normalizeImageBytes(
     imageBytes: number[],
@@ -763,11 +784,52 @@
     showContextMenu = true;
   }
 
+  async function setGalleryImageAsModelThumb(
+    image: OutputImage,
+    category: "checkpoints" | "loras",
+    filename: string,
+  ) {
+    if (!image.gallery_filename) {
+      gallery.showToast(locale.t("gallery.persisted_only_thumb"), "warning");
+      return;
+    }
+    try {
+      await saveModelSidecarThumbnail({
+        category,
+        filename,
+        galleryFilename: image.gallery_filename,
+      });
+      gallery.showToast(locale.t("checkpoint.sidecar_saved"), "success");
+    } catch (e) {
+      gallery.showToast(
+        locale.t("checkpoint.sidecar_failed", {
+          message: e instanceof Error ? e.message : String(e),
+        }),
+        "error",
+      );
+    }
+  }
+
   const contextMenuItems = $derived.by((): ContextMenuItem[] => {
     const image = contextMenuImage;
     if (!image) return [];
-    return [
+    const items: ContextMenuItem[] = [
       { label: locale.t("gallery.get_tags"), action: () => interrogateFromGallery(image) },
+    ];
+    if (generation.checkpoint) {
+      items.push({
+        label: locale.t("gallery.use_as_checkpoint_thumb"),
+        action: () => void setGalleryImageAsModelThumb(image, "checkpoints", generation.checkpoint!),
+      });
+    }
+    const thumbLora = generation.loras.find((l) => l.enabled && l.name)?.name;
+    if (thumbLora) {
+      items.push({
+        label: locale.t("gallery.use_as_lora_thumb"),
+        action: () => void setGalleryImageAsModelThumb(image, "loras", thumbLora),
+      });
+    }
+    items.push(
       { label: "", action: () => {}, separator: true },
       { label: locale.t("gallery.img2img"), action: () => img2imgImage(image) },
       { label: locale.t("gallery.inpaint"), action: () => inpaintImage(image) },
@@ -777,8 +839,103 @@
       { label: locale.t("gallery.copy"), action: () => gallery.copyToClipboard(image) },
       { label: "", action: () => {}, separator: true },
       { label: locale.t("gallery.delete"), action: () => gallery.deleteImage(image), destructive: true },
-    ];
+    );
+    return items;
   });
+
+  async function interrogateFromPreviewUrl(url: string) {
+    showInterrogateModal = true;
+    interrogateLoading = true;
+    interrogateResult = null;
+    interrogateStage = null;
+    interrogateDownloadProgress = null;
+    interrogateError = null;
+    interrogateImageUrl = url.startsWith("data:") ? url : null;
+
+    const unlistenDownload = await ipcListen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+      "interrogator:download_progress",
+      (event) => {
+        if (event.payload.done) {
+          interrogateDownloadProgress = null;
+        } else {
+          interrogateDownloadProgress = event.payload;
+        }
+      },
+    );
+
+    const unlistenStage = await ipcListen<string>("interrogator:stage", (event) => {
+      interrogateStage = event.payload;
+    });
+
+    try {
+      const { bytes } = await fetchModelPreviewImageBytes(url, "model_preview.png");
+      const uint8 = new Uint8Array(bytes);
+      let binary = "";
+      for (let i = 0; i < uint8.length; i++) {
+        binary += String.fromCharCode(uint8[i]);
+      }
+      interrogateResult = await interrogateImage(btoa(binary));
+      if (!interrogateImageUrl && url.startsWith("http")) {
+        interrogateImageUrl = url;
+      }
+    } catch (e) {
+      console.error("Interrogation failed:", e);
+      interrogateError = e instanceof Error ? e.message : String(e);
+    } finally {
+      interrogateLoading = false;
+      interrogateStage = null;
+      unlistenDownload();
+      unlistenStage();
+    }
+  }
+
+  async function img2imgFromPreviewUrl(url: string) {
+    try {
+      const name = await uploadModelPreviewImage(url, "model_preview.png");
+      generation.inputImage = name;
+      canvas.clearMask();
+      generation.maskImage = null;
+      generation.mode = "img2img";
+      currentPage = "generate";
+      gallery.showToast(locale.t("gallery.toast.loaded_img2img"), "success");
+    } catch (e) {
+      console.error("Failed to load preview for img2img:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
+    }
+  }
+
+  async function setStyleReferenceFromPreviewUrl(url: string) {
+    try {
+      const name = await uploadModelPreviewImage(url, "style_reference.png");
+      generation.styleReferenceImage = name;
+      generation.styleTransferEnabled = true;
+      generation.controlnetEnabled = false;
+      generation.upscaleEnabled = false;
+      generation.facefixEnabled = false;
+      generation.mode = "txt2img";
+      if (!["euler_ancestral", "euler_a"].includes(generation.samplerName)) {
+        generation.samplerName = "euler_ancestral";
+      }
+      generation.saveSettings();
+      currentPage = "generate";
+      gallery.showToast(locale.t("generation.style_transfer.reference_loaded"), "success");
+    } catch (e) {
+      console.error("Failed to load style reference:", e);
+      gallery.showToast(locale.t("generation.style_transfer.upload_error"), "error");
+    }
+  }
+
+  async function handleModelPreviewAction(event: Event) {
+    const detail = (event as CustomEvent<ModelPreviewActionDetail>).detail;
+    if (!detail?.imageUrl) return;
+    if (detail.type === "interrogate") {
+      await interrogateFromPreviewUrl(detail.imageUrl);
+    } else if (detail.type === "img2img") {
+      await img2imgFromPreviewUrl(detail.imageUrl);
+    } else if (detail.type === "style_reference") {
+      await setStyleReferenceFromPreviewUrl(detail.imageUrl);
+    }
+  }
 
   async function interrogateFromGallery(image: OutputImage) {
     showInterrogateModal = true;
@@ -1379,10 +1536,12 @@
         img.src = src;
       });
 
-      const [imgElements, logoImg] = await Promise.all([
-        Promise.all(cellImages.map(({ url }) => loadImg(url))),
-        loadImg(logoUrl),
-      ]);
+      const includeBranding = !brandingHidden();
+      const logoSource = resolveThemeLogoUrl();
+      const imgElements = await Promise.all(cellImages.map(({ url }) => loadImg(url)));
+      const logoImg = includeBranding
+        ? await loadImg(logoSource).catch(() => loadImg(logoUrl)).catch(() => null)
+        : null;
 
       const cellW = Math.max(...imgElements.map(img => img.naturalWidth));
       const cellH = Math.max(...imgElements.map(img => img.naturalHeight));
@@ -1391,11 +1550,11 @@
       const labelFont = `600 ${fontSize}px sans-serif`;
       const labelH = fontSize + 10;
 
-      // Reserve footer space for the watermark below the grid
+      // Reserve footer space for the watermark below the grid (when branding is enabled)
       const wmSize = Math.max(20, Math.round(cellW * 0.045));
       const wmFont = `600 ${Math.round(wmSize * 0.8)}px sans-serif`;
       const wmPad = Math.round(wmSize * 0.5);
-      const footerH = wmSize + wmPad * 2 + wmPad;
+      const footerH = includeBranding ? wmSize + wmPad * 2 + wmPad : 0;
 
       const totalW = cols * cellW + (cols - 1) * gap;
       const totalH = rows * (labelH + cellH) + (rows - 1) * gap + footerH;
@@ -1431,29 +1590,30 @@
         ctx.drawImage(img, x + ox, y + labelH + oy);
       }
 
-      // Single MooshieUI watermark in the footer area below the grid
-      ctx.font = wmFont;
-      const textW = ctx.measureText("MooshieUI").width;
-      const pillW = wmSize + 6 + textW + wmPad * 2;
-      const pillH = wmSize + wmPad;
-      const gridBottom = rows * (labelH + cellH) + (rows - 1) * gap;
-      const pillX = wmPad;
-      const pillY = gridBottom + (footerH - pillH) / 2;
+      if (includeBranding && logoImg) {
+        ctx.font = wmFont;
+        const textW = ctx.measureText("MooshieUI").width;
+        const pillW = wmSize + 6 + textW + wmPad * 2;
+        const pillH = wmSize + wmPad;
+        const gridBottom = rows * (labelH + cellH) + (rows - 1) * gap;
+        const pillX = wmPad;
+        const pillY = gridBottom + (footerH - pillH) / 2;
 
-      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-      ctx.beginPath();
-      ctx.roundRect(pillX, pillY, pillW, pillH, 6);
-      ctx.fill();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+        ctx.beginPath();
+        ctx.roundRect(pillX, pillY, pillW, pillH, 6);
+        ctx.fill();
 
-      const lx = pillX + wmPad;
-      const ly = pillY + (pillH - wmSize) / 2;
-      ctx.drawImage(logoImg, lx, ly, wmSize, wmSize);
+        const lx = pillX + wmPad;
+        const ly = pillY + (pillH - wmSize) / 2;
+        ctx.drawImage(logoImg, lx, ly, wmSize, wmSize);
 
-      ctx.font = wmFont;
-      ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
-      ctx.textAlign = "left";
-      ctx.textBaseline = "middle";
-      ctx.fillText("MooshieUI", lx + wmSize + 6, pillY + pillH / 2);
+        ctx.font = wmFont;
+        ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText("MooshieUI", lx + wmSize + 6, pillY + pillH / 2);
+      }
 
       const gridBlob = await new Promise<Blob>((resolve, reject) => {
         cvs.toBlob(
@@ -1575,7 +1735,7 @@
     // Apply UI preferences (theme, font scale) immediately
     try {
       const cfg = await getConfig();
-      applyTheme(cfg.theme);
+      applyTheme(cfg);
       applyFontScale(cfg.font_scale);
       autoStartEnabled = cfg.auto_start !== false;
       comfyServerUrl = cfg.server_url || `http://127.0.0.1:${cfg.server_port ?? 8188}`;
@@ -1929,7 +2089,9 @@
         // Build a user-visible error message from the raw error string
         const rawErr = String(data.error ?? "");
         let toastMsg = locale.t("generation.toast.failed");
-        if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
+        if (isStyleTransferExecutionError(rawErr)) {
+          toastMsg = locale.t("generation.style_transfer.execution_failed");
+        } else if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
           toastMsg = locale.t("generation.toast.failed_validation");
         } else {
           try {
@@ -2054,7 +2216,13 @@
                   finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images);
                 }
               } else {
-                gallery.showToast(locale.t("app.generation_lost"), "error");
+                const failedStyleTransfer = item.params?.style_transfer_enabled;
+                gallery.showToast(
+                  failedStyleTransfer
+                    ? locale.t("generation.style_transfer.failed_no_output")
+                    : locale.t("app.generation_lost"),
+                  "error",
+                );
               }
             }
           }
@@ -2076,6 +2244,11 @@
     };
     sseReconnectHandler = handleSseReconnect;
     window.addEventListener("mooshie:sse-reconnected", handleSseReconnect);
+
+    modelPreviewActionHandler = (event: Event) => {
+      void handleModelPreviewAction(event);
+    };
+    window.addEventListener("mooshie:model-preview-action", modelPreviewActionHandler);
 
     // Start ComfyUI server — returns immediately, background task handles readiness
     // The backend will auto-connect WebSocket and emit comfyui:server_ready when done
@@ -2170,6 +2343,9 @@
   onDestroy(() => {
     if (reconcileIntervalId) clearInterval(reconcileIntervalId);
     if (sseReconnectHandler) window.removeEventListener("mooshie:sse-reconnected", sseReconnectHandler);
+    if (modelPreviewActionHandler) {
+      window.removeEventListener("mooshie:model-preview-action", modelPreviewActionHandler);
+    }
     clearGenerationDoneToastTimers();
   });
 </script>
@@ -2179,8 +2355,8 @@
     <!-- Forced password change screen -->
     <div class="flex items-center justify-center h-full bg-neutral-950">
       <div class="w-80 space-y-4">
-        <div class="flex items-center justify-center gap-3 mb-6">
-          <img src={logoUrl} alt="MooshieUI" class="w-10 h-10 rounded-lg" />
+        <div class="mooshie-branding flex items-center justify-center gap-3 mb-6">
+          <img src={themeLogoUrl} alt="MooshieUI" class="w-10 h-10 aspect-square object-contain rounded-lg" />
           <h1 class="text-xl font-bold text-neutral-100">MooshieUI</h1>
         </div>
         <p class="text-sm text-neutral-400 text-center">{locale.t("auth.password_reset_by_admin")}</p>
@@ -2215,8 +2391,8 @@
   <!-- Login gate for LAN users -->
   <div class="flex items-center justify-center h-full bg-neutral-950">
     <div class="w-80 space-y-4">
-      <div class="flex items-center justify-center gap-3 mb-6">
-        <img src={logoUrl} alt="MooshieUI" class="w-10 h-10 rounded-lg" />
+      <div class="mooshie-branding flex items-center justify-center gap-3 mb-6">
+        <img src={themeLogoUrl} alt="MooshieUI" class="w-10 h-10 aspect-square object-contain rounded-lg" />
         <h1 class="text-xl font-bold text-neutral-100">MooshieUI</h1>
       </div>
       <p class="text-sm text-neutral-400 text-center">{locale.t("auth.sign_in_continue")}</p>
@@ -2289,10 +2465,22 @@
     </defs>
   </svg>
 
-  <!-- Sidebar -->
-  <nav
-    class="flex w-14 shrink-0 flex-col items-stretch gap-1.5 border-r border-neutral-800 bg-neutral-900 px-1.5 py-3 md:rounded-2xl md:border md:shadow-2xl md:shadow-black/30"
-  >
+  <!-- Sidebar column: logo panel + nav -->
+  <div class="flex w-14 shrink-0 flex-col gap-1.5 self-stretch md:gap-3">
+    <div
+      class="theme-logo-panel flex shrink-0 items-center justify-center border-r border-neutral-800 bg-neutral-900 px-1.5 py-2 md:rounded-2xl md:border md:shadow-2xl md:shadow-black/30"
+    >
+      <div
+        class="flex size-8 items-center justify-center rounded-lg bg-neutral-800/60 text-neutral-400"
+        title="Theme logo"
+      >
+        <img src={themeLogoUrl} alt="Theme logo" class="size-7 rounded-md object-contain" />
+      </div>
+    </div>
+
+    <nav
+      class="flex min-h-0 flex-1 flex-col items-stretch gap-1.5 border-r border-neutral-800 bg-neutral-900 px-1.5 py-3 md:rounded-2xl md:border md:shadow-2xl md:shadow-black/30"
+    >
     <div class="relative mx-auto">
       <button
         class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
@@ -2449,7 +2637,7 @@
     ></div>
 
     <span
-      class="text-[10px] text-neutral-500 text-center mb-2 select-none cursor-default"
+      class="mooshie-branding text-[10px] text-neutral-500 text-center mb-2 select-none cursor-default"
       role="button"
       tabindex="0"
       onclick={handleVersionTap}
@@ -2460,7 +2648,8 @@
         }
       }}
     >v{appVersion}</span>
-  </nav>
+    </nav>
+  </div>
 
   <!-- Main content -->
   <main class="flex min-w-0 flex-1 flex-col overflow-hidden md:rounded-2xl md:border md:border-neutral-800 md:bg-neutral-900 md:p-1 md:shadow-2xl md:shadow-black/30">
@@ -2549,11 +2738,6 @@
   <div
     class="lightbox-backdrop fixed inset-0 bg-black/90 z-50 flex {visionSimClass}"
     role="dialog"
-    onkeydown={(e) => {
-      if (e.key === "Escape") gallery.closeLightbox();
-      if (e.key === "ArrowLeft") navigateLightbox("prev");
-      if (e.key === "ArrowRight") navigateLightbox("next");
-    }}
     tabindex="-1"
     use:focusOnMount
   >
@@ -2898,21 +3082,7 @@
     onkeydown={(e) => { if (e.key === 'Escape') artistInsert.dismiss(); }}
   >
     <div class="w-96 max-w-full rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
-      {#if artistInsertPending.duplicate}
-        <h2 class="mb-1 text-sm font-semibold text-neutral-100">{locale.t("artist_insert.tag_duplicate_title")}</h2>
-        <p class="mb-3 text-xs text-neutral-400">
-          {locale.t("artist_insert.tag_duplicate_body", { tag: artistInsertPending.tag })}
-        </p>
-        <div class="flex justify-end gap-2">
-          <button
-            type="button"
-            class="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 transition-colors hover:border-neutral-500"
-            onclick={() => artistInsert.dismiss()}
-          >
-            {locale.t("common.ok")}
-          </button>
-        </div>
-      {:else}
+      {#if !artistInsertPending.duplicate}
         <h2 class="mb-1 text-sm font-semibold text-neutral-100">{locale.t("artist_insert.artist_duplicate_title")}</h2>
         <p class="mb-3 text-xs text-neutral-400">
           {locale.t("artist_insert.artist_duplicate_body", {

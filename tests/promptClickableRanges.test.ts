@@ -78,3 +78,42 @@ test("leaves scheduling and preset syntax inert while keeping normal tags clicka
     { kind: "tag", clickable: true, text: "green hair" },
   ]);
 });
+
+test("treats colon-escaped expression tags like :< as normal clickable tags", () => {
+  const raw = "1girl, :<, smile";
+  const summary = summarize(getPromptClickableSegments(raw), raw);
+
+  assert.deepEqual(summary, [
+    { kind: "tag", clickable: true, text: "1girl" },
+    { kind: "text", clickable: false, text: "," },
+    { kind: "text", clickable: false, text: " " },
+    { kind: "tag", clickable: true, text: ":<" },
+    { kind: "text", clickable: false, text: "," },
+    { kind: "text", clickable: false, text: " " },
+    { kind: "tag", clickable: true, text: "smile" },
+  ]);
+});
+
+test("keeps commas inside MooshieUI schedule blocks from splitting tags", () => {
+  const raw = "<from:0.2>blue eyes, green hair</from>, masterpiece";
+  const summary = summarize(getPromptClickableSegments(raw), raw);
+
+  assert.deepEqual(summary, [
+    { kind: "text", clickable: false, text: "<from:0.2>blue eyes, green hair</from>" },
+    { kind: "text", clickable: false, text: "," },
+    { kind: "text", clickable: false, text: " " },
+    { kind: "tag", clickable: true, text: "masterpiece" },
+  ]);
+});
+
+test("treats weighted tags with angle-bracket content before the weight colon as clickable", () => {
+  const raw = "(tag:<broken:1.2), normal tag";
+  const summary = summarize(getPromptClickableSegments(raw), raw);
+
+  assert.deepEqual(summary, [
+    { kind: "weighted", clickable: true, text: "(tag:<broken:1.2)" },
+    { kind: "text", clickable: false, text: "," },
+    { kind: "text", clickable: false, text: " " },
+    { kind: "tag", clickable: true, text: "normal tag" },
+  ]);
+});

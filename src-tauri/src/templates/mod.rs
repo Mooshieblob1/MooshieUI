@@ -311,6 +311,9 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
     // Apply rectified flow scheduling for SD3/Flux/AuraFlow (patches model before sampling)
     inject_rectified_flow(&mut result, params);
 
+    // v-prediction + zero-terminal SNR for NoobAI / Illustrious SDXL variants
+    inject_vpred_zsnr_sampling(&mut result, params);
+
     // Apply Stable Cascade model sampling if applicable
     inject_cascade_sampling(&mut result, params);
 
@@ -813,6 +816,61 @@ fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams)
             if let Some(inputs) = sampler_node.get_mut("inputs") {
                 inputs["model"] = json!([result.model_source.0, result.model_source.1]);
             }
+        }
+    }
+}
+
+/// Returns true when the model needs `ModelSamplingDiscrete` with v_prediction + zsnr.
+pub fn needs_vpred_zsnr_sampling(params: &GenerationParams) -> bool {
+    if params.needs_vpred_zsnr_sampling {
+        return true;
+    }
+    if is_sd3_architecture(params)
+        || is_flux_architecture(params)
+        || is_auraflow_architecture(params)
+        || is_mugen_architecture(params)
+        || is_nanosaur_architecture(params)
+        || is_anima_architecture(params)
+    {
+        return false;
+    }
+    let name = model_name_lower(params);
+    if name.contains("vpred") || name.contains("v-pred") || name.contains("v_pred") {
+        return true;
+    }
+    if name.contains("juice") {
+        return true;
+    }
+    if name.contains("2048") && (name.contains("noob") || name.contains("seele")) {
+        return true;
+    }
+    name.contains("seele") && name.contains("pop")
+}
+
+/// Patch SDXL-family v-prediction models with zero-terminal SNR discrete sampling.
+fn inject_vpred_zsnr_sampling(result: &mut WorkflowResult, params: &GenerationParams) {
+    if !needs_vpred_zsnr_sampling(params) {
+        return;
+    }
+
+    let node_id = result.next_id.to_string();
+    result.workflow.insert(
+        node_id.clone(),
+        json!({
+            "class_type": "ModelSamplingDiscrete",
+            "inputs": {
+                "model": [result.model_source.0.clone(), result.model_source.1],
+                "sampling": "v_prediction",
+                "zsnr": true
+            }
+        }),
+    );
+    result.model_source = (node_id, 0);
+    result.next_id += 1;
+
+    if let Some(sampler_node) = result.workflow.get_mut(&result.sampler_id) {
+        if let Some(inputs) = sampler_node.get_mut("inputs") {
+            inputs["model"] = json!([result.model_source.0, result.model_source.1]);
         }
     }
 }

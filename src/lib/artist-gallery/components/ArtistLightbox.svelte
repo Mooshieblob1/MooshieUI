@@ -125,7 +125,7 @@
           <button
             type="button"
             class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-500"
-            onclick={() => oninsertTag?.("@" + entry.tag.replace(/^@/, ""))}
+            onclick={() => oninsertTag?.(entry.tag)}
           >
             {locale.t('artist_gallery.lightbox.insert')}
           </button>

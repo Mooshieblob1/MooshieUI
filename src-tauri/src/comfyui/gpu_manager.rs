@@ -234,6 +234,25 @@ impl GpuManager {
                     "All GPU workers are busy — try again later".into(),
                 ));
             }
+
+            // Prefer an idle worker (exclusive reservation until execution completes).
+            if let Some(worker) = self.find_available().await {
+                if worker.try_reserve() {
+                    return self.do_submit(&worker, workflow, client_id).await;
+                }
+            }
+
+            // ComfyUI accepts multiple prompts per server — queue on a running worker
+            // instead of blocking until the current generation finishes.
+            for worker in &self.workers {
+                let status = *worker.status.read().await;
+                if status == WorkerStatus::Running {
+                    return self
+                        .do_submit_to_server_queue(&worker, workflow, client_id)
+                        .await;
+                }
+            }
+
             let worker = self.wait_for_available(remaining).await.ok_or_else(|| {
                 AppError::Other("All GPU workers are busy — try again later".into())
             })?;
@@ -243,6 +262,48 @@ impl GpuManager {
             // Lost the reservation race against another submitter — loop and
             // wait for another idle worker (or the same one to free again)
             // instead of failing the user-facing call instantly.
+        }
+    }
+
+    /// POST a prompt to a worker that is already executing. ComfyUI queues it
+    /// server-side; we do not reserve the worker again.
+    async fn do_submit_to_server_queue(
+        &self,
+        worker: &Arc<GpuWorker>,
+        workflow: serde_json::Value,
+        client_id: &str,
+    ) -> Result<(u32, crate::comfyui::types::PromptResponse), AppError> {
+        let body = serde_json::json!({
+            "prompt": workflow,
+            "client_id": client_id,
+        });
+
+        let url = format!("{}/prompt", worker.base_url);
+        let resp = self
+            .http_client
+            .post(&url)
+            .json(&body)
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                let prompt_resp: crate::comfyui::types::PromptResponse = r.json().await?;
+                Ok((worker.id, prompt_resp))
+            }
+            Ok(r) => {
+                let status_code = r.status().as_u16();
+                let body = r.text().await.unwrap_or_default();
+                Err(AppError::ApiError {
+                    status: status_code,
+                    message: body,
+                })
+            }
+            Err(e) => Err(AppError::ConnectionFailed(format!(
+                "Worker {} (GPU {}): {}",
+                worker.id, worker.gpu_index, e
+            ))),
         }
     }
 

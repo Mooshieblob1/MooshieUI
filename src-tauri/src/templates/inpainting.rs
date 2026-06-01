@@ -1,6 +1,9 @@
 use serde_json::json;
 
-use super::{build_scheduled_conditioning, insert_vae_decode, load_model_nodes, WorkflowResult};
+use super::{
+    build_scheduled_conditioning, insert_vae_decode, is_anima_architecture, load_model_nodes,
+    needs_vpred_zsnr_sampling, WorkflowResult,
+};
 use crate::comfyui::types::GenerationParams;
 
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
@@ -108,16 +111,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
 
     let sampler_name_lc = params.sampler_name.to_lowercase();
     let is_cfgpp_sampler = sampler_name_lc.contains("cfg_pp");
-    let checkpoint_lc = params.checkpoint.to_lowercase();
-    let diffusion_lc = params
-        .diffusion_model
-        .as_ref()
-        .map(|m| m.to_lowercase())
-        .unwrap_or_default();
-    let is_vpred_or_anima = checkpoint_lc.contains("vpred")
-        || checkpoint_lc.contains("anima")
-        || diffusion_lc.contains("vpred")
-        || diffusion_lc.contains("anima");
+    let is_vpred_or_anima = needs_vpred_zsnr_sampling(params) || is_anima_architecture(params);
 
     let use_differential_diffusion =
         params.differential_diffusion || (is_vpred_or_anima && !is_cfgpp_sampler);

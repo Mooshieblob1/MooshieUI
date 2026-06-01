@@ -94,6 +94,7 @@ export interface GenerationParams {
   upscale_steps: number;
   upscale_tile_size: number;
   upscale_tiling: boolean;
+  upscale_fast_refine?: boolean;
   upscale_soft_guidance: boolean;
   upscale_soft_guidance_multiplier: number;
   smart_guidance: boolean;
@@ -108,6 +109,8 @@ export interface GenerationParams {
   clip_type: string | null;
   controlnet: ControlNetPayload | null;
   model_architecture: string;
+  /** Inject ModelSamplingDiscrete (v_prediction + zsnr) before KSampler. */
+  needs_vpred_zsnr_sampling?: boolean;
   output_bit_depth: string;
   /** Storage format for this generation: "png" (default) or "jxl". */
   output_format: string;
@@ -225,6 +228,28 @@ export interface AppConfig {
   webhook_events: string[];
   webhook_include_sensitive: boolean;
   webhook_allow_private_targets: boolean;
+  theme_profile_id: string | null;
+  theme_profiles: ThemeProfile[];
+}
+
+export interface ThemeTone {
+  main: string;
+  sub: string;
+  trim: string;
+  background: string;
+  text: string;
+}
+
+export interface ThemeProfile {
+  id: string;
+  name: string;
+  palette: "mooshie" | "nord" | "solarized" | "gruvbox" | "catppuccin" | "custom";
+  dark: ThemeTone;
+  light: ThemeTone;
+  background_image: string | null;
+  background_fade: number;
+  logo_image: string | null;
+  hide_branding: boolean;
 }
 
 export interface QueueInfo {

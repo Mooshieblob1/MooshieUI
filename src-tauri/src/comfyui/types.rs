@@ -115,6 +115,9 @@ pub struct GenerationParams {
     pub upscale_steps: u32,
     pub upscale_tile_size: u32,
     pub upscale_tiling: bool,
+    /// Skip MultiDiffusion and tiled VAE during refine (faster; may OOM on Anima).
+    #[serde(default)]
+    pub upscale_fast_refine: bool,
     /// "Refine" mode — when true with mode="img2img", skip the main img2img
     /// KSampler/VAE round-trip and feed the loaded input image directly into
     /// the upscale chain. Mirrors SwarmUI's "Refine Image" button: a single
@@ -151,6 +154,9 @@ pub struct GenerationParams {
     /// Detected model architecture from the frontend (e.g. "sd3", "sdxl", "sd15", "illustrious", "unknown")
     #[serde(default)]
     pub model_architecture: String,
+    /// When true, patch the model with ModelSamplingDiscrete (v_prediction + zsnr) before sampling.
+    #[serde(default)]
+    pub needs_vpred_zsnr_sampling: bool,
     /// Whether the model uses rectified flow scheduling (detected from filename or architecture)
     #[serde(default)]
     pub uses_rectified_flow: bool,

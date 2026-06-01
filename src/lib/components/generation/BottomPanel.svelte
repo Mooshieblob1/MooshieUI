@@ -239,7 +239,7 @@
   function applyArtistTag(hit: ArtistSearchHit) {
     // Delegate to the shared store so the same replace/append confirmation
     // modal that the gallery page uses is reused here.
-    artistInsert.request(hit.slug);
+    artistInsert.request(hit.tag);
   }
 
   function displayArtistTag(tag: string): string {

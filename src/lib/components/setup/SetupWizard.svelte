@@ -412,14 +412,16 @@
         {#if setupMode === "remote"}
           <div class="mb-6 rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-3">
             <p class="text-sm text-neutral-200">{locale.t('setup.remote_desc')}</p>
+            <p class="text-xs text-neutral-500">{locale.t('setup.remote_server_build_note')}</p>
             <div>
               <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.connection.server_url')}</label>
               <input
                 type="text"
                 bind:value={remoteServerUrl}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500"
-                placeholder={locale.t('settings.connection.server_url_placeholder')}
+                placeholder={locale.t('setup.remote_url_placeholder')}
               />
+              <p class="text-[10px] text-neutral-600 mt-1">{locale.t('setup.remote_url_hint')}</p>
             </div>
             <button
               type="button"

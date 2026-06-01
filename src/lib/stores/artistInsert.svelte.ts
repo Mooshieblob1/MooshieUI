@@ -22,6 +22,15 @@ function escapeParens(s: string): string {
   return s.replace(/(\\?)([()])/g, (_, esc, paren) => (esc ? esc + paren : "\\" + paren));
 }
 
+/** Canonical form for comparing or inserting `@` artist tags. */
+function normalizeArtistTag(tag: string): string {
+  return "@" + escapeParens(tag.replace(/^@+/, "").replace(/_/g, " ").trim());
+}
+
+function artistTagsMatch(a: string, b: string): boolean {
+  return normalizeArtistTag(a).toLowerCase() === normalizeArtistTag(b).toLowerCase();
+}
+
 class ArtistInsertStore {
   pending = $state<ArtistInsertPending | null>(null);
 
@@ -29,7 +38,7 @@ class ArtistInsertStore {
    * Request insertion of an artist tag into the positive prompt.
    *
    * - If there are no existing `@` tags, applies immediately (add).
-   * - If the exact tag is already present, opens the "already in prompt" hint.
+   * - If the exact tag is already present, removes it (toggle, like LoRAs).
    * - If other `@` tags exist, opens the replace/add confirmation modal.
    *
    * The `tag` may be provided with or without a leading `@`.
@@ -39,15 +48,15 @@ class ArtistInsertStore {
     // escape any unescaped parens (so `artist (tag)` becomes `artist \(tag\)`),
     // then re-prefix with @. Already-escaped parens are left as-is so prompts
     // round-trip correctly through the scheduler/highlight parser.
-    const cleaned = escapeParens(tag.replace(/^@+/, "").replace(/_/g, " ").trim());
-    const withAt = "@" + cleaned;
+    const withAt = normalizeArtistTag(tag);
     const existing = generation.positivePrompt.trim();
     const existingArtistTags = existing
       .split(",")
       .map((s) => s.trim())
       .filter((s) => s.startsWith("@"));
-    if (existingArtistTags.some((t) => t.toLowerCase() === withAt.toLowerCase())) {
-      this.pending = { tag: withAt, existingTags: existingArtistTags, duplicate: true };
+    if (existingArtistTags.some((t) => artistTagsMatch(t, withAt))) {
+      this.remove(withAt);
+      return;
     } else if (existingArtistTags.length > 0) {
       this.pending = { tag: withAt, existingTags: existingArtistTags, duplicate: false };
     } else {
@@ -55,11 +64,25 @@ class ArtistInsertStore {
     }
   }
 
+  /** Remove a single `@` artist tag from the positive prompt (case-insensitive). */
+  remove(withAt: string): void {
+    const target = normalizeArtistTag(withAt);
+    const existing = generation.positivePrompt.trim();
+    if (!existing) return;
+    const tags = existing.split(",").map((s) => s.trim()).filter(Boolean);
+    const filtered = tags.filter(
+      (t) => !(t.startsWith("@") && artistTagsMatch(t, target)),
+    );
+    generation.positivePrompt = filtered.join(", ");
+    generation.saveSettings();
+    this.pending = null;
+  }
+
   apply(withAt: string, mode: "add" | "replace"): void {
     // Defensive: normalize underscores → spaces and escape unescaped parens
     // in case a caller passes a raw danbooru-style tag rather than going
     // through request().
-    const cleaned = "@" + escapeParens(withAt.replace(/^@+/, "").replace(/_/g, " ").trim());
+    const cleaned = normalizeArtistTag(withAt);
     const existing = generation.positivePrompt.trim();
     let newPrompt: string;
     if (mode === "replace") {

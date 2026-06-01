@@ -306,6 +306,20 @@ fn is_structured_model_dir(path: &std::path::Path) -> bool {
         .any(|subdir| path.join(subdir).is_dir())
 }
 
+/// When the user points at a ComfyUI install root (with `models/checkpoints`
+/// etc. nested one level down), normalize to the `models` folder so structured
+/// category subdirs resolve correctly.
+pub(crate) fn resolve_extra_model_root(path: &std::path::Path) -> std::path::PathBuf {
+    if is_structured_model_dir(path) {
+        return path.to_path_buf();
+    }
+    let nested = path.join("models");
+    if nested.is_dir() && is_structured_model_dir(&nested) {
+        return nested;
+    }
+    path.to_path_buf()
+}
+
 fn classify_flat_model_dir(path: &std::path::Path) -> &'static str {
     let name = path
         .file_name()
@@ -334,6 +348,8 @@ fn classify_flat_model_dir(path: &std::path::Path) -> &'static str {
     } else if name.contains("clip")
         || name.contains("text_encoder")
         || name.contains("text-encoder")
+        || name.contains("textencoder")
+    // StabilityMatrix
     {
         "text_encoders"
     } else if name.contains("unet") || name.contains("diffusion") {
@@ -384,13 +400,13 @@ pub(crate) fn model_install_dirs_for_config(
 
     if let Some(extra) = extra_model_paths {
         for line in extra.lines().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            let base = std::path::Path::new(line);
+            let base = resolve_extra_model_root(std::path::Path::new(line));
             let base_label = base
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| line.to_string());
 
-            if is_structured_model_dir(base) {
+            if is_structured_model_dir(&base) {
                 for subdir in category_subdirs(category) {
                     let candidate = base.join(subdir);
                     if candidate.is_dir() {
@@ -402,7 +418,7 @@ pub(crate) fn model_install_dirs_for_config(
                         push_model_install_dir(&mut dirs, &mut seen, candidate, label);
                     }
                 }
-            } else if classify_flat_model_dir(base) == category {
+            } else if classify_flat_model_dir(&base) == category {
                 push_model_install_dir(&mut dirs, &mut seen, base.to_path_buf(), base_label);
             }
         }
@@ -1239,15 +1255,20 @@ pub async fn load_gallery_image(filename: String) -> Result<Vec<u8>, AppError> {
 /// Load a gallery image and encode as PNG. JXL files are decoded via jxl-oxide
 /// and re-encoded as PNG. Used when copying/saving/downloading — PNG is the
 /// portable export format that supports metadata embedding.
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn load_gallery_image_png(filename: String) -> Result<Vec<u8>, AppError> {
+pub(crate) async fn load_gallery_image_png_inner(filename: String) -> Result<Vec<u8>, AppError> {
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    load_gallery_image_png_from_dir(&dir, &filename).await
+}
+
+pub(crate) async fn load_gallery_image_png_from_dir(
+    gallery_dir: &std::path::Path,
+    filename: &str,
+) -> Result<Vec<u8>, AppError> {
     if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
         return Err(AppError::Other("Invalid filename".into()));
     }
-    let dir = crate::config::gallery_dir()
-        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
-    let path = resolve_gallery_image_path(&dir, &filename)
+    let path = resolve_gallery_image_path(gallery_dir, filename)
         .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
     let bytes = std::fs::read(&path)?;
     if filename.ends_with(".jxl") {
@@ -1265,6 +1286,12 @@ pub async fn load_gallery_image_png(filename: String) -> Result<Vec<u8>, AppErro
     } else {
         Ok(bytes)
     }
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn load_gallery_image_png(filename: String) -> Result<Vec<u8>, AppError> {
+    load_gallery_image_png_inner(filename).await
 }
 
 /// Load a gallery image for display in the UI. JXL files are transcoded to WebP
@@ -1542,6 +1569,18 @@ pub async fn rename_gallery_image(
         .map_err(|e| AppError::Other(format!("{}: {}", e, old_filename)))?;
     validate_gallery_filename(&new_filename)
         .map_err(|e| AppError::Other(format!("{}: {}", e, new_filename)))?;
+
+    // Disallow path traversal / directory injection in rename target.
+    let new_name_path = std::path::Path::new(&new_filename);
+    let is_single_component = new_name_path.components().count() == 1;
+    let exact_file_name =
+        new_name_path.file_name().and_then(|n| n.to_str()) == Some(new_filename.as_str());
+    if new_filename.trim().is_empty() || !is_single_component || !exact_file_name {
+        return Err(AppError::Other(format!(
+            "Invalid gallery filename for rename: {}",
+            new_filename
+        )));
+    }
 
     let new_path = old_path
         .parent()
@@ -2391,6 +2430,244 @@ pub async fn civitai_lookup_hash(
     Ok(data)
 }
 
+/// Parse a CivitAI image id from a numeric string or `https://civitai.com/images/{id}` URL.
+pub(crate) fn parse_civitai_image_id_pub(image_ref: &str) -> Result<u64, AppError> {
+    parse_civitai_image_id(image_ref)
+}
+
+fn parse_civitai_image_id(image_ref: &str) -> Result<u64, AppError> {
+    let trimmed = image_ref.trim();
+    if let Ok(id) = trimmed.parse::<u64>() {
+        return Ok(id);
+    }
+    const MARKER: &str = "/images/";
+    if let Some(pos) = trimmed.find(MARKER) {
+        let rest = &trimmed[pos + MARKER.len()..];
+        let id_str = rest.split(&['/', '?', '#'][..]).next().unwrap_or("").trim();
+        if let Ok(id) = id_str.parse::<u64>() {
+            return Ok(id);
+        }
+    }
+    Err(AppError::Other(format!(
+        "Could not parse CivitAI image id from {:?}",
+        image_ref
+    )))
+}
+
+fn is_allowed_civitai_image_host(host: &str) -> bool {
+    matches!(
+        host.to_ascii_lowercase().as_str(),
+        "civitai.com" | "www.civitai.com" | "image.civitai.com" | "cdn.civitai.com"
+    )
+}
+
+fn parse_civitai_image_url(url: &str) -> Result<reqwest::Url, AppError> {
+    let parsed = reqwest::Url::parse(url.trim())
+        .map_err(|e| AppError::Other(format!("Invalid CivitAI image URL: {}", e)))?;
+    if parsed.scheme() != "https" {
+        return Err(AppError::Other("CivitAI image URL must use HTTPS".into()));
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| AppError::Other("CivitAI image URL is missing a host".into()))?;
+    if !is_allowed_civitai_image_host(host) {
+        return Err(AppError::Other(
+            "Only CivitAI image URLs can be used as sidecar thumbnails".into(),
+        ));
+    }
+    Ok(parsed)
+}
+
+async fn fetch_civitai_image_bytes(state: &AppState, url: &str) -> Result<Vec<u8>, AppError> {
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| AppError::Other(format!("Failed to build image fetch client: {}", e)))?;
+    let mut current = parse_civitai_image_url(url)?;
+    let civitai_api_key = state.config.read().await.civitai_api_key.clone();
+
+    for _ in 0..5 {
+        let mut req = client
+            .get(current.clone())
+            .header("User-Agent", "MooshieUI/0.5.7");
+        if let Some(key) = civitai_api_key.as_ref().filter(|v| !v.trim().is_empty()) {
+            req = req.bearer_auth(key);
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| AppError::Other(format!("Image fetch failed: {}", e)))?;
+        if resp.status().is_redirection() {
+            let location = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .ok_or_else(|| AppError::Other("Image fetch redirect missing Location".into()))?
+                .to_str()
+                .map_err(|_| AppError::Other("Image fetch redirect Location is invalid".into()))?;
+            current = current
+                .join(location)
+                .map_err(|e| AppError::Other(format!("Image fetch redirect invalid: {}", e)))?;
+            parse_civitai_image_url(current.as_str())?;
+            continue;
+        }
+        if !resp.status().is_success() {
+            return Err(AppError::Other(format!(
+                "Image fetch returned HTTP {}",
+                resp.status()
+            )));
+        }
+        return resp
+            .bytes()
+            .await
+            .map(|bytes| bytes.to_vec())
+            .map_err(|e| AppError::Other(format!("Failed to read image bytes: {}", e)));
+    }
+
+    Err(AppError::Other("Image fetch had too many redirects".into()))
+}
+
+#[cfg(test)]
+mod sidecar_thumbnail_tests {
+    use super::*;
+
+    #[test]
+    fn sidecar_image_url_allows_civitai_image_hosts() {
+        assert!(parse_civitai_image_url("https://image.civitai.com/example.jpeg").is_ok());
+        assert!(parse_civitai_image_url("https://cdn.civitai.com/example.png").is_ok());
+        assert!(parse_civitai_image_url("https://civitai.com/images/123").is_ok());
+    }
+
+    #[test]
+    fn sidecar_image_url_rejects_non_civitai_and_non_https_targets() {
+        assert!(parse_civitai_image_url("http://image.civitai.com/example.jpeg").is_err());
+        assert!(parse_civitai_image_url("http://127.0.0.1:8188/view").is_err());
+        assert!(parse_civitai_image_url("https://169.254.169.254/latest/meta-data").is_err());
+        assert!(parse_civitai_image_url("https://civitai.com.evil.test/example.png").is_err());
+    }
+}
+
+/// Look up a CivitAI image by id (or image page URL) and return generation metadata when available.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn civitai_lookup_image(
+    state: State<'_, Arc<AppState>>,
+    image_ref: String,
+) -> Result<Value, AppError> {
+    let image_id = parse_civitai_image_id(&image_ref)?;
+    let api_key = state.config.read().await.civitai_api_key.clone();
+    let url = format!(
+        "https://civitai.com/api/v1/images?imageId={}&withMeta=true",
+        image_id
+    );
+    let mut req = state
+        .http_client
+        .get(&url)
+        .header("User-Agent", "MooshieUI/0.5.7");
+    if let Some(key) = api_key.filter(|v| !v.trim().is_empty()) {
+        req = req.bearer_auth(key);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| AppError::Other(format!("CivitAI image lookup failed: {}", e)))?;
+
+    if resp.status() == 404 {
+        return Err(AppError::Other("Image not found on CivitAI".into()));
+    }
+    if !resp.status().is_success() {
+        return Err(AppError::Other(format!(
+            "CivitAI returned status {}",
+            resp.status()
+        )));
+    }
+
+    let data: Value = resp
+        .json()
+        .await
+        .map_err(|e| AppError::Other(format!("Failed to parse CivitAI response: {}", e)))?;
+    Ok(data)
+}
+
+/// Write a PNG sidecar preview next to a checkpoint or LoRA file (`{stem}.png`).
+pub(crate) async fn save_model_sidecar_thumbnail_inner(
+    state: &AppState,
+    category: &str,
+    filename: &str,
+    image_url: Option<&str>,
+    gallery_filename: Option<&str>,
+    gallery_dir: Option<&std::path::Path>,
+) -> Result<(), AppError> {
+    let bytes = if let Some(gf) = gallery_filename.filter(|s| !s.is_empty()) {
+        if let Some(dir) = gallery_dir {
+            load_gallery_image_png_from_dir(dir, gf).await?
+        } else {
+            load_gallery_image_png_inner(gf.to_string()).await?
+        }
+    } else if let Some(url) = image_url.filter(|s| !s.is_empty()) {
+        fetch_civitai_image_bytes(state, url).await?
+    } else {
+        return Err(AppError::Other(
+            "Provide image_url or gallery_filename".into(),
+        ));
+    };
+
+    let (comfyui_path, extra_model_paths) = {
+        let config = state.config.read().await;
+        if config.comfyui_path.is_empty() {
+            return Err(AppError::Other("ComfyUI path not configured".into()));
+        }
+        (
+            config.comfyui_path.clone(),
+            config.extra_model_paths.clone(),
+        )
+    };
+
+    let path = resolve_model_path(
+        &comfyui_path,
+        extra_model_paths.as_deref(),
+        category,
+        filename,
+    )
+    .ok_or_else(|| AppError::Other(format!("Model file not found: {}", filename)))?;
+
+    let model_dir = path
+        .parent()
+        .ok_or_else(|| AppError::Other("Model path has no parent directory".into()))?;
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| AppError::Other("Invalid model filename".into()))?;
+
+    let out_path = model_dir.join(format!("{}.png", stem));
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
+    img.save(&out_path)
+        .map_err(|e| AppError::Other(format!("Failed to write sidecar thumbnail: {}", e)))?;
+
+    Ok(())
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn save_model_sidecar_thumbnail(
+    state: State<'_, Arc<AppState>>,
+    category: String,
+    filename: String,
+    image_url: Option<String>,
+    gallery_filename: Option<String>,
+) -> Result<(), AppError> {
+    save_model_sidecar_thumbnail_inner(
+        state.inner(),
+        &category,
+        &filename,
+        image_url.as_deref(),
+        gallery_filename.as_deref(),
+        None,
+    )
+    .await
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn civitai_search_models(
@@ -2694,9 +2971,11 @@ pub(crate) fn read_safetensors_modelspec(
 
     let mut result = std::collections::HashMap::new();
     for (key, value) in metadata {
-        if let Some(field) = key.strip_prefix("modelspec.") {
-            if let Some(s) = value.as_str() {
+        if let Some(s) = value.as_str() {
+            if let Some(field) = key.strip_prefix("modelspec.") {
                 result.insert(field.to_string(), s.to_string());
+            } else if key == "prediction_type" && !result.contains_key("prediction_type") {
+                result.insert("prediction_type".to_string(), s.to_string());
             }
         }
     }
@@ -2803,11 +3082,45 @@ fn infer_architecture_from_keys(header: &serde_json::Map<String, Value>) -> Opti
     None
 }
 
+/// Read `{stem}.png` / `.jpg` sidecar preview next to a model file, if present.
+pub(crate) fn read_model_sidecar_thumbnail_pub(path: &std::path::Path) -> Option<String> {
+    read_model_sidecar_thumbnail(path)
+}
+
+fn read_model_sidecar_thumbnail(path: &std::path::Path) -> Option<String> {
+    let model_dir = path.parent()?;
+    let stem = path.file_stem()?.to_str()?;
+    let candidates = [
+        model_dir.join(format!("{}.png", stem)),
+        model_dir.join(format!("{}.jpg", stem)),
+        model_dir.join(format!("{}.jpeg", stem)),
+        model_dir.join(format!("{}.preview.png", stem)),
+        model_dir.join(format!("{}.preview.jpg", stem)),
+    ];
+    for candidate in &candidates {
+        if candidate.exists() {
+            if let Ok(bytes) = std::fs::read(candidate) {
+                use base64::Engine as _;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                let mime = match candidate.extension().and_then(|e| e.to_str()).unwrap_or("") {
+                    "jpg" | "jpeg" => "image/jpeg",
+                    _ => "image/png",
+                };
+                return Some(format!("data:{};base64,{}", mime, b64));
+            }
+            break;
+        }
+    }
+    None
+}
+
 /// Combined LoRA information from ModelSpec + CivitAI.
 #[derive(Debug, Serialize)]
 pub struct LoraCivitaiInfo {
     pub filename: String,
     pub hash: Option<String>,
+    /// "data:<mime>;base64,..." for local sidecar, "https://..." for CivitAI, or None.
+    pub thumbnail_url: Option<String>,
     pub civitai_name: Option<String>,
     pub civitai_description: Option<String>,
     pub civitai_model_id: Option<u64>,
@@ -2912,13 +3225,19 @@ pub(crate) fn category_subdirs(category: &str) -> &'static [&'static str] {
         "unet" => &["unet", "models/unet", "Models/unet"],
         "diffusion_models" => &[
             "diffusion_models",
+            "DiffusionModels",
             "models/diffusion_models",
+            "models/DiffusionModels",
             "Models/diffusion_models",
+            "Models/DiffusionModels",
         ],
         "text_encoders" => &[
             "text_encoders",
+            "TextEncoders",
             "models/text_encoders",
+            "models/TextEncoders",
             "Models/text_encoders",
+            "Models/TextEncoders",
         ],
         "ultralytics" => &["ultralytics", "models/ultralytics", "Models/ultralytics"],
         _ => &[],
@@ -2956,7 +3275,7 @@ pub(crate) fn resolve_model_path(
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
         {
-            let base = std::path::Path::new(dir);
+            let base = resolve_extra_model_root(std::path::Path::new(dir));
             // Try all known subdirectory variants for this category
             for subdir in subdirs {
                 let candidate = base.join(subdir).join(filename);
@@ -3034,6 +3353,8 @@ pub async fn get_lora_civitai_info(
 
     log::debug!("Resolved LoRA '{}' → {:?}", filename, path);
 
+    let sidecar_thumbnail = read_model_sidecar_thumbnail(&path);
+
     // Read modelspec in parallel-friendly manner (sync I/O in blocking task)
     let modelspec = if filename.ends_with(".safetensors") {
         read_safetensors_modelspec(&path).ok().flatten()
@@ -3065,6 +3386,7 @@ pub async fn get_lora_civitai_info(
     let mut info = LoraCivitaiInfo {
         filename: filename.clone(),
         hash: Some(autov2),
+        thumbnail_url: sidecar_thumbnail,
         civitai_name: None,
         civitai_description: None,
         civitai_model_id: None,
@@ -3154,6 +3476,10 @@ pub async fn get_lora_civitai_info(
                                 })
                         })
                         .collect();
+
+                    if info.thumbnail_url.is_none() {
+                        info.thumbnail_url = info.civitai_images.first().map(|i| i.url.clone());
+                    }
                 }
 
                 // Stats from parent model
@@ -3216,34 +3542,7 @@ pub async fn get_checkpoint_civitai_info(
         None
     };
 
-    // Check for sidecar thumbnails — prefer local preview but do NOT return early;
-    // we still need the hash + CivitAI call for model name, description, and stats.
-    let mut sidecar_thumbnail: Option<String> = None;
-    if let (Some(model_dir), Some(stem)) =
-        (path.parent(), path.file_stem().and_then(|s| s.to_str()))
-    {
-        let candidates = [
-            model_dir.join(format!("{}.png", stem)),
-            model_dir.join(format!("{}.jpg", stem)),
-            model_dir.join(format!("{}.jpeg", stem)),
-            model_dir.join(format!("{}.preview.png", stem)),
-            model_dir.join(format!("{}.preview.jpg", stem)),
-        ];
-        for candidate in &candidates {
-            if candidate.exists() {
-                if let Ok(bytes) = std::fs::read(candidate) {
-                    use base64::Engine as _;
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                    let mime = match candidate.extension().and_then(|e| e.to_str()).unwrap_or("") {
-                        "jpg" | "jpeg" => "image/jpeg",
-                        _ => "image/png",
-                    };
-                    sidecar_thumbnail = Some(format!("data:{};base64,{}", mime, b64));
-                }
-                break; // stop after first readable candidate
-            }
-        }
-    }
+    let sidecar_thumbnail = read_model_sidecar_thumbnail(&path);
 
     let mut info = CheckpointCivitaiInfo {
         filename: filename.clone(),
