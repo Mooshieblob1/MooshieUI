@@ -330,6 +330,14 @@ The app will run the one-click setup wizard on first launch - no manual ComfyUI 
 
 ---
 
+## Contributing
+
+Pull requests are welcome. `main` is protected: open a PR from a `chore/<topic>` branch after local validation and GlassWorm pre-commit checks.
+
+See **[push-instructions.md](push-instructions.md)** for the full workflow (branch naming, build gates, IPC/gallery conventions, CI, and how releases differ from everyday contributions).
+
+---
+
 ## 🧩 Custom Nodes
 
 MooshieUI ships with custom ComfyUI nodes that are auto-installed into ComfyUI's `custom_nodes/` directory.

@@ -14,6 +14,7 @@ Project docs that are not release notes or AI workflow prompts.
 | Topic | Path |
 |-------|------|
 | User-facing readme | [README.md](../README.md) |
+| Contributing / PR workflow | [push-instructions.md](../push-instructions.md) |
 | Changelog / release notes | [CHANGELOG.md](../CHANGELOG.md), [RELEASE_NOTES.md](../RELEASE_NOTES.md) |
 | Agent entry | [AGENTS.md](../AGENTS.md) |
 | Copilot / Gemini overview | [GEMINI.md](../GEMINI.md), [.github/copilot-instructions.md](../.github/copilot-instructions.md) |
