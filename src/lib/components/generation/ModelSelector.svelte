@@ -1045,7 +1045,13 @@
         <div bind:this={architecturePickerEl} class="relative shrink-0">
           <button
             type="button"
-            class="rounded-full border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-[10px] text-neutral-300 hover:border-neutral-600"
+            class="shrink-0 text-[10px] px-2 py-0.5 rounded-full border transition-colors cursor-pointer {isModelMetadataLoading
+              ? 'bg-amber-600/15 text-amber-300 border-amber-600/30 hover:bg-amber-600/25'
+              : currentFamilyOverride()
+                ? 'bg-indigo-600/20 text-indigo-300 border-indigo-600/30 hover:bg-indigo-600/30'
+                : generation.detectedArchitecture === 'unknown'
+                  ? 'bg-red-600/15 text-red-300 border-red-600/30 hover:bg-red-600/25'
+                  : 'bg-emerald-600/20 text-emerald-400 border-emerald-600/30 hover:bg-emerald-600/30'}"
             title={locale.t("generation.model.architecture_picker_title")}
             onclick={() => showArchitecturePicker = !showArchitecturePicker}
           >
