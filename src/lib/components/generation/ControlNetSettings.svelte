@@ -79,7 +79,7 @@
 
   const selectedPresetPreprocessor = $derived(
     generation.controlnetMode === "preset" && generation.controlnetPreset
-      ? getPresetPreprocessor(generation.controlnetPreset, generation.detectedArchitecture)
+      ? getPresetPreprocessor(generation.controlnetPreset, generation.modelFamily)
       : null,
   );
   const presetNeedsPreprocessor = $derived(!!selectedPresetPreprocessor);
@@ -153,15 +153,15 @@
     generation.controlnetPreset = presetId;
     generation.controlnetPreprocessor = getPresetPreprocessor(
       presetId,
-      generation.detectedArchitecture,
+      generation.modelFamily,
     );
 
-    const defaults = getPresetDefaults(presetId, generation.detectedArchitecture);
+    const defaults = getPresetDefaults(presetId, generation.modelFamily);
     if (defaults?.strength !== undefined) generation.controlnetStrength = defaults.strength;
     if (defaults?.startPercent !== undefined) generation.controlnetStartPercent = defaults.startPercent;
     if (defaults?.endPercent !== undefined) generation.controlnetEndPercent = defaults.endPercent;
 
-    const model = getPresetModel(presetId, generation.detectedArchitecture);
+    const model = getPresetModel(presetId, generation.modelFamily);
     generation.controlnetModel = model?.filename ?? null;
     return model;
   }
@@ -465,7 +465,7 @@
     const preset = getPreset(presetId);
     if (!preset) return false;
     if (preset.requiresMode === "inpainting" && generation.mode !== "inpainting") return false;
-    return getPresetModel(presetId, generation.detectedArchitecture) !== null;
+    return getPresetModel(presetId, generation.modelFamily) !== null;
   }
 
   function presetUnavailableText(presetId: string): string {
@@ -492,7 +492,7 @@
     if (generation.controlnetMode !== "preset" || !generation.controlnetPreset) return;
     const presetPreprocessor = getPresetPreprocessor(
       generation.controlnetPreset,
-      generation.detectedArchitecture,
+      generation.modelFamily,
     );
     if (
       generation.controlnetPreprocessor !== null &&

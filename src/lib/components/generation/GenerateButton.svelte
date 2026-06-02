@@ -238,7 +238,7 @@
           "[regional] Generate skipped",
           configuredRegions,
           "GUI region(s); architecture=",
-          generation.detectedArchitecture,
+          generation.modelFamily,
         );
       }
 

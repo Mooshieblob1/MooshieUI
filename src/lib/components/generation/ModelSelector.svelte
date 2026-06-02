@@ -289,7 +289,7 @@
     const manualOverride = currentFamilyOverride();
     if (manualOverride) return manualOverride;
     if (isModelMetadataLoading) return locale.t("generation.model.architecture_detecting");
-    return generation.detectedArchitecture === "unknown" ? "undefined" : generation.detectedArchitecture;
+    return generation.modelFamily === "unknown" ? "undefined" : generation.modelFamily;
   }
 
   function applyCurrentModelFamilyOverride(family: ModelFamily | null): void {
@@ -1050,7 +1050,7 @@
               ? 'bg-amber-600/15 text-amber-300 border-amber-600/30 hover:bg-amber-600/25'
               : currentFamilyOverride()
                 ? 'bg-indigo-600/20 text-indigo-300 border-indigo-600/30 hover:bg-indigo-600/30'
-                : generation.detectedArchitecture === 'unknown'
+                : generation.modelFamily === 'unknown'
                   ? 'bg-red-600/15 text-red-300 border-red-600/30 hover:bg-red-600/25'
                   : 'bg-emerald-600/20 text-emerald-400 border-emerald-600/30 hover:bg-emerald-600/30'}"
             title={locale.t("generation.model.architecture_picker_title")}

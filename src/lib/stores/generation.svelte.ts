@@ -426,17 +426,17 @@ class GenerationStore {
 
   /** True when the selected model is an Anima variant (split diffusion model). */
   get isAnima(): boolean {
-    return this.detectedArchitecture === "anima";
+    return this.modelFamily === "anima";
   }
 
   /** True when the selected model is an Illustrious/NoobAI family variant. */
   get isIllustrious(): boolean {
-    return this.detectedArchitecture === "illustrious";
+    return this.modelFamily === "illustrious";
   }
 
   /** True when the selected model is an SD3/SD3.5 variant. */
   get isSd3(): boolean {
-    return this.detectedArchitecture === "sd3";
+    return this.modelFamily === "sd3";
   }
 
   /** True when the selected model is a Flux-family variant. */
@@ -447,7 +447,7 @@ class GenerationStore {
       "flux1s",
       "flux1krea",
       "chroma",
-    ].includes(this.detectedArchitecture);
+    ].includes(this.modelFamily);
   }
 
   /** True when the selected model is a Flux.2-family variant. */
@@ -458,67 +458,67 @@ class GenerationStore {
       "flux2klein9bbase",
       "flux2klein4b",
       "flux2klein4bbase",
-    ].includes(this.detectedArchitecture);
+    ].includes(this.modelFamily);
   }
 
   /** True when the selected model is a Z-Image Base variant. */
   get isZib(): boolean {
-    return this.detectedArchitecture === "zib";
+    return this.modelFamily === "zib";
   }
 
   /** True when the selected model is a Z-Image Turbo variant. */
   get isZit(): boolean {
-    return this.detectedArchitecture === "zit";
+    return this.modelFamily === "zit";
   }
 
   /** True when the selected model is a Wan variant. */
   get isWan(): boolean {
-    return this.detectedArchitecture === "wan";
+    return this.modelFamily === "wan";
   }
 
   /** True when the selected model is a Qwen variant. */
   get isQwen(): boolean {
-    return this.detectedArchitecture === "qwen";
+    return this.modelFamily === "qwen";
   }
 
   /** True when the selected model is a Pony Diffusion variant. */
   get isPony(): boolean {
-    return this.detectedArchitecture === "pony";
+    return this.modelFamily === "pony";
   }
 
   /** True when the selected model is AuraFlow. */
   get isAuraFlow(): boolean {
-    return this.detectedArchitecture === "auraflow";
+    return this.modelFamily === "auraflow";
   }
 
   /** True when the selected model is PixArt. */
   get isPixArt(): boolean {
-    return this.detectedArchitecture === "pixart";
+    return this.modelFamily === "pixart";
   }
 
   /** True when the selected model is HunyuanDiT. */
   get isHunyuanDit(): boolean {
-    return this.detectedArchitecture === "hunyuandit";
+    return this.modelFamily === "hunyuandit";
   }
 
   /** True when the selected model is Stable Cascade. */
   get isCascade(): boolean {
-    return this.detectedArchitecture === "cascade";
+    return this.modelFamily === "cascade";
   }
 
   /** True when the selected model is Kolors. */
   get isKolors(): boolean {
-    return this.detectedArchitecture === "kolors";
+    return this.modelFamily === "kolors";
   }
 
   /** True when the selected model is Mugen (SDXL with Flux2 VAE + rectified flow). */
   get isMugen(): boolean {
-    return this.detectedArchitecture === "mugen";
+    return this.modelFamily === "mugen";
   }
 
   /** True when the selected model is Nanosaur (custom 1.2B DiT with DINOv3 VAE). */
   get isNanosaur(): boolean {
-    return this.detectedArchitecture === "nanosaur";
+    return this.modelFamily === "nanosaur";
   }
 
   /** True when the model belongs to the SDXL-like family bucket. */
@@ -540,7 +540,7 @@ class GenerationStore {
       "zit",
       "flux2klein9b",
       "flux2klein4b",
-    ].includes(this.detectedArchitecture);
+    ].includes(this.modelFamily);
   }
 
   /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow, Mugen, Nanosaur). */
@@ -702,11 +702,6 @@ class GenerationStore {
     }));
   }
 
-  /** Detect the model family from the backend-resolved family bucket. */
-  get detectedArchitecture(): ModelFamily {
-    return this.modelFamily;
-  }
-
   private _storeReady = false;
 
   constructor() {
@@ -848,7 +843,7 @@ class GenerationStore {
     autocomplete.notifyModelChanged(isAnimaLike);
 
     let preset: ModelPreset;
-    switch (this.detectedArchitecture) {
+    switch (this.modelFamily) {
       // Nanosaur uses a custom DiT/VAE combo and prefers a taller default canvas.
       case "nanosaur":
         preset = {
@@ -1557,7 +1552,7 @@ class GenerationStore {
         "[regional] Dropping",
         configuredRegionCount,
         "GUI region(s): unsupported for",
-        this.detectedArchitecture,
+        this.modelFamily,
         "mode",
         this.mode,
         "checkpoint",
@@ -1719,7 +1714,7 @@ class GenerationStore {
       facefix_steps: this.facefixSteps,
       facefix_guide_size: this.facefixGuideSize,
       facefix_max_faces: this.facefixMaxFaces,
-      model_architecture: this.detectedArchitecture,
+      model_architecture: this.modelFamily,
       is_sdxl_like: this.isSdxlLike,
       is_vpred_model: signalsIndicateVPred(this.modelFamilySignals()),
       output_bit_depth: this.outputBitDepth,
