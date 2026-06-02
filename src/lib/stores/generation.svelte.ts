@@ -531,6 +531,18 @@ class GenerationStore {
     return this.modelTurboVariant !== "none";
   }
 
+  /** True when the selected model family ignores negative prompts. */
+  get disablesNegativePrompt(): boolean {
+    return [
+      "flux1d",
+      "flux1s",
+      "flux1krea",
+      "zit",
+      "flux2klein9b",
+      "flux2klein4b",
+    ].includes(this.detectedArchitecture);
+  }
+
   /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow, Mugen, Nanosaur). */
   get usesRectifiedFlow(): boolean {
     return this.isSd3 || this.isFlux || this.isAuraFlow || this.isMugen || this.isNanosaur;
@@ -626,15 +638,7 @@ class GenerationStore {
     if (!recommended) return;
 
     const current = this.vae.trim();
-    const currentLower = current.toLowerCase();
-    const recommendedLower = recommended.toLowerCase();
-    const currentMissing = !!current && !vaes.includes(current);
-    const obviousLatentMismatch =
-      (this.isAnima || this.isWan || this.isQwen || this.isFlux || this.isFlux2) &&
-      currentLower.includes("sdxl_vae") &&
-      currentLower !== recommendedLower;
-
-    if (!current || currentMissing || obviousLatentMismatch) {
+    if (current !== recommended) {
       this.vae = recommended;
       if (save) this.saveSettings();
     }
@@ -871,13 +875,23 @@ class GenerationStore {
         break;
 
       // Flux is guidance-distilled, so keep CFG low and scheduler simple.
-      case "flux":
       case "flux1d":
+        preset = {
+          steps: 20,
+          cfg: 1.0,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // Flux flux1krea and chroma.
       case "flux1krea":
       case "chroma":
         preset = {
           steps: 20,
-          cfg: 1.0,
+          cfg: 3.0,
           samplerName: "euler",
           scheduler: "simple",
           width: 1024,
@@ -1580,6 +1594,10 @@ class GenerationStore {
         .filter((region): region is NonNullable<typeof region> => region !== null)
       : [];
 
+    if (this.disablesNegativePrompt) {
+      negativePrompt = "";
+    }
+
     // Parse timestep scheduling tags from prompts before NAI weight translation.
     const parsedPositive = parseScheduledPrompt(positivePrompt);
     const parsedNegative = parseScheduledPrompt(negativePrompt);
@@ -1702,6 +1720,7 @@ class GenerationStore {
       facefix_guide_size: this.facefixGuideSize,
       facefix_max_faces: this.facefixMaxFaces,
       model_architecture: this.detectedArchitecture,
+      is_sdxl_like: this.isSdxlLike,
       is_vpred_model: signalsIndicateVPred(this.modelFamilySignals()),
       output_bit_depth: this.outputBitDepth,
       output_format: this.outputFormat,
@@ -1753,28 +1772,8 @@ class GenerationStore {
     this.ensureRecommendedSplitVae(vaes, true);
     if (this.checkpoint) return;
 
-    // Look for the default Juice checkpoint (SIH successor), then legacy SIH installs
-    const defaultCkpt =
-      checkpoints.find((c) => c.toLowerCase().includes("juice")) ??
-      checkpoints.find((c) => c.includes("SIH-1.5"));
-    if (defaultCkpt) {
-      this.checkpoint = defaultCkpt;
-      this.samplerName = "euler_cfg_pp";
-      this.scheduler = "sgm_uniform";
-      this.cfg = 1.4;
-      this.steps = 20;
-      this.width = 1024;
-      this.height = 1024;
-    } else if (checkpoints.length > 0) {
+    if (checkpoints.length > 0) {
       this.checkpoint = checkpoints[0];
-    }
-
-    // Look for SDXL VAE
-    if (!this.vae) {
-      const defaultVae = vaes.find((v) => v.includes("sdxl_vae"));
-      if (defaultVae) {
-        this.vae = defaultVae;
-      }
     }
 
     this.saveSettings();

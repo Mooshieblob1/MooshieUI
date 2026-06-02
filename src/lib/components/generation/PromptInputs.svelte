@@ -172,11 +172,11 @@
     {/if}
   </div>
 
-  <div class="transition-opacity {generation.isFlux ? 'opacity-40 pointer-events-none' : ''}">
+  <div class="transition-opacity {generation.disablesNegativePrompt ? 'opacity-40 pointer-events-none' : ''}">
     <label class="block text-xs text-neutral-400 mb-1">
       {locale.t('generation.prompts.negative')}<InfoTip text={locale.t('generation.prompts.negative_tip')} />
-      {#if generation.isFlux}
-        <span class="ml-1 text-[10px] text-amber-400">({locale.t('generation.prompts.negative_flux_disabled')})</span>
+      {#if generation.disablesNegativePrompt}
+        <span class="ml-1 text-[10px] text-amber-400">({locale.t('generation.prompts.negative_disabled_for_model')})</span>
       {/if}
     </label>
     <PromptTextarea

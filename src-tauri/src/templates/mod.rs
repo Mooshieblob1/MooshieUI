@@ -76,7 +76,7 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     }
 
     if params.style_transfer_enabled {
-        if !is_anima_architecture(params) {
+        if params.model_architecture != "anima" {
             return Err(
                 "Style transfer (Untwisting RoPE) is only supported for Anima models.".into(),
             );
@@ -148,7 +148,7 @@ pub fn load_model_nodes(
 ) -> ModelLoadResult {
     let (mut model_source, mut clip_source, mut vae_source);
 
-    if is_nanosaur_architecture(params) {
+    if params.model_architecture == "nanosaur" {
         // NanoSaurLoader — custom all-in-one loader for Nanosaur models.
         // Outputs: MODEL(0), CLIP(1), VAE(2). Includes its own sampler patch.
         let loader_id = next_id.to_string();
@@ -300,7 +300,7 @@ pub fn load_model_nodes(
 }
 
 pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
-    if params.style_transfer_enabled && is_anima_architecture(params) {
+    if params.style_transfer_enabled && params.model_architecture == "anima" {
         let result = style_transfer::build(params, seed);
         return finish_workflow(result, params, seed);
     }
@@ -330,7 +330,7 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
     // Inject ControlNet if enabled
     if let Some(ref cn) = params.controlnet {
         if cn.enabled && cn.controlnet_model.is_some() && cn.image.is_some() {
-            if is_anima_architecture(params) {
+            if params.model_architecture == "anima" {
                 let mask = params.mask_image.as_deref();
                 controlnet::inject_anima_lllite(&mut result, cn, mask);
             } else {
@@ -386,123 +386,6 @@ fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: 
     Value::Object(result.workflow)
 }
 
-/// Returns true when the model is an SD3/SD3.5 architecture.
-pub fn is_sd3_architecture(params: &GenerationParams) -> bool {
-    if params.model_architecture == "sd3" {
-        return true;
-    }
-    let name = model_name_lower(params);
-    if name.contains("sd3")
-        || name.contains("stable-diffusion-3")
-        || name.contains("stable_diffusion_3")
-    {
-        return true;
-    }
-    if let Some(ref clip_type) = params.clip_type {
-        if clip_type == "sd3" {
-            return true;
-        }
-    }
-    false
-}
-
-/// Returns true when the model is a Flux architecture.
-pub fn is_flux_architecture(params: &GenerationParams) -> bool {
-    if matches!(
-        params.model_architecture.as_str(),
-        "flux"
-            | "flux1d"
-            | "flux1s"
-            | "flux1krea"
-            | "chroma"
-    ) {
-        return true;
-    }
-    model_name_lower(params).contains("flux")
-}
-
-/// TODO:
-/// "flux2d"
-/// "flux2klein9b"
-/// "flux2klein9bbase"
-/// "flux2klein4b"
-/// "flux2klein4bbase"
-
-/// Returns true when the model is a Pony Diffusion architecture (SDXL-based).
-pub fn is_pony_architecture(params: &GenerationParams) -> bool {
-    if params.model_architecture == "pony" {
-        return true;
-    }
-    model_name_lower(params).contains("pony")
-}
-
-/// Returns true when the model is AuraFlow architecture.
-pub fn is_auraflow_architecture(params: &GenerationParams) -> bool {
-    if params.model_architecture == "auraflow" {
-        return true;
-    }
-    model_name_lower(params).contains("auraflow")
-}
-
-/// Returns true when the model is a PixArt architecture.
-pub fn is_pixart_architecture(params: &GenerationParams) -> bool {
-    if params.model_architecture == "pixart" {
-        return true;
-    }
-    model_name_lower(params).contains("pixart")
-}
-
-/// Returns true when the model is HunyuanDiT architecture.
-pub fn is_hunyuandit_architecture(params: &GenerationParams) -> bool {
-    if params.model_architecture == "hunyuandit" {
-        return true;
-    }
-    model_name_lower(params).contains("hunyuan")
-}
-
-/// Returns true when the model is Stable Cascade architecture.
-pub fn is_cascade_architecture(params: &GenerationParams) -> bool {
-    if params.model_architecture == "cascade" {
-        return true;
-    }
-    model_name_lower(params).contains("cascade")
-}
-
-/// Returns true when the model is Kolors architecture.
-pub fn is_kolors_architecture(params: &GenerationParams) -> bool {
-    if params.model_architecture == "kolors" {
-        return true;
-    }
-    model_name_lower(params).contains("kolors")
-}
-
-/// Returns true when the model is Mugen (SDXL with Flux2 VAE + rectified flow scheduling).
-/// Must be checked before is_illustrious since Mugen derives from NoobAI.
-pub fn is_mugen_architecture(params: &GenerationParams) -> bool {
-    if params.model_architecture == "mugen" {
-        return true;
-    }
-    model_name_lower(params).contains("mugen")
-}
-
-/// Returns true when the model is Nanosaur (custom 1.2B DiT with DINOv3 VAE).
-/// Uses the `NanoSaurLoader` custom node instead of standard loaders.
-pub fn is_nanosaur_architecture(params: &GenerationParams) -> bool {
-    if params.model_architecture == "nanosaur" {
-        return true;
-    }
-    model_name_lower(params).contains("nanosaur")
-}
-
-/// Returns true when the model is Anima (Wan2.1 fine-tune with AnimaLLLite ControlNet).
-pub fn is_anima_architecture(params: &GenerationParams) -> bool {
-    if params.model_architecture == "anima" {
-        return true;
-    }
-    let name = model_name_lower(params);
-    name.contains("anima")
-}
-
 /// Returns the frontend v-pred flag.
 pub fn is_vpred_model(params: &GenerationParams) -> bool {
     params.is_vpred_model
@@ -524,18 +407,20 @@ pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
     )
 }
 
-  /// TODO:
-  /// flux2 uses "Empty Flux 2 Latent"
-  /// flux2 uses "Flux2Scheduler" - adding this would be fairly complex, because it is not compatible with the current scheduler UI and would require a separate workflow path.
-
-/// Lowercase model name for heuristic checks.
-fn model_name_lower(params: &GenerationParams) -> String {
-    params
-        .diffusion_model
-        .as_deref()
-        .unwrap_or(&params.checkpoint)
-        .to_lowercase()
+/// Returns true when the resolved architecture uses the Flux.2 latent node.
+pub fn needs_flux2_latent(params: &GenerationParams) -> bool {
+    matches!(
+        params.model_architecture.as_str(),
+        "flux2d"
+            | "flux2klein9b"
+            | "flux2klein9bbase"
+            | "flux2klein4b"
+            | "flux2klein4bbase"
+    )
 }
+
+/// TODO:
+/// flux2 uses "Flux2Scheduler" - adding this would be fairly complex, because it is not compatible with the current scheduler UI and would require a separate workflow path.
 
 /// Insert a VAE decode node into the workflow.
 /// Uses `VAEDecodeTiled` for Mugen (Flux2VAE SDXL requires tiled decode to handle the larger
@@ -549,7 +434,7 @@ pub fn insert_vae_decode(
     params: &GenerationParams,
 ) -> (String, u32) {
     let decode_id = next_id.to_string();
-    if is_mugen_architecture(params) {
+    if params.model_architecture == "mugen" {
         workflow.insert(
             decode_id.clone(),
             json!({
@@ -754,11 +639,11 @@ pub fn build_scheduled_conditioning(
 /// Rewires the KSampler in all cases.
 fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams) {
     // Nanosaur handles flow matching internally via NanoSaurLoader — skip injection
-    if is_nanosaur_architecture(params) {
+    if params.model_architecture == "nanosaur" {
         return;
     }
 
-    if is_mugen_architecture(params) {
+    if params.model_architecture == "mugen" {
         // ModelSamplingSD3 with elevated shift for Flux2VAE SDXL (recommended range: 8-12)
         let node_id = result.next_id.to_string();
         result.workflow.insert(
@@ -780,7 +665,7 @@ fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams)
                 inputs["model"] = json!([result.model_source.0, result.model_source.1]);
             }
         }
-    } else if is_sd3_architecture(params) {
+    } else if params.model_architecture == "sd3" {
         // ModelSamplingSD3 — discrete flow matching with constant shift
         let node_id = result.next_id.to_string();
         result.workflow.insert(
@@ -802,7 +687,10 @@ fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams)
                 inputs["model"] = json!([result.model_source.0, result.model_source.1]);
             }
         }
-    } else if is_flux_architecture(params) {
+    } else if matches!(
+        params.model_architecture.as_str(),
+        "flux" | "flux1d" | "flux1s" | "flux1krea" | "chroma"
+    ) {
         // ModelSamplingFlux — resolution-dependent shift for Flux family
         let node_id = result.next_id.to_string();
         result.workflow.insert(
@@ -827,7 +715,7 @@ fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams)
                 inputs["model"] = json!([result.model_source.0, result.model_source.1]);
             }
         }
-    } else if is_auraflow_architecture(params) {
+    } else if params.model_architecture == "auraflow" {
         // ModelSamplingAuraFlow — discrete flow matching with shift 1.73, multiplier 1.0
         let node_id = result.next_id.to_string();
         result.workflow.insert(
@@ -855,14 +743,7 @@ fn inject_rectified_flow(result: &mut WorkflowResult, params: &GenerationParams)
 /// Patch SDXL-family v-prediction models with zero-terminal SNR discrete sampling.
 /// ComfyUI model loader already detects most v-pred models on its own, except when the header (in .safetensors) does not contain a top-level v_pred entry.
 fn inject_vpred_zsnr_sampling(result: &mut WorkflowResult, params: &GenerationParams) {
-    if is_sd3_architecture(params)
-        || is_flux_architecture(params)
-        || is_auraflow_architecture(params)
-        || is_mugen_architecture(params)
-        || is_nanosaur_architecture(params)
-        || is_anima_architecture(params)
-        || !is_vpred_model(params)
-    {
+    if !params.is_sdxl_like || !is_vpred_model(params) {
         return;
     }
 
@@ -890,7 +771,7 @@ fn inject_vpred_zsnr_sampling(result: &mut WorkflowResult, params: &GenerationPa
 
 /// Inject Stable Cascade model sampling (shift 2.0) for Cascade architecture models.
 fn inject_cascade_sampling(result: &mut WorkflowResult, params: &GenerationParams) {
-    if !is_cascade_architecture(params) {
+    if params.model_architecture != "cascade" {
         return;
     }
 
@@ -945,16 +826,10 @@ fn inject_smart_guidance(result: &mut WorkflowResult, params: &GenerationParams)
 }
 
 fn inject_flux_guidance(result: &mut WorkflowResult, params: &GenerationParams) {
-    if !is_flux_architecture(params) {
-        return;
-    }
-
-    // Skip for Schnell (already guidance-distilled, no guidance needed)
-    if params.model_architecture == "flux1s" {
-        return;
-    }
-    let name = model_name_lower(params);
-    if name.contains("schnell") {
+    if !matches!(
+        params.model_architecture.as_str(),
+        "flux" | "flux1d" | "flux1krea"
+    ) {
         return;
     }
 

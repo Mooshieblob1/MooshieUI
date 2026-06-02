@@ -154,6 +154,9 @@ pub struct GenerationParams {
     /// Detected model architecture from the frontend (e.g. "sd3", "sdxl", "sd15", "illustrious", "unknown")
     #[serde(default)]
     pub model_architecture: String,
+    /// True when the resolved family belongs to the SDXL-like bucket.
+    #[serde(default)]
+    pub is_sdxl_like: bool,
     /// True when metadata or filename indicates a v-pred SDXL variant.
     #[serde(default)]
     pub is_vpred_model: bool,

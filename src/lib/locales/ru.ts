@@ -554,7 +554,7 @@ const ru: Record<string, string> = {
   "generation.model.hash_label": "Хеш:",
   "generation.model.copy_hash": "Скопировать хеш в буфер обмена",
   "generation.model.architecture_detecting": "Определение...",
-  "generation.model.architecture_picker_title": "Определённая архитектура модели",
+  "generation.model.architecture_picker_title": "Архитектура модели",
   "generation.model.license_label": "Лицензия:",
 
   "generation.image.title": "Входные изображения",
@@ -1489,7 +1489,7 @@ const ru: Record<string, string> = {
 
 
   // -- Stubs (untranslated -- English fallback) --
-  "generation.prompts.negative_flux_disabled": "ignored by Flux models",
+  "generation.prompts.negative_disabled_for_model": "не используется этой моделью",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
 

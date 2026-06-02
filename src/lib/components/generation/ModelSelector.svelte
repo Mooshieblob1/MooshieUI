@@ -864,6 +864,7 @@
     generation.diffusionModel = null;
     generation.clipModel = null;
     generation.clipType = null;
+    // generation.vae = "";  // Reset selected vae for checkpoint
     generation.checkpoint = name;
     generation.applyModelMetadata({
       modelspecPredictionType: null,

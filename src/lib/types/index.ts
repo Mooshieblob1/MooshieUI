@@ -109,6 +109,7 @@ export interface GenerationParams {
   clip_type: string | null;
   controlnet: ControlNetPayload | null;
   model_architecture: string;
+  is_sdxl_like?: boolean;
   is_vpred_model?: boolean;
   output_bit_depth: string;
   /** Storage format for this generation: "png" (default) or "jxl". */
