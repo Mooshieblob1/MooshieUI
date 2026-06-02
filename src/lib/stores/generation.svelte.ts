@@ -897,6 +897,33 @@ class GenerationStore {
         };
         break;
 
+      // Flux.2 base.
+      case "flux2d":
+      case "flux2klein9bbase":
+      case "flux2klein4bbase":
+        preset = {
+          steps: 20,
+          cfg: 4.0,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // Flux.2 klein.
+      case "flux2klein9b":
+      case "flux2klein4b":
+        preset = {
+          steps: 9,
+          cfg: 1.5,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
       // Z-Image Base defaults.
       case "zib":
         preset = {
