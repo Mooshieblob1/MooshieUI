@@ -3124,7 +3124,7 @@ fn recommended_clip_from_available(
                 "t5_xxl",
             ])
             .or_else(|| encoders.first().cloned())?;
-        return Some((preferred, "flux"));
+        return Some((preferred, "chroma"));
     }
 
     Some((encoders.first()?.clone(), "wan"))
