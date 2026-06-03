@@ -780,5 +780,10 @@ mod tests {
 
         let line_es = "  TCP    0.0.0.0:8188           0.0.0.0:0              ESCUCHANDO      4242";
         assert_eq!(parse_netstat_listening_pid(line_es, 8188), Some(4242));
+
+        // Established connection (foreign port is non-zero/non-asterisk) - should be ignored
+        let line_est =
+            "  TCP    127.0.0.1:8188         127.0.0.1:52132        ESTABLISHED     4242";
+        assert_eq!(parse_netstat_listening_pid(line_est, 8188), None);
     }
 }

@@ -285,13 +285,19 @@
 
   let scrollContainer = $state<HTMLDivElement | null>(null);
 
+  const detectedArtists = $derived.by(() => {
+    if (gallery.artistIndexReady && gallery.artistTagIndex.size > 0) {
+      return detectArtistsInPrompt(generation.positivePrompt, gallery.artistTagIndex);
+    }
+    return [];
+  });
+
   function isArtistInPrompt(tag: string): boolean {
     if (gallery.artistIndexReady && gallery.artistTagIndex.size > 0) {
-      const detected = detectArtistsInPrompt(generation.positivePrompt, gallery.artistTagIndex);
       const normalizedTag = tag.replace(/^@+/, "").toLowerCase().replace(/\s+/g, "_");
       const targetHit = gallery.artistTagIndex.get(normalizedTag);
       if (targetHit) {
-        return detected.some((d) => d.slug === targetHit.slug);
+        return detectedArtists.some((d) => d.slug === targetHit.slug);
       }
     }
     // Simple fallback

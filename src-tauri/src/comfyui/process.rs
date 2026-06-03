@@ -12,7 +12,7 @@ pub async fn comfyui_health_ok(http_client: &reqwest::Client, health_url: &str) 
     }
 }
 
-/// Parse a Windows `netstat -ano` line and return the PID when it is a TCP socket and the local port matches exactly.
+/// Parse a Windows `netstat -ano` line and return the PID when it is a TCP socket, the local port matches exactly, and it is in a listening state (foreign port is 0 or *).
 #[cfg(target_os = "windows")]
 pub(crate) fn parse_netstat_listening_pid(line: &str, port: u16) -> Option<u32> {
     let parts: Vec<&str> = line.split_whitespace().collect();
@@ -25,6 +25,12 @@ pub(crate) fn parse_netstat_listening_pid(line: &str, port: u16) -> Option<u32> 
     let local_addr = parts[1];
     let port_str = local_addr.rsplit(':').next()?;
     if port_str.parse::<u16>().ok()? != port {
+        return None;
+    }
+    // Verify it is a listening socket by checking that the foreign port is 0 or *
+    let foreign_addr = parts[2];
+    let foreign_port = foreign_addr.rsplit(':').next()?;
+    if foreign_port != "0" && foreign_port != "*" {
         return None;
     }
     parts.last()?.parse().ok()
