@@ -39,8 +39,9 @@ cargo clippy                 # Rust lint (run in src-tauri/)
 - **Ring buffer log capture**: Both Rust (`src-tauri/src/log_buffer.rs`) and frontend (`src/lib/utils/log-buffer.ts`) capture console output for `exportLogs()` diagnostics.
 - **keep_alive config**: When true, ComfyUI process survives app close. App kills ComfyUI on exit otherwise.
 - **Store files use `.svelte.ts` extension** — required for Svelte 5 rune compilation.
-- **Cursor config**: [`.cursor/README.md`](.cursor/README.md)
-  - **Skills:** `push`, `release`, `pre-commit-check`, `add-tauri-command`, `add-generation-param`, `workflow-template-builder` — [`.cursor/skills/`](.cursor/skills/)
-  - **Rules:** always-on + file-scoped (mirrors `.roo/rules-*`) — [`.cursor/rules/`](.cursor/rules/)
+- **Agent config (canonical):** [`.agents/README.md`](.agents/README.md)
+  - **Skills:** `push`, `release`, `cleanup`, `pre-commit-check`, `add-tauri-command`, `add-generation-param`, `workflow-template-builder` — [`.agents/skills/`](.agents/skills/)
+  - **Rules:** always-on + file-scoped — [`.agents/rules/`](.agents/rules/)
+  - **Cursor mirror:** [`.cursor/skills/`](.cursor/skills/), [`.cursor/rules/`](.cursor/rules/) (synced from `.agents/`)
 - **Existing AI rules**: [`GEMINI.md`](GEMINI.md), [`.github/copilot-instructions.md`](.github/copilot-instructions.md), [`.github/instructions/`](.github/instructions/) (including [`mooshieui.instructions.md`](.github/instructions/mooshieui.instructions.md)), [`.github/agents/`](.github/agents/), [`.roo/commands/`](.roo/commands/)
 - **Project docs**: [`docs/README.md`](docs/README.md) — bot triage, feature research, superpowers plans/specs

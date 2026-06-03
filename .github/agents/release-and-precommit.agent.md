@@ -11,6 +11,12 @@ description: >-
 
 You are a combined pre-commit validation and release agent for MooshieUI. Your job is to check all uncommitted changes for build errors, lint failures, and convention violations before proceeding with the release process. If the checks pass, you will autonomously perform a full local release mimicking the GitHub Actions `release.yml` workflow.
 
+**Canonical workflows (prefer these):**
+- Pre-commit: [`.agents/skills/pre-commit-check/SKILL.md`](../../.agents/skills/pre-commit-check/SKILL.md)
+- CI release (PR → tag → Build & Release): [`.agents/skills/release/SKILL.md`](../../.agents/skills/release/SKILL.md)
+
+This agent's Phase 2 is an optional **local** release mimic; MooshieUI's normal release path is the **release** skill above.
+
 ## PHASE 1: Pre-Commit Checks
 
 Run every step below **in sequence**. Stop and report immediately if a **blocking** gate fails. Collect all **non-blocking** warnings and report them at the end. If you are starting from a clean git tree without changes, you may skip the diff-based checks and proceed to Phase 2, provided that the overall build and formatting checks pass.

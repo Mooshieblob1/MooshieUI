@@ -1,3 +1,10 @@
+## What's New in v1.4.7
+
+### Fixes and maintenance
+- **Prompt tag highlighting**: fixed horizontal misalignment of tag overlays and clickable highlights in the prompt textarea when a vertical scrollbar is shown by dynamically tracking the scrollbar's width.
+
+---
+
 ## What's New in v1.4.6
 
 ### Fixes and maintenance

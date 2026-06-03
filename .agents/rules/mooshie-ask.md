@@ -30,7 +30,7 @@ Mirrors `.roo/rules-ask/AGENTS.md`.
 | Overview | `GEMINI.md`, `.github/copilot-instructions.md` |
 | Full conventions | `.github/instructions/mooshieui.instructions.md` |
 | Layer rules | `.github/instructions/` (svelte-*, tauri-backend) |
-| Cursor workflows | `.cursor/skills/` |
+| Cursor workflows | `.agents/skills/` (mirrored in `.cursor/skills/`) |
 | Release / push | `push`, `release` skills |
 | Pre-commit | `pre-commit-check` skill |
 | Bot PR triage | `docs/BOT_REVIEW_TRIAGE.md` |

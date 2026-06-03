@@ -43,6 +43,17 @@
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
   let backdropEl = $state<HTMLDivElement | null>(null);
   let clickOverlayEl = $state<HTMLDivElement | null>(null);
+  let scrollbarWidth = $state(0);
+
+  function updateScrollbarWidth() {
+    if (textareaEl) {
+      const computedStyle = window.getComputedStyle(textareaEl);
+      const borderLeft = parseFloat(computedStyle.borderLeftWidth) || 0;
+      const borderRight = parseFloat(computedStyle.borderRightWidth) || 0;
+      const width = textareaEl.offsetWidth - textareaEl.clientWidth - (borderLeft + borderRight);
+      scrollbarWidth = Math.max(0, width);
+    }
+  }
   let suggestions = $state<TagEntry[]>([]);
   let selectedIndex = $state(0);
   let showSuggestions = $state(false);
@@ -513,24 +524,40 @@
   // Restore saved height and persist future resize changes via ResizeObserver.
   let resizeObserver: ResizeObserver | null = null;
   $effect(() => {
-    if (!textareaEl || !storageKey) return;
-    // Restore saved height on mount.
-    const saved = localStorage.getItem(storageKey);
-    if (saved) {
-      textareaEl.style.height = saved;
-      resizeStyle = `height: ${saved};`;
+    if (!textareaEl) return;
+
+    // Restore saved height on mount if storageKey is provided.
+    if (storageKey) {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        textareaEl.style.height = saved;
+        resizeStyle = `height: ${saved};`;
+      }
     }
+
     // Observe future user-driven resizes.
     resizeObserver?.disconnect();
     resizeObserver = new ResizeObserver(() => {
-      if (!textareaEl || !storageKey) return;
-      const h = textareaEl.style.height;
-      if (h && h !== "" && h !== "0px") {
-        localStorage.setItem(storageKey, h);
-        resizeStyle = `height: ${h};`;
+      if (!textareaEl) return;
+      if (storageKey) {
+        const h = textareaEl.style.height;
+        if (h && h !== "" && h !== "0px") {
+          localStorage.setItem(storageKey, h);
+          resizeStyle = `height: ${h};`;
+        }
       }
+      updateScrollbarWidth();
     });
     resizeObserver.observe(textareaEl);
+  });
+
+  // Keep scrollbar width and scroll position updated as the value changes.
+  $effect(() => {
+    value; // track value
+    requestAnimationFrame(() => {
+      updateScrollbarWidth();
+      syncScroll();
+    });
   });
 
   onDestroy(() => {
@@ -657,7 +684,7 @@
       <div
         bind:this={backdropEl}
         class="absolute inset-0 pointer-events-none overflow-hidden rounded-lg px-3 py-2 text-sm leading-5 whitespace-pre-wrap break-words border border-transparent"
-        style="color: transparent; z-index: 0;"
+        style="color: transparent; z-index: 0; right: {scrollbarWidth}px;"
       >{@html highlightedHtml}</div>
     {/if}
 
@@ -682,7 +709,7 @@
         bind:this={clickOverlayEl}
         aria-hidden="true"
         class="absolute inset-0 overflow-hidden rounded-lg px-3 py-2 text-sm leading-5 whitespace-pre-wrap break-words border border-transparent select-none"
-        style="pointer-events: none; color: transparent; z-index: 2;"
+        style="pointer-events: none; color: transparent; z-index: 2; right: {scrollbarWidth}px;"
       >
         {#each clickableSegments as segment (segment.start + ':' + segment.end + ':' + segment.kind)}
           {#if segment.clickable}
