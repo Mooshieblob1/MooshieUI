@@ -10,6 +10,7 @@ Invoke by name or slash-style request (`/push`, `/release`, etc.):
 |-------|---------|
 | [push](skills/push/SKILL.md) | PR to main, no release |
 | [release](skills/release/SKILL.md) | Version bump, tag, CI release |
+| [quickrelease](skills/quickrelease/SKILL.md) | Quick release: version bump, tag, CI release (no local compile/lint checks) |
 | [cleanup](skills/cleanup/SKILL.md) | Branch hygiene + bot PR triage |
 | [pre-commit-check](skills/pre-commit-check/SKILL.md) | Pre-commit / pre-PR validation |
 | [add-tauri-command](skills/add-tauri-command/SKILL.md) | New Tauri + TS IPC command |
