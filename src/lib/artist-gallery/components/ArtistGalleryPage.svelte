@@ -10,6 +10,9 @@
   import { proxiedCdnUrl } from "../../utils/cdnFetch.js";
   import { CharacterExplorer } from "../../animadex/index.js";
   import type { AnimadexCharacter } from "../../animadex/types.js";
+  import { generation } from "../../stores/generation.svelte.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
+  import { detectArtistsInPrompt } from "../detection.js";
 
   type ExplorerTab = "artists" | "characters";
 
@@ -87,6 +90,9 @@
   let searchDebounce: number | null = null;
 
   onMount(() => {
+    // Also load artist search index in gallery store so the active check has access to the index.
+    void gallery.loadArtistIndex(manifestUrl);
+
     store.init().then(async () => {
       // Load entries only once; subsequent mounts reuse cached data.
       if (store.allEntries.length === 0 && !store.allEntriesLoading) {
@@ -278,6 +284,22 @@
   }
 
   let scrollContainer = $state<HTMLDivElement | null>(null);
+
+  function isArtistInPrompt(tag: string): boolean {
+    if (gallery.artistIndexReady && gallery.artistTagIndex.size > 0) {
+      const detected = detectArtistsInPrompt(generation.positivePrompt, gallery.artistTagIndex);
+      const normalizedTag = tag.replace(/^@+/, "").toLowerCase().replace(/\s+/g, "_");
+      const targetHit = gallery.artistTagIndex.get(normalizedTag);
+      if (targetHit) {
+        return detected.some((d) => d.slug === targetHit.slug);
+      }
+    }
+    // Simple fallback
+    const cleanTag = tag.replace(/^@+/, "").toLowerCase().trim();
+    if (!cleanTag) return false;
+    const promptLower = (generation.positivePrompt || "").toLowerCase();
+    return promptLower.includes(cleanTag);
+  }
 
   function goToPage(page: number) {
     store.currentPage = page;
@@ -668,7 +690,7 @@
           <div
             role="button"
             tabindex="0"
-            class="card-slide-in group relative flex flex-col items-stretch rounded-lg border bg-neutral-900 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 {copiedSlug === hit.slug ? 'border-emerald-500' : 'border-neutral-800 hover:border-indigo-500'} {catPickerSlug === hit.slug ? 'z-50' : ''}"
+            class="card-slide-in group relative flex flex-col items-stretch rounded-lg border bg-neutral-900 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 {copiedSlug === hit.slug ? 'border-emerald-500' : (isArtistInPrompt(hit.tag) ? 'border-amber-500/60 ring-1 ring-amber-500/20' : 'border-neutral-800 hover:border-indigo-500')} {catPickerSlug === hit.slug ? 'z-50' : ''}"
             style="--card-delay: {Math.min(i * 30, 450)}ms"
             onclick={() => { void openHit(hit, i); }}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void openHit(hit, i); } }}

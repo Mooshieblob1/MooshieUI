@@ -143,6 +143,7 @@ class GalleryStore {
   /** Images generated during this app session (not loaded from disk). */
   sessionImages = $state<OutputImage[]>([]);
   selectedImage = $state<OutputImage | null>(null);
+  lastSelectedImage = $state<OutputImage | null>(null);
   /** When set, the lightbox shows this URL instead of selectedImage. */
   lightboxUrl = $state<string | null>(null);
   lightboxOpen = $state(false);
@@ -370,6 +371,7 @@ class GalleryStore {
 
   async openLightbox(image: OutputImage) {
     this.selectedImage = image;
+    this.lastSelectedImage = image;
     this.lightboxOpen = true;
     const isJxl = image.gallery_filename?.endsWith(".jxl") ?? false;
     if (image.fullImageUrl && !isJxl) {
@@ -1130,6 +1132,9 @@ class GalleryStore {
       this.sessionImages = this.sessionImages.filter((i) => i !== image);
       if (this.selectedImage === image) {
         this.closeLightbox();
+      }
+      if (this.lastSelectedImage === image) {
+        this.lastSelectedImage = null;
       }
     } catch (e) {
       console.error("Failed to delete image:", e);

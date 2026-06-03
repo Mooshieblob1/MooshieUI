@@ -63,10 +63,10 @@ pub fn append_upscale_chain(
 
     // Fast refine skips MultiDiffusion and tiled VAE (user opt-in; may OOM on Anima).
     // Otherwise split models (Anima/COSMOS) require tiled diffusion for 5D latents.
-    let use_tiling = !params.upscale_fast_refine
-        && (params.upscale_tiling || params.use_split_model);
-    let use_tiled_vae = !params.upscale_fast_refine
-        && (params.upscale_tiling || params.use_split_model);
+    let use_tiling =
+        !params.upscale_fast_refine && (params.upscale_tiling || params.use_split_model);
+    let use_tiled_vae =
+        !params.upscale_fast_refine && (params.upscale_tiling || params.use_split_model);
 
     let latent_source: (String, u32) = if use_tiled_vae {
         let tiled_encode_id = next_id.to_string();

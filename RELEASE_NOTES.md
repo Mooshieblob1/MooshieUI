@@ -1,3 +1,13 @@
+## What's New in v1.4.6
+
+### Fixes and maintenance
+- **Windows process termination**: resolved an issue where stopping or restarting ComfyUI could fail on non-English locales (e.g., German, Spanish) by making the `netstat` process/port check locale-independent.
+- **Artist selection & gallery**: fixed automatic manifest loading and tag detection within the artist gallery BottomPanel.
+- **Model preview actions**: improved checkpoint and LoRA gallery cards to use the `lastSelectedImage` helper for assigning thumbnails, ensuring reliability even when the lightbox is closed.
+- **Model directory deduplication**: merged disk folders now deduplicate by basename against the ComfyUI API model list to avoid showing duplicates.
+
+---
+
 ## What's New in v1.4.5
 
 ### Fixes and maintenance

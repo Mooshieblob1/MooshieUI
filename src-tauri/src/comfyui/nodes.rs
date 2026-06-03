@@ -773,5 +773,12 @@ mod tests {
         let line = "  TCP    0.0.0.0:8188           0.0.0.0:0              LISTENING       4242";
         assert_eq!(parse_netstat_listening_pid(line, 8188), Some(4242));
         assert_eq!(parse_netstat_listening_pid(line, 18188), None);
+
+        // Localized (German, Spanish) state column test cases
+        let line_de = "  TCP    0.0.0.0:8188           0.0.0.0:0              ABHÖREN         4242";
+        assert_eq!(parse_netstat_listening_pid(line_de, 8188), Some(4242));
+
+        let line_es = "  TCP    0.0.0.0:8188           0.0.0.0:0              ESCUCHANDO      4242";
+        assert_eq!(parse_netstat_listening_pid(line_es, 8188), Some(4242));
     }
 }

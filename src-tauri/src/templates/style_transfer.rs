@@ -123,8 +123,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
                 "high_scale_end": 0.0,
                 "low_scale_start": 1.0,
                 "low_scale_end": params.style_transfer_low_scale_end,
-                "start_block": 0,
-                "end_block": 999,
+                "blocks": "0-999",
                 "adain_strength": params.style_transfer_adain_strength,
                 "verbose": false
             }

@@ -394,7 +394,7 @@
   }
 
   async function setSidecarFromGallery(loraFilename: string) {
-    const gf = gallery.selectedImage?.gallery_filename;
+    const gf = gallery.lastSelectedImage?.gallery_filename;
     if (!gf) {
       gallery.showToast(locale.t("model.thumb_no_gallery_image"), "warning");
       return;
@@ -676,6 +676,31 @@
               {#if imgUrl}
                 <ModelPreviewActions imageUrl={imgUrl} modelLabel={displayName(loraName)} />
               {/if}
+            {:else if error}
+              <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                <span class="text-[10px] text-neutral-600 text-center" title={error}>
+                  {error.includes('not found')
+                    ? error
+                    : accessDenied
+                      ? error
+                      : locale.t('lora.not_on_civitai')}
+                </span>
+                <button
+                  class="text-[10px] text-indigo-400 hover:text-indigo-300"
+                  onclick={(e) => { e.stopPropagation(); refetchLora(loraName); }}
+                >
+                  {locale.t('lora.retry')}
+                </button>
+              </div>
+            {:else}
+              <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-neutral-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                <p class="text-[9px] text-neutral-600 text-center leading-snug">{locale.t('model.thumb_empty_hint')}</p>
+              </div>
+            {/if}
+
+            {#if !isLoading}
               <div
                 class="absolute left-1 bottom-1 z-10 flex gap-0.5"
                 onclick={(e) => e.stopPropagation()}
@@ -724,28 +749,6 @@
                   </button>
                 </div>
               {/if}
-            {:else if error}
-              <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2">
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                <span class="text-[10px] text-neutral-600 text-center" title={error}>
-                  {error.includes('not found')
-                    ? error
-                    : accessDenied
-                      ? error
-                      : locale.t('lora.not_on_civitai')}
-                </span>
-                <button
-                  class="text-[10px] text-indigo-400 hover:text-indigo-300"
-                  onclick={(e) => { e.stopPropagation(); refetchLora(loraName); }}
-                >
-                  {locale.t('lora.retry')}
-                </button>
-              </div>
-            {:else}
-              <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-2">
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-neutral-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                <p class="text-[9px] text-neutral-600 text-center leading-snug">{locale.t('model.thumb_empty_hint')}</p>
-              </div>
             {/if}
           </div>
 

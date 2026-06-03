@@ -19,6 +19,7 @@
   import { styles as stylesStore } from "../../stores/styles.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import type { OutputImage } from "../../types/index.js";
+  import { detectArtistsInPrompt } from "../../artist-gallery/detection.js";
 
   interface Props {
     onupscale: (image: OutputImage) => void;
@@ -146,6 +147,9 @@
   // viewed so cards can render thumbnails without visiting the gallery page.
   $effect(() => {
     if (activeTab !== "artists" || !artistStore) return;
+    if (connection.artistGalleryManifestUrl) {
+      void gallery.loadArtistIndex(connection.artistGalleryManifestUrl);
+    }
     if (!artistStore.manifest && !artistStore.manifestLoading) {
       void artistStore.init();
     }
@@ -244,6 +248,22 @@
 
   function displayArtistTag(tag: string): string {
     return tag.replace(/^@/, "").replace(/\\([()[\]]])/g, "$1").replace(/_/g, " ");
+  }
+
+  function isArtistInPrompt(tag: string): boolean {
+    if (gallery.artistIndexReady && gallery.artistTagIndex.size > 0) {
+      const detected = detectArtistsInPrompt(generation.positivePrompt, gallery.artistTagIndex);
+      const normalizedTag = tag.replace(/^@+/, "").toLowerCase().replace(/\s+/g, "_");
+      const targetHit = gallery.artistTagIndex.get(normalizedTag);
+      if (targetHit) {
+        return detected.some((d) => d.slug === targetHit.slug);
+      }
+    }
+    // Simple fallback
+    const cleanTag = tag.replace(/^@+/, "").toLowerCase().trim();
+    if (!cleanTag) return false;
+    const promptLower = (generation.positivePrompt || "").toLowerCase();
+    return promptLower.includes(cleanTag);
   }
 </script>
 
@@ -540,7 +560,7 @@
                 <div
                   role="button"
                   tabindex="0"
-                  class="group relative flex flex-col rounded-lg border border-neutral-800 bg-neutral-900 cursor-pointer transition-colors hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  class="group relative flex flex-col rounded-lg border bg-neutral-900 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 {isArtistInPrompt(hit.tag) ? 'border-amber-500/60 ring-1 ring-amber-500/20' : 'border-neutral-800 hover:border-indigo-500'}"
                   onclick={() => applyArtistTag(hit)}
                   onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); applyArtistTag(hit); } }}
                   title={locale.t('bottom_panel.apply_artist_tag', { tag: hit.tag })}
