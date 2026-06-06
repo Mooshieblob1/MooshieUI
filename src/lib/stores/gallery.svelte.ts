@@ -735,7 +735,7 @@ class GalleryStore {
       } else {
         bytes = await getOutputImage(image.filename, image.subfolder);
       }
-      if (!bytes) throw new Error("Image bytes unavailable");
+      if (!bytes) throw new Error(locale.t("gallery.error.image_bytes_unavailable"));
 
       bytes = await this._ensurePngBytes(bytes);
       if (image.metadata) {
@@ -781,7 +781,7 @@ class GalleryStore {
       } else if (blob) {
         saveBytes = await this._blobToPngBytes(blob);
       } else {
-        throw new Error("Image URL is no longer available");
+        throw new Error(locale.t("gallery.error.image_url_unavailable"));
       }
 
       // Normalise the default filename extension — always saving as PNG.
@@ -833,7 +833,7 @@ class GalleryStore {
       } else {
         bytes = await getOutputImage(image.filename, image.subfolder);
       }
-      if (!bytes) throw new Error("Image bytes unavailable");
+      if (!bytes) throw new Error(locale.t("gallery.error.image_bytes_unavailable"));
       bytes = await this._ensurePngBytes(bytes);
       const filename = pngNormalizedFilename(image.filename || `image_${Date.now()}.png`);
       if (image.metadata) {
@@ -919,7 +919,7 @@ class GalleryStore {
           try {
             const resp = await fetch(fetchUrl);
             if (!resp.ok) {
-              this.showToast(locale.t("gallery.toast.copy_failed") || "Failed to copy image", "error");
+              this.showToast(locale.t("gallery.toast.copy_failed"), "error");
               return;
             }
             const blob = await resp.blob();
@@ -1002,7 +1002,7 @@ class GalleryStore {
       await copyBytesToClipboard(bytes, ext);
       return;
     }
-    throw new Error("Clipboard API not available — copy not supported in this browser context");
+    throw new Error(locale.t("common.clipboard_unavailable"));
   }
 
   /** Copy a blob URL image to clipboard via native Tauri clipboard or browser Clipboard API. */

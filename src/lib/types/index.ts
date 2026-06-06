@@ -205,6 +205,8 @@ export interface AppConfig {
   interrogator_general_threshold: number;
   interrogator_character_threshold: number;
   civitai_api_key: string | null;
+  /** Present in browser mode for non-admin users when a server-side key is configured. */
+  civitai_api_key_configured?: boolean;
   gallery_path: string | null;
   browser_mode: boolean;
   ui_server_port: number;

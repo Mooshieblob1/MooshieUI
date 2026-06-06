@@ -79,7 +79,7 @@
         });
         if (!path) return;
         await writeTextFile(path, json);
-        importStatus = `Exported to ${path}`;
+        importStatus = locale.t("artist_gallery.fav_manager.exported_to", { path });
       } else {
         const blob = new Blob([json], { type: "application/json" });
         const url = URL.createObjectURL(blob);
@@ -90,7 +90,7 @@
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        importStatus = `Downloaded ${defaultName}`;
+        importStatus = locale.t("artist_gallery.fav_manager.downloaded", { filename: defaultName });
       }
       importError = null;
     } catch (e) {

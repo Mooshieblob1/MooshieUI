@@ -282,7 +282,7 @@
                 ? modeLabel(image.generation_mode)
                 : galleryGroupBy === "board"
                   ? gallery.getBoard(image)
-                  : (image.prompt_id || "No Prompt ID");
+                  : (image.prompt_id || locale.t("gallery.no_prompt_id"));
         const bucket = grouped.get(key) ?? [];
         bucket.push(image);
         grouped.set(key, bucket);

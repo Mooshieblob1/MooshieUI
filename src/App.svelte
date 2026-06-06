@@ -498,7 +498,6 @@
   let newPass2 = $state("");
   let changePassError = $state<string | null>(null);
   let changePassBusy = $state(false);
-
   async function checkAuth(): Promise<boolean> {
     if (!isBrowserMode) {
       authChecked = true;
@@ -688,7 +687,7 @@
                 ? modeLabel(image.generation_mode)
                 : galleryGroupBy === "board"
                   ? gallery.getBoard(image)
-                  : (image.prompt_id || "No Prompt ID");
+                  : (image.prompt_id || locale.t("gallery.no_prompt_id"));
         const bucket = grouped.get(key) ?? [];
         bucket.push(image);
         grouped.set(key, bucket);
@@ -2356,8 +2355,8 @@
     <div class="flex items-center justify-center h-full bg-neutral-950">
       <div class="w-80 space-y-4">
         <div class="mooshie-branding flex items-center justify-center gap-3 mb-6">
-          <img src={themeLogoUrl} alt="MooshieUI" class="w-10 h-10 aspect-square object-contain rounded-lg" />
-          <h1 class="text-xl font-bold text-neutral-100">MooshieUI</h1>
+          <img src={themeLogoUrl} alt={locale.t("app.brand_name")} class="w-10 h-10 aspect-square object-contain rounded-lg" />
+          <h1 class="text-xl font-bold text-neutral-100">{locale.t("app.brand_name")}</h1>
         </div>
         <p class="text-sm text-neutral-400 text-center">{locale.t("auth.password_reset_by_admin")}</p>
         <input
@@ -2383,7 +2382,7 @@
           disabled={changePassBusy}
           onclick={handleSetNewPassword}
         >
-          {changePassBusy ? "Saving..." : "Set New Password"}
+          {changePassBusy ? locale.t("common.saving") : locale.t("auth.change_password")}
         </button>
       </div>
     </div>
@@ -2392,8 +2391,8 @@
   <div class="flex items-center justify-center h-full bg-neutral-950">
     <div class="w-80 space-y-4">
       <div class="mooshie-branding flex items-center justify-center gap-3 mb-6">
-        <img src={themeLogoUrl} alt="MooshieUI" class="w-10 h-10 aspect-square object-contain rounded-lg" />
-        <h1 class="text-xl font-bold text-neutral-100">MooshieUI</h1>
+        <img src={themeLogoUrl} alt={locale.t("app.brand_name")} class="w-10 h-10 aspect-square object-contain rounded-lg" />
+        <h1 class="text-xl font-bold text-neutral-100">{locale.t("app.brand_name")}</h1>
       </div>
       <p class="text-sm text-neutral-400 text-center">{locale.t("auth.sign_in_continue")}</p>
       <input
@@ -2426,8 +2425,9 @@
         disabled={loginBusy}
         onclick={handleLogin}
       >
-        {loginBusy ? "Signing in..." : "Sign In"}
+        {loginBusy ? locale.t("common.saving") : locale.t("auth.sign_in")}
       </button>
+
     </div>
   </div>
   {/if}
@@ -2472,9 +2472,9 @@
     >
       <div
         class="flex size-8 items-center justify-center rounded-lg bg-neutral-800/60 text-neutral-400"
-        title="Theme logo"
+        title={locale.t("app.theme_logo")}
       >
-        <img src={themeLogoUrl} alt="Theme logo" class="size-7 rounded-md object-contain" />
+        <img src={themeLogoUrl} alt={locale.t("app.theme_logo")} class="size-7 rounded-md object-contain" />
       </div>
     </div>
 
@@ -2982,7 +2982,7 @@
         <img
           bind:this={lbImgEl}
           src={gallery.lightboxUrl}
-          alt={gallery.selectedImage?.filename ?? 'Preview'}
+          alt={gallery.selectedImage?.filename ?? locale.t("gallery.no_preview")}
           class="max-w-full max-h-[85vh] object-contain select-none {lbPanning ? 'cursor-grabbing' : 'cursor-grab'}"
           draggable="false"
           style="transform-origin: center center; will-change: transform;"

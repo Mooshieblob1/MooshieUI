@@ -105,7 +105,7 @@
         });
         if (!path) return;
         await saveTextFile(content, path);
-        importStatus = `Exported to ${path}`;
+        importStatus = locale.t("styles.manager.exported_to", { path });
       } else {
         const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
         const url = URL.createObjectURL(blob);
@@ -116,7 +116,7 @@
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        importStatus = `Downloaded ${filename}`;
+        importStatus = locale.t("styles.manager.downloaded", { filename });
       }
     } catch (e) {
       importError = e instanceof Error ? e.message : String(e);
@@ -191,9 +191,10 @@
     const kind = isStylesTab ? "style" : "preset";
     importStatus =
       imported > 0
-        ? `Imported ${imported} ${kind}${imported === 1 ? "" : "s"}${
-            renamed > 0 ? ` (${renamed} renamed to avoid duplicates)` : ""
-          }.`
+        ? locale.t("styles.manager.imported", {
+            count: String(imported),
+            renamed: renamed > 0 ? locale.t("styles.manager.imported_renamed", { count: String(renamed) }) : "",
+          })
         : null;
   }
 </script>
@@ -361,7 +362,7 @@
                     {/if}
                   </div>
                   <p class="mt-0.5 truncate font-mono text-[11px] text-neutral-500">
-                    {preset.content || "(empty)"}
+                    {preset.content || locale.t("common.empty")}
                   </p>
                   <p class="flex items-center gap-2 text-[10px] text-neutral-600">
                     <span>{choiceCount === 1 ? locale.t("styles.manager.wildcard_options", { count: String(choiceCount) }) : locale.t("styles.manager.wildcard_options_plural", { count: String(choiceCount) })}</span>

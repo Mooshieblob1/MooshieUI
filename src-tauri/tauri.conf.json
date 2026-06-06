@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: https://asset.localhost https://thumbnail.localhost https://gallery.localhost; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* https://api.github.com https://cdn.mooshieblob.com https://civitai.com https://*.civitai.com https://image.civitai.com https://cdn.civitai.com https://animadex.net; font-src 'self' data:; media-src 'self' blob: data:"
     }
   },
   "bundle": {

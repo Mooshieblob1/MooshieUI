@@ -59,7 +59,7 @@ class ModelRequestsStore {
       const resp = await fetch(url, { headers: authHeaders() });
       if (!resp.ok) {
         const data = await resp.json();
-        throw new Error(data.error ?? "Failed to fetch requests");
+        throw new Error(data.error ?? locale.t("model_requests.error.fetch"));
       }
       const data = await resp.json();
       this.requests = data.requests ?? [];
@@ -83,7 +83,7 @@ class ModelRequestsStore {
       });
       const data = await resp.json();
       if (!resp.ok) {
-        throw new Error(data.error ?? "Failed to submit request");
+        throw new Error(data.error ?? locale.t("model_requests.error.submit"));
       }
       this.showToast(locale.t("model_requests.requested", { name: payload.model_name }), "success");
       return data.request as ModelRequest;
@@ -103,7 +103,7 @@ class ModelRequestsStore {
       });
       const data = await resp.json();
       if (!resp.ok) {
-        throw new Error(data.error ?? "Failed to approve request");
+        throw new Error(data.error ?? locale.t("model_requests.error.approve"));
       }
       // Update local state
       const idx = this.requests.findIndex((r) => r.id === requestId);
@@ -126,7 +126,7 @@ class ModelRequestsStore {
       });
       const data = await resp.json();
       if (!resp.ok) {
-        throw new Error(data.error ?? "Failed to deny request");
+        throw new Error(data.error ?? locale.t("model_requests.error.deny"));
       }
       // Update local state
       const idx = this.requests.findIndex((r) => r.id === requestId);

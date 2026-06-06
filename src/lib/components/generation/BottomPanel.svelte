@@ -531,12 +531,12 @@
                 type="button"
                 class="rounded px-2 py-0.5 text-[10px] transition-colors {artistCategoryFilter === 'all' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
                 onclick={() => artistCategoryFilter = 'all'}
-              >All ({artistFavourites.count})</button>
+              >{locale.t("artist_gallery.category_all_short", { count: String(artistFavourites.count) })}</button>
               <button
                 type="button"
                 class="rounded px-2 py-0.5 text-[10px] transition-colors {artistCategoryFilter === '__uncat' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
                 onclick={() => artistCategoryFilter = '__uncat'}
-              >Uncategorised ({counts[''] ?? 0})</button>
+              >{locale.t("artist_gallery.category_uncat_short", { count: String(counts[''] ?? 0) })}</button>
               {#each artistFavourites.categories as cat (cat.id)}
                 <button
                   type="button"
@@ -589,14 +589,14 @@
                         class="absolute left-1 top-1 h-3 w-3 rounded-full border border-black/40"
                         style="background-color: {favCat.color}"
                         title={favCat.name}
-                        aria-label={`Category: ${favCat.name}`}
+                        aria-label={locale.t("artist_gallery.category_aria", { name: favCat.name })}
                       ></span>
                     {/if}
                   </div>
                   <div class="px-2 py-1.5">
                     <div class="truncate text-xs text-red-400">{displayArtistTag(hit.tag)}</div>
                     {#if hit.postCount > 0}
-                      <div class="text-[10px] text-neutral-500">{locale.formatInteger(hit.postCount)} posts</div>
+                      <div class="text-[10px] text-neutral-500">{locale.formatInteger(hit.postCount)} {locale.t("artist_gallery.posts_suffix")}</div>
                     {/if}
                   </div>
                 </div>

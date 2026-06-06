@@ -164,40 +164,40 @@
     clearPresetMessages();
     const activeStack = generation.loras.filter((lora) => lora.name.trim().length > 0);
     if (activeStack.length === 0) {
-      presetError = "No LoRAs in current stack.";
+      presetError = locale.t("lora_presets.error.no_loras");
       return;
     }
-    const fallbackName = `LoRA Preset ${loraPresets.presets.length + 1}`;
+    const fallbackName = locale.t("lora_presets.default_name", { n: String(loraPresets.presets.length + 1) });
     const created = loraPresets.create(newPresetName.trim() || fallbackName, activeStack);
     newPresetName = "";
     selectedPresetId = created.id;
-    presetStatus = `Saved preset "${created.name}"`;
+    presetStatus = locale.t("lora_presets.saved", { name: created.name });
   }
 
   function updatePresetFromCurrent() {
     clearPresetMessages();
     if (!selectedPresetId) {
-      presetError = "Select a preset first.";
+      presetError = locale.t("lora_presets.error.select_first");
       return;
     }
     const selected = loraPresets.getById(selectedPresetId);
     if (!selected) {
-      presetError = "Preset not found.";
+      presetError = locale.t("lora_presets.error.not_found");
       return;
     }
     const activeStack = generation.loras.filter((lora) => lora.name.trim().length > 0);
     if (activeStack.length === 0) {
-      presetError = "No LoRAs in current stack.";
+      presetError = locale.t("lora_presets.error.no_loras");
       return;
     }
     loraPresets.update(selected.id, { loras: activeStack });
-    presetStatus = `Updated preset "${selected.name}"`;
+    presetStatus = locale.t("lora_presets.updated", { name: selected.name });
   }
 
   function applySelectedPreset() {
     clearPresetMessages();
     if (!selectedPresetId) {
-      presetError = "Select a preset first.";
+      presetError = locale.t("lora_presets.error.select_first");
       return;
     }
     const result = loraPresets.applyToLoras(
@@ -207,30 +207,30 @@
       models.loras,
     );
     if (!result) {
-      presetError = "Preset not found.";
+      presetError = locale.t("lora_presets.error.not_found");
       return;
     }
     generation.loras = result.loras;
     generation.saveSettings();
     if (result.missingNames.length > 0) {
-      presetError = `Applied with missing LoRAs: ${result.missingNames.join(", ")}`;
+      presetError = locale.t("lora_presets.applied_missing", { names: result.missingNames.join(", ") });
     } else {
-      presetStatus = "Preset applied.";
+      presetStatus = locale.t("lora_presets.applied");
     }
   }
 
   function deleteSelectedPreset() {
     clearPresetMessages();
     if (!selectedPresetId) {
-      presetError = "Select a preset first.";
+      presetError = locale.t("lora_presets.error.select_first");
       return;
     }
     const selected = loraPresets.getById(selectedPresetId);
     if (!selected) return;
-    if (!confirm(`Delete preset "${selected.name}"?`)) return;
+    if (!confirm(locale.t("lora_presets.delete_confirm", { name: selected.name }))) return;
     loraPresets.remove(selected.id);
     selectedPresetId = "";
-    presetStatus = "Preset deleted.";
+    presetStatus = locale.t("lora_presets.deleted");
   }
 
   // Lazy fetch: only fetch info for visible LoRAs
@@ -491,13 +491,13 @@
 <!-- Search + LoRA grid -->
 <div class="flex flex-col h-full">
   <div class="mx-2 mt-1.5 rounded border border-neutral-800 bg-neutral-900/60 p-2 text-[11px] space-y-2">
-    <p class="text-neutral-400">LoRA Presets</p>
+    <p class="text-neutral-400">{locale.t("lora_presets.title")}</p>
     <div class="flex items-center gap-2">
       <select
         bind:value={selectedPresetId}
         class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] text-neutral-100 focus:outline-none focus:border-indigo-500"
       >
-        <option value="">Select preset...</option>
+        <option value="">{locale.t("lora_presets.select_placeholder")}</option>
         {#each loraPresets.presets as preset (preset.id)}
           <option value={preset.id}>{preset.name}</option>
         {/each}
@@ -506,22 +506,22 @@
         bind:value={applyMode}
         class="bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] text-neutral-100 focus:outline-none focus:border-indigo-500"
       >
-        <option value="replace">replace</option>
-        <option value="merge">merge</option>
+        <option value="replace">{locale.t("lora_presets.mode.replace")}</option>
+        <option value="merge">{locale.t("lora_presets.mode.merge")}</option>
       </select>
       <button
         type="button"
         class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:border-indigo-500"
         onclick={applySelectedPreset}
       >
-        Apply
+        {locale.t("common.apply")}
       </button>
     </div>
     <div class="flex items-center gap-2">
       <input
         type="text"
         bind:value={newPresetName}
-        placeholder="New preset name (optional)"
+        placeholder={locale.t("lora_presets.name_placeholder")}
         class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-[11px] text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500"
       />
       <button
@@ -529,21 +529,21 @@
         class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-200 hover:border-indigo-500"
         onclick={createPresetFromCurrent}
       >
-        Save Current
+        {locale.t("lora_presets.save_current")}
       </button>
       <button
         type="button"
         class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500"
         onclick={updatePresetFromCurrent}
       >
-        Update
+        {locale.t("common.update")}
       </button>
       <button
         type="button"
         class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-red-300 hover:border-red-500/50"
         onclick={deleteSelectedPreset}
       >
-        Delete
+        {locale.t("common.delete")}
       </button>
     </div>
     {#if presetStatus}

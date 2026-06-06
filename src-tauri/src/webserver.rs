@@ -215,6 +215,58 @@ fn forbidden_response(msg: &str) -> Response {
         .into_response()
 }
 
+/// Remote LAN clients must authenticate; localhost and non-LAN mode stay open.
+fn require_remote_lan_auth(
+    state: &WebState,
+    headers: &HeaderMap,
+    remote: &SocketAddr,
+) -> Option<Response> {
+    if state.lan_enabled && !is_localhost(remote) {
+        let role = resolve_role(state, headers, remote);
+        if role == UserRole::Anonymous {
+            return Some(unauthorized_response("Authentication required"));
+        }
+    }
+    None
+}
+
+async fn resolve_tls_config(
+    state: &Arc<AppState>,
+) -> Option<axum_server::tls_rustls::RustlsConfig> {
+    let (cert_path, key_path) = {
+        let cfg = state.config.read().await;
+        (cfg.tls_cert_path.clone(), cfg.tls_key_path.clone())
+    };
+    let cert_path = cert_path
+        .or_else(|| std::env::var("MOOSHIEUI_TLS_CERT_PATH").ok())
+        .filter(|s| !s.trim().is_empty());
+    let key_path = key_path
+        .or_else(|| std::env::var("MOOSHIEUI_TLS_KEY_PATH").ok())
+        .filter(|s| !s.trim().is_empty());
+
+    match (cert_path, key_path) {
+        (Some(cert), Some(key)) => {
+            match axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key).await {
+                Ok(cfg) => {
+                    log::info!("TLS enabled for UI web server");
+                    Some(cfg)
+                }
+                Err(e) => {
+                    log::error!("Failed to load TLS certificate: {}", e);
+                    None
+                }
+            }
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            log::warn!(
+                "TLS cert/key pair incomplete — set both tls_cert_path and tls_key_path (or MOOSHIEUI_TLS_CERT_PATH / MOOSHIEUI_TLS_KEY_PATH)"
+            );
+            None
+        }
+        _ => None,
+    }
+}
+
 /// Start the embedded web server.
 ///
 /// Attempts to bind to `port`; if that port is already in use, tries the
@@ -399,10 +451,13 @@ pub async fn start_server(
         .store(true, std::sync::atomic::Ordering::SeqCst);
 
     let web_state = Arc::new(WebState {
-        app: state,
+        app: state.clone(),
         auth: Arc::new(AuthState::new()),
         lan_enabled,
     });
+    web_state
+        .auth
+        .try_emit_legacy_password_announcement(&web_state.app.notifications);
 
     let app = Router::new()
         // Auth endpoints (always accessible)
@@ -420,6 +475,10 @@ pub async fn start_server(
         .route(
             "/internal-api/_auth/change_password",
             post(auth_change_password_handler),
+        )
+        .route(
+            "/internal-api/_auth/upgrade_password_encryption",
+            post(auth_upgrade_password_encryption_handler),
         )
         .route(
             "/internal-api/_auth/reset_password",
@@ -678,15 +737,25 @@ pub async fn start_server(
         });
     }
 
+    let tls_config = resolve_tls_config(&web_state.app).await;
     let actual_port = bind_addr.port();
-    let handle = tokio::spawn(async move {
-        axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await
-        .expect("UI web server crashed");
-    });
+    let handle = if let Some(tls_config) = tls_config {
+        tokio::spawn(async move {
+            axum_server::bind_rustls(bind_addr, tls_config)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+                .await
+                .expect("UI web server crashed");
+        })
+    } else {
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .expect("UI web server crashed");
+        })
+    };
     (actual_port, handle)
 }
 
@@ -1576,9 +1645,14 @@ async fn gpu_stats_handler(
 /// Animadex API proxy — characters search/facets only.
 async fn animadex_proxy_handler(
     AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Path(path): Path<String>,
     uri: axum::http::Uri,
 ) -> Response {
+    if let Some(resp) = require_remote_lan_auth(&state, &headers, &remote) {
+        return resp;
+    }
     let clean = path.trim_start_matches('/');
     if !clean.starts_with("api/characters/") {
         return StatusCode::BAD_REQUEST.into_response();
@@ -1620,9 +1694,14 @@ async fn animadex_proxy_handler(
 /// Only proxies from the hardcoded CDN origin; this is NOT an open proxy.
 async fn cdn_proxy_handler(
     AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Path(path): Path<String>,
     uri: axum::http::Uri,
 ) -> Response {
+    if let Some(resp) = require_remote_lan_auth(&state, &headers, &remote) {
+        return resp;
+    }
     let mut target_url = format!("https://cdn.mooshieblob.com/{}", path);
     if let Some(query) = uri.query() {
         target_url.push('?');
@@ -1718,6 +1797,7 @@ async fn command_handler(
         &command,
         &args,
         username.as_deref(),
+        role,
     )
     .await
     {
@@ -1739,12 +1819,15 @@ async fn dispatch_command(
     command: &str,
     args: &serde_json::Value,
     username: Option<&str>,
+    caller_role: UserRole,
 ) -> Result<serde_json::Value, String> {
     match command {
         // --- Config ---
         "get_config" => {
             let config = state.config.read().await;
-            serde_json::to_value(config.clone()).map_err(|e| e.to_string())
+            let include_secrets = matches!(caller_role, UserRole::Admin | UserRole::Moderator);
+            crate::config::config_to_client_json(&config, include_secrets)
+                .map_err(|e| e.to_string())
         }
         "update_config" => {
             let mut new_config: crate::config::AppConfig =
@@ -4184,20 +4267,33 @@ async fn auth_login_handler(
     AxumState(state): AxumState<SharedState>,
     Json(req): Json<AuthRequest>,
 ) -> Response {
-    match state.auth.login(&req.username, &req.password) {
-        Ok((token, must_change)) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "token": token,
-                "must_change_password": must_change,
-            })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::UNAUTHORIZED,
+    if let Err(e) = state.auth.check_login_allowed(&req.username) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
             Json(serde_json::json!({ "error": e })),
         )
-            .into_response(),
+            .into_response();
+    }
+    match state.auth.login(&req.username, &req.password) {
+        Ok((token, must_change)) => {
+            state.auth.clear_login_attempts(&req.username);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "token": token,
+                    "must_change_password": must_change,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            state.auth.record_failed_login(&req.username);
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": e })),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -4269,14 +4365,26 @@ async fn auth_status_handler(
             }
         }
     };
-    Json(serde_json::json!({
+    let mut payload = serde_json::json!({
         "auth_required": state.lan_enabled,
         "has_accounts": state.auth.has_accounts(),
         "role": role_str,
         "lan_enabled": state.lan_enabled,
         "server_mode": !cfg!(feature = "desktop"),
         "can_use_modelhub": can_use_modelhub,
-    }))
+        "legacy_password_deadline": state.auth.legacy_password_deadline(),
+    });
+
+    if let Some(token) = extract_token(&headers) {
+        if let Some(username) = state.auth.validate_token(&token) {
+            let uses_legacy = state.auth.account_uses_legacy_password(&username);
+            payload["uses_legacy_password"] = serde_json::json!(uses_legacy);
+            payload["legacy_password_expired"] =
+                serde_json::json!(uses_legacy && state.auth.is_legacy_password_grace_expired());
+        }
+    }
+
+    Json(payload)
 }
 
 /// GET /internal-api/_auth/accounts — list all accounts with roles and online status. Admin/Moderator.
@@ -4384,6 +4492,112 @@ async fn auth_delete_account_handler(
             Json(serde_json::json!({ "error": e })),
         )
             .into_response(),
+    }
+}
+
+/// POST /internal-api/_auth/upgrade_password_encryption — migrate a legacy SHA-256
+/// hash to Argon2id using the current password (password text unchanged).
+/// Accepts `{ password }` when authenticated, or `{ username, password }` on the login gate.
+async fn auth_upgrade_password_encryption_handler(
+    AxumState(state): AxumState<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    let (username, password, authenticated) = if let Some(token) = extract_token(&headers) {
+        match state.auth.validate_token(&token) {
+            Some(username) => {
+                let password = match req.get("password").and_then(|v| v.as_str()) {
+                    Some(p) => p.to_string(),
+                    None => {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({ "error": "Missing password" })),
+                        )
+                            .into_response();
+                    }
+                };
+                (username, password, true)
+            }
+            None => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({ "error": "Not authenticated" })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        let username = match req.get("username").and_then(|v| v.as_str()) {
+            Some(u) => u.to_string(),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "Missing username" })),
+                )
+                    .into_response();
+            }
+        };
+        let password = match req.get("password").and_then(|v| v.as_str()) {
+            Some(p) => p.to_string(),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "Missing password" })),
+                )
+                    .into_response();
+            }
+        };
+        (username, password, false)
+    };
+
+    if let Err(e) = state.auth.check_login_allowed(&username) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response();
+    }
+
+    match state.auth.upgrade_password_encryption(&username, &password) {
+        Ok(true) => {
+            if authenticated {
+                return (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response();
+            }
+            match state.auth.login(&username, &password) {
+                Ok((token, must_change)) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "token": token,
+                        "must_change_password": must_change,
+                    })),
+                )
+                    .into_response(),
+                Err(e) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "login_error": e,
+                    })),
+                )
+                    .into_response(),
+            }
+        }
+        Ok(false) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "Password already uses the modern encryption format"
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            state.auth.record_failed_login(&username);
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e })),
+            )
+                .into_response()
+        }
     }
 }
 

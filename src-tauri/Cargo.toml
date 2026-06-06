@@ -70,7 +70,9 @@ rusqlite = { version = "0.39", features = ["bundled"] }
 ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "tracing", "tls-native", "api-24", "load-dynamic"], optional = true }
 csv = { version = "1", optional = true }
 axum = { version = "0.8", features = ["tokio"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
+subtle = "2"
 mime_guess = "2"
 tokio-stream = { version = "0.1", features = ["sync"] }
 open = "5"

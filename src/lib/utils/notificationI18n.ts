@@ -1,6 +1,18 @@
 import { locale } from "../stores/locale.svelte.js";
 import type { Notification } from "../stores/notifications.svelte.js";
 
+function formatDeadlineParam(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+  } catch {
+    return iso;
+  }
+}
+
 function paramsRecord(
   params: Record<string, unknown> | undefined,
 ): Record<string, string | number> | undefined {
@@ -9,6 +21,9 @@ function paramsRecord(
   for (const [k, v] of Object.entries(params)) {
     if (typeof v === "string" || typeof v === "number") out[k] = v;
     else if (v != null) out[k] = String(v);
+  }
+  if (out.deadline != null) {
+    out.deadline = formatDeadlineParam(String(out.deadline));
   }
   return out;
 }

@@ -384,7 +384,7 @@
           />
         </div>
         <div>
-          <label class="text-xs text-neutral-500 block mb-1" for="style-transfer-rf-mode">RF mode</label>
+          <label class="text-xs text-neutral-500 block mb-1" for="style-transfer-rf-mode">{locale.t("generation.style_transfer.rf_mode")}</label>
           <select
             id="style-transfer-rf-mode"
             bind:value={generation.styleTransferRfMode}
@@ -399,7 +399,7 @@
         </div>
         <div class="grid grid-cols-2 gap-2">
           <div>
-            <label class="text-[10px] text-neutral-500" for="style-transfer-gamma">Gamma</label>
+            <label class="text-[10px] text-neutral-500" for="style-transfer-gamma">{locale.t("generation.style_transfer.gamma")}</label>
             <input
               id="style-transfer-gamma"
               type="number"
@@ -412,7 +412,7 @@
             />
           </div>
           <div>
-            <label class="text-[10px] text-neutral-500" for="style-transfer-beta">Beta</label>
+            <label class="text-[10px] text-neutral-500" for="style-transfer-beta">{locale.t("generation.style_transfer.beta")}</label>
             <input
               id="style-transfer-beta"
               type="number"

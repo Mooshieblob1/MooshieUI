@@ -396,7 +396,7 @@
     clearPreprocessorPreviewTimeout();
     try {
       const result = await imageBytesFromPreprocessorEvent(data);
-      if (!result) throw new Error("No image data in event");
+      if (!result) throw new Error(locale.t("generation.controlnet.no_image_data"));
       const filename = `controlnet-preprocessed-${Date.now()}.png`;
       const uploaded = await uploadImageBytes(result.bytes, filename);
       generation.controlnetImage = uploaded.name;

@@ -1,5 +1,6 @@
 import { uploadImageBytes } from "../utils/api.js";
 import { generation } from "./generation.svelte.js";
+import { locale } from "./locale.svelte.js";
 
 export type ToolType = "brush" | "eraser" | "rectFill" | "eyedropper" | "move" | "view" | "transform";
 
@@ -266,7 +267,7 @@ class CanvasStore {
 
     let maskLayerMeta = this.layers.find((l) => l.type === "mask");
     if (!maskLayerMeta) {
-      const newId = this.addLayer("mask", "Inpaint Mask");
+      const newId = this.addLayer("mask", locale.t("canvas.layer.inpaint_mask"));
       maskLayerMeta = this.layers.find((l) => l.id === newId) ?? undefined;
     }
     if (!maskLayerMeta) return false;
@@ -324,7 +325,9 @@ class CanvasStore {
   addLayer(type: "raster" | "mask" = "raster", name?: string): string {
     const id = genLayerId();
     const maxOrder = this.layers.reduce((max, l) => Math.max(max, l.order), -1);
-    const layerName = name ?? (type === "mask" ? "Inpaint Mask" : `Layer ${this.layers.filter((l) => l.type === "raster").length + 1}`);
+    const layerName = name ?? (type === "mask"
+      ? locale.t("canvas.layer.inpaint_mask")
+      : locale.t("canvas.layer.raster", { n: String(this.layers.filter((l) => l.type === "raster").length + 1) }));
 
     this.layers = [
       ...this.layers,
@@ -463,8 +466,8 @@ class CanvasStore {
     this.layers = [];
     this.activeLayerId = null;
 
-    this.addLayer("raster", "Background");
-    this.addLayer("mask", "Inpaint Mask");
+    this.addLayer("raster", locale.t("canvas.layer.background"));
+    this.addLayer("mask", locale.t("canvas.layer.inpaint_mask"));
 
     // Set active to the raster layer
     const rasterLayer = this.layers.find((l) => l.type === "raster");

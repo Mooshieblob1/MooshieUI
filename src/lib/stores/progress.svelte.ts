@@ -1,4 +1,5 @@
 import type { GenerationParams } from "../types/index.js";
+import { locale } from "./locale.svelte.js";
 
 export interface QueuedPrompt {
   promptId: string;
@@ -113,27 +114,39 @@ class ProgressStore {
   get phaseLabel(): string {
     if (this.regionalChainStatus) return this.regionalChainStatus;
     if (!this.isGenerating) return "";
+    const queuedSuffix = this.queueCount - 1;
     // Show queue position if waiting behind other users
     if (this.queuePosition != null && this.queuePosition > 0 && this.totalSteps === 0) {
       const pos = this.queuePosition;
       const own = this.queueCount;
-      if (own > 1) return `Queue position #${pos + 1} (+${own - 1} of yours)`;
-      return `Queue position #${pos + 1}`;
+      if (own > 1) {
+        return locale.t("progress.queue_position_own", {
+          pos: String(pos + 1),
+          count: String(own - 1),
+        });
+      }
+      return locale.t("progress.queue_position", { pos: String(pos + 1) });
     }
     if (this.totalSteps === 0) {
       // Position 0 (or unknown) means this prompt is not waiting behind
       // another prompt in the queue; avoid misleading "In queue..." labels.
-      return this.queueCount > 1 ? `Queued (${this.queueCount})` : "Preparing...";
+      return this.queueCount > 1
+        ? locale.t("progress.queued", { count: String(this.queueCount) })
+        : locale.t("progress.preparing");
     }
     if (this.activePrompt?.params?.style_transfer_enabled && !this.hasReliableStepProgress) {
       return this.queueCount > 1
-        ? `Applying style reference... (+${this.queueCount - 1} queued)`
-        : "Applying style reference...";
+        ? locale.t("progress.applying_style_reference_queued", { count: String(queuedSuffix) })
+        : locale.t("progress.applying_style_reference");
     }
     if (this.wasUpscaled && this.samplingPass >= 2) {
-      return this.queueCount > 1 ? `Upscaling... (+${this.queueCount - 1} queued)` : "Upscaling...";
+      return this.queueCount > 1
+        ? locale.t("progress.upscaling_queued", { count: String(queuedSuffix) })
+        : locale.t("progress.upscaling");
     }
-    return this.queueCount > 1 ? `Generating... (+${this.queueCount - 1} queued)` : "Generating...";
+    return this.queueCount > 1
+      ? locale.t("progress.generating_queued", { count: String(queuedSuffix) })
+      : locale.t("progress.generating");
   }
 
   setActiveMode(mode: "txt2img" | "img2img" | "inpainting") {

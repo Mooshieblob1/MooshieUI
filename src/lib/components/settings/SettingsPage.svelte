@@ -24,6 +24,7 @@
   import type { ThemeProfile, ThemeTone } from "../../utils/theme.js";
   import { onMount, onDestroy } from "svelte";
   import { marked } from "marked";
+  import DOMPurify from "dompurify";
   import { clearArtistImageCache, getArtistImageCacheCount } from "../../artist-gallery/imageCache.js";
 
   interface Props {
@@ -88,7 +89,7 @@
   let attentionStatusError = $state<string | null>(null);
   let attentionStatusVenvPath = $state<string | null>(null);
   let workersDetecting = $state(false);
-  let newThemeName = $state("Custom Theme");
+  let newThemeName = $state("");
   let themeImportError = $state<string | null>(null);
   let themeImportDone = $state(false);
   let themeExportDone = $state(false);
@@ -96,7 +97,7 @@
   let showThemeCreatorModal = $state(false);
   let draftEditingProfileId = $state<string | null>(null);
   let settingsLoadError = $state<string | null>(null);
-  let draftThemeName = $state("Custom Theme");
+  let draftThemeName = $state("");
   let draftThemeDark = $state<ThemeTone>({ ...DEFAULT_THEME_TONE_DARK });
   let draftThemeLight = $state<ThemeTone>({ ...DEFAULT_THEME_TONE_LIGHT });
   let draftThemeBackgroundImage = $state<string | null>(null);
@@ -270,7 +271,7 @@
     try {
       const gb = locale.parseDecimal(storageInputGB);
       if (isNaN(gb) || gb < 0.1 || gb > 100) {
-        storageError = "Enter a value between 0.1 and 100 GB.";
+        storageError = locale.t("settings.lan.storage_range_error");
         return;
       }
       const limitBytes = Math.round(gb * 1024 * 1024 * 1024);
@@ -285,22 +286,22 @@
   }
 
   function relativeTime(iso: string | null): string {
-    if (!iso) return "Never";
+    if (!iso) return locale.t("settings.lan.time.never");
     const diff = Date.now() - new Date(iso).getTime();
-    if (diff < 0 || isNaN(diff)) return "Unknown";
+    if (diff < 0 || isNaN(diff)) return locale.t("settings.lan.time.unknown");
     const sec = Math.floor(diff / 1000);
-    if (sec < 60) return "Just now";
+    if (sec < 60) return locale.t("notifications.time.just_now");
     const min = Math.floor(sec / 60);
-    if (min < 60) return `${min}m ago`;
+    if (min < 60) return locale.t("notifications.time.minutes_ago", { min: String(min) });
     const hrs = Math.floor(min / 60);
-    if (hrs < 24) return `${hrs}h ago`;
+    if (hrs < 24) return locale.t("notifications.time.hours_ago", { hrs: String(hrs) });
     const days = Math.floor(hrs / 24);
-    if (days < 7) return `${days}d ago`;
+    if (days < 7) return locale.t("notifications.time.days_ago", { days: String(days) });
     const weeks = Math.floor(days / 7);
-    if (weeks < 5) return `${weeks}w ago`;
+    if (weeks < 5) return locale.t("settings.lan.time.weeks_ago", { weeks: String(weeks) });
     const months = Math.floor(days / 30);
-    if (months < 12) return `${months}mo ago`;
-    return `${Math.floor(days / 365)}y ago`;
+    if (months < 12) return locale.t("settings.lan.time.months_ago", { months: String(months) });
+    return locale.t("settings.lan.time.years_ago", { years: String(Math.floor(days / 365)) });
   }
 
   const sortedAccounts = $derived.by(() => {
@@ -339,9 +340,77 @@
   let cpSuccess = $state(false);
   let cpBusy = $state(false);
 
+  let usesLegacyPassword = $state(false);
+  let legacyPasswordExpired = $state(false);
+  let legacyPasswordDeadline = $state<string | null>(null);
+  let upgradePass = $state("");
+  let upgradeBusy = $state(false);
+  let upgradeError = $state<string | null>(null);
+  let upgradeSuccess = $state(false);
+
+  function formatLegacyDeadline(iso: string | null): string {
+    if (!iso) return "";
+    try {
+      return new Date(iso).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      });
+    } catch {
+      return iso;
+    }
+  }
+
+  async function refreshPasswordSecurityStatus() {
+    if (!isBrowserMode) return;
+    try {
+      const resp = await fetch("/internal-api/_auth/status", {
+        headers: authHeaders(),
+      });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      usesLegacyPassword = data.uses_legacy_password === true;
+      legacyPasswordExpired = data.legacy_password_expired === true;
+      legacyPasswordDeadline = data.legacy_password_deadline ?? null;
+    } catch (e) {
+      console.warn("[settings] failed to read password security status:", e);
+    }
+  }
+
+  async function upgradePasswordEncryption() {
+    if (!upgradePass) {
+      upgradeError = locale.t("auth.password_placeholder");
+      return;
+    }
+    upgradeBusy = true;
+    upgradeError = null;
+    upgradeSuccess = false;
+    try {
+      const resp = await fetch("/internal-api/_auth/upgrade_password_encryption", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ password: upgradePass }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        upgradeError = data.error ?? locale.t("auth.upgrade_password_failed");
+        return;
+      }
+      upgradePass = "";
+      upgradeSuccess = true;
+      usesLegacyPassword = false;
+      legacyPasswordExpired = false;
+      setTimeout(() => (upgradeSuccess = false), 4000);
+    } catch (e) {
+      upgradeError = String(e);
+    } finally {
+      upgradeBusy = false;
+    }
+  }
+
   async function changeOwnPassword() {
-    if (cpNewPass1.length < 4) { cpError = "New password must be at least 4 characters."; return; }
-    if (cpNewPass1 !== cpNewPass2) { cpError = "Passwords do not match."; return; }
+    if (cpNewPass1.length < 4) { cpError = locale.t("auth.password_min_length"); return; }
+    if (cpNewPass1 !== cpNewPass2) { cpError = locale.t("auth.passwords_mismatch"); return; }
     cpBusy = true;
     cpError = null;
     cpSuccess = false;
@@ -352,7 +421,7 @@
         body: JSON.stringify({ current_password: cpCurrentPass, new_password: cpNewPass1 }),
       });
       const data = await resp.json();
-      if (!resp.ok) { cpError = data.error ?? "Failed to change password."; return; }
+      if (!resp.ok) { cpError = data.error ?? locale.t("auth.change_password_failed"); return; }
       cpCurrentPass = "";
       cpNewPass1 = "";
       cpNewPass2 = "";
@@ -374,7 +443,7 @@
   let resetBusy = $state(false);
 
   async function adminResetPassword() {
-    if (resetTempPass.length < 4) { resetError = "Temporary password must be at least 4 characters."; return; }
+    if (resetTempPass.length < 4) { resetError = locale.t("settings.lan.temp_password_min"); return; }
     resetBusy = true;
     resetError = null;
     resetSuccess = false;
@@ -385,7 +454,7 @@
         body: JSON.stringify({ username: resetTargetUser, temp_password: resetTempPass }),
       });
       const data = await resp.json();
-      if (!resp.ok) { resetError = data.error ?? "Failed to reset password."; return; }
+      if (!resp.ok) { resetError = data.error ?? locale.t("settings.lan.reset_failed"); return; }
       resetSuccess = true;
       resetTempPass = "";
     } catch (e) {
@@ -412,7 +481,7 @@
   }
 
   function openReportInMail() {
-    const subject = encodeURIComponent("MooshieUI Issue Report");
+    const subject = encodeURIComponent(locale.t("settings.about.issue_report_subject"));
     const bodyParts = [];
     if (reportName.trim()) bodyParts.push(`Name: ${reportName.trim()}`);
     if (reportEmail.trim()) bodyParts.push(`Email: ${reportEmail.trim()}`);
@@ -454,7 +523,7 @@
 
   async function createLanAccount() {
     if (!lanNewUser.trim() || lanNewPass.length < 4) {
-      lanAuthError = "Username required, password must be at least 4 characters.";
+      lanAuthError = locale.t("settings.lan.account_validation");
       return;
     }
     lanAuthBusy = true;
@@ -467,7 +536,7 @@
       });
       const data = await resp.json();
       if (!resp.ok) {
-        lanAuthError = data.error ?? "Failed to create account.";
+        lanAuthError = data.error ?? locale.t("settings.lan.create_failed");
       } else {
         lanNewUser = "";
         lanNewPass = "";
@@ -491,7 +560,7 @@
       });
       if (!resp.ok) {
         const data = await resp.json();
-        lanAuthError = data.error ?? "Failed to delete account.";
+        lanAuthError = data.error ?? locale.t("settings.lan.delete_failed");
       } else {
         await loadLanAccounts();
       }
@@ -514,7 +583,7 @@
       });
       if (!resp.ok) {
         const data = await resp.json();
-        lanAuthError = data.error ?? "Failed to update role.";
+        lanAuthError = data.error ?? locale.t("settings.lan.role_update_failed");
       } else {
         await loadLanAccounts();
       }
@@ -536,7 +605,7 @@
       });
       if (!resp.ok) {
         const data = await resp.json();
-        lanAuthError = data.error ?? "Failed to update Model Hub access.";
+        lanAuthError = data.error ?? locale.t("settings.lan.modelhub_update_failed");
       } else {
         await loadLanAccounts();
       }
@@ -599,7 +668,7 @@
       destination = await saveDialog({
         title: locale.t('settings.about.save_dialog_title'),
         defaultPath: "mooshieui-diagnostics.log",
-        filters: [{ name: "Log Files", extensions: ["log", "txt"] }],
+        filters: [{ name: locale.t("settings.about.log_files_filter"), extensions: ["log", "txt"] }],
       });
     }
     if (!destination) return;
@@ -718,7 +787,8 @@
       })
       .trim();
     if (!cleaned) return `<p class='text-neutral-500 italic'>${locale.t('settings.about.no_notes_html')}</p>`;
-    return marked.parse(cleaned, { async: false }) as string;
+    const html = marked.parse(cleaned, { async: false }) as string;
+    return DOMPurify.sanitize(html);
   }
 
   // Model directory auto-detection
@@ -797,7 +867,7 @@
     moving = true;
     moveError = null;
     moveSuccess = false;
-    moveProgress = "Starting move...";
+    moveProgress = locale.t("settings.gallery.move_starting");
 
     const unlisten = await ipcListen("setup:progress", (event: any) => {
       const data = event.payload as { message: string };
@@ -813,7 +883,7 @@
       // Reload config since paths changed
       await loadConfig();
     } catch (e: any) {
-      moveError = typeof e === "string" ? e : e.message || "Unknown error";
+      moveError = typeof e === "string" ? e : e.message || locale.t("app.status.unknown_error");
       moveProgress = "";
     } finally {
       moving = false;
@@ -1050,7 +1120,7 @@
     try {
       attentionStatus = await checkAttentionBackend();
     } catch (e: any) {
-      attentionStatusError = typeof e === "string" ? e : e.message || "Failed to check attention backend";
+      attentionStatusError = typeof e === "string" ? e : e.message || locale.t("settings.attention.check_failed");
     } finally {
       attentionStatusLoading = false;
     }
@@ -1081,6 +1151,7 @@
     if (isBrowserMode) {
       loadLanAccounts();
       loadLanInfo();
+      void refreshPasswordSecurityStatus();
     }
     startQueuePolling();
   });
@@ -1142,7 +1213,7 @@
       config.attention_backend = backend;
       checkRestartNeeded();
     } catch (e: any) {
-      attentionError = typeof e === "string" ? e : e.message || "Installation failed";
+      attentionError = typeof e === "string" ? e : e.message || locale.t("settings.attention.install_failed");
       config.attention_backend = previousBackend;
     } finally {
       attentionInstalling = false;
@@ -1197,7 +1268,7 @@
 
   function resetThemeCreatorDraft() {
     draftEditingProfileId = null;
-    draftThemeName = newThemeName.trim() || "Custom Theme";
+    draftThemeName = newThemeName.trim() || locale.t("settings.appearance.custom_theme_default");
     draftThemeDark = { ...DEFAULT_THEME_TONE_DARK };
     draftThemeLight = { ...DEFAULT_THEME_TONE_LIGHT };
     draftThemeBackgroundImage = null;
@@ -1231,7 +1302,7 @@
     if (!config) return;
     const profile: ThemeProfile = {
       id: draftEditingProfileId ?? `theme_${Date.now()}`,
-      name: draftThemeName.trim() || "Custom Theme",
+      name: draftThemeName.trim() || locale.t("settings.appearance.custom_theme_default"),
       palette: "custom",
       dark: { ...draftThemeDark },
       light: { ...draftThemeLight },
@@ -1392,8 +1463,8 @@
     if (!file) return;
     try {
       const parsed = JSON.parse(await file.text()) as { themes?: unknown[] };
-      if (!Array.isArray(parsed.themes)) throw new Error("Invalid theme file.");
-      if (parsed.themes.length === 0) throw new Error("Theme file does not contain any themes.");
+      if (!Array.isArray(parsed.themes)) throw new Error(locale.t("settings.appearance.theme_import_invalid"));
+      if (parsed.themes.length === 0) throw new Error(locale.t("settings.appearance.theme_import_empty"));
       const existingProfiles = Array.isArray(config.theme_profiles) ? config.theme_profiles : [];
       const usedIds = new Set(existingProfiles.map((profile) => profile.id));
       const imported = parsed.themes.map((theme, index) => {
@@ -1405,7 +1476,7 @@
             typeof source.id === "string" && source.id.trim() ? source.id : `theme_${Date.now()}_${index}`,
             usedIds,
           ),
-          name: typeof source.name === "string" && source.name.trim() ? source.name.trim() : `Imported Theme ${index + 1}`,
+          name: typeof source.name === "string" && source.name.trim() ? source.name.trim() : locale.t("settings.appearance.imported_theme", { index: String(index + 1) }),
           palette:
             source.palette === "mooshie" ||
             source.palette === "nord" ||
@@ -2009,7 +2080,7 @@
               <p class="text-xs text-neutral-500 mt-1">{locale.t('settings.connection.pip_index_url_desc')}</p>
             </div>
             <div class="col-span-3">
-              <label class="block text-xs text-neutral-400 mb-1">Output filename template</label>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t("settings.connection.output_filename_template")}</label>
               <input
                 type="text"
                 bind:value={config.output_filename_template}
@@ -2018,29 +2089,37 @@
                 placeholder={`{prompt_id}__{mode}__{model}__{seed}`}
               />
               <p class="text-xs text-neutral-500 mt-1">
-                Keys: {`{prompt_id}`}, {`{mode}`}, {`{index}`}, {`{date}`}, {`{time}`}, {`{model}`}, {`{seed}`}
+                {locale.t("settings.connection.output_filename_keys", {
+                  prompt_id: "{prompt_id}",
+                  mode: "{mode}",
+                  index: "{index}",
+                  date: "{date}",
+                  time: "{time}",
+                  model: "{model}",
+                  seed: "{seed}",
+                })}
               </p>
             </div>
             <div class="col-span-3">
-              <label class="block text-xs text-neutral-400 mb-1">Webhook URL</label>
+              <label class="block text-xs text-neutral-400 mb-1">{locale.t("settings.connection.webhook_url")}</label>
               <input
                 type="text"
                 bind:value={config.webhook_url}
                 oninput={checkRestartNeeded}
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
-                placeholder="https://example.com/webhooks/mooshie"
+                placeholder={locale.t("settings.connection.webhook_url_placeholder")}
               />
               <div class="mt-2 flex flex-wrap gap-4 text-xs text-neutral-400">
                 <label class="inline-flex items-center gap-2">
                   <input type="checkbox" bind:checked={config.webhook_include_sensitive} class="accent-indigo-500" />
-                  Include prompt/metadata
+                  {locale.t("settings.connection.webhook_include_sensitive")}
                 </label>
                 <label class="inline-flex items-center gap-2">
                   <input type="checkbox" bind:checked={config.webhook_allow_private_targets} class="accent-indigo-500" />
-                  Allow localhost/private targets
+                  {locale.t("settings.connection.webhook_allow_private")}
                 </label>
               </div>
-              <p class="text-xs text-neutral-500 mt-1">Enabled event: <code>image_saved</code> (async retry with backoff).</p>
+              <p class="text-xs text-neutral-500 mt-1">{locale.t("settings.connection.webhook_events")}</p>
             </div>
           </div>
           </div>
@@ -2185,7 +2264,7 @@
                 <div class="flex items-center gap-2 text-[10px] text-neutral-400">
                   <span>{locale.t("settings.appearance.logo_preview")}</span>
                   {#if activeThemeProfile.logo_image}
-                    <img src={activeThemeProfile.logo_image} alt="theme logo preview" class="w-6 h-6 rounded object-cover border border-neutral-700" />
+                    <img src={activeThemeProfile.logo_image} alt={locale.t("settings.appearance.logo_preview_alt")} class="w-6 h-6 rounded object-cover border border-neutral-700" />
                   {:else}
                     <span class="text-neutral-500">-</span>
                   {/if}
@@ -2499,14 +2578,14 @@
             {#if config}
               <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-3">
                 <div class="flex items-center justify-between">
-                  <p class="text-xs text-neutral-300">GPU worker config</p>
+                  <p class="text-xs text-neutral-300">{locale.t("settings.gpu.worker_config")}</p>
                   <div class="flex items-center gap-2">
                     <button
                       type="button"
                       class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:border-indigo-500"
                       onclick={addGpuWorker}
                     >
-                      Add
+                      {locale.t("common.add")}
                     </button>
                     <button
                       type="button"
@@ -2514,44 +2593,44 @@
                       onclick={autoDetectGpuWorkers}
                       disabled={workersDetecting}
                     >
-                      {workersDetecting ? "Detecting..." : "Auto-detect"}
+                      {workersDetecting ? locale.t("settings.gpu.detecting") : locale.t("settings.gpu.auto_detect")}
                     </button>
                   </div>
                 </div>
                 {#if !config.gpu_workers || config.gpu_workers.length === 0}
-                  <p class="text-[11px] text-neutral-500">No workers configured. Single-worker mode is used by default.</p>
+                  <p class="text-[11px] text-neutral-500">{locale.t("settings.gpu.no_workers")}</p>
                 {:else}
                   <div class="space-y-2">
                     {#each config.gpu_workers as worker, idx}
                       <div class="grid grid-cols-12 gap-2 items-center rounded border border-neutral-800 bg-neutral-900/60 p-2">
                         <label class="col-span-2 text-[10px] text-neutral-400">
-                          GPU
+                          {locale.t("settings.gpu.field.gpu")}
                           <input type="number" bind:value={worker.gpu_index} oninput={() => autoSave()} class="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100" />
                         </label>
                         <label class="col-span-2 text-[10px] text-neutral-400">
-                          Port
+                          {locale.t("settings.gpu.field.port")}
                           <input type="number" bind:value={worker.port} oninput={() => autoSave()} class="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100" />
                         </label>
                         <label class="col-span-4 text-[10px] text-neutral-400">
-                          Label
+                          {locale.t("settings.gpu.field.label")}
                           <input type="text" bind:value={worker.label} oninput={() => autoSave()} class="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100" />
                         </label>
                         <label class="col-span-2 text-[10px] text-neutral-400">
-                          VRAM
+                          {locale.t("settings.gpu.vram")}
                           <select bind:value={worker.vram_mode} onchange={() => autoSave()} class="mt-1 w-full rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100">
-                            <option value="">default</option>
-                            <option value="high">high</option>
-                            <option value="normal">normal</option>
-                            <option value="low">low</option>
-                            <option value="none">none</option>
+                            <option value="">{locale.t("settings.gpu.vram_mode.default")}</option>
+                            <option value="high">{locale.t("settings.gpu.vram_mode.high")}</option>
+                            <option value="normal">{locale.t("settings.gpu.vram_mode.normal")}</option>
+                            <option value="low">{locale.t("settings.gpu.vram_mode.low")}</option>
+                            <option value="none">{locale.t("settings.gpu.vram_mode.none")}</option>
                           </select>
                         </label>
                         <div class="col-span-2 flex items-center justify-end gap-2">
                           <label class="inline-flex items-center gap-1 text-[10px] text-neutral-300">
                             <input type="checkbox" bind:checked={worker.enabled} onchange={() => autoSave()} class="accent-indigo-500" />
-                            On
+                            {locale.t("settings.gpu.enabled_label")}
                           </label>
-                          <button type="button" class="text-xs text-red-300 hover:text-red-200" onclick={() => removeGpuWorker(idx)}>Delete</button>
+                          <button type="button" class="text-xs text-red-300 hover:text-red-200" onclick={() => removeGpuWorker(idx)}>{locale.t("common.delete")}</button>
                         </div>
                       </div>
                     {/each}
@@ -3279,6 +3358,44 @@
         </section>
         {/if}
 
+        <!-- Legacy password encryption upgrade (browser mode) -->
+        {#if isBrowserMode && usesLegacyPassword}
+        <section class="bg-neutral-900 rounded-xl border border-amber-800/50 overflow-hidden break-inside-avoid mb-4">
+          <div class="p-5 space-y-3">
+            <h3 class="text-sm font-medium text-amber-200">{locale.t('auth.legacy_password_migration_title')}</h3>
+            <p class="text-xs text-neutral-400">
+              {locale.t('auth.legacy_password_migration_desc', {
+                deadline: formatLegacyDeadline(legacyPasswordDeadline),
+              })}
+            </p>
+            {#if legacyPasswordExpired}
+              <p class="text-xs text-red-400">{locale.t('auth.legacy_password_expired')}</p>
+            {/if}
+            <p class="text-[10px] text-neutral-500">{locale.t('auth.upgrade_password_encryption_desc')}</p>
+            <input
+              type="password"
+              bind:value={upgradePass}
+              placeholder={locale.t('settings.lan.current_password')}
+              class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-amber-500 transition-colors"
+              onkeydown={(e) => { if (e.key === "Enter") upgradePasswordEncryption(); }}
+            />
+            {#if upgradeError}
+              <p class="text-xs text-red-400">{upgradeError}</p>
+            {/if}
+            {#if upgradeSuccess}
+              <p class="text-xs text-green-400">{locale.t('auth.upgrade_password_success')}</p>
+            {/if}
+            <button
+              class="w-full py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer border border-amber-700/60 {upgradeBusy ? 'bg-neutral-800 text-neutral-500' : 'bg-amber-600/20 hover:bg-amber-600/30 text-amber-200'}"
+              disabled={upgradeBusy}
+              onclick={upgradePasswordEncryption}
+            >
+              {upgradeBusy ? locale.t('common.saving') : locale.t('auth.upgrade_password_encryption')}
+            </button>
+          </div>
+        </section>
+        {/if}
+
         <!-- Account / Change Password (browser mode non-admin users) -->
         {#if isBrowserMode && !isAdmin}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
@@ -3360,7 +3477,7 @@
           <div class="px-5 pb-5 space-y-4">
             <div class="flex items-center justify-between">
               <div>
-                <p class="text-sm text-neutral-200">MooshieUI</p>
+                <p class="text-sm text-neutral-200">{locale.t("app.brand_name")}</p>
                 <p class="text-xs text-neutral-500">{locale.t('settings.about.version')} {appVersion}</p>
               </div>
               <button
@@ -3678,7 +3795,7 @@
         <input type="file" accept="image/*" onchange={(event) => setDraftThemeImage("logo", event)} class="block w-full text-xs text-neutral-300" />
         <div class="h-14 w-14 rounded-lg border border-neutral-700 bg-neutral-900 flex items-center justify-center overflow-hidden">
           {#if draftThemeLogoImage}
-            <img src={draftThemeLogoImage} alt="draft logo preview" class="h-full w-full object-contain" />
+            <img src={draftThemeLogoImage} alt={locale.t("settings.appearance.draft_logo_alt")} class="h-full w-full object-contain" />
           {:else}
             <span class="text-[10px] text-neutral-500">{locale.t("settings.appearance.status_off")}</span>
           {/if}
@@ -3725,7 +3842,7 @@
     <div class="w-56 h-56 mx-auto rounded-xl border border-neutral-700 overflow-hidden bg-neutral-950 relative">
       <img
         src={pendingLogoDataUrl}
-        alt="crop source"
+        alt={locale.t("settings.appearance.crop_source_alt")}
         class="absolute inset-0 w-full h-full object-cover"
         style="transform: translate({logoCropPanX * 20}%, {logoCropPanY * 20}%) scale({logoCropZoom}); transform-origin: center;"
       />
