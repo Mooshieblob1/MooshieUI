@@ -215,6 +215,7 @@ fn forbidden_response(msg: &str) -> Response {
 }
 
 /// Remote LAN clients must authenticate; localhost and non-LAN mode stay open.
+#[allow(dead_code)]
 fn require_remote_lan_auth(
     state: &WebState,
     headers: &HeaderMap,
@@ -1645,14 +1646,9 @@ async fn gpu_stats_handler(
 /// Animadex API proxy — characters search/facets only.
 async fn animadex_proxy_handler(
     AxumState(state): AxumState<SharedState>,
-    ConnectInfo(remote): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
     Path(path): Path<String>,
     uri: axum::http::Uri,
 ) -> Response {
-    if let Some(resp) = require_remote_lan_auth(&state, &headers, &remote) {
-        return resp;
-    }
     let clean = path.trim_start_matches('/');
     if !clean.starts_with("api/characters/") {
         return StatusCode::BAD_REQUEST.into_response();
@@ -1694,14 +1690,9 @@ async fn animadex_proxy_handler(
 /// Only proxies from the hardcoded CDN origin; this is NOT an open proxy.
 async fn cdn_proxy_handler(
     AxumState(state): AxumState<SharedState>,
-    ConnectInfo(remote): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
     Path(path): Path<String>,
     uri: axum::http::Uri,
 ) -> Response {
-    if let Some(resp) = require_remote_lan_auth(&state, &headers, &remote) {
-        return resp;
-    }
     let mut target_url = format!("https://cdn.mooshieblob.com/{}", path);
     if let Some(query) = uri.query() {
         target_url.push('?');

@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v1.4.9
+
+### Fixes and maintenance
+- **Browser mode proxies**: removed LAN authentication from Animadex and CDN proxy routes so artist previews and CDN assets load correctly in browser mode without a session token.
+
+---
+
 ## What's New in v1.4.8
 
 ### LAN and Web Server Security
