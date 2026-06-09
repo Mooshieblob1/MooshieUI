@@ -1,5 +1,18 @@
 # Changelog
 
+## What's New in v1.4.8
+
+### LAN and Web Server Security
+- **LAN Authentication & Accounts**: introduced a robust local account authentication system for LAN / browser-mode deployments. Supports password hashing with Argon2id, token-based session tracking, and user role management (Admin, Moderator, User).
+- **Password Upgrade Migration**: transparently verifies and upgrades legacy SHA-256 password hashes to the modern Argon2id format on login. Prompts a warning when grace periods expire.
+- **Port Binding Fix**: resolved a port-binding conflict when starting the Axum web server in TLS mode by explicitly dropping the HTTP listener socket before binding the TLS server.
+
+### User Experience and Caching
+- **Artist preview cache**: cached CDN preview images locally in the user's gallery directory, resolving CORS issues and speeding up subsequent views in browser mode.
+- **Quickrelease configuration**: added automation tools for checkless git and version tagging workflows.
+
+---
+
 ## What's New in v1.4.7
 
 ### Fixes and maintenance

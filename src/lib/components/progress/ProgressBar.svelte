@@ -12,6 +12,9 @@
         {#if progress.hasReliableStepProgress}
           <span class="text-neutral-500 ml-1">{progress.currentStep}/{progress.totalSteps}</span>
         {/if}
+        {#if progress.elapsedSeconds > 0}
+          <span class="text-neutral-500 ml-2">({progress.elapsedSeconds}s)</span>
+        {/if}
       </span>
       {#if progress.hasReliableStepProgress}
         <span>{Math.round(progress.percentage)}%</span>

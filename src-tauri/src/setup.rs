@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use std::process::Stdio;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::config;
 use crate::state::AppState;
@@ -35,8 +34,32 @@ fn emit(app: &AppHandle, step: &str, msg: &str, pct: u32) {
     .ok();
 }
 
+#[derive(Clone, serde::Serialize)]
+struct SetupLogPayload {
+    text: String,
+    is_update: bool,
+}
+
 fn emit_log(app: &AppHandle, line: &str) {
-    app.emit("setup:log", line).ok();
+    app.emit(
+        "setup:log",
+        SetupLogPayload {
+            text: line.to_string(),
+            is_update: false,
+        },
+    )
+    .ok();
+}
+
+fn emit_log_update(app: &AppHandle, line: &str) {
+    app.emit(
+        "setup:log",
+        SetupLogPayload {
+            text: line.to_string(),
+            is_update: true,
+        },
+    )
+    .ok();
 }
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -130,6 +153,71 @@ fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Comman
 
 /// Run a command with hidden window, capturing stdout/stderr and streaming
 /// each line to the frontend via `setup:log`.
+async fn read_stream_logged<R: tokio::io::AsyncRead + Unpin>(app: AppHandle, stream: R) {
+    use tokio::io::AsyncReadExt;
+    let mut reader = stream;
+    let mut buf = [0u8; 1024];
+    let mut line_buf = Vec::new();
+    let mut last_was_cr = false;
+
+    loop {
+        match reader.read(&mut buf).await {
+            Ok(0) => {
+                if !line_buf.is_empty() {
+                    let s = String::from_utf8_lossy(&line_buf);
+                    let trimmed = s.trim_end_matches(&['\r', '\n'][..]);
+                    if !trimmed.is_empty() {
+                        if last_was_cr {
+                            emit_log_update(&app, trimmed);
+                        } else {
+                            emit_log(&app, trimmed);
+                        }
+                    }
+                }
+                break;
+            }
+            Ok(n) => {
+                for i in 0..n {
+                    let b = buf[i];
+                    if b == b'\n' {
+                        if !(last_was_cr && line_buf.is_empty()) {
+                            let s = String::from_utf8_lossy(&line_buf);
+                            let trimmed = s.trim_end_matches(&['\r', '\n'][..]);
+                            if last_was_cr {
+                                emit_log_update(&app, trimmed);
+                            } else {
+                                emit_log(&app, trimmed);
+                            }
+                        }
+                        line_buf.clear();
+                        last_was_cr = false;
+                    } else if b == b'\r' {
+                        let s = String::from_utf8_lossy(&line_buf);
+                        let trimmed = s.trim_end_matches(&['\r', '\n'][..]);
+                        if !trimmed.is_empty() {
+                            if last_was_cr {
+                                emit_log_update(&app, trimmed);
+                            } else {
+                                emit_log(&app, trimmed);
+                            }
+                        }
+                        line_buf.clear();
+                        last_was_cr = true;
+                    } else {
+                        line_buf.push(b);
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("Error reading stream: {}", e);
+                break;
+            }
+        }
+    }
+}
+
+/// Run a command with hidden window, capturing stdout/stderr and streaming
+/// each line to the frontend via `setup:log`.
 async fn run_logged(
     app: &AppHandle,
     program: &str,
@@ -154,19 +242,13 @@ async fn run_logged(
 
     let out_task = tokio::spawn(async move {
         if let Some(out) = stdout {
-            let mut lines = BufReader::new(out).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                emit_log(&app_out, &line);
-            }
+            read_stream_logged(app_out, out).await;
         }
     });
 
     let err_task = tokio::spawn(async move {
         if let Some(err) = stderr {
-            let mut lines = BufReader::new(err).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                emit_log(&app_err, &line);
-            }
+            read_stream_logged(app_err, err).await;
         }
     });
 
@@ -202,19 +284,13 @@ async fn run_command_logged(
 
     let out_task = tokio::spawn(async move {
         if let Some(out) = stdout {
-            let mut lines = BufReader::new(out).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                emit_log(&app_out, &line);
-            }
+            read_stream_logged(app_out, out).await;
         }
     });
 
     let err_task = tokio::spawn(async move {
         if let Some(err) = stderr {
-            let mut lines = BufReader::new(err).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                emit_log(&app_err, &line);
-            }
+            read_stream_logged(app_err, err).await;
         }
     });
 
@@ -689,6 +765,8 @@ async fn uv_pip(
     let mut cmd = tokio::process::Command::new(uv);
     cmd.arg("pip")
         .arg("install")
+        .arg("--progress")
+        .arg("always")
         .arg("--python")
         .arg(&python_str)
         .args(args)
@@ -997,6 +1075,8 @@ async fn step_install_deps(
     let mut cmd = tokio::process::Command::new(uv);
     cmd.arg("pip")
         .arg("install")
+        .arg("--progress")
+        .arg("always")
         .arg("--python")
         .arg(&python_str)
         .arg("-r")
@@ -1063,11 +1143,25 @@ async fn step_install_attention_backend(
         }
         "flash_v1" => {
             emit_log(app, "Installing FlashAttention v1...");
-            uv_pip(app, base, &["flash-attn<2.0"], net, true).await
+            uv_pip(
+                app,
+                base,
+                &["flash-attn<2.0", "--no-build-isolation"],
+                net,
+                true,
+            )
+            .await
         }
         "flash_v2" => {
             emit_log(app, "Installing FlashAttention v2...");
-            uv_pip(app, base, &["flash-attn"], net, true).await
+            uv_pip(
+                app,
+                base,
+                &["flash-attn", "--no-build-isolation"],
+                net,
+                true,
+            )
+            .await
         }
         _ => Ok(()),
     }

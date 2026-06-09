@@ -41,13 +41,21 @@
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
-  import { interrogateGalleryImage, interrogateImage, saveModelSidecarThumbnail } from "./lib/utils/api.js";
+  import {
+    interrogateGalleryImage,
+    interrogateImage,
+    saveModelSidecarThumbnail,
+    installCustomNode,
+  } from "./lib/utils/api.js";
   import {
     fetchModelPreviewImageBytes,
     uploadModelPreviewImage,
     type ModelPreviewActionDetail,
   } from "./lib/utils/modelPreviewImage.js";
-  import { isStyleTransferExecutionError } from "./lib/utils/styleTransferNodes.js";
+  import {
+    isStyleTransferExecutionError,
+    checkStyleTransferNodesReady,
+  } from "./lib/utils/styleTransferNodes.js";
   import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
@@ -918,6 +926,34 @@
       generation.saveSettings();
       currentPage = "generate";
       gallery.showToast(locale.t("generation.style_transfer.reference_loaded"), "success");
+
+      // Actually ensure style transfer nodes are installed and take action when the
+      // feature is activated via a preview "Style" button (e.g. on a LoRA card).
+      // This is the path that previously left users with a stuck "generates but no output"
+      // state. We check, and if missing we action the git installs for the two required
+      // packages (the same ones the backend ensure logic uses on startup).
+      try {
+        const nodesReady = await checkStyleTransferNodesReady();
+        if (!nodesReady) {
+          gallery.showToast(locale.t("generation.style_transfer.nodes_install"), "info");
+          if (!isBrowserMode) {
+            // Action the installs only in desktop mode (clones the repos into the local custom_nodes).
+            // In browser/LAN mode the remote ComfyUI must have the nodes pre-installed (via its server build).
+            await installCustomNode(
+              "https://github.com/BigStationW/ComfyUi-Untwisting-RoPE.git",
+              "ComfyUi-Untwisting-RoPE",
+            );
+            await installCustomNode(
+              "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git",
+              "ComfyUi-Scale-Image-to-Total-Pixels-Advanced",
+            );
+          }
+          // Full ComfyUI restart (via Settings or next app launch) is still needed for the
+          // nodes to load; the warning banner in the Style Transfer panel will guide the user.
+        }
+      } catch (ensureErr) {
+        console.warn("Style transfer node ensure/install during preview activation:", ensureErr);
+      }
     } catch (e) {
       console.error("Failed to load style reference:", e);
       gallery.showToast(locale.t("generation.style_transfer.upload_error"), "error");
@@ -2090,6 +2126,12 @@
         let toastMsg = locale.t("generation.toast.failed");
         if (isStyleTransferExecutionError(rawErr)) {
           toastMsg = locale.t("generation.style_transfer.execution_failed");
+          // Auto-clear style transfer state on failure so the user is not stuck unable to generate
+          // normal images after enabling via a preview button (for example on a LoRA card). This addresses
+          // reports of generation loading quickly with no final output.
+          generation.styleTransferEnabled = false;
+          generation.styleReferenceImage = null;
+          generation.saveSettings();
         } else if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
           toastMsg = locale.t("generation.toast.failed_validation");
         } else {
@@ -2216,6 +2258,14 @@
                 }
               } else {
                 const failedStyleTransfer = item.params?.style_transfer_enabled;
+                if (failedStyleTransfer) {
+                  // Auto-clear to recover normal generation. Prevents being stuck in a
+                  // non-generating state after a style reference (for example from LoRA preview) causes
+                  // the style transfer workflow to produce no output image.
+                  generation.styleTransferEnabled = false;
+                  generation.styleReferenceImage = null;
+                  generation.saveSettings();
+                }
                 gallery.showToast(
                   failedStyleTransfer
                     ? locale.t("generation.style_transfer.failed_no_output")
@@ -2809,9 +2859,16 @@
           <!-- Resize handle -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
-            class="w-1.5 cursor-col-resize hover:bg-indigo-500/40 active:bg-indigo-500/60 transition-colors shrink-0"
+            class="relative w-1.5 cursor-col-resize hover:bg-indigo-500/40 active:bg-indigo-500/60 transition-colors shrink-0 flex items-center justify-center group"
             onmousedown={startMetadataResize}
-          ></div>
+          >
+            <!-- Drag icon handle -->
+            <div class="absolute pointer-events-none w-1 h-8 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex flex-col items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all">
+              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+            </div>
+          </div>
         {:else}
           <!-- Collapsed: just a narrow strip with expand button -->
           <div class="w-9 h-full bg-neutral-900/95 border-r border-neutral-700 flex flex-col items-center pt-4 shrink-0">

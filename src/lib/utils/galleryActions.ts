@@ -135,9 +135,10 @@ export async function loadOutputImageForGenerationInput(
     }
   }
 
-  if (image.url) {
+  const fallbackUrl = image.url || (gallery.selectedImage === image && gallery.lightboxUrl ? gallery.lightboxUrl : undefined);
+  if (fallbackUrl) {
     try {
-      return { bytes: await imageUrlToPngBytes(image.url), filename: uploadFilename };
+      return { bytes: await imageUrlToPngBytes(fallbackUrl), filename: uploadFilename };
     } catch (urlError) {
       if (!image.tempFilename) throw urlError;
       console.warn("Preview URL load failed; falling back to temp image:", urlError);

@@ -217,6 +217,9 @@ pub struct GenerationParams {
     /// Target megapixels for ImageScaleToTotalPixelsX (default 1.05).
     #[serde(default = "default_style_transfer_megapixels")]
     pub style_transfer_megapixels: f64,
+    /// Blocks range for UntwistingRoPE node (e.g. "0-999").
+    #[serde(default = "default_style_transfer_blocks")]
+    pub style_transfer_blocks: String,
 }
 
 fn default_output_bit_depth() -> String {
@@ -265,6 +268,10 @@ fn default_style_transfer_pmi_alpha() -> f64 {
 
 fn default_style_transfer_megapixels() -> f64 {
     1.05
+}
+
+fn default_style_transfer_blocks() -> String {
+    "0-999".to_string()
 }
 
 fn default_region_strength() -> f64 {

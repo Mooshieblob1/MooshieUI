@@ -397,6 +397,19 @@
             <option value="linear">linear</option>
           </select>
         </div>
+        <div>
+          <label class="text-xs text-neutral-400 flex items-center gap-1 mb-1">
+            {locale.t("generation.style_transfer.blocks")}
+            <InfoTip text={locale.t("generation.style_transfer.blocks_tip")} />
+          </label>
+          <input
+            type="text"
+            bind:value={generation.styleTransferBlocks}
+            onchange={() => generation.saveSettings()}
+            placeholder="0-999"
+            class="w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-200"
+          />
+        </div>
         <div class="grid grid-cols-2 gap-2">
           <div>
             <label class="text-[10px] text-neutral-500" for="style-transfer-gamma">{locale.t("generation.style_transfer.gamma")}</label>

@@ -24,10 +24,11 @@
   interface Props {
     onupscale: (image: OutputImage) => void;
     oninpaint: (image: OutputImage) => void;
+    onrefine: (image: OutputImage) => void;
     oncontextmenu?: (image: OutputImage, x: number, y: number) => void;
   }
 
-  let { onupscale, oninpaint, oncontextmenu }: Props = $props();
+  let { onupscale, oninpaint, onrefine, oncontextmenu }: Props = $props();
 
   type TabId = "loras" | "checkpoints" | "images" | "prompts" | "compare" | "artists" | "styles" | "schedule";
 
@@ -271,6 +272,60 @@
     const promptLower = (generation.positivePrompt || "").toLowerCase();
     return promptLower.includes(cleanTag);
   }
+
+  // ---------------------------------------------------------------------------
+  // Floating action bar (portal approach — escapes overflow-hidden)
+  // ---------------------------------------------------------------------------
+  let hoveredImage = $state<OutputImage | null>(null);
+  let actionBarPos = $state<{ x: number; y: number } | null>(null);
+  let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function showActionBar(image: OutputImage, el: HTMLElement) {
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    const rect = el.getBoundingClientRect();
+    hoveredImage = image;
+    actionBarPos = { x: rect.left + rect.width / 2, y: rect.bottom };
+  }
+
+  function scheduleHideActionBar() {
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => { hoveredImage = null; actionBarPos = null; }, 80);
+  }
+
+  function cancelHideActionBar() {
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+  }
+
+  function actionBarOut(node: Element, { duration = 260 } = {}) {
+    return {
+      duration,
+      css: (t: number) => {
+        let ty = 0, sy = 1, op = 1;
+        if (t > 0.8) {
+          const p = (1 - t) / 0.2;
+          ty = 0 + p * 1;
+          sy = 1 + p * 0.02;
+        } else if (t > 0.65) {
+          const p = (0.8 - t) / 0.15;
+          ty = 1 + p * -2;
+          sy = 1.02 + p * -0.06;
+        } else if (t > 0.4) {
+          const p = (0.65 - t) / 0.25;
+          ty = -1 + p * 4;
+          sy = 0.96 + p * 0.12;
+        } else {
+          const p = (0.4 - t) / 0.4;
+          ty = 3 + p * -9;
+          sy = 1.08 + p * -0.78;
+          op = 1 - p;
+        }
+        return `
+          transform: translateX(-50%) translateY(${ty}px) scaleY(${sy});
+          opacity: ${op};
+        `;
+      }
+    };
+  }
 </script>
 
 <div class="flex flex-col h-full min-w-0">
@@ -370,60 +425,24 @@
           {:else}
             <div class="grid gap-2 flex-1 min-h-0 overflow-y-auto px-2 py-2" style="grid-template-columns: repeat(auto-fill, minmax({imageCardSize}px, 1fr)); align-content: start;">
               {#each filteredSessionImages as image}
-                <div class="group relative w-full rounded-lg overflow-hidden border border-neutral-800 hover:border-indigo-500 transition-colors" style="aspect-ratio: 1 / 1;" oncontextmenu={(e) => { if (oncontextmenu) { e.preventDefault(); oncontextmenu(image, e.clientX, e.clientY); } }}>
-              <button
-                class="absolute inset-0 w-full h-full"
-                onclick={() => gallery.openLightbox(image)}
-              >
-                <img
-                  use:lazyThumbnail={{ image }}
-                  alt={image.filename}
-                  class="w-full h-full object-cover"
-                />
-              </button>
-              <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center p-1.5 pointer-events-none">
-                <div class="flex gap-1 pointer-events-auto">
-                  {#if !image.is_upscaled}
-                    <button
-                      class="w-7 h-7 flex items-center justify-center rounded bg-indigo-900/90 hover:bg-indigo-700 text-neutral-300"
-                      title={locale.t('bottom_panel.upscale')}
-                      onclick={(e) => { e.stopPropagation(); onupscale(image); }}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-                    </button>
-                  {/if}
+                <div
+                  class="relative w-full rounded-lg overflow-hidden border transition-colors {hoveredImage === image ? 'border-indigo-500' : 'border-neutral-800'}"
+                  style="aspect-ratio: 1 / 1;"
+                  oncontextmenu={(e) => { if (oncontextmenu) { e.preventDefault(); oncontextmenu(image, e.clientX, e.clientY); } }}
+                  onmouseenter={(e) => showActionBar(image, e.currentTarget as HTMLElement)}
+                  onmouseleave={() => scheduleHideActionBar()}
+                >
                   <button
-                    class="w-7 h-7 flex items-center justify-center rounded bg-indigo-900/90 hover:bg-indigo-700 text-neutral-300"
-                    title={locale.t('bottom_panel.inpaint')}
-                    onclick={(e) => { e.stopPropagation(); oninpaint(image); }}
+                    class="absolute inset-0 w-full h-full"
+                    onclick={() => gallery.openLightbox(image)}
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                  </button>
-                  <button
-                    class="w-7 h-7 flex items-center justify-center rounded bg-neutral-900/95 hover:bg-neutral-700 text-neutral-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={locale.t('bottom_panel.save_as')}
-                    disabled={gallery.saving}
-                    onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                  </button>
-                  <button
-                    class="w-7 h-7 flex items-center justify-center rounded bg-neutral-900/95 hover:bg-neutral-700 text-neutral-300"
-                    title={locale.t('bottom_panel.copy')}
-                    onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                  </button>
-                  <button
-                    class="w-7 h-7 flex items-center justify-center rounded bg-red-900/90 hover:bg-red-800 text-neutral-300"
-                    title={locale.t('bottom_panel.delete')}
-                    onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    <img
+                      use:lazyThumbnail={{ image }}
+                      alt={image.filename}
+                      class="w-full h-full object-cover"
+                    />
                   </button>
                 </div>
-              </div>
-            </div>
               {/each}
             </div>
           {/if}
@@ -608,3 +627,80 @@
     {/if}
   </div>
 </div>
+
+{#if hoveredImage && actionBarPos}
+  {@const image = hoveredImage}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="fixed z-[9999] flex justify-center pointer-events-auto animate-[actionBarBounce_0.35s_ease-out]"
+    style="left: {actionBarPos.x}px; top: {actionBarPos.y + 4}px; transform: translateX(-50%);"
+    onmouseenter={cancelHideActionBar}
+    onmouseleave={scheduleHideActionBar}
+    out:actionBarOut
+  >
+    <div class="flex items-center gap-0.5 px-1.5 py-1 rounded-lg bg-neutral-900/95 border border-neutral-700/80 shadow-lg shadow-black/40 backdrop-blur-sm">
+      {#if !image.is_upscaled}
+        <button
+          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-indigo-600/80 text-neutral-300 hover:text-white transition-colors"
+          title={locale.t('bottom_panel.upscale')}
+          onclick={() => onupscale(image)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        </button>
+        <button
+          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-indigo-600/80 text-neutral-300 hover:text-white transition-colors"
+          title={locale.t('gallery.send_to_img2img')}
+          onclick={() => onrefine(image)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+        </button>
+      {:else}
+        <button
+          class="w-6 h-6 flex items-center justify-center rounded-md text-neutral-300 opacity-50 pointer-events-none"
+          title={locale.t('bottom_panel.upscale')}
+          disabled
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        </button>
+        <button
+          class="w-6 h-6 flex items-center justify-center rounded-md text-neutral-300 opacity-50 pointer-events-none"
+          title={locale.t('gallery.send_to_img2img')}
+          disabled
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+        </button>
+      {/if}
+      <button
+        class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-indigo-600/80 text-neutral-300 hover:text-white transition-colors"
+        title={locale.t('bottom_panel.inpaint')}
+        onclick={() => oninpaint(image)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+      </button>
+      <div class="w-px h-4 bg-neutral-700/60"></div>
+      <button
+        class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors disabled:opacity-50 disabled:pointer-events-none"
+        title={locale.t('bottom_panel.save_as')}
+        disabled={gallery.saving}
+        onclick={() => gallery.saveImageAs(image)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </button>
+      <button
+        class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
+        title={locale.t('bottom_panel.copy')}
+        onclick={() => gallery.copyToClipboard(image)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      </button>
+      <div class="w-px h-4 bg-neutral-700/60"></div>
+      <button
+        class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-red-600/80 text-neutral-400 hover:text-red-200 transition-colors"
+        title={locale.t('bottom_panel.delete')}
+        onclick={() => gallery.deleteImage(image)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      </button>
+    </div>
+  </div>
+{/if}

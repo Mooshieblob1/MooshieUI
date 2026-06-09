@@ -2918,7 +2918,7 @@ pub async fn read_modelspec(
         .join(&filename);
 
     if !path.is_file() {
-        return Err(AppError::Other(format!("File not found: {}", filename)));
+        return Ok(None);
     }
 
     // Only process .safetensors files
@@ -4520,7 +4520,14 @@ pub async fn install_attention_backend(
                         "Installing FlashAttention v1...",
                     )
                     .ok();
-                vec!["pip", "install", "--python", &python_str, "flash-attn<2.0"]
+                vec![
+                    "pip",
+                    "install",
+                    "--python",
+                    &python_str,
+                    "flash-attn<2.0",
+                    "--no-build-isolation",
+                ]
             }
             "flash_v2" => {
                 app_handle
@@ -4529,7 +4536,14 @@ pub async fn install_attention_backend(
                         "Installing FlashAttention v2 (may compile from source — this can take 10+ minutes)...",
                     )
                     .ok();
-                vec!["pip", "install", "--python", &python_str, "flash-attn"]
+                vec![
+                    "pip",
+                    "install",
+                    "--python",
+                    &python_str,
+                    "flash-attn",
+                    "--no-build-isolation",
+                ]
             }
             _ => unreachable!(),
         };

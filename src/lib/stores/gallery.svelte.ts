@@ -22,6 +22,7 @@ import {
 import { isTauri, isBrowserMode, getAuthToken } from "../utils/ipc.js";
 import { locale } from "./locale.svelte.js";
 import { generation } from "./generation.svelte.js";
+import { progress } from "./progress.svelte.js";
 import { createArtistGalleryClient } from "../artist-gallery/client.js";
 import { cdnFetch } from "../utils/cdnFetch.js";
 import {
@@ -433,7 +434,10 @@ class GalleryStore {
       // Don't revoke a blob URL that is still referenced by a session image
       // or by progress.lastOutputImage — revoking would break subsequent
       // lightbox opens and the post-generation preview in PreviewImage.
-      const isShared = this.sessionImages.some((img) => img.url === this.lightboxUrl);
+      const isShared =
+        this.sessionImages.some((img) => img.url === this.lightboxUrl) ||
+        progress.lastOutputImage === this.lightboxUrl ||
+        progress.previewImage === this.lightboxUrl;
       if (!isShared) URL.revokeObjectURL(this.lightboxUrl);
     }
     this.lightboxOpen = false;
@@ -877,7 +881,7 @@ class GalleryStore {
               console.warn("JXL gallery transcode failed, falling back to display copy:", e);
               const displayUrl = image.displayTempFilename
                 ? tempImageUrl(image.displayTempFilename)
-                : image.url;
+                : (image.url || (this.selectedImage === image ? this.lightboxUrl : null));
               if (displayUrl) {
                 try {
                   pngBytes = await this._blobUrlToPngBytes(displayUrl);
@@ -914,7 +918,7 @@ class GalleryStore {
         if (!fetchUrl && galleryFilename) {
           fetchUrl = await fullImageUrl(galleryFilename);
         }
-        if (!fetchUrl) fetchUrl = image.url;
+        if (!fetchUrl) fetchUrl = image.url || (this.selectedImage === image ? this.lightboxUrl : null);
         if (fetchUrl) {
           try {
             const resp = await fetch(fetchUrl);

@@ -47,6 +47,14 @@ class ProgressStore {
   /** Total prompts in the global queue across all users. */
   queueTotal = $state(0);
 
+  /** Timestamp when the current active generation started (for elapsed time display). */
+  generationStartTime = $state<number | null>(null);
+
+  /** Live-updating elapsed seconds (ticked for real-time display during long generations like style transfer). */
+  elapsedSeconds = $state(0);
+
+  private _elapsedInterval: ReturnType<typeof setInterval> | null = null;
+
   /**
    * Server-wide generation activity broadcast to all users.
    * null when the server is idle. Set from `mooshie:server_progress` events.
@@ -98,6 +106,30 @@ class ProgressStore {
       return false;
     }
     return true;
+  }
+
+  /** Elapsed time in ms since the current generation became active (for issue 252 style speed feedback). */
+  get elapsedMs(): number | null {
+    if (!this.generationStartTime) return null;
+    return Date.now() - this.generationStartTime;
+  }
+
+  private _startElapsedTimer() {
+    this._stopElapsedTimer();
+    this.elapsedSeconds = 0;
+    this._elapsedInterval = setInterval(() => {
+      if (this.generationStartTime) {
+        this.elapsedSeconds = Math.floor((Date.now() - this.generationStartTime) / 1000);
+      }
+    }, 1000);
+  }
+
+  private _stopElapsedTimer() {
+    if (this._elapsedInterval) {
+      clearInterval(this._elapsedInterval);
+      this._elapsedInterval = null;
+    }
+    this.elapsedSeconds = 0;
   }
 
   get displayImage() {
@@ -259,6 +291,8 @@ class ProgressStore {
       this.previewImage = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
+      this.generationStartTime = Date.now();
+      this._startElapsedTimer();
     }
   }
 
@@ -282,6 +316,8 @@ class ProgressStore {
       this.currentNode = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
+      this.generationStartTime = null;
+      this._stopElapsedTimer();
 
       if (this.previewImage && item) {
         this.setLastOutputForMode(item.mode, this.previewImage);
@@ -305,6 +341,8 @@ class ProgressStore {
       this.previewImage = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
+      this.generationStartTime = null;
+      this._stopElapsedTimer();
     }
 
     if (this.pendingPrompts.length === 0) {
@@ -323,6 +361,8 @@ class ProgressStore {
     this.previewImage = null;
     this.samplingPass = 0;
     this._lastProgressNode = null;
+    this.generationStartTime = null;
+    this._stopElapsedTimer();
     this.queuePosition = null;
     this.queueTotal = 0;
   }

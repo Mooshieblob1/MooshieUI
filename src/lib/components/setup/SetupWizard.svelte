@@ -162,9 +162,17 @@
     });
 
     // Listen for terminal log lines
+    interface LogPayload {
+      text: string;
+      is_update: boolean;
+    }
     await ipcListen("setup:log", (event: any) => {
-      const line = event.payload as string;
-      logLines = [...logLines, line];
+      const payload = event.payload as LogPayload;
+      if (payload.is_update && logLines.length > 0) {
+        logLines[logLines.length - 1] = payload.text;
+      } else {
+        logLines = [...logLines, payload.text];
+      }
       // Auto-scroll
       requestAnimationFrame(() => {
         if (logContainer) {
@@ -330,7 +338,7 @@
   {#if phase === "installing" || phase === "validating-remote" || phase === "choose-mode" || phase === "done" || phase === "error"}
     <div
       bind:this={logContainer}
-      class="absolute inset-0 overflow-y-auto p-4 pt-6 font-mono text-[11px] leading-relaxed text-green-500/25 pointer-events-none select-none"
+      class="absolute inset-0 overflow-y-auto p-4 pt-6 font-mono text-[11px] leading-relaxed text-indigo-400/20 pointer-events-none select-none"
       aria-hidden="true"
     >
       {#each logLines as line}
@@ -338,7 +346,7 @@
       {/each}
     </div>
     <!-- Darkening overlay so the UI stays readable -->
-    <div class="absolute inset-0 bg-neutral-950/70 pointer-events-none"></div>
+    <div class="absolute inset-0 bg-neutral-950/75 backdrop-blur-[1.5px] pointer-events-none"></div>
   {/if}
 
   <!-- Main content (on top of terminal) -->

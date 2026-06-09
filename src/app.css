@@ -771,6 +771,14 @@ html.light .lightbox-backdrop {
   animation-delay: var(--card-delay, 0ms);
 }
 
+/* ─── Session gallery action bar bounce-in ─── */
+@keyframes actionBarBounce {
+  0%   { transform: translateX(-50%) translateY(-6px) scaleY(0.3); opacity: 0; }
+  40%  { transform: translateX(-50%) translateY(3px) scaleY(1.08); opacity: 1; }
+  65%  { transform: translateX(-50%) translateY(-1px) scaleY(0.96); }
+  80%  { transform: translateX(-50%) translateY(1px) scaleY(1.02); }
+  100% { transform: translateX(-50%) translateY(0) scaleY(1); opacity: 1; }
+}
 
 /* ─── Mobile UI helpers ─── */
 .touch-target {

@@ -460,7 +460,13 @@ impl AuthState {
 
         let must_change = account.must_change_password;
         let was_legacy = is_legacy_sha256(&account.password_hash);
-        let grace_expired = was_legacy && self.is_legacy_password_grace_expired();
+        let grace_expired = was_legacy
+            && match db.legacy_password_grace_deadline.as_deref() {
+                Some(deadline) => chrono::DateTime::parse_from_rfc3339(deadline)
+                    .map(|t| Utc::now() > t.with_timezone(&Utc))
+                    .unwrap_or(false),
+                None => false,
+            };
         drop(db);
 
         if was_legacy {

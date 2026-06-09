@@ -334,6 +334,7 @@ class GenerationStore {
   styleTransferNormStrength = $state(1);
   styleTransferPmiAlpha = $state(0.5);
   styleTransferMegapixels = $state(1.05);
+  styleTransferBlocks = $state("0-999");
   facefixEnabled = $state(false);
   facefixDetector = $state<string | null>(null);
   facefixDenoise = $state(0.4);
@@ -1025,6 +1026,7 @@ class GenerationStore {
         if (saved.styleTransferNormStrength !== undefined) this.styleTransferNormStrength = saved.styleTransferNormStrength;
         if (saved.styleTransferPmiAlpha !== undefined) this.styleTransferPmiAlpha = saved.styleTransferPmiAlpha;
         if (saved.styleTransferMegapixels !== undefined) this.styleTransferMegapixels = saved.styleTransferMegapixels;
+        if (saved.styleTransferBlocks !== undefined) this.styleTransferBlocks = saved.styleTransferBlocks;
         if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
         if (saved.facefixDetector !== undefined) this.facefixDetector = saved.facefixDetector;
         if (saved.facefixDenoise !== undefined) this.facefixDenoise = saved.facefixDenoise;
@@ -1156,6 +1158,7 @@ class GenerationStore {
         styleTransferNormStrength: this.styleTransferNormStrength,
         styleTransferPmiAlpha: this.styleTransferPmiAlpha,
         styleTransferMegapixels: this.styleTransferMegapixels,
+        styleTransferBlocks: this.styleTransferBlocks,
         facefixEnabled: this.facefixEnabled,
         facefixDetector: this.facefixDetector,
         facefixDenoise: this.facefixDenoise,
@@ -1575,6 +1578,7 @@ class GenerationStore {
       style_transfer_norm_strength: this.styleTransferNormStrength,
       style_transfer_pmi_alpha: this.styleTransferPmiAlpha,
       style_transfer_megapixels: this.styleTransferMegapixels,
+      style_transfer_blocks: this.styleTransferBlocks,
     };
 
     if (options.overrides) {

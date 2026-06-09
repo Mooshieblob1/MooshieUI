@@ -641,6 +641,18 @@
     }
   }
 
+  async function refineImage(image: OutputImage) {
+    try {
+      generation.inputImage = await uploadOutputImageForGenerationInput(image, "img2img_input.png");
+      generation.mode = "img2img";
+      generation.upscaleEnabled = false;
+      gallery.showToast(locale.t('gallery.toast.loaded_img2img'), "success");
+    } catch (e) {
+      console.error("Failed to set up refine:", e);
+      gallery.showToast(locale.t('gallery.toast.failed_load'), "error");
+    }
+  }
+
   async function upscaleImage(image: OutputImage) {
     try {
       generation.inputImage = await uploadOutputImageForGenerationInput(image, "refine_input.png");
@@ -2115,7 +2127,7 @@
 
     {#if !mobileFriendly && (leftHasSections || controlsSide === "left" || draggingSection)}
       <!-- Left divider with collapse button -->
-      <div class="relative shrink-0 flex flex-col items-center">
+      <div class="relative shrink-0 flex flex-col items-center group">
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="w-1 flex-1 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'left' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
@@ -2123,6 +2135,12 @@
           ondblclick={resetLeftWidth}
           title={locale.t('generation.drag_to_resize')}
         ></div>
+        <!-- Drag icon handle -->
+        <div class="absolute pointer-events-none top-[30%] w-1 h-8 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex flex-col items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all z-10">
+          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+        </div>
         <button
           onclick={toggleLeftPanel}
           class="absolute top-1/2 -translate-y-1/2 left-0 z-20 w-6 h-12 flex items-center justify-center rounded-r border border-l-0 transition-colors {leftCollapsed
@@ -2151,7 +2169,7 @@
 
         <!-- Bottom panel (LoRAs / Images / Prompts) -->
         {#if !mobileFriendly}
-          <div class="relative shrink-0 flex items-center">
+          <div class="relative shrink-0 flex items-center group">
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="h-1 flex-1 cursor-row-resize hover:bg-indigo-500/40 transition-colors {dragging === 'bottom' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
@@ -2159,6 +2177,12 @@
               ondblclick={resetBottomHeight}
               title={locale.t('generation.drag_to_resize')}
             ></div>
+            <!-- Drag icon handle -->
+            <div class="absolute pointer-events-none left-[30%] h-1 w-8 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all z-10">
+              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+            </div>
             <button
               onclick={toggleBottomPanel}
               class="absolute left-1/2 -translate-x-1/2 bottom-0 z-20 h-6 w-12 flex items-center justify-center rounded-t border border-b-0 transition-colors {bottomCollapsed
@@ -2175,7 +2199,7 @@
             class="overflow-hidden shrink-0 min-w-0 border-t border-neutral-800/50"
             style="height: {bottomHeight}px"
           >
-            <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} oncontextmenu={handleSessionContextMenu} />
+            <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} onrefine={refineImage} oncontextmenu={handleSessionContextMenu} />
           </div>
         {/if}
       </div>
@@ -2183,7 +2207,7 @@
 
     {#if !mobileFriendly && (rightHasSections || controlsSide === "right" || draggingSection)}
       <!-- Right divider with collapse button -->
-      <div class="relative shrink-0 flex flex-col items-center">
+      <div class="relative shrink-0 flex flex-col items-center group">
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="w-1 flex-1 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'right' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
@@ -2191,6 +2215,12 @@
           ondblclick={resetRightWidth}
           title={locale.t('generation.drag_to_resize')}
         ></div>
+        <!-- Drag icon handle -->
+        <div class="absolute pointer-events-none top-[30%] w-1 h-8 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex flex-col items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all z-10">
+          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+        </div>
         <button
           onclick={toggleRightPanel}
           class="absolute top-1/2 -translate-y-1/2 right-0 z-20 w-6 h-12 flex items-center justify-center rounded-l border border-r-0 transition-colors {rightCollapsed
@@ -2340,7 +2370,7 @@
           </div>
         </div>
         <div class="flex-1 min-h-0 border-t border-neutral-800/50 overflow-hidden">
-          <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} oncontextmenu={handleSessionContextMenu} />
+          <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} onrefine={refineImage} oncontextmenu={handleSessionContextMenu} />
         </div>
       </div>
     </div>

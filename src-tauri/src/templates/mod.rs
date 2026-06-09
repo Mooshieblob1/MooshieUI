@@ -178,14 +178,17 @@ pub fn load_model_nodes(
             next_id,
         };
     } else if params.use_split_model {
-        // UNETLoader for diffusion model
+        // UNETLoader for diffusion model. Pass both unet_name and model_name for compatibility
+        // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
+        let unet_name = params.diffusion_model.as_deref().unwrap_or("");
         let unet_id = next_id.to_string();
         workflow.insert(
             unet_id.clone(),
             json!({
                 "class_type": "UNETLoader",
                 "inputs": {
-                    "unet_name": params.diffusion_model.as_deref().unwrap_or(""),
+                    "unet_name": unet_name,
+                    "model_name": unet_name,
                     "weight_dtype": "default"
                 }
             }),

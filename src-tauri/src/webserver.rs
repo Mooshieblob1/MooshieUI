@@ -171,7 +171,6 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "save_image_file",
     "save_text_file",
     "upload_image",
-    "list_model_files",
     "delete_model_file",
     "move_model_file",
 ];
@@ -740,6 +739,7 @@ pub async fn start_server(
     let tls_config = resolve_tls_config(&web_state.app).await;
     let actual_port = bind_addr.port();
     let handle = if let Some(tls_config) = tls_config {
+        std::mem::drop(listener);
         tokio::spawn(async move {
             axum_server::bind_rustls(bind_addr, tls_config)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
@@ -3368,7 +3368,7 @@ async fn dispatch_command(
             drop(config);
 
             if !path.is_file() {
-                return Err(format!("File not found: {}", filename));
+                return Ok(serde_json::json!(null));
             }
             if !filename.ends_with(".safetensors") {
                 return Ok(serde_json::json!(null));

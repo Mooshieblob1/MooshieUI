@@ -712,6 +712,8 @@ const en: Record<string, string> = {
   "generation.style_transfer.execution_failed": "Style transfer failed. Check that Untwisting RoPE nodes are installed and ComfyUI was restarted.",
   "generation.style_transfer.failed_no_output": "Style transfer finished without an image. Check the ComfyUI log for missing custom nodes.",
   "generation.style_transfer.reference_loaded": "Style reference loaded from model preview",
+  "generation.style_transfer.blocks": "Blocks (UntwistingRoPE)",
+  "generation.style_transfer.blocks_tip": "Range of transformer blocks to apply the patch to, e.g. '0-999' or '0-12'. Matches the custom node's 'blocks' input.",
 
   // Regional prompting modal
   "generation.regional.button": "Regional prompt ({count})",
@@ -1001,7 +1003,7 @@ const en: Record<string, string> = {
   "checkpoint.civitai_import_failed": "CivitAI image lookup failed: {message}",
   "model.thumb_from_gallery": "Gallery",
   "model.thumb_from_gallery_tip": "Use the selected gallery image as this model's thumbnail",
-  "model.thumb_no_gallery_image": "Select an image in the Gallery tab first",
+  "model.thumb_no_gallery_image": "View an image in the main Gallery tab first (it will be remembered), then click here to assign it as the thumbnail for this model/LoRA.",
   "model.thumb_empty_hint": "Hover preview for Thumb/Gallery buttons, or use Civitai import",
   "model.preview_interrogate": "Tags",
   "model.preview_interrogate_tip": "Interrogate this preview image for tags",

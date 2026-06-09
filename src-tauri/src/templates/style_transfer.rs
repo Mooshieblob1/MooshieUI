@@ -109,6 +109,15 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     let rf_model_source = (rf_id.clone(), 0);
     let rf_latent_source = (rf_id, 1);
 
+    let blocks = {
+        let b = params.style_transfer_blocks.trim();
+        if b.is_empty() {
+            "0-999".to_string()
+        } else {
+            b.to_string()
+        }
+    };
+
     // Untwisting RoPE model patch
     let untwist_id = next_id.to_string();
     workflow.insert(
@@ -123,7 +132,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
                 "high_scale_end": 0.0,
                 "low_scale_start": 1.0,
                 "low_scale_end": params.style_transfer_low_scale_end,
-                "blocks": "0-999",
+                "blocks": blocks,
                 "adain_strength": params.style_transfer_adain_strength,
                 "verbose": false
             }

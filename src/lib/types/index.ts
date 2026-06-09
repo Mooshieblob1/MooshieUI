@@ -127,6 +127,7 @@ export interface GenerationParams {
   style_transfer_norm_strength?: number;
   style_transfer_pmi_alpha?: number;
   style_transfer_megapixels?: number;
+  style_transfer_blocks?: string;
 }
 
 export interface OutputImage {
