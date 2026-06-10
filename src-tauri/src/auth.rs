@@ -386,12 +386,16 @@ impl AuthState {
             .find(|a| a.username.eq_ignore_ascii_case(&username))
             .ok_or_else(|| "Invalid username or password".to_string())?;
 
-        if !is_legacy_sha256(&account.password_hash) {
-            return Ok(false);
+        // Verify the password before revealing anything about the stored hash
+        // format, so this endpoint can't be used to probe account state.
+        if !verify_password(password, &account.password_hash) {
+            return Err("Invalid username or password".to_string());
         }
 
-        if !verify_password(password, &account.password_hash) {
-            return Err("Current password is incorrect".to_string());
+        if !is_legacy_sha256(&account.password_hash) {
+            drop(db);
+            self.clear_login_attempts(&username);
+            return Ok(false);
         }
 
         account.password_hash = hash_password(password);
@@ -859,30 +863,48 @@ fn migrate_plaintext_session_keys(
         .collect()
 }
 
-fn load_sessions() -> Result<HashMap<String, SessionEntry>, String> {
-    let path = sessions_db_path().ok_or("No app data dir")?;
-    if !path.exists() {
-        return Ok(HashMap::new());
-    }
-    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    if let Ok(store) = serde_json::from_str::<SessionsStore>(&content) {
-        if store.version >= SESSIONS_FORMAT_VERSION {
-            return Ok(store.sessions);
+struct LoadedSessions {
+    sessions: HashMap<String, SessionEntry>,
+    needs_save: bool,
+}
+
+fn content_looks_like_sessions_store(content: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .and_then(|value| {
+            value
+                .as_object()
+                .map(|object| object.contains_key("version") || object.contains_key("sessions"))
+        })
+        .unwrap_or(false)
+}
+
+fn parse_sessions_content(content: &str) -> Result<LoadedSessions, String> {
+    if content_looks_like_sessions_store(content) {
+        if let Ok(store) = serde_json::from_str::<SessionsStore>(content) {
+            if store.version >= SESSIONS_FORMAT_VERSION {
+                return Ok(LoadedSessions {
+                    sessions: store.sessions,
+                    needs_save: false,
+                });
+            }
+            return Ok(LoadedSessions {
+                sessions: migrate_plaintext_session_keys(store.sessions),
+                needs_save: true,
+            });
         }
-        let migrated = migrate_plaintext_session_keys(store.sessions);
-        let _ = save_sessions(&migrated);
-        return Ok(migrated);
     }
     // Legacy v1: token → SessionEntry (plaintext token keys)
-    if let Ok(entries) = serde_json::from_str::<HashMap<String, SessionEntry>>(&content) {
-        let migrated = migrate_plaintext_session_keys(entries);
-        let _ = save_sessions(&migrated);
-        return Ok(migrated);
+    if let Ok(entries) = serde_json::from_str::<HashMap<String, SessionEntry>>(content) {
+        return Ok(LoadedSessions {
+            sessions: migrate_plaintext_session_keys(entries),
+            needs_save: true,
+        });
     }
     // Legacy v0: token → username string
-    if let Ok(legacy) = serde_json::from_str::<HashMap<String, String>>(&content) {
+    if let Ok(legacy) = serde_json::from_str::<HashMap<String, String>>(content) {
         let now = Utc::now().to_rfc3339();
-        let migrated: HashMap<String, SessionEntry> = legacy
+        let sessions = legacy
             .into_iter()
             .map(|(token, username)| {
                 (
@@ -894,10 +916,25 @@ fn load_sessions() -> Result<HashMap<String, SessionEntry>, String> {
                 )
             })
             .collect();
-        let _ = save_sessions(&migrated);
-        return Ok(migrated);
+        return Ok(LoadedSessions {
+            sessions,
+            needs_save: true,
+        });
     }
     Err("Failed to parse sessions.json".to_string())
+}
+
+fn load_sessions() -> Result<HashMap<String, SessionEntry>, String> {
+    let path = sessions_db_path().ok_or("No app data dir")?;
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let loaded = parse_sessions_content(&content)?;
+    if loaded.needs_save {
+        let _ = save_sessions(&loaded.sessions);
+    }
+    Ok(loaded.sessions)
 }
 
 fn save_sessions(sessions: &HashMap<String, SessionEntry>) -> Result<(), String> {
@@ -913,4 +950,150 @@ fn save_sessions(sessions: &HashMap<String, SessionEntry>) -> Result<(), String>
     std::fs::write(&path, json).map_err(|e| e.to_string())?;
     restrict_private_file_permissions(&path);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session_entry(username: &str) -> SessionEntry {
+        SessionEntry {
+            username: username.to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn legacy_session_entry_map_is_migrated_without_being_treated_as_empty_store() {
+        let token = "0123456789abcdef";
+        let content = serde_json::json!({
+            token: {
+                "username": "Alice",
+                "created_at": "2026-01-01T00:00:00Z"
+            }
+        })
+        .to_string();
+
+        let loaded = parse_sessions_content(&content).expect("legacy sessions should parse");
+        let token_hash = hash_session_token(token);
+
+        assert!(loaded.needs_save);
+        assert_eq!(loaded.sessions.len(), 1);
+        assert!(!loaded.sessions.contains_key(token));
+        assert_eq!(
+            loaded
+                .sessions
+                .get(&token_hash)
+                .map(|entry| entry.username.as_str()),
+            Some("Alice")
+        );
+    }
+
+    #[test]
+    fn current_empty_session_store_loads_without_migration() {
+        let content = serde_json::json!({
+            "version": SESSIONS_FORMAT_VERSION,
+            "sessions": {}
+        })
+        .to_string();
+
+        let loaded = parse_sessions_content(&content).expect("current sessions should parse");
+
+        assert!(!loaded.needs_save);
+        assert!(loaded.sessions.is_empty());
+    }
+
+    #[test]
+    fn old_versioned_session_store_migrates_plaintext_keys() {
+        let token = "fedcba9876543210";
+        let content = serde_json::json!({
+            "version": 1,
+            "sessions": {
+                token: {
+                    "username": "Bob",
+                    "created_at": "2026-01-01T00:00:00Z"
+                }
+            }
+        })
+        .to_string();
+
+        let loaded = parse_sessions_content(&content).expect("old sessions store should parse");
+        let token_hash = hash_session_token(token);
+
+        assert!(loaded.needs_save);
+        assert_eq!(loaded.sessions.len(), 1);
+        assert_eq!(
+            loaded
+                .sessions
+                .get(&token_hash)
+                .map(|entry| entry.username.as_str()),
+            Some("Bob")
+        );
+    }
+
+    #[test]
+    fn current_session_store_preserves_hashed_keys() {
+        let token_hash = hash_session_token("already-hashed-token");
+        let content = serde_json::to_string(&SessionsStore {
+            version: SESSIONS_FORMAT_VERSION,
+            sessions: HashMap::from([(token_hash.clone(), session_entry("Carol"))]),
+        })
+        .expect("sessions store should serialize");
+
+        let loaded = parse_sessions_content(&content).expect("current sessions should parse");
+
+        assert!(!loaded.needs_save);
+        assert_eq!(
+            loaded
+                .sessions
+                .get(&token_hash)
+                .map(|entry| entry.username.as_str()),
+            Some("Carol")
+        );
+    }
+
+    fn test_account(username: &str, password_hash: String) -> Account {
+        Account {
+            username: username.to_string(),
+            password_hash,
+            must_change_password: false,
+            role: "user".to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            last_online: None,
+            storage_limit_bytes: DEFAULT_STORAGE_LIMIT,
+            can_use_modelhub: false,
+        }
+    }
+
+    fn auth_with_accounts(accounts: Vec<Account>) -> AuthState {
+        AuthState {
+            db: RwLock::new(AuthDatabase {
+                accounts,
+                legacy_password_grace_deadline: None,
+                legacy_password_announcement_sent: false,
+            }),
+            sessions: RwLock::new(HashMap::new()),
+            last_activity: RwLock::new(HashMap::new()),
+            login_attempts: RwLock::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn password_upgrade_checks_password_before_hash_format() {
+        let auth = auth_with_accounts(vec![test_account("alice", hash_password("correct"))]);
+
+        let missing = auth
+            .upgrade_password_encryption("missing", "wrong")
+            .unwrap_err();
+        let wrong_password = auth
+            .upgrade_password_encryption("alice", "wrong")
+            .unwrap_err();
+        assert_eq!(missing, "Invalid username or password");
+        assert_eq!(wrong_password, "Invalid username or password");
+
+        let already_modern = auth
+            .upgrade_password_encryption("alice", "correct")
+            .expect("correct password should be accepted");
+        assert!(!already_modern);
+    }
 }
