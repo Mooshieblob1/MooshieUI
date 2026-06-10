@@ -1875,6 +1875,17 @@
             });
             if (!resp.ok) return;
             const blob = await resp.blob();
+            // The prompt may have completed while the fetch was in flight
+            // (common on remote browser mode with inpaint chains). Setting
+            // previewImage now would overwrite the finalized output in the
+            // lightbox with a stale blurry preview frame — and nothing would
+            // ever clear it.
+            if (
+              !progress.isGenerating ||
+              (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId)
+            ) {
+              return;
+            }
             const url = URL.createObjectURL(blob);
             // Revoke the previous preview blob URL to avoid memory leaks
             if (progress.previewImage?.startsWith("blob:")) URL.revokeObjectURL(progress.previewImage);
@@ -3062,7 +3073,7 @@
 
 {#if generationDoneToast}
   {#key generationDoneToast.id}
-    <div class="fixed bottom-5 right-4 z-80 w-[min(22rem,calc(100vw-2rem))] md:right-5">
+    <div class="fixed bottom-5 right-4 z-10000 w-[min(22rem,calc(100vw-2rem))] md:right-5">
       <div
         class="generation-done-toast flex items-center gap-3 rounded-[var(--app-panel-radius)] border border-neutral-700 bg-neutral-900/95 p-2 shadow-2xl shadow-black/40 backdrop-blur-sm {generationDoneToast.leaving ? 'generation-done-toast-out' : 'generation-done-toast-in'}"
       >
@@ -3101,7 +3112,7 @@
 {#if gallery.toast}
   {@const type = gallery.toast.type}
   <div
-    class="fixed bottom-6 left-1/2 z-60 flex -translate-x-1/2 animate-fade-in items-center gap-2 rounded-[var(--app-panel-radius)] border px-4 py-2.5 text-sm shadow-2xl shadow-black/40 backdrop-blur-sm
+    class="fixed bottom-6 left-1/2 z-10000 flex -translate-x-1/2 animate-fade-in items-center gap-2 rounded-[var(--app-panel-radius)] border px-4 py-2.5 text-sm shadow-2xl shadow-black/40 backdrop-blur-sm
     {type === 'success' ? 'border-green-700/80 bg-green-950/95 text-green-100' : 
      type === 'error' ? 'border-red-700/80 bg-red-950/95 text-red-100' :
      'border-neutral-700 bg-neutral-900/95 text-neutral-100'}"
