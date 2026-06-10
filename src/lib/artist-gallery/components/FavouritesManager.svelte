@@ -4,13 +4,22 @@
     CATEGORY_COLOR_PALETTE,
     type FavouriteCategory,
   } from "../favourites.svelte.js";
+  import {
+    convertAnimaExplorerExport,
+    convertArtistNameList,
+    parseAnimaExplorerExport,
+    parseArtistNameList,
+  } from "../externalImport.js";
+  import type { ArtistGalleryClient } from "../types.js";
   import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
     onclose: () => void;
+    /** Used to resolve artist names/ids when importing external (Anima Style Explorer) exports. */
+    client?: ArtistGalleryClient;
   }
 
-  let { onclose }: Props = $props();
+  let { onclose, client }: Props = $props();
 
   let newName = $state("");
   let newColor = $state(CATEGORY_COLOR_PALETTE[0]);
@@ -113,7 +122,7 @@
         const { readTextFile } = await import("@tauri-apps/plugin-fs");
         const selected = await open({
           multiple: false,
-          filters: [{ name: "JSON", extensions: ["json"] }],
+          filters: [{ name: "Favourites export", extensions: ["json", "txt"] }],
         });
         if (!selected || typeof selected !== "string") return;
         raw = await readTextFile(selected);
@@ -122,7 +131,7 @@
         fileInput?.click();
         return;
       }
-      applyImport(raw);
+      await applyImport(raw);
     } catch (e) {
       importError = e instanceof Error ? e.message : String(e);
     }
@@ -135,23 +144,47 @@
     if (!file) return;
     try {
       const raw = await file.text();
-      applyImport(raw);
+      await applyImport(raw);
     } catch (err) {
       importError = err instanceof Error ? err.message : String(err);
     }
   }
 
-  function applyImport(raw: string) {
+  async function applyImport(raw: string) {
     try {
-      const result = artistFavourites.importJSON(raw, importMode);
+      let payloadRaw = raw;
+      let unmatched: string[] = [];
+
+      // External formats: Anima Style Explorer JSON export (id-based) or its
+      // TXT export (one artist name per line). Convert them to the native
+      // payload before importing.
+      const explorer = parseAnimaExplorerExport(raw);
+      const nameList = explorer ? null : parseArtistNameList(raw);
+      if (explorer || nameList) {
+        if (!client) {
+          throw new Error(locale.t('artist_gallery.fav_manager.import_error.no_index'));
+        }
+        importStatus = locale.t('artist_gallery.fav_manager.import_converting');
+        const converted = explorer
+          ? await convertAnimaExplorerExport(explorer, client)
+          : await convertArtistNameList(nameList!, client);
+        payloadRaw = JSON.stringify(converted.payload);
+        unmatched = converted.unmatched;
+      }
+
+      const result = artistFavourites.importJSON(payloadRaw, importMode);
       importStatus = locale.t(
         result.categoriesAdded === 1
           ? 'artist_gallery.fav_manager.import_result_cat_one'
           : 'artist_gallery.fav_manager.import_result_cats',
         { added: result.added, updated: result.updated, categories: result.categoriesAdded },
       );
+      if (unmatched.length > 0) {
+        importStatus += " " + locale.t('artist_gallery.fav_manager.import_unmatched', { count: unmatched.length });
+      }
       importError = null;
     } catch (e) {
+      importStatus = null;
       importError = e instanceof Error ? e.message : String(e);
     }
   }
@@ -326,7 +359,7 @@
         <input
           bind:this={fileInput}
           type="file"
-          accept="application/json,.json"
+          accept="application/json,.json,text/plain,.txt"
           class="hidden"
           onchange={onFilePicked}
         />

@@ -878,7 +878,7 @@
 {/if}
 
 {#if showFavouritesManager}
-  <FavouritesManager onclose={() => showFavouritesManager = false} />
+  <FavouritesManager onclose={() => showFavouritesManager = false} client={store.client} />
 {/if}
 
 {#if showGenParams}

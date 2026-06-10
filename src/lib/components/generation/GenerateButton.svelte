@@ -166,6 +166,11 @@
         );
       }
 
+      if (generation.mode === "img2img" && !generation.inputImage) {
+        errorMsg = locale.t('generation.error_no_image');
+        return;
+      }
+
       if (generation.mode === "inpainting") {
         if (!generation.inputImage) {
           errorMsg = locale.t('generation.error_no_image');
