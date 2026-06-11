@@ -59,6 +59,7 @@ pub const MISSING_STYLE_TRANSFER_NODES_MARKER: &str =
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveImage",
     "MooshieFaceDetailer",
+    "MooshieSegmentDetailer",
     "MooshieSoftGuidance",
     "MooshieSmartGuidance",
     "NanoSaurLoader",
