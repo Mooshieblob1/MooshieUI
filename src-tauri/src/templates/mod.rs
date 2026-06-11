@@ -2,6 +2,7 @@ pub mod controlnet;
 pub mod facefix;
 pub mod img2img;
 pub mod inpainting;
+pub mod segment_detail;
 pub mod style_transfer;
 pub mod txt2img;
 pub mod upscale;
@@ -371,6 +372,14 @@ fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: 
         final_image
     };
 
+    // Apply <segment:...> auto-refinement after facefix so face fix results
+    // feed into segment detection.
+    let final_image = if !params.detail_segments.is_empty() {
+        segment_detail::append_segment_chain(&mut result, params, final_image, seed)
+    } else {
+        final_image
+    };
+
     let save_id = result.next_id.to_string();
     let output_format = match params.output_format.as_str() {
         "jxl" => "jxl_raw",
@@ -419,11 +428,7 @@ pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
 pub fn needs_flux2_latent(params: &GenerationParams) -> bool {
     matches!(
         params.model_architecture.as_str(),
-        "flux2d"
-            | "flux2klein9b"
-            | "flux2klein9bbase"
-            | "flux2klein4b"
-            | "flux2klein4bbase"
+        "flux2d" | "flux2klein9b" | "flux2klein9bbase" | "flux2klein4b" | "flux2klein4bbase"
     )
 }
 
