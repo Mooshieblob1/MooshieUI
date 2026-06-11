@@ -1,0 +1,61 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Build & Run
+
+```bash
+npm install                  # Frontend dependencies
+npm run tauri dev            # Full dev (Tauri + Vite hot-reload on port 1420, strict)
+npm run tauri build          # Production binary
+npm run build                # Frontend-only build (used as a pre-commit gate)
+cargo check --manifest-path src-tauri/Cargo.toml   # Rust compile check
+cargo fmt && cargo clippy    # Rust format/lint (run in src-tauri/)
+```
+
+**No test framework exists** — no vitest/jest on the frontend, no `#[test]` modules in Rust. Validation is `npm run build` + `cargo check` (see the `pre-commit-check` skill).
+
+## Skills
+
+Project skills live in `.claude/skills/` (synced from canonical `.agents/skills/` — edit there first, then re-sync):
+
+| Skill | Purpose |
+|-------|---------|
+| `push` | Land changes on main via squash-merged PR, no release |
+| `release` | Full release: version bump, changelog, PR, bot triage, tag, CI |
+| `quickrelease` | Release without local checks/bot triage (trivial, pre-verified changes only) |
+| `cleanup` | Branch hygiene + bot PR comment triage |
+| `pre-commit-check` | Pre-commit/pre-PR validation (build gates, conventions, i18n) |
+| `add-tauri-command` | New Tauri command: Rust handler + lib.rs registration + TS wrapper |
+| `add-generation-param` | New generation setting across store/types/Rust/templates (6 touchpoints) |
+| `workflow-template-builder` | ComfyUI workflow JSON templates in `src-tauri/src/templates/` |
+
+## Critical Architecture (Non-Obvious)
+
+- **Dual-mode app**: Runs as a Tauri desktop app AND as a browser web app served by an embedded axum server (`src-tauri/src/webserver.rs`, shared `Arc<AppState>`). `window.__MOOSHIE_BROWSER_MODE__` flags browser mode, where IPC becomes REST POST + SSE.
+- **Custom IPC abstraction** (`src/lib/utils/ipc.ts`): ALL backend calls go through `ipcInvoke()`/`ipcListen()` — never raw `invoke()`/`listen()` from `@tauri-apps/api` (works on desktop, breaks silently in browser mode). Typed wrappers live in `src/lib/utils/api.ts`.
+- **JXL storage**: Gallery images are stored as JPEG XL on disk. Display via `loadGalleryImageDisplay()` (JXL→WebP), PNG export via `loadGalleryImagePng()` — never read gallery files directly. Custom URI schemes: `thumbnail://`, `gallery://`. Gallery metadata comes from SQLite, not directory scans.
+- **Svelte 5 runes, no `svelte/store`**: Stores are class singletons with `$state` in `*.svelte.ts` files (extension required for rune compilation). Inside stores use `get` accessors for computed values (not `$derived`); `$derived` is for component-local computeds. Read shared state directly from store singletons instead of passing props. Reassign arrays with spread (no `.push()`); call `saveSettings()` explicitly after mutations; guard persisted fields with `!== undefined`. Stores must not import each other — cross-store logic lives in `App.svelte`.
+- **Rust commands**: `#[tauri::command]` must return `Result<T, AppError>` (never raw string errors), use `State<'_, AppState>` (re-exported), register in `lib.rs` `generate_handler![]`. Drop `RwLock` guards before `.await` on I/O. HTTP via shared `state.http_client` — never create new clients. Event names: `"comfyui:{type}"` / `"setup:{type}"`.
+- **`toParams()`** in the generation store maps camelCase → snake_case for Rust manually — mismatches break silently.
+- **i18n**: only `locale.t('key')`, no hardcoded user strings. Every key and `{placeholder}` added to `src/lib/locales/en.ts` must exist in **all** other locale files (missing keys fall back to English with no error).
+- **UI**: Tailwind only, no `<style>` blocks in `.svelte`; `onclick` not legacy `on:click`; dark neutral palette with accents via `--theme-accent-*` in `app.css`.
+
+## Release Process Gotchas
+
+- **Version must match exactly in 3 files**: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`.
+- **Pre-commit hook is bash** (GlassWorm scan in `.githooks/pre-commit`) and hangs in PowerShell — on Windows, prefix every git command with `git -c core.hooksPath=/dev/null`.
+- **Branch protection on `main`** — land via PR; CI gate is the "GlassWorm Infection Audit" check.
+- **Tags are protected** (no delete/force-update). If a tag push fails to trigger the release workflow, use `gh workflow run release.yml -f tag=vX.Y.Z`.
+- Prepend release notes to **both** `RELEASE_NOTES.md` and `CHANGELOG.md`. The About UI needs no manual edit (`__APP_VERSION__` + GitHub Releases API).
+- Bot PR comment triage rules: `docs/BOT_REVIEW_TRIAGE.md` (Fix / Skip / Defer).
+
+## Other Non-Obvious Items
+
+- **`error-logs/`**: drop large logs/stack traces here (git-ignored, excluded from context ingestion); read on demand by filename.
+- **Ring buffer log capture**: Rust `src-tauri/src/log_buffer.rs` (2000 lines) + frontend `src/lib/utils/log-buffer.ts` (1000) → `exportLogs()`. Console alone misses Rust output.
+- **Browser server lifecycle**: binds `127.0.0.1`, 120s idle heartbeat watchdog shuts it down unless LAN mode is enabled.
+- **CSP is null** in `src-tauri/tauri.conf.json`.
+- **keep_alive config**: when true, the ComfyUI child process survives app close.
+- `comfyui-nodes/` is Python nodes installed into ComfyUI at setup — not app build output. `src-tauri/src/comfyui/` is the Rust ComfyUI client, not ComfyUI source.
+- **Agent config (canonical)**: `.agents/README.md` — skills in `.agents/skills/`, rules in `.agents/rules/` (mode-specific detail: architect, frontend, rust, debug, ask). `AGENTS.md` is the cross-agent entry point; deeper conventions in `.github/instructions/mooshieui.instructions.md`.
