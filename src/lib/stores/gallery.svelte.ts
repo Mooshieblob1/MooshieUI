@@ -427,6 +427,25 @@ class GalleryStore {
     this.selectedImage = null;
     this.lightboxUrl = url;
     this.lightboxOpen = true;
+    // If the URL belongs to a known session image, remember it so features
+    // like "use as model thumbnail" can resolve a gallery file later (#232).
+    const match = this.sessionImages.find((img) => img.url === url);
+    if (match) this.lastSelectedImage = match;
+  }
+
+  /**
+   * Resolve the persisted gallery filename for an image, waiting for an
+   * in-flight persist if necessary. Returns null when the image was never
+   * saved to the gallery (e.g. manual-save mode without saving).
+   */
+  async resolveGalleryFilename(image: OutputImage): Promise<string | null> {
+    if (image.gallery_filename) return image.gallery_filename;
+    const pending = this._persistPromises.get(this._imageKey(image));
+    if (pending) {
+      const galleryFilename = await pending;
+      if (galleryFilename) return galleryFilename;
+    }
+    return image.gallery_filename ?? null;
   }
 
   closeLightbox() {
