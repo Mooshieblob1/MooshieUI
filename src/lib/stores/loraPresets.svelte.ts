@@ -1,5 +1,6 @@
 import type { LoraEntry } from "../types/index.js";
 import { triggerSync } from "../utils/syncTrigger.js";
+import { locale } from "./locale.svelte.js";
 
 const STORAGE_KEY = "mooshieui.loraPresets.v1";
 const EXPORT_VERSION = 1;
@@ -45,7 +46,7 @@ function sanitizePreset(raw: any): LoraPreset | null {
     : [];
   return {
     id: raw.id,
-    name: raw.name.trim() || "Untitled LoRA preset",
+    name: raw.name.trim() || locale.t("lora_presets.untitled"),
     loras,
     createdAt: typeof raw.createdAt === "number" && raw.createdAt > 0 ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "number" && raw.updatedAt > 0 ? raw.updatedAt : now,
@@ -102,7 +103,7 @@ class LoraPresetsStore {
     const now = Date.now();
     const preset: LoraPreset = {
       id: genId(),
-      name: name.trim() || "Untitled LoRA preset",
+      name: name.trim() || locale.t("lora_presets.untitled"),
       loras: loras.map(cloneLora),
       createdAt: now,
       updatedAt: now,

@@ -1,4 +1,5 @@
 import type { GenerationParams } from "../types/index.js";
+import { locale } from "./locale.svelte.js";
 
 export interface QueuedPrompt {
   promptId: string;
@@ -45,6 +46,14 @@ class ProgressStore {
   queuePosition = $state<number | null>(null);
   /** Total prompts in the global queue across all users. */
   queueTotal = $state(0);
+
+  /** Timestamp when the current active generation started (for elapsed time display). */
+  generationStartTime = $state<number | null>(null);
+
+  /** Live-updating elapsed seconds (ticked for real-time display during long generations like style transfer). */
+  elapsedSeconds = $state(0);
+
+  private _elapsedInterval: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Server-wide generation activity broadcast to all users.
@@ -99,6 +108,30 @@ class ProgressStore {
     return true;
   }
 
+  /** Elapsed time in ms since the current generation became active (for issue 252 style speed feedback). */
+  get elapsedMs(): number | null {
+    if (!this.generationStartTime) return null;
+    return Date.now() - this.generationStartTime;
+  }
+
+  private _startElapsedTimer() {
+    this._stopElapsedTimer();
+    this.elapsedSeconds = 0;
+    this._elapsedInterval = setInterval(() => {
+      if (this.generationStartTime) {
+        this.elapsedSeconds = Math.floor((Date.now() - this.generationStartTime) / 1000);
+      }
+    }, 1000);
+  }
+
+  private _stopElapsedTimer() {
+    if (this._elapsedInterval) {
+      clearInterval(this._elapsedInterval);
+      this._elapsedInterval = null;
+    }
+    this.elapsedSeconds = 0;
+  }
+
   get displayImage() {
     return this.previewImage ?? this.lastOutputImage;
   }
@@ -113,27 +146,39 @@ class ProgressStore {
   get phaseLabel(): string {
     if (this.regionalChainStatus) return this.regionalChainStatus;
     if (!this.isGenerating) return "";
+    const queuedSuffix = this.queueCount - 1;
     // Show queue position if waiting behind other users
     if (this.queuePosition != null && this.queuePosition > 0 && this.totalSteps === 0) {
       const pos = this.queuePosition;
       const own = this.queueCount;
-      if (own > 1) return `Queue position #${pos + 1} (+${own - 1} of yours)`;
-      return `Queue position #${pos + 1}`;
+      if (own > 1) {
+        return locale.t("progress.queue_position_own", {
+          pos: String(pos + 1),
+          count: String(own - 1),
+        });
+      }
+      return locale.t("progress.queue_position", { pos: String(pos + 1) });
     }
     if (this.totalSteps === 0) {
       // Position 0 (or unknown) means this prompt is not waiting behind
       // another prompt in the queue; avoid misleading "In queue..." labels.
-      return this.queueCount > 1 ? `Queued (${this.queueCount})` : "Preparing...";
+      return this.queueCount > 1
+        ? locale.t("progress.queued", { count: String(this.queueCount) })
+        : locale.t("progress.preparing");
     }
     if (this.activePrompt?.params?.style_transfer_enabled && !this.hasReliableStepProgress) {
       return this.queueCount > 1
-        ? `Applying style reference... (+${this.queueCount - 1} queued)`
-        : "Applying style reference...";
+        ? locale.t("progress.applying_style_reference_queued", { count: String(queuedSuffix) })
+        : locale.t("progress.applying_style_reference");
     }
     if (this.wasUpscaled && this.samplingPass >= 2) {
-      return this.queueCount > 1 ? `Upscaling... (+${this.queueCount - 1} queued)` : "Upscaling...";
+      return this.queueCount > 1
+        ? locale.t("progress.upscaling_queued", { count: String(queuedSuffix) })
+        : locale.t("progress.upscaling");
     }
-    return this.queueCount > 1 ? `Generating... (+${this.queueCount - 1} queued)` : "Generating...";
+    return this.queueCount > 1
+      ? locale.t("progress.generating_queued", { count: String(queuedSuffix) })
+      : locale.t("progress.generating");
   }
 
   setActiveMode(mode: "txt2img" | "img2img" | "inpainting") {
@@ -246,11 +291,19 @@ class ProgressStore {
       this.previewImage = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
+      this.generationStartTime = Date.now();
+      this._startElapsedTimer();
     }
   }
 
-  /** Called when a prompt completes — removes it from the queue and returns its metadata. */
-  completePrompt(promptId: string): QueuedPrompt | undefined {
+  /** Called when a prompt completes — removes it from the queue and returns its metadata.
+   *
+   * `hasFinalImage` should be true when the caller is about to set the real
+   * output via `setLastOutputForMode` (finalizeOutputImages). The last preview
+   * frame is then discarded instead of being promoted to lastOutputImage —
+   * promoting it first risks the blurry progress frame sticking around if the
+   * final image swap fails. */
+  completePrompt(promptId: string, hasFinalImage = false): QueuedPrompt | undefined {
     const item = this.pendingPrompts.find((p) => p.promptId === promptId);
 
     if (item) {
@@ -269,8 +322,10 @@ class ProgressStore {
       this.currentNode = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
+      this.generationStartTime = null;
+      this._stopElapsedTimer();
 
-      if (this.previewImage && item) {
+      if (this.previewImage && item && !hasFinalImage) {
         this.setLastOutputForMode(item.mode, this.previewImage);
       }
       this.previewImage = null;
@@ -292,6 +347,8 @@ class ProgressStore {
       this.previewImage = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
+      this.generationStartTime = null;
+      this._stopElapsedTimer();
     }
 
     if (this.pendingPrompts.length === 0) {
@@ -310,6 +367,8 @@ class ProgressStore {
     this.previewImage = null;
     this.samplingPass = 0;
     this._lastProgressNode = null;
+    this.generationStartTime = null;
+    this._stopElapsedTimer();
     this.queuePosition = null;
     this.queueTotal = 0;
   }

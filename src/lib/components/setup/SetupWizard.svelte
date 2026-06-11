@@ -162,9 +162,17 @@
     });
 
     // Listen for terminal log lines
+    interface LogPayload {
+      text: string;
+      is_update: boolean;
+    }
     await ipcListen("setup:log", (event: any) => {
-      const line = event.payload as string;
-      logLines = [...logLines, line];
+      const payload = event.payload as LogPayload;
+      if (payload.is_update && logLines.length > 0) {
+        logLines[logLines.length - 1] = payload.text;
+      } else {
+        logLines = [...logLines, payload.text];
+      }
       // Auto-scroll
       requestAnimationFrame(() => {
         if (logContainer) {
@@ -264,7 +272,7 @@
       }
     } catch (e: any) {
       phase = "error";
-      errorMessage = typeof e === "string" ? e : e.message || "Unknown error";
+      errorMessage = typeof e === "string" ? e : e.message || locale.t("app.status.unknown_error");
     }
   }
 
@@ -299,7 +307,7 @@
       } catch {
         // Keep the original validation error if config rollback also fails.
       }
-      const message = typeof e === "string" ? e : e?.message || "Unknown error";
+      const message = typeof e === "string" ? e : e?.message || locale.t("app.status.unknown_error");
       errorMessage = message;
       if (message.includes("has not loaded required MooshieUI custom nodes")) {
         remoteChecklist = [
@@ -330,7 +338,7 @@
   {#if phase === "installing" || phase === "validating-remote" || phase === "choose-mode" || phase === "done" || phase === "error"}
     <div
       bind:this={logContainer}
-      class="absolute inset-0 overflow-y-auto p-4 pt-6 font-mono text-[11px] leading-relaxed text-green-500/25 pointer-events-none select-none"
+      class="absolute inset-0 overflow-y-auto p-4 pt-6 font-mono text-[11px] leading-relaxed text-indigo-400/20 pointer-events-none select-none"
       aria-hidden="true"
     >
       {#each logLines as line}
@@ -338,7 +346,7 @@
       {/each}
     </div>
     <!-- Darkening overlay so the UI stays readable -->
-    <div class="absolute inset-0 bg-neutral-950/70 pointer-events-none"></div>
+    <div class="absolute inset-0 bg-neutral-950/75 backdrop-blur-[1.5px] pointer-events-none"></div>
   {/if}
 
   <!-- Main content (on top of terminal) -->
@@ -558,12 +566,12 @@
                 onclick={browseInstallPath}
                 class="px-3 py-2 rounded-lg border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors text-xs cursor-pointer"
               >
-                Browse
+                {locale.t("setup.browse")}
               </button>
             </div>
-            <p class="text-[10px] text-neutral-600">Pick any drive or folder. All app data (~5-10 GB) will be stored here.</p>
+            <p class="text-[10px] text-neutral-600">{locale.t("setup.install_location_desc")}</p>
           {:else}
-            <p class="text-xs text-neutral-500 font-mono truncate" title={defaultInstallPath}>{defaultInstallPath || "Loading..."}</p>
+            <p class="text-xs text-neutral-500 font-mono truncate" title={defaultInstallPath}>{defaultInstallPath || locale.t("common.loading")}</p>
           {/if}
         </div>
 

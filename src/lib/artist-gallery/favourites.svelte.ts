@@ -10,10 +10,11 @@
  */
 
 const STORAGE_KEY = "mooshieui.artist-gallery.favourites.v1";
-const EXPORT_KIND = "mooshieui.artist-gallery.favourites";
-const EXPORT_VERSION = 1;
+export const EXPORT_KIND = "mooshieui.artist-gallery.favourites";
+export const EXPORT_VERSION = 1;
 
 import { triggerSync } from "../utils/syncTrigger.js";
+import { locale } from "../stores/locale.svelte.js";
 
 export interface FavouriteCategory {
   id: string;
@@ -266,8 +267,8 @@ class ArtistFavouritesStore {
     mode: "replace" | "merge" = "merge",
   ): { added: number; updated: number; categoriesAdded: number } {
     const parsed = JSON.parse(raw) as Partial<FavouritesExport>;
-    if (!parsed || typeof parsed !== "object") throw new Error("Invalid JSON payload");
-    if (parsed.kind !== EXPORT_KIND) throw new Error("Not a MooshieUI artist favourites export");
+    if (!parsed || typeof parsed !== "object") throw new Error(locale.t("artist_gallery.fav_manager.import_error.invalid_json"));
+    if (parsed.kind !== EXPORT_KIND) throw new Error(locale.t("artist_gallery.fav_manager.import_error.not_export"));
 
     const incomingCats: FavouriteCategory[] = Array.isArray(parsed.categories)
       ? parsed.categories.filter(

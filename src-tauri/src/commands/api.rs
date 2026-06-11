@@ -2461,7 +2461,7 @@ fn is_allowed_civitai_image_host(host: &str) -> bool {
     )
 }
 
-fn parse_civitai_image_url(url: &str) -> Result<reqwest::Url, AppError> {
+pub(crate) fn parse_civitai_image_url(url: &str) -> Result<reqwest::Url, AppError> {
     let parsed = reqwest::Url::parse(url.trim())
         .map_err(|e| AppError::Other(format!("Invalid CivitAI image URL: {}", e)))?;
     if parsed.scheme() != "https" {
@@ -2478,7 +2478,10 @@ fn parse_civitai_image_url(url: &str) -> Result<reqwest::Url, AppError> {
     Ok(parsed)
 }
 
-async fn fetch_civitai_image_bytes(state: &AppState, url: &str) -> Result<Vec<u8>, AppError> {
+pub(crate) async fn fetch_civitai_image_bytes(
+    state: &AppState,
+    url: &str,
+) -> Result<Vec<u8>, AppError> {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -2544,6 +2547,15 @@ mod sidecar_thumbnail_tests {
         assert!(parse_civitai_image_url("http://127.0.0.1:8188/view").is_err());
         assert!(parse_civitai_image_url("https://169.254.169.254/latest/meta-data").is_err());
         assert!(parse_civitai_image_url("https://civitai.com.evil.test/example.png").is_err());
+    }
+
+    #[test]
+    fn cached_image_fetch_uses_same_civitai_only_url_policy() {
+        // `fetch_cached_image` is exposed through browser-mode LAN auth; this
+        // policy must keep it from becoming a server-side request primitive.
+        assert!(parse_civitai_image_url("https://www.civitai.com/images/123").is_ok());
+        assert!(parse_civitai_image_url("https://localhost/admin").is_err());
+        assert!(parse_civitai_image_url("file:///etc/passwd").is_err());
     }
 }
 
@@ -2918,7 +2930,7 @@ pub async fn read_modelspec(
         .join(&filename);
 
     if !path.is_file() {
-        return Err(AppError::Other(format!("File not found: {}", filename)));
+        return Ok(None);
     }
 
     // Only process .safetensors files
@@ -4082,7 +4094,7 @@ pub async fn append_frontend_logs(lines: Vec<String>) -> Result<(), AppError> {
 }
 
 /// Detect the MIME type of image bytes from magic bytes.
-fn detect_image_mime(bytes: &[u8]) -> &'static str {
+pub(crate) fn detect_image_mime(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(b"\x89PNG") {
         "image/png"
     } else if bytes.starts_with(b"\xff\xd8") {
@@ -4109,6 +4121,10 @@ pub async fn fetch_cached_image(
     url: String,
 ) -> Result<String, AppError> {
     use base64::{engine::general_purpose::STANDARD, Engine};
+
+    // This backend fetch carries the user's CivitAI token, so keep it scoped to
+    // CivitAI image hosts and validate redirects before touching the cache.
+    parse_civitai_image_url(&url)?;
 
     // Build a stable cache filename from the URL hash.
     let mut hasher = sha2::Sha256::new();
@@ -4142,36 +4158,7 @@ pub async fn fetch_cached_image(
     }
 
     // Cache miss — fetch through the backend so auth headers are applied.
-    let civitai_api_key = {
-        let config = state.config.read().await;
-        config.civitai_api_key.clone()
-    };
-
-    let mut req = state
-        .http_client
-        .get(&url)
-        .header("User-Agent", "MooshieUI/0.5.7");
-    if let Some(key) = civitai_api_key.filter(|v| !v.trim().is_empty()) {
-        req = req.bearer_auth(key);
-    }
-
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| AppError::Other(format!("Image fetch failed: {}", e)))?;
-
-    if !resp.status().is_success() {
-        return Err(AppError::Other(format!(
-            "Image fetch returned HTTP {}",
-            resp.status()
-        )));
-    }
-
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| AppError::Other(format!("Failed to read image bytes: {}", e)))?
-        .to_vec();
+    let bytes = fetch_civitai_image_bytes(state.inner().as_ref(), &url).await?;
 
     // Persist to disk cache (best-effort; ignore write errors).
     let _ = std::fs::write(&cache_path, &bytes);
@@ -4520,7 +4507,14 @@ pub async fn install_attention_backend(
                         "Installing FlashAttention v1...",
                     )
                     .ok();
-                vec!["pip", "install", "--python", &python_str, "flash-attn<2.0"]
+                vec![
+                    "pip",
+                    "install",
+                    "--python",
+                    &python_str,
+                    "flash-attn<2.0",
+                    "--no-build-isolation",
+                ]
             }
             "flash_v2" => {
                 app_handle
@@ -4529,7 +4523,14 @@ pub async fn install_attention_backend(
                         "Installing FlashAttention v2 (may compile from source — this can take 10+ minutes)...",
                     )
                     .ok();
-                vec!["pip", "install", "--python", &python_str, "flash-attn"]
+                vec![
+                    "pip",
+                    "install",
+                    "--python",
+                    &python_str,
+                    "flash-attn",
+                    "--no-build-isolation",
+                ]
             }
             _ => unreachable!(),
         };

@@ -1,0 +1,39 @@
+---
+trigger: always_on
+description: MooshieUI core build, dual-mode IPC, release/git gotchas — always apply
+---
+
+# MooshieUI Core
+
+Mirrors essentials from root `AGENTS.md`. Deeper mode rules: sibling `.mdc` / `.md` files (source of truth also in `.roo/rules-*/`).
+
+## Build & run
+
+```bash
+npm install && npm run tauri dev    # dev (port 1420)
+npm run tauri build                 # production
+cargo check   # in src-tauri/
+```
+
+No automated tests (no vitest/jest, no Rust `#[test]`).
+
+## Dual-mode (non-negotiable)
+
+- Desktop: Tauri WebView. Browser: axum serves same UI (`webserver.rs`); `window.__MOOSHIE_BROWSER_MODE__`.
+- **All backend I/O:** `ipcInvoke()` / `ipcListen()` in `src/lib/utils/ipc.ts` — never raw `invoke()`/`listen()` (browser mode breaks silently).
+
+## Images
+
+- Gallery on disk: **JXL**. UI: `loadGalleryImageDisplay()` / `loadGalleryImagePng()` — not raw file reads.
+- URI schemes: `thumbnail://`, `gallery://`.
+
+## Git / release (Windows)
+
+- Pre-commit hook is bash → hangs in PowerShell: `git -c core.hooksPath=/dev/null ...`
+- Version must match in `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`
+- Workflows: `.cursor/skills/push`, `.cursor/skills/release` / `.agents/skills/push`, `.agents/skills/release`
+
+## Diagnostics
+
+- `error-logs/` for large logs (on-demand read)
+- Ring buffers: `log_buffer.rs`, `log-buffer.ts` → `exportLogs()`

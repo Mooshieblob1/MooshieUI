@@ -141,12 +141,12 @@
     try {
       const latest = gallery.sessionImages[0] ?? gallery.images[0];
       if (!latest) {
-        thumbnailError = "No recent generation to use";
+        thumbnailError = locale.t("styles.editor.thumb_no_generation");
         return;
       }
       const url = latest.fullImageUrl ?? latest.thumbnailUrl ?? latest.url;
       if (!url) {
-        thumbnailError = "Latest image has no accessible URL";
+        thumbnailError = locale.t("styles.editor.thumb_no_url");
         return;
       }
       const resp = await fetch(url);
@@ -387,7 +387,7 @@
           {#if autocompleteSuggestions.length > 0}
             <div class="mt-2">
               <p class="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">
-                From autocomplete{generation.isAnima ? " (Anima)" : ""}
+                {locale.t("styles.editor.from_autocomplete")}
               </p>
               <div class="flex flex-wrap gap-1">
                 {#each autocompleteSuggestions as hit (hit.name)}

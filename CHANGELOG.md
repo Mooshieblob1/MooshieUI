@@ -1,5 +1,42 @@
 # Changelog
 
+## What's New in v1.4.9
+
+### Fixes and maintenance
+- **Browser mode proxies**: removed LAN authentication from Animadex and CDN proxy routes so artist previews and CDN assets load correctly in browser mode without a session token.
+
+---
+
+## What's New in v1.4.8
+
+### LAN and Web Server Security
+- **LAN Authentication & Accounts**: introduced a robust local account authentication system for LAN / browser-mode deployments. Supports password hashing with Argon2id, token-based session tracking, and user role management (Admin, Moderator, User).
+- **Password Upgrade Migration**: transparently verifies and upgrades legacy SHA-256 password hashes to the modern Argon2id format on login. Prompts a warning when grace periods expire.
+- **Port Binding Fix**: resolved a port-binding conflict when starting the Axum web server in TLS mode by explicitly dropping the HTTP listener socket before binding the TLS server.
+
+### User Experience and Caching
+- **Artist preview cache**: cached CDN preview images locally in the user's gallery directory, resolving CORS issues and speeding up subsequent views in browser mode.
+- **Quickrelease configuration**: added automation tools for checkless git and version tagging workflows.
+
+---
+
+## What's New in v1.4.7
+
+### Fixes and maintenance
+- **Prompt tag highlighting**: fixed horizontal misalignment of tag overlays and clickable highlights in the prompt textarea when a vertical scrollbar is shown by dynamically tracking the scrollbar's width.
+
+---
+
+## What's New in v1.4.6
+
+### Fixes and maintenance
+- **Windows process termination**: resolved an issue where stopping or restarting ComfyUI could fail on non-English locales (e.g., German, Spanish) by making the `netstat` process/port check locale-independent.
+- **Artist selection & gallery**: fixed automatic manifest loading and tag detection within the artist gallery BottomPanel.
+- **Model preview actions**: improved checkpoint and LoRA gallery cards to use the `lastSelectedImage` helper for assigning thumbnails, ensuring reliability even when the lightbox is closed.
+- **Model directory deduplication**: merged disk folders now deduplicate by basename against the ComfyUI API model list to avoid showing duplicates.
+
+---
+
 ## What's New in v1.4.5
 
 ### Fixes and maintenance

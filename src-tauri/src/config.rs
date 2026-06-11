@@ -130,6 +130,10 @@ pub struct AppConfig {
     /// User-defined custom theme profiles.
     #[serde(default)]
     pub theme_profiles: Vec<ThemeProfile>,
+    /// Optional TLS certificate PEM path for the browser-mode web server.
+    pub tls_cert_path: Option<String>,
+    /// Optional TLS private key PEM path for the browser-mode web server.
+    pub tls_key_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -183,8 +187,32 @@ impl Default for AppConfig {
             webhook_allow_private_targets: false,
             theme_profile_id: None,
             theme_profiles: vec![],
+            tls_cert_path: None,
+            tls_key_path: None,
         }
     }
+}
+
+/// Serialize config for a browser-mode client. Secrets are included only for admins/moderators.
+pub fn config_to_client_json(
+    config: &AppConfig,
+    include_secrets: bool,
+) -> Result<serde_json::Value, serde_json::Error> {
+    let mut value = serde_json::to_value(config)?;
+    if !include_secrets {
+        if let Some(obj) = value.as_object_mut() {
+            let configured = obj
+                .get("civitai_api_key")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.is_empty());
+            obj.insert("civitai_api_key".to_string(), serde_json::Value::Null);
+            obj.insert(
+                "civitai_api_key_configured".to_string(),
+                serde_json::json!(configured),
+            );
+        }
+    }
+    Ok(value)
 }
 
 /// Resolve the gallery directory.
@@ -332,6 +360,8 @@ pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
         &mut config.output_filename_template,
         &mut config.webhook_url,
         &mut config.theme_profile_id,
+        &mut config.tls_cert_path,
+        &mut config.tls_key_path,
     ] {
         match field {
             Some(p) if p.trim().is_empty() => *field = None,

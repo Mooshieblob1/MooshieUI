@@ -213,9 +213,15 @@
   }
 
   async function setSidecarFromGallery(checkpointFilename: string) {
-    const gf = gallery.selectedImage?.gallery_filename;
-    if (!gf) {
+    const last = gallery.lastSelectedImage;
+    if (!last) {
       gallery.showToast(locale.t("model.thumb_no_gallery_image"), "warning");
+      return;
+    }
+    // Wait for an in-flight persist so freshly generated images work too (#232).
+    const gf = await gallery.resolveGalleryFilename(last);
+    if (!gf) {
+      gallery.showToast(locale.t("gallery.persisted_only_thumb"), "warning");
       return;
     }
     try {
@@ -383,6 +389,31 @@
                 loading="lazy"
               />
               <ModelPreviewActions imageUrl={imgUrl} modelLabel={displayName(name)} />
+            {:else if isLoading}
+              <div class="absolute inset-0 flex items-center justify-center">
+                <div class="w-4 h-4 border-2 border-neutral-600 border-t-indigo-500 rounded-full animate-spin"></div>
+              </div>
+            {:else}
+              <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-2">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="w-8 h-8 {isActive ? 'text-indigo-700' : 'text-neutral-700'}"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                  <line x1="12" y1="22.08" x2="12" y2="12"/>
+                </svg>
+                <p class="text-[9px] text-neutral-600 text-center leading-snug">{locale.t('model.thumb_empty_hint')}</p>
+              </div>
+            {/if}
+
+            {#if !isLoading}
               <div
                 class="absolute left-1 bottom-1 z-10 flex gap-0.5"
                 onclick={(e) => e.stopPropagation()}
@@ -431,28 +462,6 @@
                   </button>
                 </div>
               {/if}
-            {:else if isLoading}
-              <div class="absolute inset-0 flex items-center justify-center">
-                <div class="w-4 h-4 border-2 border-neutral-600 border-t-indigo-500 rounded-full animate-spin"></div>
-              </div>
-            {:else}
-              <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-2">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  class="w-8 h-8 {isActive ? 'text-indigo-700' : 'text-neutral-700'}"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-                  <line x1="12" y1="22.08" x2="12" y2="12"/>
-                </svg>
-                <p class="text-[9px] text-neutral-600 text-center leading-snug">{locale.t('model.thumb_empty_hint')}</p>
-              </div>
             {/if}
           </div>
 

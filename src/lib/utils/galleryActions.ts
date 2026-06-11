@@ -4,6 +4,7 @@
  * stores so callers don't need to duplicate the bytes-load + upload dance.
  */
 import type { OutputImage } from "../types/index.js";
+import { locale } from "../stores/locale.svelte.js";
 import { gallery } from "../stores/gallery.svelte.js";
 import { generation } from "../stores/generation.svelte.js";
 import { authHeaders, isTauri } from "./ipc.js";
@@ -74,7 +75,7 @@ async function tempImageToPngBytes(tempFilename: string, outputFilename: string)
   const sourceIsJxl = lowerTempFilename.endsWith(".jxl");
   const outputIsJxl = outputFilename.toLowerCase().endsWith(".jxl");
   if (isTauri) {
-    if (sourceIsJxl) throw new Error("JXL display copy is unavailable");
+    if (sourceIsJxl) throw new Error(locale.t("gallery.error.jxl_copy_unavailable"));
     const bytes = await readTempImage(tempFilename);
     const type = lowerTempFilename.endsWith(".webp")
       ? "image/webp"
@@ -134,9 +135,10 @@ export async function loadOutputImageForGenerationInput(
     }
   }
 
-  if (image.url) {
+  const fallbackUrl = image.url || (gallery.selectedImage === image && gallery.lightboxUrl ? gallery.lightboxUrl : undefined);
+  if (fallbackUrl) {
     try {
-      return { bytes: await imageUrlToPngBytes(image.url), filename: uploadFilename };
+      return { bytes: await imageUrlToPngBytes(fallbackUrl), filename: uploadFilename };
     } catch (urlError) {
       if (!image.tempFilename) throw urlError;
       console.warn("Preview URL load failed; falling back to temp image:", urlError);

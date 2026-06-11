@@ -1,5 +1,6 @@
 import { ipcStore } from "../utils/ipc.js";
 import { triggerSync } from "../utils/syncTrigger.js";
+import { locale } from "./locale.svelte.js";
 import builtinTags from "../assets/danbooru-tags.json";
 
 export interface TagEntry {
@@ -381,7 +382,7 @@ class AutocompleteStore {
     if (trimmed.startsWith("[")) {
       // JSON array
       const parsed = JSON.parse(trimmed);
-      if (!Array.isArray(parsed)) throw new Error("JSON must be an array");
+      if (!Array.isArray(parsed)) throw new Error(locale.t("settings.autocomplete.error.json_array"));
       return parsed.map((entry: any) => ({
         n: entry.n || entry.name || "",
         c: entry.c ?? entry.category ?? 0,
@@ -403,7 +404,7 @@ class AutocompleteStore {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
       const text = await resp.text();
       const tags = this.parseTagData(text);
-      if (tags.length === 0) throw new Error("No tags found in file");
+      if (tags.length === 0) throw new Error(locale.t("settings.autocomplete.error.no_tags"));
       this._customTags = tags;
       this.setTags(tags);
       this.sourceMode = "url";
@@ -424,7 +425,7 @@ class AutocompleteStore {
     this.error = null;
     try {
       const tags = this.parseTagData(text);
-      if (tags.length === 0) throw new Error("No tags found in file");
+      if (tags.length === 0) throw new Error(locale.t("settings.autocomplete.error.no_tags"));
       this._customTags = tags;
       this.setTags(tags);
       this.sourceMode = "file";

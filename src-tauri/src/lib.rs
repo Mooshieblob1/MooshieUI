@@ -493,22 +493,19 @@ pub fn run() {
                     use std::os::windows::process::CommandExt;
                     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-                    if let Ok(output) = std::process::Command::new("cmd")
-                        .args([
-                            "/C",
-                            &format!("netstat -ano | findstr :{} | findstr LISTENING", port),
-                        ])
+                    if let Ok(output) = std::process::Command::new("netstat")
+                        .arg("-ano")
                         .creation_flags(CREATE_NO_WINDOW)
                         .output()
                     {
                         for line in String::from_utf8_lossy(&output.stdout).lines() {
-                            if let Some(pid) = line.split_whitespace().last() {
-                                if pid.parse::<u32>().is_ok() {
-                                    let _ = std::process::Command::new("taskkill")
-                                        .args(["/F", "/PID", pid])
-                                        .creation_flags(CREATE_NO_WINDOW)
-                                        .output();
-                                }
+                            if let Some(pid) =
+                                crate::comfyui::process::parse_netstat_listening_pid(line, port)
+                            {
+                                let _ = std::process::Command::new("taskkill")
+                                    .args(["/F", "/PID", &pid.to_string()])
+                                    .creation_flags(CREATE_NO_WINDOW)
+                                    .output();
                             }
                         }
                     }

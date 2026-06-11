@@ -63,7 +63,7 @@
   ]);
 
   const architectureOptions = $state<Array<{ value: string; label: string }>>([
-    { value: "", label: "All Base Models" },
+    { value: "", label: locale.t("modelhub.architecture.all_base") },
   ]);
 
   const fileFormatOptions = $derived<Array<{ value: CivitaiFileFormat | ""; label: string }>>([
@@ -483,7 +483,7 @@
     const normalized = normalizeArchitectures(architectures);
 
     architectureOptions.length = 0;
-    architectureOptions.push({ value: "", label: "All Base Models" });
+    architectureOptions.push({ value: "", label: locale.t("modelhub.architecture.all_base") });
     for (const arch of normalized) {
       architectureOptions.push({ value: arch, label: arch });
     }
@@ -675,7 +675,7 @@
       }
       if (!hasExistingOptions) {
         architectureOptions.length = 0;
-        architectureOptions.push({ value: "", label: "All Architectures" });
+        architectureOptions.push({ value: "", label: locale.t("modelhub.architecture.all") });
       }
     } finally {
       loadingArchitectures = false;
@@ -1338,7 +1338,7 @@
               bind:value={directUrl}
               oninput={handleDirectUrlInput}
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500"
-              placeholder="https://.../model.safetensors"
+              placeholder={locale.t("modelhub.direct.url_placeholder")}
             />
           </div>
           <div>
@@ -1349,7 +1349,7 @@
               type="text"
               bind:value={directFilename}
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500"
-              placeholder="model.safetensors"
+              placeholder={locale.t("modelhub.direct.filename_placeholder")}
             />
           </div>
         </div>

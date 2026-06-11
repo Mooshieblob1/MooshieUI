@@ -54,7 +54,7 @@
         <div class="w-full max-w-xl rounded-xl border border-neutral-700 bg-neutral-950/95 shadow-2xl overflow-hidden">
           <div class="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
             <div class="text-sm font-medium text-neutral-100">{locale.t('canvas.inpainting_preview')}</div>
-            <div class="text-xs text-neutral-400">{progress.phaseLabel || "Generating..."}</div>
+            <div class="text-xs text-neutral-400">{progress.phaseLabel || locale.t("progress.generating")}</div>
           </div>
 
           <div class="p-4">
@@ -81,7 +81,7 @@
                 ></div>
               </div>
               <div class="mt-1 text-[11px] text-neutral-500 text-right">
-                {progress.currentStep} / {progress.totalSteps || "?"} steps
+                {progress.currentStep} / {progress.totalSteps || "?"} {locale.t("progress.steps_suffix")}
               </div>
             </div>
           </div>

@@ -41,13 +41,21 @@
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
-  import { interrogateGalleryImage, interrogateImage, saveModelSidecarThumbnail } from "./lib/utils/api.js";
+  import {
+    interrogateGalleryImage,
+    interrogateImage,
+    saveModelSidecarThumbnail,
+    installCustomNode,
+  } from "./lib/utils/api.js";
   import {
     fetchModelPreviewImageBytes,
     uploadModelPreviewImage,
     type ModelPreviewActionDetail,
   } from "./lib/utils/modelPreviewImage.js";
-  import { isStyleTransferExecutionError } from "./lib/utils/styleTransferNodes.js";
+  import {
+    isStyleTransferExecutionError,
+    checkStyleTransferNodesReady,
+  } from "./lib/utils/styleTransferNodes.js";
   import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
@@ -82,6 +90,20 @@
   async function awaitFetchesWithTimeout(fetches: Promise<void>[]): Promise<void> {
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, FETCH_TIMEOUT_MS));
     await Promise.race([Promise.allSettled(fetches), timeout]);
+  }
+  /** Fetch a `_temp_image` URL, retrying once after a short delay. A transient
+   *  failure here (e.g. a 401 while the LAN session token refreshes) would
+   *  otherwise drop the final output image and leave the blurry progress
+   *  preview stuck as the displayed result. */
+  async function fetchTempImageWithRetry(url: string): Promise<Response> {
+    try {
+      const resp = await fetch(url, { headers: authHeaders() });
+      if (resp.ok) return resp;
+    } catch {
+      // fall through to retry
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    return fetch(url, { headers: authHeaders() });
   }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
   let sseReconnectHandler: (() => void) | null = null;
@@ -498,7 +520,6 @@
   let newPass2 = $state("");
   let changePassError = $state<string | null>(null);
   let changePassBusy = $state(false);
-
   async function checkAuth(): Promise<boolean> {
     if (!isBrowserMode) {
       authChecked = true;
@@ -688,7 +709,7 @@
                 ? modeLabel(image.generation_mode)
                 : galleryGroupBy === "board"
                   ? gallery.getBoard(image)
-                  : (image.prompt_id || "No Prompt ID");
+                  : (image.prompt_id || locale.t("gallery.no_prompt_id"));
         const bucket = grouped.get(key) ?? [];
         bucket.push(image);
         grouped.set(key, bucket);
@@ -919,6 +940,34 @@
       generation.saveSettings();
       currentPage = "generate";
       gallery.showToast(locale.t("generation.style_transfer.reference_loaded"), "success");
+
+      // Actually ensure style transfer nodes are installed and take action when the
+      // feature is activated via a preview "Style" button (e.g. on a LoRA card).
+      // This is the path that previously left users with a stuck "generates but no output"
+      // state. We check, and if missing we action the git installs for the two required
+      // packages (the same ones the backend ensure logic uses on startup).
+      try {
+        const nodesReady = await checkStyleTransferNodesReady();
+        if (!nodesReady) {
+          gallery.showToast(locale.t("generation.style_transfer.nodes_install"), "info");
+          if (!isBrowserMode) {
+            // Action the installs only in desktop mode (clones the repos into the local custom_nodes).
+            // In browser/LAN mode the remote ComfyUI must have the nodes pre-installed (via its server build).
+            await installCustomNode(
+              "https://github.com/BigStationW/ComfyUi-Untwisting-RoPE.git",
+              "ComfyUi-Untwisting-RoPE",
+            );
+            await installCustomNode(
+              "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git",
+              "ComfyUi-Scale-Image-to-Total-Pixels-Advanced",
+            );
+          }
+          // Full ComfyUI restart (via Settings or next app launch) is still needed for the
+          // nodes to load; the warning banner in the Style Transfer panel will guide the user.
+        }
+      } catch (ensureErr) {
+        console.warn("Style transfer node ensure/install during preview activation:", ensureErr);
+      }
     } catch (e) {
       console.error("Failed to load style reference:", e);
       gallery.showToast(locale.t("generation.style_transfer.upload_error"), "error");
@@ -1286,6 +1335,36 @@
       console.error("Failed to save gallery preferences:", e);
     }
   });
+
+  /** Recover output images from the server temp cache (browser mode) when the
+   *  output_image SSE event was dropped or its fetch failed. Without this the
+   *  blurry progress frame stays as the displayed result. The `_temp_image`
+   *  endpoint transcodes JXL to WebP, so the blobs are always displayable. */
+  async function recoverMissingOutputImages(
+    promptId: string,
+    images: Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>,
+  ): Promise<void> {
+    if (isTauri) return;
+    try {
+      const recovered = await recoverPromptOutputs(promptId);
+      for (const imgRef of recovered.images) {
+        const tempFn = imgRef.temp_filename?.trim();
+        if (!tempFn) continue;
+        progress.registerPromptOutput(promptId, tempFn);
+        try {
+          const resp = await fetch(
+            `/internal-api/_temp_image/${encodeURIComponent(tempFn)}`,
+            { headers: authHeaders() },
+          );
+          if (resp.ok) {
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            images.push({ blob, url, tempFilename: tempFn });
+          }
+        } catch { /* individual image fetch failed */ }
+      }
+    } catch { /* recovery command failed */ }
+  }
 
   /**
    * Finalize images received via WebSocket during generation.
@@ -1840,6 +1919,20 @@
             });
             if (!resp.ok) return;
             const blob = await resp.blob();
+            // The prompt may have completed while the fetch was in flight
+            // (common on remote browser mode with inpaint chains). Setting
+            // previewImage now would overwrite the finalized output in the
+            // lightbox with a stale blurry preview frame — and nothing would
+            // ever clear it. The pendingPrompts check also covers the window
+            // between one queued prompt completing and the next starting,
+            // when activePromptId is briefly null.
+            if (
+              !progress.isGenerating ||
+              (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) ||
+              (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId)
+            ) {
+              return;
+            }
             const url = URL.createObjectURL(blob);
             // Revoke the previous preview blob URL to avoid memory leaks
             if (progress.previewImage?.startsWith("blob:")) URL.revokeObjectURL(progress.previewImage);
@@ -1941,10 +2034,10 @@
                     ? `/internal-api/_temp_image/${encodeURIComponent(displayFilename)}`
                     : `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}?format=webp`;
                   const [canonicalResp, displayResp] = await Promise.all([
-                    fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}?raw=true`, {
-                      headers: authHeaders(),
-                    }),
-                    fetch(displayUrl, { headers: authHeaders() }),
+                    fetchTempImageWithRetry(
+                      `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}?raw=true`,
+                    ),
+                    fetchTempImageWithRetry(displayUrl),
                   ]);
                   if (!canonicalResp.ok) {
                     console.error(
@@ -1966,9 +2059,8 @@
                     url = progress.displayImage ?? "";
                   }
                 } else {
-                  const resp = await fetch(
+                  const resp = await fetchTempImageWithRetry(
                     `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`,
-                    { headers: authHeaders() },
                   );
                   if (!resp.ok) {
                     console.error("[output_image] failed to fetch temp image:", resp.status);
@@ -2050,15 +2142,24 @@
             pendingOutputFetches.delete(promptId);
           }
 
-          const item = progress.completePrompt(promptId);
+          // Read the collected output images first so completePrompt knows
+          // whether a real final image is about to replace the preview frame.
+          const images = pendingOutputImages.get(promptId) ?? [];
+          const item = progress.completePrompt(promptId, images.length > 0);
           promptLastActivity.delete(promptId);
           if (item) {
-            const images = pendingOutputImages.get(promptId) ?? [];
             for (const img of images) {
               const tempFn = img.tempFilename?.trim();
               if (tempFn) progress.registerPromptOutput(promptId, tempFn);
             }
             pendingOutputImages.delete(promptId);
+
+            if (images.length === 0) {
+              // The output_image event was dropped or its fetch failed — try
+              // to recover from the server temp cache so the final image
+              // replaces the blurry progress frame.
+              await recoverMissingOutputImages(promptId, images);
+            }
 
             const skipGallery = shouldSuppressRegionalChainGallerySave(promptId);
             if (skipGallery) {
@@ -2091,6 +2192,12 @@
         let toastMsg = locale.t("generation.toast.failed");
         if (isStyleTransferExecutionError(rawErr)) {
           toastMsg = locale.t("generation.style_transfer.execution_failed");
+          // Auto-clear style transfer state on failure so the user is not stuck unable to generate
+          // normal images after enabling via a preview button (for example on a LoRA card). This addresses
+          // reports of generation loading quickly with no final output.
+          generation.styleTransferEnabled = false;
+          generation.styleReferenceImage = null;
+          generation.saveSettings();
         } else if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
           toastMsg = locale.t("generation.toast.failed_validation");
         } else {
@@ -2173,10 +2280,10 @@
               await awaitFetchesWithTimeout(fetches);
               pendingOutputFetches.delete(p.promptId);
             }
-            const item = progress.completePrompt(p.promptId);
+            let images = pendingOutputImages.get(p.promptId) ?? [];
+            const item = progress.completePrompt(p.promptId, images.length > 0);
             promptLastActivity.delete(p.promptId);
             if (item) {
-              let images = pendingOutputImages.get(p.promptId) ?? [];
               for (const img of images) {
                 const tempFn = img.tempFilename?.trim();
                 if (tempFn) progress.registerPromptOutput(p.promptId, tempFn);
@@ -2187,24 +2294,7 @@
                 // SSE event was likely dropped during a reconnect — the image was
                 // saved to a temp file on the server and cached by the cleanup
                 // reactor.  Try to recover it before giving up.
-                try {
-                  const recovered = await recoverPromptOutputs(p.promptId);
-                  for (const imgRef of recovered.images) {
-                    const tempFn = imgRef.temp_filename?.trim();
-                    if (tempFn) progress.registerPromptOutput(p.promptId, tempFn);
-                    try {
-                      const resp = await fetch(
-                        `/internal-api/_temp_image/${encodeURIComponent(imgRef.temp_filename)}`,
-                        { headers: authHeaders() },
-                      );
-                      if (resp.ok) {
-                        const blob = await resp.blob();
-                        const url = URL.createObjectURL(blob);
-                        images.push({ blob, url, tempFilename: imgRef.temp_filename });
-                      }
-                    } catch { /* individual image fetch failed */ }
-                  }
-                } catch { /* recovery command failed */ }
+                await recoverMissingOutputImages(p.promptId, images);
               }
 
               if (images.length > 0) {
@@ -2217,6 +2307,14 @@
                 }
               } else {
                 const failedStyleTransfer = item.params?.style_transfer_enabled;
+                if (failedStyleTransfer) {
+                  // Auto-clear to recover normal generation. Prevents being stuck in a
+                  // non-generating state after a style reference (for example from LoRA preview) causes
+                  // the style transfer workflow to produce no output image.
+                  generation.styleTransferEnabled = false;
+                  generation.styleReferenceImage = null;
+                  generation.saveSettings();
+                }
                 gallery.showToast(
                   failedStyleTransfer
                     ? locale.t("generation.style_transfer.failed_no_output")
@@ -2356,8 +2454,8 @@
     <div class="flex items-center justify-center h-full bg-neutral-950">
       <div class="w-80 space-y-4">
         <div class="mooshie-branding flex items-center justify-center gap-3 mb-6">
-          <img src={themeLogoUrl} alt="MooshieUI" class="w-10 h-10 aspect-square object-contain rounded-lg" />
-          <h1 class="text-xl font-bold text-neutral-100">MooshieUI</h1>
+          <img src={themeLogoUrl} alt={locale.t("app.brand_name")} class="w-10 h-10 aspect-square object-contain rounded-lg" />
+          <h1 class="text-xl font-bold text-neutral-100">{locale.t("app.brand_name")}</h1>
         </div>
         <p class="text-sm text-neutral-400 text-center">{locale.t("auth.password_reset_by_admin")}</p>
         <input
@@ -2383,7 +2481,7 @@
           disabled={changePassBusy}
           onclick={handleSetNewPassword}
         >
-          {changePassBusy ? "Saving..." : "Set New Password"}
+          {changePassBusy ? locale.t("common.saving") : locale.t("auth.change_password")}
         </button>
       </div>
     </div>
@@ -2392,8 +2490,8 @@
   <div class="flex items-center justify-center h-full bg-neutral-950">
     <div class="w-80 space-y-4">
       <div class="mooshie-branding flex items-center justify-center gap-3 mb-6">
-        <img src={themeLogoUrl} alt="MooshieUI" class="w-10 h-10 aspect-square object-contain rounded-lg" />
-        <h1 class="text-xl font-bold text-neutral-100">MooshieUI</h1>
+        <img src={themeLogoUrl} alt={locale.t("app.brand_name")} class="w-10 h-10 aspect-square object-contain rounded-lg" />
+        <h1 class="text-xl font-bold text-neutral-100">{locale.t("app.brand_name")}</h1>
       </div>
       <p class="text-sm text-neutral-400 text-center">{locale.t("auth.sign_in_continue")}</p>
       <input
@@ -2426,8 +2524,9 @@
         disabled={loginBusy}
         onclick={handleLogin}
       >
-        {loginBusy ? "Signing in..." : "Sign In"}
+        {loginBusy ? locale.t("common.saving") : locale.t("auth.sign_in")}
       </button>
+
     </div>
   </div>
   {/if}
@@ -2472,9 +2571,9 @@
     >
       <div
         class="flex size-8 items-center justify-center rounded-lg bg-neutral-800/60 text-neutral-400"
-        title="Theme logo"
+        title={locale.t("app.theme_logo")}
       >
-        <img src={themeLogoUrl} alt="Theme logo" class="size-7 rounded-md object-contain" />
+        <img src={themeLogoUrl} alt={locale.t("app.theme_logo")} class="size-7 rounded-md object-contain" />
       </div>
     </div>
 
@@ -2809,9 +2908,16 @@
           <!-- Resize handle -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
-            class="w-1.5 cursor-col-resize hover:bg-indigo-500/40 active:bg-indigo-500/60 transition-colors shrink-0"
+            class="relative w-1.5 cursor-col-resize hover:bg-indigo-500/40 active:bg-indigo-500/60 transition-colors shrink-0 flex items-center justify-center group"
             onmousedown={startMetadataResize}
-          ></div>
+          >
+            <!-- Drag icon handle -->
+            <div class="absolute pointer-events-none w-1 h-8 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex flex-col items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all">
+              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+            </div>
+          </div>
         {:else}
           <!-- Collapsed: just a narrow strip with expand button -->
           <div class="w-9 h-full bg-neutral-900/95 border-r border-neutral-700 flex flex-col items-center pt-4 shrink-0">
@@ -2982,7 +3088,7 @@
         <img
           bind:this={lbImgEl}
           src={gallery.lightboxUrl}
-          alt={gallery.selectedImage?.filename ?? 'Preview'}
+          alt={gallery.selectedImage?.filename ?? locale.t("gallery.no_preview")}
           class="max-w-full max-h-[85vh] object-contain select-none {lbPanning ? 'cursor-grabbing' : 'cursor-grab'}"
           draggable="false"
           style="transform-origin: center center; will-change: transform;"
@@ -3005,7 +3111,7 @@
 
 {#if generationDoneToast}
   {#key generationDoneToast.id}
-    <div class="fixed bottom-5 right-4 z-80 w-[min(22rem,calc(100vw-2rem))] md:right-5">
+    <div class="fixed bottom-5 right-4 z-10000 w-[min(22rem,calc(100vw-2rem))] md:right-5">
       <div
         class="generation-done-toast flex items-center gap-3 rounded-[var(--app-panel-radius)] border border-neutral-700 bg-neutral-900/95 p-2 shadow-2xl shadow-black/40 backdrop-blur-sm {generationDoneToast.leaving ? 'generation-done-toast-out' : 'generation-done-toast-in'}"
       >
@@ -3044,7 +3150,7 @@
 {#if gallery.toast}
   {@const type = gallery.toast.type}
   <div
-    class="fixed bottom-6 left-1/2 z-60 flex -translate-x-1/2 animate-fade-in items-center gap-2 rounded-[var(--app-panel-radius)] border px-4 py-2.5 text-sm shadow-2xl shadow-black/40 backdrop-blur-sm
+    class="fixed bottom-6 left-1/2 z-10000 flex -translate-x-1/2 animate-fade-in items-center gap-2 rounded-[var(--app-panel-radius)] border px-4 py-2.5 text-sm shadow-2xl shadow-black/40 backdrop-blur-sm
     {type === 'success' ? 'border-green-700/80 bg-green-950/95 text-green-100' : 
      type === 'error' ? 'border-red-700/80 bg-red-950/95 text-red-100' :
      'border-neutral-700 bg-neutral-900/95 text-neutral-100'}"

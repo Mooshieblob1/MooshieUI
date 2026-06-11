@@ -12,10 +12,12 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
+use std::time::{Duration, Instant};
 
 use crate::config;
+use crate::notifications::NotificationState;
 
 /// Default storage limit per user: 1 GB.
 const DEFAULT_STORAGE_LIMIT: u64 = 1024 * 1024 * 1024;
@@ -25,6 +27,32 @@ pub const DEFAULT_EXPIRY_SECS: u64 = 7 * 24 * 60 * 60;
 
 /// Session TTL: 7 days.
 const SESSION_TTL_SECS: i64 = 7 * 24 * 60 * 60;
+
+/// Grace period before legacy SHA-256 password hashes are auto-upgraded on login.
+const LEGACY_PASSWORD_GRACE_DAYS: i64 = 30;
+
+/// Failed login attempts before a temporary lockout.
+const MAX_LOGIN_ATTEMPTS: u32 = 15;
+
+/// Lockout duration after too many failed logins.
+const LOGIN_LOCKOUT: Duration = Duration::from_secs(15 * 60);
+
+/// Persisted sessions file format (v2 stores hashed token keys).
+const SESSIONS_FORMAT_VERSION: u32 = 2;
+
+#[derive(Debug, Clone)]
+struct LoginAttemptState {
+    failures: u32,
+    locked_until: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct SessionsStore {
+    #[serde(default)]
+    version: u32,
+    #[serde(default)]
+    sessions: HashMap<String, SessionEntry>,
+}
 
 fn default_storage_limit() -> u64 {
     DEFAULT_STORAGE_LIMIT
@@ -66,6 +94,12 @@ fn default_role() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AuthDatabase {
     pub accounts: Vec<Account>,
+    /// ISO 8601 deadline after which legacy SHA-256 password hashes are auto-upgraded on login.
+    #[serde(default)]
+    pub legacy_password_grace_deadline: Option<String>,
+    /// Whether the one-time global notification about the legacy password migration was sent.
+    #[serde(default)]
+    pub legacy_password_announcement_sent: bool,
 }
 
 /// A persisted session entry with TTL metadata.
@@ -85,6 +119,8 @@ pub struct AuthState {
     sessions: RwLock<HashMap<String, SessionEntry>>,
     /// Per-user last activity timestamp (username → Instant).
     last_activity: RwLock<HashMap<String, std::time::Instant>>,
+    /// Failed login counters (username → attempt state).
+    login_attempts: RwLock<HashMap<String, LoginAttemptState>>,
 }
 
 impl Default for AuthState {
@@ -123,6 +159,23 @@ impl AuthState {
                 );
                 db_changed = true;
             }
+        }
+        let has_legacy = db
+            .accounts
+            .iter()
+            .any(|a| is_legacy_sha256(&a.password_hash));
+        if has_legacy && db.legacy_password_grace_deadline.is_none() {
+            let deadline = Utc::now() + chrono::Duration::days(LEGACY_PASSWORD_GRACE_DAYS);
+            db.legacy_password_grace_deadline = Some(deadline.to_rfc3339());
+            db_changed = true;
+            log::info!(
+                "Legacy password encryption migration: {} account(s) must upgrade to Argon2id by {}",
+                db.accounts
+                    .iter()
+                    .filter(|a| is_legacy_sha256(&a.password_hash))
+                    .count(),
+                deadline.to_rfc3339()
+            );
         }
         if db_changed {
             if let Err(e) = save_auth_db(&db) {
@@ -201,7 +254,155 @@ impl AuthState {
             db: RwLock::new(db),
             sessions: RwLock::new(sessions),
             last_activity: RwLock::new(HashMap::new()),
+            login_attempts: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Returns an error when the account is temporarily locked out.
+    pub fn check_login_allowed(&self, username: &str) -> Result<(), String> {
+        let username = username.to_ascii_lowercase();
+        let attempts = self.login_attempts.read().unwrap();
+        let Some(state) = attempts.get(&username) else {
+            return Ok(());
+        };
+        if let Some(until) = state.locked_until {
+            if Instant::now() < until {
+                let secs = until.saturating_duration_since(Instant::now()).as_secs();
+                let mins = secs.div_ceil(60);
+                return Err(format!(
+                    "Too many failed login attempts. Try again in about {} minute(s).",
+                    mins.max(1)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn record_failed_login(&self, username: &str) {
+        let username = username.to_ascii_lowercase();
+        let mut attempts = self.login_attempts.write().unwrap();
+        let state = attempts.entry(username).or_insert(LoginAttemptState {
+            failures: 0,
+            locked_until: None,
+        });
+        if let Some(until) = state.locked_until {
+            if Instant::now() < until {
+                return;
+            }
+            state.locked_until = None;
+            state.failures = 0;
+        }
+        state.failures = state.failures.saturating_add(1);
+        if state.failures >= MAX_LOGIN_ATTEMPTS {
+            state.locked_until = Some(Instant::now() + LOGIN_LOCKOUT);
+            log::warn!(
+                "Login lockout triggered after {} failed attempts",
+                MAX_LOGIN_ATTEMPTS
+            );
+        }
+    }
+
+    pub fn clear_login_attempts(&self, username: &str) {
+        let username = username.to_ascii_lowercase();
+        self.login_attempts.write().unwrap().remove(&username);
+    }
+
+    /// ISO 8601 deadline when legacy SHA-256 password hashes expire.
+    pub fn legacy_password_deadline(&self) -> Option<String> {
+        self.db
+            .read()
+            .unwrap()
+            .legacy_password_grace_deadline
+            .clone()
+    }
+
+    pub fn is_legacy_password_grace_expired(&self) -> bool {
+        let db = self.db.read().unwrap();
+        match db.legacy_password_grace_deadline.as_deref() {
+            Some(deadline) => chrono::DateTime::parse_from_rfc3339(deadline)
+                .map(|t| Utc::now() > t.with_timezone(&Utc))
+                .unwrap_or(false),
+            None => false,
+        }
+    }
+
+    pub fn account_uses_legacy_password(&self, username: &str) -> bool {
+        let db = self.db.read().unwrap();
+        db.accounts
+            .iter()
+            .find(|a| a.username.eq_ignore_ascii_case(username))
+            .is_some_and(|a| is_legacy_sha256(&a.password_hash))
+    }
+
+    /// Re-hash the user's current password with Argon2id without changing the password text.
+    /// Returns `true` when upgraded, `false` when already on Argon2id.
+    /// Emit a one-time global notification about the legacy password encryption migration.
+    pub fn try_emit_legacy_password_announcement(&self, notifications: &NotificationState) {
+        let should_emit = {
+            let db = self.db.read().unwrap();
+            let has_legacy = db
+                .accounts
+                .iter()
+                .any(|a| is_legacy_sha256(&a.password_hash));
+            has_legacy
+                && !db.legacy_password_announcement_sent
+                && db.legacy_password_grace_deadline.is_some()
+        };
+        if !should_emit {
+            return;
+        }
+
+        let deadline = self.legacy_password_deadline().unwrap_or_default();
+        let params = serde_json::json!({ "deadline": deadline });
+        notifications.create_i18n(
+            "global",
+            "notifications.legacy_password_migration.title",
+            Some("notifications.legacy_password_migration.body"),
+            Some(params),
+            "warning",
+        );
+
+        let mut db = self.db.write().unwrap();
+        db.legacy_password_announcement_sent = true;
+        if let Err(e) = save_auth_db(&db) {
+            log::error!(
+                "Failed to persist auth DB after legacy password announcement: {}",
+                e
+            );
+        }
+    }
+
+    pub fn upgrade_password_encryption(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<bool, String> {
+        self.check_login_allowed(username)?;
+        let username = username.to_ascii_lowercase();
+        let mut db = self.db.write().unwrap();
+        let account = db
+            .accounts
+            .iter_mut()
+            .find(|a| a.username.eq_ignore_ascii_case(&username))
+            .ok_or_else(|| "Invalid username or password".to_string())?;
+
+        // Verify the password before revealing anything about the stored hash
+        // format, so this endpoint can't be used to probe account state.
+        if !verify_password(password, &account.password_hash) {
+            return Err("Invalid username or password".to_string());
+        }
+
+        if !is_legacy_sha256(&account.password_hash) {
+            drop(db);
+            self.clear_login_attempts(&username);
+            return Ok(false);
+        }
+
+        account.password_hash = hash_password(password);
+        save_auth_db(&db)?;
+        drop(db);
+        self.clear_login_attempts(&username);
+        Ok(true)
     }
 
     /// Check if any accounts exist.
@@ -248,6 +449,7 @@ impl AuthState {
     /// Authenticate and return a session token plus whether a password change
     /// is required.
     pub fn login(&self, username: &str, password: &str) -> Result<(String, bool), String> {
+        self.check_login_allowed(username)?;
         let username = username.to_ascii_lowercase();
         let db = self.db.read().unwrap();
         let account = db
@@ -261,10 +463,17 @@ impl AuthState {
         }
 
         let must_change = account.must_change_password;
+        let was_legacy = is_legacy_sha256(&account.password_hash);
+        let grace_expired = was_legacy
+            && match db.legacy_password_grace_deadline.as_deref() {
+                Some(deadline) => chrono::DateTime::parse_from_rfc3339(deadline)
+                    .map(|t| Utc::now() > t.with_timezone(&Utc))
+                    .unwrap_or(false),
+                None => false,
+            };
+        drop(db);
 
-        // Transparently upgrade legacy SHA-256 hash to Argon2id
-        if is_legacy_sha256(&account.password_hash) {
-            drop(db); // release read lock
+        if was_legacy {
             let mut db = self.db.write().unwrap();
             if let Some(acc) = db
                 .accounts
@@ -272,7 +481,23 @@ impl AuthState {
                 .find(|a| a.username.eq_ignore_ascii_case(&username))
             {
                 acc.password_hash = hash_password(password);
-                let _ = save_auth_db(&db);
+                if let Err(e) = save_auth_db(&db) {
+                    log::error!(
+                        "Failed to persist Argon2id upgrade for '{}': {}",
+                        username,
+                        e
+                    );
+                } else if grace_expired {
+                    log::info!(
+                        "Auto-upgraded legacy password encryption for '{}' after grace period",
+                        username
+                    );
+                } else {
+                    log::info!(
+                        "Upgraded legacy password encryption for '{}' on login",
+                        username
+                    );
+                }
             }
         }
 
@@ -280,7 +505,7 @@ impl AuthState {
         {
             let mut sessions = self.sessions.write().unwrap();
             sessions.insert(
-                token.clone(),
+                hash_session_token(&token),
                 SessionEntry {
                     username: username.to_string(),
                     created_at: Utc::now().to_rfc3339(),
@@ -295,8 +520,9 @@ impl AuthState {
 
     /// Validate a session token. Returns the username if valid and not expired.
     pub fn validate_token(&self, token: &str) -> Option<String> {
+        let token_key = hash_session_token(token);
         let sessions = self.sessions.read().unwrap();
-        if let Some(entry) = sessions.get(token) {
+        if let Some(entry) = sessions.get(&token_key) {
             // Check TTL
             let now = Utc::now();
             let expired = chrono::DateTime::parse_from_rfc3339(&entry.created_at)
@@ -305,7 +531,7 @@ impl AuthState {
             if expired {
                 drop(sessions);
                 let mut sessions = self.sessions.write().unwrap();
-                sessions.remove(token);
+                sessions.remove(&token_key);
                 if let Err(e) = save_sessions(&sessions) {
                     log::error!("Failed to persist sessions after TTL prune: {}", e);
                 }
@@ -320,7 +546,7 @@ impl AuthState {
     /// Invalidate a session token.
     pub fn logout(&self, token: &str) {
         let mut sessions = self.sessions.write().unwrap();
-        sessions.remove(token);
+        sessions.remove(&hash_session_token(token));
         if let Err(e) = save_sessions(&sessions) {
             log::error!("Failed to persist sessions after logout: {}", e);
         }
@@ -557,13 +783,20 @@ fn hash_password(password: &str) -> String {
 
 /// Verify a password against a stored hash.
 /// Supports both Argon2id (PHC string) and legacy SHA-256 (64 hex chars).
+fn hash_session_token(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
 fn verify_password(password: &str, stored_hash: &str) -> bool {
     if is_legacy_sha256(stored_hash) {
-        // Legacy path: plain SHA-256 comparison
+        // Legacy path: constant-time SHA-256 comparison (upgraded to Argon2id on login).
         let mut hasher = Sha256::new();
         hasher.update(password.as_bytes());
         let computed = format!("{:x}", hasher.finalize());
-        computed == stored_hash
+        use subtle::ConstantTimeEq;
+        computed.as_bytes().ct_eq(stored_hash.as_bytes()).into()
     } else {
         // Argon2id verification
         match PasswordHash::new(stored_hash) {
@@ -595,6 +828,15 @@ fn load_auth_db() -> Result<AuthDatabase, String> {
     serde_json::from_str(&content).map_err(|e| e.to_string())
 }
 
+#[cfg(unix)]
+fn restrict_private_file_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn restrict_private_file_permissions(_path: &Path) {}
+
 fn save_auth_db(db: &AuthDatabase) -> Result<(), String> {
     let path = auth_db_path().ok_or("No app data dir")?;
     if let Some(parent) = path.parent() {
@@ -602,6 +844,7 @@ fn save_auth_db(db: &AuthDatabase) -> Result<(), String> {
     }
     let json = serde_json::to_string_pretty(db).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    restrict_private_file_permissions(&path);
     Ok(())
 }
 
@@ -611,24 +854,61 @@ fn sessions_db_path() -> Option<PathBuf> {
     config::app_data_dir().map(|d| d.join("sessions.json"))
 }
 
-fn load_sessions() -> Result<HashMap<String, SessionEntry>, String> {
-    let path = sessions_db_path().ok_or("No app data dir")?;
-    if !path.exists() {
-        return Ok(HashMap::new());
+fn migrate_plaintext_session_keys(
+    sessions: HashMap<String, SessionEntry>,
+) -> HashMap<String, SessionEntry> {
+    sessions
+        .into_iter()
+        .map(|(key, entry)| (hash_session_token(&key), entry))
+        .collect()
+}
+
+struct LoadedSessions {
+    sessions: HashMap<String, SessionEntry>,
+    needs_save: bool,
+}
+
+fn content_looks_like_sessions_store(content: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .and_then(|value| {
+            value
+                .as_object()
+                .map(|object| object.contains_key("version") || object.contains_key("sessions"))
+        })
+        .unwrap_or(false)
+}
+
+fn parse_sessions_content(content: &str) -> Result<LoadedSessions, String> {
+    if content_looks_like_sessions_store(content) {
+        if let Ok(store) = serde_json::from_str::<SessionsStore>(content) {
+            if store.version >= SESSIONS_FORMAT_VERSION {
+                return Ok(LoadedSessions {
+                    sessions: store.sessions,
+                    needs_save: false,
+                });
+            }
+            return Ok(LoadedSessions {
+                sessions: migrate_plaintext_session_keys(store.sessions),
+                needs_save: true,
+            });
+        }
     }
-    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    // Try new format first (token → SessionEntry)
-    if let Ok(entries) = serde_json::from_str::<HashMap<String, SessionEntry>>(&content) {
-        return Ok(entries);
+    // Legacy v1: token → SessionEntry (plaintext token keys)
+    if let Ok(entries) = serde_json::from_str::<HashMap<String, SessionEntry>>(content) {
+        return Ok(LoadedSessions {
+            sessions: migrate_plaintext_session_keys(entries),
+            needs_save: true,
+        });
     }
-    // Fall back to legacy format (token → username string) — migrate on load
-    if let Ok(legacy) = serde_json::from_str::<HashMap<String, String>>(&content) {
+    // Legacy v0: token → username string
+    if let Ok(legacy) = serde_json::from_str::<HashMap<String, String>>(content) {
         let now = Utc::now().to_rfc3339();
-        let migrated: HashMap<String, SessionEntry> = legacy
+        let sessions = legacy
             .into_iter()
             .map(|(token, username)| {
                 (
-                    token,
+                    hash_session_token(&token),
                     SessionEntry {
                         username,
                         created_at: now.clone(),
@@ -636,9 +916,25 @@ fn load_sessions() -> Result<HashMap<String, SessionEntry>, String> {
                 )
             })
             .collect();
-        return Ok(migrated);
+        return Ok(LoadedSessions {
+            sessions,
+            needs_save: true,
+        });
     }
     Err("Failed to parse sessions.json".to_string())
+}
+
+fn load_sessions() -> Result<HashMap<String, SessionEntry>, String> {
+    let path = sessions_db_path().ok_or("No app data dir")?;
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let loaded = parse_sessions_content(&content)?;
+    if loaded.needs_save {
+        let _ = save_sessions(&loaded.sessions);
+    }
+    Ok(loaded.sessions)
 }
 
 fn save_sessions(sessions: &HashMap<String, SessionEntry>) -> Result<(), String> {
@@ -646,7 +942,158 @@ fn save_sessions(sessions: &HashMap<String, SessionEntry>) -> Result<(), String>
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let json = serde_json::to_string_pretty(sessions).map_err(|e| e.to_string())?;
+    let store = SessionsStore {
+        version: SESSIONS_FORMAT_VERSION,
+        sessions: sessions.clone(),
+    };
+    let json = serde_json::to_string_pretty(&store).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    restrict_private_file_permissions(&path);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session_entry(username: &str) -> SessionEntry {
+        SessionEntry {
+            username: username.to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn legacy_session_entry_map_is_migrated_without_being_treated_as_empty_store() {
+        let token = "0123456789abcdef";
+        let content = serde_json::json!({
+            token: {
+                "username": "Alice",
+                "created_at": "2026-01-01T00:00:00Z"
+            }
+        })
+        .to_string();
+
+        let loaded = parse_sessions_content(&content).expect("legacy sessions should parse");
+        let token_hash = hash_session_token(token);
+
+        assert!(loaded.needs_save);
+        assert_eq!(loaded.sessions.len(), 1);
+        assert!(!loaded.sessions.contains_key(token));
+        assert_eq!(
+            loaded
+                .sessions
+                .get(&token_hash)
+                .map(|entry| entry.username.as_str()),
+            Some("Alice")
+        );
+    }
+
+    #[test]
+    fn current_empty_session_store_loads_without_migration() {
+        let content = serde_json::json!({
+            "version": SESSIONS_FORMAT_VERSION,
+            "sessions": {}
+        })
+        .to_string();
+
+        let loaded = parse_sessions_content(&content).expect("current sessions should parse");
+
+        assert!(!loaded.needs_save);
+        assert!(loaded.sessions.is_empty());
+    }
+
+    #[test]
+    fn old_versioned_session_store_migrates_plaintext_keys() {
+        let token = "fedcba9876543210";
+        let content = serde_json::json!({
+            "version": 1,
+            "sessions": {
+                token: {
+                    "username": "Bob",
+                    "created_at": "2026-01-01T00:00:00Z"
+                }
+            }
+        })
+        .to_string();
+
+        let loaded = parse_sessions_content(&content).expect("old sessions store should parse");
+        let token_hash = hash_session_token(token);
+
+        assert!(loaded.needs_save);
+        assert_eq!(loaded.sessions.len(), 1);
+        assert_eq!(
+            loaded
+                .sessions
+                .get(&token_hash)
+                .map(|entry| entry.username.as_str()),
+            Some("Bob")
+        );
+    }
+
+    #[test]
+    fn current_session_store_preserves_hashed_keys() {
+        let token_hash = hash_session_token("already-hashed-token");
+        let content = serde_json::to_string(&SessionsStore {
+            version: SESSIONS_FORMAT_VERSION,
+            sessions: HashMap::from([(token_hash.clone(), session_entry("Carol"))]),
+        })
+        .expect("sessions store should serialize");
+
+        let loaded = parse_sessions_content(&content).expect("current sessions should parse");
+
+        assert!(!loaded.needs_save);
+        assert_eq!(
+            loaded
+                .sessions
+                .get(&token_hash)
+                .map(|entry| entry.username.as_str()),
+            Some("Carol")
+        );
+    }
+
+    fn test_account(username: &str, password_hash: String) -> Account {
+        Account {
+            username: username.to_string(),
+            password_hash,
+            must_change_password: false,
+            role: "user".to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            last_online: None,
+            storage_limit_bytes: DEFAULT_STORAGE_LIMIT,
+            can_use_modelhub: false,
+        }
+    }
+
+    fn auth_with_accounts(accounts: Vec<Account>) -> AuthState {
+        AuthState {
+            db: RwLock::new(AuthDatabase {
+                accounts,
+                legacy_password_grace_deadline: None,
+                legacy_password_announcement_sent: false,
+            }),
+            sessions: RwLock::new(HashMap::new()),
+            last_activity: RwLock::new(HashMap::new()),
+            login_attempts: RwLock::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn password_upgrade_checks_password_before_hash_format() {
+        let auth = auth_with_accounts(vec![test_account("alice", hash_password("correct"))]);
+
+        let missing = auth
+            .upgrade_password_encryption("missing", "wrong")
+            .unwrap_err();
+        let wrong_password = auth
+            .upgrade_password_encryption("alice", "wrong")
+            .unwrap_err();
+        assert_eq!(missing, "Invalid username or password");
+        assert_eq!(wrong_password, "Invalid username or password");
+
+        let already_modern = auth
+            .upgrade_password_encryption("alice", "correct")
+            .expect("correct password should be accepted");
+        assert!(!already_modern);
+    }
 }

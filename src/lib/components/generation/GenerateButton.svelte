@@ -78,7 +78,7 @@
     await installPipPackage("ultralytics==8.4.34");
     const importOk = await checkPythonImport("ultralytics");
     if (!importOk) {
-      throw new Error("Face Detailer dependency check failed: unable to import ultralytics.");
+      throw new Error(locale.t("generation.facefix.dep_check_failed"));
     }
   }
 
@@ -158,12 +158,17 @@
       // If canvas mode is active, export canvas content before generating
       if (canvas.isCanvasMode) {
         if (!canvasEditorRef) {
-          throw new Error("Canvas editor is not ready yet. Please try again.");
+          throw new Error(locale.t("canvas.editor_not_ready"));
         }
         await canvas.syncToGeneration(
           () => canvasEditorRef.getRasterComposite(),
           () => canvasEditorRef.getMaskCanvas()
         );
+      }
+
+      if (generation.mode === "img2img" && !generation.inputImage) {
+        errorMsg = locale.t('generation.error_no_image');
+        return;
       }
 
       if (generation.mode === "inpainting") {

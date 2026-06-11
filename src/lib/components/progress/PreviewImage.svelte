@@ -2,9 +2,15 @@
   import { progress } from "../../stores/progress.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { generate, uploadImageBytes } from "../../utils/api.js";
+  import { generate, uploadImageBytes, downloadModel } from "../../utils/api.js";
   import { loadOutputImageForGenerationInput, uploadImageUrlForGenerationInput } from "../../utils/galleryActions.js";
+  import {
+    DEFAULT_REFINE_UPSCALER,
+    DEFAULT_REFINE_UPSCALER_SCALE,
+    recommendedUpscaleModels,
+  } from "../../utils/upscalers.js";
   import type { GenerationParams } from "../../types/index.js";
 
   let currentTipIndex = $state(0);
@@ -97,6 +103,22 @@
     return () => stopAutoPlay();
   });
 
+  /** Make sure the default refine upscale model is installed, downloading it
+   *  on first use (~1.6 MB). Returns false if it can't be made available. */
+  async function ensureDefaultRefineUpscaler(): Promise<boolean> {
+    if (models.upscaleModels.includes(DEFAULT_REFINE_UPSCALER)) return true;
+    const rec = recommendedUpscaleModels.find((r) => r.filename === DEFAULT_REFINE_UPSCALER);
+    if (!rec) return false;
+    try {
+      await downloadModel(rec.url, "upscale_models", rec.filename);
+      await models.refresh();
+      return true;
+    } catch (e) {
+      console.warn("Default refine upscaler download failed; keeping current upscale settings:", e);
+      return false;
+    }
+  }
+
   async function upscaleImage() {
     // The Refine button takes the most-recent output and runs it back through
     // the upscale chain (MooshieUI's "refiner") at low denoise — analogous to
@@ -132,6 +154,17 @@
       // the upscale chain alone is the refiner pass.
       params.refine_only = true;
       params.upscale_enabled = true;
+      // Default the refiner to the OmniSR 2x model upscaler unless the user
+      // has explicitly chosen a model upscaler in the Upscale settings.
+      let appliedDefaultUpscaler = false;
+      if (generation.upscaleMethod !== "model" || !generation.upscaleModel) {
+        if (await ensureDefaultRefineUpscaler()) {
+          params.upscale_method = "model";
+          params.upscale_model = DEFAULT_REFINE_UPSCALER;
+          params.upscale_scale = DEFAULT_REFINE_UPSCALER_SCALE;
+          appliedDefaultUpscaler = true;
+        }
+      }
       // ControlNet on a refine pass would re-condition the existing image
       // against the original control input, which is rarely what the user
       // wants. Disable it for this pass.
@@ -145,6 +178,11 @@
       generation.mode = "img2img";
       generation.inputImage = uploadName;
       generation.upscaleEnabled = true;
+      if (appliedDefaultUpscaler) {
+        generation.upscaleMethod = "model";
+        generation.upscaleModel = DEFAULT_REFINE_UPSCALER;
+        generation.upscaleScale = DEFAULT_REFINE_UPSCALER_SCALE;
+      }
     } catch (e) {
       console.error("Refine failed:", e);
       gallery.showToast(`${locale.t("preview.refine_failed")}: ${e}`, "error");

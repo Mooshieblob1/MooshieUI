@@ -18,6 +18,7 @@ const ACTIVE_KEY = "mooshieui.styles.active.v1";
 const EXPORT_VERSION = 1;
 
 import { triggerSync } from "../utils/syncTrigger.js";
+import { locale } from "./locale.svelte.js";
 
 /** Max dimension (px) for thumbnails stored with the style. Keeps localStorage / exports small. */
 const THUMBNAIL_MAX_DIM = 384;
@@ -77,7 +78,7 @@ function sanitizeStyle(raw: any): ArtistStyle | null {
   const now = Date.now();
   return {
     id: raw.id,
-    name: raw.name.trim() || "Untitled style",
+    name: raw.name.trim() || locale.t("styles.untitled"),
     artists,
     overallWeight: clampWeight(raw.overallWeight, 1.0),
     thumbnail: typeof raw.thumbnail === "string" && raw.thumbnail.startsWith("data:") ? raw.thumbnail : null,
@@ -270,7 +271,7 @@ class StylesStore {
     const now = Date.now();
     const style: ArtistStyle = {
       id: genId(),
-      name: name.trim() || "Untitled style",
+      name: name.trim() || locale.t("styles.untitled"),
       artists: artists.map((a) => ({ ...a, weight: clampWeight(a.weight, 1.0) })),
       overallWeight: clampWeight(overallWeight, 1.0),
       thumbnail: null,
@@ -416,7 +417,7 @@ class StylesStore {
    * If a style with the same name already exists, a numeric suffix is added.
    */
   importTxt(filename: string, content: string): { style: ArtistStyle; renamed: boolean } {
-    const baseName = stripExtension(filename).trim() || "Imported style";
+    const baseName = stripExtension(filename).trim() || locale.t("styles.imported");
     const { name, renamed } = this.uniqueName(baseName);
     let overallWeight = 1.0;
     const artists: StyleArtist[] = [];

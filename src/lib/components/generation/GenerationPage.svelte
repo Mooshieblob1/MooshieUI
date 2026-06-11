@@ -556,6 +556,7 @@
       generation.inputImage = response.name;
     } catch (e) {
       console.error("Failed to handle dropped image:", e);
+      gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
     } finally {
       uploading = false;
     }
@@ -580,6 +581,7 @@
       generation.maskImage = response.name;
     } catch (e) {
       console.error("Failed to handle dropped mask:", e);
+      gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
     } finally {
       uploading = false;
     }
@@ -638,6 +640,18 @@
     if (maskPreviewUrl) {
       URL.revokeObjectURL(maskPreviewUrl);
       maskPreviewUrl = null;
+    }
+  }
+
+  async function refineImage(image: OutputImage) {
+    try {
+      generation.inputImage = await uploadOutputImageForGenerationInput(image, "img2img_input.png");
+      generation.mode = "img2img";
+      generation.upscaleEnabled = false;
+      gallery.showToast(locale.t('gallery.toast.loaded_img2img'), "success");
+    } catch (e) {
+      console.error("Failed to set up refine:", e);
+      gallery.showToast(locale.t('gallery.toast.failed_load'), "error");
     }
   }
 
@@ -1218,7 +1232,6 @@
     if (!isTauri) return;
     const { getCurrentWebview } = await import("@tauri-apps/api/webview");
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    const { readFile } = await import("@tauri-apps/plugin-fs");
     const webview = getCurrentWebview();
     const appWindow = getCurrentWindow();
     const scaleFactor = await appWindow.scaleFactor();
@@ -1266,15 +1279,11 @@
         if (zoneEl) {
           const zone = zoneEl.dataset.dropZone;
           try {
-            const filename = imgPath.split("/").pop() || "dropped_image.png";
+            const filename = getFilenameFromPath(imgPath);
             if (zone === "img-input") {
-              const fileBytes = await readFile(imgPath);
-              const bytes = Array.from(fileBytes);
-              await handleImageDropBytes(bytes, filename);
+              await handleImageDropPath(imgPath, filename);
             } else if (zone === "mask-input") {
-              const fileBytes = await readFile(imgPath);
-              const bytes = Array.from(fileBytes);
-              await handleMaskDropBytes(bytes, filename);
+              await handleMaskDropPath(imgPath, filename);
             } else {
               // Dispatch custom event for child components with file path
               zoneEl.dispatchEvent(new CustomEvent("tauri-file-drop", {
@@ -1284,6 +1293,7 @@
             }
           } catch (err) {
             console.error("Tauri drag-drop image upload failed:", err);
+            gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
           }
         }
       } else if (payload.type === "leave") {
@@ -1293,38 +1303,59 @@
     });
   }
 
-  /** Handle image input upload from raw bytes (Tauri drag-drop). */
-  async function handleImageDropBytes(bytes: number[], filename: string) {
+  /** Handle image input drop in Tauri mode. The file is read locally only for
+   *  the preview; the ComfyUI upload uses the path-based command so the full
+   *  byte array never crosses the IPC boundary, which could fail silently for
+   *  large files and leave the preview set without an input image (#273). */
+  async function handleImageDropPath(path: string, filename: string) {
     uploading = true;
     dragOver = false;
     try {
+      const { readFile } = await import("@tauri-apps/plugin-fs");
+      const bytes = Array.from(await readFile(path));
       const normalized = await normalizeImageBytes(bytes, filename);
       if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
       imagePreviewUrl = normalized.previewUrl;
       applyImageGeometry(normalized.width, normalized.height);
       canvas.setReferenceImage(imagePreviewUrl);
-      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      const response = await uploadImage(path);
       generation.inputImage = response.name;
     } catch (e) {
       console.error("Failed to handle dropped image:", e);
+      // Don't leave a preview visible when the upload never registered.
+      generation.inputImage = null;
+      if (imagePreviewUrl) {
+        URL.revokeObjectURL(imagePreviewUrl);
+        imagePreviewUrl = null;
+      }
+      canvas.setReferenceImage(null);
+      gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
     } finally {
       uploading = false;
     }
   }
 
-  /** Handle mask upload from raw bytes (Tauri drag-drop). */
-  async function handleMaskDropBytes(bytes: number[], filename: string) {
+  /** Handle mask drop in Tauri mode (path-based upload, see handleImageDropPath). */
+  async function handleMaskDropPath(path: string, _filename: string) {
     uploading = true;
     maskDragOver = false;
     try {
-      const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+      const { readFile } = await import("@tauri-apps/plugin-fs");
+      const bytes = await readFile(path);
+      const blob = new Blob([bytes], { type: "image/png" });
       if (maskPreviewUrl) URL.revokeObjectURL(maskPreviewUrl);
       maskPreviewUrl = URL.createObjectURL(blob);
       canvas.setPersistedMaskPreview(maskPreviewUrl);
-      const response = await uploadImageBytes(bytes, filename);
+      const response = await uploadImage(path);
       generation.maskImage = response.name;
     } catch (e) {
       console.error("Failed to handle dropped mask:", e);
+      generation.maskImage = null;
+      if (maskPreviewUrl) {
+        URL.revokeObjectURL(maskPreviewUrl);
+        maskPreviewUrl = null;
+      }
+      gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
     } finally {
       uploading = false;
     }
@@ -1521,7 +1552,14 @@
           <div class="{canvas.currentStagingImage ? 'opacity-50 pointer-events-none' : ''}">
             <p class="text-xs text-neutral-400 mb-1">{locale.t('generation.image.input')}</p>
             {#if imagePreviewUrl}
-              <div class="relative group">
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="relative group"
+                data-drop-zone="img-input"
+                ondragenter={(e) => { e.preventDefault(); }}
+                ondragover={(e) => { e.preventDefault(); }}
+                ondrop={handleImageDrop}
+              >
                 <img
                   src={imagePreviewUrl}
                   alt={locale.t('generation.image.input')}
@@ -1618,7 +1656,14 @@
                 </button>
               </div>
               {#if maskPreviewUrl}
-                <div class="relative group">
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  class="relative group"
+                  data-drop-zone="mask-input"
+                  ondragenter={(e) => { e.preventDefault(); }}
+                  ondragover={(e) => { e.preventDefault(); }}
+                  ondrop={handleMaskDrop}
+                >
                   <img
                     src={maskPreviewUrl}
                     alt={locale.t('generation.inpaint.mask')}
@@ -2115,7 +2160,7 @@
 
     {#if !mobileFriendly && (leftHasSections || controlsSide === "left" || draggingSection)}
       <!-- Left divider with collapse button -->
-      <div class="relative shrink-0 flex flex-col items-center">
+      <div class="relative shrink-0 flex flex-col items-center group">
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="w-1 flex-1 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'left' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
@@ -2123,6 +2168,12 @@
           ondblclick={resetLeftWidth}
           title={locale.t('generation.drag_to_resize')}
         ></div>
+        <!-- Drag icon handle -->
+        <div class="absolute pointer-events-none top-[30%] w-1 h-8 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex flex-col items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all z-10">
+          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+        </div>
         <button
           onclick={toggleLeftPanel}
           class="absolute top-1/2 -translate-y-1/2 left-0 z-20 w-6 h-12 flex items-center justify-center rounded-r border border-l-0 transition-colors {leftCollapsed
@@ -2151,7 +2202,7 @@
 
         <!-- Bottom panel (LoRAs / Images / Prompts) -->
         {#if !mobileFriendly}
-          <div class="relative shrink-0 flex items-center">
+          <div class="relative shrink-0 flex items-center group">
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="h-1 flex-1 cursor-row-resize hover:bg-indigo-500/40 transition-colors {dragging === 'bottom' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
@@ -2159,6 +2210,12 @@
               ondblclick={resetBottomHeight}
               title={locale.t('generation.drag_to_resize')}
             ></div>
+            <!-- Drag icon handle -->
+            <div class="absolute pointer-events-none left-[30%] h-1 w-8 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all z-10">
+              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+            </div>
             <button
               onclick={toggleBottomPanel}
               class="absolute left-1/2 -translate-x-1/2 bottom-0 z-20 h-6 w-12 flex items-center justify-center rounded-t border border-b-0 transition-colors {bottomCollapsed
@@ -2175,7 +2232,7 @@
             class="overflow-hidden shrink-0 min-w-0 border-t border-neutral-800/50"
             style="height: {bottomHeight}px"
           >
-            <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} oncontextmenu={handleSessionContextMenu} />
+            <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} onrefine={refineImage} oncontextmenu={handleSessionContextMenu} />
           </div>
         {/if}
       </div>
@@ -2183,7 +2240,7 @@
 
     {#if !mobileFriendly && (rightHasSections || controlsSide === "right" || draggingSection)}
       <!-- Right divider with collapse button -->
-      <div class="relative shrink-0 flex flex-col items-center">
+      <div class="relative shrink-0 flex flex-col items-center group">
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="w-1 flex-1 cursor-col-resize hover:bg-indigo-500/40 transition-colors {dragging === 'right' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
@@ -2191,6 +2248,12 @@
           ondblclick={resetRightWidth}
           title={locale.t('generation.drag_to_resize')}
         ></div>
+        <!-- Drag icon handle -->
+        <div class="absolute pointer-events-none top-[30%] w-1 h-8 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex flex-col items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all z-10">
+          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+        </div>
         <button
           onclick={toggleRightPanel}
           class="absolute top-1/2 -translate-y-1/2 right-0 z-20 w-6 h-12 flex items-center justify-center rounded-l border border-r-0 transition-colors {rightCollapsed
@@ -2340,7 +2403,7 @@
           </div>
         </div>
         <div class="flex-1 min-h-0 border-t border-neutral-800/50 overflow-hidden">
-          <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} oncontextmenu={handleSessionContextMenu} />
+          <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} onrefine={refineImage} oncontextmenu={handleSessionContextMenu} />
         </div>
       </div>
     </div>

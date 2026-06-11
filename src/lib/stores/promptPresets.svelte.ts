@@ -27,6 +27,7 @@ const EXPORT_KIND = "mooshieui.prompt-presets";
 const EXPORT_VERSION = 1;
 
 import { triggerSync } from "../utils/syncTrigger.js";
+import { locale } from "./locale.svelte.js";
 
 export type PresetMode = "prepend" | "append" | "wildcard" | "wildcard_ordered";
 
@@ -73,7 +74,7 @@ function sanitizePreset(raw: any): PromptPreset | null {
   const now = Date.now();
   return {
     id: raw.id,
-    name: raw.name.trim() || "Untitled preset",
+    name: raw.name.trim() || locale.t("generation.presets.untitled"),
     content: typeof raw.content === "string" ? raw.content : "",
     createdAt: typeof raw.createdAt === "number" && raw.createdAt > 0 ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "number" && raw.updatedAt > 0 ? raw.updatedAt : now,
@@ -467,7 +468,7 @@ class PromptPresetsStore {
     const now = Date.now();
     const preset: PromptPreset = {
       id: genId(),
-      name: name.trim() || "Untitled preset",
+      name: name.trim() || locale.t("generation.presets.untitled"),
       content,
       createdAt: now,
       updatedAt: now,
@@ -547,7 +548,7 @@ class PromptPresetsStore {
    * (e.g. `cats (2)`). Returns the created preset and whether it was renamed.
    */
   importTxt(filename: string, content: string): { preset: PromptPreset; renamed: boolean } {
-    const baseName = stripExtension(filename).trim() || "Imported preset";
+    const baseName = stripExtension(filename).trim() || locale.t("generation.presets.imported");
     const { name, renamed } = this.uniqueName(baseName);
     const preset = this.create(name);
     this.update(preset.id, { content });

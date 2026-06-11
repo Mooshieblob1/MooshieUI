@@ -136,10 +136,17 @@
   <!-- Resize handle -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="h-1 bg-neutral-800 hover:bg-indigo-600 cursor-row-resize transition-colors shrink-0"
+    class="relative h-1.5 bg-neutral-800 hover:bg-indigo-600/80 cursor-row-resize transition-colors shrink-0 flex items-center justify-center group"
     onmousedown={onDragStart}
     ontouchstart={onDragStart}
-  ></div>
+  >
+    <!-- Drag icon handle -->
+    <div class="absolute pointer-events-none h-1 w-6 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all">
+      <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+      <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+      <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
+    </div>
+  </div>
 
   <!-- Header bar -->
   <div class="flex items-center gap-1 px-2 py-1 border-b border-neutral-800 bg-neutral-900 shrink-0">

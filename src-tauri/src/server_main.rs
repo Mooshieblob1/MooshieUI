@@ -29,14 +29,15 @@ async fn main() {
 
     match (&admin_user, &admin_pass) {
         (Some(user), Some(pass)) if !user.trim().is_empty() && pass.len() >= 4 => {
-            if pass == "changeme" {
+            let force_password_change = pass == "changeme";
+            if force_password_change {
                 log::warn!("============================================================");
                 log::warn!("  Using default admin password 'changeme'.");
-                log::warn!("  Change MOOSHIEUI_ADMIN_PASS before exposing this server!");
+                log::warn!("  The admin must choose a new password on first login.");
                 log::warn!("============================================================");
             }
             let auth = AuthState::new();
-            match auth.create_account(user, pass) {
+            match auth.create_account_ex(user, pass, force_password_change) {
                 Ok(()) => {
                     // Promote to admin so they have full access remotely (account management, settings, etc.)
                     let _ = auth.set_account_role(user, "admin");

@@ -1,62 +1,79 @@
 ---
 name: push
-description: Commit and push changes to main via PR — no version bump, no release, no tag
+description: >-
+  Commits MooshieUI working-tree changes and lands them on main via a squash-merged
+  PR without version bump or release tag. Use when the user says /push, push to main,
+  chore PR, or wants docs/CI/fixes merged without a release.
 argument-hint: "Brief commit message describing the changes"
 ---
 
-Push the current working-tree changes to `main` via a pull request. This is for non-release changes — CI fixes, docs, config, prompts, minor tweaks, or accumulating small changes toward a future release. Execute every step autonomously — do NOT pause for confirmation.
+# Push to Main (MooshieUI)
 
-## Required Information
+Non-release path: **PR → GlassWorm CI → squash merge → sync main**. Run autonomously; do not pause for confirmation unless blocked.
 
-If NOT provided in the user's message, derive a commit message from `git diff --stat` and the changed file contents. Keep it under 72 characters, imperative mood (e.g. "fix CI toolchain", "update release prompt", "add push workflow").
+**Does not:** bump version, edit `RELEASE_NOTES.md` / `CHANGELOG.md`, create tags, or run full release build CI.
 
-If the user provides a message, use it as-is.
+## Inputs
 
-## Execution Plan
+- **Commit message:** user-provided, or derive from `git diff` (imperative, ≤72 chars, e.g. `fix CI toolchain`)
+- **Branch:** `chore/<slug>` — lowercase, hyphens, ≤50 chars from message
 
-### 1. Pre-flight checks
+## Windows git (required)
+
+Pre-commit hook is bash and **hangs in PowerShell**. Prefix **every** git command:
+
+```text
+git -c core.hooksPath=/dev/null ...
+```
+
+## Workflow
+
+### 1. Pre-flight
 
 ```powershell
+cd "$(git rev-parse --show-toplevel)"
 git diff --stat
 git diff --cached --stat
 ```
 
-If the working tree is clean (no changes), tell the user and stop.
+Clean tree → tell user and stop.
 
-### 2. Run pre-commit-check agent
+If `package.json`, `src-tauri/Cargo.toml`, or `src-tauri/tauri.conf.json` show version-only bumps → warn user to use **release** skill instead.
 
-Invoke the `pre-commit-check` agent. If it reports failures, fix them before continuing.
+### 2. Pre-commit-check
 
-### 3. Create branch, commit, and push
+Follow the **pre-commit-check** skill. Fix blocking issues; re-run until ✅ Ready to commit.
 
-Pick a branch name from the commit message: `chore/<slugified-summary>` (lowercase, hyphens, max 50 chars).
-
-> **CRITICAL**: The pre-commit hook at `.githooks/pre-commit` is a bash script and will hang in PowerShell. Always use `git -c core.hooksPath=/dev/null` for all git commands.
+### 3. Branch, commit, push
 
 ```powershell
 git checkout -b chore/<slug>
 git add -A
-git -c core.hooksPath=/dev/null commit -m "<commit message>"
-git -c core.hooksPath=/dev/null push origin chore/<slug>
+git -c core.hooksPath=/dev/null commit -m "<message>"
+git -c core.hooksPath=/dev/null push -u origin chore/<slug>
 ```
 
-### 4. Create a PR
+### 4. Open PR
 
-Create a PR via GitHub CLI or API:
-- **Title**: the commit message
-- **Body**: output of `git diff --stat` against `main`, or a brief description of what changed
-- **Base**: `main`
-- **Head**: `chore/<slug>`
+```powershell
+gh pr create --base main --head chore/<slug> --title "<message>" --body "$(git diff --stat origin/main...HEAD)"
+```
 
 ### 5. Wait for CI
 
-Poll until the "GlassWorm Infection Audit" check shows `state: "success"`. Wait 30 seconds between polls. Timeout after 5 minutes.
+Poll until **GlassWorm Infection Audit** is `SUCCESS` (30s interval, 5 min timeout):
 
-If GlassWorm fails, read the check details and attempt to fix. If unfixable, report to the user.
+```powershell
+gh pr checks --watch --interval 30
+```
 
-### 6. Merge the PR
+On failure: `gh pr checks` / run logs → fix → push → re-poll.
 
-Merge with `merge_method: "squash"`.
+### 6. Merge
+
+```powershell
+gh pr merge --squash --delete-branch
+```
 
 ### 7. Sync local main
 
@@ -66,23 +83,26 @@ git fetch origin main
 git reset --hard origin/main
 ```
 
-### 8. Clean up
+### 8. Cleanup
 
-Delete the remote branch:
+Remote branch is deleted by `--delete-branch` if merge succeeded. If not:
+
 ```powershell
 git -c core.hooksPath=/dev/null push origin --delete chore/<slug>
 ```
 
-## What this does NOT do
+## Checklist
 
-- **No version bump** — `package.json`, `Cargo.toml`, `tauri.conf.json` are left untouched
-- **No release notes** — `RELEASE_NOTES.md` and `CHANGELOG.md` are not modified
-- **No tag** — no `vX.Y.Z` tag is created or pushed
-- **No release workflow** — the Build & Release CI is not triggered
-- **No build validation** — cargo check / npm build are skipped (use `/release` for that)
+```
+- [ ] Pre-commit-check passed
+- [ ] PR created chore/<slug> → main
+- [ ] GlassWorm SUCCESS
+- [ ] Squash merged
+- [ ] Local main reset to origin/main
+```
 
-## Common mistakes to avoid
+## Mistakes to avoid
 
-1. **Pushing directly to main** — branch protection will reject it; always use a PR
-2. **Using git without `-c core.hooksPath=/dev/null`** — the bash pre-commit hook hangs in PowerShell
-3. **Accidentally including version bumps** — if version files are modified, warn the user and suggest using `/release` instead
+1. Pushing directly to `main` (branch protection)
+2. Omitting `core.hooksPath=/dev/null` on Windows
+3. Including release version bumps — use **release** skill

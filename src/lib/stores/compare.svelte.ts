@@ -260,12 +260,14 @@ class CompareStore {
       const name = snap.checkpoint.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? snap.checkpoint;
       diffs.push(name.length > 18 ? name.slice(0, 16) + "…" : name);
     }
-    if (snap.seed !== ref.seed && snap.seed !== -1) diffs.push(`seed ${snap.seed}`);
-    if (snap.steps !== ref.steps) diffs.push(`${snap.steps} steps`);
-    if (snap.cfg !== ref.cfg) diffs.push(`cfg ${snap.cfg}`);
+    if (snap.seed !== ref.seed && snap.seed !== -1) diffs.push(locale.t("compare.summary.seed", { seed: String(snap.seed) }));
+    if (snap.steps !== ref.steps) diffs.push(locale.t("compare.summary.steps", { steps: String(snap.steps) }));
+    if (snap.cfg !== ref.cfg) diffs.push(locale.t("compare.summary.cfg", { cfg: String(snap.cfg) }));
     if (snap.samplerName !== ref.samplerName) diffs.push(snap.samplerName);
-    if (snap.width !== ref.width || snap.height !== ref.height) diffs.push(`${snap.width}×${snap.height}`);
-    if (snap.denoise !== ref.denoise) diffs.push(`d${snap.denoise}`);
+    if (snap.width !== ref.width || snap.height !== ref.height) {
+      diffs.push(locale.t("compare.summary.dimensions", { width: String(snap.width), height: String(snap.height) }));
+    }
+    if (snap.denoise !== ref.denoise) diffs.push(locale.t("compare.summary.denoise_short", { denoise: String(snap.denoise) }));
     if (snap.positivePrompt !== ref.positivePrompt) diffs.push(locale.t("compare.cell_prompt_differs"));
     if (diffs.length === 0) return locale.t("compare.cell_same");
     return diffs.slice(0, 3).join(", ");
@@ -278,7 +280,7 @@ class CompareStore {
       parts.push(name.length > 18 ? name.slice(0, 16) + "…" : name);
     }
     parts.push(`${snap.steps}s`);
-    parts.push(`cfg ${snap.cfg}`);
+    parts.push(locale.t("compare.summary.cfg", { cfg: String(snap.cfg) }));
     return parts.slice(0, 3).join(", ");
   }
 
@@ -352,11 +354,13 @@ class CompareStore {
       }
       if (snap.samplerName !== ref.samplerName) diffs.push(snap.samplerName);
       if (snap.scheduler !== ref.scheduler) diffs.push(snap.scheduler);
-      if (snap.steps !== ref.steps) diffs.push(`${snap.steps} steps`);
-      if (snap.cfg !== ref.cfg) diffs.push(`cfg ${snap.cfg}`);
-      if (snap.seed !== ref.seed && snap.seed !== -1) diffs.push(`seed ${snap.seed}`);
-      if (snap.width !== ref.width || snap.height !== ref.height) diffs.push(`${snap.width}×${snap.height}`);
-      if (snap.denoise !== ref.denoise) diffs.push(`denoise ${snap.denoise}`);
+      if (snap.steps !== ref.steps) diffs.push(locale.t("compare.summary.steps", { steps: String(snap.steps) }));
+      if (snap.cfg !== ref.cfg) diffs.push(locale.t("compare.summary.cfg", { cfg: String(snap.cfg) }));
+      if (snap.seed !== ref.seed && snap.seed !== -1) diffs.push(locale.t("compare.summary.seed", { seed: String(snap.seed) }));
+      if (snap.width !== ref.width || snap.height !== ref.height) {
+        diffs.push(locale.t("compare.summary.dimensions", { width: String(snap.width), height: String(snap.height) }));
+      }
+      if (snap.denoise !== ref.denoise) diffs.push(locale.t("compare.summary.denoise", { denoise: String(snap.denoise) }));
       if (snap.vae !== ref.vae) {
         const vName = snap.vae ? (snap.vae.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? snap.vae) : locale.t("compare.cell_default_vae");
         diffs.push(vName);
