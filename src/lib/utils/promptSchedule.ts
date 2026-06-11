@@ -5,6 +5,7 @@ import {
   PROMPT_SCHEDULE_REGEX,
   PROMPT_SEGMENT_TAG_REGEX,
 } from "./promptInertRanges.js";
+import { isValidSegmentSpec } from "./promptSegmentDetail.js";
 
 export {
   findPromptInertRangeContaining,
@@ -303,6 +304,16 @@ function renderSegmentAwareText(
   while ((match = PROMPT_SEGMENT_TAG_REGEX.exec(text)) !== null) {
     html += renderPresetSegment(text.slice(lastIndex, match.index), knownPresetSlugs);
     lastIndex = match.index + match[0].length;
+    // Opening tags only get the pill when the spec would actually parse;
+    // </segment> closers are always pilled (pairing can't be judged here).
+    const openPrefix = "<segment:";
+    if (match[0].toLowerCase().startsWith(openPrefix)) {
+      const spec = match[0].slice(openPrefix.length, -1);
+      if (!isValidSegmentSpec(spec)) {
+        html += renderPresetSegment(match[0], knownPresetSlugs);
+        continue;
+      }
+    }
     html += `<span style="display:inline;color:transparent;background:${SEGMENT_TAG_COLOR.bg};border:1px solid ${SEGMENT_TAG_COLOR.border};border-radius:4px;box-shadow:${SEGMENT_TAG_COLOR.glow};padding:1px 3px;margin:0 1px;">`;
     html += escapeHtml(match[0]);
     html += `</span>`;

@@ -13,13 +13,15 @@ import type { DetailSegment } from "../types/index.js";
  * The refinement prompt is either everything after the tag until the next
  * <segment: tag or end of prompt (SwarmUI trailing form), or the text up to a
  * closing </segment> (MooshieUI closed form).
+ *
+ * Note: a trailing-form segment's prompt swallows everything (including other
+ * tag syntax) until the next <segment: tag or end of prompt, so trailing-form
+ * segments are best placed at the end of the prompt.
  */
 export const PROMPT_SEGMENT_OPEN_REGEX = new RegExp(
   `${SYNTAX_ANGLE_LOOKBEHIND}<segment:([^>]+)>`,
   "gi",
 );
-
-const SEGMENT_CLOSE = "</segment>";
 
 export const DEFAULT_SEGMENT_CREATIVITY = 0.6;
 export const DEFAULT_CLIPSEG_THRESHOLD = 0.5;
@@ -62,6 +64,11 @@ function parseSegmentSpec(spec: string): ParsedSpec | null {
   return { target, creativity, threshold };
 }
 
+/** Whether the inside of an opening tag would parse (used by highlight rendering). */
+export function isValidSegmentSpec(spec: string): boolean {
+  return parseSegmentSpec(spec) !== null;
+}
+
 /**
  * Extract <segment:...> tags from a prompt. Tag text and refinement prompts are
  * removed from baseText; invalid tags are left as literal text (parser convention
@@ -97,12 +104,12 @@ export function parseSegmentDetailPrompt(raw: string): ParsedSegmentDetailPrompt
 
     const regionEnd = i + 1 < opens.length ? opens[i + 1].start : raw.length;
     const between = raw.slice(open.end, regionEnd);
-    const closeIdx = between.toLowerCase().indexOf(SEGMENT_CLOSE);
+    const closeMatch = /<\/segment>/i.exec(between);
 
-    if (closeIdx >= 0) {
+    if (closeMatch) {
       // Closed form: prompt up to </segment>; text after the closer returns to base.
-      segments.push({ ...spec, prompt: between.slice(0, closeIdx).trim() });
-      cursor = open.end + closeIdx + SEGMENT_CLOSE.length;
+      segments.push({ ...spec, prompt: between.slice(0, closeMatch.index).trim() });
+      cursor = open.end + closeMatch.index + closeMatch[0].length;
     } else {
       // Trailing form: prompt runs to the next segment tag or end of prompt.
       segments.push({ ...spec, prompt: between.trim() });
@@ -130,11 +137,4 @@ export function yoloTargetFilename(target: string): string | null {
   const indexed = name.match(/^(.+\.(?:pt|onnx))-\d+$/i);
   if (indexed) name = indexed[1];
   return name || null;
-}
-
-/** Cheap check used to skip parsing on every keystroke. */
-export function hasSegmentDetailTags(raw: string): boolean {
-  if (!raw || !raw.toLowerCase().includes("<segment:")) return false;
-  PROMPT_SEGMENT_OPEN_REGEX.lastIndex = 0;
-  return PROMPT_SEGMENT_OPEN_REGEX.test(raw);
 }
