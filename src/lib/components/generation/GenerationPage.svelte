@@ -556,6 +556,7 @@
       generation.inputImage = response.name;
     } catch (e) {
       console.error("Failed to handle dropped image:", e);
+      gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
     } finally {
       uploading = false;
     }
@@ -580,6 +581,7 @@
       generation.maskImage = response.name;
     } catch (e) {
       console.error("Failed to handle dropped mask:", e);
+      gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
     } finally {
       uploading = false;
     }
@@ -1230,7 +1232,6 @@
     if (!isTauri) return;
     const { getCurrentWebview } = await import("@tauri-apps/api/webview");
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    const { readFile } = await import("@tauri-apps/plugin-fs");
     const webview = getCurrentWebview();
     const appWindow = getCurrentWindow();
     const scaleFactor = await appWindow.scaleFactor();
@@ -1278,15 +1279,11 @@
         if (zoneEl) {
           const zone = zoneEl.dataset.dropZone;
           try {
-            const filename = imgPath.split("/").pop() || "dropped_image.png";
+            const filename = getFilenameFromPath(imgPath);
             if (zone === "img-input") {
-              const fileBytes = await readFile(imgPath);
-              const bytes = Array.from(fileBytes);
-              await handleImageDropBytes(bytes, filename);
+              await handleImageDropPath(imgPath, filename);
             } else if (zone === "mask-input") {
-              const fileBytes = await readFile(imgPath);
-              const bytes = Array.from(fileBytes);
-              await handleMaskDropBytes(bytes, filename);
+              await handleMaskDropPath(imgPath, filename);
             } else {
               // Dispatch custom event for child components with file path
               zoneEl.dispatchEvent(new CustomEvent("tauri-file-drop", {
@@ -1296,6 +1293,7 @@
             }
           } catch (err) {
             console.error("Tauri drag-drop image upload failed:", err);
+            gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
           }
         }
       } else if (payload.type === "leave") {
@@ -1305,38 +1303,59 @@
     });
   }
 
-  /** Handle image input upload from raw bytes (Tauri drag-drop). */
-  async function handleImageDropBytes(bytes: number[], filename: string) {
+  /** Handle image input drop in Tauri mode. The file is read locally only for
+   *  the preview; the ComfyUI upload uses the path-based command so the full
+   *  byte array never crosses the IPC boundary, which could fail silently for
+   *  large files and leave the preview set without an input image (#273). */
+  async function handleImageDropPath(path: string, filename: string) {
     uploading = true;
     dragOver = false;
     try {
+      const { readFile } = await import("@tauri-apps/plugin-fs");
+      const bytes = Array.from(await readFile(path));
       const normalized = await normalizeImageBytes(bytes, filename);
       if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
       imagePreviewUrl = normalized.previewUrl;
       applyImageGeometry(normalized.width, normalized.height);
       canvas.setReferenceImage(imagePreviewUrl);
-      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      const response = await uploadImage(path);
       generation.inputImage = response.name;
     } catch (e) {
       console.error("Failed to handle dropped image:", e);
+      // Don't leave a preview visible when the upload never registered.
+      generation.inputImage = null;
+      if (imagePreviewUrl) {
+        URL.revokeObjectURL(imagePreviewUrl);
+        imagePreviewUrl = null;
+      }
+      canvas.setReferenceImage(null);
+      gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
     } finally {
       uploading = false;
     }
   }
 
-  /** Handle mask upload from raw bytes (Tauri drag-drop). */
-  async function handleMaskDropBytes(bytes: number[], filename: string) {
+  /** Handle mask drop in Tauri mode (path-based upload, see handleImageDropPath). */
+  async function handleMaskDropPath(path: string, _filename: string) {
     uploading = true;
     maskDragOver = false;
     try {
-      const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+      const { readFile } = await import("@tauri-apps/plugin-fs");
+      const bytes = await readFile(path);
+      const blob = new Blob([bytes], { type: "image/png" });
       if (maskPreviewUrl) URL.revokeObjectURL(maskPreviewUrl);
       maskPreviewUrl = URL.createObjectURL(blob);
       canvas.setPersistedMaskPreview(maskPreviewUrl);
-      const response = await uploadImageBytes(bytes, filename);
+      const response = await uploadImage(path);
       generation.maskImage = response.name;
     } catch (e) {
       console.error("Failed to handle dropped mask:", e);
+      generation.maskImage = null;
+      if (maskPreviewUrl) {
+        URL.revokeObjectURL(maskPreviewUrl);
+        maskPreviewUrl = null;
+      }
+      gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
     } finally {
       uploading = false;
     }
@@ -1533,7 +1552,14 @@
           <div class="{canvas.currentStagingImage ? 'opacity-50 pointer-events-none' : ''}">
             <p class="text-xs text-neutral-400 mb-1">{locale.t('generation.image.input')}</p>
             {#if imagePreviewUrl}
-              <div class="relative group">
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="relative group"
+                data-drop-zone="img-input"
+                ondragenter={(e) => { e.preventDefault(); }}
+                ondragover={(e) => { e.preventDefault(); }}
+                ondrop={handleImageDrop}
+              >
                 <img
                   src={imagePreviewUrl}
                   alt={locale.t('generation.image.input')}
@@ -1630,7 +1656,14 @@
                 </button>
               </div>
               {#if maskPreviewUrl}
-                <div class="relative group">
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  class="relative group"
+                  data-drop-zone="mask-input"
+                  ondragenter={(e) => { e.preventDefault(); }}
+                  ondragover={(e) => { e.preventDefault(); }}
+                  ondrop={handleMaskDrop}
+                >
                   <img
                     src={maskPreviewUrl}
                     alt={locale.t('generation.inpaint.mask')}

@@ -10,8 +10,8 @@
  */
 
 const STORAGE_KEY = "mooshieui.artist-gallery.favourites.v1";
-const EXPORT_KIND = "mooshieui.artist-gallery.favourites";
-const EXPORT_VERSION = 1;
+export const EXPORT_KIND = "mooshieui.artist-gallery.favourites";
+export const EXPORT_VERSION = 1;
 
 import { triggerSync } from "../utils/syncTrigger.js";
 import { locale } from "../stores/locale.svelte.js";

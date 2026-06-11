@@ -220,7 +220,11 @@ export function startHeartbeat() {
   // Send heartbeat before unload to give a final ping
   window.addEventListener("beforeunload", () => {
     // Use sendBeacon for reliability during page close
-    navigator.sendBeacon("/internal-api/_heartbeat_stop");
+    const token = getAuthToken();
+    const url = token
+      ? `/internal-api/_heartbeat_stop?token=${encodeURIComponent(token)}`
+      : "/internal-api/_heartbeat_stop";
+    navigator.sendBeacon(url);
   });
 }
 
