@@ -296,8 +296,14 @@ class ProgressStore {
     }
   }
 
-  /** Called when a prompt completes — removes it from the queue and returns its metadata. */
-  completePrompt(promptId: string): QueuedPrompt | undefined {
+  /** Called when a prompt completes — removes it from the queue and returns its metadata.
+   *
+   * `hasFinalImage` should be true when the caller is about to set the real
+   * output via `setLastOutputForMode` (finalizeOutputImages). The last preview
+   * frame is then discarded instead of being promoted to lastOutputImage —
+   * promoting it first risks the blurry progress frame sticking around if the
+   * final image swap fails. */
+  completePrompt(promptId: string, hasFinalImage = false): QueuedPrompt | undefined {
     const item = this.pendingPrompts.find((p) => p.promptId === promptId);
 
     if (item) {
@@ -319,7 +325,7 @@ class ProgressStore {
       this.generationStartTime = null;
       this._stopElapsedTimer();
 
-      if (this.previewImage && item) {
+      if (this.previewImage && item && !hasFinalImage) {
         this.setLastOutputForMode(item.mode, this.previewImage);
       }
       this.previewImage = null;
