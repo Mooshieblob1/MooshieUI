@@ -309,6 +309,9 @@ class MooshieSegmentDetailer:
             blurred = self._blur_mask(mask, mask_blur)
 
             ys, xs = torch.nonzero(blurred > 0.01, as_tuple=True)
+            if ys.numel() == 0:
+                print(f"[MooshieSegmentDetailer] Mask faded below blend threshold for '{detection}' (batch {b})")
+                continue
             pad = 32
             cy1 = max(0, int(ys.min().item()) - pad)
             cy2 = min(H, int(ys.max().item()) + 1 + pad)
@@ -427,7 +430,7 @@ class MooshieSegmentDetailer:
         return mask
 
     def _clipseg_mask(self, text, img_np, H, W, threshold):
-        """Binary mask [H, W] from CLIPSeg text detection, or None on failure.
+        """Binary mask [H, W] from CLIPSeg text detection.
 
         Weights cache under models/clipseg/ (auto-downloaded on first use) and
         are released after each run — no persistent VRAM/RAM residency.

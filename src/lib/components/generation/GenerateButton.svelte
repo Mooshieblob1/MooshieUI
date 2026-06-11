@@ -209,12 +209,16 @@
         generation.facefixDetector = detector;
       }
 
-      // Ensure YOLO detectors referenced by <segment:yolo-...> tags are ready.
-      // Unknown models that fail to download are skipped with a warning — the
-      // segment node passes through unchanged when its model is missing.
-      for (const segment of parseSegmentDetailPrompt(generation.positivePrompt).segments) {
-        const detector = yoloTargetFilename(segment.target);
-        if (!detector) continue;
+      // Ensure YOLO detectors referenced by <segment:yolo-...> tags are ready
+      // (deduplicated so each detector is checked once). Unknown models that
+      // fail to download are skipped with a warning — the segment node passes
+      // through unchanged when its model is missing.
+      const segmentDetectors = new Set(
+        parseSegmentDetailPrompt(generation.positivePrompt)
+          .segments.map((s) => yoloTargetFilename(s.target))
+          .filter((name): name is string => name !== null),
+      );
+      for (const detector of segmentDetectors) {
         try {
           await ensureUltralyticsDetector(detector, "generation.segment.downloading_detector");
         } catch (e) {
