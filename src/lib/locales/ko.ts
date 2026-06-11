@@ -622,6 +622,8 @@ const ko: Record<string, string> = {
   "generation.facefix.downloading": "{model} 다운로드 중...",
   "generation.facefix.download_failed": "다운로드 실패: {error}",
   "generation.facefix.select_model": "모델 선택...",
+  "generation.segment.downloading_detector": "세그먼트 감지 모델 다운로드 중...",
+  "generation.segment.detector_unavailable": "세그먼트 감지기 '{name}'를 사용할 수 없어 해당 세그먼트를 건너뜁니다.",
 
   "generation.upscale.title": "리파이너",
   "generation.upscale.tip": "콘텐츠를 변경하지 않고 더 높은 해상도로 출력을 재생성합니다. 디테일 개선에 유용합니다.",

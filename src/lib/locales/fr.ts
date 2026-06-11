@@ -640,6 +640,8 @@ const fr: Record<string, string> = {
   "generation.facefix.downloading": "Téléchargement de {model}...",
   "generation.facefix.download_failed": "Échec du téléchargement : {error}",
   "generation.facefix.select_model": "Sélectionner un modèle...",
+  "generation.segment.downloading_detector": "Téléchargement du modèle de détection de segment...",
+  "generation.segment.detector_unavailable": "Le détecteur de segment '{name}' n'est pas disponible — ce segment sera ignoré.",
 
   // Refiner
   "generation.upscale.title": "Refiner",

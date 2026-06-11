@@ -23,6 +23,7 @@
     clearAllRegionalChainGallerySuppress,
   } from "../../utils/regionalChainGallery.js";
   import { checkStyleTransferNodesReady } from "../../utils/styleTransferNodes.js";
+  import { parseSegmentDetailPrompt, yoloTargetFilename } from "../../utils/promptSegmentDetail.js";
 
   interface Props {
     canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
@@ -80,6 +81,25 @@
     if (!importOk) {
       throw new Error(locale.t("generation.facefix.dep_check_failed"));
     }
+  }
+
+  const DETECTOR_META: Record<string, { url: string; sha256?: string }> = {
+    "Anzhc Face seg 640 v4 y11n.pt": {
+      url: "https://huggingface.co/Anzhc/Anzhcs_YOLOs/resolve/0319daeae9ae40752c2fb3904069cb35cc61d2ec/Anzhc%20Face%20seg%20640%20v4%20y11n.pt",
+      sha256: "1e77ad7bd349babd8a4a90478bfc965348642b63a8d95d3b43ee13db42fd0a64",
+    },
+  };
+
+  /** Download a YOLO detector into models/ultralytics if missing, then ensure the python dep. */
+  async function ensureUltralyticsDetector(detector: string, toastKey: string): Promise<void> {
+    if (!models.ultralyticsModels.includes(detector)) {
+      gallery.showToast(locale.t(toastKey), "info");
+      const meta = DETECTOR_META[detector];
+      const url = meta?.url ?? `https://huggingface.co/Bingsu/adetailer/resolve/main/${detector}`;
+      await downloadModel(url, "ultralytics", detector, undefined, meta?.sha256);
+      await models.refresh();
+    }
+    await ensureFacefixPythonDependency();
   }
 
   function finishSubmitRun(runToken: number) {
@@ -185,27 +205,25 @@
       // Ensure face fix dependencies are ready when enabled
       if (generation.facefixEnabled) {
         const detector = generation.facefixDetector || "Anzhc Face seg 640 v4 y11n.pt";
-        if (!models.ultralyticsModels.includes(detector)) {
-          gallery.showToast(locale.t('generation.downloading_facefix'), "info");
-          const detectorMeta: Record<string, { url: string; sha256?: string }> = {
-            "Anzhc Face seg 640 v4 y11n.pt": {
-              url: "https://huggingface.co/Anzhc/Anzhcs_YOLOs/resolve/0319daeae9ae40752c2fb3904069cb35cc61d2ec/Anzhc%20Face%20seg%20640%20v4%20y11n.pt",
-              sha256: "1e77ad7bd349babd8a4a90478bfc965348642b63a8d95d3b43ee13db42fd0a64",
-            },
-          };
-          const meta = detectorMeta[detector];
-          const url = meta?.url ?? `https://huggingface.co/Bingsu/adetailer/resolve/main/${detector}`;
-          await downloadModel(
-            url,
-            "ultralytics",
-            detector,
-            undefined,
-            meta?.sha256,
+        await ensureUltralyticsDetector(detector, "generation.downloading_facefix");
+        generation.facefixDetector = detector;
+      }
+
+      // Ensure YOLO detectors referenced by <segment:yolo-...> tags are ready.
+      // Unknown models that fail to download are skipped with a warning — the
+      // segment node passes through unchanged when its model is missing.
+      for (const segment of parseSegmentDetailPrompt(generation.positivePrompt).segments) {
+        const detector = yoloTargetFilename(segment.target);
+        if (!detector) continue;
+        try {
+          await ensureUltralyticsDetector(detector, "generation.segment.downloading_detector");
+        } catch (e) {
+          console.warn("[segment] detector unavailable:", detector, e);
+          gallery.showToast(
+            locale.t("generation.segment.detector_unavailable", { name: detector }),
+            "warning",
           );
-          generation.facefixDetector = detector;
-          await models.refresh();
         }
-        await ensureFacefixPythonDependency();
       }
 
       // Anima models produce poor results below 1024 — clamp to 1024² area preserving aspect ratio

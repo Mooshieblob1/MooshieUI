@@ -622,6 +622,8 @@ const pt: Record<string, string> = {
   "generation.facefix.downloading": "Baixando {model}...",
   "generation.facefix.download_failed": "Download falhou: {error}",
   "generation.facefix.select_model": "Selecionar modelo...",
+  "generation.segment.downloading_detector": "Baixando modelo detector de segmentos...",
+  "generation.segment.detector_unavailable": "O detector de segmentos '{name}' não está disponível — esse segmento será ignorado.",
 
   "generation.upscale.title": "Refiner",
   "generation.upscale.tip": "Regenera a saída em resolução mais alta sem alterar o conteúdo. Útil para refinamento de detalhes.",

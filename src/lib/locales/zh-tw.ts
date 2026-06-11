@@ -622,6 +622,8 @@ const zhTw: Record<string, string> = {
   "generation.facefix.downloading": "正在下載 {model}...",
   "generation.facefix.download_failed": "下載失敗：{error}",
   "generation.facefix.select_model": "選擇模型...",
+  "generation.segment.downloading_detector": "正在下載分割偵測模型...",
+  "generation.segment.detector_unavailable": "分割偵測器 '{name}' 無法使用——將跳過該分割。",
 
   "generation.upscale.title": "精煉器",
   "generation.upscale.tip": "以更高解析度重新生成輸出而不改變內容。適合改善細節。",

@@ -640,6 +640,8 @@ const ja: Record<string, string> = {
   "generation.facefix.downloading": "{model}をダウンロード中...",
   "generation.facefix.download_failed": "ダウンロード失敗：{error}",
   "generation.facefix.select_model": "モデルを選択...",
+  "generation.segment.downloading_detector": "セグメント検出モデルをダウンロード中...",
+  "generation.segment.detector_unavailable": "セグメント検出器「{name}」が利用できないため、そのセグメントはスキップされます。",
 
   // リファイナー
   "generation.upscale.title": "リファイナー",

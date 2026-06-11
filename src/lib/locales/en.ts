@@ -778,6 +778,8 @@ const en: Record<string, string> = {
   "generation.facefix.downloading": "Downloading {model}...",
   "generation.facefix.download_failed": "Download failed: {error}",
   "generation.facefix.select_model": "Select model...",
+  "generation.segment.downloading_detector": "Downloading segment detector model...",
+  "generation.segment.detector_unavailable": "Segment detector '{name}' is not available — that segment will be skipped.",
 
   // Refiner
   "generation.upscale.title": "Refiner",

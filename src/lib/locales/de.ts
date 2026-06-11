@@ -638,6 +638,8 @@ const de: Record<string, string> = {
   "generation.facefix.downloading": "{model} wird heruntergeladen...",
   "generation.facefix.download_failed": "Download fehlgeschlagen: {error}",
   "generation.facefix.select_model": "Modell wählen...",
+  "generation.segment.downloading_detector": "Segment-Detektormodell wird heruntergeladen...",
+  "generation.segment.detector_unavailable": "Segment-Detektor '{name}' ist nicht verfügbar — dieses Segment wird übersprungen.",
 
   "generation.upscale.title": "Refiner",
   "generation.upscale.tip": "Erzeugt die Ausgabe in höherer Auflösung neu, ohne den Inhalt zu ändern. Nützlich zur Verbesserung von Details.",

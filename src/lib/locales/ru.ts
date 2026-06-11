@@ -622,6 +622,8 @@ const ru: Record<string, string> = {
   "generation.facefix.downloading": "Скачивание {model}...",
   "generation.facefix.download_failed": "Скачивание не удалось: {error}",
   "generation.facefix.select_model": "Выбрать модель...",
+  "generation.segment.downloading_detector": "Загрузка модели детектора сегментов...",
+  "generation.segment.detector_unavailable": "Детектор сегментов '{name}' недоступен — этот сегмент будет пропущен.",
 
   "generation.upscale.title": "Рифайнер",
   "generation.upscale.tip": "Перегенерирует результат в более высоком разрешении без изменения содержимого. Полезно для улучшения деталей.",
