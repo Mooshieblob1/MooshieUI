@@ -3,6 +3,7 @@ import {
   PROMPT_PRESET_TOKEN_REGEX,
   PROMPT_REGION_TAG_REGEX,
   PROMPT_SCHEDULE_REGEX,
+  PROMPT_SEGMENT_TAG_REGEX,
 } from "./promptInertRanges.js";
 
 export {
@@ -201,7 +202,7 @@ export function renderHighlightedPrompt(raw: string, knownPresetSlugs?: Readonly
     const fullMatch = match[0];
     const matchStart = match.index;
 
-    html += renderPresetSegment(raw.slice(lastIndex, matchStart), knownPresetSlugs);
+    html += renderSegmentAwareText(raw.slice(lastIndex, matchStart), knownPresetSlugs);
     lastIndex = matchStart + fullMatch.length;
 
     let isValid = false;
@@ -237,7 +238,7 @@ export function renderHighlightedPrompt(raw: string, knownPresetSlugs?: Readonly
     html += `</span>`;
   }
 
-  html += renderPresetSegment(raw.slice(lastIndex), knownPresetSlugs);
+  html += renderSegmentAwareText(raw.slice(lastIndex), knownPresetSlugs);
   return html;
 }
 
@@ -272,6 +273,41 @@ function renderPresetSegment(text: string, knownPresetSlugs?: ReadonlySet<string
     html += `</span>`;
   }
   html += escapeHtml(text.slice(lastIndex));
+  return html;
+}
+
+/** Teal pill for <segment:...> / </segment> tags — distinct from scheduling gold. */
+const SEGMENT_TAG_COLOR = {
+  bg: "rgba(45, 212, 191, 0.12)",
+  border: "rgba(45, 212, 191, 0.45)",
+  glow: "0 0 10px rgba(45, 212, 191, 0.25), 0 0 4px rgba(45, 212, 191, 0.12)",
+};
+
+/**
+ * Highlight <segment:...> tags within a plain-text run, delegating the
+ * remaining text to renderPresetSegment for @preset highlighting.
+ */
+function renderSegmentAwareText(
+  text: string,
+  knownPresetSlugs?: ReadonlySet<string>,
+): string {
+  if (!text) return "";
+  const lower = text.toLowerCase();
+  if (!lower.includes("<segment:") && !lower.includes("</segment>")) {
+    return renderPresetSegment(text, knownPresetSlugs);
+  }
+  let html = "";
+  let lastIndex = 0;
+  PROMPT_SEGMENT_TAG_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PROMPT_SEGMENT_TAG_REGEX.exec(text)) !== null) {
+    html += renderPresetSegment(text.slice(lastIndex, match.index), knownPresetSlugs);
+    lastIndex = match.index + match[0].length;
+    html += `<span style="display:inline;color:transparent;background:${SEGMENT_TAG_COLOR.bg};border:1px solid ${SEGMENT_TAG_COLOR.border};border-radius:4px;box-shadow:${SEGMENT_TAG_COLOR.glow};padding:1px 3px;margin:0 1px;">`;
+    html += escapeHtml(match[0]);
+    html += `</span>`;
+  }
+  html += renderPresetSegment(text.slice(lastIndex), knownPresetSlugs);
   return html;
 }
 
