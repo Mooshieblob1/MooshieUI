@@ -694,7 +694,7 @@
       {placeholder}
       {rows}
       class="w-full border border-neutral-700 rounded-lg px-3 py-2 text-sm leading-5 text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors break-words {minHeight} {showBackdrop ? 'bg-transparent' : 'bg-neutral-800'}"
-      style="position: relative; z-index: 1; {resizeStyle}{showBackdrop ? 'caret-color: #e5e5e5;' : ''}"
+      style="position: relative; z-index: 1; scrollbar-gutter: stable; {resizeStyle}{showBackdrop ? 'caret-color: #e5e5e5;' : ''}"
       onkeydown={handleKeydown}
       oninput={handleInput}
       onclick={handleClick}

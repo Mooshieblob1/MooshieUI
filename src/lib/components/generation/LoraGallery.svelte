@@ -394,9 +394,15 @@
   }
 
   async function setSidecarFromGallery(loraFilename: string) {
-    const gf = gallery.lastSelectedImage?.gallery_filename;
-    if (!gf) {
+    const last = gallery.lastSelectedImage;
+    if (!last) {
       gallery.showToast(locale.t("model.thumb_no_gallery_image"), "warning");
+      return;
+    }
+    // Wait for an in-flight persist so freshly generated images work too (#232).
+    const gf = await gallery.resolveGalleryFilename(last);
+    if (!gf) {
+      gallery.showToast(locale.t("gallery.persisted_only_thumb"), "warning");
       return;
     }
     try {
