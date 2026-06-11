@@ -83,12 +83,15 @@ async fn main() {
 
     // Auto-start ComfyUI if configured
     if auto_start {
-        let multi_gpu = !state.gpu_manager.is_single_worker();
+        let configured_worker_mode = {
+            let config = state.config.read().await;
+            process::uses_configured_gpu_workers(&config)
+        };
 
-        if multi_gpu {
-            // Multi-GPU mode: start all configured workers
+        if configured_worker_mode {
+            // Explicit GPU worker mode: start all configured workers, even one.
             log::info!(
-                "Auto-starting ComfyUI on {} GPU workers...",
+                "Auto-starting ComfyUI on {} configured GPU worker(s)...",
                 state.gpu_manager.workers.len()
             );
             let results = process::start_all_workers(&state).await;
@@ -164,7 +167,11 @@ async fn main() {
     log::info!("Shutdown signal received, cleaning up...");
 
     // Kill ComfyUI process(es)
-    if !state.gpu_manager.is_single_worker() {
+    let configured_worker_mode = {
+        let config = state.config.read().await;
+        process::uses_configured_gpu_workers(&config)
+    };
+    if configured_worker_mode {
         log::info!("Shutting down all GPU workers...");
         process::stop_all_workers(&state).await;
     } else {

@@ -907,6 +907,33 @@ pub async fn connect_websocket_for_worker(
     worker: &std::sync::Arc<super::gpu_manager::GpuWorker>,
     event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
 ) -> Result<(), AppError> {
+    connect_websocket_for_worker_inner(
+        #[cfg(feature = "desktop")]
+        None,
+        state,
+        worker,
+        event_tx,
+    )
+    .await
+}
+
+/// Desktop variant that also mirrors worker events to Tauri listeners.
+#[cfg(feature = "desktop")]
+pub async fn connect_websocket_for_worker_desktop(
+    app_handle: AppHandle,
+    state: &Arc<AppState>,
+    worker: &std::sync::Arc<super::gpu_manager::GpuWorker>,
+    event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
+) -> Result<(), AppError> {
+    connect_websocket_for_worker_inner(Some(app_handle), state, worker, event_tx).await
+}
+
+async fn connect_websocket_for_worker_inner(
+    #[cfg(feature = "desktop")] app_handle: Option<AppHandle>,
+    state: &Arc<AppState>,
+    worker: &std::sync::Arc<super::gpu_manager::GpuWorker>,
+    event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
+) -> Result<(), AppError> {
     {
         let mut handle = worker.ws_handle.lock().await;
         if handle.as_ref().map(|h| !h.is_finished()).unwrap_or(false) {
@@ -929,10 +956,16 @@ pub async fn connect_websocket_for_worker(
 
     let worker_id = worker.id;
     let tx = event_tx;
+    #[cfg(feature = "desktop")]
+    let app = app_handle;
     let ws_state = Arc::clone(state);
 
     let task = tokio::spawn(async move {
         let emit = |event: &str, payload: serde_json::Value| {
+            #[cfg(feature = "desktop")]
+            if let Some(app) = &app {
+                let _ = app.emit(event, payload.clone());
+            }
             if let Some(prompt_id) = payload.get("prompt_id").and_then(|v| v.as_str()) {
                 cache_temp_event(&ws_state, event, prompt_id, &payload);
             }

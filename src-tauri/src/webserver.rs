@@ -1999,6 +1999,49 @@ async fn dispatch_command(
                 StartResult::Spawned => {
                     let state_clone = state.clone();
                     tokio::spawn(async move {
+                        let configured_worker_mode = {
+                            let config = state_clone.config.read().await;
+                            process::uses_configured_gpu_workers(&config)
+                        };
+                        if configured_worker_mode {
+                            process::wait_all_workers_ready(&state_clone, 120).await;
+
+                            let mut ready_any = false;
+                            for worker in &state_clone.gpu_manager.workers {
+                                let status = *worker.status.read().await;
+                                if status != crate::comfyui::gpu_manager::WorkerStatus::Idle {
+                                    continue;
+                                }
+                                ready_any = true;
+                                if let Err(e) = websocket::connect_websocket_for_worker(
+                                    &state_clone,
+                                    worker,
+                                    event_tx.clone(),
+                                )
+                                .await
+                                {
+                                    log::error!("Worker {} WebSocket failed: {}", worker.id, e);
+                                }
+                            }
+
+                            if ready_any {
+                                let _ = event_tx.send(crate::state::BroadcastEvent {
+                                    event: "comfyui:server_ready".to_string(),
+                                    payload: serde_json::json!(null),
+                                });
+                            } else {
+                                let err_str = "No configured GPU workers became ready".to_string();
+                                log::error!("{}", err_str);
+                                let port = state_clone.config.read().await.server_port;
+                                let _ = event_tx.send(crate::state::BroadcastEvent {
+                                    event: "comfyui:server_error".to_string(),
+                                    payload: crate::comfyui::nodes::server_error_payload(
+                                        &err_str, port,
+                                    ),
+                                });
+                            }
+                            return;
+                        }
                         match process::wait_for_ready(&state_clone, 120).await {
                             Ok(()) => {
                                 log::info!("ComfyUI server is ready (browser mode)");

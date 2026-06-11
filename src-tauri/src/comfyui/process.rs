@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::config::ServerMode;
+use crate::config::{AppConfig, ServerMode};
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -156,6 +156,12 @@ pub enum StartResult {
     Skipped,
 }
 
+/// A non-empty `gpu_workers` config means the user opted into explicit worker
+/// launching, even if only one worker is enabled.
+pub fn uses_configured_gpu_workers(config: &AppConfig) -> bool {
+    !config.gpu_workers.is_empty()
+}
+
 /// After killing a stale ComfyUI listener, wait until `/system_stats` stops responding.
 async fn wait_for_port_free(state: &AppState, health_url: &str, port: u16) {
     kill_process_on_port(port).await;
@@ -236,8 +242,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         return Ok(StartResult::Skipped);
     }
 
-    let multi_worker_enabled = config.gpu_workers.iter().filter(|w| w.enabled).count() > 1;
-    if multi_worker_enabled {
+    if uses_configured_gpu_workers(&config) {
         let mut started_any = false;
         let mut first_error: Option<AppError> = None;
         for (_worker_id, result) in start_all_workers(state).await {
@@ -789,7 +794,8 @@ pub fn read_comfyui_log_tail(lines: usize) -> Option<String> {
 }
 
 pub async fn stop_comfyui_process(state: &AppState) -> Result<(), AppError> {
-    let port = state.config.read().await.server_port;
+    let config = state.config.read().await.clone();
+    let port = config.server_port;
 
     // Disconnect WebSocket first
     {
@@ -809,6 +815,11 @@ pub async fn stop_comfyui_process(state: &AppState) -> Result<(), AppError> {
         }
     }
 
+    if uses_configured_gpu_workers(&config) {
+        stop_all_workers(state).await;
+        return Ok(());
+    }
+
     // If something is still listening on the port (external process or race),
     // kill it by port number
     kill_process_on_port(port).await;
@@ -824,6 +835,33 @@ pub async fn stop_comfyui_process(state: &AppState) -> Result<(), AppError> {
 
     log::warn!("Port {} still in use after stop attempts", port);
     Ok(())
+}
+
+/// Synchronous shutdown path used from Tauri's `RunEvent::ExitRequested`.
+pub fn stop_comfyui_process_blocking(state: &AppState) {
+    let config = state.config.blocking_read().clone();
+
+    {
+        let mut ws = state.ws_handle.blocking_lock();
+        if let Some(h) = ws.take() {
+            h.abort();
+        }
+    }
+
+    {
+        let mut process = state.comfyui_process.blocking_lock();
+        if let Some(ref mut child) = *process {
+            log::info!("Shutting down ComfyUI process...");
+            let _ = child.start_kill();
+            *process = None;
+        }
+    }
+
+    if uses_configured_gpu_workers(&config) {
+        stop_all_workers_blocking(state);
+    } else {
+        kill_process_on_port_blocking(config.server_port);
+    }
 }
 
 /// Find and kill any process listening on the given port.
@@ -871,6 +909,53 @@ pub async fn kill_process_on_port(port: u16) {
                     kill_cmd.args(["/F", "/PID", &pid.to_string()]);
                     kill_cmd.creation_flags(CREATE_NO_WINDOW);
                     let _ = kill_cmd.output().await;
+                }
+            }
+        }
+    }
+}
+
+/// Blocking variant for shutdown hooks that cannot `.await`.
+fn kill_process_on_port_blocking(port: u16) {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("fuser")
+            .args(["-k", &format!("{}/tcp", port)])
+            .output();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("lsof")
+            .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"])
+            .output()
+        {
+            let pids = String::from_utf8_lossy(&output.stdout);
+            for pid in pids.lines() {
+                if pid.trim().parse::<u32>().is_ok() {
+                    let _ = std::process::Command::new("kill")
+                        .args(["-9", pid.trim()])
+                        .output();
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        #[allow(unused_imports)]
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        if let Ok(output) = std::process::Command::new("netstat")
+            .arg("-ano")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                if let Some(pid) = parse_netstat_listening_pid(line, port) {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/F", "/PID", &pid.to_string()])
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .output();
                 }
             }
         }
@@ -1325,5 +1410,75 @@ pub async fn stop_all_workers(state: &AppState) {
         if let Err(e) = stop_worker_process(worker).await {
             log::error!("Failed to stop worker {}: {}", worker.id, e);
         }
+    }
+}
+
+/// Stop all workers from synchronous shutdown hooks.
+pub fn stop_all_workers_blocking(state: &AppState) {
+    use super::gpu_manager::WorkerStatus;
+
+    for worker in &state.gpu_manager.workers {
+        {
+            let mut ws = worker.ws_handle.blocking_lock();
+            if let Some(h) = ws.take() {
+                h.abort();
+            }
+        }
+
+        {
+            let mut process = worker.process.blocking_lock();
+            if let Some(ref mut child) = *process {
+                log::info!(
+                    "Shutting down worker {} (GPU {})...",
+                    worker.id,
+                    worker.gpu_index
+                );
+                let _ = child.start_kill();
+                *process = None;
+            }
+        }
+
+        kill_process_on_port_blocking(worker.port);
+
+        worker.release();
+        let mut status = worker.status.blocking_write();
+        if *status != WorkerStatus::Disabled {
+            *status = WorkerStatus::Stopped;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::uses_configured_gpu_workers;
+    use crate::config::{AppConfig, GpuWorkerConfig};
+
+    #[test]
+    fn configured_gpu_worker_mode_requires_explicit_config_entries() {
+        let mut config = AppConfig::default();
+        assert!(!uses_configured_gpu_workers(&config));
+
+        config.gpu_workers.push(GpuWorkerConfig {
+            gpu_index: 1,
+            port: Some(8189),
+            enabled: true,
+            label: Some("GPU 1".to_string()),
+            vram_mode: None,
+        });
+        assert!(uses_configured_gpu_workers(&config));
+    }
+
+    #[test]
+    fn disabled_configured_worker_still_uses_worker_mode() {
+        let mut config = AppConfig::default();
+        config.gpu_workers.push(GpuWorkerConfig {
+            gpu_index: 1,
+            port: Some(8189),
+            enabled: false,
+            label: None,
+            vram_mode: None,
+        });
+
+        assert!(uses_configured_gpu_workers(&config));
     }
 }
