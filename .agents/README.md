@@ -32,6 +32,7 @@ Invoke by name or slash-style request (`/push`, `/release`, etc.):
 
 | Target | Format | Notes |
 |--------|--------|-------|
+| [`.claude/skills/`](../.claude/skills/) | `SKILL.md` | Direct copy (Claude Code project skills) |
 | [`.cursor/skills/`](../.cursor/skills/) | `SKILL.md` | Direct copy |
 | [`.cursor/rules/`](../.cursor/rules/) | `.mdc` | Cursor frontmatter (`alwaysApply`, `globs`) |
 | [`.roo/commands/`](../.roo/commands/) | `.md` | Roo slash commands + `argument-hint` |
