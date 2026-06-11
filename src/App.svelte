@@ -91,6 +91,20 @@
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, FETCH_TIMEOUT_MS));
     await Promise.race([Promise.allSettled(fetches), timeout]);
   }
+  /** Fetch a `_temp_image` URL, retrying once after a short delay. A transient
+   *  failure here (e.g. a 401 while the LAN session token refreshes) would
+   *  otherwise drop the final output image and leave the blurry progress
+   *  preview stuck as the displayed result. */
+  async function fetchTempImageWithRetry(url: string): Promise<Response> {
+    try {
+      const resp = await fetch(url, { headers: authHeaders() });
+      if (resp.ok) return resp;
+    } catch {
+      // fall through to retry
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    return fetch(url, { headers: authHeaders() });
+  }
   let reconcileIntervalId: ReturnType<typeof setInterval> | null = null;
   let sseReconnectHandler: (() => void) | null = null;
   let modelPreviewActionHandler: ((event: Event) => void) | null = null;
@@ -1322,6 +1336,36 @@
     }
   });
 
+  /** Recover output images from the server temp cache (browser mode) when the
+   *  output_image SSE event was dropped or its fetch failed. Without this the
+   *  blurry progress frame stays as the displayed result. The `_temp_image`
+   *  endpoint transcodes JXL to WebP, so the blobs are always displayable. */
+  async function recoverMissingOutputImages(
+    promptId: string,
+    images: Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>,
+  ): Promise<void> {
+    if (isTauri) return;
+    try {
+      const recovered = await recoverPromptOutputs(promptId);
+      for (const imgRef of recovered.images) {
+        const tempFn = imgRef.temp_filename?.trim();
+        if (!tempFn) continue;
+        progress.registerPromptOutput(promptId, tempFn);
+        try {
+          const resp = await fetch(
+            `/internal-api/_temp_image/${encodeURIComponent(tempFn)}`,
+            { headers: authHeaders() },
+          );
+          if (resp.ok) {
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            images.push({ blob, url, tempFilename: tempFn });
+          }
+        } catch { /* individual image fetch failed */ }
+      }
+    } catch { /* recovery command failed */ }
+  }
+
   /**
    * Finalize images received via WebSocket during generation.
    * MooshieSaveImage sends PNG bytes directly over WS — no disk round-trip.
@@ -1879,9 +1923,12 @@
             // (common on remote browser mode with inpaint chains). Setting
             // previewImage now would overwrite the finalized output in the
             // lightbox with a stale blurry preview frame — and nothing would
-            // ever clear it.
+            // ever clear it. The pendingPrompts check also covers the window
+            // between one queued prompt completing and the next starting,
+            // when activePromptId is briefly null.
             if (
               !progress.isGenerating ||
+              (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) ||
               (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId)
             ) {
               return;
@@ -1987,10 +2034,10 @@
                     ? `/internal-api/_temp_image/${encodeURIComponent(displayFilename)}`
                     : `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}?format=webp`;
                   const [canonicalResp, displayResp] = await Promise.all([
-                    fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}?raw=true`, {
-                      headers: authHeaders(),
-                    }),
-                    fetch(displayUrl, { headers: authHeaders() }),
+                    fetchTempImageWithRetry(
+                      `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}?raw=true`,
+                    ),
+                    fetchTempImageWithRetry(displayUrl),
                   ]);
                   if (!canonicalResp.ok) {
                     console.error(
@@ -2012,9 +2059,8 @@
                     url = progress.displayImage ?? "";
                   }
                 } else {
-                  const resp = await fetch(
+                  const resp = await fetchTempImageWithRetry(
                     `/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`,
-                    { headers: authHeaders() },
                   );
                   if (!resp.ok) {
                     console.error("[output_image] failed to fetch temp image:", resp.status);
@@ -2096,15 +2142,24 @@
             pendingOutputFetches.delete(promptId);
           }
 
-          const item = progress.completePrompt(promptId);
+          // Read the collected output images first so completePrompt knows
+          // whether a real final image is about to replace the preview frame.
+          const images = pendingOutputImages.get(promptId) ?? [];
+          const item = progress.completePrompt(promptId, images.length > 0);
           promptLastActivity.delete(promptId);
           if (item) {
-            const images = pendingOutputImages.get(promptId) ?? [];
             for (const img of images) {
               const tempFn = img.tempFilename?.trim();
               if (tempFn) progress.registerPromptOutput(promptId, tempFn);
             }
             pendingOutputImages.delete(promptId);
+
+            if (images.length === 0) {
+              // The output_image event was dropped or its fetch failed — try
+              // to recover from the server temp cache so the final image
+              // replaces the blurry progress frame.
+              await recoverMissingOutputImages(promptId, images);
+            }
 
             const skipGallery = shouldSuppressRegionalChainGallerySave(promptId);
             if (skipGallery) {
@@ -2225,10 +2280,10 @@
               await awaitFetchesWithTimeout(fetches);
               pendingOutputFetches.delete(p.promptId);
             }
-            const item = progress.completePrompt(p.promptId);
+            let images = pendingOutputImages.get(p.promptId) ?? [];
+            const item = progress.completePrompt(p.promptId, images.length > 0);
             promptLastActivity.delete(p.promptId);
             if (item) {
-              let images = pendingOutputImages.get(p.promptId) ?? [];
               for (const img of images) {
                 const tempFn = img.tempFilename?.trim();
                 if (tempFn) progress.registerPromptOutput(p.promptId, tempFn);
@@ -2239,24 +2294,7 @@
                 // SSE event was likely dropped during a reconnect — the image was
                 // saved to a temp file on the server and cached by the cleanup
                 // reactor.  Try to recover it before giving up.
-                try {
-                  const recovered = await recoverPromptOutputs(p.promptId);
-                  for (const imgRef of recovered.images) {
-                    const tempFn = imgRef.temp_filename?.trim();
-                    if (tempFn) progress.registerPromptOutput(p.promptId, tempFn);
-                    try {
-                      const resp = await fetch(
-                        `/internal-api/_temp_image/${encodeURIComponent(imgRef.temp_filename)}`,
-                        { headers: authHeaders() },
-                      );
-                      if (resp.ok) {
-                        const blob = await resp.blob();
-                        const url = URL.createObjectURL(blob);
-                        images.push({ blob, url, tempFilename: imgRef.temp_filename });
-                      }
-                    } catch { /* individual image fetch failed */ }
-                  }
-                } catch { /* recovery command failed */ }
+                await recoverMissingOutputImages(p.promptId, images);
               }
 
               if (images.length > 0) {
