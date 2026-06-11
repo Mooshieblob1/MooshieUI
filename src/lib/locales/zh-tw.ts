@@ -695,7 +695,7 @@ const zhTw: Record<string, string> = {
   "generation.panel.expand_bottom": "展開底部面板",
   "generation.panel.collapse_bottom": "摺疊底部面板",
 
-  "generation.interrogate.title": "影像分析",
+  "generation.interrogate.title": "AI圖片標註",
   "generation.interrogate.tip": "分析影像以擷取標籤（角色、藝術家、通用）。拖放影像、瀏覽檔案或從剪貼簿貼上。標籤可直接套用到提示詞。",
   "generation.interrogate.browse_or_drop": "瀏覽或拖放",
   "generation.interrogate.paste": "Ctrl+V 貼上",

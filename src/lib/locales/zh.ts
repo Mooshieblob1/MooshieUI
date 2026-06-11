@@ -695,7 +695,7 @@ const zh: Record<string, string> = {
   "generation.panel.expand_bottom": "展开底部面板",
   "generation.panel.collapse_bottom": "折叠底部面板",
 
-  "generation.interrogate.title": "图像分析",
+  "generation.interrogate.title": "AI图片标注",
   "generation.interrogate.tip": "分析图像以提取标签（角色、艺术家、通用）。拖放图像、浏览文件或从剪贴板粘贴。标签可直接应用到提示词。",
   "generation.interrogate.browse_or_drop": "浏览或拖放",
   "generation.interrogate.paste": "Ctrl+V 粘贴",
