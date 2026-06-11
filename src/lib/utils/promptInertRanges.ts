@@ -29,6 +29,14 @@ export const PROMPT_REGION_TAG_REGEX = new RegExp(
   "gi",
 );
 
+/** <segment:...> opening tags and </segment> closers. Only the tags are inert —
+ * the refinement prompt text between them stays interactive (autocomplete,
+ * clickable tags). */
+export const PROMPT_SEGMENT_TAG_REGEX = new RegExp(
+  `${SYNTAX_ANGLE_LOOKBEHIND}<segment:[^>]+>|<\\/segment>`,
+  "gi",
+);
+
 function mergePromptTextRanges(ranges: PromptTextRange[]): PromptTextRange[] {
   if (ranges.length === 0) return [];
   ranges.sort((a, b) => a.start - b.start || a.end - b.end);
@@ -73,6 +81,10 @@ export function getPromptInertRanges(raw: string): PromptTextRange[] {
   }
   if (raw.includes("<region:")) {
     ranges.push(...collectRegexRanges(raw, PROMPT_REGION_TAG_REGEX));
+  }
+  const lower = raw.toLowerCase();
+  if (lower.includes("<segment:") || lower.includes("</segment>")) {
+    ranges.push(...collectRegexRanges(raw, PROMPT_SEGMENT_TAG_REGEX));
   }
 
   return mergePromptTextRanges(ranges);

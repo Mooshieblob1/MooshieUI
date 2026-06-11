@@ -28,6 +28,18 @@ export interface PromptSegment {
   end: number;
 }
 
+/** A <segment:...> auto-refinement region parsed from the positive prompt. */
+export interface DetailSegment {
+  /** Detection target: free text (CLIPSeg) or "yolo-<model filename>[-<match index>]". */
+  target: string;
+  /** Refinement prompt for the detected region (may be empty). */
+  prompt: string;
+  /** Denoise strength for the re-sample, (0, 1]. */
+  creativity: number;
+  /** Detection threshold, (0, 1). */
+  threshold: number;
+}
+
 export interface PositiveRegion {
   text: string;
   x: number;
@@ -65,6 +77,7 @@ export interface GenerationParams {
   negative_prompt: string;
   positive_segments: PromptSegment[];
   negative_segments: PromptSegment[];
+  detail_segments: DetailSegment[];
   positive_regions?: PositiveRegion[];
   /** Raw prompt text with scheduling tags intact, for metadata embedding */
   raw_positive_prompt: string;
