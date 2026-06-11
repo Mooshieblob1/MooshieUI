@@ -3450,9 +3450,10 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing filename")?
                 .to_string();
-            let result = crate::commands::api::read_modelspec_internal(&state, &category, &filename)
-                .await
-                .map_err(|e| e.to_string())?;
+            let result =
+                crate::commands::api::read_modelspec_internal(&state, &category, &filename)
+                    .await
+                    .map_err(|e| e.to_string())?;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
 

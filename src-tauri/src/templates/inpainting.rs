@@ -1,6 +1,9 @@
 use serde_json::json;
 
-use super::{build_scheduled_conditioning, insert_vae_decode, is_vpred_model, load_model_nodes, WorkflowResult};
+use super::{
+    build_scheduled_conditioning, insert_vae_decode, is_vpred_model, load_model_nodes,
+    WorkflowResult,
+};
 use crate::comfyui::types::GenerationParams;
 
 pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
