@@ -1875,13 +1875,12 @@
             });
             if (!resp.ok) return;
             const blob = await resp.blob();
-            // The prompt may have completed while the fetch was in flight
-            // (common on remote browser mode with inpaint chains). Setting
-            // previewImage now would overwrite the finalized output in the
-            // lightbox with a stale blurry preview frame — and nothing would
-            // ever clear it.
+            // The prompt may have completed while the fetch was in flight.
+            // Re-check that this preview still belongs to a pending prompt
+            // before updating previewImage with a stale blurry frame.
             if (
               !progress.isGenerating ||
+              (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) ||
               (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId)
             ) {
               return;
