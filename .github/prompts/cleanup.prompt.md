@@ -5,15 +5,26 @@ argument-hint: "Optional scope hint, e.g. 'release branches only' or 'all open P
 agent: agent
 ---
 
-Run a standalone maintenance cleanup for branch hygiene and bot PR comment triage. Execute autonomously and summarize actions taken.
 
-## Goal
+# Cleanup (MooshieUI)
 
-Clean stale/conflicting branches and triage bot comments across relevant PRs without cutting a release.
+Standalone maintenance path: **branch hygiene → PR/bot triage → targeted cleanup actions → summary**.
 
-## Execution Plan
+This workflow does **not** bump versions, edit release notes/changelog, create release tags, or trigger release CI.
 
-### 1. Branch hygiene inventory
+## Windows git (required)
+
+Prefix git commands with:
+
+```text
+git -c core.hooksPath=/dev/null ...
+```
+
+Pre-commit hook is bash and hangs in PowerShell.
+
+## Workflow
+
+### 1. Branch inventory and stale detection
 
 ```powershell
 git fetch --prune origin
@@ -23,14 +34,17 @@ gh pr list --state open --base main --json number,title,headRefName,updatedAt,is
 gh api repos/Mooshieblob1/MooshieUI/branches?per_page=100 --jq '.[].name'
 ```
 
-Identify and classify:
+Identify:
 - stale local branches tracking deleted remotes
-- stale/duplicate remote `release/v*` branches
-- open PR branches superseded by newer work
+- stale remote `release/v*` branches with merged/closed PRs
+- duplicate release branches for the same version
+- open PR branches with no recent activity and no merge intent
 
-### 2. Bot comment triage
+### 2. Bot comment triage scope
 
-Read bot comments for open PRs and recently merged PRs:
+Review bot comments on:
+1) open PRs to `main`
+2) recently merged PRs (default: last 20, or since last tag)
 
 ```powershell
 gh pr list --state open --base main --json number,title,headRefName
@@ -41,36 +55,49 @@ gh api repos/Mooshieblob1/MooshieUI/pulls/N/comments
 gh api repos/Mooshieblob1/MooshieUI/pulls/N/reviews
 ```
 
+Primary bots: `gemini-code-assist[bot]`, `copilot-pull-request-reviewer[bot]`, and actionable `github-actions[bot]` comments.
+
 Classify with `docs/BOT_REVIEW_TRIAGE.md`:
 - **Fix**: correctness/safety/consistency
-- **Skip**: nits/premature abstraction/factually wrong
-- **Defer**: valid but non-blocking
+- **Skip**: stylistic nits, premature abstraction, factually wrong
+- **Defer**: valid but not maintenance-blocking
 
-### 3. Apply cleanup actions
+### 3. Cleanup actions
 
-Safe actions only:
-- delete stale locals
-- delete stale remote `release/v*` branches with merged/closed PRs
-- close superseded stale PRs where appropriate
-- for bot **Fix** findings:
-  - open PR → fix on branch and push
-  - merged PR → create follow-up branch/PR
+Apply only safe, explicit actions:
+- Delete stale local branches
+- Delete stale remote release branches (`release/v*`) that are merged/abandoned
+- Close superseded release PRs when appropriate
+- For bot **Fix** findings:
+  - open PR: push fix on that branch
+  - merged PR: create follow-up branch/PR (do not rewrite history)
 
-Never:
-- force-push protected branches
-- delete active unmerged branches with ongoing work intent
-- move/delete tags
+Avoid destructive/unsafe actions:
+- never force-push protected branches
+- never delete unmerged branches with active intent
+- never force-move or delete tags
 
-### 4. Verify and report
+### 4. Re-check and report
 
-Re-run branch inventory and report:
-- branch action table (branch/PR, status, action)
-- bot triage table (PR, bot comment, verdict, rationale)
-- unresolved follow-ups
+Re-run inventory commands after actions and provide:
+- branch/PR action table (what changed)
+- bot triage table (PR, comment, verdict, rationale)
+- unresolved follow-ups (if any)
 
-## Common mistakes to avoid
+## Checklist
 
-1. Treating every bot comment as mandatory
-2. Deleting branches with active unmerged work
-3. Ignoring recently merged PR bot comments
-4. Using destructive git operations for convenience
+```
+- [ ] Remote/local branches inventoried and pruned
+- [ ] Stale `release/v*` branches addressed
+- [ ] Open PRs reviewed for stale/conflicting branch state
+- [ ] Bot comments triaged on open + recent merged PRs
+- [ ] Fix/Skip/Defer outcomes documented
+- [ ] Safe cleanup actions completed and re-verified
+```
+
+## Mistakes to avoid
+
+1. Deleting active unmerged branches without confirmation
+2. Ignoring bot comments on non-release open PRs
+3. Treating all bot comments as mandatory fixes
+4. Force-updating tags/branches during cleanup

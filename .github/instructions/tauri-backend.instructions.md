@@ -135,7 +135,24 @@ next_id += 1;
 2. Add `pub mod new_mode;` in `templates/mod.rs`.
 3. Add a match arm in `templates/mod.rs::build_workflow()` for the new mode string.
 4. The template receives `&GenerationParams` — access fields directly.
-5. Return the workflow map. The `SaveImage` node is added by `mod.rs`, not individual templates.
+5. Return the workflow map. The terminal save node is added by `mod.rs`, not individual templates.
+
+### finish_workflow Chain (mod.rs)
+
+Post-process chains append to the template's final IMAGE in **this fixed order**:
+
+```
+template image → upscale? → facefix? → segment refinement? → MooshieSaveImage
+```
+
+Seed offsets per step: `seed+2` facefix, `seed+3+i` per `<segment>` tag. New chains pick an unused offset.
+
+### Custom ComfyUI Nodes
+
+- Python classes in `src-tauri/src/comfyui/mooshie_nodes.py` (embedded via `include_str!`, deployed to ComfyUI's `custom_nodes/` at startup). Examples: `MooshieSaveImage`, `MooshieFaceDetailer`, `MooshieSegmentDetailer`.
+- Every workflow-required class must be listed in `REQUIRED_MOOSHIE_NODE_CLASSES` (`comfyui/nodes.rs`) — verified against `/object_info` at startup.
+- ComfyUI must be **restarted** to pick up node changes; deploying files alone does not reload classes.
+- Heavy Python imports (`transformers`, `ultralytics`) go inside node methods, not module top-level.
 
 ### LoRA Chaining Pattern
 

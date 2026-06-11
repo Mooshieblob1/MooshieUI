@@ -5,190 +5,259 @@ argument-hint: "Version number (e.g. 0.4.3) and a brief summary of changes"
 agent: agent
 ---
 
-Cut a new MooshieUI release. Execute every step autonomously — do NOT pause for confirmation between steps. Use the todo list to track progress.
 
-## Required Information
+# Release (MooshieUI)
 
-If NOT provided in the user's message, ask for:
-1. **Version number** (e.g. `0.4.3`) — must be semver, no `v` prefix
-2. **Summary of changes** — what features/fixes to include in release notes
+Full release path: **repo hygiene → pre-commit → version bump → changelog → build validation → PR → GlassWorm → bot triage (all relevant PRs) → merge → tag → CI**.
 
-If the user says something like "release it" or "cut a release" without a version, read the current version from `package.json` and auto-increment the patch number. If no summary is given, derive it from `git log` since the last tag.
+## Inputs
 
-## Execution Plan
+| Field | Default if omitted |
+|-------|-------------------|
+| Version `X.Y.Z` | Read `package.json`, patch+1 (no `v` prefix in files) |
+| Summary | `git log` since last `v*` tag |
 
-Create a todo list with these items and work through them sequentially:
+## Windows git (required)
 
-### 1. Run pre-commit-check agent
+```text
+git -c core.hooksPath=/dev/null ...
+```
 
-Invoke the `pre-commit-check` agent before anything else. If it reports failures, fix them before continuing.
+Pre-commit hook hangs in PowerShell without this.
 
-### 2. Bump version in 3 files
+## Workflow
 
-All three must have the **exact same version string**:
+### 1. Repo hygiene — branches and open PRs [BLOCKING before new release branch]
 
-- **`package.json`** → `"version": "X.Y.Z"`
-- **`src-tauri/Cargo.toml`** → `version = "X.Y.Z"` (under `[package]`)
-- **`src-tauri/tauri.conf.json`** → `"version": "X.Y.Z"`
+Refresh remotes, inventory branches/PRs, and resolve conflicts **before** creating `release/vX.Y.Z`.
 
-After bumping, run `Select-String -Pattern "X.Y.Z" package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json` to verify all three match.
+```powershell
+git fetch --prune origin
+git branch -vv
+git branch -r
+gh pr list --state open --base main --json number,title,headRefName,updatedAt,isDraft
+gh api repos/Mooshieblob1/MooshieUI/branches?per_page=100 --jq '.[].name'
+```
 
-> `Cargo.lock` updates automatically on next `cargo check`.
+**Release / stale branch handling**
 
-### 3. Update RELEASE_NOTES.md and CHANGELOG.md
+| Situation | Action |
+|-----------|--------|
+| Remote `release/vX.Y.Z` already exists for **this** release | If PR is merged or abandoned: delete remote branch. If PR is still open and current: check out and continue on it (do not create a duplicate). |
+| Remote `release/v*` for an **older** version, PR merged | Delete remote branch: `git -c core.hooksPath=/dev/null push origin --delete release/vOLD` |
+| Remote `release/v*` with **closed** PR and no further work | Delete remote branch |
+| Local tracking branches for deleted remotes | `git fetch --prune` then delete stale locals |
+| Open PR targeting `main` that is superseded by this release | Close with a short comment, or merge first if it must ship in this release |
+| Open PR with failing **GlassWorm** or blocking CI | Fix on that branch/PR or close before cutting the release |
 
-**RELEASE_NOTES.md** — prepend a new section **above** the existing content:
+**Do not** force-push `main` or protected tags. Do not delete branches that still have unmerged work the user intends to ship.
+
+Report a short table: branch/PR, status, action taken.
+
+### 2. Bot review sweep — open PRs and recent merges
+
+Before version bump, triage bot feedback on PRs that could block or duplicate this release.
+
+**Bots to read** (non-exhaustive): `gemini-code-assist[bot]`, `copilot-pull-request-reviewer[bot]`, `github-actions[bot]` (only when comment contains a concrete fix).
+
+```powershell
+# Open PRs targeting main
+gh pr list --state open --base main --json number,title,headRefName
+
+# Per PR (replace N):
+gh pr view N --json reviews,comments,state,mergedAt
+gh api repos/Mooshieblob1/MooshieUI/pulls/N/comments
+gh api repos/Mooshieblob1/MooshieUI/pulls/N/reviews
+```
+
+Also check **recently merged** PRs since the last `v*` tag (bots sometimes comment late or on squash-merge commits):
+
+```powershell
+$lastTag = git describe --tags --abbrev=0
+gh pr list --state merged --base main --limit 20 --json number,title,mergedAt
+```
+
+Classify every bot comment using [docs/BOT_REVIEW_TRIAGE.md](../../../docs/BOT_REVIEW_TRIAGE.md):
+
+| Verdict | Action |
+|---------|--------|
+| **Fix** | Correctness, safety, MIME mismatches, consistency — fix on that PR's branch if still open, or on `main`/release branch if merged and release-blocking |
+| **Skip** | Premature abstraction, nits, factually wrong bot claims — note rationale in release PR body or user summary |
+| **Defer** | Valid but not release-blocking — document for follow-up; do not block tag |
+
+**Release-blocking** bot findings on open PRs must be resolved (fix or explicit skip with verification) before creating the release PR. If a fix belongs on another open PR, land it there first or cherry-pick into the release branch.
+
+### 3. Pre-commit-check
+
+Run **pre-commit-check** on current tree. Fix blockers; re-run until ✅.
+
+### 4. Version bump (all three must match)
+
+| File | Field |
+|------|-------|
+| `package.json` | `"version": "X.Y.Z"` |
+| `src-tauri/Cargo.toml` | `version = "X.Y.Z"` under `[package]` |
+| `src-tauri/tauri.conf.json` | `"version": "X.Y.Z"` |
+
+Verify:
+
+```powershell
+Select-String -Pattern '"X.Y.Z"|version = "X.Y.Z"' package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json
+```
+
+### 5. Changelog files
+
+Prepend to **both** `RELEASE_NOTES.md` and `CHANGELOG.md`:
 
 ```markdown
 ## What's New in vX.Y.Z
 
-### Feature/Fix Title
-- Description
+### Group title
+- Detail
 
 ---
 
 ## What's New in vPREVIOUS
-(existing content below)
 ```
 
-**CHANGELOG.md** — prepend the same new section **below** the `# Changelog` heading and **above** the previous version:
+`CHANGELOG.md`: new section goes directly under `# Changelog`.
 
-```markdown
-# Changelog
-
-## What's New in vX.Y.Z
-
-### Feature/Fix Title
-- Description
-
----
-
-## What's New in vPREVIOUS
-(existing content below)
-```
-
-Format rules (apply to both files):
-- `## What's New in vX.Y.Z` as the top-level heading
-- `### Subsection` for each feature or fix group
-- Bullet points for details
-- `---` horizontal rule separating from the previous version
-
-### 4. Build validation
-
-Run both and confirm they succeed with no errors:
+### 6. Build validation [BLOCKING]
 
 ```powershell
 cargo check --manifest-path src-tauri/Cargo.toml
 npm run build
 ```
 
-### 5. Commit, branch, and PR
+### 7. Release branch and PR
 
-> **CRITICAL**: Branch protection on `main` requires the "GlassWorm Infection Audit" status check to pass. Direct pushes to `main` will be rejected.
+Confirm step 1: no conflicting `release/vX.Y.Z` on remote (unless intentionally continuing that PR).
 
-> **CRITICAL**: The pre-commit hook at `.githooks/pre-commit` is a bash script and will hang in PowerShell. Always use `git -c core.hooksPath=/dev/null` for all git commands.
+```powershell
+git checkout main
+git pull origin main
+git checkout -b release/vX.Y.Z
+git add -A
+git -c core.hooksPath=/dev/null commit -m "vX.Y.Z: Short summary"
+git -c core.hooksPath=/dev/null push -u origin release/vX.Y.Z
+gh pr create --base main --head release/vX.Y.Z --title "vX.Y.Z: Short summary" --body "<bullet list of changes; note any bot triage from steps 1-2>"
+```
 
-1. **Create a release branch and commit:**
-   ```powershell
-   git checkout -b release/vX.Y.Z
-   git add -A
-   git -c core.hooksPath=/dev/null commit -m "vX.Y.Z: Short summary of major changes"
-   git -c core.hooksPath=/dev/null push origin release/vX.Y.Z
-   ```
+### 8. CI
 
-2. **Create a PR** from `release/vX.Y.Z` → `main` using `mcp_github_create_pull_request`:
-   - Title: `vX.Y.Z: Short summary`
-   - Body: bullet list of changes
+```powershell
+gh pr checks <PR_NUMBER> --watch --interval 30
+```
 
-3. **Wait for CI** — poll `github-pull-request_pullRequestStatusChecks` until the "GlassWorm Infection Audit" check shows `state: "success"`. Wait 30 seconds between polls. Timeout after 5 minutes.
+Wait for **GlassWorm Infection Audit** SUCCESS (5 min timeout).
 
-4. **Triage and address bot review comments** — after CI passes, wait 60 seconds for automated reviewers (`gemini-code-assist[bot]`, `copilot-pull-request-reviewer[bot]`) to post, then fetch all review comments with `mcp_github_pull_request_read` (`method: "get_review_comments"`).
+### 9. Bot review triage — release PR (and late comments)
 
-   **Assessment — do NOT blindly trust bot suggestions.** For each comment, classify it:
+Wait ~60s after CI green. Re-fetch **all** bot threads on the release PR:
 
-   | Category | Action | Examples |
-   |----------|--------|---------|
-   | **Correctness / Safety** | Fix it | Error propagation bugs, MIME type mismatches, missing integrity checks, silent data loss |
-   | **Consistency** | Fix it | Title-case inconsistency in user-visible strings, naming convention violations |
-   | **Defensive hardening** | Fix if trivial | `.trim().is_empty()` instead of `.is_empty()`, edge-case guards |
-   | **Premature abstraction** | Skip | "Centralize X into a shared config" when only 2 call-sites exist |
-   | **Stylistic / informational** | Skip | Praise, nitpicks, suggestions that don't improve correctness or safety |
-   | **Factually wrong** | Skip and note why | Bot misunderstands the API contract, browser Clipboard API constraints, etc. |
+```powershell
+gh pr view <PR_NUMBER> --json reviews,comments,state
+gh api repos/Mooshieblob1/MooshieUI/pulls/<PR_NUMBER>/comments
+gh api repos/Mooshieblob1/MooshieUI/pulls/<PR_NUMBER>/reviews
+```
 
-   **Workflow:**
-   - Read each comment, read the referenced file to verify the bot's claim is accurate
-   - Present a summary table to the user: comment, file, verdict (fix / skip), and one-line rationale
-   - Apply only the fixes classified as Fix
-   - If any fixes were made, commit and push:
-     ```powershell
-     git add -A
-     git -c core.hooksPath=/dev/null commit -m "address bot review feedback"
-     git -c core.hooksPath=/dev/null push origin release/vX.Y.Z
-     ```
-   - Wait for CI to pass again (same polling as step 3) before proceeding to merge
-   - If there are no actionable comments, proceed directly to merge
+Repeat classification (Fix / Skip / Defer). Present a summary table: bot, file, verdict, one-line rationale.
 
-5. **Merge the PR** using `mcp_github_merge_pull_request` with `merge_method: "squash"`.
+Apply fixes only for **Fix**; then:
 
-6. **Sync local main:**
-   ```powershell
-   git checkout main
-   git fetch origin main
-   git reset --hard origin/main
-   ```
+```powershell
+git add -A
+git -c core.hooksPath=/dev/null commit -m "address bot review feedback"
+git -c core.hooksPath=/dev/null push
+gh pr checks <PR_NUMBER> --watch --interval 30
+```
 
-### 7. Tag and push
+If bots post **after** a green run (common on squash-merge), re-poll comments once more before merge. Do not merge with unaddressed **Fix** items on the release PR.
 
-> **CRITICAL**: Tag protection rules prevent deleting or force-updating tags once pushed. Only push the tag after the PR is merged and main is synced.
+### 10. Merge and sync main
+
+```powershell
+gh pr merge <PR_NUMBER> --squash --delete-branch
+git checkout main
+git fetch origin main
+git reset --hard origin/main
+```
+
+### 11. Post-merge bot pass (before tag)
+
+On the merged release PR, fetch comments again in case bots reviewed the squash commit:
+
+```powershell
+gh pr view <PR_NUMBER> --json comments,reviews,mergedAt
+gh api repos/Mooshieblob1/MooshieUI/pulls/<PR_NUMBER>/comments
+```
+
+- **Fix** on `main`: commit directly on `main` only if policy allows; otherwise open a tiny follow-up PR. For release workflow, prefer a fast follow-up commit on `main` before tagging when the fix is trivial and release-blocking.
+- If a **Fix** requires re-tagging content, complete the fix, then tag (never move/delete an existing tag).
+
+### 12. Tag (after merge only)
+
+Tags are protected — no force/delete. Tag must point at merged `main`:
 
 ```powershell
 git tag vX.Y.Z
 git -c core.hooksPath=/dev/null push origin vX.Y.Z
 ```
 
-The `v*` tag triggers the **Build & Release** GitHub Actions workflow which:
-1. Builds Linux (`.deb`, `.AppImage`) and Windows (`.exe`) installers
-2. Generates `latest.json` updater manifest with signatures
-3. Creates a **GitHub Release** with download table + only the current version's section from `RELEASE_NOTES.md`
+`v*` tag triggers **Build & Release** ([`.github/workflows/release.yml`](../../../.github/workflows/release.yml)).
 
-### 8. Verify CI started
-
-After pushing the tag, confirm the release workflow started by checking with the GitHub API or telling the user to check `https://github.com/Mooshieblob1/MooshieUI/actions`.
-
-### 9. Fallback: workflow_dispatch
-
-If the tag push is rejected (e.g. tag already exists due to a previous attempt), or if the tag-triggered workflow fails, use **workflow_dispatch** as a fallback:
+### 13. Verify CI
 
 ```powershell
-# Extract git credential token
-$cred = "protocol=https`nhost=github.com" | git credential fill 2>$null
-$token = ($cred | Select-String "password=").Line -replace "password=",""
-$headers = @{ Authorization = "Bearer $token"; Accept = "application/vnd.github+json" }
-$body = @{ ref = "main"; inputs = @{ tag = "vX.Y.Z" } } | ConvertTo-Json
-Invoke-RestMethod -Uri "https://api.github.com/repos/Mooshieblob1/MooshieUI/actions/workflows/release.yml/dispatches" -Method POST -Headers $headers -Body $body -ContentType "application/json"
+gh run list --workflow=release.yml --limit 3
 ```
 
-This triggers the same Build & Release workflow from the current `main` HEAD.
+Tell user: https://github.com/Mooshieblob1/MooshieUI/actions
 
-### 10. Clean up
+### 14. Fallback
 
-Delete the release branch (remote only):
+If tag push fails or workflow does not start:
+
 ```powershell
+gh workflow run release.yml -f tag=vX.Y.Z
+```
+
+### 15. Cleanup
+
+```powershell
+git fetch --prune origin
 git -c core.hooksPath=/dev/null push origin --delete release/vX.Y.Z
 ```
 
-## How the About section works
+Confirm no duplicate `release/v*` branches remain for this version. Prune stale local branches.
 
-No manual edit needed. The About section in Settings auto-populates:
-- **Version**: `v{appVersion}` where `appVersion` comes from `package.json` → Vite define → `__APP_VERSION__`
-- **Release notes**: Fetched at runtime from the GitHub Releases API via `fetchReleaseNotes()` in `SettingsPage.svelte`
+## About UI
 
-## Common mistakes to avoid
+No manual About edit — version from `__APP_VERSION__`; release notes from GitHub Releases API at runtime.
 
-1. **Forgetting one of the 3 version files** — always grep to verify all three match
-2. **Not running cargo check** — the Cargo.lock won't update and the build will fail in CI
-3. **Pushing directly to main** — branch protection will reject it; always use a PR
-4. **Using git without `-c core.hooksPath=/dev/null`** — the bash pre-commit hook hangs in PowerShell
-5. **Pushing a tag before the PR is merged** — the tag must point at the final merge commit on main
-6. **Trying to force-update or delete a tag** — tag protection rules prevent this; use workflow_dispatch instead
-7. **Tag before commit** — the tag must point at the release commit, not the previous one
+## Checklist
+
+```
+- [ ] Stale/existing branches and open PRs reviewed; release/* cleaned up or continued intentionally
+- [ ] Bot comments triaged on open PRs + recent merges (Fix/Skip/Defer documented)
+- [ ] Pre-commit-check passed
+- [ ] Three version files match X.Y.Z
+- [ ] RELEASE_NOTES.md + CHANGELOG.md updated
+- [ ] cargo check + npm run build passed
+- [ ] Release PR merged to main
+- [ ] Post-merge bot pass completed (no unaddressed Fix items)
+- [ ] Tag vX.Y.Z pushed
+- [ ] Release workflow running
+- [ ] Remote release/vX.Y.Z branch deleted
+```
+
+## Mistakes to avoid
+
+1. Missing one of the three version files
+2. Skipping `cargo check` (stale `Cargo.lock` breaks CI)
+3. Tag before PR merge
+4. `git` without `core.hooksPath=/dev/null` on Windows
+5. Force-updating tags — use `workflow_dispatch` instead
+6. Creating a second `release/vX.Y.Z` while an open PR already exists for the same version
+7. Merging the release PR while another open PR has release-blocking bot **Fix** items still unresolved
+8. Ignoring late bot comments posted after CI goes green

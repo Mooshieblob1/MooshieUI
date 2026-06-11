@@ -30,10 +30,18 @@ Mirrors `.roo/rules-code/AGENTS.md` (Rust) + `.github/instructions/tauri-backend
 - **Node connections**: Track connection sources as `(String, u32)` tuples: (source node ID, output port index).
 - **LoRA Chaining Pattern**: Track current model and clip sources (`model_source` and `clip_source`), and thread them through sequential `LoraLoader` nodes.
 - Return complete `WorkflowResult` from builders.
-- The terminal `SaveImage` node is appended by `templates/mod.rs` rather than by individual template files.
+- The terminal `MooshieSaveImage` node is appended by `templates/mod.rs` (`finish_workflow`) rather than by individual template files.
+- **`finish_workflow` chain order is fixed**: upscale → facefix → segment refinement → `MooshieSaveImage`. Seed offsets: `seed+2` facefix, `seed+3+i` segments.
+
+## Custom ComfyUI nodes
+
+- Python classes in `src-tauri/src/comfyui/mooshie_nodes.py` (embedded via `include_str!`, deployed to ComfyUI `custom_nodes/` at startup).
+- Every workflow-required class must be in `REQUIRED_MOOSHIE_NODE_CLASSES` (`comfyui/nodes.rs`) — verified against `/object_info` at startup.
+- ComfyUI must be **restarted** to pick up node changes; deploying files alone is not enough.
 
 ## Related skills
 
 - New command → `add-tauri-command`
 - New param → `add-generation-param`
 - New mode → `workflow-template-builder`
+- New ComfyUI node → `add-comfyui-node`

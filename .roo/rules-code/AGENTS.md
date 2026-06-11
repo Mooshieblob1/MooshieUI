@@ -26,6 +26,15 @@
 - Workflow template IDs are **string numbers** (`"1"`, `"2"`, ...). Use `next_id.to_string()` counter pattern. Track connection sources as `(String, u32)` tuples.
 - New Tauri commands: add handler in `commands/`, register in `lib.rs`'s `generate_handler![...]`, add wrapper in `src/lib/utils/api.ts`.
 - **Use `AppError` enum** for all command returns. Never panic, never return raw strings.
+- **`finish_workflow` chain order is fixed** (templates/mod.rs): upscale → facefix → segment refinement → `MooshieSaveImage`. Seed offsets: `seed+2` facefix, `seed+3+i` segments.
+- **Custom ComfyUI nodes**: Python classes in `src-tauri/src/comfyui/mooshie_nodes.py` (deployed at startup); every workflow-required class must be listed in `REQUIRED_MOOSHIE_NODE_CLASSES` (`comfyui/nodes.rs`). ComfyUI must be restarted to pick up node changes.
+
+## Prompt Inline Tags (frontend)
+
+- Parsers in `src/lib/utils/`: `promptSchedule.ts` (`<from/to/range>`, `<fromto[..]>`), `promptSegmentDetail.ts` (`<segment:target,creativity,threshold>`), `promptInertRanges.ts` (shared inert ranges).
+- Conventions: invalid tags stay literal text; reset shared regex `lastIndex` before exec loops; opening-tag regexes use `SYNTAX_ANGLE_LOOKBEHIND`.
+- In `toParams()`, `<segment>` parsing runs **before** system fragments (styles, quality tags, preset appends) merge into the prompt — trailing-form segments would otherwise swallow them.
+- Textarea highlight pills must render from the parser's `ranges` so highlighting and parsing can't drift.
 
 ## i18n / Locales
 

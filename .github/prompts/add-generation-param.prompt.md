@@ -5,72 +5,70 @@ argument-hint: "Describe the parameter: name, type, default value, and which wor
 agent: agent
 ---
 
-Add a new generation parameter to MooshieUI. This requires changes across 6 files in a specific order.
 
-## Required Information
+# Add Generation Parameter (MooshieUI)
 
-Ask the user for:
-1. **Parameter name** (camelCase for TypeScript, snake_case for Rust)
-2. **Type** (string, number, boolean, optional/nullable)
-3. **Default value**
-4. **Which templates use it** (txt2img, img2img, inpainting, upscale, or all)
-5. **How it's used in the workflow** (which ComfyUI node and input field)
+**6 touchpoints**, in order. New workflow-only params still need Rust + TS types if exposed in UI.
 
-## Checklist — Edit These Files in Order
+## Gather from user
 
-### 1. TypeScript interface — `src/lib/types/index.ts`
-Add the field to the `GenerationParams` interface (snake_case, matching Rust naming):
+1. Name (TS `camelCase`, Rust/iface `snake_case`)
+2. Type + default
+3. Templates: txt2img | img2img | inpainting | upscale | all
+4. ComfyUI node + input field name
+
+## 1. `src/lib/types/index.ts`
+
 ```typescript
 export interface GenerationParams {
-  // ... existing fields ...
-  new_param: type;  // snake_case
+  new_param: SomeType;
 }
 ```
 
-### 2. Svelte store field — `src/lib/stores/generation.svelte.ts`
-Add a `$state` field to `GenerationStore` (camelCase):
-```typescript
-newParam = $state<Type>(defaultValue);
-```
+## 2–4. `src/lib/stores/generation.svelte.ts`
 
-### 3. Persistence — same file, `loadSettings()` and `saveSettings()`
-In `loadSettings()`, add a guarded restore (use `!== undefined` for booleans/numbers that can be 0/false):
 ```typescript
+newParam = $state<SomeType>(defaultValue);
+
+// loadSettings()
 if (saved.newParam !== undefined) this.newParam = saved.newParam;
-```
-In `saveSettings()`, add the field to the object passed to `this._store.set()`:
-```typescript
-newParam: this.newParam,
-```
 
-### 4. Params mapping — same file, `toParams()`
-Add the camelCase → snake_case mapping:
-```typescript
+// saveSettings()
+newParam: this.newParam,
+
+// toParams()
 new_param: this.newParam,
 ```
 
-### 5. Rust struct — `src-tauri/src/comfyui/types.rs`
-Add the field to `GenerationParams` (snake_case, serde handles JSON deserialization):
+Use `!== undefined` for bool/number defaults that can be `0` or `false`.
+
+## 5. `src-tauri/src/comfyui/types.rs`
+
 ```rust
 pub new_param: Type,
-// or for optional:
+// or
 pub new_param: Option<Type>,
 ```
 
-### 6. Workflow template — `src-tauri/src/templates/{mode}.rs`
-Use the parameter in the relevant workflow template's node JSON:
+## 6. `src-tauri/src/templates/{mode}.rs`
+
 ```rust
-"node_input_name": params.new_param,
+"node_input": params.new_param,
 ```
 
-## Verification
+## Verify
 
-After all edits, confirm:
-- [ ] TypeScript interface has the snake_case field
-- [ ] Store has the camelCase `$state` field with correct default
-- [ ] `loadSettings()` restores it (with proper null/falsy guard)
-- [ ] `saveSettings()` includes it
-- [ ] `toParams()` maps camelCase → snake_case
-- [ ] Rust `GenerationParams` has the matching snake_case field
-- [ ] At least one template uses the parameter
-- [ ] `cargo check` passes in `src-tauri/` (type check the Rust side)
+```powershell
+cargo check --manifest-path src-tauri/Cargo.toml
+```
+
+```
+- [ ] Interface snake_case field
+- [ ] Store $state + load/save + toParams()
+- [ ] Rust GenerationParams field
+- [ ] ≥1 template references param
+```
+
+If UI needs i18n: add keys to **all** files in `src/lib/locales/` (parity with `en.ts`).
+
+For new workflow **modes**, use **workflow-template-builder** skill after params exist.

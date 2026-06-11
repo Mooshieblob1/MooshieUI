@@ -35,8 +35,10 @@ The IPC abstraction layer ([`src/lib/utils/ipc.ts`](src/lib/utils/ipc.ts)) route
 - Workflow templates in [`src-tauri/src/templates/`](src-tauri/src/templates/) build `serde_json::Map<String, Value>` (not visual/graph-based).
 - Node IDs are **stringified incrementing integers** (`"1"`, `"2"`, `"3"`) assigned via `next_id.to_string()` counter.
 - Node connections use `(node_id_string, output_port_index)` tuples as JSON arrays.
-- The `SaveImage` terminal node is appended by `templates/mod.rs`, not individual templates.
+- `finish_workflow` in `templates/mod.rs` appends post-process chains in fixed order — upscale → facefix → segment refinement → `MooshieSaveImage` — not individual templates.
 - LoRA chaining pattern: `model_source`/`clip_source` tuples are threaded through sequential `LoraLoader` nodes.
+- Custom ComfyUI nodes (`MooshieSaveImage`, `MooshieFaceDetailer`, `MooshieSegmentDetailer`, …) live in `src-tauri/src/comfyui/mooshie_nodes.py`, deployed to ComfyUI's `custom_nodes/` at startup, and verified against `/object_info` via `REQUIRED_MOOSHIE_NODE_CLASSES`.
+- Prompt inline tags (`<from/to/range>`, `<segment:...>`) are parsed frontend-side in `toParams()`; Rust receives structured params (`positive_segments`, `detail_segments`), never raw tag text.
 
 ## Hidden Dependencies & Constraints
 

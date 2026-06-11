@@ -13,6 +13,7 @@
 | [pre-commit-check](skills/pre-commit-check/SKILL.md) | (auto) | Pre-commit / pre-PR validation |
 | [add-tauri-command](skills/add-tauri-command/SKILL.md) | `/add-tauri-command` | New Tauri + TS IPC command |
 | [add-generation-param](skills/add-generation-param/SKILL.md) | `/add-generation-param` | New generation setting (full stack) |
+| [add-comfyui-node](skills/add-comfyui-node/SKILL.md) | `/add-comfyui-node` | New custom ComfyUI Python node + Rust registration |
 | [workflow-template-builder](skills/workflow-template-builder/SKILL.md) | — | ComfyUI workflow templates in Rust |
 
 ## Rules

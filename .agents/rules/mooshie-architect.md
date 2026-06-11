@@ -34,7 +34,9 @@ Mirrors `.roo/rules-architect/AGENTS.md`.
 ## Workflow templates
 
 - `src-tauri/src/templates/`: JSON maps, string node IDs `"1"`,`"2"`, connections `[id, port]`.
-- `SaveImage` appended in `mod.rs`. LoRA chain threads `model_source`/`clip_source`.
+- `finish_workflow` (mod.rs) appends post-process chains in fixed order: upscale → facefix → segment refinement → `MooshieSaveImage`. LoRA chain threads `model_source`/`clip_source`.
+- Custom ComfyUI nodes live in `comfyui/mooshie_nodes.py`, deployed at startup, verified via `/object_info` (`REQUIRED_MOOSHIE_NODE_CLASSES`).
+- Prompt inline tags (`<from/to/range>`, `<segment:...>`) are parsed frontend-side in `toParams()`; Rust receives structured params (`positive_segments`, `detail_segments`), never raw tags.
 
 ## Constraints
 

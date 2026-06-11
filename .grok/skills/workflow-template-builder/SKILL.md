@@ -15,6 +15,7 @@ Specialist workflow for `src-tauri/src/templates/`. Each template builds `serde_
 1. Read `src-tauri/src/templates/mod.rs`
 2. Read `txt2img.rs` (reference pattern)
 3. If new params needed → **add-generation-param** skill first
+4. If a custom ComfyUI node is needed → **add-comfyui-node** skill first
 
 ## Rules
 
@@ -29,13 +30,16 @@ Specialist workflow for `src-tauri/src/templates/`. Each template builds `serde_
 
 ```rust
 pub struct WorkflowResult {
-    pub workflow: Map<String, Value>,
+    pub workflow: serde_json::Map<String, Value>,
     pub next_id: u32,
     pub image_output: (String, u32),
     pub model_source: (String, u32),
-    pub positive_id: String,
-    pub negative_id: String,
+    pub clip_source: (String, u32),
+    pub positive_source: (String, u32),
+    pub negative_source: (String, u32),
     pub vae_source: (String, u32),
+    /// KSampler node ID — needed to rewire ± after ControlNet injection.
+    pub sampler_id: String,
 }
 ```
 
@@ -47,6 +51,16 @@ pub struct WorkflowResult {
 | img2img | … → LoadImage → VAEEncode → KSampler (denoise < 1) → VAEDecode |
 | inpainting | … → LoadImage + Mask → VAEEncodeForInpaint → KSampler → VAEDecode |
 | upscale append | IMAGE → upscale → VAEEncodeTiled → KSampler → VAEDecodeTiled |
+
+## finish_workflow chain (mod.rs)
+
+Post-process steps append to the template's final IMAGE in **this fixed order**:
+
+```
+template image → upscale? → facefix? → segment refinement? → MooshieSaveImage
+```
+
+Seed offsets per step: `seed+2` facefix, `seed+3+i` per `<segment>` tag. New chains pick an unused offset.
 
 ## New template checklist
 

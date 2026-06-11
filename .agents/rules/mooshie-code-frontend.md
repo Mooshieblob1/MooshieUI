@@ -31,6 +31,13 @@ Mirrors `.roo/rules-code/AGENTS.md` (frontend sections).
 - `toParams()` maps camelCase → snake_case for Rust.
 - Cross-store logic in `App.svelte` only.
 
+## Prompt inline tags
+
+- Parsers in `src/lib/utils/`: `promptSchedule.ts` (`<from/to/range>`, `<fromto[..]>`), `promptSegmentDetail.ts` (`<segment:target,creativity,threshold>`), `promptInertRanges.ts` (shared inert ranges for autocomplete/weighting).
+- **Conventions**: invalid tags stay literal text; reset shared regex `lastIndex` before exec loops; opening-tag regexes use `SYNTAX_ANGLE_LOOKBEHIND`.
+- In `toParams()`, `<segment>` parsing runs **before** system fragments (styles, quality tags, preset appends) merge into the prompt — trailing-form segments would otherwise swallow them.
+- Textarea highlight pills must mirror parser output exactly — render from the parser's `ranges`, never a separate regex.
+
 ## i18n
 
 - `locale.t('key')` — no hardcoded user strings.

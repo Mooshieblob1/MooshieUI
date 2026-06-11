@@ -28,6 +28,7 @@ Project skills live in `.claude/skills/` (synced from canonical `.agents/skills/
 | `pre-commit-check` | Pre-commit/pre-PR validation (build gates, conventions, i18n) |
 | `add-tauri-command` | New Tauri command: Rust handler + lib.rs registration + TS wrapper |
 | `add-generation-param` | New generation setting across store/types/Rust/templates (6 touchpoints) |
+| `add-comfyui-node` | New custom ComfyUI Python node: mooshie_nodes.py + Rust registration + workflow hookup |
 | `workflow-template-builder` | ComfyUI workflow JSON templates in `src-tauri/src/templates/` |
 
 ## Critical Architecture (Non-Obvious)

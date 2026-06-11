@@ -9,6 +9,7 @@
   import PromptTextarea from "./PromptTextarea.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { parseScheduledPrompt, hasRegionalTags, hasSchedulingTags } from "../../utils/promptSchedule.js";
+  import SegmentRefinementPanel from "./SegmentRefinementPanel.svelte";
 
   interface Props {
     showHistory?: boolean;
@@ -237,6 +238,8 @@
       {/if}
     </div>
   {/if}
+
+  <SegmentRefinementPanel />
 
   {#if showHistory && sortedPromptHistory.length > 0}
     <div class="rounded-lg border border-neutral-800 bg-neutral-900/50 p-2.5 space-y-2">

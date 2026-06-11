@@ -294,7 +294,7 @@ class MooshieSegmentDetailer:
             else:
                 mask = self._clipseg_mask(detection, img_np, H, W, threshold)
 
-            if mask is None or mask.sum().item() < 16:
+            if mask is None or (mask >= threshold).sum().item() < 16:
                 print(f"[MooshieSegmentDetailer] No region found for '{detection}' (batch {b})")
                 continue
 
@@ -456,7 +456,18 @@ class MooshieSegmentDetailer:
             mask = torch.nn.functional.interpolate(
                 heat[None, None], size=(H, W), mode="bilinear", align_corners=False
             )[0, 0]
-            return (mask >= threshold).float()
+            max_heat = mask.max().item()
+            mean_heat = mask.mean().item()
+            pixels_above = int((mask >= threshold).sum().item())
+            print(
+                f"[MooshieSegmentDetailer] CLIPSeg '{text}': "
+                f"max={max_heat:.3f} mean={mean_heat:.3f} threshold={threshold:.3f} "
+                f"pixels_above={pixels_above}"
+            )
+            # Return soft sigmoid values [0,1] — the threshold gates existence only;
+            # soft values let both eyes (or any bilateral feature) blend proportionally
+            # to confidence rather than the brighter one winning exclusively.
+            return mask
         finally:
             del seg_model, processor
 

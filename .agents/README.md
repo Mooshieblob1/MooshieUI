@@ -15,6 +15,7 @@ Invoke by name or slash-style request (`/push`, `/release`, etc.):
 | [pre-commit-check](skills/pre-commit-check/SKILL.md) | Pre-commit / pre-PR validation |
 | [add-tauri-command](skills/add-tauri-command/SKILL.md) | New Tauri + TS IPC command |
 | [add-generation-param](skills/add-generation-param/SKILL.md) | New generation setting (full stack) |
+| [add-comfyui-node](skills/add-comfyui-node/SKILL.md) | New custom ComfyUI Python node + Rust registration |
 | [workflow-template-builder](skills/workflow-template-builder/SKILL.md) | ComfyUI workflow templates in Rust |
 
 ## Rules
@@ -33,10 +34,13 @@ Invoke by name or slash-style request (`/push`, `/release`, etc.):
 | Target | Format | Notes |
 |--------|--------|-------|
 | [`.claude/skills/`](../.claude/skills/) | `SKILL.md` | Direct copy (Claude Code project skills) |
+| [`.claude/commands/`](../.claude/commands/) | `.md` | Thin slash-command wrappers — surface `/push` etc. in the Claude Code `/` menu; each invokes its skill via the Skill tool |
 | [`.cursor/skills/`](../.cursor/skills/) | `SKILL.md` | Direct copy |
 | [`.cursor/rules/`](../.cursor/rules/) | `.mdc` | Cursor frontmatter (`alwaysApply`, `globs`) |
-| [`.roo/commands/`](../.roo/commands/) | `.md` | Roo slash commands + `argument-hint` |
+| [`.roo/commands/`](../.roo/commands/) | `.md` | Roo slash commands + `argument-hint` (skill + reference inlined) |
 | [`.github/agents/`](../.github/agents/) | `.agent.md` | Copilot agents (skill + reference inlined) |
+| [`.github/prompts/`](../.github/prompts/) | `.prompt.md` | Copilot prompts (`agent: agent` frontmatter, canonical skill body) |
+| [`.grok/skills/`](../.grok/skills/) + [`.grok/rules/`](../.grok/rules/) | `SKILL.md` / `.md` | Direct copy |
 
 Roo mode rules remain in [`.roo/rules-*/`](../.roo/) (architect, code, debug, ask). When editing conventions, update `.agents/rules/` first, then re-sync `.cursor/rules/`.
 

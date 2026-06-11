@@ -35,6 +35,18 @@
 | CLIPSetLastLayer | clip, stop_at_clip_layer |
 | ControlNetLoader / ControlNetApplyAdvanced | |
 
+## Mooshie custom nodes
+
+Defined in `src-tauri/src/comfyui/mooshie_nodes.py`, deployed at startup, verified via `/object_info` (`REQUIRED_MOOSHIE_NODE_CLASSES` in `comfyui/nodes.rs`). New node → **add-comfyui-node** skill.
+
+| class_type | Notes |
+|------------|--------|
+| MooshieSaveImage | terminal output over WebSocket (no disk round-trip); appended by `finish_workflow` in mod.rs |
+| MooshieFaceDetailer | YOLO face detect → crop → re-denoise → composite; appended by facefix chain |
+| MooshieSegmentDetailer | CLIPSeg (free text) or YOLO (`yolo-<model>`) region detect → re-denoise → soft-mask composite; one per `<segment:...>` prompt tag (`templates/segment_detail.rs`) |
+| MooshieSoftGuidance / MooshieSmartGuidance | guidance variants |
+| NanoSaurLoader | NanoSaur checkpoint loader |
+
 ## Connection syntax
 
 ```rust

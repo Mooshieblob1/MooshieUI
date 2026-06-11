@@ -642,6 +642,17 @@ const ja: Record<string, string> = {
   "generation.facefix.select_model": "モデルを選択...",
   "generation.segment.downloading_detector": "セグメント検出モデルをダウンロード中...",
   "generation.segment.detector_unavailable": "セグメント検出器「{name}」が利用できないため、そのセグメントはスキップされます。",
+  "generation.segment.title": "セグメント精細化",
+  "generation.segment.tip": "完成画像内の各ターゲット領域を自動検出し、専用のプロンプトで再処理します。ターゲットには自由テキスト（CLIPSeg）または \"yolo-<モデル>\"（YOLO検出器）を使用できます。",
+  "generation.segment.target": "ターゲット",
+  "generation.segment.target_tip": "検出対象: \"eyes\" のような自由テキスト（CLIPSeg）、または YOLO 検出器を使う場合は \"yolo-<モデルファイル名>\"。",
+  "generation.segment.prompt_placeholder": "この領域の精細化プロンプト...",
+  "generation.segment.creativity": "クリエイティビティ",
+  "generation.segment.creativity_tip": "検出領域をどの程度強く再ノイズ除去するか。高いほど変化が大きくなります。",
+  "generation.segment.threshold": "しきい値",
+  "generation.segment.threshold_tip": "検出信頼度のしきい値。低いほど多く検出されます（アニメ調の画像では CLIPSeg で ~0.1 が必要なことが多い）。高いほど厳格になります。",
+  "generation.segment.suggestions": "候補:",
+  "generation.segment.add_suggestion": "\"{target}\" の精細化セグメントを追加",
 
   // リファイナー
   "generation.upscale.title": "リファイナー",

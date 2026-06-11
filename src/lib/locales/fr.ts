@@ -642,6 +642,17 @@ const fr: Record<string, string> = {
   "generation.facefix.select_model": "Sélectionner un modèle...",
   "generation.segment.downloading_detector": "Téléchargement du modèle de détection de segment...",
   "generation.segment.detector_unavailable": "Le détecteur de segment '{name}' n'est pas disponible — ce segment sera ignoré.",
+  "generation.segment.title": "Raffinement de segments",
+  "generation.segment.tip": "Détecte automatiquement chaque région cible dans l'image finale et la raffine avec son propre prompt. Utilisez du texte libre (CLIPSeg) ou \"yolo-<modèle>\" (détecteur YOLO) comme cible.",
+  "generation.segment.target": "Cible",
+  "generation.segment.target_tip": "Quoi détecter : texte libre comme \"eyes\" (CLIPSeg), ou \"yolo-<nom de fichier du modèle>\" pour utiliser un détecteur YOLO.",
+  "generation.segment.prompt_placeholder": "Prompt de raffinement pour cette région...",
+  "generation.segment.creativity": "Créativité",
+  "generation.segment.creativity_tip": "Intensité du retraitement de la région détectée. Plus élevé = changements plus importants.",
+  "generation.segment.threshold": "Seuil",
+  "generation.segment.threshold_tip": "Seuil de confiance de la détection. Plus bas trouve davantage (l'art anime nécessite souvent ~0.1 avec CLIPSeg) ; plus haut est plus strict.",
+  "generation.segment.suggestions": "Suggestions :",
+  "generation.segment.add_suggestion": "Ajouter un segment de raffinement \"{target}\"",
 
   // Refiner
   "generation.upscale.title": "Refiner",

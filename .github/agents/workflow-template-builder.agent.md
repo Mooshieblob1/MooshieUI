@@ -15,6 +15,7 @@ Specialist workflow for `src-tauri/src/templates/`. Each template builds `serde_
 1. Read `src-tauri/src/templates/mod.rs`
 2. Read `txt2img.rs` (reference pattern)
 3. If new params needed → **add-generation-param** skill first
+4. If a custom ComfyUI node is needed → **add-comfyui-node** skill first
 
 ## Rules
 
@@ -29,13 +30,16 @@ Specialist workflow for `src-tauri/src/templates/`. Each template builds `serde_
 
 ```rust
 pub struct WorkflowResult {
-    pub workflow: Map<String, Value>,
+    pub workflow: serde_json::Map<String, Value>,
     pub next_id: u32,
     pub image_output: (String, u32),
     pub model_source: (String, u32),
-    pub positive_id: String,
-    pub negative_id: String,
+    pub clip_source: (String, u32),
+    pub positive_source: (String, u32),
+    pub negative_source: (String, u32),
     pub vae_source: (String, u32),
+    /// KSampler node ID — needed to rewire ± after ControlNet injection.
+    pub sampler_id: String,
 }
 ```
 
@@ -47,6 +51,16 @@ pub struct WorkflowResult {
 | img2img | … → LoadImage → VAEEncode → KSampler (denoise < 1) → VAEDecode |
 | inpainting | … → LoadImage + Mask → VAEEncodeForInpaint → KSampler → VAEDecode |
 | upscale append | IMAGE → upscale → VAEEncodeTiled → KSampler → VAEDecodeTiled |
+
+## finish_workflow chain (mod.rs)
+
+Post-process steps append to the template's final IMAGE in **this fixed order**:
+
+```
+template image → upscale? → facefix? → segment refinement? → MooshieSaveImage
+```
+
+Seed offsets per step: `seed+2` facefix, `seed+3+i` per `<segment>` tag. New chains pick an unused offset.
 
 ## New template checklist
 
@@ -100,6 +114,18 @@ ComfyUI node tables, connection syntax, append-chain pattern: [reference.md](ref
 | ApplyTiledDiffusion | model, method, tile_* |
 | CLIPSetLastLayer | clip, stop_at_clip_layer |
 | ControlNetLoader / ControlNetApplyAdvanced | |
+
+## Mooshie custom nodes
+
+Defined in `src-tauri/src/comfyui/mooshie_nodes.py`, deployed at startup, verified via `/object_info` (`REQUIRED_MOOSHIE_NODE_CLASSES` in `comfyui/nodes.rs`). New node → **add-comfyui-node** skill.
+
+| class_type | Notes |
+|------------|--------|
+| MooshieSaveImage | terminal output over WebSocket (no disk round-trip); appended by `finish_workflow` in mod.rs |
+| MooshieFaceDetailer | YOLO face detect → crop → re-denoise → composite; appended by facefix chain |
+| MooshieSegmentDetailer | CLIPSeg (free text) or YOLO (`yolo-<model>`) region detect → re-denoise → soft-mask composite; one per `<segment:...>` prompt tag (`templates/segment_detail.rs`) |
+| MooshieSoftGuidance / MooshieSmartGuidance | guidance variants |
+| NanoSaurLoader | NanoSaur checkpoint loader |
 
 ## Connection syntax
 

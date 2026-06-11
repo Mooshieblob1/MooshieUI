@@ -8,7 +8,7 @@ import type { DetailSegment } from "../types/index.js";
  *   - target: free text (CLIPSeg detection) or "yolo-<model filename>" with an
  *     optional trailing "-<n>" match index (e.g. "yolo-face_yolov8n.pt-1").
  *   - creativity: re-sample denoise, default 0.6, valid (0, 1].
- *   - threshold: detection threshold, default 0.5 (CLIPSeg) / 0.25 (YOLO), valid (0, 1).
+ *   - threshold: detection threshold, default 0.1 (CLIPSeg) / 0.25 (YOLO), valid (0, 1).
  *
  * The refinement prompt is either everything after the tag until the next
  * <segment: tag or end of prompt (SwarmUI trailing form), or the text up to a
@@ -24,12 +24,14 @@ export const PROMPT_SEGMENT_OPEN_REGEX = new RegExp(
 );
 
 export const DEFAULT_SEGMENT_CREATIVITY = 0.6;
-export const DEFAULT_CLIPSEG_THRESHOLD = 0.5;
+export const DEFAULT_CLIPSEG_THRESHOLD = 0.1;
 export const DEFAULT_YOLO_THRESHOLD = 0.25;
 
 export interface ParsedSegmentDetailPrompt {
   baseText: string;
   segments: DetailSegment[];
+  /** Raw-prompt character range of each valid segment (open tag through prompt/closer), parallel to `segments`. */
+  ranges: Array<{ start: number; end: number }>;
 }
 
 interface ParsedSpec {
@@ -64,11 +66,6 @@ function parseSegmentSpec(spec: string): ParsedSpec | null {
   return { target, creativity, threshold };
 }
 
-/** Whether the inside of an opening tag would parse (used by highlight rendering). */
-export function isValidSegmentSpec(spec: string): boolean {
-  return parseSegmentSpec(spec) !== null;
-}
-
 /**
  * Extract <segment:...> tags from a prompt. Tag text and refinement prompts are
  * removed from baseText; invalid tags are left as literal text (parser convention
@@ -76,7 +73,7 @@ export function isValidSegmentSpec(spec: string): boolean {
  */
 export function parseSegmentDetailPrompt(raw: string): ParsedSegmentDetailPrompt {
   if (!raw || !raw.toLowerCase().includes("<segment:")) {
-    return { baseText: raw ?? "", segments: [] };
+    return { baseText: raw ?? "", segments: [], ranges: [] };
   }
 
   const opens: Array<{ start: number; end: number; spec: string }> = [];
@@ -87,6 +84,7 @@ export function parseSegmentDetailPrompt(raw: string): ParsedSegmentDetailPrompt
   }
 
   const segments: DetailSegment[] = [];
+  const ranges: Array<{ start: number; end: number }> = [];
   let baseText = "";
   let cursor = 0;
 
@@ -115,6 +113,7 @@ export function parseSegmentDetailPrompt(raw: string): ParsedSegmentDetailPrompt
       segments.push({ ...spec, prompt: between.trim() });
       cursor = regionEnd;
     }
+    ranges.push({ start: open.start, end: cursor });
   }
 
   baseText += raw.slice(cursor);
@@ -124,7 +123,7 @@ export function parseSegmentDetailPrompt(raw: string): ParsedSegmentDetailPrompt
     .replace(/\s*,\s*$/, "")
     .trim();
 
-  return { baseText, segments };
+  return { baseText, segments, ranges };
 }
 
 /**
@@ -132,15 +131,49 @@ export function parseSegmentDetailPrompt(raw: string): ParsedSegmentDetailPrompt
  * Closed form survives reimport regardless of position; explicit numbers make
  * the round-trip exact.
  */
+export function serializeSegmentTag(s: DetailSegment): string {
+  return `<segment:${s.target},${s.creativity},${s.threshold}>${s.prompt}</segment>`;
+}
+
 export function serializeSegmentTags(
   segments: ReadonlyArray<DetailSegment>,
 ): string {
-  return segments
-    .map(
-      (s) =>
-        `<segment:${s.target},${s.creativity},${s.threshold}>${s.prompt}</segment>`,
-    )
-    .join(", ");
+  return segments.map(serializeSegmentTag).join(", ");
+}
+
+/** Rewrite the nth valid segment tag in `raw` with canonical closed-form syntax. */
+export function replaceSegmentInPrompt(
+  raw: string,
+  index: number,
+  segment: DetailSegment,
+): string {
+  const { ranges } = parseSegmentDetailPrompt(raw);
+  const range = ranges[index];
+  if (!range) return raw;
+  return raw.slice(0, range.start) + serializeSegmentTag(segment) + raw.slice(range.end);
+}
+
+/** Remove the nth valid segment tag (and its refinement prompt) from `raw`. */
+export function removeSegmentFromPrompt(raw: string, index: number): string {
+  const { ranges } = parseSegmentDetailPrompt(raw);
+  const range = ranges[index];
+  if (!range) return raw;
+  return (raw.slice(0, range.start) + raw.slice(range.end))
+    .replace(/,\s*,/g, ",")
+    .replace(/\s*,\s*$/, "")
+    .trimEnd();
+}
+
+/** Append a closed-form segment tag (defaults apply for creativity/threshold). */
+export function appendSegmentToPrompt(
+  raw: string,
+  target: string,
+  prompt: string,
+): string {
+  const tag = `<segment:${target}>${prompt}</segment>`;
+  const trimmed = raw.trimEnd();
+  if (!trimmed) return tag;
+  return trimmed.endsWith(",") ? `${trimmed} ${tag}` : `${trimmed}, ${tag}`;
 }
 
 /**
