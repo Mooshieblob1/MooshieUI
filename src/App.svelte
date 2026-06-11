@@ -35,6 +35,7 @@
   import NotificationBell from "./lib/components/ui/NotificationBell.svelte";
   import logoUrl from "./lib/assets/logo.png";
   import { applyTheme, getActiveThemeLogoUrl, onThemeApplied } from "./lib/utils/theme.js";
+  import { serializeSegmentTags } from "./lib/utils/promptSegmentDetail.js";
 
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
   import ContextMenu from "./lib/components/ui/ContextMenu.svelte";
@@ -1099,8 +1100,15 @@
   }
 
   function buildPngMetadata(params: GenerationParams): Record<string, string> {
+    // Re-append <segment:...> tags in canonical closed form so reimport/remix
+    // restores them (the params prompt itself is segment-stripped).
+    const positiveWithSegments = params.detail_segments?.length
+      ? [params.positive_prompt, serializeSegmentTags(params.detail_segments)]
+          .filter(Boolean)
+          .join(", ")
+      : params.positive_prompt;
     const metadata: Record<string, string> = {
-      positive_prompt: params.positive_prompt,
+      positive_prompt: positiveWithSegments,
       negative_prompt: params.negative_prompt,
       steps: String(params.steps),
       sampler: params.sampler_name,

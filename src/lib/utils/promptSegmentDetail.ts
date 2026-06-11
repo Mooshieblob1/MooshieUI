@@ -128,6 +128,22 @@ export function parseSegmentDetailPrompt(raw: string): ParsedSegmentDetailPrompt
 }
 
 /**
+ * Serialize segments back to canonical closed-form tags for metadata embedding.
+ * Closed form survives reimport regardless of position; explicit numbers make
+ * the round-trip exact.
+ */
+export function serializeSegmentTags(
+  segments: ReadonlyArray<DetailSegment>,
+): string {
+  return segments
+    .map(
+      (s) =>
+        `<segment:${s.target},${s.creativity},${s.threshold}>${s.prompt}</segment>`,
+    )
+    .join(", ");
+}
+
+/**
  * For a "yolo-..." target, return the detector model filename (match-index
  * suffix stripped). Returns null for CLIPSeg (non-yolo) targets.
  */

@@ -1468,7 +1468,12 @@ class GenerationStore {
       fixedChoices: options.fixedPresetChoices,
     });
 
-    let positivePrompt = this.mergeTagPrompts(inlinePositive, style.positive);
+    // Parse <segment:...> auto-refinement tags from the user-typed prompt before
+    // system fragments (style presets, artist styles, preset appends, quality
+    // tags) are merged in — a trailing-form segment must not swallow them.
+    const parsedSegmentDetails = parseSegmentDetailPrompt(inlinePositive);
+
+    let positivePrompt = this.mergeTagPrompts(parsedSegmentDetails.baseText, style.positive);
     let negativePrompt = this.mergeTagPrompts(inlineNegative, style.negative);
 
     // Inject tags contributed by any currently-active Artist Styles. These are
@@ -1567,11 +1572,6 @@ class GenerationStore {
       ? parseRegionalPrompt(positivePrompt)
       : { baseText: positivePrompt, regions: [] as Array<{ text: string; x: number; y: number; width: number; height: number }> };
     positivePrompt = parsedRegions.baseText;
-    // Parse <segment:...> auto-refinement tags (SwarmUI-style) before schedule
-    // parsing. Keep the tagged text around so gallery metadata round-trips.
-    const promptWithSegmentTags = positivePrompt;
-    const parsedSegmentDetails = parseSegmentDetailPrompt(positivePrompt);
-    positivePrompt = parsedSegmentDetails.baseText;
     const guiRegions = regionalPromptingSupported
       ? this.regionalPrompts
         .map((region) => {
@@ -1663,7 +1663,7 @@ class GenerationStore {
         creativity: s.creativity,
         threshold: s.threshold,
       })),
-      raw_positive_prompt: translateNaiWeightSyntax(promptWithSegmentTags),
+      raw_positive_prompt: translateNaiWeightSyntax(positivePrompt),
       positive_regions: builtRegions,
       raw_negative_prompt: translateNaiWeightSyntax(negativePrompt),
       checkpoint: this.checkpoint,

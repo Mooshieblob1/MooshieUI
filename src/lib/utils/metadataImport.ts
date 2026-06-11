@@ -50,15 +50,28 @@ function buildAutoQualityTagSet(): Set<string> {
 }
 
 /**
- * Strip SwarmUI-specific inline syntax tags from a prompt string.
- * Matches patterns like `<segment:...>`, `<random:...>`, `<preset:...>`, `<wildcard:...>`, etc.
+ * Strip unsupported SwarmUI inline syntax tags from a prompt string.
+ * Matches patterns like `<random:...>`, `<preset:...>`, `<wildcard:...>`, etc.
  * LoRA tags `<lora:name:strength>` are also stripped since MooshieUI handles LoRAs separately.
  * Handles URL-encoded values and nested `//` parameters.
  */
 const SWARMUI_TAG_RE = /<[a-zA-Z_-]+:[^>]*>/g;
 
+/**
+ * Inline syntaxes MooshieUI supports natively — preserved on import so they
+ * keep working (`<segment:...>` refinement, `<from/to/range:...>` scheduling,
+ * `<region:...>` regional prompts). `<fromto[...]:...>` never matched the
+ * strip regex (the `[` breaks the name pattern) and survives on its own.
+ */
+const SUPPORTED_TAG_RE = /^<(?:segment|from|to|range|region):/i;
+
 function stripSwarmUITags(prompt: string): string {
-  return prompt.replace(SWARMUI_TAG_RE, "").replace(/,\s*,/g, ",").replace(/^\s*,\s*/, "").replace(/\s*,\s*$/, "").trim();
+  return prompt
+    .replace(SWARMUI_TAG_RE, (tag) => (SUPPORTED_TAG_RE.test(tag) ? tag : ""))
+    .replace(/,\s*,/g, ",")
+    .replace(/^\s*,\s*/, "")
+    .replace(/\s*,\s*$/, "")
+    .trim();
 }
 
 /** Remove auto-applied quality tags and SwarmUI syntax from a prompt string. */
