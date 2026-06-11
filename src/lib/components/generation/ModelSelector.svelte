@@ -3,7 +3,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { downloadModel, findModelByHash, hashModelFile, readModelSpec, getComputeCapability } from "../../utils/api.js";
+  import { downloadModel, findModelByHash, hashModelFile, readModelSpec, getComputeCapability, type ModelSpec } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
   import { onMount, onDestroy, tick } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
@@ -265,6 +265,47 @@
   let isModelMetadataLoading = $state(false);
   let showArchitecturePicker = $state(false);
 
+  let modelSpec = $state<ModelSpec | null>(null);
+  let modelSpecUnavailable = $state(false);
+  let showModelInfo = $state(false);
+
+  /** Display-only ModelSpec fields shown in the model info panel. */
+  const MODEL_SPEC_DISPLAY_FIELDS = [
+    "title",
+    "author",
+    "description",
+    "architecture",
+    "hash",
+    "resolution",
+    "prediction_type",
+    "trigger_phrase",
+    "usage_hint",
+    "tags",
+    "license",
+  ] as const;
+
+  function specHasDisplayFields(spec: ModelSpec | null): boolean {
+    if (!spec) return false;
+    return MODEL_SPEC_DISPLAY_FIELDS.some((field) => !!spec[field]);
+  }
+
+  /** Strip HTML tags and convert to readable plain text. */
+  function stripHtml(html: string): string {
+    return html
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<hr\s*\/?>/gi, "\n---\n")
+      .replace(/<a[^>]+href="([^"]*)"[^>]*>[^<]*<\/a>/gi, "$1")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
   function familyIsSdxlLike(family: ModelFamily): boolean {
     return ["sdxl", "illustrious", "pony", "mugen"].includes(family);
   }
@@ -330,6 +371,8 @@
     if (!filename || !filename.endsWith(".safetensors")) {
       loadedModelMetadataKey = "";
       isModelMetadataLoading = false;
+      modelSpec = null;
+      modelSpecUnavailable = false;
       generation.applyModelMetadata({
         modelspecPredictionType: null,
         modelspecPredictKey: null,
@@ -348,6 +391,8 @@
     if (manualOverride) {
       loadedModelMetadataKey = metadataKey;
       isModelMetadataLoading = false;
+      modelSpec = null;
+      modelSpecUnavailable = false;
       generation.applyModelMetadata({
         modelspecPredictionType: null,
         modelspecPredictKey: null,
@@ -369,6 +414,9 @@
       const spec = await readModelSpec(category, filename);
       if (requestId !== latestModelMetadataRequestId) return;
       if (currentModelMetadataKey() !== metadataKey) return;
+
+      modelSpec = specHasDisplayFields(spec) ? spec : null;
+      modelSpecUnavailable = !modelSpec;
 
       const family = (spec?.family as ModelFamily | undefined) ?? "unknown";
       loadedModelMetadataKey = metadataKey;
@@ -398,6 +446,8 @@
 
       loadedModelMetadataKey = "";
       isModelMetadataLoading = false;
+      modelSpec = null;
+      modelSpecUnavailable = true;
       generation.applyModelMetadata({
         modelspecPredictionType: null,
         modelspecPredictKey: null,
@@ -1183,6 +1233,102 @@
           {/each}
         </div>
       </div>
+    {/if}
+
+    <!-- ModelSpec info -->
+    {#if modelSpecUnavailable && !modelSpec}
+      <div class="mt-1.5 text-[11px] text-neutral-600">{locale.t('generation.model.no_modelspec')}</div>
+    {:else if modelSpec}
+      <button
+        class="mt-1.5 w-full flex items-center gap-1.5 text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors"
+        onclick={() => (showModelInfo = !showModelInfo)}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
+        {showModelInfo ? locale.t('generation.model.hide_model_info') : locale.t('generation.model.show_model_info')}
+        {#if modelSpec.title}
+          <span class="text-neutral-500 truncate">— {modelSpec.title}</span>
+        {/if}
+        <span class="ml-auto px-1 py-0.5 rounded bg-emerald-900/30 text-emerald-400 text-[9px]">{locale.t("generation.model_spec_badge")}</span>
+      </button>
+      {#if showModelInfo}
+        <div class="mt-1.5 bg-neutral-800/60 border border-neutral-700/50 rounded-lg p-2.5 space-y-1.5 text-xs">
+          {#if modelSpec.title}
+            <div class="font-medium text-neutral-200">{modelSpec.title}</div>
+          {/if}
+          {#if modelSpec.author}
+            <div class="text-neutral-500">by {modelSpec.author}</div>
+          {/if}
+          {#if modelSpec.description}
+            <div class="text-neutral-400 text-[11px] whitespace-pre-line max-h-32 overflow-y-auto">{stripHtml(modelSpec.description)}</div>
+          {/if}
+          {#if modelSpec.architecture}
+            <div class="flex gap-2">
+              <span class="text-neutral-500">{locale.t('generation.model.architecture_label')}</span>
+              <span class="text-neutral-300">{modelSpec.architecture}</span>
+            </div>
+          {/if}
+          {#if modelSpec.hash}
+            <div class="flex gap-2 items-center">
+              <span class="text-neutral-500">{locale.t('generation.model.hash_label')}</span>
+              <span class="text-neutral-300 font-mono text-[10px]">{modelSpec.hash}</span>
+              <button
+                class="text-neutral-500 hover:text-neutral-300 transition-colors"
+                title={locale.t('generation.model.copy_hash')}
+                onclick={() => { if (modelSpec?.hash) navigator.clipboard.writeText(modelSpec.hash); }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z"/><path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5z"/></svg>
+              </button>
+            </div>
+          {/if}
+          {#if modelSpec.resolution}
+            <div class="flex gap-2">
+              <span class="text-neutral-500">{locale.t('generation.model.resolution_label')}</span>
+              <span class="text-neutral-300">{modelSpec.resolution}</span>
+            </div>
+          {/if}
+          {#if modelSpec.prediction_type}
+            <div class="flex gap-2">
+              <span class="text-neutral-500">{locale.t('generation.model.prediction_label')}</span>
+              <span class="text-neutral-300">{modelSpec.prediction_type}</span>
+            </div>
+          {/if}
+          {#if modelSpec.trigger_phrase}
+            <div>
+              <span class="text-neutral-500">{locale.t('generation.model.trigger_phrase_label')}</span>
+              <button
+                class="ml-1.5 text-indigo-400 hover:text-indigo-300 transition-colors"
+                title={locale.t('generation.model.copy_trigger')}
+                onclick={() => {
+                  if (modelSpec?.trigger_phrase && !generation.positivePrompt.includes(modelSpec.trigger_phrase)) {
+                    generation.positivePrompt = generation.positivePrompt
+                      ? `${modelSpec.trigger_phrase}, ${generation.positivePrompt}`
+                      : modelSpec.trigger_phrase;
+                  }
+                }}
+              >
+                {modelSpec.trigger_phrase}
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 inline ml-0.5" viewBox="0 0 20 20" fill="currentColor"><path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z"/><path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5z"/></svg>
+              </button>
+            </div>
+          {/if}
+          {#if modelSpec.usage_hint}
+            <div class="text-neutral-400 text-[11px] italic whitespace-pre-line">{stripHtml(modelSpec.usage_hint)}</div>
+          {/if}
+          {#if modelSpec.tags}
+            <div class="flex flex-wrap gap-1 mt-1">
+              {#each modelSpec.tags.split(",").map(t => t.trim()).filter(Boolean) as tag}
+                <span class="px-1.5 py-0.5 bg-neutral-700/50 text-neutral-400 rounded text-[10px]">{tag}</span>
+              {/each}
+            </div>
+          {/if}
+          {#if modelSpec.license}
+            <div class="flex gap-2 text-[10px]">
+              <span class="text-neutral-600">{locale.t('generation.model.license_label')}</span>
+              <span class="text-neutral-500">{modelSpec.license}</span>
+            </div>
+          {/if}
+        </div>
+      {/if}
     {/if}
   </div>
 

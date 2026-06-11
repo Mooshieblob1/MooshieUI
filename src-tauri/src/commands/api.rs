@@ -2697,6 +2697,17 @@ fn is_sdxl_like_family(family: &str) -> bool {
     matches!(family, "sdxl" | "illustrious" | "pony")
 }
 
+/// Anima / Wan2.1 fine-tunes (e.g. animayume) generally ship without ModelSpec
+/// or sidecar metadata — keep the legacy filename heuristics for them so they
+/// never depend on sidecar or hash lookups.
+fn filename_indicates_anima(filename: &str) -> bool {
+    let name = filename.trim().to_lowercase();
+    if name.contains("nanosaur") || name.contains("mugen") {
+        return false;
+    }
+    name.contains("anima") || name.contains("yume")
+}
+
 fn model_family_from_base_model(base_model: &str) -> &'static str {
     let bm = base_model.trim().to_lowercase();
     if bm.is_empty() {
@@ -2739,8 +2750,10 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("qwen") {
         return "qwen";
     }
+    // Wan Video bases are Anima fine-tunes in practice (animayume etc.) — keep
+    // the legacy CivitAI baseModel → anima mapping.
     if bm.contains("wan video") || bm.contains("wan 2") || bm.contains("wan2") || bm == "wan" {
-        return "wan";
+        return "anima";
     }
     if bm.contains("anima") {
         return "anima";
@@ -2885,7 +2898,9 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if name == "wan" || name.contains("wan video") || name.contains("wan 2") || name.contains("wan2") {
         return Some("wan");
     }
-    if name.contains("anima") {
+    // Fine-tunes such as animayume_v05.safetensors; Nanosaur/Mugen contain
+    // overlapping substrings and must not match (nanosaur returns earlier).
+    if (name.contains("anima") || name.contains("yume")) && !name.contains("mugen") {
         return Some("anima");
     }
     if name.contains("noobai") || name.contains("illustrious") {
@@ -3053,13 +3068,14 @@ fn recommended_clip_from_available(
     }
 
     if family == "anima" {
+        // Matches the curated Anima recommended-model entries (CLIPLoader type "wan").
         let preferred =
             find_first_text_encoder_matching(encoders, &[
                 "qwen_3_06b_base",
                 "qwen_3_06b",
             ])
             .or_else(|| encoders.first().cloned())?;
-        return Some((preferred, "stable_diffusion"));
+        return Some((preferred, "wan"));
     }
 
     if matches!(family, "qwen" | "wan") {
@@ -3581,7 +3597,8 @@ pub async fn civitai_list_architectures(
 /// 5. fallback to `hash + CivitAI baseModel`
 /// Prediction-related header fields are read only for SDXL-like families
 /// (`sdxl`, `illustrious`/`noobai`, `pony`).
-#[cfg(feature = "desktop")]
+/// Shared by the desktop `read_modelspec` command and the browser-mode
+/// webserver dispatch — must compile in both build flavors (no desktop cfg).
 pub(crate) async fn read_modelspec_internal(
     state: &Arc<AppState>,
     category: &str,
@@ -3619,7 +3636,12 @@ pub(crate) async fn read_modelspec_internal(
         "turbo_model_variant".to_string(),
         turbo_model_variant_from_filename(filename).to_string(),
     );
-    if let Some(base_model) = read_comfyui_lora_manager_metadata(&path)?
+    if filename_indicates_anima(filename) {
+        // Anima models lack ModelSpec/sidecar metadata — resolve from the
+        // filename first (legacy detection) instead of sidecar/hash lookups.
+        result.insert("family".to_string(), "anima".to_string());
+        result.insert("is_sdxl_like".to_string(), "false".to_string());
+    } else if let Some(base_model) = read_comfyui_lora_manager_metadata(&path)?
         .as_ref()
         .and_then(|v| v.get("baseModel"))
         .and_then(|v| v.as_str())
@@ -3688,6 +3710,15 @@ pub(crate) async fn read_modelspec_internal(
                 "false".to_string()
             },
         );
+    }
+
+    // Merge the full ModelSpec display fields (title, author, description,
+    // trigger phrase, ...) for the model info panel. Header-only read — no
+    // hashing. Runtime keys resolved above take precedence.
+    if let Ok(Some(display_meta)) = read_safetensors_modelspec(&path) {
+        for (key, value) in display_meta {
+            result.entry(key).or_insert(value);
+        }
     }
 
     if category == "diffusion_models" {

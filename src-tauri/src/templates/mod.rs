@@ -392,6 +392,7 @@ pub fn is_vpred_model(params: &GenerationParams) -> bool {
 }
 
 /// Returns true when the resolved architecture uses a 16-channel latent bucket.
+/// Anima/Wan (Wan2.1-based) need this — a 4-channel latent fails at decode.
 pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
     matches!(
         params.model_architecture.as_str(),
@@ -404,6 +405,8 @@ pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
             | "zib"
             | "zit"
             | "qwen"
+            | "anima"
+            | "wan"
     )
 }
 
