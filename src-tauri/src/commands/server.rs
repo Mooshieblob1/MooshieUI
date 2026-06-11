@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::comfyui::gpu_manager::WorkerStatus;
 use crate::comfyui::process::{self, StartResult};
 use crate::comfyui::types::SystemStats;
 use crate::comfyui::websocket;
@@ -12,6 +13,47 @@ use crate::state::AppState;
 fn emit_both(app: &AppHandle, state: &AppState, event: &str, payload: serde_json::Value) {
     let _ = app.emit(event, payload.clone());
     state.broadcast(event, payload);
+}
+
+async fn wait_for_configured_workers_ready(
+    app: AppHandle,
+    state: Arc<AppState>,
+    event_tx: tokio::sync::broadcast::Sender<crate::state::BroadcastEvent>,
+) -> Result<(), AppError> {
+    process::wait_all_workers_ready(&state, 120).await;
+
+    let mut ready_any = false;
+    for worker in &state.gpu_manager.workers {
+        let status = *worker.status.read().await;
+        if status != WorkerStatus::Idle {
+            continue;
+        }
+        ready_any = true;
+        if let Err(e) = websocket::connect_websocket_for_worker_desktop(
+            app.clone(),
+            &state,
+            worker,
+            event_tx.clone(),
+        )
+        .await
+        {
+            log::error!("Worker {} WebSocket failed: {}", worker.id, e);
+        }
+    }
+
+    if !ready_any {
+        return Err(AppError::ConnectionFailed(
+            "No configured GPU workers became ready".into(),
+        ));
+    }
+
+    emit_both(
+        &app,
+        &state,
+        "comfyui:server_ready",
+        serde_json::json!(null),
+    );
+    Ok(())
 }
 
 /// Start ComfyUI and return immediately with the result.
@@ -52,6 +94,30 @@ pub async fn start_comfyui(
             let app = app_handle.clone();
             tokio::spawn(async move {
                 let state = app.state::<Arc<AppState>>();
+                let configured_worker_mode = {
+                    let config = state.config.read().await;
+                    process::uses_configured_gpu_workers(&config)
+                };
+                if configured_worker_mode {
+                    if let Err(e) = wait_for_configured_workers_ready(
+                        app.clone(),
+                        Arc::clone(&state),
+                        event_tx.clone(),
+                    )
+                    .await
+                    {
+                        let err_str = e.to_string();
+                        log::error!("Configured GPU workers failed to become ready: {}", err_str);
+                        let port = state.config.read().await.server_port;
+                        emit_both(
+                            &app,
+                            &state,
+                            "comfyui:server_error",
+                            crate::comfyui::nodes::server_error_payload(&err_str, port),
+                        );
+                    }
+                    return;
+                }
                 match process::wait_for_ready(&state, 120).await {
                     Ok(()) => {
                         log::info!("ComfyUI server is ready");

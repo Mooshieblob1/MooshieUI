@@ -456,60 +456,7 @@ pub fn run() {
                 config.keep_alive
             };
             if !keep_alive {
-                // Kill ComfyUI process on app exit
-                let mut process = state.comfyui_process.blocking_lock();
-                if let Some(ref mut child) = *process {
-                    log::info!("Shutting down ComfyUI process...");
-                    // Use start_kill (non-async) for synchronous shutdown
-                    let _ = child.start_kill();
-                    *process = None;
-                }
-                // Also kill anything on the port as a safety net
-                let port = state.config.blocking_read().server_port;
-                #[cfg(target_os = "linux")]
-                {
-                    let _ = std::process::Command::new("fuser")
-                        .args(["-k", &format!("{}/tcp", port)])
-                        .output();
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    if let Ok(output) = std::process::Command::new("lsof")
-                        .args(["-ti", &format!(":{}", port)])
-                        .output()
-                    {
-                        for pid in String::from_utf8_lossy(&output.stdout).lines() {
-                            if pid.trim().parse::<u32>().is_ok() {
-                                let _ = std::process::Command::new("kill")
-                                    .args(["-9", pid.trim()])
-                                    .output();
-                            }
-                        }
-                    }
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    #[allow(unused_imports)]
-                    use std::os::windows::process::CommandExt;
-                    const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-                    if let Ok(output) = std::process::Command::new("netstat")
-                        .arg("-ano")
-                        .creation_flags(CREATE_NO_WINDOW)
-                        .output()
-                    {
-                        for line in String::from_utf8_lossy(&output.stdout).lines() {
-                            if let Some(pid) =
-                                crate::comfyui::process::parse_netstat_listening_pid(line, port)
-                            {
-                                let _ = std::process::Command::new("taskkill")
-                                    .args(["/F", "/PID", &pid.to_string()])
-                                    .creation_flags(CREATE_NO_WINDOW)
-                                    .output();
-                            }
-                        }
-                    }
-                }
+                crate::comfyui::process::stop_comfyui_process_blocking(&state);
             } else {
                 log::info!("Keeping ComfyUI running (keep_alive=true)");
             }
