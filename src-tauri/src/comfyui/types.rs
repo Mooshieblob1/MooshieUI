@@ -68,6 +68,19 @@ pub struct PromptSegment {
     pub end: f64,
 }
 
+/// A `<segment:...>` auto-refinement region parsed from the positive prompt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetailSegment {
+    /// Detection target: free text (CLIPSeg) or "yolo-<model filename>[-<match index>]".
+    pub target: String,
+    /// Refinement prompt for the detected region (may be empty).
+    pub prompt: String,
+    /// Denoise strength for the re-sample, (0, 1].
+    pub creativity: f64,
+    /// Detection threshold, (0, 1).
+    pub threshold: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PositiveRegion {
     pub text: String,
@@ -88,6 +101,8 @@ pub struct GenerationParams {
     pub positive_segments: Vec<PromptSegment>,
     #[serde(default)]
     pub negative_segments: Vec<PromptSegment>,
+    #[serde(default)]
+    pub detail_segments: Vec<DetailSegment>,
     #[serde(default)]
     pub positive_regions: Vec<PositiveRegion>,
     pub checkpoint: String,

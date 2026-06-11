@@ -113,6 +113,11 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
                 "Style transfer cannot be used with face fix enabled in this version — disable face fix.".into(),
             );
         }
+        if !params.detail_segments.is_empty() {
+            return Err(
+                "Style transfer cannot be used with <segment> refinement in this version — remove segment tags from the prompt.".into(),
+            );
+        }
     }
 
     Ok(())
