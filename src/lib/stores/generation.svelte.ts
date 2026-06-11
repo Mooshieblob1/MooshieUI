@@ -6,6 +6,7 @@ import {
   parseRegionalPrompt,
   parseScheduledPrompt,
 } from "../utils/promptSchedule.js";
+import { parseSegmentDetailPrompt } from "../utils/promptSegmentDetail.js";
 import {
   MODEL_FAMILIES,
   TURBO_MODEL_VARIANTS,
@@ -1566,6 +1567,11 @@ class GenerationStore {
       ? parseRegionalPrompt(positivePrompt)
       : { baseText: positivePrompt, regions: [] as Array<{ text: string; x: number; y: number; width: number; height: number }> };
     positivePrompt = parsedRegions.baseText;
+    // Parse <segment:...> auto-refinement tags (SwarmUI-style) before schedule
+    // parsing. Keep the tagged text around so gallery metadata round-trips.
+    const promptWithSegmentTags = positivePrompt;
+    const parsedSegmentDetails = parseSegmentDetailPrompt(positivePrompt);
+    positivePrompt = parsedSegmentDetails.baseText;
     const guiRegions = regionalPromptingSupported
       ? this.regionalPrompts
         .map((region) => {
@@ -1651,7 +1657,13 @@ class GenerationStore {
         start: s.start,
         end: s.end,
       })),
-      raw_positive_prompt: translateNaiWeightSyntax(positivePrompt),
+      detail_segments: parsedSegmentDetails.segments.map((s) => ({
+        target: s.target,
+        prompt: translateNaiWeightSyntax(s.prompt),
+        creativity: s.creativity,
+        threshold: s.threshold,
+      })),
+      raw_positive_prompt: translateNaiWeightSyntax(promptWithSegmentTags),
       positive_regions: builtRegions,
       raw_negative_prompt: translateNaiWeightSyntax(negativePrompt),
       checkpoint: this.checkpoint,

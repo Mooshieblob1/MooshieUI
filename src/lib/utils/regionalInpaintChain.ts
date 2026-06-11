@@ -71,8 +71,11 @@ export async function runRegionalInpaintChain(
 
   const baseParams = generation.toParams({ includeConditioningRegions: false });
   const facefixOnFinal = baseParams.facefix_enabled;
-  // Face fix once on the final combined image; skip on base + intermediate inpaints.
+  // Face fix + segment refinement once on the final combined image; skip on
+  // base + intermediate inpaints.
   baseParams.facefix_enabled = false;
+  const segmentsOnFinal = baseParams.detail_segments;
+  baseParams.detail_segments = [];
 
   const regionalContext = buildRegionalContextPrompt(
     baseParams.positive_prompt,
@@ -131,6 +134,7 @@ export async function runRegionalInpaintChain(
       denoise: regionStrengthToDenoise(region.strength),
       differential_diffusion: generation.isAnima || generation.differentialDiffusion,
       facefix_enabled: isFinalOutput && facefixOnFinal,
+      detail_segments: isFinalOutput ? segmentsOnFinal : [],
     };
 
     const regionResult = await callbacks.submit(regionParams, {
