@@ -687,6 +687,9 @@ const ja: Record<string, string> = {
   "generation.upscale.fast_refine_label": "Fast refine",
   "generation.upscale.fast_refine_tip": "Skip tiled diffusion and tiled VAE for a quicker refine pass. Uses more VRAM. On Anima, only enable if you have enough GPU memory.",
   "generation.upscale.fast_refine_anima_warning": "Fast refine on Anima may run out of VRAM or fail. Use only on high-VRAM GPUs.",
+  "generation.upscale.refine_only_label": "リファインのみ（img2imgパスをスキップ）",
+  "generation.upscale.refine_only_tip": "入力画像を再生成せずに直接アップスケーラーに渡します。既存の画像をそのまま拡大・リファインしたいときに使用します。ComfyUIでアップスケーラーノードに直接つなぐのと同じ動作です。",
+  "generation.upscale.refine_only_hint": "img2imgのサンプリングパスはスキップされ、入力画像に対してアップスケール／リファインパスのみが実行されます。",
   "generation.sampler.smart_guidance_label": "スマートガイダンス",
   "generation.sampler.smart_guidance_tip": "ポジティブ寄りの適応型ガイダンス — ネガティブを避けるだけでなく、プロンプトにより忠実にモデルが従います。すべての生成ステップに適用。調整不要。",
 

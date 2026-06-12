@@ -178,6 +178,7 @@
       generation.mode = "img2img";
       generation.inputImage = uploadName;
       generation.upscaleEnabled = true;
+      generation.refineOnly = true;
       if (appliedDefaultUpscaler) {
         generation.upscaleMethod = "model";
         generation.upscaleModel = DEFAULT_REFINE_UPSCALER;

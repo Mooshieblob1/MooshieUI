@@ -377,6 +377,9 @@
       generation.inputImage = await uploadOutputImageForGenerationInput(image, "refine_input.png");
       generation.mode = "img2img";
       generation.upscaleEnabled = true;
+      // Skip the base img2img pass — the user wants to upscale this image
+      // as-is, not regenerate it first.
+      generation.refineOnly = true;
       currentPage = "generate";
       gallery.closeLightbox();
       gallery.showToast(locale.t("gallery.toast.loaded_upscale"), "success");
@@ -409,6 +412,7 @@
       canvas.clearMask();
       generation.mode = mode;
       generation.upscaleEnabled = false;
+      generation.refineOnly = false;
 
       if (mode === "inpainting" && normalized) {
         generation.width = normalized.width;

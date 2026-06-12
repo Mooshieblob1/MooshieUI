@@ -292,6 +292,11 @@ class GenerationStore {
   upscaleFastRefine = $state(false);
   upscaleSoftGuidance = $state(true);
   upscaleSoftGuidanceMultiplier = $state(0.4);
+  /**
+   * img2img only: skip the base img2img sampling pass and feed the input image
+   * directly into the upscale/refine chain (SwarmUI "Refine Image" semantics).
+   */
+  refineOnly = $state(false);
   smartGuidance = $state(false);
   /**
    * FluxGuidance value (used by Flux Dev / Flux 2 Klein family). Replaces
@@ -1124,6 +1129,7 @@ class GenerationStore {
         if (saved.upscaleFastRefine !== undefined) this.upscaleFastRefine = saved.upscaleFastRefine;
         if (saved.upscaleSoftGuidance !== undefined) this.upscaleSoftGuidance = saved.upscaleSoftGuidance;
         if (saved.upscaleSoftGuidanceMultiplier !== undefined) this.upscaleSoftGuidanceMultiplier = saved.upscaleSoftGuidanceMultiplier;
+        if (saved.refineOnly !== undefined) this.refineOnly = saved.refineOnly;
         if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
         if (saved.fluxGuidance !== undefined) this.fluxGuidance = saved.fluxGuidance;
         if (saved.useSplitModel !== undefined) this.useSplitModel = saved.useSplitModel;
@@ -1263,6 +1269,7 @@ class GenerationStore {
         upscaleFastRefine: this.upscaleFastRefine,
         upscaleSoftGuidance: this.upscaleSoftGuidance,
         upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
+        refineOnly: this.refineOnly,
         smartGuidance: this.smartGuidance,
         fluxGuidance: this.fluxGuidance,
         useSplitModel: this.useSplitModel,
@@ -1699,6 +1706,7 @@ class GenerationStore {
       upscale_fast_refine: this.upscaleFastRefine,
       upscale_soft_guidance: this.upscaleSoftGuidance,
       upscale_soft_guidance_multiplier: this.upscaleSoftGuidanceMultiplier,
+      refine_only: this.mode === "img2img" && this.upscaleEnabled && this.refineOnly,
       smart_guidance: this.smartGuidance,
       flux_guidance: this.fluxGuidance,
       upscale_positive_prompt: upscalePositivePrompt,

@@ -179,14 +179,17 @@ export async function sendImageToImg2Img(image: OutputImage): Promise<void> {
   const name = await uploadOutputImageForGenerationInput(image, "img2img_input.png");
   generation.inputImage = name;
   generation.mode = "img2img";
+  generation.refineOnly = false;
   gallery.closeLightbox();
 }
 
-/** Re-use image as upscale input. */
+/** Re-use image as upscale input. Refine-only: the upscale chain runs directly
+ *  on the image without a base img2img sampling pass. */
 export async function sendImageToUpscale(image: OutputImage): Promise<void> {
   const name = await uploadOutputImageForGenerationInput(image, "refine_input.png");
   generation.inputImage = name;
   generation.mode = "img2img";
   generation.upscaleEnabled = true;
+  generation.refineOnly = true;
   gallery.closeLightbox();
 }

@@ -684,6 +684,9 @@ const de: Record<string, string> = {
   "generation.upscale.fast_refine_label": "Fast refine",
   "generation.upscale.fast_refine_tip": "Skip tiled diffusion and tiled VAE for a quicker refine pass. Uses more VRAM. On Anima, only enable if you have enough GPU memory.",
   "generation.upscale.fast_refine_anima_warning": "Fast refine on Anima may run out of VRAM or fail. Use only on high-VRAM GPUs.",
+  "generation.upscale.refine_only_label": "Nur verfeinern (img2img-Durchlauf überspringen)",
+  "generation.upscale.refine_only_tip": "Das Eingabebild direkt in den Upscaler einspeisen, ohne es vorher neu zu generieren. Damit lässt sich ein vorhandenes Bild unverändert hochskalieren oder verfeinern — wie das direkte Verbinden mit einem Upscaler-Node in ComfyUI.",
+  "generation.upscale.refine_only_hint": "Der img2img-Sampling-Durchlauf wird übersprungen — nur der Upscale-/Verfeinerungs-Durchlauf läuft auf dem Eingabebild.",
   "generation.sampler.smart_guidance_label": "Intelligente Führung",
   "generation.sampler.smart_guidance_tip": "Positiv gewichtete adaptive Führung – das Modell folgt deinem Prompt stärker, statt nur das Negative zu vermeiden. Gilt für alle Generierungsschritte. Keine Einstellung nötig.",
 

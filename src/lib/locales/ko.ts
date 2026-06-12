@@ -668,6 +668,9 @@ const ko: Record<string, string> = {
   "generation.upscale.fast_refine_label": "Fast refine",
   "generation.upscale.fast_refine_tip": "Skip tiled diffusion and tiled VAE for a quicker refine pass. Uses more VRAM. On Anima, only enable if you have enough GPU memory.",
   "generation.upscale.fast_refine_anima_warning": "Fast refine on Anima may run out of VRAM or fail. Use only on high-VRAM GPUs.",
+  "generation.upscale.refine_only_label": "리파인만 실행 (img2img 패스 건너뛰기)",
+  "generation.upscale.refine_only_tip": "입력 이미지를 다시 생성하지 않고 곧바로 업스케일러에 전달합니다. 기존 이미지를 그대로 업스케일하거나 리파인할 때 사용하세요. ComfyUI에서 업스케일러 노드에 직접 연결하는 것과 같습니다.",
+  "generation.upscale.refine_only_hint": "img2img 샘플링 패스를 건너뛰고 입력 이미지에 업스케일/리파인 패스만 실행됩니다.",
   "generation.sampler.smart_guidance_label": "스마트 가이던스",
   "generation.sampler.smart_guidance_tip": "긍정 편향 적응형 가이던스 — 부정을 피하는 것만이 아니라 프롬프트를 더 충실히 따릅니다. 모든 생성 단계에 적용. 조정 불필요.",
 

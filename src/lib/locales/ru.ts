@@ -668,6 +668,9 @@ const ru: Record<string, string> = {
   "generation.upscale.fast_refine_label": "Fast refine",
   "generation.upscale.fast_refine_tip": "Skip tiled diffusion and tiled VAE for a quicker refine pass. Uses more VRAM. On Anima, only enable if you have enough GPU memory.",
   "generation.upscale.fast_refine_anima_warning": "Fast refine on Anima may run out of VRAM or fail. Use only on high-VRAM GPUs.",
+  "generation.upscale.refine_only_label": "Только доработка (пропустить проход img2img)",
+  "generation.upscale.refine_only_tip": "Подаёт входное изображение напрямую в апскейлер без повторной генерации. Используйте, чтобы увеличить или доработать готовое изображение как есть — как подключение напрямую к ноде апскейлера в ComfyUI.",
+  "generation.upscale.refine_only_hint": "Проход сэмплирования img2img пропускается — на входном изображении выполняется только проход увеличения/доработки.",
   "generation.sampler.smart_guidance_label": "Умное руководство",
   "generation.sampler.smart_guidance_tip": "Адаптивное руководство с позитивным уклоном — модель точнее следует вашему запросу вместо простого избегания негатива. Применяется ко всем этапам генерации. Настройка не требуется.",
 

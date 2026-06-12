@@ -713,6 +713,9 @@ const es: Record<string, string> = {
   "generation.upscale.fast_refine_label": "Fast refine",
   "generation.upscale.fast_refine_tip": "Skip tiled diffusion and tiled VAE for a quicker refine pass. Uses more VRAM. On Anima, only enable if you have enough GPU memory.",
   "generation.upscale.fast_refine_anima_warning": "Fast refine on Anima may run out of VRAM or fail. Use only on high-VRAM GPUs.",
+  "generation.upscale.refine_only_label": "Solo refinar (omitir pase img2img)",
+  "generation.upscale.refine_only_tip": "Envía la imagen de entrada directamente al upscaler sin regenerarla primero. Úsalo para ampliar o refinar una imagen existente tal cual — como conectarla directamente a un nodo de upscaler en ComfyUI.",
+  "generation.upscale.refine_only_hint": "Se omite el pase de muestreo img2img — solo se ejecuta el pase de ampliación/refinado sobre la imagen de entrada.",
   "generation.sampler.smart_guidance_label": "Guía Inteligente",
   "generation.sampler.smart_guidance_tip": "Guía adaptativa con sesgo positivo: el modelo sigue tu prompt más fielmente en lugar de solo evitar lo negativo. Se aplica a todos los pasos de generación. Sin ajustes necesarios.",
 

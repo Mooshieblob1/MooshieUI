@@ -668,6 +668,9 @@ const zh: Record<string, string> = {
   "generation.upscale.fast_refine_label": "Fast refine",
   "generation.upscale.fast_refine_tip": "Skip tiled diffusion and tiled VAE for a quicker refine pass. Uses more VRAM. On Anima, only enable if you have enough GPU memory.",
   "generation.upscale.fast_refine_anima_warning": "Fast refine on Anima may run out of VRAM or fail. Use only on high-VRAM GPUs.",
+  "generation.upscale.refine_only_label": "仅精修（跳过 img2img 阶段）",
+  "generation.upscale.refine_only_tip": "将输入图像直接送入放大器，无需先重新生成。适合按原样放大或精修已有图像——就像在 ComfyUI 中直接接入放大节点一样。",
+  "generation.upscale.refine_only_hint": "将跳过 img2img 采样阶段——仅对输入图像执行放大/精修阶段。",
   "generation.sampler.smart_guidance_label": "偏向性引导",
   "generation.sampler.smart_guidance_tip": "偏向性自适应引导——模型将更忠实地遵循你的提示词，而不仅仅是回避负面内容。适用于所有生成步骤。无需调整。",
 
