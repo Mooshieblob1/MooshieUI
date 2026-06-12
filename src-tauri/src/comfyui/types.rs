@@ -139,6 +139,9 @@ pub struct GenerationParams {
     /// low-denoise second pass at higher resolution.
     #[serde(default)]
     pub refine_only: bool,
+    /// Also save the base image as it was before the upscale chain ran.
+    #[serde(default)]
+    pub save_pre_upscale_image: bool,
     /// Enable Soft Guidance (CFG rescaling) for upscale pass to prevent hallucination
     #[serde(default)]
     pub upscale_soft_guidance: bool,

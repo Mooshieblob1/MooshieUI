@@ -130,11 +130,16 @@
       };
     }
 
-    // Find the start of the current tag (after the last comma before cursor)
-    let start = text.lastIndexOf(",", pos - 1) + 1;
-    // Find the end of the current tag (next comma after cursor, or end of string)
-    let end = text.indexOf(",", pos);
-    if (end === -1) end = text.length;
+    // Find the start of the current tag (after the last comma or newline before cursor)
+    let start = Math.max(text.lastIndexOf(",", pos - 1), text.lastIndexOf("\n", pos - 1)) + 1;
+    // Find the end of the current tag (next comma or newline after cursor, or end of string).
+    // Newlines delimit tags too — otherwise accepting a suggestion on its own line would
+    // replace everything up to the next comma, swallowing tags on the lines below.
+    let end = text.length;
+    const commaEnd = text.indexOf(",", pos);
+    if (commaEnd !== -1) end = commaEnd;
+    const newlineEnd = text.indexOf("\n", pos);
+    if (newlineEnd !== -1 && newlineEnd < end) end = newlineEnd;
 
     const token = text.substring(start, end);
     const leadingWhitespace = token.match(/^\s*/)?.[0].length ?? 0;
@@ -639,46 +644,53 @@
 </script>
 
 <div class="relative">
-  {#if hasSelection}
-    <div class="mb-2 flex flex-wrap gap-1.5">
-      <button
-        type="button"
-        class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
-        title={locale.t('generation.prompt.weight_up')}
-        onmousedown={(e) => e.preventDefault()}
-        onclick={() => adjustSelectedWeight(0.05)}
-      >
-        +0.05
-      </button>
-      <button
-        type="button"
-        class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
-        title={locale.t('generation.prompt.weight_down')}
-        onmousedown={(e) => e.preventDefault()}
-        onclick={() => adjustSelectedWeight(-0.05)}
-      >
-        -0.05
-      </button>
-      <button
-        type="button"
-        class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
-        title={locale.t('generation.prompt.wrap_stronger')}
-        onmousedown={(e) => e.preventDefault()}
-        onclick={() => wrapSelection("brace")}
-      >
-        &#123;&#125;
-      </button>
-      <button
-        type="button"
-        class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
-        title={locale.t('generation.prompt.wrap_weaker')}
-        onmousedown={(e) => e.preventDefault()}
-        onclick={() => wrapSelection("bracket")}
-      >
-        []
-      </button>
-    </div>
-  {/if}
+  <!-- Always rendered so the textarea never shifts; buttons stay disabled until
+       text is selected, which guards against inserting empty weight wrappers. -->
+  <div class="mb-2 flex flex-wrap gap-1.5">
+    <button
+      type="button"
+      disabled={!hasSelection}
+      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:pointer-events-none disabled:opacity-40"
+      title={hasSelection ? locale.t('generation.prompt.weight_up') : locale.t('generation.prompt.weight_select_hint')}
+      onmousedown={(e) => e.preventDefault()}
+      onclick={() => adjustSelectedWeight(0.05)}
+    >
+      +0.05
+    </button>
+    <button
+      type="button"
+      disabled={!hasSelection}
+      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:pointer-events-none disabled:opacity-40"
+      title={hasSelection ? locale.t('generation.prompt.weight_down') : locale.t('generation.prompt.weight_select_hint')}
+      onmousedown={(e) => e.preventDefault()}
+      onclick={() => adjustSelectedWeight(-0.05)}
+    >
+      -0.05
+    </button>
+    <button
+      type="button"
+      disabled={!hasSelection}
+      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:pointer-events-none disabled:opacity-40"
+      title={hasSelection ? locale.t('generation.prompt.wrap_stronger') : locale.t('generation.prompt.weight_select_hint')}
+      onmousedown={(e) => e.preventDefault()}
+      onclick={() => wrapSelection("brace")}
+    >
+      &#123;&#125;
+    </button>
+    <button
+      type="button"
+      disabled={!hasSelection}
+      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:pointer-events-none disabled:opacity-40"
+      title={hasSelection ? locale.t('generation.prompt.wrap_weaker') : locale.t('generation.prompt.weight_select_hint')}
+      onmousedown={(e) => e.preventDefault()}
+      onclick={() => wrapSelection("bracket")}
+    >
+      []
+    </button>
+    {#if !hasSelection}
+      <span class="self-center text-[10px] text-neutral-600">{locale.t('generation.prompt.weight_select_hint')}</span>
+    {/if}
+  </div>
   <div class="relative">
     {#if showBackdrop}
       <div

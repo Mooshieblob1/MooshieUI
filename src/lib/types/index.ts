@@ -110,6 +110,8 @@ export interface GenerationParams {
   upscale_fast_refine?: boolean;
   upscale_soft_guidance: boolean;
   upscale_soft_guidance_multiplier: number;
+  /** Also save the base image before the upscale chain runs. */
+  save_pre_upscale_image?: boolean;
   smart_guidance: boolean;
   /** FluxGuidance value (Flux Dev / Flux 2 Klein only). Default 3.5. */
   flux_guidance?: number;

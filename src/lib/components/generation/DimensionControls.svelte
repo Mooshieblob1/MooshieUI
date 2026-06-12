@@ -2,6 +2,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
+  import type { ModelFamily } from "../../utils/modelFamily.js";
 
   interface Props {
     suggestedAspect?: { w: number; h: number } | null;
@@ -141,6 +142,74 @@
     presets.find((p) => p.w === aspectW && p.h === aspectH)?.label ?? ""
   );
 
+  const DEFAULT_SIDE = 1024;
+  const sidePresets = [512, 768, 1024, 1536, 2048];
+
+  function applySideLength(side: number) {
+    sideLength = side;
+    recalc();
+  }
+
+  const FAMILY_LABELS: Partial<Record<ModelFamily, string>> = {
+    anima: "Anima",
+    sdxl: "SDXL",
+    illustrious: "Illustrious",
+    pony: "Pony",
+    sd15: "SD 1.5",
+    sd3: "SD3",
+    flux: "Flux",
+    flux1d: "Flux.1 Dev",
+    flux1s: "Flux.1 Schnell",
+    flux1krea: "Flux.1 Krea",
+    flux2d: "Flux.2 Dev",
+    flux2klein9b: "Flux.2 Klein 9B",
+    flux2klein9bbase: "Flux.2 Klein 9B Base",
+    flux2klein4b: "Flux.2 Klein 4B",
+    flux2klein4bbase: "Flux.2 Klein 4B Base",
+    chroma: "Chroma",
+    zib: "Z-Image Base",
+    zit: "Z-Image Turbo",
+    wan: "Wan",
+    qwen: "Qwen",
+    auraflow: "AuraFlow",
+    pixart: "PixArt",
+    hunyuandit: "HunyuanDiT",
+    cascade: "Stable Cascade",
+    kolors: "Kolors",
+    mugen: "Mugen",
+    nanosaur: "Nanosaur",
+  };
+
+  /** Recommended initial-generation side-length range per model family. */
+  function recommendedRange(family: ModelFamily): { min: number; max: number } | null {
+    switch (family) {
+      case "unknown":
+        return null;
+      case "sd15":
+        return { min: 512, max: 768 };
+      case "flux2d":
+      case "flux2klein9b":
+      case "flux2klein9bbase":
+      case "flux2klein4b":
+      case "flux2klein4bbase":
+        return { min: 1024, max: 2048 };
+      case "qwen":
+        return { min: 1024, max: 1536 };
+      default:
+        return { min: 1024, max: 1024 };
+    }
+  }
+
+  const recommended = $derived(recommendedRange(generation.modelFamily));
+  const recommendedLabel = $derived(
+    recommended
+      ? recommended.min === recommended.max
+        ? String(recommended.min)
+        : `${recommended.min}–${recommended.max}`
+      : ""
+  );
+  const familyLabel = $derived(FAMILY_LABELS[generation.modelFamily] ?? "");
+
   /** Fit a w:h ratio into a max bounding box for preset preview chips. */
   function aspectPreviewSize(w: number, h: number, boxPx = 12): { w: number; h: number } {
     const ratio = w / h;
@@ -212,11 +281,44 @@
         </svg>
       </button>
     </div>
+    <p class="text-[10px] text-neutral-500 mt-1">{locale.t('generation.dimensions.ratio_hint')}</p>
   </div>
 
   <!-- Side Length -->
   <div>
-    <label class="block text-xs text-neutral-400 mb-1.5">{locale.t('generation.dimensions.resolution')}<InfoTip text={locale.t('generation.dimensions.resolution_tip')} /></label>
+    <div class="flex items-center justify-between mb-1.5">
+      <label class="text-xs text-neutral-400">{locale.t('generation.dimensions.resolution')}<InfoTip text={locale.t('generation.dimensions.resolution_tip')} /></label>
+      <button
+        onclick={() => applySideLength(DEFAULT_SIDE)}
+        class="inline-flex items-center gap-1 text-[10px] text-neutral-400 hover:text-neutral-200 transition-colors"
+        title={locale.t('generation.dimensions.reset', { res: DEFAULT_SIDE })}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+          <path d="M3 3v5h5"/>
+        </svg>
+        {locale.t('generation.dimensions.reset', { res: DEFAULT_SIDE })}
+      </button>
+    </div>
+    <div class="flex items-center gap-1 flex-wrap mb-2">
+      {#each sidePresets as side (side)}
+        {@const isRecommended = recommended !== null && side >= recommended.min && side <= recommended.max}
+        <button
+          onclick={() => applySideLength(side)}
+          class="relative text-xs px-2 py-1 rounded transition-colors {sideLength === side
+            ? 'bg-indigo-600 text-white'
+            : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:bg-neutral-700'}"
+          title={isRecommended && familyLabel
+            ? locale.t('generation.dimensions.recommended', { model: familyLabel, res: recommendedLabel })
+            : String(side)}
+        >
+          {side}
+          {#if isRecommended}
+            <span class="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden="true"></span>
+          {/if}
+        </button>
+      {/each}
+    </div>
     <input
       type="number"
       bind:value={sideLength}
@@ -226,6 +328,11 @@
       step="8"
       class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
     />
+    {#if recommended && familyLabel}
+      <p class="text-[10px] text-neutral-500 mt-1">
+        <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 mr-1 align-middle" aria-hidden="true"></span>{locale.t('generation.dimensions.recommended', { model: familyLabel, res: recommendedLabel })}
+      </p>
+    {/if}
   </div>
 
   <!-- Resulting dimensions -->

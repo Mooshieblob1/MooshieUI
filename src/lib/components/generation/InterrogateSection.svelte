@@ -5,7 +5,7 @@
   import InterrogateModal from "./InterrogateModal.svelte";
   import { interrogateImage, interrogateImagePath, interrogateClipboard, readClipboardImage } from "../../utils/api.js";
   import { ipcListen, isTauri, isBrowserMode, ipcOpenFileDialog } from "../../utils/ipc.js";
-  import { handleMetadataImport, handleMetadataImportPath } from "../../utils/metadataImport.js";
+  import { handleMetadataImport, handleMetadataImportPath, getClipboardImageFile } from "../../utils/metadataImport.js";
   import type { InterrogationResult } from "../../types/index.js";
 
   // Interrogation state
@@ -277,8 +277,27 @@
     return () => el.removeEventListener("tauri-file-drop", handleTauriFileDrop);
   });
 
-  // Listen for Ctrl+V while this drop zone is active — uses native clipboard (bypasses WebView restrictions)
+  // Browser mode: handle the native paste event directly — clipboardData carries the
+  // pasted image without any clipboard-permission or server-side clipboard access.
   $effect(() => {
+    const handler = (e: ClipboardEvent) => {
+      if (!pasteActive) return;
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+      const file = getClipboardImageFile(e);
+      if (!file) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      readFileAsBase64(file);
+    };
+    window.addEventListener("paste", handler, { capture: true });
+    return () => window.removeEventListener("paste", handler, { capture: true });
+  });
+
+  // Tauri desktop: the WebView blocks image clipboardData, so intercept Ctrl+V and
+  // read the clipboard natively instead. In browser mode the paste handler above runs.
+  $effect(() => {
+    if (!isTauri) return;
     const handler = (e: KeyboardEvent) => {
       if (pasteActive && e.ctrlKey && e.key === "v") {
         // Don't intercept if user is typing in an input/textarea

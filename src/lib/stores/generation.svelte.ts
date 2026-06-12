@@ -292,6 +292,8 @@ class GenerationStore {
   upscaleFastRefine = $state(false);
   upscaleSoftGuidance = $state(true);
   upscaleSoftGuidanceMultiplier = $state(0.4);
+  /** Advanced: also save the base image before the upscale chain runs. */
+  savePreUpscaleImage = $state(false);
   /**
    * img2img only: skip the base img2img sampling pass and feed the input image
    * directly into the upscale/refine chain (SwarmUI "Refine Image" semantics).
@@ -378,6 +380,10 @@ class GenerationStore {
   modelIsSdxlLike = $state(false);
   /** Backend-resolved turbo/lightning/lcm/hyper/dmd model variant. */
   modelTurboVariant = $state<TurboModelVariant>("none");
+  /** Identity of the model the family preset was last applied for. Persisted so a
+   *  generation-page remount (tab switch) or app restart doesn't re-apply model
+   *  defaults over the user's tweaked settings. */
+  modelPresetAppliedKey = $state<string | null>(null);
   /** Backend-resolved recommended VAE for split-model pipelines. */
   modelRecommendedVae = $state<string | null>(null);
   /** Backend-resolved recommended text encoder for split-model pipelines. */
@@ -848,6 +854,17 @@ class GenerationStore {
     const isAnimaLike = this.isAnima || this.isWan || this.isQwen;
     autocomplete.notifyModelChanged(isAnimaLike);
 
+    // Only apply defaults when the selected model actually changed. Metadata
+    // reloads for the same model (page remount on tab switch, app restart)
+    // must not clobber settings the user has tweaked since.
+    const presetKey = [
+      this.useSplitModel && this.diffusionModel ? `dm:${this.diffusionModel}` : `cp:${this.checkpoint}`,
+      this.modelFamily,
+      this.modelTurboVariant,
+    ].join("|");
+    if (presetKey === this.modelPresetAppliedKey) return;
+    this.modelPresetAppliedKey = presetKey;
+
     let preset: ModelPreset;
     switch (this.modelFamily) {
       // Nanosaur uses a custom DiT/VAE combo and prefers a taller default canvas.
@@ -1097,6 +1114,7 @@ class GenerationStore {
       if (saved) {
         const savedMode = isGenerationMode(saved.mode) ? saved.mode : this._mode;
         if (saved.checkpoint) this.checkpoint = saved.checkpoint;
+        if (saved.modelPresetAppliedKey !== undefined) this.modelPresetAppliedKey = saved.modelPresetAppliedKey;
         if (saved.vae !== undefined) this.vae = saved.vae;
         if (saved.samplerName) this.samplerName = saved.samplerName;
         if (saved.scheduler) this.scheduler = saved.scheduler;
@@ -1130,6 +1148,7 @@ class GenerationStore {
         if (saved.upscaleSoftGuidance !== undefined) this.upscaleSoftGuidance = saved.upscaleSoftGuidance;
         if (saved.upscaleSoftGuidanceMultiplier !== undefined) this.upscaleSoftGuidanceMultiplier = saved.upscaleSoftGuidanceMultiplier;
         if (saved.refineOnly !== undefined) this.refineOnly = saved.refineOnly;
+        if (saved.savePreUpscaleImage !== undefined) this.savePreUpscaleImage = saved.savePreUpscaleImage;
         if (saved.smartGuidance !== undefined) this.smartGuidance = saved.smartGuidance;
         if (saved.fluxGuidance !== undefined) this.fluxGuidance = saved.fluxGuidance;
         if (saved.useSplitModel !== undefined) this.useSplitModel = saved.useSplitModel;
@@ -1246,6 +1265,7 @@ class GenerationStore {
         positivePrompt: this.positivePrompt,
         negativePrompt: this.negativePrompt,
         checkpoint: this.checkpoint,
+        modelPresetAppliedKey: this.modelPresetAppliedKey,
         vae: this.vae,
         loras: this.loras,
         samplerName: this.samplerName,
@@ -1270,6 +1290,7 @@ class GenerationStore {
         upscaleSoftGuidance: this.upscaleSoftGuidance,
         upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
         refineOnly: this.refineOnly,
+        savePreUpscaleImage: this.savePreUpscaleImage,
         smartGuidance: this.smartGuidance,
         fluxGuidance: this.fluxGuidance,
         useSplitModel: this.useSplitModel,
@@ -1338,6 +1359,7 @@ class GenerationStore {
       positivePrompt: this.positivePrompt,
       negativePrompt: this.negativePrompt,
       checkpoint: this.checkpoint,
+      modelPresetAppliedKey: this.modelPresetAppliedKey,
       vae: this.vae,
       loras: this.loras,
       samplerName: this.samplerName,
@@ -1361,6 +1383,7 @@ class GenerationStore {
       upscaleFastRefine: this.upscaleFastRefine,
       upscaleSoftGuidance: this.upscaleSoftGuidance,
       upscaleSoftGuidanceMultiplier: this.upscaleSoftGuidanceMultiplier,
+      savePreUpscaleImage: this.savePreUpscaleImage,
       smartGuidance: this.smartGuidance,
       fluxGuidance: this.fluxGuidance,
       useSplitModel: this.useSplitModel,
@@ -1707,6 +1730,7 @@ class GenerationStore {
       upscale_soft_guidance: this.upscaleSoftGuidance,
       upscale_soft_guidance_multiplier: this.upscaleSoftGuidanceMultiplier,
       refine_only: this.mode === "img2img" && this.upscaleEnabled && this.refineOnly,
+      save_pre_upscale_image: this.savePreUpscaleImage,
       smart_guidance: this.smartGuidance,
       flux_guidance: this.fluxGuidance,
       upscale_positive_prompt: upscalePositivePrompt,

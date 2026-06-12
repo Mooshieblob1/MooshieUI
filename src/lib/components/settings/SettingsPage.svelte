@@ -1059,7 +1059,7 @@
     { key: "models", labelKey: "settings.sections.models", keywords: "models manage delete move lora checkpoint vae upscaler controlnet" },
     { key: "modelRequests", labelKey: "settings.sections.model_requests", keywords: "model requests approve deny pending download civitai hub" },
     { key: "paths", labelKey: "settings.sections.paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
-    { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview" },
+    { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview upscale pre-upscale before base" },
     { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
@@ -2962,6 +2962,23 @@
                 <span class="text-sm text-neutral-200">{locale.t('settings.gallery.manual_save_label')}</span>
               </label>
               <p class="text-[10px] text-neutral-500 mt-1 ml-6">{locale.t('settings.gallery.manual_save_desc')}</p>
+            </div>
+
+            <!-- Save pre-upscale image (advanced) -->
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded accent-indigo-500"
+                  checked={generation.savePreUpscaleImage}
+                  onchange={(e) => {
+                    generation.savePreUpscaleImage = (e.target as HTMLInputElement).checked;
+                    generation.saveSettings();
+                  }}
+                />
+                <span class="text-sm text-neutral-200">{locale.t('settings.gallery.save_pre_upscale_label')}</span>
+              </label>
+              <p class="text-[10px] text-neutral-500 mt-1 ml-6">{locale.t('settings.gallery.save_pre_upscale_desc')}</p>
             </div>
 
             {#if generation.manualSaveMode && isAdmin}

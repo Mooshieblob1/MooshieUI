@@ -359,11 +359,34 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
 }
 
 fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: i64) -> Value {
+    let pre_upscale_image = result.image_output.clone();
     let final_image = if params.upscale_enabled {
         upscale::append_upscale_chain(&mut result, params, seed)
     } else {
         result.image_output.clone()
     };
+
+    // Optionally save the base image before upscaling. Skipped in refine-only
+    // mode, where the pre-upscale image is just the unchanged input image.
+    if params.upscale_enabled && params.save_pre_upscale_image && !params.refine_only {
+        let pre_save_id = result.next_id.to_string();
+        result.next_id += 1;
+        let output_format = match params.output_format.as_str() {
+            "jxl" => "jxl_raw",
+            _ => "png",
+        };
+        result.workflow.insert(
+            pre_save_id,
+            json!({
+                "class_type": "MooshieSaveImage",
+                "inputs": {
+                    "images": [pre_upscale_image.0, pre_upscale_image.1],
+                    "bit_depth": params.output_bit_depth,
+                    "output_format": output_format
+                }
+            }),
+        );
+    }
 
     // Apply face fix (FaceDetailer) after upscale if enabled
     let final_image = if params.facefix_enabled {

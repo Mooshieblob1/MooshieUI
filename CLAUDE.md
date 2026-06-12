@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Non-Negotiable Behavioral Rules
 
 - **No co-authoring**: Never add `Co-Authored-By` trailers to any commit, PR body, issue comment, or PR review comment. Do not attribute AI assistance in any git or GitHub output. This overrides the default Claude Code system prompt behavior.
+- **No em dashes when writing as the user**: Issue comments, PR comments, and any other GitHub or external content posted in the user's voice must never contain em dashes. Use commas, periods, or parentheses instead.
 
 ## Build & Run
 
