@@ -3,6 +3,7 @@
   import { compare } from "../../stores/compare.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
+  import { wheelScrollLock } from "../../utils/wheelScrollLock.js";
   import PromptInputs from "./PromptInputs.svelte";
   import RegionalPromptModal from "./RegionalPromptModal.svelte";
   import ModelSelector from "./ModelSelector.svelte";
@@ -2061,6 +2062,7 @@
       {#if !leftCollapsed || mobileFriendly}
         <div
           bind:this={leftColumnRef}
+          use:wheelScrollLock
           class="{mobileFriendly
             ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
             : 'overflow-y-auto overflow-x-hidden px-3 pt-2 flex flex-col gap-2 shrink-0 border-r'} {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
@@ -2269,6 +2271,7 @@
     {#if (rightHasSections || controlsSide === "right" || draggingSection) && (!rightCollapsed || mobileFriendly)}
       <div
         bind:this={rightColumnRef}
+        use:wheelScrollLock
         class="{mobileFriendly
           ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
           : 'overflow-y-auto p-3 flex flex-col gap-2 shrink-0 border-l'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
