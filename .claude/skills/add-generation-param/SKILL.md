@@ -4,6 +4,7 @@ description: >-
   Adds a generation parameter across MooshieUI's Svelte store, TypeScript types,
   Rust GenerationParams, and workflow templates. Use for new UI settings, ComfyUI
   inputs, or /add-generation-param.
+model: sonnet
 ---
 
 # Add Generation Parameter (MooshieUI)
