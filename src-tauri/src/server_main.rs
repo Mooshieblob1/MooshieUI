@@ -105,9 +105,11 @@ async fn main() {
             process::wait_all_workers_ready(&state, 120).await;
 
             // Connect WebSocket for each ready worker
+            let mut ready_any = false;
             for worker in &state.gpu_manager.workers {
                 let status = *worker.status.read().await;
                 if status == comfyui_desktop_lib::comfyui::gpu_manager::WorkerStatus::Idle {
+                    ready_any = true;
                     let event_tx = state.event_tx.clone();
                     if let Err(e) =
                         websocket::connect_websocket_for_worker(&state, worker, event_tx).await
@@ -117,7 +119,17 @@ async fn main() {
                 }
             }
 
-            state.broadcast("comfyui:server_ready", serde_json::json!(null));
+            if ready_any {
+                state.broadcast("comfyui:server_ready", serde_json::json!(null));
+            } else {
+                let err_str = "No configured GPU workers became ready".to_string();
+                log::error!("{}", err_str);
+                let port = state.config.read().await.server_port;
+                state.broadcast(
+                    "comfyui:server_error",
+                    nodes::server_error_payload(&err_str, port),
+                );
+            }
         } else {
             // Single-worker mode (backward compat)
             log::info!("Auto-starting ComfyUI...");
