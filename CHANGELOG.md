@@ -1,5 +1,25 @@
 # Changelog
 
+## What's New in v1.4.10
+
+### New Features
+- **Refine-only upscale**: send an existing image directly into the upscale/refine chain without re-running it through img2img first. Available as a checkbox in the Upscale settings panel when in img2img mode; the gallery "Upscale" action now enables it automatically.
+- **Segment prompt syntax**: SwarmUI-style `<segment:subject>` tags in the positive prompt trigger automatic detect-crop-refine-composite loops, applying per-region prompts to a masked area of the image without manual inpainting.
+
+### Improved Model Detection
+- **Richer base-model resolution**: model architecture is now resolved via a layered pipeline — safetensors header metadata, StabilityMatrix/Forge sidecar files, filename heuristics, and CivitAI hash lookup — with the result cached. Anima/Yume detection uses explicit markers to avoid false positives on Animation/Animagine models.
+
+### Bug Fixes
+- Fixed stuck blurry previews that could persist after generation completed; default refine upscaler changed to OmniSR 2x; corrected prompt overlay drift in the canvas.
+- Fixed stale preview images overwriting final output in the lightbox when a fetch was in-flight on completion.
+- Fixed img2img drag-drop in desktop mode; gallery favourites import from external formats; thumbnail assignment on fast generations.
+- Fixed LAN mode auth gaps: SSRF via cached image proxy, session migration data loss on re-login.
+- Fixed lock ordering inversion in LAN queue filter that could deadlock under concurrent prompt submissions.
+- Fixed CivitAI and sidecar-JSON error propagation in model spec reading: offline or rate-limited CivitAI no longer fails the whole model info panel; a corrupted sidecar no longer blocks the fallback chain.
+- Updated CSP to include Windows `http://{scheme}.localhost` forms for custom URI schemes and new allowed origins for connect-src.
+
+---
+
 ## What's New in v1.4.9
 
 ### Fixes and maintenance

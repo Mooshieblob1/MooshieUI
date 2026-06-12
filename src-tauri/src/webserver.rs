@@ -2214,9 +2214,7 @@ async fn dispatch_command(
             let tracked: Vec<String> = {
                 let q = state.prompt_queue.queue.read().unwrap();
                 q.iter()
-                    .filter(|(pid, _)| {
-                        is_privileged || state.prompt_queue.is_owned_by(pid, &caller)
-                    })
+                    .filter(|(_, owner)| is_privileged || *owner == caller)
                     .map(|(pid, _)| pid.clone())
                     .collect()
             };

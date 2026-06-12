@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicerlab/files/main/tauri/tauri.conf.json.schema",
   "productName": "MooshieUI",
-  "version": "1.4.9",
+  "version": "1.4.10",
   "identifier": "com.mooshieui.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: https://asset.localhost https://thumbnail.localhost https://gallery.localhost; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* https://api.github.com https://cdn.mooshieblob.com https://civitai.com https://*.civitai.com https://image.civitai.com https://cdn.civitai.com https://animadex.net; font-src 'self' data:; media-src 'self' blob: data:"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: thumbnail: gallery: http://asset.localhost https://asset.localhost http://thumbnail.localhost https://thumbnail.localhost http://gallery.localhost https://gallery.localhost https://cdn.mooshieblob.com https://civitai.com https://*.civitai.com https://blobs.animadex.net; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* https://api.github.com https://cdn.mooshieblob.com https://civitai.com https://*.civitai.com https://image.civitai.com https://cdn.civitai.com https://animadex.net https://thetacursed.github.io https://raw.githubusercontent.com; font-src 'self' data:; media-src 'self' blob: data:"
     }
   },
   "bundle": {

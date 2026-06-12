@@ -3622,14 +3622,18 @@ pub(crate) async fn read_modelspec_internal(
         .map(str::to_string)
     {
         result.insert("base_model".to_string(), base_model);
-    } else if let Some(base_model) = read_forge_metadata(&path)?
+    } else if let Some(base_model) = read_forge_metadata(&path)
+        .ok()
+        .flatten()
         .as_ref()
         .and_then(|v| v.get("baseModel"))
         .and_then(|v| v.as_str())
         .map(str::to_string)
     {
         result.insert("base_model".to_string(), base_model);
-    } else if let Some(base_model) = read_stability_matrix_metadata(&path)?
+    } else if let Some(base_model) = read_stability_matrix_metadata(&path)
+        .ok()
+        .flatten()
         .as_ref()
         .and_then(|v| v.get("baseModel"))
         .and_then(|v| v.as_str())
@@ -3653,7 +3657,11 @@ pub(crate) async fn read_modelspec_internal(
             .map_err(|e| AppError::Other(format!("Hash task failed: {}", e)))??;
         let autov2 = autov2_hash(&hash);
         result.insert("hash".to_string(), autov2.clone());
-        if let Some(base_model) = lookup_civitai_base_model_by_hash(state, &autov2).await? {
+        if let Some(base_model) = lookup_civitai_base_model_by_hash(state, &autov2)
+            .await
+            .ok()
+            .flatten()
+        {
             result.insert("base_model".to_string(), base_model);
         }
     }

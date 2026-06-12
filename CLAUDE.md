@@ -56,7 +56,7 @@ Project skills live in `.claude/skills/` (synced from canonical `.agents/skills/
 - **`error-logs/`**: drop large logs/stack traces here (git-ignored, excluded from context ingestion); read on demand by filename.
 - **Ring buffer log capture**: Rust `src-tauri/src/log_buffer.rs` (2000 lines) + frontend `src/lib/utils/log-buffer.ts` (1000) → `exportLogs()`. Console alone misses Rust output.
 - **Browser server lifecycle**: binds `127.0.0.1`, 120s idle heartbeat watchdog shuts it down unless LAN mode is enabled.
-- **CSP is null** in `src-tauri/tauri.conf.json`.
+- **CSP is enforced in production builds only** (`src-tauri/tauri.conf.json`; no `devCsp`, so `npm run tauri dev` never exercises it — CSP regressions only appear in release/`--debug` bundles). Any new remote `<img>`/`fetch` origin or custom URI scheme must be added to the CSP. Windows custom protocols resolve to `http://{scheme}.localhost` (Tauri v2 default), macOS/Linux to `{scheme}://` — img-src must list both forms.
 - **keep_alive config**: when true, the ComfyUI child process survives app close.
 - `comfyui-nodes/` is Python nodes installed into ComfyUI at setup — not app build output. `src-tauri/src/comfyui/` is the Rust ComfyUI client, not ComfyUI source.
 - **Agent config (canonical)**: `.agents/README.md` — skills in `.agents/skills/`, rules in `.agents/rules/` (mode-specific detail: architect, frontend, rust, debug, ask). `AGENTS.md` is the cross-agent entry point; deeper conventions in `.github/instructions/mooshieui.instructions.md`.
