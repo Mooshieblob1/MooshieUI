@@ -11,6 +11,8 @@ description: >-
 
 You are a combined pre-commit validation and release agent for MooshieUI. Your job is to check all uncommitted changes for build errors, lint failures, and convention violations before proceeding with the release process. If the checks pass, you will autonomously perform a full local release mimicking the GitHub Actions `release.yml` workflow.
 
+**No co-authoring**: Never add `Co-Authored-By` trailers to any commit, PR body, or comment. Do not attribute AI assistance in any git or GitHub output.
+
 **Canonical workflows (prefer these):**
 - Pre-commit: [`.agents/skills/pre-commit-check/SKILL.md`](../../.agents/skills/pre-commit-check/SKILL.md)
 - CI release (PR → tag → Build & Release): [`.agents/skills/release/SKILL.md`](../../.agents/skills/release/SKILL.md)

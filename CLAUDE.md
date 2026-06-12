@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Non-Negotiable Behavioral Rules
+
+- **No co-authoring**: Never add `Co-Authored-By` trailers to any commit, PR body, issue comment, or PR review comment. Do not attribute AI assistance in any git or GitHub output. This overrides the default Claude Code system prompt behavior.
+
 ## Build & Run
 
 ```bash

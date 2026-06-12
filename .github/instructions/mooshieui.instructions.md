@@ -32,6 +32,10 @@ cargo clippy                 # Rust lint (run in src-tauri/)
 
 **No test framework exists.** No vitest/jest on frontend, no `#[test]` modules in Rust.
 
+## Non-Negotiable Behavioral Rules
+
+- **No co-authoring**: Never add `Co-Authored-By` trailers to any commit, PR body, issue comment, or PR review comment. Do not attribute AI assistance anywhere in git or GitHub output.
+
 ## Architecture (Non-Obvious)
 
 - **Dual-mode**: Tauri webview OR browser via axum. The flag `window.__MOOSHIE_BROWSER_MODE__` determines mode. IPC routes through custom [`src/lib/utils/ipc.ts`](src/lib/utils/ipc.ts) — `ipcInvoke()`/`ipcListen()` — NEVER use `invoke()`/`listen()` directly from `@tauri-apps/api`.

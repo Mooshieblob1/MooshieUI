@@ -27,6 +27,10 @@ No automated tests (no vitest/jest, no Rust `#[test]`).
 - Gallery on disk: **JXL**. UI: `loadGalleryImageDisplay()` / `loadGalleryImagePng()` — not raw file reads.
 - URI schemes: `thumbnail://`, `gallery://`.
 
+## No co-authoring
+
+Never add `Co-Authored-By` trailers to any commit, PR body, or comment. Do not attribute AI assistance anywhere in git or GitHub output.
+
 ## Git / release (Windows)
 
 - Pre-commit hook is bash → hangs in PowerShell: `git -c core.hooksPath=/dev/null ...`

@@ -121,3 +121,9 @@ Prune any stale local branches.
 - [ ] Tag vX.Y.Z pushed
 - [ ] Release workflow running on GitHub
 ```
+
+## Mistakes to avoid
+
+1. Adding `Co-Authored-By` trailers to commits, PR bodies, or comments — never attribute AI assistance in any git or GitHub output
+2. Missing one of the three version files
+3. `git` without `core.hooksPath=/dev/null` on Windows
