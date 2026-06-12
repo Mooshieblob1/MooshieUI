@@ -1,3 +1,18 @@
+## What's New in v1.4.11
+
+### New Features
+- **Save pre-upscale image**: new advanced toggle in Settings > Gallery. When upscaling, the base image is saved before the upscale chain runs (skipped in refine-only mode, where the input is unchanged).
+- **Prompt weight buttons always visible**: the weight adjustment buttons above the prompt box no longer pop in and out; they stay rendered and disabled until text is selected, with a hint tooltip explaining how to enable them.
+- **Recommended resolution hints**: dimension controls show the recommended side-length range for the detected model family, with a reset button.
+
+### Bug Fixes
+- Fixed tag autocomplete deleting tags on lines below the cursor: newlines are now treated as tag delimiters when accepting a suggestion.
+- Fixed generation parameters resetting when switching tabs or restarting the app: model family presets now apply only when the selected model actually changes.
+- Fixed Ctrl+V image paste into the interrogate drop zone in browser mode: the native clipboard event is used instead of a server-side clipboard read that fails on headless hosts.
+- Hardened the browser-mode paste handler against null event targets.
+
+---
+
 ## What's New in v1.4.10
 
 ### New Features

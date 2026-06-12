@@ -282,8 +282,8 @@
   $effect(() => {
     const handler = (e: ClipboardEvent) => {
       if (!pasteActive) return;
-      const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable) return;
       const file = getClipboardImageFile(e);
       if (!file) return;
       e.preventDefault();

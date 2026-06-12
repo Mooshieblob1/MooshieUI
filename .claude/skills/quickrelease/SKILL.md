@@ -127,3 +127,5 @@ Prune any stale local branches.
 1. Adding `Co-Authored-By` trailers to commits, PR bodies, or comments — never attribute AI assistance in any git or GitHub output
 2. Missing one of the three version files
 3. `git` without `core.hooksPath=/dev/null` on Windows
+4. Tag before PR merge
+5. Force-updating tags — use `workflow_dispatch` instead

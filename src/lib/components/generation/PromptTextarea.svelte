@@ -650,7 +650,7 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:pointer-events-none disabled:opacity-40"
+      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:opacity-40"
       title={hasSelection ? locale.t('generation.prompt.weight_up') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => adjustSelectedWeight(0.05)}
@@ -660,7 +660,7 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:pointer-events-none disabled:opacity-40"
+      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:opacity-40"
       title={hasSelection ? locale.t('generation.prompt.weight_down') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => adjustSelectedWeight(-0.05)}
@@ -670,7 +670,7 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:pointer-events-none disabled:opacity-40"
+      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:opacity-40"
       title={hasSelection ? locale.t('generation.prompt.wrap_stronger') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => wrapSelection("brace")}
@@ -680,7 +680,7 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:pointer-events-none disabled:opacity-40"
+      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors disabled:opacity-40"
       title={hasSelection ? locale.t('generation.prompt.wrap_weaker') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => wrapSelection("bracket")}
