@@ -2,3 +2,4 @@
 //! Submodules are added by subsequent tasks.
 
 pub mod catalog;
+pub mod hardware;
