@@ -6,6 +6,8 @@ pub mod error;
 pub mod gallery_index;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod interrogator;
+#[cfg(any(feature = "desktop", feature = "server"))]
+pub mod prompt_assistant;
 pub mod jxl;
 pub mod log_buffer;
 pub mod metadata;

@@ -21,6 +21,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_llm_idle_timeout() -> u64 {
+    120
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeTone {
     pub main: String,
@@ -92,6 +96,13 @@ pub struct AppConfig {
     pub interrogator_general_threshold: f32,
     /// Interrogator: character tag confidence threshold (0.0–1.0)
     pub interrogator_character_threshold: f32,
+    /// Prompt assistant: selected/installed catalog model id (None = not chosen yet).
+    pub prompt_assistant_model_id: Option<String>,
+    /// Prompt assistant: idle seconds before the llama-server subprocess is unloaded.
+    #[serde(default = "default_llm_idle_timeout")]
+    pub prompt_assistant_idle_timeout_secs: u64,
+    /// Prompt assistant: true once the user has completed first-run setup.
+    pub prompt_assistant_setup_done: bool,
     /// Optional CivitAI API key for authenticated hash lookups and metadata fetching
     pub civitai_api_key: Option<String>,
     /// Custom gallery directory. When `None`, defaults to `{app_data_dir}/gallery`.
@@ -171,6 +182,9 @@ impl Default for AppConfig {
             extra_model_paths: None,
             interrogator_general_threshold: 0.30,
             interrogator_character_threshold: 0.85,
+            prompt_assistant_model_id: None,
+            prompt_assistant_idle_timeout_secs: 120,
+            prompt_assistant_setup_done: false,
             civitai_api_key: None,
             gallery_path: None,
             browser_mode: false,

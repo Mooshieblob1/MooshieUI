@@ -29,6 +29,9 @@ pub enum AppError {
     #[error("Interrogator error: {0}")]
     InterrogatorError(String),
 
+    #[error("Prompt assistant error: {0}")]
+    LlmError(String),
+
     #[error("{0}")]
     Other(String),
 }
