@@ -148,11 +148,11 @@ pub fn entry(id: &str) -> Option<LlmCatalogEntry> {
 
 /// Pick the smallest-footprint variant a host can run, preferring NVFP4 when capable.
 /// Returns None if no variant fits.
-pub fn best_variant_for<'a>(
-    entry: &'a LlmCatalogEntry,
+pub fn best_variant_for(
+    entry: &LlmCatalogEntry,
     available_vram_mb: u64,
     nvfp4_capable: bool,
-) -> Option<&'a LlmVariant> {
+) -> Option<&LlmVariant> {
     // Prefer NVFP4 when the host supports it and the variant fits.
     if nvfp4_capable {
         if let Some(v) = entry
