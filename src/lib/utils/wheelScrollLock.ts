@@ -26,13 +26,28 @@ export function wheelScrollLock(node: HTMLElement) {
   let lockedTarget: HTMLElement | null = null;
   let lastWheelAt = 0;
 
-  function findScrollTarget(start: EventTarget | null): HTMLElement | null {
-    let el = start instanceof Element ? start : null;
+  function findNestedScrollTarget(start: Element | null): HTMLElement | null {
+    let el = start;
     while (el && el !== node) {
       if (el instanceof HTMLElement && isScrollableY(el)) return el;
       el = el.parentElement;
     }
-    return isScrollableY(node) ? node : null;
+    return null;
+  }
+
+  function findScrollTarget(e: WheelEvent): HTMLElement | null {
+    // A prompt tag overlay can be the event target while the textarea below is
+    // the scrollable under the cursor, so inspect the full hit-test stack.
+    for (const el of document.elementsFromPoint(e.clientX, e.clientY)) {
+      if (!(el instanceof Element)) continue;
+      if (el !== node && !node.contains(el)) continue;
+
+      const nestedTarget = findNestedScrollTarget(el);
+      if (nestedTarget) return nestedTarget;
+    }
+
+    const eventTarget = e.target instanceof Element ? e.target : null;
+    return findNestedScrollTarget(eventTarget) ?? (isScrollableY(node) ? node : null);
   }
 
   function onWheel(e: WheelEvent) {
@@ -42,7 +57,7 @@ export function wheelScrollLock(node: HTMLElement) {
     const gestureStarting = e.timeStamp - lastWheelAt > GESTURE_PAUSE_MS;
     lastWheelAt = e.timeStamp;
     if (gestureStarting || !lockedTarget?.isConnected) {
-      lockedTarget = findScrollTarget(e.target);
+      lockedTarget = findScrollTarget(e);
     }
     if (!lockedTarget) return;
 
