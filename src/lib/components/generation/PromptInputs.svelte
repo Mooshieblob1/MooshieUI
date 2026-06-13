@@ -10,6 +10,9 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import { parseScheduledPrompt, hasRegionalTags, hasSchedulingTags } from "../../utils/promptSchedule.js";
   import SegmentRefinementPanel from "./SegmentRefinementPanel.svelte";
+  import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import PromptAssistantSetupModal from "./PromptAssistantSetupModal.svelte";
+  import PromptComposeModal from "./PromptComposeModal.svelte";
 
   interface Props {
     showHistory?: boolean;
@@ -56,6 +59,75 @@
       hour: "2-digit",
       minute: "2-digit",
     });
+  }
+
+  let undoSnapshot = $state<string | null>(null);
+  let showUndo = $state(false);
+  let undoTimer: ReturnType<typeof setTimeout> | null = null;
+  let _pendingAction = $state<"enhance" | "compose" | null>(null);
+
+  async function onEnhanceClick() {
+    if (!promptAssistant.hasInstalledModel) {
+      _pendingAction = "enhance";
+      promptAssistant.setupModalOpen = true;
+      return;
+    }
+    await runEnhance();
+  }
+
+  async function runEnhance() {
+    const current = generation.positivePrompt?.trim();
+    if (!current) return;
+    try {
+      const result = await promptAssistant.enhance(current, generation.modelFamily);
+      if (result && result.trim()) {
+        undoSnapshot = generation.positivePrompt;
+        generation.positivePrompt = result;
+        generation.saveSettings();
+        triggerUndo();
+      } else {
+        gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
+      }
+    } catch (e) {
+      gallery.showToast(mapLlmError(String(e)), "error");
+    }
+  }
+
+  function onComposeClick() {
+    if (!promptAssistant.hasInstalledModel) {
+      _pendingAction = "compose";
+      promptAssistant.setupModalOpen = true;
+      return;
+    }
+    promptAssistant.composeModalOpen = true;
+  }
+
+  function triggerUndo() {
+    showUndo = true;
+    if (undoTimer) clearTimeout(undoTimer);
+    undoTimer = setTimeout(() => (showUndo = false), 10000);
+  }
+
+  function undoEnhance() {
+    if (undoSnapshot !== null) {
+      generation.positivePrompt = undoSnapshot;
+      generation.saveSettings();
+      undoSnapshot = null;
+    }
+    showUndo = false;
+  }
+
+  function mapLlmError(msg: string): string {
+    if (msg.includes("busy_generation")) return locale.t("prompt_assistant.busy_generation");
+    if (msg.includes("no_model")) return locale.t("prompt_assistant.no_model");
+    return locale.t("prompt_assistant.error_generic");
+  }
+
+  function onSetupInstalled() {
+    const action = _pendingAction;
+    _pendingAction = null;
+    if (action === "enhance") runEnhance();
+    else if (action === "compose") promptAssistant.composeModalOpen = true;
   }
 
 </script>
@@ -137,7 +209,41 @@
       {/each}
       </div>
     </div>
-    <div class="mb-1 flex justify-end">
+    <div class="mb-1 flex items-center justify-between">
+      <div class="flex items-center gap-1.5">
+        <button
+          class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+          disabled={promptAssistant.isGenerating || !generation.positivePrompt?.trim()}
+          title={locale.t("prompt_assistant.enhance_tooltip")}
+          onclick={onEnhanceClick}
+        >
+          {#if promptAssistant.isGenerating}
+            <span class="inline-block animate-spin">⟳</span>
+          {:else}
+            ✨
+          {/if}
+          {locale.t("prompt_assistant.enhance")}
+        </button>
+        <button
+          class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+          disabled={promptAssistant.isGenerating}
+          title={locale.t("prompt_assistant.compose_tooltip")}
+          onclick={onComposeClick}
+        >
+          ✍ {locale.t("prompt_assistant.compose")}
+        </button>
+        {#if showUndo}
+          <button
+            class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-indigo-400 hover:bg-neutral-800"
+            onclick={undoEnhance}
+          >
+            ↩ {locale.t("prompt_assistant.undo")}
+          </button>
+        {/if}
+        {#if promptAssistant.stage === "loading_model"}
+          <span class="text-[10px] text-neutral-400">{locale.t("prompt_assistant.loading_model")}</span>
+        {/if}
+      </div>
       <button
         type="button"
         disabled={!regionalPromptingSupported}
@@ -293,3 +399,12 @@
     </div>
   {/if}
 </div>
+{#if promptAssistant.setupModalOpen}
+  <PromptAssistantSetupModal
+    onClose={() => (promptAssistant.setupModalOpen = false)}
+    onInstalled={onSetupInstalled}
+  />
+{/if}
+{#if promptAssistant.composeModalOpen}
+  <PromptComposeModal onClose={() => (promptAssistant.composeModalOpen = false)} />
+{/if}
