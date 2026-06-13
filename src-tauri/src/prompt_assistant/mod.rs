@@ -1,7 +1,212 @@
-//! Prompt Assistant: local LLM prompt enhance/compose runtime.
-//! Submodules are added by subsequent tasks.
-
 pub mod catalog;
 pub mod grounding;
 pub mod hardware;
 pub mod server;
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use crate::config;
+use crate::error::AppError;
+use server::LlamaServer;
+
+/// Top-level prompt-assistant state held in AppState.
+pub struct PromptAssistant {
+    /// {app_data}/prompt-assistant
+    root: PathBuf,
+    pub server: Arc<LlamaServer>,
+}
+
+impl Default for PromptAssistant {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PromptAssistant {
+    pub fn new() -> Self {
+        let root = config::app_data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("prompt-assistant");
+        let server = Arc::new(LlamaServer::new(root.join("bin")));
+        Self { root, server }
+    }
+
+    fn models_dir(&self) -> PathBuf {
+        self.root.join("models")
+    }
+
+    /// Local on-disk path for a catalog variant's weight file.
+    pub fn model_file_path(&self, model_id: &str, file: &str) -> PathBuf {
+        self.models_dir().join(model_id).join(file)
+    }
+
+    /// Whether ANY variant of a catalog model id is installed.
+    pub fn is_model_installed(&self, model_id: &str) -> bool {
+        let entry = match catalog::entry(model_id) {
+            Some(e) => e,
+            None => return false,
+        };
+        entry
+            .variants
+            .iter()
+            .any(|v| self.model_file_path(model_id, &v.file).exists())
+    }
+
+    /// Catalog model ids that are installed.
+    pub fn installed_models(&self) -> Vec<String> {
+        catalog::catalog()
+            .into_iter()
+            .filter(|e| self.is_model_installed(&e.id))
+            .map(|e| e.id)
+            .collect()
+    }
+
+    /// Find the installed variant file path + whether it is NVFP4, for a model id.
+    fn installed_variant(&self, model_id: &str) -> Option<(PathBuf, bool)> {
+        let entry = catalog::entry(model_id)?;
+        for v in &entry.variants {
+            let p = self.model_file_path(model_id, &v.file);
+            if p.exists() {
+                return Some((p, v.format == "nvfp4"));
+            }
+        }
+        None
+    }
+
+    /// Download a specific variant (by format key: "gguf:Q4_K_M" / "nvfp4") of a model.
+    pub async fn download_model(
+        &self,
+        client: &reqwest::Client,
+        model_id: &str,
+        variant_key: &str,
+        progress: &dyn Fn(&str, u64, u64, bool),
+    ) -> Result<(), AppError> {
+        let entry = catalog::entry(model_id)
+            .ok_or_else(|| AppError::LlmError("Unknown model id".into()))?;
+        let variant = entry
+            .variants
+            .iter()
+            .find(|v| variant_matches(v, variant_key))
+            .ok_or_else(|| AppError::LlmError("Unknown variant".into()))?;
+
+        let dest = self.model_file_path(model_id, &variant.file);
+        if dest.exists() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(dest.parent().unwrap())?;
+        // HuggingFace resolve URL (mirrors interrogator's HF_BASE_URL pattern).
+        let url = format!(
+            "https://huggingface.co/{}/resolve/main/{}",
+            variant.repo, variant.file
+        );
+        download_to(client, &url, &dest, &variant.file, progress).await
+    }
+
+    /// Delete all installed files for a model id.
+    pub fn delete_model(&self, model_id: &str) -> Result<(), AppError> {
+        let dir = self.models_dir().join(model_id);
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)?;
+        }
+        Ok(())
+    }
+
+    /// Ensure the server is up and the model loaded, starting the idle watchdog.
+    /// `total_vram_mb` drives GPU-layer offload; `nvfp4_capable` selects the backend.
+    pub async fn ensure_running(
+        &self,
+        client: &reqwest::Client,
+        model_id: &str,
+        total_vram_mb: u64,
+        nvfp4_capable: bool,
+        idle_timeout_secs: u64,
+        progress: &dyn Fn(&str, u64, u64, bool),
+    ) -> Result<u16, AppError> {
+        let (model_path, is_nvfp4) = self
+            .installed_variant(model_id)
+            .ok_or_else(|| AppError::LlmError("Model not installed".into()))?;
+
+        let backend = server::default_backend(is_nvfp4 && nvfp4_capable);
+        self.server.ensure_binary(client, backend, progress).await?;
+
+        // Offload all layers when the model fits comfortably in VRAM, else CPU.
+        let variant_vram = catalog::entry(model_id)
+            .and_then(|e| {
+                e.variants
+                    .into_iter()
+                    .find(|v| self.model_file_path(model_id, &v.file).exists())
+            })
+            .map(|v| v.vram_mb)
+            .unwrap_or(u64::MAX);
+        let n_gpu_layers = if total_vram_mb >= variant_vram {
+            999
+        } else {
+            0
+        };
+
+        let port = self
+            .server
+            .ensure_running(&model_path, model_id, n_gpu_layers, idle_timeout_secs)
+            .await?;
+        server::start_idle_watchdog(self.server.clone(), idle_timeout_secs);
+        Ok(port)
+    }
+}
+
+/// Match a catalog variant against a frontend variant key.
+/// Keys: "nvfp4" or "gguf:<QUANT>" (e.g. "gguf:Q4_K_M").
+fn variant_matches(v: &catalog::LlmVariant, key: &str) -> bool {
+    if v.format == "nvfp4" {
+        return key == "nvfp4";
+    }
+    match key.strip_prefix("gguf:") {
+        Some(q) => v.quant.as_deref() == Some(q),
+        None => false,
+    }
+}
+
+async fn download_to(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &std::path::Path,
+    label: &str,
+    progress: &dyn Fn(&str, u64, u64, bool),
+) -> Result<(), AppError> {
+    use tokio::io::AsyncWriteExt;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| AppError::LlmError(format!("Download failed: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(AppError::LlmError(format!(
+            "Download returned {}",
+            resp.status()
+        )));
+    }
+    let total = resp.content_length().unwrap_or(0);
+    let mut downloaded = 0u64;
+    let mut file = tokio::fs::File::create(dest).await?;
+    progress(label, 0, total, false);
+    let mut resp = resp;
+    let mut last_emit = 0u64;
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| AppError::LlmError(format!("Download read error: {e}")))?
+    {
+        file.write_all(&chunk).await?;
+        downloaded += chunk.len() as u64;
+        if downloaded - last_emit > 1024 * 1024 || downloaded == total {
+            last_emit = downloaded;
+            progress(label, downloaded, total, false);
+        }
+    }
+    file.flush().await?;
+    progress(label, downloaded, total, true);
+    Ok(())
+}
+
+pub use catalog::{LlmCatalogEntry, LlmVariant};
+pub use hardware::{LlmGpu, LlmHardware};

@@ -11,6 +11,8 @@ use crate::config::AppConfig;
 use crate::interrogator::InterrogatorState;
 use crate::model_requests::ModelRequestState;
 use crate::notifications::NotificationState;
+#[cfg(any(feature = "desktop", feature = "server"))]
+use crate::prompt_assistant::PromptAssistant;
 
 /// Stored Tauri AppHandle so the headless web server can control the window.
 #[cfg(feature = "desktop")]
@@ -474,6 +476,8 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     #[cfg(any(feature = "desktop", feature = "server"))]
     pub interrogator: Arc<RwLock<InterrogatorState>>,
+    #[cfg(any(feature = "desktop", feature = "server"))]
+    pub prompt_assistant: Arc<PromptAssistant>,
     /// Broadcast channel for SSE events in browser mode.
     pub event_tx: broadcast::Sender<BroadcastEvent>,
     /// Timestamp of last heartbeat from browser client.
@@ -539,6 +543,8 @@ impl AppState {
             http_client,
             #[cfg(any(feature = "desktop", feature = "server"))]
             interrogator: Arc::new(RwLock::new(InterrogatorState::new())),
+            #[cfg(any(feature = "desktop", feature = "server"))]
+            prompt_assistant: Arc::new(PromptAssistant::new()),
             event_tx,
             last_heartbeat: Mutex::new(std::time::Instant::now()),
             #[cfg(feature = "desktop")]
