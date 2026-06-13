@@ -6,13 +6,13 @@ pub mod error;
 pub mod gallery_index;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod interrogator;
-#[cfg(any(feature = "desktop", feature = "server"))]
-pub mod prompt_assistant;
 pub mod jxl;
 pub mod log_buffer;
 pub mod metadata;
 pub mod model_requests;
 pub mod notifications;
+#[cfg(any(feature = "desktop", feature = "server"))]
+pub mod prompt_assistant;
 #[cfg(feature = "desktop")]
 pub mod setup;
 pub mod state;
@@ -433,6 +433,14 @@ pub fn run() {
             commands::interrogator::interrogate_image_path,
             commands::interrogator::interrogate_gallery_image,
             commands::interrogator::interrogate_clipboard,
+            commands::prompt_assistant::detect_llm_hardware,
+            commands::prompt_assistant::list_llm_catalog,
+            commands::prompt_assistant::llm_status,
+            commands::prompt_assistant::download_llm_model,
+            commands::prompt_assistant::delete_llm_model,
+            commands::prompt_assistant::unload_llm,
+            commands::prompt_assistant::enhance_prompt,
+            commands::prompt_assistant::compose_prompt,
             commands::api::fetch_cached_image,
             commands::api::read_clipboard_image,
             commands::api::get_gpu_stats,

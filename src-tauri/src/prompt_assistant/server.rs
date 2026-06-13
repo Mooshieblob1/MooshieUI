@@ -118,7 +118,7 @@ impl LlamaServer {
         &self,
         client: &reqwest::Client,
         backend: Backend,
-        progress: &dyn Fn(&str, u64, u64, bool),
+        progress: &(dyn Fn(&str, u64, u64, bool) + Sync),
     ) -> Result<(), AppError> {
         if self.is_binary_present() {
             return Ok(());
@@ -299,7 +299,7 @@ async fn download_with_progress(
     url: &str,
     dest: &Path,
     label: &str,
-    progress: &dyn Fn(&str, u64, u64, bool),
+    progress: &(dyn Fn(&str, u64, u64, bool) + Sync),
 ) -> Result<(), AppError> {
     let resp = client
         .get(url)
@@ -339,8 +339,8 @@ async fn download_with_progress(
 /// preserving executable bits on unix.
 fn extract_all_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
     let file = std::fs::File::open(archive_path)?;
-    let mut zip = zip::ZipArchive::new(file)
-        .map_err(|e| AppError::LlmError(format!("Bad zip: {e}")))?;
+    let mut zip =
+        zip::ZipArchive::new(file).map_err(|e| AppError::LlmError(format!("Bad zip: {e}")))?;
     for i in 0..zip.len() {
         let mut entry = zip
             .by_index(i)
@@ -348,7 +348,10 @@ fn extract_all_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
         if entry.is_dir() {
             continue;
         }
-        let name = match entry.enclosed_name().and_then(|p| p.file_name().map(|f| f.to_owned())) {
+        let name = match entry
+            .enclosed_name()
+            .and_then(|p| p.file_name().map(|f| f.to_owned()))
+        {
             Some(n) => n,
             None => continue,
         };

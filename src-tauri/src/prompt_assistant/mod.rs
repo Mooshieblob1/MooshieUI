@@ -80,7 +80,7 @@ impl PromptAssistant {
         client: &reqwest::Client,
         model_id: &str,
         variant_key: &str,
-        progress: &dyn Fn(&str, u64, u64, bool),
+        progress: &(dyn Fn(&str, u64, u64, bool) + Sync),
     ) -> Result<(), AppError> {
         let entry = catalog::entry(model_id)
             .ok_or_else(|| AppError::LlmError("Unknown model id".into()))?;
@@ -121,7 +121,7 @@ impl PromptAssistant {
         total_vram_mb: u64,
         nvfp4_capable: bool,
         idle_timeout_secs: u64,
-        progress: &dyn Fn(&str, u64, u64, bool),
+        progress: &(dyn Fn(&str, u64, u64, bool) + Sync),
     ) -> Result<u16, AppError> {
         let (model_path, is_nvfp4) = self
             .installed_variant(model_id)
@@ -171,7 +171,7 @@ async fn download_to(
     url: &str,
     dest: &std::path::Path,
     label: &str,
-    progress: &dyn Fn(&str, u64, u64, bool),
+    progress: &(dyn Fn(&str, u64, u64, bool) + Sync),
 ) -> Result<(), AppError> {
     use tokio::io::AsyncWriteExt;
     let resp = client
