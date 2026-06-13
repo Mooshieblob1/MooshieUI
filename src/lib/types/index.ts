@@ -220,6 +220,9 @@ export interface AppConfig {
   extra_model_paths: string | null;
   interrogator_general_threshold: number;
   interrogator_character_threshold: number;
+  prompt_assistant_model_id: string | null;
+  prompt_assistant_idle_timeout_secs: number;
+  prompt_assistant_setup_done: boolean;
   civitai_api_key: string | null;
   /** Present in browser mode for non-admin users when a server-side key is configured. */
   civitai_api_key_configured?: boolean;

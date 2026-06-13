@@ -8,6 +8,8 @@
   import { accessibility } from "../../stores/accessibility.svelte.js";
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
+  import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import PromptAssistantSetupModal from "../generation/PromptAssistantSetupModal.svelte";
   import OpenModelFolders from "./OpenModelFolders.svelte";
   import ModelManagerModal from "./ModelManagerModal.svelte";
   import GpuStatusPanel from "./GpuStatusPanel.svelte";
@@ -68,6 +70,7 @@
   const appVersion = __APP_VERSION__ ?? "dev";
 
   let config = $state<AppConfig | null>(null);
+  let showPromptAssistantSetup = $state(false);
   let loading = $state(true);
   let saving = $state(false);
   let saved = $state(false);
@@ -1027,6 +1030,7 @@
       paths: false,
       autocomplete: false,
       interrogator: false,
+      prompt_assistant: false,
       civitai: false,
       about: false,
     };
@@ -1062,6 +1066,7 @@
     { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview upscale pre-upscale before base" },
     { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
+    { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf nvfp4 ai assistant" },
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
     { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
     { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates about troubleshooting logs export diagnostic github report issue" },
@@ -3336,6 +3341,77 @@
         </section>
         {/if}
 
+        <!-- Prompt Assistant -->
+        {#if sectionVisible("prompt_assistant")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.prompt_assistant = !collapsed.prompt_assistant)}
+          >
+            <span class="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+              {locale.t('settings.prompt_assistant.title')}
+            </span>
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-neutral-500 transition-transform {collapsed.prompt_assistant ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.prompt_assistant}
+          <div class="px-5 pb-5 space-y-4">
+            <p class="text-[10px] text-neutral-500">
+              {locale.t('settings.prompt_assistant.desc')}
+            </p>
+
+            <div class="text-sm text-neutral-300">
+              {#if promptAssistant.status && promptAssistant.status.installed_models.length > 0}
+                {locale.t('settings.prompt_assistant.installed_label')}: {promptAssistant.status.installed_models.join(", ")}
+              {:else}
+                {locale.t('settings.prompt_assistant.none_installed')}
+              {/if}
+            </div>
+
+            <div class="flex flex-wrap gap-2">
+              <button
+                class="rounded-lg border border-neutral-600 px-3 py-1 text-sm text-neutral-200 hover:bg-neutral-800 cursor-pointer"
+                onclick={() => (showPromptAssistantSetup = true)}
+              >
+                {locale.t('settings.prompt_assistant.manage_models')}
+              </button>
+              {#each promptAssistant.status?.installed_models ?? [] as id}
+                <button
+                  class="rounded-lg border border-red-700 px-3 py-1 text-sm text-red-300 hover:bg-red-900/30 cursor-pointer"
+                  onclick={() => promptAssistant.deleteModel(id)}
+                >
+                  {locale.t('settings.prompt_assistant.delete')} {id}
+                </button>
+              {/each}
+              <button
+                class="rounded-lg border border-neutral-600 px-3 py-1 text-sm text-neutral-200 hover:bg-neutral-800 cursor-pointer"
+                onclick={() => promptAssistant.unload()}
+              >
+                {locale.t('settings.prompt_assistant.unload_now')}
+              </button>
+            </div>
+
+            <div>
+              <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+                {locale.t('settings.prompt_assistant.idle_timeout')}
+                <span class="text-neutral-300">{config.prompt_assistant_idle_timeout_secs}s</span>
+              </label>
+              <input
+                type="range"
+                bind:value={config.prompt_assistant_idle_timeout_secs}
+                onchange={() => { autoSave(); }}
+                min="30"
+                max="600"
+                step="30"
+                class="w-full accent-indigo-500"
+              />
+            </div>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
         <!-- CivitAI (admin / moderator) -->
         {#if canManageServer && sectionVisible("civitai")}
         <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
@@ -4317,4 +4393,8 @@
     </div>
   </div>
 </div>
+{/if}
+
+{#if showPromptAssistantSetup}
+  <PromptAssistantSetupModal onClose={() => (showPromptAssistantSetup = false)} />
 {/if}
