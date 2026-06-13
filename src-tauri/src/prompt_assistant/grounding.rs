@@ -100,7 +100,8 @@ fn resolve_artist(token: &str) -> Option<String> {
 }
 
 /// Retrieve up to `limit` candidate tags that share a token with the input,
-/// to seed the system prompt (lexical grounding).
+/// to seed the system prompt (lexical grounding). Results are sorted so the
+/// selection is deterministic regardless of HashSet iteration order.
 pub fn retrieve_candidates(input: &str, limit: usize) -> Vec<String> {
     let c = corpus();
     let input_tokens: HashSet<String> = input
@@ -109,19 +110,17 @@ pub fn retrieve_candidates(input: &str, limit: usize) -> Vec<String> {
         .filter(|s| s.len() > 2)
         .map(|s| s.to_string())
         .collect();
-    let mut out: Vec<String> = Vec::new();
-    for tag in &c.tags {
-        if out.len() >= limit {
-            break;
-        }
-        if tag
-            .split('_')
-            .any(|part| part.len() > 2 && input_tokens.contains(part))
-        {
-            out.push(to_display(tag));
-        }
-    }
-    out
+    let mut matches: Vec<&String> = c
+        .tags
+        .iter()
+        .filter(|tag| {
+            tag.split('_')
+                .any(|part| part.len() > 2 && input_tokens.contains(part))
+        })
+        .collect();
+    matches.sort();
+    matches.truncate(limit);
+    matches.iter().map(|tag| to_display(tag)).collect()
 }
 
 /// Whether a family uses tag-only prompting (vs Anima natural language).
@@ -129,8 +128,16 @@ pub fn is_tag_only_family(family: &str) -> bool {
     !matches!(family, "anima")
 }
 
-/// Build the family-specific system prompt, seeded with grounding candidates.
-pub fn system_prompt(family: &str, mode: GenMode, candidates: &[String]) -> String {
+/// Whether grounding should run in tag-only mode. A purpose-built tag upsampler
+/// (e.g. DanTagGen) is always tag-only regardless of family; otherwise the
+/// family decides (everything except Anima is tag-only).
+pub fn is_tag_only(purpose: &str, family: &str) -> bool {
+    purpose == "tag_upsampler" || is_tag_only_family(family)
+}
+
+/// Build the system prompt, seeded with grounding candidates. `tag_only`
+/// selects between danbooru-tag and Anima natural-language conventions.
+pub fn system_prompt(tag_only: bool, mode: GenMode, candidates: &[String]) -> String {
     let cand = if candidates.is_empty() {
         String::new()
     } else {
@@ -139,7 +146,7 @@ pub fn system_prompt(family: &str, mode: GenMode, candidates: &[String]) -> Stri
             candidates.join(", ")
         )
     };
-    if is_tag_only_family(family) {
+    if tag_only {
         let verb = match mode {
             GenMode::Enhance => "Expand and enrich the user's danbooru tag list",
             GenMode::Compose => "Convert the user's description into a danbooru tag list",
@@ -171,10 +178,11 @@ pub enum GenMode {
 }
 
 /// Post-filter repair of raw model output. Validates/repairs against the corpus
-/// and enforces family conventions. Returns a cleaned prompt string (possibly
+/// and enforces the active conventions. Returns a cleaned prompt string (possibly
 /// empty if nothing survived — caller keeps the original prompt in that case).
-pub fn repair(raw: &str, family: &str) -> String {
-    if is_tag_only_family(family) {
+/// `tag_only` selects danbooru-tag vs Anima natural-language repair.
+pub fn repair(raw: &str, tag_only: bool) -> String {
+    if tag_only {
         repair_tag_only(raw)
     } else {
         repair_anima(raw)
@@ -281,5 +289,26 @@ mod tests {
         let out = repair_anima("a serene forest at dawn, 1girl, soft lighting");
         assert!(out.contains("a serene forest at dawn"));
         assert!(out.contains("1girl"));
+    }
+
+    #[test]
+    fn is_tag_only_routes_by_purpose_and_family() {
+        // Tag upsampler is always tag-only, even on Anima.
+        assert!(is_tag_only("tag_upsampler", "anima"));
+        // Natural-language model on Anima uses prose mode.
+        assert!(!is_tag_only("natural_language", "anima"));
+        // Natural-language model on a non-Anima family stays tag-only.
+        assert!(is_tag_only("natural_language", "illustrious"));
+    }
+
+    #[test]
+    fn retrieve_candidates_is_deterministic() {
+        let a = retrieve_candidates("1girl solo", 10);
+        let b = retrieve_candidates("1girl solo", 10);
+        assert_eq!(a, b);
+        // Sorted ascending.
+        let mut sorted = a.clone();
+        sorted.sort();
+        assert_eq!(a, sorted);
     }
 }

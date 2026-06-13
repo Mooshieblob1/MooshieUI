@@ -89,6 +89,13 @@ impl PromptAssistant {
             .iter()
             .find(|v| variant_matches(v, variant_key))
             .ok_or_else(|| AppError::LlmError("Unknown variant".into()))?;
+        // Defense in depth: "coming soon" variants (e.g. NVFP4 pending runtime
+        // support) are never installable even if a key somehow reaches here.
+        if variant.coming_soon {
+            return Err(AppError::LlmError(
+                "This model variant is not yet available".into(),
+            ));
+        }
 
         let dest = self.model_file_path(model_id, &variant.file);
         if dest.exists() {
@@ -147,7 +154,7 @@ impl PromptAssistant {
 
         let port = self
             .server
-            .ensure_running(&model_path, model_id, n_gpu_layers, idle_timeout_secs)
+            .ensure_running(client, &model_path, model_id, n_gpu_layers)
             .await?;
         server::start_idle_watchdog(self.server.clone(), idle_timeout_secs);
         Ok(port)
@@ -186,26 +193,40 @@ async fn download_to(
         )));
     }
     let total = resp.content_length().unwrap_or(0);
-    let mut downloaded = 0u64;
     let mut file = tokio::fs::File::create(dest).await?;
     progress(label, 0, total, false);
-    let mut resp = resp;
-    let mut last_emit = 0u64;
-    while let Some(chunk) = resp
-        .chunk()
-        .await
-        .map_err(|e| AppError::LlmError(format!("Download read error: {e}")))?
-    {
-        file.write_all(&chunk).await?;
-        downloaded += chunk.len() as u64;
-        if downloaded - last_emit > 1024 * 1024 || downloaded == total {
-            last_emit = downloaded;
-            progress(label, downloaded, total, false);
+    // Stream to disk; on any error remove the partial file so a retry starts clean.
+    let stream_result: Result<u64, AppError> = async {
+        let mut downloaded = 0u64;
+        let mut last_emit = 0u64;
+        let mut resp = resp;
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .map_err(|e| AppError::LlmError(format!("Download read error: {e}")))?
+        {
+            file.write_all(&chunk).await?;
+            downloaded += chunk.len() as u64;
+            if downloaded - last_emit > 1024 * 1024 || downloaded == total {
+                last_emit = downloaded;
+                progress(label, downloaded, total, false);
+            }
+        }
+        file.flush().await?;
+        Ok(downloaded)
+    }
+    .await;
+    match stream_result {
+        Ok(downloaded) => {
+            progress(label, downloaded, total, true);
+            Ok(())
+        }
+        Err(e) => {
+            drop(file);
+            let _ = tokio::fs::remove_file(dest).await;
+            Err(e)
         }
     }
-    file.flush().await?;
-    progress(label, downloaded, total, true);
-    Ok(())
 }
 
 pub use catalog::{LlmCatalogEntry, LlmVariant};

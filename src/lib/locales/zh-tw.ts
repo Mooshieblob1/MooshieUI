@@ -2133,6 +2133,7 @@ const zhTw: Record<string, string> = {
   "prompt_assistant.cpu_only": "僅 CPU — 建議使用小型模型",
   "prompt_assistant.nvfp4_supported": "Blackwell（支援 NVFP4）",
   "prompt_assistant.needs_blackwell": "需要 Blackwell GPU",
+  "prompt_assistant.coming_soon": "即將推出",
   "prompt_assistant.needs_vram": "需要約 {gb} GB 顯示記憶體",
   "prompt_assistant.downloading": "下載模型中…",
   "prompt_assistant.download_install": "下載並安裝",

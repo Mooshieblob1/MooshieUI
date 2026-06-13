@@ -2171,6 +2171,7 @@ const en: Record<string, string> = {
   "prompt_assistant.cpu_only": "CPU only — small models recommended",
   "prompt_assistant.nvfp4_supported": "Blackwell (NVFP4 supported)",
   "prompt_assistant.needs_blackwell": "Requires a Blackwell GPU",
+  "prompt_assistant.coming_soon": "Coming soon",
   "prompt_assistant.needs_vram": "Needs ~{gb} GB VRAM",
   "prompt_assistant.downloading": "Downloading model…",
   "prompt_assistant.download_install": "Download & install",

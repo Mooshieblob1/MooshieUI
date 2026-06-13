@@ -2158,6 +2158,7 @@ const ja: Record<string, string> = {
   "prompt_assistant.cpu_only": "CPUのみ — 小さいモデルを推奨",
   "prompt_assistant.nvfp4_supported": "Blackwell（NVFP4対応）",
   "prompt_assistant.needs_blackwell": "Blackwell GPUが必要",
+  "prompt_assistant.coming_soon": "近日公開",
   "prompt_assistant.needs_vram": "約{gb} GB VRAMが必要",
   "prompt_assistant.downloading": "モデルをダウンロード中…",
   "prompt_assistant.download_install": "ダウンロードとインストール",

@@ -155,8 +155,13 @@ async fn run_generation(
         .await?;
 
     app.emit("llm:stage", "generating").ok();
+    // A purpose-built tag upsampler is always tag-only regardless of family.
+    let purpose = catalog::entry(&model_id)
+        .map(|e| e.purpose)
+        .unwrap_or_else(|| "natural_language".to_string());
+    let tag_only = grounding::is_tag_only(&purpose, family);
     let candidates = grounding::retrieve_candidates(input, 40);
-    let system = grounding::system_prompt(family, mode, &candidates);
+    let system = grounding::system_prompt(tag_only, mode, &candidates);
     let max_tokens = match opts.length.as_deref() {
         Some("short") => 96,
         Some("detailed") => 384,
@@ -166,7 +171,7 @@ async fn run_generation(
         .server
         .chat(&state.http_client, port, &system, input, max_tokens)
         .await?;
-    let cleaned = grounding::repair(&raw, family);
+    let cleaned = grounding::repair(&raw, tag_only);
     Ok(cleaned)
 }
 

@@ -14,6 +14,9 @@ pub struct LlmVariant {
     pub repo: String,
     /// File name within the repo.
     pub file: String,
+    /// Surfaced in the catalog but not yet downloadable (e.g. NVFP4 pending
+    /// llama.cpp runtime support). Never auto-selected, recommended, or installed.
+    pub coming_soon: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,6 +42,7 @@ fn gguf(quant: &str, size_mb: u64, vram_mb: u64, repo: &str, file: &str) -> LlmV
         vram_mb,
         repo: repo.into(),
         file: file.into(),
+        coming_soon: false,
     }
 }
 
@@ -50,6 +54,9 @@ fn nvfp4(size_mb: u64, vram_mb: u64, repo: &str, file: &str) -> LlmVariant {
         vram_mb,
         repo: repo.into(),
         file: file.into(),
+        // NVFP4 weights are surfaced for visibility but not yet loadable by the
+        // pinned llama.cpp runtime, so they remain "coming soon" (not installable).
+        coming_soon: true,
     }
 }
 
@@ -146,19 +153,19 @@ pub fn entry(id: &str) -> Option<LlmCatalogEntry> {
     catalog().into_iter().find(|e| e.id == id)
 }
 
-/// Pick the smallest-footprint variant a host can run, preferring NVFP4 when capable.
-/// Returns None if no variant fits.
+/// Pick the smallest-footprint variant a host can run, preferring NVFP4 when
+/// capable and available. Returns None if no variant fits.
 pub fn best_variant_for(
     entry: &LlmCatalogEntry,
     available_vram_mb: u64,
     nvfp4_capable: bool,
 ) -> Option<&LlmVariant> {
-    // Prefer NVFP4 when the host supports it and the variant fits.
+    // Prefer NVFP4 when the host supports it, it fits, and it is installable.
     if nvfp4_capable {
         if let Some(v) = entry
             .variants
             .iter()
-            .find(|v| v.format == "nvfp4" && v.vram_mb <= available_vram_mb)
+            .find(|v| v.format == "nvfp4" && !v.coming_soon && v.vram_mb <= available_vram_mb)
         {
             return Some(v);
         }
@@ -207,12 +214,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn high_vram_blackwell_picks_7b_nvfp4() {
+    fn high_vram_blackwell_picks_7b_gguf() {
+        // Blackwell host: NVFP4 is "coming soon" (not yet installable), so the
+        // recommendation must fall back to the best-fitting GGUF, never NVFP4.
         let id = recommend_model_id(32000, 65536, true);
         assert_eq!(id, "qwen25-7b-instruct");
         let e = entry(&id).unwrap();
         let v = best_variant_for(&e, 32000, true).unwrap();
-        assert_eq!(v.format, "nvfp4");
+        assert_eq!(v.format, "gguf");
+    }
+
+    #[test]
+    fn coming_soon_variants_are_never_auto_selected() {
+        // Every NVFP4 variant is currently coming_soon; none should be picked.
+        let e = entry("qwen25-7b-instruct").unwrap();
+        let v = best_variant_for(&e, 32000, true).unwrap();
+        assert!(!v.coming_soon);
+        assert_eq!(v.format, "gguf");
     }
 
     #[test]

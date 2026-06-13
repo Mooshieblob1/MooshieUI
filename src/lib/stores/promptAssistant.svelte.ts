@@ -81,7 +81,8 @@ class PromptAssistantStore {
     const nvfp4Ok = this.hardware?.nvfp4_capable ?? false;
     const vram = this.hardware?.total_vram_mb ?? 0;
     if (nvfp4Ok) {
-      const v = entry.variants.find((v) => v.format === "nvfp4");
+      // Skip "coming soon" NVFP4 variants — they are not yet installable.
+      const v = entry.variants.find((v) => v.format === "nvfp4" && !v.coming_soon);
       if (v) return "nvfp4";
     }
     // Largest GGUF that fits, else smallest GGUF.

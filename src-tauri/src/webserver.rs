@@ -4185,6 +4185,45 @@ async fn dispatch_command(
             let result = run_prompt_assistant_headless(&state, &input, &family, mode).await?;
             Ok(serde_json::Value::String(result))
         }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "download_llm_model" => {
+            let id = args["id"].as_str().unwrap_or("").to_string();
+            let variant = args["variant"].as_str().unwrap_or("").to_string();
+            let state_for_progress = state.clone();
+            let progress = move |filename: &str, downloaded: u64, total: u64, done: bool| {
+                state_for_progress.broadcast(
+                    "llm:download_progress",
+                    serde_json::json!({
+                        "filename": filename,
+                        "downloaded": downloaded,
+                        "total": total,
+                        "done": done,
+                    }),
+                );
+            };
+            state
+                .prompt_assistant
+                .download_model(&state.http_client, &id, &variant, &progress)
+                .await
+                .map_err(|e| e.to_string())?;
+            // Persist selected model id + mark setup done.
+            {
+                let mut cfg = state.config.write().await;
+                cfg.prompt_assistant_model_id = Some(id.clone());
+                cfg.prompt_assistant_setup_done = true;
+                let _ = crate::config::save_config(&cfg);
+            }
+            Ok(serde_json::Value::Null)
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "delete_llm_model" => {
+            let id = args["id"].as_str().unwrap_or("").to_string();
+            state
+                .prompt_assistant
+                .delete_model(&id)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
 
         // --- File operations ---
         "save_image_file" => {
@@ -4392,15 +4431,20 @@ pub async fn run_prompt_assistant_headless(
         )
         .await
         .map_err(|e| e.to_string())?;
+    // A purpose-built tag upsampler is always tag-only regardless of family.
+    let purpose = crate::prompt_assistant::catalog::entry(&model_id)
+        .map(|e| e.purpose)
+        .unwrap_or_else(|| "natural_language".to_string());
+    let tag_only = grounding::is_tag_only(&purpose, family);
     let candidates = grounding::retrieve_candidates(input, 40);
-    let system = grounding::system_prompt(family, mode, &candidates);
+    let system = grounding::system_prompt(tag_only, mode, &candidates);
     let raw = state
         .prompt_assistant
         .server
         .chat(&state.http_client, port, &system, input, 192)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(grounding::repair(&raw, family))
+    Ok(grounding::repair(&raw, tag_only))
 }
 
 // ---------------------------------------------------------------------------

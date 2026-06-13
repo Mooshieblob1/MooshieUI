@@ -2134,6 +2134,7 @@ const pt: Record<string, string> = {
   "prompt_assistant.cpu_only": "Apenas CPU — modelos pequenos recomendados",
   "prompt_assistant.nvfp4_supported": "Blackwell (NVFP4 compatível)",
   "prompt_assistant.needs_blackwell": "Requer uma GPU Blackwell",
+  "prompt_assistant.coming_soon": "Em breve",
   "prompt_assistant.needs_vram": "Precisa de ~{gb} GB de VRAM",
   "prompt_assistant.downloading": "Baixando modelo…",
   "prompt_assistant.download_install": "Baixar e instalar",

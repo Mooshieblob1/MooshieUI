@@ -348,6 +348,8 @@ export interface LlmVariant {
   vram_mb: number;
   repo: string;
   file: string;
+  /** Surfaced in the catalog but not yet downloadable (e.g. NVFP4 pending runtime support). */
+  coming_soon: boolean;
 }
 
 export interface LlmCatalogEntry {

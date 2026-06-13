@@ -29,7 +29,9 @@
       const msg = String(e);
       error = msg.includes("busy_generation")
         ? locale.t("prompt_assistant.busy_generation")
-        : locale.t("prompt_assistant.error_generic");
+        : msg.includes("no_model")
+          ? locale.t("prompt_assistant.no_model")
+          : locale.t("prompt_assistant.error_generic");
     }
   }
 

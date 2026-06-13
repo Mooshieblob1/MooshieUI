@@ -148,27 +148,33 @@
               {#each entry.variants as v}
                 {@const available = variantAvailable(v)}
                 {@const ok = fits(v)}
+                {@const comingSoon = v.coming_soon}
+                {@const selectable = available && ok && !comingSoon}
                 <button
-                  disabled={!available}
-                  title={!available
-                    ? locale.t("prompt_assistant.needs_blackwell")
-                    : !ok
-                      ? locale.t("prompt_assistant.needs_vram", {
-                          gb: (v.vram_mb / 1024).toFixed(1),
-                        })
-                      : ""}
+                  disabled={!selectable}
+                  title={comingSoon
+                    ? locale.t("prompt_assistant.coming_soon")
+                    : !available
+                      ? locale.t("prompt_assistant.needs_blackwell")
+                      : !ok
+                        ? locale.t("prompt_assistant.needs_vram", {
+                            gb: (v.vram_mb / 1024).toFixed(1),
+                          })
+                        : ""}
                   class="rounded border px-2 py-0.5 text-[10px] {selectedVariant ===
                   variantKey(v)
                     ? 'border-[var(--theme-accent-500)] text-neutral-100'
-                    : 'border-neutral-600 text-neutral-400'} {!available || !ok
-                    ? 'opacity-40'
-                    : 'hover:text-neutral-200'}"
+                    : 'border-neutral-600 text-neutral-400'} {selectable
+                    ? 'hover:text-neutral-200'
+                    : 'opacity-40'}"
                   onclick={(e) => {
                     e.stopPropagation();
-                    if (available) selectedVariant = variantKey(v);
+                    if (selectable) selectedVariant = variantKey(v);
                   }}
                 >
-                  {variantLabel(v)} · {(v.size_mb / 1024).toFixed(1)} GB
+                  {variantLabel(v)} · {comingSoon
+                    ? locale.t("prompt_assistant.coming_soon")
+                    : `${(v.size_mb / 1024).toFixed(1)} GB`}
                 </button>
               {/each}
             </div>

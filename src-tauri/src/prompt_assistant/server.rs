@@ -145,10 +145,10 @@ impl LlamaServer {
     /// on first use or after an idle unload / model switch.
     pub async fn ensure_running(
         &self,
+        client: &reqwest::Client,
         model_path: &Path,
         model_id: &str,
         n_gpu_layers: i32,
-        _idle_timeout_secs: u64,
     ) -> Result<u16, AppError> {
         // Already running with the right model?
         if self.is_running() && self.active_model().as_deref() == Some(model_id) {
@@ -172,7 +172,9 @@ impl LlamaServer {
             .arg(n_gpu_layers.to_string())
             .arg("--no-webui")
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::null())
+            // Ensure the child dies with the app even if unload() is skipped.
+            .kill_on_drop(true);
         #[cfg(windows)]
         {
             cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
@@ -185,10 +187,9 @@ impl LlamaServer {
         self.port.store(port, std::sync::atomic::Ordering::Relaxed);
         *self.active_model.lock().unwrap() = Some(model_id.to_string());
 
-        // Health poll (up to ~60s).
+        // Health poll (up to ~180s — large models can be slow to load).
         let health = format!("http://127.0.0.1:{port}/health");
-        let client = reqwest::Client::new();
-        let deadline = Instant::now() + Duration::from_secs(60);
+        let deadline = Instant::now() + Duration::from_secs(180);
         loop {
             if Instant::now() > deadline {
                 self.unload().await;
@@ -313,26 +314,40 @@ async fn download_with_progress(
         )));
     }
     let total = resp.content_length().unwrap_or(0);
-    let mut downloaded: u64 = 0;
     let mut file = tokio::fs::File::create(dest).await?;
     progress(label, 0, total, false);
-    let mut resp = resp;
-    let mut last_emit = 0u64;
-    while let Some(chunk) = resp
-        .chunk()
-        .await
-        .map_err(|e| AppError::LlmError(format!("Download read error: {e}")))?
-    {
-        file.write_all(&chunk).await?;
-        downloaded += chunk.len() as u64;
-        if downloaded - last_emit > 1024 * 1024 || downloaded == total {
-            last_emit = downloaded;
-            progress(label, downloaded, total, false);
+    // Stream to disk; on any error remove the partial file so a retry starts clean.
+    let stream_result: Result<u64, AppError> = async {
+        let mut downloaded: u64 = 0;
+        let mut last_emit = 0u64;
+        let mut resp = resp;
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .map_err(|e| AppError::LlmError(format!("Download read error: {e}")))?
+        {
+            file.write_all(&chunk).await?;
+            downloaded += chunk.len() as u64;
+            if downloaded - last_emit > 1024 * 1024 || downloaded == total {
+                last_emit = downloaded;
+                progress(label, downloaded, total, false);
+            }
+        }
+        file.flush().await?;
+        Ok(downloaded)
+    }
+    .await;
+    match stream_result {
+        Ok(downloaded) => {
+            progress(label, downloaded, total, true);
+            Ok(())
+        }
+        Err(e) => {
+            drop(file);
+            let _ = tokio::fs::remove_file(dest).await;
+            Err(e)
         }
     }
-    file.flush().await?;
-    progress(label, downloaded, total, true);
-    Ok(())
 }
 
 /// Extract every file from a zip archive flatly into `dir` (strip directories),

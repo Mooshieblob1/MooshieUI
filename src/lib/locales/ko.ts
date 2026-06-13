@@ -2133,6 +2133,7 @@ const ko: Record<string, string> = {
   "prompt_assistant.cpu_only": "CPU만 — 작은 모델 권장",
   "prompt_assistant.nvfp4_supported": "Blackwell (NVFP4 지원)",
   "prompt_assistant.needs_blackwell": "Blackwell GPU 필요",
+  "prompt_assistant.coming_soon": "출시 예정",
   "prompt_assistant.needs_vram": "약 {gb} GB VRAM 필요",
   "prompt_assistant.downloading": "모델 다운로드 중…",
   "prompt_assistant.download_install": "다운로드 및 설치",

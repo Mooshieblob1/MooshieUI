@@ -470,6 +470,9 @@ pub fn run() {
             } else {
                 log::info!("Keeping ComfyUI running (keep_alive=true)");
             }
+            // Always stop the prompt-assistant llama-server on exit — it is never
+            // meant to outlive the app, regardless of keep_alive.
+            tauri::async_runtime::block_on(state.prompt_assistant.server.unload());
         }
     });
 }
