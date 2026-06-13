@@ -101,7 +101,8 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
                     "qwen2.5-3b-instruct-q5_k_m.gguf",
                 ),
             ],
-            pros: "Good quality for its size; natural language + tags; 6-8 GB VRAM friendly.".into(),
+            pros: "Good quality for its size; natural language + tags; 6-8 GB VRAM friendly."
+                .into(),
             cons: "Less nuanced than 7B+ models.".into(),
             best_for: "Laptops / 6-8 GB GPUs; Anima natural-language prompts.".into(),
         },

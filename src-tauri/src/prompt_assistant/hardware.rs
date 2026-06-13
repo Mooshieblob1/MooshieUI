@@ -23,13 +23,13 @@ pub struct LlmHardware {
 /// Name-based detection with room to grow; the compute-capability fallback in
 /// `is_blackwell_name` covers SKUs whose names are not yet listed.
 const BLACKWELL_MARKERS: &[&str] = &[
-    "rtx 50",     // GeForce RTX 5060/5070/5080/5090 (+Ti/Super/Laptop)
+    "rtx 50",       // GeForce RTX 5060/5070/5080/5090 (+Ti/Super/Laptop)
     "rtx pro 6000", // RTX PRO 6000 Blackwell workstation
-    "b200",       // datacenter B200
-    "gb200",      // Grace-Blackwell GB200
-    "gb10",       // Grace-Blackwell GB10
-    "dgx spark",  // DGX Spark (GB10)
-    "blackwell",  // explicit branding
+    "b200",         // datacenter B200
+    "gb200",        // Grace-Blackwell GB200
+    "gb10",         // Grace-Blackwell GB10
+    "dgx spark",    // DGX Spark (GB10)
+    "blackwell",    // explicit branding
 ];
 
 /// True when a GPU name indicates a Blackwell-class NVIDIA part.

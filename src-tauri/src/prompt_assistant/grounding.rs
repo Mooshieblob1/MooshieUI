@@ -186,7 +186,9 @@ fn repair_tag_only(raw: &str) -> String {
     let mut seen = HashSet::new();
     let mut out: Vec<String> = Vec::new();
     for chunk in raw.split(',') {
-        let token = chunk.trim().trim_matches(|c| c == '.' || c == '"' || c == '\'');
+        let token = chunk
+            .trim()
+            .trim_matches(|c| c == '.' || c == '"' || c == '\'');
         if token.is_empty() {
             continue;
         }
