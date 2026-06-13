@@ -4144,6 +4144,48 @@ async fn dispatch_command(
             "interrogate_clipboard not available in browser mode (no clipboard access)".to_string(),
         ),
 
+        // --- Prompt assistant ---
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "detect_llm_hardware" => {
+            let hw = tokio::task::spawn_blocking(crate::prompt_assistant::hardware::detect)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(hw).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "list_llm_catalog" => serde_json::to_value(crate::prompt_assistant::catalog::catalog())
+            .map_err(|e| e.to_string()),
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "llm_status" => {
+            let pa = &state.prompt_assistant;
+            Ok(serde_json::json!({
+                "installed_models": pa.installed_models(),
+                "active_model": pa.server.active_model(),
+                "server_running": pa.server.is_running(),
+            }))
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "unload_llm" => {
+            state.prompt_assistant.server.unload().await;
+            Ok(serde_json::Value::Null)
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "enhance_prompt" | "compose_prompt" => {
+            let input = if command == "enhance_prompt" {
+                args["prompt"].as_str().unwrap_or("").to_string()
+            } else {
+                args["description"].as_str().unwrap_or("").to_string()
+            };
+            let family = args["family"].as_str().unwrap_or("unknown").to_string();
+            let mode = if command == "enhance_prompt" {
+                crate::prompt_assistant::grounding::GenMode::Enhance
+            } else {
+                crate::prompt_assistant::grounding::GenMode::Compose
+            };
+            let result = run_prompt_assistant_headless(&state, &input, &family, mode).await?;
+            Ok(serde_json::Value::String(result))
+        }
+
         // --- File operations ---
         "save_image_file" => {
             let image_bytes: Vec<u8> = serde_json::from_value(args["imageBytes"].clone())
@@ -4313,6 +4355,52 @@ async fn run_interrogation_headless(
     })
     .await
     .map_err(|e| format!("Inference task failed: {}", e))?
+}
+
+#[cfg(any(feature = "desktop", feature = "server"))]
+pub async fn run_prompt_assistant_headless(
+    state: &Arc<AppState>,
+    input: &str,
+    family: &str,
+    mode: crate::prompt_assistant::grounding::GenMode,
+) -> Result<String, String> {
+    use crate::prompt_assistant::{grounding, hardware};
+    if !state.prompt_queue.is_empty() {
+        return Err("prompt_assistant.busy_generation".to_string());
+    }
+    let (model_id, idle_secs) = {
+        let cfg = state.config.read().await;
+        (
+            cfg.prompt_assistant_model_id.clone(),
+            cfg.prompt_assistant_idle_timeout_secs,
+        )
+    };
+    let model_id = model_id.ok_or_else(|| "prompt_assistant.no_model".to_string())?;
+    let hw = tokio::task::spawn_blocking(hardware::detect)
+        .await
+        .map_err(|e| e.to_string())?;
+    let noop = |_: &str, _: u64, _: u64, _: bool| {};
+    let port = state
+        .prompt_assistant
+        .ensure_running(
+            &state.http_client,
+            &model_id,
+            hw.total_vram_mb,
+            hw.nvfp4_capable,
+            idle_secs,
+            &noop,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let candidates = grounding::retrieve_candidates(input, 40);
+    let system = grounding::system_prompt(family, mode, &candidates);
+    let raw = state
+        .prompt_assistant
+        .server
+        .chat(&state.http_client, port, &system, input, 192)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(grounding::repair(&raw, family))
 }
 
 // ---------------------------------------------------------------------------
