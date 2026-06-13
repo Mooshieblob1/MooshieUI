@@ -31,6 +31,7 @@
   import CharacterInsertModal from "./lib/animadex/components/CharacterInsertModal.svelte";
   import type { AnimadexCharacter } from "./lib/animadex/types.js";
   import { styles as stylesStore } from "./lib/stores/styles.svelte.js";
+  import { promptAssistant } from "./lib/stores/promptAssistant.svelte.js";
   import { notifications } from "./lib/stores/notifications.svelte.js";
   import NotificationBell from "./lib/components/ui/NotificationBell.svelte";
   import logoUrl from "./lib/assets/logo.png";
@@ -1836,6 +1837,9 @@
 
     // Load persisted settings
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
+
+    // Prompt assistant: detect hardware + pre-select recommended model at launch.
+    promptAssistant.init();
 
     // Set up event listeners BEFORE starting so we don't miss events
     await Promise.all([

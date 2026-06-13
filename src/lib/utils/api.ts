@@ -7,7 +7,11 @@ import type {
   GenerationParams,
   GpuStats,
   InterrogationResult,
+  LlmCatalogEntry,
+  LlmHardware,
+  LlmStatus,
   OutputImage,
+  PromptAssistantOpts,
   QueueInfo,
   SamplerInfo,
   SystemStats,
@@ -737,6 +741,46 @@ export async function interrogateGalleryImage(filename: string): Promise<Interro
 
 export async function interrogateClipboard(): Promise<InterrogationResult> {
   return ipcInvoke("interrogate_clipboard");
+}
+
+export async function detectLlmHardware(): Promise<LlmHardware> {
+  return ipcInvoke("detect_llm_hardware");
+}
+
+export async function listLlmCatalog(): Promise<LlmCatalogEntry[]> {
+  return ipcInvoke("list_llm_catalog");
+}
+
+export async function llmStatus(): Promise<LlmStatus> {
+  return ipcInvoke("llm_status");
+}
+
+export async function downloadLlmModel(id: string, variant: string): Promise<void> {
+  return ipcInvoke("download_llm_model", { id, variant });
+}
+
+export async function deleteLlmModel(id: string): Promise<void> {
+  return ipcInvoke("delete_llm_model", { id });
+}
+
+export async function unloadLlm(): Promise<void> {
+  return ipcInvoke("unload_llm");
+}
+
+export async function enhancePrompt(
+  prompt: string,
+  family: string,
+  opts?: PromptAssistantOpts,
+): Promise<string> {
+  return ipcInvoke("enhance_prompt", { prompt, family, opts });
+}
+
+export async function composePrompt(
+  description: string,
+  family: string,
+  opts?: PromptAssistantOpts,
+): Promise<string> {
+  return ipcInvoke("compose_prompt", { description, family, opts });
 }
 
 export async function readClipboardImage(): Promise<number[]> {
