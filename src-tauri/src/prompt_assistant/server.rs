@@ -1,0 +1,367 @@
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+
+use serde_json::json;
+use tokio::io::AsyncWriteExt;
+use tokio::process::{Child, Command};
+
+use crate::error::AppError;
+
+/// Pinned llama.cpp release. Update this constant to roll the binary forward.
+const LLAMA_RELEASE: &str = "b4585";
+const LLAMA_BASE_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download";
+
+/// Acceleration backend for the downloaded binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    Vulkan,
+    Metal,
+    Cuda,
+    Cpu,
+}
+
+/// Pick the default backend for this platform (GPU-accelerated where possible).
+pub fn default_backend(needs_cuda: bool) -> Backend {
+    if cfg!(target_os = "macos") {
+        Backend::Metal
+    } else if needs_cuda {
+        Backend::Cuda
+    } else if cfg!(any(target_os = "windows", target_os = "linux")) {
+        Backend::Vulkan
+    } else {
+        Backend::Cpu
+    }
+}
+
+/// Archive asset name(s) for a backend on this platform. The second entry is an
+/// optional companion archive (e.g. Windows CUDA runtime).
+fn assets_for(backend: Backend) -> (String, Option<String>) {
+    let t = LLAMA_RELEASE;
+    #[cfg(target_os = "windows")]
+    {
+        match backend {
+            Backend::Vulkan => (format!("llama-{t}-bin-win-vulkan-x64.zip"), None),
+            Backend::Cuda => (
+                format!("llama-{t}-bin-win-cuda-cu12.4-x64.zip"),
+                Some("cudart-llama-bin-win-cu12.4-x64.zip".to_string()),
+            ),
+            _ => (format!("llama-{t}-bin-win-cpu-x64.zip"), None),
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = backend;
+        (format!("llama-{t}-bin-ubuntu-x64.zip"), None)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = backend;
+        let arch = if cfg!(target_arch = "aarch64") {
+            "arm64"
+        } else {
+            "x64"
+        };
+        (format!("llama-{t}-bin-macos-{arch}.zip"), None)
+    }
+}
+
+#[cfg(target_os = "windows")]
+const SERVER_BIN: &str = "llama-server.exe";
+#[cfg(not(target_os = "windows"))]
+const SERVER_BIN: &str = "llama-server";
+
+/// Manages a single llama-server child process and its idle lifetime.
+pub struct LlamaServer {
+    bin_dir: PathBuf,
+    child: tokio::sync::Mutex<Option<Child>>,
+    port: std::sync::atomic::AtomicU16,
+    active_model: std::sync::Mutex<Option<String>>,
+    last_used: std::sync::Mutex<Instant>,
+    watchdog_started: std::sync::atomic::AtomicBool,
+}
+
+impl LlamaServer {
+    pub fn new(bin_dir: PathBuf) -> Self {
+        Self {
+            bin_dir,
+            child: tokio::sync::Mutex::new(None),
+            port: std::sync::atomic::AtomicU16::new(0),
+            active_model: std::sync::Mutex::new(None),
+            last_used: std::sync::Mutex::new(Instant::now()),
+            watchdog_started: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    pub fn server_path(&self) -> PathBuf {
+        self.bin_dir.join(SERVER_BIN)
+    }
+
+    pub fn is_binary_present(&self) -> bool {
+        self.server_path().exists()
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.port.load(std::sync::atomic::Ordering::Relaxed) != 0
+    }
+
+    pub fn active_model(&self) -> Option<String> {
+        self.active_model.lock().unwrap().clone()
+    }
+
+    fn touch(&self) {
+        *self.last_used.lock().unwrap() = Instant::now();
+    }
+
+    /// Download + extract the llama-server binary for the given backend if absent.
+    pub async fn ensure_binary(
+        &self,
+        client: &reqwest::Client,
+        backend: Backend,
+        progress: &dyn Fn(&str, u64, u64, bool),
+    ) -> Result<(), AppError> {
+        if self.is_binary_present() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(&self.bin_dir)?;
+        let (primary, companion) = assets_for(backend);
+        for asset in std::iter::once(primary).chain(companion) {
+            let url = format!("{LLAMA_BASE_URL}/{LLAMA_RELEASE}/{asset}");
+            let archive = self.bin_dir.join(&asset);
+            download_with_progress(client, &url, &archive, &asset, progress).await?;
+            extract_all_into(&archive, &self.bin_dir)?;
+            std::fs::remove_file(&archive).ok();
+        }
+        if !self.is_binary_present() {
+            return Err(AppError::LlmError(format!(
+                "llama-server not found after extracting {}",
+                self.bin_dir.display()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Ensure the server is running with `model_path` loaded. Spawns + health-polls
+    /// on first use or after an idle unload / model switch.
+    pub async fn ensure_running(
+        &self,
+        model_path: &Path,
+        model_id: &str,
+        n_gpu_layers: i32,
+        _idle_timeout_secs: u64,
+    ) -> Result<u16, AppError> {
+        // Already running with the right model?
+        if self.is_running() && self.active_model().as_deref() == Some(model_id) {
+            self.touch();
+            return Ok(self.port.load(std::sync::atomic::Ordering::Relaxed));
+        }
+        // Switching models: stop the old server first.
+        if self.is_running() {
+            self.unload().await;
+        }
+
+        let port = pick_free_port()?;
+        let mut cmd = Command::new(self.server_path());
+        cmd.arg("-m")
+            .arg(model_path)
+            .arg("--host")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("-ngl")
+            .arg(n_gpu_layers.to_string())
+            .arg("--no-webui")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        let child = cmd
+            .spawn()
+            .map_err(|e| AppError::LlmError(format!("Failed to spawn llama-server: {e}")))?;
+
+        *self.child.lock().await = Some(child);
+        self.port.store(port, std::sync::atomic::Ordering::Relaxed);
+        *self.active_model.lock().unwrap() = Some(model_id.to_string());
+
+        // Health poll (up to ~60s).
+        let health = format!("http://127.0.0.1:{port}/health");
+        let client = reqwest::Client::new();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            if Instant::now() > deadline {
+                self.unload().await;
+                return Err(AppError::LlmError("llama-server health timeout".into()));
+            }
+            if let Ok(resp) = client.get(&health).send().await {
+                if resp.status().is_success() {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(400)).await;
+        }
+        self.touch();
+        Ok(port)
+    }
+
+    /// POST a single chat completion and return the assistant message content.
+    pub async fn chat(
+        &self,
+        client: &reqwest::Client,
+        port: u16,
+        system: &str,
+        user: &str,
+        max_tokens: u32,
+    ) -> Result<String, AppError> {
+        self.touch();
+        let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
+        let body = json!({
+            "messages": [
+                { "role": "system", "content": system },
+                { "role": "user", "content": user }
+            ],
+            "temperature": 0.7,
+            "max_tokens": max_tokens,
+            "stream": false
+        });
+        let resp = client
+            .post(&url)
+            .json(&body)
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await
+            .map_err(|e| AppError::LlmError(format!("llama-server request failed: {e}")))?;
+        if !resp.status().is_success() {
+            return Err(AppError::LlmError(format!(
+                "llama-server returned {}",
+                resp.status()
+            )));
+        }
+        let v: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::LlmError(format!("Bad llama-server response: {e}")))?;
+        let content = v["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        self.touch();
+        Ok(content)
+    }
+
+    /// Terminate the server and clear running state.
+    pub async fn unload(&self) {
+        if let Some(mut child) = self.child.lock().await.take() {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+        }
+        self.port.store(0, std::sync::atomic::Ordering::Relaxed);
+        *self.active_model.lock().unwrap() = None;
+    }
+}
+
+/// Idle watchdog implemented as a free function so it can hold an Arc clone.
+pub fn start_idle_watchdog(server: std::sync::Arc<LlamaServer>, idle_secs: u64) {
+    if server
+        .watchdog_started
+        .swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        return; // already running
+    }
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(15)).await;
+            if !server.is_running() {
+                continue;
+            }
+            let idle = server.last_used.lock().unwrap().elapsed().as_secs();
+            if idle >= idle_secs {
+                log::info!("[prompt-assistant] idle {idle}s, unloading llama-server");
+                server.unload().await;
+            }
+        }
+    });
+}
+
+fn pick_free_port() -> Result<u16, AppError> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| AppError::LlmError(format!("No free port: {e}")))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| AppError::LlmError(e.to_string()))?
+        .port();
+    Ok(port)
+}
+
+async fn download_with_progress(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+    label: &str,
+    progress: &dyn Fn(&str, u64, u64, bool),
+) -> Result<(), AppError> {
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| AppError::LlmError(format!("Download failed: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(AppError::LlmError(format!(
+            "Download returned {}",
+            resp.status()
+        )));
+    }
+    let total = resp.content_length().unwrap_or(0);
+    let mut downloaded: u64 = 0;
+    let mut file = tokio::fs::File::create(dest).await?;
+    progress(label, 0, total, false);
+    let mut resp = resp;
+    let mut last_emit = 0u64;
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| AppError::LlmError(format!("Download read error: {e}")))?
+    {
+        file.write_all(&chunk).await?;
+        downloaded += chunk.len() as u64;
+        if downloaded - last_emit > 1024 * 1024 || downloaded == total {
+            last_emit = downloaded;
+            progress(label, downloaded, total, false);
+        }
+    }
+    file.flush().await?;
+    progress(label, downloaded, total, true);
+    Ok(())
+}
+
+/// Extract every file from a zip archive flatly into `dir` (strip directories),
+/// preserving executable bits on unix.
+fn extract_all_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
+    let file = std::fs::File::open(archive_path)?;
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| AppError::LlmError(format!("Bad zip: {e}")))?;
+    for i in 0..zip.len() {
+        let mut entry = zip
+            .by_index(i)
+            .map_err(|e| AppError::LlmError(format!("Zip entry error: {e}")))?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = match entry.enclosed_name().and_then(|p| p.file_name().map(|f| f.to_owned())) {
+            Some(n) => n,
+            None => continue,
+        };
+        let out_path = dir.join(name);
+        let mut out = std::fs::File::create(&out_path)?;
+        std::io::copy(&mut entry, &mut out)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if out_path.file_name().and_then(|n| n.to_str()) == Some(SERVER_BIN) {
+                std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(0o755))?;
+            }
+        }
+    }
+    Ok(())
+}

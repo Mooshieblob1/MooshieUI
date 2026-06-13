@@ -4,3 +4,4 @@
 pub mod catalog;
 pub mod grounding;
 pub mod hardware;
+pub mod server;
