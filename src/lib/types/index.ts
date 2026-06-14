@@ -330,26 +330,22 @@ export interface LlmGpu {
   name: string;
   vram_mb: number;
   vendor: string;
-  nvfp4_capable: boolean;
 }
 
 export interface LlmHardware {
   gpus: LlmGpu[];
   total_vram_mb: number;
   system_ram_mb: number;
-  nvfp4_capable: boolean;
   recommended_model_id: string;
 }
 
 export interface LlmVariant {
-  format: "gguf" | "nvfp4";
+  format: "gguf";
   quant: string | null;
   size_mb: number;
   vram_mb: number;
   repo: string;
   file: string;
-  /** Surfaced in the catalog but not yet downloadable (e.g. NVFP4 pending runtime support). */
-  coming_soon: boolean;
 }
 
 export interface LlmCatalogEntry {

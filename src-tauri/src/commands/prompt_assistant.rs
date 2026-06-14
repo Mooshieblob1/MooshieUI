@@ -148,7 +148,6 @@ async fn run_generation(
             &state.http_client,
             &model_id,
             hw.total_vram_mb,
-            hw.nvfp4_capable,
             idle_secs,
             &progress,
         )

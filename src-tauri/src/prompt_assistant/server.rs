@@ -17,16 +17,13 @@ const LLAMA_BASE_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/dow
 pub enum Backend {
     Vulkan,
     Metal,
-    Cuda,
     Cpu,
 }
 
 /// Pick the default backend for this platform (GPU-accelerated where possible).
-pub fn default_backend(needs_cuda: bool) -> Backend {
+pub fn default_backend() -> Backend {
     if cfg!(target_os = "macos") {
         Backend::Metal
-    } else if needs_cuda {
-        Backend::Cuda
     } else if cfg!(any(target_os = "windows", target_os = "linux")) {
         Backend::Vulkan
     } else {
@@ -34,25 +31,20 @@ pub fn default_backend(needs_cuda: bool) -> Backend {
     }
 }
 
-/// Archive asset name(s) for a backend on this platform. The second entry is an
-/// optional companion archive (e.g. Windows CUDA runtime).
-fn assets_for(backend: Backend) -> (String, Option<String>) {
+/// Archive asset name for a backend on this platform.
+fn assets_for(backend: Backend) -> String {
     let t = LLAMA_RELEASE;
     #[cfg(target_os = "windows")]
     {
         match backend {
-            Backend::Vulkan => (format!("llama-{t}-bin-win-vulkan-x64.zip"), None),
-            Backend::Cuda => (
-                format!("llama-{t}-bin-win-cuda-cu12.4-x64.zip"),
-                Some("cudart-llama-bin-win-cu12.4-x64.zip".to_string()),
-            ),
-            _ => (format!("llama-{t}-bin-win-cpu-x64.zip"), None),
+            Backend::Vulkan => format!("llama-{t}-bin-win-vulkan-x64.zip"),
+            _ => format!("llama-{t}-bin-win-cpu-x64.zip"),
         }
     }
     #[cfg(target_os = "linux")]
     {
         let _ = backend;
-        (format!("llama-{t}-bin-ubuntu-x64.zip"), None)
+        format!("llama-{t}-bin-ubuntu-x64.zip")
     }
     #[cfg(target_os = "macos")]
     {
@@ -62,7 +54,7 @@ fn assets_for(backend: Backend) -> (String, Option<String>) {
         } else {
             "x64"
         };
-        (format!("llama-{t}-bin-macos-{arch}.zip"), None)
+        format!("llama-{t}-bin-macos-{arch}.zip")
     }
 }
 
@@ -124,14 +116,12 @@ impl LlamaServer {
             return Ok(());
         }
         std::fs::create_dir_all(&self.bin_dir)?;
-        let (primary, companion) = assets_for(backend);
-        for asset in std::iter::once(primary).chain(companion) {
-            let url = format!("{LLAMA_BASE_URL}/{LLAMA_RELEASE}/{asset}");
-            let archive = self.bin_dir.join(&asset);
-            download_with_progress(client, &url, &archive, &asset, progress).await?;
-            extract_all_into(&archive, &self.bin_dir)?;
-            std::fs::remove_file(&archive).ok();
-        }
+        let asset = assets_for(backend);
+        let url = format!("{LLAMA_BASE_URL}/{LLAMA_RELEASE}/{asset}");
+        let archive = self.bin_dir.join(&asset);
+        download_with_progress(client, &url, &archive, &asset, progress).await?;
+        extract_all_into(&archive, &self.bin_dir)?;
+        std::fs::remove_file(&archive).ok();
         if !self.is_binary_present() {
             return Err(AppError::LlmError(format!(
                 "llama-server not found after extracting {}",

@@ -78,13 +78,7 @@ class PromptAssistantStore {
   defaultVariantKey(modelId: string): string {
     const entry = this.catalog.find((e) => e.id === modelId);
     if (!entry) return "gguf:Q4_K_M";
-    const nvfp4Ok = this.hardware?.nvfp4_capable ?? false;
     const vram = this.hardware?.total_vram_mb ?? 0;
-    if (nvfp4Ok) {
-      // Skip "coming soon" NVFP4 variants — they are not yet installable.
-      const v = entry.variants.find((v) => v.format === "nvfp4" && !v.coming_soon);
-      if (v) return "nvfp4";
-    }
     // Largest GGUF that fits, else smallest GGUF.
     const fitting = entry.variants
       .filter((v) => v.format === "gguf" && v.vram_mb <= vram)

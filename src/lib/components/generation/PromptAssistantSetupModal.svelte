@@ -22,11 +22,11 @@
   });
 
   function variantKey(v: LlmVariant): string {
-    return v.format === "nvfp4" ? "nvfp4" : `gguf:${v.quant}`;
+    return `gguf:${v.quant}`;
   }
 
   function variantLabel(v: LlmVariant): string {
-    return v.format === "nvfp4" ? "NVFP4 (Blackwell)" : `GGUF ${v.quant}`;
+    return `GGUF ${v.quant}`;
   }
 
   function fits(v: LlmVariant): boolean {
@@ -34,11 +34,6 @@
     // CPU path: allow if system RAM can hold it.
     if (vram < 2000) return (hw?.system_ram_mb ?? 0) * 0.6 >= v.vram_mb;
     return v.vram_mb <= vram;
-  }
-
-  function variantAvailable(v: LlmVariant): boolean {
-    if (v.format === "nvfp4" && !(hw?.nvfp4_capable ?? false)) return false;
-    return true;
   }
 
   function isInstalled(id: string): boolean {
@@ -67,10 +62,7 @@
     }
     const g = hw.gpus[0];
     const vramGb = (g.vram_mb / 1024).toFixed(0);
-    const nvfp4 = hw.nvfp4_capable
-      ? ` — ${locale.t("prompt_assistant.nvfp4_supported")}`
-      : "";
-    return `${g.name} — ${vramGb} GB VRAM${nvfp4}`;
+    return `${g.name} — ${vramGb} GB VRAM`;
   }
 </script>
 
@@ -146,21 +138,14 @@
           {#if selectedId === entry.id}
             <div class="mt-2 flex flex-wrap gap-1.5">
               {#each entry.variants as v}
-                {@const available = variantAvailable(v)}
-                {@const ok = fits(v)}
-                {@const comingSoon = v.coming_soon}
-                {@const selectable = available && ok && !comingSoon}
+                {@const selectable = fits(v)}
                 <button
                   disabled={!selectable}
-                  title={comingSoon
-                    ? locale.t("prompt_assistant.coming_soon")
-                    : !available
-                      ? locale.t("prompt_assistant.needs_blackwell")
-                      : !ok
-                        ? locale.t("prompt_assistant.needs_vram", {
-                            gb: (v.vram_mb / 1024).toFixed(1),
-                          })
-                        : ""}
+                  title={!selectable
+                    ? locale.t("prompt_assistant.needs_vram", {
+                        gb: (v.vram_mb / 1024).toFixed(1),
+                      })
+                    : ""}
                   class="rounded border px-2 py-0.5 text-[10px] {selectedVariant ===
                   variantKey(v)
                     ? 'border-[var(--theme-accent-500)] text-neutral-100'
@@ -172,9 +157,7 @@
                     if (selectable) selectedVariant = variantKey(v);
                   }}
                 >
-                  {variantLabel(v)} · {comingSoon
-                    ? locale.t("prompt_assistant.coming_soon")
-                    : `${(v.size_mb / 1024).toFixed(1)} GB`}
+                  {variantLabel(v)} · {(v.size_mb / 1024).toFixed(1)} GB
                 </button>
               {/each}
             </div>

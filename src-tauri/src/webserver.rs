@@ -4425,7 +4425,6 @@ pub async fn run_prompt_assistant_headless(
             &state.http_client,
             &model_id,
             hw.total_vram_mb,
-            hw.nvfp4_capable,
             idle_secs,
             &noop,
         )

@@ -62,19 +62,19 @@ impl PromptAssistant {
             .collect()
     }
 
-    /// Find the installed variant file path + whether it is NVFP4, for a model id.
-    fn installed_variant(&self, model_id: &str) -> Option<(PathBuf, bool)> {
+    /// Find the installed variant file path for a model id.
+    fn installed_variant(&self, model_id: &str) -> Option<PathBuf> {
         let entry = catalog::entry(model_id)?;
         for v in &entry.variants {
             let p = self.model_file_path(model_id, &v.file);
             if p.exists() {
-                return Some((p, v.format == "nvfp4"));
+                return Some(p);
             }
         }
         None
     }
 
-    /// Download a specific variant (by format key: "gguf:Q4_K_M" / "nvfp4") of a model.
+    /// Download a specific variant (by format key: "gguf:Q4_K_M") of a model.
     pub async fn download_model(
         &self,
         client: &reqwest::Client,
@@ -89,13 +89,6 @@ impl PromptAssistant {
             .iter()
             .find(|v| variant_matches(v, variant_key))
             .ok_or_else(|| AppError::LlmError("Unknown variant".into()))?;
-        // Defense in depth: "coming soon" variants (e.g. NVFP4 pending runtime
-        // support) are never installable even if a key somehow reaches here.
-        if variant.coming_soon {
-            return Err(AppError::LlmError(
-                "This model variant is not yet available".into(),
-            ));
-        }
 
         let dest = self.model_file_path(model_id, &variant.file);
         if dest.exists() {
@@ -120,21 +113,20 @@ impl PromptAssistant {
     }
 
     /// Ensure the server is up and the model loaded, starting the idle watchdog.
-    /// `total_vram_mb` drives GPU-layer offload; `nvfp4_capable` selects the backend.
+    /// `total_vram_mb` drives GPU-layer offload.
     pub async fn ensure_running(
         &self,
         client: &reqwest::Client,
         model_id: &str,
         total_vram_mb: u64,
-        nvfp4_capable: bool,
         idle_timeout_secs: u64,
         progress: &(dyn Fn(&str, u64, u64, bool) + Sync),
     ) -> Result<u16, AppError> {
-        let (model_path, is_nvfp4) = self
+        let model_path = self
             .installed_variant(model_id)
             .ok_or_else(|| AppError::LlmError("Model not installed".into()))?;
 
-        let backend = server::default_backend(is_nvfp4 && nvfp4_capable);
+        let backend = server::default_backend();
         self.server.ensure_binary(client, backend, progress).await?;
 
         // Offload all layers when the model fits comfortably in VRAM, else CPU.
@@ -162,11 +154,8 @@ impl PromptAssistant {
 }
 
 /// Match a catalog variant against a frontend variant key.
-/// Keys: "nvfp4" or "gguf:<QUANT>" (e.g. "gguf:Q4_K_M").
+/// Keys: "gguf:<QUANT>" (e.g. "gguf:Q4_K_M").
 fn variant_matches(v: &catalog::LlmVariant, key: &str) -> bool {
-    if v.format == "nvfp4" {
-        return key == "nvfp4";
-    }
     match key.strip_prefix("gguf:") {
         Some(q) => v.quant.as_deref() == Some(q),
         None => false,

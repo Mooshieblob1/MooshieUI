@@ -2,9 +2,9 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LlmVariant {
-    /// "gguf" or "nvfp4".
+    /// Weight format. Currently always "gguf".
     pub format: String,
-    /// Quant label for GGUF (e.g. "Q4_K_M"); None for nvfp4.
+    /// Quant label for GGUF (e.g. "Q4_K_M").
     pub quant: Option<String>,
     /// On-disk size estimate (MB).
     pub size_mb: u64,
@@ -14,9 +14,6 @@ pub struct LlmVariant {
     pub repo: String,
     /// File name within the repo.
     pub file: String,
-    /// Surfaced in the catalog but not yet downloadable (e.g. NVFP4 pending
-    /// llama.cpp runtime support). Never auto-selected, recommended, or installed.
-    pub coming_soon: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,21 +39,6 @@ fn gguf(quant: &str, size_mb: u64, vram_mb: u64, repo: &str, file: &str) -> LlmV
         vram_mb,
         repo: repo.into(),
         file: file.into(),
-        coming_soon: false,
-    }
-}
-
-fn nvfp4(size_mb: u64, vram_mb: u64, repo: &str, file: &str) -> LlmVariant {
-    LlmVariant {
-        format: "nvfp4".into(),
-        quant: None,
-        size_mb,
-        vram_mb,
-        repo: repo.into(),
-        file: file.into(),
-        // NVFP4 weights are surfaced for visibility but not yet loadable by the
-        // pinned llama.cpp runtime, so they remain "coming soon" (not installable).
-        coming_soon: true,
     }
 }
 
@@ -110,15 +92,14 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
                     "bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF",
                     "Qwen_Qwen3-4B-Instruct-2507-Q5_K_M.gguf",
                 ),
-                // Real single-file NVFP4 GGUF (Blackwell-only). Surfaced but
-                // coming_soon until the llama.cpp runtime is bumped to a build with
-                // NVFP4 kernels; swap to a verified Instruct-2507 NVFP4 build before
-                // flipping coming_soon off (this upload is base Qwen3-4B).
-                nvfp4(
-                    2500,
-                    3400,
-                    "richarddavison/Qwen3-4B-NVFP4-GGUF",
-                    "Qwen3-4B-NVFP4.gguf",
+                // Q8_0 — near-lossless 8-bit (the highest-fidelity GGUF tier;
+                // llama.cpp has no true FP8 inference type, so Q8_0 is the 8-bit option).
+                gguf(
+                    "Q8_0",
+                    4100,
+                    5500,
+                    "bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF",
+                    "Qwen_Qwen3-4B-Instruct-2507-Q8_0.gguf",
                 ),
             ],
             pros: "Modern non-thinking instruct; strong natural language + tags; 4-6 GB VRAM friendly."
@@ -150,9 +131,14 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
                     "bartowski/Qwen2.5-7B-Instruct-GGUF",
                     "Qwen2.5-7B-Instruct-Q5_K_M.gguf",
                 ),
-                // No trustworthy Qwen2.5-7B-Instruct NVFP4 *GGUF* exists yet (the
-                // available NVFP4 GGUFs are Qwen3-4B and the large Qwen3.x MoE
-                // models), so the 7B tier ships GGUF-only for now.
+                // Q8_0 — near-lossless 8-bit, for >=12 GB GPUs that want top quality.
+                gguf(
+                    "Q8_0",
+                    7800,
+                    9700,
+                    "bartowski/Qwen2.5-7B-Instruct-GGUF",
+                    "Qwen2.5-7B-Instruct-Q8_0.gguf",
+                ),
             ],
             pros: "High-quality compose/enhance; best prose of the GGUF lineup.".into(),
             cons: "Needs ~6-7 GB VRAM; slow on CPU.".into(),
@@ -166,24 +152,9 @@ pub fn entry(id: &str) -> Option<LlmCatalogEntry> {
     catalog().into_iter().find(|e| e.id == id)
 }
 
-/// Pick the smallest-footprint variant a host can run, preferring NVFP4 when
-/// capable and available. Returns None if no variant fits.
-pub fn best_variant_for(
-    entry: &LlmCatalogEntry,
-    available_vram_mb: u64,
-    nvfp4_capable: bool,
-) -> Option<&LlmVariant> {
-    // Prefer NVFP4 when the host supports it, it fits, and it is installable.
-    if nvfp4_capable {
-        if let Some(v) = entry
-            .variants
-            .iter()
-            .find(|v| v.format == "nvfp4" && !v.coming_soon && v.vram_mb <= available_vram_mb)
-        {
-            return Some(v);
-        }
-    }
-    // Otherwise the largest GGUF quant that still fits (best quality that fits).
+/// Pick the largest-footprint GGUF variant a host can run (best quality that
+/// fits). Returns None if no variant fits.
+pub fn best_variant_for(entry: &LlmCatalogEntry, available_vram_mb: u64) -> Option<&LlmVariant> {
     entry
         .variants
         .iter()
@@ -196,7 +167,7 @@ pub fn best_variant_for(
 /// tag upsampler (always runnable on CPU/RAM).
 ///
 /// "available" is GPU VRAM when a GPU is present, otherwise a fraction of system RAM.
-pub fn recommend_model_id(total_vram_mb: u64, system_ram_mb: u64, nvfp4_capable: bool) -> String {
+pub fn recommend_model_id(total_vram_mb: u64, system_ram_mb: u64) -> String {
     // CPU path: use ~60% of system RAM as a safe working budget.
     let available = if total_vram_mb >= 2000 {
         total_vram_mb
@@ -209,9 +180,9 @@ pub fn recommend_model_id(total_vram_mb: u64, system_ram_mb: u64, nvfp4_capable:
     let nl_pick = cat
         .iter()
         .filter(|e| e.purpose == "natural_language")
-        .filter(|e| best_variant_for(e, available, nvfp4_capable).is_some())
+        .filter(|e| best_variant_for(e, available).is_some())
         .max_by_key(|e| {
-            best_variant_for(e, available, nvfp4_capable)
+            best_variant_for(e, available)
                 .map(|v| v.vram_mb)
                 .unwrap_or(0)
         });
@@ -227,43 +198,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn high_vram_blackwell_picks_7b_gguf() {
-        // Blackwell host: NVFP4 is "coming soon" (not yet installable), so the
-        // recommendation must fall back to the best-fitting GGUF, never NVFP4.
-        let id = recommend_model_id(32000, 65536, true);
+    fn high_vram_picks_7b_gguf() {
+        // High-VRAM host: pick the best-fitting GGUF of the largest NL model.
+        let id = recommend_model_id(32000, 65536);
         assert_eq!(id, "qwen25-7b-instruct");
         let e = entry(&id).unwrap();
-        let v = best_variant_for(&e, 32000, true).unwrap();
+        let v = best_variant_for(&e, 32000).unwrap();
         assert_eq!(v.format, "gguf");
-    }
-
-    #[test]
-    fn coming_soon_variants_are_never_auto_selected() {
-        // Every NVFP4 variant is currently coming_soon; none should be picked.
-        let e = entry("qwen3-4b-instruct").unwrap();
-        let v = best_variant_for(&e, 32000, true).unwrap();
-        assert!(!v.coming_soon);
-        assert_eq!(v.format, "gguf");
+        // Q8_0 is the highest tier and fits comfortably here.
+        assert_eq!(v.quant.as_deref(), Some("Q8_0"));
     }
 
     #[test]
     fn midrange_gpu_picks_largest_fitting_gguf() {
-        // 8 GB GPU, not Blackwell → 7B Q5 needs 7.3 GB → fits; should pick 7B.
-        let id = recommend_model_id(8000, 32768, false);
+        // 8 GB GPU → 7B Q5 needs 7.3 GB → fits; should pick 7B.
+        let id = recommend_model_id(8000, 32768);
         assert_eq!(id, "qwen25-7b-instruct");
     }
 
     #[test]
     fn small_gpu_picks_4b() {
         // 4 GB GPU → 7B does not fit, Qwen3-4B Q4 (3.6 GB) fits.
-        let id = recommend_model_id(4000, 16384, false);
+        let id = recommend_model_id(4000, 16384);
         assert_eq!(id, "qwen3-4b-instruct");
     }
 
     #[test]
     fn cpu_only_low_ram_falls_back_to_tiny() {
         // No GPU, 4 GB RAM → 60% = 2.4 GB, Qwen3-4B Q4 needs 3.6 GB → no NL fits → tiny.
-        let id = recommend_model_id(0, 4096, false);
+        let id = recommend_model_id(0, 4096);
         assert_eq!(id, "dantaggen-l");
     }
 }
