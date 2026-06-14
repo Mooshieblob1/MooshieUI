@@ -86,34 +86,47 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
             cons: "Tags only — cannot write natural-language prose.".into(),
             best_for: "Expanding a few tags into a fuller tag prompt.".into(),
         },
-        // Small — general instruct, natural language + tags. Laptop default.
+        // Small — modern non-thinking instruct, natural language + tags. Laptop default.
         LlmCatalogEntry {
-            id: "qwen25-3b-instruct".into(),
-            name: "Qwen2.5 3B Instruct".into(),
+            id: "qwen3-4b-instruct".into(),
+            name: "Qwen3 4B Instruct".into(),
             purpose: "natural_language".into(),
             families: vec!["*".into()],
             variants: vec![
+                // bartowski hosts single-file GGUFs of Qwen3-4B-Instruct-2507 (the
+                // non-thinking "2507" instruct — no <think> blocks, ideal for prompt
+                // generation). Qwen's own repo shards these into multi-part files.
                 gguf(
                     "Q4_K_M",
-                    1900,
-                    3200,
-                    "Qwen/Qwen2.5-3B-Instruct-GGUF",
-                    "qwen2.5-3b-instruct-q4_k_m.gguf",
+                    2500,
+                    3600,
+                    "bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF",
+                    "Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
                 ),
                 gguf(
                     "Q5_K_M",
-                    2300,
-                    3700,
-                    "Qwen/Qwen2.5-3B-Instruct-GGUF",
-                    "qwen2.5-3b-instruct-q5_k_m.gguf",
+                    2900,
+                    4200,
+                    "bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF",
+                    "Qwen_Qwen3-4B-Instruct-2507-Q5_K_M.gguf",
+                ),
+                // Real single-file NVFP4 GGUF (Blackwell-only). Surfaced but
+                // coming_soon until the llama.cpp runtime is bumped to a build with
+                // NVFP4 kernels; swap to a verified Instruct-2507 NVFP4 build before
+                // flipping coming_soon off (this upload is base Qwen3-4B).
+                nvfp4(
+                    2500,
+                    3400,
+                    "richarddavison/Qwen3-4B-NVFP4-GGUF",
+                    "Qwen3-4B-NVFP4.gguf",
                 ),
             ],
-            pros: "Good quality for its size; natural language + tags; 6-8 GB VRAM friendly."
+            pros: "Modern non-thinking instruct; strong natural language + tags; 4-6 GB VRAM friendly."
                 .into(),
             cons: "Less nuanced than 7B+ models.".into(),
             best_for: "Laptops / 6-8 GB GPUs; Anima natural-language prompts.".into(),
         },
-        // Medium — higher quality; NVFP4 variant gated to Blackwell.
+        // Medium — higher quality natural-language compose/enhance.
         LlmCatalogEntry {
             id: "qwen25-7b-instruct".into(),
             name: "Qwen2.5 7B Instruct".into(),
@@ -137,14 +150,11 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
                     "bartowski/Qwen2.5-7B-Instruct-GGUF",
                     "Qwen2.5-7B-Instruct-Q5_K_M.gguf",
                 ),
-                nvfp4(
-                    4300,
-                    6200,
-                    "nvidia/Qwen2.5-7B-Instruct-NVFP4",
-                    "model.nvfp4.gguf",
-                ),
+                // No trustworthy Qwen2.5-7B-Instruct NVFP4 *GGUF* exists yet (the
+                // available NVFP4 GGUFs are Qwen3-4B and the large Qwen3.x MoE
+                // models), so the 7B tier ships GGUF-only for now.
             ],
-            pros: "High-quality compose/enhance; NVFP4 on Blackwell is fast and compact.".into(),
+            pros: "High-quality compose/enhance; best prose of the GGUF lineup.".into(),
             cons: "Needs ~6-7 GB VRAM; slow on CPU.".into(),
             best_for: ">=12 GB GPUs; best compose quality.".into(),
         },
@@ -230,7 +240,7 @@ mod tests {
     #[test]
     fn coming_soon_variants_are_never_auto_selected() {
         // Every NVFP4 variant is currently coming_soon; none should be picked.
-        let e = entry("qwen25-7b-instruct").unwrap();
+        let e = entry("qwen3-4b-instruct").unwrap();
         let v = best_variant_for(&e, 32000, true).unwrap();
         assert!(!v.coming_soon);
         assert_eq!(v.format, "gguf");
@@ -244,15 +254,15 @@ mod tests {
     }
 
     #[test]
-    fn small_gpu_picks_3b() {
-        // 4 GB GPU → 7B does not fit, 3B Q4 (3.2 GB) fits.
+    fn small_gpu_picks_4b() {
+        // 4 GB GPU → 7B does not fit, Qwen3-4B Q4 (3.6 GB) fits.
         let id = recommend_model_id(4000, 16384, false);
-        assert_eq!(id, "qwen25-3b-instruct");
+        assert_eq!(id, "qwen3-4b-instruct");
     }
 
     #[test]
     fn cpu_only_low_ram_falls_back_to_tiny() {
-        // No GPU, 4 GB RAM → 60% = 2.4 GB, 3B Q4 needs 3.2 GB → no NL fits → tiny.
+        // No GPU, 4 GB RAM → 60% = 2.4 GB, Qwen3-4B Q4 needs 3.6 GB → no NL fits → tiny.
         let id = recommend_model_id(0, 4096, false);
         assert_eq!(id, "dantaggen-l");
     }
