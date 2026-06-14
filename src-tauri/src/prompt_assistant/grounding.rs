@@ -165,8 +165,12 @@ Prefer concrete, well-known tags.{cand}"
         };
         format!(
             "You are a prompt writer for the Anima anime image model. {verb}. \
-Use a short natural-language description followed by relevant Gelbooru-style tags. \
-Reference known artists only as @artist_name. No explanations or quotes.{cand}"
+Write a short natural-language description followed by relevant Gelbooru-style tags, \
+all on one line separated by commas. \
+Only reference an artist that appears in the user's input, written as @name; \
+never invent one or emit a literal placeholder. \
+Do not append a separate tag list, headings, labels like 'tags:', or em dashes. \
+No explanations or quotes.{cand}"
         )
     }
 }
@@ -182,11 +186,41 @@ pub enum GenMode {
 /// empty if nothing survived — caller keeps the original prompt in that case).
 /// `tag_only` selects danbooru-tag vs Anima natural-language repair.
 pub fn repair(raw: &str, tag_only: bool) -> String {
+    let pre = presanitize(raw);
     if tag_only {
-        repair_tag_only(raw)
+        repair_tag_only(&pre)
     } else {
-        repair_anima(raw)
+        repair_anima(&pre)
     }
+}
+
+/// Strip artifacts models add despite instructions, before per-mode repair:
+/// - a trailing redundant labelled block ("tags:", "tag:", "prompt:") that begins
+///   its own line (a leading "Prompt:" prefix is left intact so we never empty the
+///   result);
+/// - em/en dashes, rewritten to commas so dash-joined flourishes (e.g.
+///   "elegance — @artist_name") split into separate tokens the repair pass can drop.
+fn presanitize(raw: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    let mut cut = raw.len();
+    for m in ["tags:", "tag:", "prompt:"] {
+        let mut from = 0;
+        while let Some(rel) = lower[from..].find(m) {
+            let idx = from + rel;
+            let before_ok = idx == 0 || !lower.as_bytes()[idx - 1].is_ascii_alphanumeric();
+            let starts_line = lower[..idx]
+                .trim_end_matches(|c| c == ' ' || c == '\t')
+                .ends_with('\n');
+            if before_ok && starts_line {
+                cut = cut.min(idx);
+                break;
+            }
+            from = idx + m.len();
+        }
+    }
+    raw[..cut]
+        .replace('\u{2014}', ", ")
+        .replace('\u{2013}', ", ")
 }
 
 /// Tag-only: split on commas, drop prose, validate/snap each tag, dedupe.
@@ -289,6 +323,34 @@ mod tests {
         let out = repair_anima("a serene forest at dawn, 1girl, soft lighting");
         assert!(out.contains("a serene forest at dawn"));
         assert!(out.contains("1girl"));
+    }
+
+    #[test]
+    fn anima_strips_emdash_placeholder_and_tag_dump() {
+        // Mirrors a real bad generation: an em-dash flourish ending in the literal
+        // @artist_name placeholder, plus a redundant trailing "tags:" block.
+        let raw = "1girl, wearing a red dress, subtle elegance — @artist_name\n\n\
+tags: 1girl, red dress, hair bun";
+        let out = repair(raw, false);
+        assert!(!out.contains('\u{2014}'), "em dash should be gone: {out}");
+        assert!(
+            !out.to_ascii_lowercase().contains("artist_name"),
+            "placeholder artist should be dropped: {out}"
+        );
+        assert!(
+            !out.to_ascii_lowercase().contains("tags:"),
+            "trailing tag dump should be cut: {out}"
+        );
+        assert!(out.contains("1girl"));
+        assert!(out.contains("wearing a red dress"));
+    }
+
+    #[test]
+    fn presanitize_keeps_leading_label_prefix() {
+        // A label at the very start is a prefix, not a redundant trailing block —
+        // cutting there would empty the result, so it must be preserved.
+        let out = presanitize("prompt: 1girl, solo");
+        assert!(out.contains("1girl"), "leading prefix must survive: {out}");
     }
 
     #[test]
