@@ -566,6 +566,22 @@ impl AppState {
         config.server_url.clone()
     }
 
+    /// Free the prompt-assistant LLM's GPU memory before an image generation.
+    ///
+    /// The llama-server keeps its model fully resident in VRAM (≈5 GB for the
+    /// 4B Q8) until its idle watchdog fires, so a compose/enhance immediately
+    /// followed by a generation leaves ComfyUI competing for what's left and
+    /// spilling into shared system memory. Unloading here is cheap (the child
+    /// is killed in well under a second) and the next compose/enhance simply
+    /// respawns it via `ensure_running`.
+    #[cfg(any(feature = "desktop", feature = "server"))]
+    pub async fn free_llm_vram_for_generation(&self) {
+        if self.prompt_assistant.server.is_running() {
+            log::info!("[generate] unloading llama-server to free VRAM before generation");
+            self.prompt_assistant.server.unload().await;
+        }
+    }
+
     pub async fn dispatch_webhook_event(
         &self,
         event: &str,

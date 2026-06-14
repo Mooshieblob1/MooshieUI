@@ -2594,6 +2594,10 @@ async fn dispatch_command(
             let bg_state = Arc::clone(&state);
             let bg_placeholder = placeholder_id.clone();
             tokio::spawn(async move {
+                // Release the prompt-assistant LLM's VRAM so it doesn't starve
+                // ComfyUI's diffusion model during this generation. Done inside
+                // the spawned task so it never delays the HTTP acknowledgment.
+                bg_state.free_llm_vram_for_generation().await;
                 if needs_hold {
                     // Fair queue: hold this prompt until a slot opens for this user.
                     let submitted = Arc::new(tokio::sync::Notify::new());

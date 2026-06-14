@@ -22,7 +22,7 @@ fn default_true() -> bool {
 }
 
 fn default_llm_idle_timeout() -> u64 {
-    120
+    30
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,7 +183,7 @@ impl Default for AppConfig {
             interrogator_general_threshold: 0.30,
             interrogator_character_threshold: 0.85,
             prompt_assistant_model_id: None,
-            prompt_assistant_idle_timeout_secs: 120,
+            prompt_assistant_idle_timeout_secs: 30,
             prompt_assistant_setup_done: false,
             civitai_api_key: None,
             gallery_path: None,

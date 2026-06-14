@@ -64,6 +64,10 @@ pub async fn generate(
         );
     }
 
+    // Release the prompt-assistant LLM's VRAM so it doesn't starve ComfyUI's
+    // diffusion model (which would otherwise spill into shared system memory).
+    state.free_llm_vram_for_generation().await;
+
     // Route through GPU manager for multi-GPU distribution
     let timeout = std::time::Duration::from_secs(300);
     let (worker_id, response) = state
