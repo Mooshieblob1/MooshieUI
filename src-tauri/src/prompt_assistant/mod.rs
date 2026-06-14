@@ -170,10 +170,9 @@ async fn download_to(
     progress: &(dyn Fn(&str, u64, u64, bool) + Sync),
 ) -> Result<(), AppError> {
     use tokio::io::AsyncWriteExt;
-    let resp = client
-        .get(url)
-        .send()
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(30), client.get(url).send())
         .await
+        .map_err(|_| AppError::LlmError("Download timed out while connecting".into()))?
         .map_err(|e| AppError::LlmError(format!("Download failed: {e}")))?;
     if !resp.status().is_success() {
         return Err(AppError::LlmError(format!(
@@ -189,11 +188,14 @@ async fn download_to(
         let mut downloaded = 0u64;
         let mut last_emit = 0u64;
         let mut resp = resp;
-        while let Some(chunk) = resp
-            .chunk()
-            .await
-            .map_err(|e| AppError::LlmError(format!("Download read error: {e}")))?
-        {
+        // A stalled connection (no bytes for 60s) errors out rather than hanging
+        // forever — the shared http_client has no read timeout of its own.
+        loop {
+            let chunk = tokio::time::timeout(std::time::Duration::from_secs(60), resp.chunk())
+                .await
+                .map_err(|_| AppError::LlmError("Download stalled (no data for 60s)".into()))?
+                .map_err(|e| AppError::LlmError(format!("Download read error: {e}")))?;
+            let Some(chunk) = chunk else { break };
             file.write_all(&chunk).await?;
             downloaded += chunk.len() as u64;
             if downloaded - last_emit > 1024 * 1024 || downloaded == total {

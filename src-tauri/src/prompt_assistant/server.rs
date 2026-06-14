@@ -9,7 +9,10 @@ use tokio::process::{Child, Command};
 use crate::error::AppError;
 
 /// Pinned llama.cpp release. Update this constant to roll the binary forward.
-const LLAMA_RELEASE: &str = "b4585";
+/// b7100 is the newest release that still ships `.zip` assets on every platform
+/// (b7300+ switched Linux/macOS to `.tar.gz`) and supports the `qwen3`
+/// architecture, which the previous pin (b4585) could not load.
+const LLAMA_RELEASE: &str = "b7100";
 const LLAMA_BASE_URL: &str = "https://github.com/ggml-org/llama.cpp/releases/download";
 
 /// Acceleration backend for the downloaded binary.
@@ -93,6 +96,36 @@ impl LlamaServer {
         self.server_path().exists()
     }
 
+    /// Marker file recording which `LLAMA_RELEASE` the on-disk binary came from.
+    fn version_marker(&self) -> PathBuf {
+        self.bin_dir.join(".llama-release")
+    }
+
+    /// True only when the installed binary matches the currently pinned release.
+    /// A missing or mismatched marker forces a re-download, so bumping
+    /// `LLAMA_RELEASE` rolls existing installs forward instead of silently
+    /// reusing a stale (e.g. qwen3-incapable) binary.
+    fn is_binary_current(&self) -> bool {
+        self.server_path().exists()
+            && std::fs::read_to_string(self.version_marker())
+                .map(|s| s.trim() == LLAMA_RELEASE)
+                .unwrap_or(false)
+    }
+
+    /// Path to the captured llama-server stderr log (latest spawn only).
+    fn log_path(&self) -> PathBuf {
+        self.bin_dir.join("llama-server.log")
+    }
+
+    /// Returns the child's exit status if it has already terminated.
+    async fn child_exit_status(&self) -> Option<std::process::ExitStatus> {
+        let mut guard = self.child.lock().await;
+        match guard.as_mut() {
+            Some(child) => child.try_wait().ok().flatten(),
+            None => None,
+        }
+    }
+
     pub fn is_running(&self) -> bool {
         self.port.load(std::sync::atomic::Ordering::Relaxed) != 0
     }
@@ -112,7 +145,7 @@ impl LlamaServer {
         backend: Backend,
         progress: &(dyn Fn(&str, u64, u64, bool) + Sync),
     ) -> Result<(), AppError> {
-        if self.is_binary_present() {
+        if self.is_binary_current() {
             return Ok(());
         }
         std::fs::create_dir_all(&self.bin_dir)?;
@@ -128,6 +161,8 @@ impl LlamaServer {
                 self.bin_dir.display()
             )));
         }
+        // Record the installed release so a future LLAMA_RELEASE bump re-downloads.
+        std::fs::write(self.version_marker(), LLAMA_RELEASE).ok();
         Ok(())
     }
 
@@ -151,6 +186,12 @@ impl LlamaServer {
         }
 
         let port = pick_free_port()?;
+        // Capture llama-server stderr (where it logs model-load diagnostics such as
+        // "unknown model architecture") to a file so failures are debuggable instead
+        // of vanishing into a null sink.
+        let log_path = self.log_path();
+        let log_file = std::fs::File::create(&log_path)
+            .map_err(|e| AppError::LlmError(format!("Failed to create llama-server log: {e}")))?;
         let mut cmd = Command::new(self.server_path());
         cmd.arg("-m")
             .arg(model_path)
@@ -162,7 +203,7 @@ impl LlamaServer {
             .arg(n_gpu_layers.to_string())
             .arg("--no-webui")
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::from(log_file))
             // Ensure the child dies with the app even if unload() is skipped.
             .kill_on_drop(true);
         #[cfg(windows)]
@@ -177,10 +218,20 @@ impl LlamaServer {
         self.port.store(port, std::sync::atomic::Ordering::Relaxed);
         *self.active_model.lock().unwrap() = Some(model_id.to_string());
 
-        // Health poll (up to ~180s — large models can be slow to load).
+        // Health poll (up to ~180s — large models can be slow to load), but bail out
+        // immediately if the child exits (e.g. an unsupported model architecture),
+        // surfacing the tail of its captured stderr instead of waiting out the full
+        // deadline on a process that is already dead.
         let health = format!("http://127.0.0.1:{port}/health");
         let deadline = Instant::now() + Duration::from_secs(180);
         loop {
+            if let Some(status) = self.child_exit_status().await {
+                self.unload().await;
+                return Err(AppError::LlmError(format!(
+                    "llama-server exited ({status}) before becoming ready{}",
+                    read_log_tail(&log_path)
+                )));
+            }
             if Instant::now() > deadline {
                 self.unload().await;
                 return Err(AppError::LlmError("llama-server health timeout".into()));
@@ -275,6 +326,23 @@ pub fn start_idle_watchdog(server: std::sync::Arc<LlamaServer>, idle_secs: u64) 
     });
 }
 
+/// Read the last few non-empty lines of the llama-server log, formatted for
+/// appending to an error message. Returns an empty string if the log is missing
+/// or blank.
+fn read_log_tail(path: &Path) -> String {
+    match std::fs::read_to_string(path) {
+        Ok(s) => {
+            let lines: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
+            if lines.is_empty() {
+                return String::new();
+            }
+            let start = lines.len().saturating_sub(6);
+            format!(":\n{}", lines[start..].join("\n"))
+        }
+        Err(_) => String::new(),
+    }
+}
+
 fn pick_free_port() -> Result<u16, AppError> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|e| AppError::LlmError(format!("No free port: {e}")))?;
@@ -292,10 +360,9 @@ async fn download_with_progress(
     label: &str,
     progress: &(dyn Fn(&str, u64, u64, bool) + Sync),
 ) -> Result<(), AppError> {
-    let resp = client
-        .get(url)
-        .send()
+    let resp = tokio::time::timeout(Duration::from_secs(30), client.get(url).send())
         .await
+        .map_err(|_| AppError::LlmError("Download timed out while connecting".into()))?
         .map_err(|e| AppError::LlmError(format!("Download failed: {e}")))?;
     if !resp.status().is_success() {
         return Err(AppError::LlmError(format!(
@@ -311,11 +378,14 @@ async fn download_with_progress(
         let mut downloaded: u64 = 0;
         let mut last_emit = 0u64;
         let mut resp = resp;
-        while let Some(chunk) = resp
-            .chunk()
-            .await
-            .map_err(|e| AppError::LlmError(format!("Download read error: {e}")))?
-        {
+        // A stalled connection (no bytes for 60s) errors out rather than hanging
+        // forever — the shared http_client has no read timeout of its own.
+        loop {
+            let chunk = tokio::time::timeout(Duration::from_secs(60), resp.chunk())
+                .await
+                .map_err(|_| AppError::LlmError("Download stalled (no data for 60s)".into()))?
+                .map_err(|e| AppError::LlmError(format!("Download read error: {e}")))?;
+            let Some(chunk) = chunk else { break };
             file.write_all(&chunk).await?;
             downloaded += chunk.len() as u64;
             if downloaded - last_emit > 1024 * 1024 || downloaded == total {
