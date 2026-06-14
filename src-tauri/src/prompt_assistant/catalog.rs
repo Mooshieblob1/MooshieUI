@@ -120,19 +120,22 @@ pub fn catalog() -> Vec<LlmCatalogEntry> {
             purpose: "natural_language".into(),
             families: vec!["*".into()],
             variants: vec![
+                // Qwen's own 7B GGUF repo shards Q4_K_M/Q5_K_M into multi-part
+                // files, which the single-file downloader cannot fetch (404).
+                // bartowski hosts single-file builds of the same quants.
                 gguf(
                     "Q4_K_M",
                     4700,
                     6500,
-                    "Qwen/Qwen2.5-7B-Instruct-GGUF",
-                    "qwen2.5-7b-instruct-q4_k_m.gguf",
+                    "bartowski/Qwen2.5-7B-Instruct-GGUF",
+                    "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
                 ),
                 gguf(
                     "Q5_K_M",
                     5400,
                     7300,
-                    "Qwen/Qwen2.5-7B-Instruct-GGUF",
-                    "qwen2.5-7b-instruct-q5_k_m.gguf",
+                    "bartowski/Qwen2.5-7B-Instruct-GGUF",
+                    "Qwen2.5-7B-Instruct-Q5_K_M.gguf",
                 ),
                 nvfp4(
                     4300,
