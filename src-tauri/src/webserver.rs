@@ -3925,25 +3925,21 @@ async fn dispatch_command(
             Ok(releases)
         }
         "export_logs" => {
-            let destination = args["destination"]
-                .as_str()
-                .ok_or("Missing destination")?
-                .to_string();
-            // Fold any frontend logs from the payload into the shared ring
-            // buffer before exporting so this handler matches the desktop
-            // command's behaviour.
-            if let Some(lines) = args.get("frontendLogs").and_then(|v| v.as_array()) {
-                let strings: Vec<String> = lines
-                    .iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect();
-                crate::log_buffer::push_frontend_lines(strings);
-            }
-            // Simplified: just write config info to the destination
-            let cfg = state.config.read().await;
-            let info = format!("MooshieUI Log Export\nConfig: {:?}", *cfg);
-            std::fs::write(&destination, info).map_err(|e| e.to_string())?;
-            Ok(serde_json::json!(null))
+            // In server/browser mode there is no meaningful host filesystem path
+            // for a remote browser, so build the full diagnostic log (same
+            // content as the desktop command, including the llama-server log) and
+            // return it as a string for the client to download.
+            let frontend_logs = args
+                .get("frontendLogs")
+                .and_then(|v| v.as_array())
+                .map(|lines| {
+                    lines
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<String>>()
+                });
+            let content = crate::commands::api::build_diagnostic_log(&state, frontend_logs).await;
+            Ok(serde_json::json!({ "content": content }))
         }
 
         "download_model" => {

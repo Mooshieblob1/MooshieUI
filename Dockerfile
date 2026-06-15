@@ -70,10 +70,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 # System packages
+# libgomp1 is required by the prompt-assistant llama.cpp CPU build (OpenMP); the
+# CUDA runtime base image does not ship it, so without it llama-server exits
+# immediately on load with "error while loading shared libraries: libgomp.so.1"
+# and every enhance/compose request 500s.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 python3.12-venv python3-pip \
     git curl ca-certificates \
-    libxcb1 libglib2.0-0 libgl1 \
+    libxcb1 libglib2.0-0 libgl1 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (fast Python package manager)

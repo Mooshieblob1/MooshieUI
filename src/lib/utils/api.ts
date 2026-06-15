@@ -825,6 +825,16 @@ export async function exportLogs(destination: string): Promise<void> {
   });
 }
 
+// Browser/server mode: the backend has no meaningful local path to write to for
+// a remote browser, so it returns the diagnostic text and the caller triggers a
+// client-side download.
+export async function exportLogsContent(): Promise<string> {
+  const res = await ipcInvoke<{ content: string }>("export_logs", {
+    frontendLogs: getLogSnapshot(),
+  });
+  return res.content;
+}
+
 export async function getGpuStats(): Promise<GpuStats[]> {
   if (isTauri) {
     return ipcInvoke("get_gpu_stats");

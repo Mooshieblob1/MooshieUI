@@ -1,3 +1,12 @@
+## What's New in v1.4.14
+
+### Fixes and maintenance
+- **Prompt Assistant errors are now visible**: Enhance and Compose failures surface the real backend reason (model-load crash, missing shared library, health timeout) in the toast and console instead of a generic message, so failures are diagnosable from the UI alone, especially on headless server deployments.
+- **Fixed server-mode Enhance/Compose returning HTTP 500**: the Docker image now installs `libgomp1`, which the Prompt Assistant's CPU llama.cpp build requires; without it `llama-server` exited immediately on load and every enhance/compose request failed.
+- **Export Logs now works in browser/server mode**: it produces a downloadable diagnostic log (including the Prompt Assistant `llama-server` log) for remote users, instead of doing nothing.
+
+---
+
 ## What's New in v1.4.13
 
 ### Prompt Assistant (local LLM)

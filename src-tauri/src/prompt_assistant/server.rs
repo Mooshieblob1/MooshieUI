@@ -117,6 +117,13 @@ impl LlamaServer {
         self.bin_dir.join("llama-server.log")
     }
 
+    /// Full contents of the captured llama-server stderr log, if it exists.
+    /// Used by the diagnostics export so prompt-assistant load failures are
+    /// visible to remote/server-mode users who can't reach the host filesystem.
+    pub fn read_server_log(&self) -> Option<String> {
+        std::fs::read_to_string(self.log_path()).ok()
+    }
+
     /// Returns the child's exit status if it has already terminated.
     async fn child_exit_status(&self) -> Option<std::process::ExitStatus> {
         let mut guard = self.child.lock().await;

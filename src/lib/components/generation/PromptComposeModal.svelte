@@ -26,12 +26,20 @@
         error = locale.t("prompt_assistant.couldnt_compose");
       }
     } catch (e) {
+      console.error("Prompt compose failed:", e);
       const msg = String(e);
-      error = msg.includes("busy_generation")
-        ? locale.t("prompt_assistant.busy_generation")
-        : msg.includes("no_model")
-          ? locale.t("prompt_assistant.no_model")
+      if (msg.includes("busy_generation")) {
+        error = locale.t("prompt_assistant.busy_generation");
+      } else if (msg.includes("no_model")) {
+        error = locale.t("prompt_assistant.no_model");
+      } else {
+        // Surface the real backend reason instead of a generic message so
+        // server-side failures are diagnosable from the UI alone.
+        const detail = msg.replace(/^Error:\s*/, "").trim();
+        error = detail
+          ? `${locale.t("prompt_assistant.error_generic")}: ${detail}`
           : locale.t("prompt_assistant.error_generic");
+      }
     }
   }
 

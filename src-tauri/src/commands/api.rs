@@ -4762,6 +4762,17 @@ pub async fn export_logs(
     destination: String,
     frontend_logs: Option<Vec<String>>,
 ) -> Result<(), AppError> {
+    let output = build_diagnostic_log(&state, frontend_logs).await;
+    std::fs::write(&destination, &output)?;
+    Ok(())
+}
+
+/// Build the full diagnostic log text (config, GPU, Python/ComfyUI versions,
+/// ComfyUI + llama-server logs, Rust/frontend ring buffers). Shared by the
+/// desktop `export_logs` command (which writes it to a file) and the
+/// browser/server-mode handler (which returns it for a client-side download).
+#[cfg(any(feature = "desktop", feature = "server"))]
+pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<String>>) -> String {
     use std::fmt::Write;
 
     // Fold any newly-submitted frontend logs into the ring buffer so repeat
@@ -4910,6 +4921,22 @@ pub async fn export_logs(
         }
     }
 
+    // Prompt-assistant llama-server stderr log (model-load diagnostics such as
+    // missing shared libraries, unsupported architectures, health timeouts).
+    let _ = writeln!(output);
+    let _ = writeln!(output, "=== Prompt Assistant (llama-server) Log ===");
+    match state.prompt_assistant.server.read_server_log() {
+        Some(content) if !content.trim().is_empty() => {
+            let _ = write!(output, "{}", content);
+        }
+        Some(_) => {
+            let _ = writeln!(output, "(log file is empty)");
+        }
+        None => {
+            let _ = writeln!(output, "(no llama-server log yet)");
+        }
+    }
+
     // Rust-side log ring buffer (captured by log_buffer::RingLogger)
     let rust_lines = crate::log_buffer::snapshot_rust();
     if !rust_lines.is_empty() {
@@ -4934,9 +4961,7 @@ pub async fn export_logs(
         }
     }
 
-    // Write to destination
-    std::fs::write(&destination, &output)?;
-    Ok(())
+    output
 }
 
 /// Append a batch of frontend console log lines to the in-memory diagnostics

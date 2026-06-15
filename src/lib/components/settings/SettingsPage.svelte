@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AppConfig, QueueInfo } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
@@ -665,21 +665,43 @@
   let galleryPathMessage = $state<string | null>(null);
 
   async function handleExportLogs() {
-    let destination: string | null = null;
     if (isTauri) {
       const { save: saveDialog } = await import("@tauri-apps/plugin-dialog");
-      destination = await saveDialog({
+      const destination = await saveDialog({
         title: locale.t('settings.about.save_dialog_title'),
         defaultPath: "mooshieui-diagnostics.log",
         filters: [{ name: locale.t("settings.about.log_files_filter"), extensions: ["log", "txt"] }],
       });
+      if (!destination) return;
+      exportingLogs = true;
+      logExportDone = false;
+      logExportError = null;
+      try {
+        await exportLogs(destination);
+        logExportDone = true;
+        setTimeout(() => (logExportDone = false), 4000);
+      } catch (e) {
+        logExportError = String(e);
+      } finally {
+        exportingLogs = false;
+      }
+      return;
     }
-    if (!destination) return;
+    // Browser/server mode: fetch the diagnostic text and download it client-side.
     exportingLogs = true;
     logExportDone = false;
     logExportError = null;
     try {
-      await exportLogs(destination);
+      const content = await exportLogsContent();
+      const blob = new Blob([content], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "mooshieui-diagnostics.log";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
       logExportDone = true;
       setTimeout(() => (logExportDone = false), 4000);
     } catch (e) {

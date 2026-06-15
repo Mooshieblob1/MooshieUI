@@ -89,6 +89,7 @@
         gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
       }
     } catch (e) {
+      console.error("Prompt enhance failed:", e);
       gallery.showToast(mapLlmError(String(e)), "error");
     }
   }
@@ -120,7 +121,14 @@
   function mapLlmError(msg: string): string {
     if (msg.includes("busy_generation")) return locale.t("prompt_assistant.busy_generation");
     if (msg.includes("no_model")) return locale.t("prompt_assistant.no_model");
-    return locale.t("prompt_assistant.error_generic");
+    // Surface the real backend reason (llama-server crash tail, missing shared
+    // library, health timeout, etc.) instead of a generic message — the detailed
+    // string is what makes a failed enhance diagnosable, especially on headless
+    // server deployments where the only signal the user sees is this toast.
+    const detail = msg.replace(/^Error:\s*/, "").trim();
+    return detail
+      ? `${locale.t("prompt_assistant.error_generic")}: ${detail}`
+      : locale.t("prompt_assistant.error_generic");
   }
 
   function onSetupInstalled() {
