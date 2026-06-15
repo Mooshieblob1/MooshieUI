@@ -286,6 +286,14 @@ const FACE_ATOMS: &[&str] = &[
     "headband", "headphones", "headdress", "headgear",
 ];
 
+/// Danbooru emoticon/expression tags that carry no `_`-separated word a
+/// [`FACE_ATOMS`] check could catch, yet clearly describe a facial expression.
+const EMOTICON_FACE_TAGS: &[&str] = &[
+    ":d", ":3", ":o", ":p", ":q", ":t", ":i", ":<", ":>", ":/", ":|", ";)", ";d",
+    ";o", ";p", ";3", ";q", "xd", "x3", "d:", "o3o", "uwu", ">:)", ">:(", ">_<",
+    "@_@", "+_+", "^_^", "^o^", "0_0", "o_o", "._.", "=_=", "qwq", "tot",
+];
+
 /// Extract the face/head-relevant subset of a comma-separated prompt, preserving
 /// each kept item's original display text and order. Count tags (1girl/1boy),
 /// named characters, and any tag whose canonical form ends in `_hair`/`_eyes` or
@@ -301,7 +309,22 @@ pub fn extract_face_tags(prompt: &str) -> String {
         if item.is_empty() {
             continue;
         }
-        let canon = normalize(item);
+        // Match on a copy with ComfyUI/SD attention-weight syntax stripped
+        // (`(blue hair:1.1)`, `(((smiling)))`) but keep the original `item` — weights
+        // and all — in the output so the user's conditioning strength is preserved.
+        // Only unwrap when the item starts with a bracket, so a tag that merely carries
+        // a parenthesised qualifier (`hatsune miku (vocaloid)`) and emoticon tags
+        // (`:3`, `:d`) are left intact.
+        let mut clean = item;
+        if clean.starts_with('(') || clean.starts_with('[') {
+            clean = clean.trim_matches(|ch| matches!(ch, '(' | ')' | '[' | ']'));
+            if let Some(idx) = clean.rfind(':') {
+                if idx > 0 && clean[idx + 1..].trim().parse::<f32>().is_ok() {
+                    clean = clean[..idx].trim_end();
+                }
+            }
+        }
+        let canon = normalize(clean);
         if canon.is_empty() {
             continue;
         }
@@ -309,6 +332,7 @@ pub fn extract_face_tags(prompt: &str) -> String {
             || canon.ends_with("_eyes")
             || count_tag_set().contains(canon.as_str())
             || c.characters.contains(&canon)
+            || EMOTICON_FACE_TAGS.contains(&canon.as_str())
             || canon.split('_').any(|atom| FACE_ATOMS.contains(&atom));
         if is_face && seen.insert(canon) {
             kept.push(item.to_string());
