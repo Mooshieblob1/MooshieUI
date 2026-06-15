@@ -1,5 +1,13 @@
 # Changelog
 
+## What's New in v1.4.19
+
+### Brand and design refresh
+- **New logo across the app and OS icons**: the glossy 3D gummy mark is replaced by a flat, geometric "M" in Mooshie Yellow whose strokes terminate in circular nodes, reading as both the letter M and a ComfyUI node graph. It now ships everywhere: the in-app logo, the favicon, and the full desktop/installer, iOS, and Android icon sets.
+- **New brand typeface: Hanken Grotesk**: the interface now uses Hanken Grotesk, a warm humanist grotesque that keeps the dense control surface approachable while staying crisp at small sizes. It is self-hosted (latin + latin-ext subsets) so it loads offline and within the production content security policy, with the native system font stack as the fallback.
+
+---
+
 ## What's New in v1.4.18
 
 ### Prompt Assistant (server / read-only config)
