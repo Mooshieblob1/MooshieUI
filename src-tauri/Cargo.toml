@@ -1,6 +1,6 @@
 [package]
 name = "comfyui-desktop"
-version = "1.4.12"
+version = "1.4.13"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 default-run = "comfyui-desktop"
@@ -80,6 +80,9 @@ hex = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 sysinfo = "0.33"
+# llama.cpp (prompt assistant) ships `.zip` assets on every platform at the
+# pinned release, so zip extraction is needed on all targets, not just Windows.
+zip = "8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "=2.0.2", optional = true }
@@ -87,6 +90,3 @@ tar = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tar = "0.4"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-zip = "8"

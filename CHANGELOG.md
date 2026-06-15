@@ -1,6 +1,6 @@
 # Changelog
 
-## What's New in v1.4.12
+## What's New in v1.4.13
 
 ### Prompt Assistant (local LLM)
 - **Enhance & Compose prompts locally**: new Enhance and Compose buttons above the prompt box run a small, curated language model entirely on your machine, no API key or cloud call. Enhance expands your existing prompt; Compose builds one from a plain-language description with selectable length and optional artist suggestions, then replaces or appends to the prompt with one-click Undo.
@@ -14,6 +14,7 @@
 
 ### Bug Fixes
 - Hardened model-download directory creation against a potential panic when resolving the parent path.
+- Fixed the Linux desktop and headless web-server builds, which failed to compile because the Prompt Assistant referenced desktop-only and Windows-only dependencies on every platform.
 
 ---
 
