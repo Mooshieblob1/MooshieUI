@@ -28,7 +28,16 @@ impl PromptAssistant {
         let root = config::app_data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("prompt-assistant");
-        let server = Arc::new(LlamaServer::new(root.join("bin")));
+        // A deployment can supply its own llama-server (e.g. a CUDA build baked
+        // into the Docker image) via MOOSHIEUI_LLAMA_BIN_DIR. The release only
+        // ships a CPU build for Linux, so this is how the server image gets
+        // GPU-accelerated enhance/compose. When unset, fall back to the
+        // downloaded binary under the app data dir.
+        let (bin_dir, external) = match std::env::var("MOOSHIEUI_LLAMA_BIN_DIR") {
+            Ok(d) if !d.trim().is_empty() => (PathBuf::from(d), true),
+            _ => (root.join("bin"), false),
+        };
+        let server = Arc::new(LlamaServer::new(bin_dir, external));
         Self { root, server }
     }
 

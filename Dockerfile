@@ -56,6 +56,17 @@ RUN touch src-tauri/src/lib.rs src-tauri/src/server_main.rs src-tauri/src/main.r
     cargo build --release --no-default-features --features server --bin mooshieui-server
 
 # ---------------------------------------------------------------------------
+# Stage 2b: CUDA-enabled llama.cpp server (prompt assistant)
+# ---------------------------------------------------------------------------
+# The llama.cpp GitHub release assets only ship a CPU build for Linux, so the
+# app would otherwise run enhance/compose on CPU even though the host has GPUs.
+# A 7B model on CPU takes >100s and trips Cloudflare's 524 timeout. Pull the
+# official CUDA server image and copy its binary + ggml/llama shared libs; the
+# app is pointed at them via MOOSHIEUI_LLAMA_BIN_DIR so `-ngl` offloads to the
+# GPU and a generation finishes in seconds. Pin a digest for reproducibility.
+FROM ghcr.io/ggml-org/llama.cpp:server-cuda AS llama
+
+# ---------------------------------------------------------------------------
 # Stage 3: Runtime with CUDA + Python + ComfyUI
 # ---------------------------------------------------------------------------
 FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
@@ -67,17 +78,20 @@ ENV DEBIAN_FRONTEND=noninteractive \
     MOOSHIEUI_DATA_DIR=/data \
     COMFYUI_PATH=/opt/comfyui \
     NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    MOOSHIEUI_LLAMA_BIN_DIR=/app/llama \
+    LD_LIBRARY_PATH=/app/llama:${LD_LIBRARY_PATH}
 
 # System packages
-# libgomp1 is required by the prompt-assistant llama.cpp CPU build (OpenMP); the
+# libgomp1 is required by the prompt-assistant llama.cpp build (OpenMP); the
 # CUDA runtime base image does not ship it, so without it llama-server exits
 # immediately on load with "error while loading shared libraries: libgomp.so.1"
-# and every enhance/compose request 500s.
+# and every enhance/compose request 500s. libcurl4 is linked by the official
+# CUDA llama-server build (HF model fetch support) and is likewise absent.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 python3.12-venv python3-pip \
     git curl ca-certificates \
-    libxcb1 libglib2.0-0 libgl1 libgomp1 \
+    libxcb1 libglib2.0-0 libgl1 libgomp1 libcurl4 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (fast Python package manager)
@@ -130,6 +144,14 @@ COPY comfyui-nodes/nanosaur_support/ ${COMFYUI_PATH}/custom_nodes/nanosaur_suppo
 # Copy server binary, frontend, and entrypoint
 COPY --from=builder /build/src-tauri/target/release/mooshieui-server /app/mooshieui-server
 COPY --from=frontend /build/dist /app/dist
+
+# CUDA llama-server + its ggml/llama shared libs for the prompt assistant. The
+# official server-cuda image lays the binary and *.so out flat under /app, so
+# copying that directory gives both. MOOSHIEUI_LLAMA_BIN_DIR (set above) points
+# the app here, and LD_LIBRARY_PATH lets the binary find its libs. NOTE: this
+# build links libcuda.so.1 (the driver stub), so the container must be run with
+# GPU access (--gpus all); on a CPU-only host enhance/compose will fail to load.
+COPY --from=llama /app/ /app/llama/
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 

@@ -69,6 +69,12 @@ const SERVER_BIN: &str = "llama-server";
 /// Manages a single llama-server child process and its idle lifetime.
 pub struct LlamaServer {
     bin_dir: PathBuf,
+    /// When true, `bin_dir` holds a binary provisioned out-of-band (e.g. baked
+    /// into the Docker image) rather than one this struct downloads. The GitHub
+    /// release only ships a CPU build for Linux, so a GPU-accelerated server
+    /// deployment supplies its own CUDA `llama-server` and we must not clobber
+    /// it with the CPU download.
+    external_binary: bool,
     child: tokio::sync::Mutex<Option<Child>>,
     port: std::sync::atomic::AtomicU16,
     active_model: std::sync::Mutex<Option<String>>,
@@ -81,9 +87,10 @@ pub struct LlamaServer {
 }
 
 impl LlamaServer {
-    pub fn new(bin_dir: PathBuf) -> Self {
+    pub fn new(bin_dir: PathBuf, external_binary: bool) -> Self {
         Self {
             bin_dir,
+            external_binary,
             child: tokio::sync::Mutex::new(None),
             port: std::sync::atomic::AtomicU16::new(0),
             active_model: std::sync::Mutex::new(None),
@@ -157,6 +164,20 @@ impl LlamaServer {
         backend: Backend,
         progress: &(dyn Fn(&str, u64, u64, bool) + Sync),
     ) -> Result<(), AppError> {
+        // A pre-provisioned (e.g. CUDA) binary is used as-is; never download over
+        // it. The release download only offers a CPU build for Linux, which would
+        // silently undo GPU acceleration on a server deployment.
+        if self.external_binary {
+            return if self.is_binary_present() {
+                Ok(())
+            } else {
+                Err(AppError::LlmError(format!(
+                    "llama-server binary not found at {} (MOOSHIEUI_LLAMA_BIN_DIR is set but the \
+                     binary is missing)",
+                    self.server_path().display()
+                )))
+            };
+        }
         if self.is_binary_current() {
             return Ok(());
         }

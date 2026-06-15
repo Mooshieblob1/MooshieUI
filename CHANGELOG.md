@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v1.4.16
+
+### Prompt Assistant (server / GPU)
+- **GPU-accelerated enhance/compose on the server image**: the Docker image now ships a CUDA-enabled `llama-server` and points the app at it, so prompt enhancement offloads to the GPU and finishes in seconds. The llama.cpp release only provides a CPU build for Linux, which made a 7B model take longer than Cloudflare's 100s proxy timeout and fail with a 524. The app can now use a pre-provisioned binary via the `MOOSHIEUI_LLAMA_BIN_DIR` environment variable. (Requires rebuilding the Docker image; the CUDA build needs the container to be run with GPU access.)
+
+---
+
 ## What's New in v1.4.15
 
 ### Fixes and maintenance
