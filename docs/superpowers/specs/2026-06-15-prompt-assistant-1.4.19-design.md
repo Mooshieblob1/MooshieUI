@@ -30,14 +30,25 @@ This release replaces the manual workarounds with code fixes, fixes compose, and
 
 ## A. Prompt-assistant reliability
 
-### A1. No-model fallback prefers a natural-language model
+### A1. No-model fallback prefers an installed natural-language model
 
 When `prompt_assistant_model_id` is unset, the server path currently falls back to
 `installed_models().next()` ([webserver.rs:4424-4432](../../../src-tauri/src/webserver.rs)), which returns
-the first catalog entry (`dantaggen-l`). Replace this with
-`catalog::recommend_model_id(total_vram_mb, system_ram_mb)`, which already prefers the largest-fitting
-natural-language model and only falls back to DanTagGen when nothing else fits. Detect hardware
-(`hardware::detect`) for the VRAM/RAM inputs, which the function already does just below the fallback.
+the first catalog entry (`dantaggen-l`).
+
+Do **not** swap this for `catalog::recommend_model_id()`. That function recommends across the **whole
+catalog** ([catalog.rs:170-193](../../../src-tauri/src/prompt_assistant/catalog.rs)), regardless of what is
+on disk — and the headless path feeds the result straight into `ensure_running`, which hard-errors
+`"Model not installed"` when the file is absent
+([mod.rs:136-138](../../../src-tauri/src/prompt_assistant/mod.rs)). On a host that has the 4B but not the
+recommended 7B, that turns a working fallback into a failure.
+
+**Fix:** the fallback must pick the largest-fitting natural-language model **among installed ones**. Add a
+small helper (e.g. `PromptAssistant::recommend_installed_model(total_vram_mb, system_ram_mb)`) that filters
+`installed_models()` to catalog entries with `purpose == "natural_language"`, chooses the largest that fits
+via `catalog::best_variant_for`, and only then falls back to any installed model (DanTagGen last). Detect
+hardware (`hardware::detect`) for the VRAM/RAM inputs, which the headless path already does just below the
+fallback.
 
 ### A2. Pin enhance to the most-VRAM GPU in code
 
@@ -47,11 +58,30 @@ detect the NVIDIA GPU with the highest **total** VRAM and pin the child to it:
 - Set `CUDA_DEVICE_ORDER=PCI_BUS_ID` so CUDA indices match nvidia-smi/PCI order.
 - Set `CUDA_VISIBLE_DEVICES=<pci index of the max-total-VRAM GPU>`.
 
-Detection reuses the nvidia-smi query already in [gpu_manager.rs](../../../src-tauri/src/comfyui/gpu_manager.rs)
-(`detect_free_vram_mb` queries per-GPU memory; add/extend a helper returning the index of the GPU with the
-greatest total memory). The child process overrides inherited env (same pattern as ComfyUI workers at
-`process.rs:1154`), so this is robust regardless of host `CUDA_VISIBLE_DEVICES`. Removes the need for the
-deployment env var. If detection fails (no nvidia-smi, no GPUs), spawn without pinning (current behavior).
+Detection reuses the nvidia-smi query already in [gpu_manager.rs](../../../src-tauri/src/comfyui/gpu_manager.rs).
+Extend it into a helper returning per-GPU `(index, total_mb, free_mb)` (today `detect_free_vram_mb` collapses
+to a single global-max free value). Pick the **max-total** entry as the pin target. The pin is set on the
+`llama-server` spawn at [server.rs:228](../../../src-tauri/src/prompt_assistant/server.rs) via
+`cmd.env("CUDA_DEVICE_ORDER", "PCI_BUS_ID").env("CUDA_VISIBLE_DEVICES", idx)` — the child overrides inherited
+env, so this is robust regardless of host `CUDA_VISIBLE_DEVICES`. Removes the need for the deployment env var.
+If detection fails (no nvidia-smi, no GPUs), spawn without pinning (current behavior).
+
+**Keep the offload gate consistent with the pin.** The GPU-vs-CPU decision in
+[mod.rs:162-166](../../../src-tauri/src/prompt_assistant/mod.rs) currently gates on `detect_free_vram_mb()`,
+the **global max free across all GPUs**. After pinning, the only free VRAM that matters is the *pinned* card's:
+if the pin target is busy (low free) but another GPU is idle (high free), the global-max value sets
+`n_gpu_layers > 0`, and CUDA then forces the load onto the busy pinned card — WDDM demotion / OOM, the exact
+failure the gate exists to prevent. Feed the **pinned GPU's** `free_mb` (from the new per-GPU helper) into the
+offload gate instead of the global max. The fit-check side already aligns: `hardware::detect().total_vram_mb`
+is `.max()` across GPUs ([hardware.rs:65](../../../src-tauri/src/prompt_assistant/hardware.rs)) — the same
+max-total card — so only the *free* side needs correcting.
+
+**Known limitation (accepted):** the max-total GPU is also `gpu_index 0`, the first worker
+`find_available()` reserves for image generation. So default generations and enhance both target that card and
+contend. This is not fatal — with the offload-gate fix above, enhance gracefully drops to CPU while the card is
+busy generating, and the mod GPU picker (section C) lets operators steer generations onto the other GPUs.
+"Enhance is always GPU-fast" is therefore not guaranteed under heavy generation load. Deprioritizing the LLM
+card in worker selection is deliberately out of scope for 1.4.19 (a larger scheduling change).
 
 ### A3. Remove the abandoned free-VRAM code
 
@@ -118,18 +148,35 @@ always honored.
 
 ### C3. Worker reservation honoring the pin
 
-`submit_prompt` currently reserves the first available worker via `find_available()` + `try_reserve()`. When a
-valid `preferred_gpu_index` is supplied, target the worker whose `gpu_index` matches. **If that worker is busy,
-wait for it** (queue on the chosen GPU) rather than falling back to another GPU — this honors the explicit
-intent. An out-of-range or disabled index falls back to normal first-available behavior.
+`submit_prompt` today has three tiers: reserve an idle worker (`find_available()` + `try_reserve()`),
+else **server-queue on any Running worker** (`do_submit_to_server_queue` — ComfyUI accepts multiple prompts
+per server), else `wait_for_available`
+([gpu_manager.rs:238-265](../../../src-tauri/src/comfyui/gpu_manager.rs)).
+
+The user's "wait for that GPU" decision maps onto the **second tier, scoped to the pinned worker**: when a
+valid `preferred_gpu_index` is supplied, target the worker whose `gpu_index` matches —
+
+- if that worker is **idle**, `try_reserve()` + `do_submit`;
+- if that worker is **busy**, `do_submit_to_server_queue` on **that specific worker** (ComfyUI queues it
+  FIFO behind the current job). No fallback to another GPU, and no client-side blocking primitive.
+
+An out-of-range or disabled index falls back to normal first-available behavior. Implement as an
+`Option<u32>` parameter on `submit_prompt` (or a thin `submit_prompt_pinned` wrapper) so existing callers
+pass `None` unchanged.
 
 ### C4. UI
 
 A GPU dropdown in the generation settings, listing enabled workers by their `label` (e.g. "Quadro RTX 8000",
 "RTX 3090 Ti"), with a default "Auto" option (`None`). Shown only when the current role is Moderator or Admin
-(desktop always shows it). This requires exposing the current user's role to the frontend — add a small field
-to an existing status/whoami response (the server already has `resolve_role`; surface it via a lightweight
-read). New i18n keys for the label and "Auto" option must be added to `en.ts` and all other locale files.
+(desktop always shows it).
+
+The role is **already exposed** — no backend change needed. `_auth/status` returns `"role"`
+([webserver.rs:4596](../../../src-tauri/src/webserver.rs)) and the frontend already fetches it into `userRole`
+([App.svelte:541](../../../src/App.svelte)), passing it to components (e.g. `SettingsPage` derives `isAdmin`
+from it). The dropdown just reads the existing `userRole` and gates visibility on
+`moderator`/`admin`/desktop. The worker list itself comes from the existing GPU-worker status the settings UI
+already surfaces. New i18n keys for the dropdown label and "Auto" option must be added to `en.ts` and all
+other locale files.
 
 ---
 
@@ -137,8 +184,8 @@ read). New i18n keys for the label and "Auto" option must be added to `en.ts` an
 
 | Area | Files |
 |------|-------|
-| A1 fallback | `src-tauri/src/webserver.rs`, `src-tauri/src/prompt_assistant/catalog.rs` |
-| A2 enhance GPU pin | `src-tauri/src/prompt_assistant/server.rs`, `src-tauri/src/comfyui/gpu_manager.rs` |
+| A1 fallback | `src-tauri/src/webserver.rs`, `src-tauri/src/prompt_assistant/mod.rs` (new installed-NL helper), `src-tauri/src/prompt_assistant/catalog.rs` |
+| A2 enhance GPU pin | `src-tauri/src/prompt_assistant/server.rs`, `src-tauri/src/comfyui/gpu_manager.rs` (per-GPU helper), `src-tauri/src/prompt_assistant/mod.rs` (offload gate uses pinned GPU's free VRAM) |
 | A3 cleanup | `src-tauri/src/state.rs`, `src-tauri/src/webserver.rs` |
 | B unify + length | `src-tauri/src/commands/prompt_assistant.rs`, `src-tauri/src/webserver.rs`, `src-tauri/src/prompt_assistant/grounding.rs`, `src-tauri/src/prompt_assistant/mod.rs` |
 | C picker | `src-tauri/src/comfyui/gpu_manager.rs`, generate command + `lib.rs`, `src/lib/stores/generation.svelte.ts`, generation settings UI component, `src/lib/utils/api.ts`, `src/lib/locales/*.ts` |
