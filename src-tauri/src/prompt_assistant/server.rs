@@ -74,6 +74,10 @@ pub struct LlamaServer {
     active_model: std::sync::Mutex<Option<String>>,
     last_used: std::sync::Mutex<Instant>,
     watchdog_started: std::sync::atomic::AtomicBool,
+    /// Number of chat requests currently in flight. The idle watchdog must not
+    /// unload the server while this is non-zero, otherwise a slow CPU generation
+    /// (longer than the idle timeout) gets killed mid-request.
+    inflight: std::sync::atomic::AtomicU32,
 }
 
 impl LlamaServer {
@@ -85,6 +89,7 @@ impl LlamaServer {
             active_model: std::sync::Mutex::new(None),
             last_used: std::sync::Mutex::new(Instant::now()),
             watchdog_started: std::sync::atomic::AtomicBool::new(false),
+            inflight: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
@@ -271,6 +276,15 @@ impl LlamaServer {
         user: &str,
         max_tokens: u32,
     ) -> Result<String, AppError> {
+        // Mark a request in flight so the idle watchdog leaves the server alone
+        // until generation finishes. CPU inference of a 7B model routinely runs
+        // longer than the idle timeout, and `last_used` is only refreshed at the
+        // start and end of this call; without the guard the watchdog unloads
+        // llama-server mid-generation and the request drops with a bare
+        // "error sending request". The guard decrements on every return path.
+        self.inflight
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _inflight = InflightGuard(&self.inflight);
         self.touch();
         let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
         let body = json!({
@@ -282,13 +296,36 @@ impl LlamaServer {
             "max_tokens": max_tokens,
             "stream": false
         });
-        let resp = client
+        let resp = match client
             .post(&url)
             .json(&body)
             .timeout(Duration::from_secs(120))
             .send()
             .await
-            .map_err(|e| AppError::LlmError(format!("llama-server request failed: {e}")))?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // The request never completed. If the child has died the
+                // connection is simply refused and we get a bare "error sending
+                // request". A crash during inference is almost always an OOM kill
+                // (model + KV cache exceed the container/host RAM limit, signal 9)
+                // or an illegal instruction on a CPU missing a SIMD feature the
+                // prebuilt binary was compiled for (signal 4). Surface the exit
+                // status and the tail of the captured stderr so the cause is
+                // visible instead of an opaque connection error.
+                if let Some(status) = self.child_exit_status().await {
+                    let log_path = self.log_path();
+                    self.unload().await;
+                    return Err(AppError::LlmError(format!(
+                        "llama-server died during inference ({status}){}",
+                        read_log_tail(&log_path)
+                    )));
+                }
+                return Err(AppError::LlmError(format!(
+                    "llama-server request failed: {e}"
+                )));
+            }
+        };
         if !resp.status().is_success() {
             return Err(AppError::LlmError(format!(
                 "llama-server returned {}",
@@ -318,6 +355,17 @@ impl LlamaServer {
     }
 }
 
+/// Decrements the in-flight request counter when a chat call returns, including
+/// on early error returns, so the idle watchdog can resume unloading the server
+/// once no request is active.
+struct InflightGuard<'a>(&'a std::sync::atomic::AtomicU32);
+
+impl Drop for InflightGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Idle watchdog implemented as a free function so it can hold an Arc clone.
 pub fn start_idle_watchdog(server: std::sync::Arc<LlamaServer>, idle_secs: u64) {
     if server
@@ -330,6 +378,13 @@ pub fn start_idle_watchdog(server: std::sync::Arc<LlamaServer>, idle_secs: u64) 
         loop {
             tokio::time::sleep(Duration::from_secs(15)).await;
             if !server.is_running() {
+                continue;
+            }
+            // Never unload while a request is in flight (a slow CPU generation can
+            // outlast the idle timeout); refresh the idle clock so the countdown
+            // restarts only once the request completes.
+            if server.inflight.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+                server.touch();
                 continue;
             }
             let idle = server.last_used.lock().unwrap().elapsed().as_secs();

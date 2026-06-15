@@ -1,3 +1,11 @@
+## What's New in v1.4.15
+
+### Fixes and maintenance
+- **Fixed Prompt Assistant "error sending request" on slow/server deployments**: the idle watchdog could unload `llama-server` mid-generation when a CPU-only inference (e.g. a 7B model on a headless server) ran longer than the idle timeout, killing the in-flight request. The watchdog now never unloads while a request is in flight and only starts the idle countdown once the request completes.
+- **Better Prompt Assistant failure reporting**: when `llama-server` dies during inference, the error now includes the child process exit status and the tail of its log instead of a generic connection error.
+
+---
+
 ## What's New in v1.4.14
 
 ### Fixes and maintenance
