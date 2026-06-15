@@ -644,6 +644,8 @@ const de: Record<string, string> = {
   "generation.facefix.downloading": "{model} wird heruntergeladen...",
   "generation.facefix.download_failed": "Download fehlgeschlagen: {error}",
   "generation.facefix.select_model": "Modell wählen...",
+  "generation.facefix.auto_prompt": "Automatischer Gesichtsprompt",
+  "generation.facefix.auto_prompt_tip": "Konditioniert jedes erkannte Gesicht auf eine reine Gesichts-Teilmenge deines Prompts (Haare, Augen, Ausdruck, benannte Charaktere) statt auf den vollen Prompt, damit Szenen-, Posen- und Hintergrund-Tags nicht in das neu entrauschte Gesicht überlaufen. Fällt auf den vollen Prompt zurück, wenn keine Gesichts-Tags gefunden werden.",
   "generation.segment.downloading_detector": "Segment-Detektormodell wird heruntergeladen...",
   "generation.segment.detector_unavailable": "Segment-Detektor '{name}' ist nicht verfügbar — dieses Segment wird übersprungen.",
   "generation.segment.title": "Segment-Verfeinerung",

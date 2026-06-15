@@ -784,6 +784,8 @@ const en: Record<string, string> = {
   "generation.facefix.downloading": "Downloading {model}...",
   "generation.facefix.download_failed": "Download failed: {error}",
   "generation.facefix.select_model": "Select model...",
+  "generation.facefix.auto_prompt": "Auto Face Prompt",
+  "generation.facefix.auto_prompt_tip": "Conditions each detected face on a face-only subset of your prompt (hair, eyes, expression, named characters) instead of the full prompt, so scene, pose, and background tags don't bleed into the re-denoised face. Falls back to the full prompt if no face tags are found.",
   "generation.segment.downloading_detector": "Downloading segment detector model...",
   "generation.segment.detector_unavailable": "Segment detector '{name}' is not available — that segment will be skipped.",
   "generation.segment.title": "Segment Refinement",

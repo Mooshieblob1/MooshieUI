@@ -340,6 +340,7 @@ class GenerationStore {
   facefixSteps = $state(20);
   facefixGuideSize = $state(512);
   facefixMaxFaces = $state(8);
+  facefixAutoPrompt = $state(false);
   outputBitDepth = $state<"8bit" | "16bit">("8bit");
   outputFormat = $state<"png" | "jxl">("png");
   metadataMode = $state<"text_chunk" | "stealth" | "both">("both");
@@ -1184,6 +1185,7 @@ class GenerationStore {
         if (saved.facefixSteps !== undefined) this.facefixSteps = saved.facefixSteps;
         if (saved.facefixGuideSize !== undefined) this.facefixGuideSize = saved.facefixGuideSize;
         if (saved.facefixMaxFaces !== undefined) this.facefixMaxFaces = saved.facefixMaxFaces;
+        if (saved.facefixAutoPrompt !== undefined) this.facefixAutoPrompt = saved.facefixAutoPrompt;
         if (saved.modeToggles !== undefined) {
           this.modeToggles = normalizeModeToggles(saved.modeToggles);
         } else {
@@ -1326,6 +1328,7 @@ class GenerationStore {
         facefixSteps: this.facefixSteps,
         facefixGuideSize: this.facefixGuideSize,
         facefixMaxFaces: this.facefixMaxFaces,
+        facefixAutoPrompt: this.facefixAutoPrompt,
         outputBitDepth: this.outputBitDepth,
         outputFormat: this.outputFormat,
         metadataMode: this.metadataMode,
@@ -1418,6 +1421,7 @@ class GenerationStore {
       facefixSteps: this.facefixSteps,
       facefixGuideSize: this.facefixGuideSize,
       facefixMaxFaces: this.facefixMaxFaces,
+      facefixAutoPrompt: this.facefixAutoPrompt,
       outputBitDepth: this.outputBitDepth,
       outputFormat: this.outputFormat,
       metadataMode: this.metadataMode,
@@ -1758,6 +1762,7 @@ class GenerationStore {
       facefix_steps: this.facefixSteps,
       facefix_guide_size: this.facefixGuideSize,
       facefix_max_faces: this.facefixMaxFaces,
+      facefix_auto_prompt: this.facefixAutoPrompt,
       model_architecture: this.modelFamily,
       is_sdxl_like: this.isSdxlLike,
       is_vpred_model: signalsIndicateVPred(this.modelFamilySignals()),

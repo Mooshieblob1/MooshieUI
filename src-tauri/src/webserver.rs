@@ -4404,9 +4404,11 @@ pub async fn run_prompt_assistant_headless(
     mode: crate::prompt_assistant::grounding::GenMode,
 ) -> Result<String, String> {
     use crate::prompt_assistant::{grounding, hardware};
-    if !state.prompt_queue.is_empty() {
-        return Err("prompt_assistant.busy_generation".to_string());
-    }
+    // No active-generation guard here: `prompt_queue` is shared across every user
+    // of a server/browser-mode instance, so blocking on it meant one person
+    // generating locked Enhance/Compose for everyone. Contention is instead handled
+    // by the free-VRAM check in `ensure_running`, which loads the LLM on CPU when a
+    // GPU is already busy with ComfyUI's model rather than evicting it.
     let (model_id, idle_secs) = {
         let cfg = state.config.read().await;
         (

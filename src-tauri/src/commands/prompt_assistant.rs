@@ -107,13 +107,12 @@ async fn run_generation(
     mode: GenMode,
     opts: &PromptAssistantOpts,
 ) -> Result<String, AppError> {
-    // Generation guard: do not contend with an active ComfyUI generation.
-    if !state.prompt_queue.is_empty() {
-        return Err(AppError::LlmError(
-            "prompt_assistant.busy_generation".into(),
-        ));
-    }
-
+    // No active-generation guard: contention with an in-flight ComfyUI generation
+    // is handled by the free-VRAM check in `ensure_running` (it loads the LLM on
+    // CPU when the GPU is busy rather than evicting the diffusion model), so there
+    // is no need to hard-block enhance/compose while a generation is queued. In
+    // server mode `prompt_queue` is shared across users, where blocking meant one
+    // person's generation locked the feature for everyone.
     let (model_id, idle_secs) = {
         let cfg = state.config.read().await;
         (

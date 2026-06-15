@@ -200,6 +200,11 @@ pub struct GenerationParams {
     pub facefix_guide_size: u32,
     #[serde(default = "default_facefix_max_faces")]
     pub facefix_max_faces: u32,
+    /// When set, condition the face detailer on a face-only subset of the prompt
+    /// (auto-extracted) instead of the full prompt, so scene/pose/background tags
+    /// don't bleed into the re-denoised face region.
+    #[serde(default)]
+    pub facefix_auto_prompt: bool,
     /// Output image bit depth — "8bit" (default) or "16bit"
     #[serde(default = "default_output_bit_depth")]
     pub output_bit_depth: String,

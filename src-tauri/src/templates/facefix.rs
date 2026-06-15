@@ -22,6 +22,33 @@ pub fn append_facefix_chain(
         .as_deref()
         .unwrap_or("Anzhc Face seg 640 v4 y11n.pt");
 
+    // Optionally condition the detailer on a face-only subset of the prompt so
+    // scene/pose/background tags don't bleed into the re-denoised face. Falls back
+    // to the full positive conditioning when the prompt has no face-relevant tags.
+    let positive_source = if params.facefix_auto_prompt {
+        let face_prompt =
+            crate::prompt_assistant::grounding::extract_face_tags(&params.positive_prompt);
+        if face_prompt.trim().is_empty() {
+            (result.positive_source.0.clone(), result.positive_source.1)
+        } else {
+            let encode_id = next_id.to_string();
+            workflow.insert(
+                encode_id.clone(),
+                json!({
+                    "class_type": "CLIPTextEncode",
+                    "inputs": {
+                        "clip": [result.clip_source.0.clone(), result.clip_source.1],
+                        "text": face_prompt
+                    }
+                }),
+            );
+            *next_id += 1;
+            (encode_id, 0)
+        }
+    } else {
+        (result.positive_source.0.clone(), result.positive_source.1)
+    };
+
     let detailer_id = next_id.to_string();
     workflow.insert(
         detailer_id.clone(),
@@ -31,7 +58,7 @@ pub fn append_facefix_chain(
                 "image": [current_image.0, current_image.1],
                 "model": [result.model_source.0.clone(), result.model_source.1],
                 "vae": [result.vae_source.0.clone(), result.vae_source.1],
-                "positive": [result.positive_source.0.clone(), result.positive_source.1],
+                "positive": [positive_source.0, positive_source.1],
                 "negative": [result.negative_source.0.clone(), result.negative_source.1],
                 "detector_model": detector_model,
                 "seed": seed + 2,

@@ -671,6 +671,8 @@ const es: Record<string, string> = {
   "generation.facefix.downloading": "Descargando {model}...",
   "generation.facefix.download_failed": "Descarga fallida: {error}",
   "generation.facefix.select_model": "Seleccionar modelo...",
+  "generation.facefix.auto_prompt": "Prompt facial automático",
+  "generation.facefix.auto_prompt_tip": "Condiciona cada rostro detectado con un subconjunto del prompt centrado en la cara (cabello, ojos, expresión, personajes con nombre) en lugar del prompt completo, para que las etiquetas de escena, pose y fondo no se filtren en el rostro reprocesado. Vuelve al prompt completo si no se encuentran etiquetas faciales.",
   "generation.segment.downloading_detector": "Descargando modelo detector de segmentos...",
   "generation.segment.detector_unavailable": "El detector de segmentos '{name}' no está disponible — ese segmento se omitirá.",
   "generation.segment.title": "Refinamiento de segmentos",

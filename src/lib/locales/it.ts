@@ -628,6 +628,8 @@ const it: Record<string, string> = {
   "generation.facefix.downloading": "Download {model}...",
   "generation.facefix.download_failed": "Download fallito: {error}",
   "generation.facefix.select_model": "Seleziona modello...",
+  "generation.facefix.auto_prompt": "Prompt viso automatico",
+  "generation.facefix.auto_prompt_tip": "Condiziona ogni volto rilevato su un sottoinsieme del prompt limitato al viso (capelli, occhi, espressione, personaggi con nome) invece del prompt completo, così che i tag di scena, posa e sfondo non si riversino sul volto rielaborato. Torna al prompt completo se non vengono trovati tag del viso.",
   "generation.segment.downloading_detector": "Download del modello rilevatore di segmenti...",
   "generation.segment.detector_unavailable": "Il rilevatore di segmenti '{name}' non è disponibile — quel segmento verrà saltato.",
   "generation.segment.title": "Rifinitura segmenti",

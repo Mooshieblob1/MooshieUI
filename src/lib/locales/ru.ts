@@ -628,6 +628,8 @@ const ru: Record<string, string> = {
   "generation.facefix.downloading": "Скачивание {model}...",
   "generation.facefix.download_failed": "Скачивание не удалось: {error}",
   "generation.facefix.select_model": "Выбрать модель...",
+  "generation.facefix.auto_prompt": "Авто-промпт лица",
+  "generation.facefix.auto_prompt_tip": "Обуславливает каждое обнаруженное лицо подмножеством промпта, относящимся только к лицу (волосы, глаза, выражение, именованные персонажи), вместо полного промпта, чтобы теги сцены, позы и фона не просачивались в повторно очищенное от шума лицо. Возвращается к полному промпту, если теги лица не найдены.",
   "generation.segment.downloading_detector": "Загрузка модели детектора сегментов...",
   "generation.segment.detector_unavailable": "Детектор сегментов '{name}' недоступен — этот сегмент будет пропущен.",
   "generation.segment.title": "Доработка сегментов",

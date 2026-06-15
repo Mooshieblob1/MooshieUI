@@ -646,6 +646,8 @@ const ja: Record<string, string> = {
   "generation.facefix.downloading": "{model}をダウンロード中...",
   "generation.facefix.download_failed": "ダウンロード失敗：{error}",
   "generation.facefix.select_model": "モデルを選択...",
+  "generation.facefix.auto_prompt": "自動フェイスプロンプト",
+  "generation.facefix.auto_prompt_tip": "検出された各顔を、プロンプト全体ではなく顔に関する部分（髪、目、表情、キャラクター名）だけで条件付けし、シーン・ポーズ・背景のタグが再ノイズ除去された顔に混ざらないようにします。顔のタグが見つからない場合はプロンプト全体にフォールバックします。",
   "generation.segment.downloading_detector": "セグメント検出モデルをダウンロード中...",
   "generation.segment.detector_unavailable": "セグメント検出器「{name}」が利用できないため、そのセグメントはスキップされます。",
   "generation.segment.title": "セグメント精細化",

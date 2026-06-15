@@ -1,5 +1,15 @@
 # Changelog
 
+## What's New in v1.4.17
+
+### Prompt Assistant (server / multi-user)
+- **Enhance/Compose no longer blocks when someone else is generating**: on shared server/browser-mode deployments the generation queue is global, so one person running a generation would make everyone else's prompt enhancement fail with `prompt_assistant.busy_generation`. The hard guard is removed; GPU contention is already handled by loading the LLM on CPU when the GPU is busy with a diffusion model.
+
+### Face Detailer
+- **Auto face prompt**: a new toggle conditions each detected face on a face-only subset of your prompt (hair, eyes, expression, named characters) instead of the full prompt, so scene, pose, and background tags don't bleed into the re-denoised face. Falls back to the full prompt when no face tags are present.
+
+---
+
 ## What's New in v1.4.16
 
 ### Prompt Assistant (server / GPU)

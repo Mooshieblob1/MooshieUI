@@ -628,6 +628,8 @@ const zh: Record<string, string> = {
   "generation.facefix.downloading": "正在下载 {model}...",
   "generation.facefix.download_failed": "下载失败：{error}",
   "generation.facefix.select_model": "选择模型...",
+  "generation.facefix.auto_prompt": "自动面部提示词",
+  "generation.facefix.auto_prompt_tip": "让每个检测到的面部仅基于提示词中与面部相关的部分（头发、眼睛、表情、指定角色）进行条件化，而非整个提示词，从而避免场景、姿势和背景标签渗入重新去噪的面部。若未找到面部标签，则回退到完整提示词。",
   "generation.segment.downloading_detector": "正在下载分割检测模型...",
   "generation.segment.detector_unavailable": "分割检测器 '{name}' 不可用——将跳过该分割。",
   "generation.segment.title": "分割细化",

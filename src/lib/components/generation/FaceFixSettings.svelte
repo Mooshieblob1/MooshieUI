@@ -219,5 +219,24 @@
         class="w-full accent-indigo-500"
       />
     </div>
+
+    <!-- Auto face prompt -->
+    <div class="flex items-center justify-between">
+      <label class="text-xs text-neutral-400">{locale.t('generation.facefix.auto_prompt')}<InfoTip text={locale.t('generation.facefix.auto_prompt_tip')} /></label>
+      <button
+        class="relative w-10 h-5 rounded-full transition-colors {generation.facefixAutoPrompt
+          ? 'bg-indigo-600'
+          : 'bg-neutral-700'}"
+        onclick={() => (generation.facefixAutoPrompt = !generation.facefixAutoPrompt)}
+        role="switch"
+        aria-checked={generation.facefixAutoPrompt}
+      >
+        <span
+          class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {generation.facefixAutoPrompt
+            ? 'translate-x-5'
+            : ''}"
+        ></span>
+      </button>
+    </div>
   {/if}
 </div>

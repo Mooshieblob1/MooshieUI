@@ -646,6 +646,8 @@ const fr: Record<string, string> = {
   "generation.facefix.downloading": "Téléchargement de {model}...",
   "generation.facefix.download_failed": "Échec du téléchargement : {error}",
   "generation.facefix.select_model": "Sélectionner un modèle...",
+  "generation.facefix.auto_prompt": "Invite de visage auto",
+  "generation.facefix.auto_prompt_tip": "Conditionne chaque visage détecté sur un sous-ensemble de votre invite limité au visage (cheveux, yeux, expression, personnages nommés) plutôt que sur l'invite complète, afin que les balises de scène, de pose et d'arrière-plan ne débordent pas sur le visage redébruité. Revient à l'invite complète si aucune balise de visage n'est trouvée.",
   "generation.segment.downloading_detector": "Téléchargement du modèle de détection de segment...",
   "generation.segment.detector_unavailable": "Le détecteur de segment '{name}' n'est pas disponible — ce segment sera ignoré.",
   "generation.segment.title": "Raffinement de segments",

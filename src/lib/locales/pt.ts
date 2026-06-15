@@ -628,6 +628,8 @@ const pt: Record<string, string> = {
   "generation.facefix.downloading": "Baixando {model}...",
   "generation.facefix.download_failed": "Download falhou: {error}",
   "generation.facefix.select_model": "Selecionar modelo...",
+  "generation.facefix.auto_prompt": "Prompt de rosto automático",
+  "generation.facefix.auto_prompt_tip": "Condiciona cada rosto detectado em um subconjunto do prompt focado no rosto (cabelo, olhos, expressão, personagens nomeados) em vez do prompt completo, para que tags de cena, pose e fundo não vazem para o rosto reprocessado. Volta ao prompt completo se nenhuma tag de rosto for encontrada.",
   "generation.segment.downloading_detector": "Baixando modelo detector de segmentos...",
   "generation.segment.detector_unavailable": "O detector de segmentos '{name}' não está disponível — esse segmento será ignorado.",
   "generation.segment.title": "Refinamento de segmentos",

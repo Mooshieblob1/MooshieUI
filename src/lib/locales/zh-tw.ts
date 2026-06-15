@@ -628,6 +628,8 @@ const zhTw: Record<string, string> = {
   "generation.facefix.downloading": "正在下載 {model}...",
   "generation.facefix.download_failed": "下載失敗：{error}",
   "generation.facefix.select_model": "選擇模型...",
+  "generation.facefix.auto_prompt": "自動臉部提示詞",
+  "generation.facefix.auto_prompt_tip": "讓每個偵測到的臉部僅根據提示詞中與臉部相關的部分（頭髮、眼睛、表情、指定角色）進行條件化，而非整個提示詞，以避免場景、姿勢和背景標籤滲入重新去噪的臉部。若未找到臉部標籤，則回退到完整提示詞。",
   "generation.segment.downloading_detector": "正在下載分割偵測模型...",
   "generation.segment.detector_unavailable": "分割偵測器 '{name}' 無法使用——將跳過該分割。",
   "generation.segment.title": "分割細化",

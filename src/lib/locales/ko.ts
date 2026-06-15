@@ -628,6 +628,8 @@ const ko: Record<string, string> = {
   "generation.facefix.downloading": "{model} 다운로드 중...",
   "generation.facefix.download_failed": "다운로드 실패: {error}",
   "generation.facefix.select_model": "모델 선택...",
+  "generation.facefix.auto_prompt": "자동 얼굴 프롬프트",
+  "generation.facefix.auto_prompt_tip": "감지된 각 얼굴을 전체 프롬프트 대신 얼굴 관련 부분(머리카락, 눈, 표정, 명명된 캐릭터)으로만 조건화하여, 장면·포즈·배경 태그가 다시 디노이즈된 얼굴에 섞이지 않도록 합니다. 얼굴 태그가 없으면 전체 프롬프트로 대체합니다.",
   "generation.segment.downloading_detector": "세그먼트 감지 모델 다운로드 중...",
   "generation.segment.detector_unavailable": "세그먼트 감지기 '{name}'를 사용할 수 없어 해당 세그먼트를 건너뜁니다.",
   "generation.segment.title": "세그먼트 정밀화",
