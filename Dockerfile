@@ -48,6 +48,9 @@ RUN cd src-tauri && \
 
 # Now copy the real source and build
 COPY src-tauri/ src-tauri/
+# The prompt-assistant grounding corpus is include_str!'d from the frontend
+# asset tree (src/lib/assets/anima-tags.json), which lives outside src-tauri.
+COPY src/lib/assets/anima-tags.json src/lib/assets/anima-tags.json
 RUN touch src-tauri/src/lib.rs src-tauri/src/server_main.rs src-tauri/src/main.rs && \
     cd src-tauri && \
     cargo build --release --no-default-features --features server --bin mooshieui-server
