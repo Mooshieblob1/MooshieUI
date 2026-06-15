@@ -4416,7 +4416,20 @@ pub async fn run_prompt_assistant_headless(
             cfg.prompt_assistant_idle_timeout_secs,
         )
     };
-    let model_id = model_id.ok_or_else(|| "prompt_assistant.no_model".to_string())?;
+    // Fall back to whatever model is already on disk when config.json carries no
+    // explicit selection. This is the only path that works on read-only-config
+    // deployments (e.g. a Kubernetes ConfigMap mounted at config.json), where the
+    // UI's model pick can never be persisted back, leaving `prompt_assistant_model_id`
+    // perpetually None despite a model sitting in the data dir.
+    let model_id = match model_id {
+        Some(id) => id,
+        None => state
+            .prompt_assistant
+            .installed_models()
+            .into_iter()
+            .next()
+            .ok_or_else(|| "prompt_assistant.no_model".to_string())?,
+    };
     let hw = tokio::task::spawn_blocking(hardware::detect)
         .await
         .map_err(|e| e.to_string())?;

@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v1.4.18
+
+### Prompt Assistant (server / read-only config)
+- **Enhance/Compose works on deployments with a read-only config**: when `config.json` is mounted read-only (for example a Kubernetes ConfigMap), the app can never persist the model you pick in the UI, so `prompt_assistant_model_id` stays empty and Enhance failed with `prompt_assistant.no_model`. The server now falls back to whatever prompt-assistant model is already downloaded on disk, so no config write is required.
+
+---
+
 ## What's New in v1.4.17
 
 ### Prompt Assistant (server / multi-user)
