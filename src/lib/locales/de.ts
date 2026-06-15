@@ -881,6 +881,8 @@ const de: Record<string, string> = {
   "bottom_panel.prompt_search_placeholder": "Prompts suchen...",
   "bottom_panel.no_prompt_results": "Keine Prompts entsprechen Ihrer Suche",
   "bottom_panel.card_size": "Kartengröße",
+  "bottom_panel.delete_all": "Alle löschen",
+  "bottom_panel.delete_all_confirm": "Alle {count} in dieser Sitzung erzeugten Bilder löschen? Dies kann nicht rückgängig gemacht werden.",
 
   // ── Downloads ───────────────────────────────────────────
   "downloads.downloading": "{filename} wird heruntergeladen",

@@ -646,11 +646,11 @@
 <div class="relative">
   <!-- Always rendered so the textarea never shifts; buttons stay disabled until
        text is selected, which guards against inserting empty weight wrappers. -->
-  <div class="mb-2 flex flex-wrap gap-1.5">
+  <div class="mb-2 flex items-center gap-1.5">
     <button
       type="button"
       disabled={!hasSelection}
-      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       title={hasSelection ? locale.t('generation.prompt.weight_up') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => adjustSelectedWeight(0.05)}
@@ -660,7 +660,7 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       title={hasSelection ? locale.t('generation.prompt.weight_down') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => adjustSelectedWeight(-0.05)}
@@ -670,7 +670,7 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       title={hasSelection ? locale.t('generation.prompt.wrap_stronger') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => wrapSelection("brace")}
@@ -680,7 +680,7 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       title={hasSelection ? locale.t('generation.prompt.wrap_weaker') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => wrapSelection("bracket")}
@@ -688,7 +688,7 @@
       []
     </button>
     {#if !hasSelection}
-      <span class="self-center text-[10px] text-neutral-600">{locale.t('generation.prompt.weight_select_hint')}</span>
+      <span class="min-w-0 truncate text-[10px] text-neutral-600" title={locale.t('generation.prompt.weight_select_hint')}>{locale.t('generation.prompt.weight_select_hint')}</span>
     {/if}
   </div>
   <div class="relative">

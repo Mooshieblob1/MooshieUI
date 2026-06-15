@@ -917,6 +917,8 @@ const es: Record<string, string> = {
   "bottom_panel.prompt_search_placeholder": "Buscar prompts...",
   "bottom_panel.no_prompt_results": "Ningún prompt coincide con tu búsqueda",
   "bottom_panel.card_size": "Tamaño de tarjeta",
+  "bottom_panel.delete_all": "Eliminar todo",
+  "bottom_panel.delete_all_confirm": "¿Eliminar las {count} imágenes generadas en esta sesión? Esta acción no se puede deshacer.",
 
   // ── Descargas ───────────────────────────────────────────
   "downloads.downloading": "Descargando {filename}",

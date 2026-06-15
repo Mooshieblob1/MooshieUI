@@ -865,6 +865,8 @@ const it: Record<string, string> = {
   "bottom_panel.prompt_search_placeholder": "Cerca prompt...",
   "bottom_panel.no_prompt_results": "Nessun prompt corrisponde alla ricerca",
   "bottom_panel.card_size": "Dimensione scheda",
+  "bottom_panel.delete_all": "Elimina tutto",
+  "bottom_panel.delete_all_confirm": "Eliminare tutte le {count} immagini generate in questa sessione? L'operazione non può essere annullata.",
 
   // ── Download ────────────────────────────────────────────
   "downloads.downloading": "Download {filename}",

@@ -1,3 +1,20 @@
+## What's New in v1.4.12
+
+### Prompt Assistant (local LLM)
+- **Enhance & Compose prompts locally**: new Enhance and Compose buttons above the prompt box run a small, curated language model entirely on your machine, no API key or cloud call. Enhance expands your existing prompt; Compose builds one from a plain-language description with selectable length and optional artist suggestions, then replaces or appends to the prompt with one-click Undo.
+- **Curated model catalog with auto-fit**: a guided setup modal detects your GPU VRAM and system RAM (including Blackwell-class cards) and recommends a GGUF model that fits, downloading and installing it on demand. Lower-VRAM systems fall back to CPU automatically.
+- **Model management in Settings**: a new Prompt Assistant settings section lists installed models, lets you switch or delete them, set an idle-unload timeout, and unload immediately to reclaim memory.
+- **Popularity-ranked grounding**: composition is grounded in a popularity-ranked tag/artist corpus (RAG) with an Anima tag/natural-language split, and a post-filter pass that strips em dashes, raw tag dumps, and placeholder artist names for cleaner output.
+- **VRAM-aware**: the assistant frees its model from VRAM before image generation so it never competes with ComfyUI for memory.
+
+### New Features
+- **Delete all session images**: the bottom panel gains a "Delete all" action to clear every image generated in the current session, with a confirmation prompt.
+
+### Bug Fixes
+- Hardened model-download directory creation against a potential panic when resolving the parent path.
+
+---
+
 ## What's New in v1.4.11
 
 ### New Features

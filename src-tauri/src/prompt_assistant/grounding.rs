@@ -154,24 +154,48 @@ pub fn system_prompt(tag_only: bool, mode: GenMode, candidates: &[String]) -> St
         )
     };
     if tag_only {
-        let verb = match mode {
-            GenMode::Enhance => "Expand and enrich the user's danbooru tag list",
-            GenMode::Compose => "Convert the user's description into a danbooru tag list",
+        let body = match mode {
+            GenMode::Enhance => {
+                "Improve the user's danbooru tag list without changing its \
+meaning. Keep every tag the user wrote, including any named character, and only ADD tags that \
+reinforce what is already there (extra detail, clothing, pose, expression, setting, lighting, \
+quality). When the prompt names a character, add tags that fit that character's canonical \
+appearance and usual outfit; but if the user's tags already differ from those defaults (a \
+different hair colour, a different outfit, and so on), keep the user's tags and do NOT add the \
+conflicting default. Replace any made-up or misspelled tag with its real danbooru equivalent. \
+Never change the subject or the number of characters: do not add a different or extra \
+character (for example, never add 1boy to a 1girl prompt) and never add a tag that contradicts \
+one already present."
+            }
+            GenMode::Compose => {
+                "Convert the user's description into a danbooru tag list that \
+matches it. Use concrete, well-known tags; do not invent subjects the description does not \
+mention."
+            }
         };
         format!(
-            "You are a danbooru tag prompt writer for an anime image generator. \
-{verb}. Output ONLY a comma-separated list of lowercase danbooru tags. \
-No sentences, no explanations, no quotes, no numbering. Keep existing tags. \
+            "You are a danbooru tag prompt writer for an anime image generator. {body} \
+Output ONLY a comma-separated list of lowercase danbooru tags. \
+No sentences, no explanations, no quotes, no numbering. \
 Prefer concrete, well-known tags.{cand}"
         )
     } else {
         // Anima: known tags first (one merged section), then a detailed NL sentence.
-        let verb = match mode {
-            GenMode::Enhance => "Enhance the user's prompt",
-            GenMode::Compose => "Write a prompt from the user's description",
+        let body = match mode {
+            GenMode::Enhance => {
+                "Improve the user's prompt without changing its meaning. Keep \
+the existing subject, the number of characters, and any named character. When a character is \
+named, add details that fit that character's canonical appearance and usual outfit; but if the \
+user's tags already differ from those defaults (a different hair colour, a different outfit, \
+and so on), keep the user's tags and never add the conflicting default. Do not add a different \
+or extra character (for example, never add 1boy to a 1girl prompt) and never add anything that \
+contradicts the prompt. Only add details that reinforce what is already there, and turn any \
+made-up tag into a real one."
+            }
+            GenMode::Compose => "Write a prompt from the user's description.",
         };
         format!(
-            "You are a prompt writer for the Anima anime image model. {verb}. \
+            "You are a prompt writer for the Anima anime image model. {body} \
 For every concept that has a known Gelbooru-style tag, use that tag; only fall back to \
 natural language for ideas that have no matching tag. \
 Put all the tags first as a single comma-separated section, then finish with one \
@@ -189,6 +213,228 @@ Do not add headings, labels like 'tags:', or em dashes. No explanations or quote
 pub enum GenMode {
     Enhance,
     Compose,
+}
+
+/// Danbooru person-count tags, grouped girls / boys / others. Enhancement must not
+/// change which of these the user supplied: adding "1boy" to a "1girl" prompt, or
+/// escalating "1girl" to "2girls", changes the subject rather than improving it. The
+/// user owns the character count; enhancement only adds supporting detail.
+const COUNT_TAGS: &[&str] = &[
+    "1girl",
+    "2girls",
+    "3girls",
+    "4girls",
+    "5girls",
+    "6+girls",
+    "multiple_girls",
+    "1boy",
+    "2boys",
+    "3boys",
+    "4boys",
+    "5boys",
+    "6+boys",
+    "multiple_boys",
+    "1other",
+    "2others",
+    "3others",
+    "4others",
+    "5others",
+    "6+others",
+    "multiple_others",
+];
+
+fn count_tag_set() -> &'static HashSet<&'static str> {
+    static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    SET.get_or_init(|| COUNT_TAGS.iter().copied().collect())
+}
+
+/// Danbooru hair/eye colours, used to detect the colour-attribute families. A
+/// character's canonical hair or eye colour is one of these; enhancement must not
+/// switch it when the user pinned a different one ("blue hair" must not gain "red
+/// hair"). Hair *style* (long_hair, ponytail) and compound descriptors (two-tone,
+/// multicoloured) are intentionally excluded — they coexist, so they are not policed.
+const COLORS: &[&str] = &[
+    "aqua",
+    "black",
+    "blonde",
+    "blue",
+    "brown",
+    "green",
+    "grey",
+    "gray",
+    "orange",
+    "pink",
+    "purple",
+    "red",
+    "white",
+    "silver",
+    "yellow",
+    "light_blue",
+    "dark_blue",
+    "light_brown",
+    "light_green",
+    "light_purple",
+    "dark_green",
+    "light_blonde",
+];
+
+fn color_set() -> &'static HashSet<&'static str> {
+    static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    SET.get_or_init(|| COLORS.iter().copied().collect())
+}
+
+/// A mutually-exclusive attribute family. When the user pins one of these,
+/// enhancement may not introduce a *different* value in the same family: the person
+/// count, the hair colour, and the eye colour the user chose are theirs to keep.
+/// Open-ended traits (clothing, accessories, hair style) are not families — the
+/// system prompt steers those instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Family {
+    Count,
+    HairColor,
+    EyeColor,
+}
+
+/// The family a canonical tag belongs to, if any.
+fn family_of(canon: &str) -> Option<Family> {
+    if count_tag_set().contains(canon) {
+        return Some(Family::Count);
+    }
+    if let Some(color) = canon.strip_suffix("_hair") {
+        if color_set().contains(color) {
+            return Some(Family::HairColor);
+        }
+    }
+    if let Some(color) = canon.strip_suffix("_eyes") {
+        if color_set().contains(color) {
+            return Some(Family::EyeColor);
+        }
+    }
+    None
+}
+
+/// Canonical identity of a prompt token for reconciliation: snap aliases to their
+/// canonical danbooru form when known, else fall back to the normalized (underscored)
+/// text so out-of-corpus tokens (niche character names) still compare consistently.
+fn reconcile_canon(token: &str) -> String {
+    resolve_tag(token).unwrap_or_else(|| normalize(token))
+}
+
+/// One authoritative tag from the user's prompt (one per comma item).
+struct UserTag {
+    /// Canonical key of the whole comma item — used for survival matching.
+    canon: String,
+    /// Verbatim text, re-injected unchanged if the model drops it.
+    display: String,
+    /// Canonical keys of the item's individual words. Lets a comma item that is really
+    /// several tags run together ("1girl solo masterpiece") pin families and count as
+    /// covered word by word, without ever tearing a genuine multi-word tag or character
+    /// name ("ganyu (genshin impact)") apart.
+    atoms: Vec<String>,
+}
+
+/// Parse the user's prompt into ordered, de-duplicated authoritative tags, one per comma
+/// item. Comma items are the natural unit, so multi-word tags and character names stay
+/// intact; each item also records its word-level canonical keys for family pinning and
+/// coverage.
+fn parse_user_tags(input: &str) -> Vec<UserTag> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<UserTag> = Vec::new();
+    for chunk in input.split(',') {
+        let chunk = chunk.trim();
+        if chunk.is_empty() {
+            continue;
+        }
+        let canon = reconcile_canon(chunk);
+        if !seen.insert(canon.clone()) {
+            continue;
+        }
+        let atoms: Vec<String> = chunk.split_whitespace().map(reconcile_canon).collect();
+        out.push(UserTag {
+            canon,
+            display: chunk.to_string(),
+            atoms,
+        });
+    }
+    out
+}
+
+/// Enhance-mode reconciliation. The user's prompt is authoritative and the model may
+/// only ADD to it, so this enforces two guarantees on the post-repair output:
+///
+///   1. Conflict guard — for each mutually-exclusive family the user pinned (person
+///      count, hair colour, eye colour), drop any *different* value the model
+///      introduced. A 1girl prompt never gains 1boy; a "blue hair" prompt never gains
+///      "red hair". Families the user left open are untouched, so the model stays free
+///      to fill in a named character's canonical traits ("play into the character").
+///   2. Survival — every tag the user wrote is guaranteed to appear, re-injected in
+///      input order at the front if the model dropped it. A named character (or any
+///      explicit tag) is therefore never lost during enhancement. An item the model
+///      already echoed as separate words (a space-run like "1girl solo") counts as
+///      covered and is not duplicated as a blob.
+///
+/// Compose invents its subject from prose, so it has nothing to anchor to and passes
+/// through unchanged. Works on the comma-joined string for both tag-only and Anima.
+pub fn reconcile_enhance(input: &str, output: &str, mode: GenMode) -> String {
+    if mode != GenMode::Enhance {
+        return output.to_string();
+    }
+    let user_tags = parse_user_tags(input);
+
+    // Pin every family the user fixed, scanning each item whole *and* word by word so a
+    // space-run ("1girl solo masterpiece") still pins Count via "1girl" even when a
+    // neighbouring word ("masterpiece") is out of corpus.
+    let mut pinned: HashMap<Family, HashSet<String>> = HashMap::new();
+    for ut in &user_tags {
+        for key in std::iter::once(&ut.canon).chain(ut.atoms.iter()) {
+            if let Some(fam) = family_of(key) {
+                pinned.entry(fam).or_default().insert(key.clone());
+            }
+        }
+    }
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut kept: Vec<String> = Vec::new();
+    for chunk in output.split(',') {
+        let token = chunk.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let canon = reconcile_canon(token);
+        // Drop a model-added value that switches a family the user pinned.
+        if let Some(fam) = family_of(&canon) {
+            if let Some(vals) = pinned.get(&fam) {
+                if !vals.contains(&canon) {
+                    continue;
+                }
+            }
+        }
+        if seen.insert(canon) {
+            kept.push(token.to_string());
+        }
+    }
+
+    // Re-inject any user tag the model failed to echo, in input order, at the front so
+    // the subject and named characters still lead the prompt. Skip an item the model
+    // already emitted as separate words (every atom present), so a space-run is not
+    // duplicated as a blob.
+    let mut missing: Vec<String> = Vec::new();
+    for ut in &user_tags {
+        if seen.contains(&ut.canon) {
+            continue;
+        }
+        if ut.atoms.len() > 1 && ut.atoms.iter().all(|a| seen.contains(a)) {
+            continue;
+        }
+        seen.insert(ut.canon.clone());
+        missing.push(ut.display.clone());
+    }
+    if missing.is_empty() {
+        kept.join(", ")
+    } else {
+        missing.extend(kept);
+        missing.join(", ")
+    }
 }
 
 /// Post-filter repair of raw model output. Validates/repairs against the corpus
@@ -428,5 +674,124 @@ tags: 1girl, red dress, hair bun";
         // truncated it out entirely.
         let out = retrieve_candidates("long hair portrait", 40);
         assert!(out.contains(&"long hair".to_string()), "got: {out:?}");
+    }
+
+    #[test]
+    fn enhance_drops_added_opposite_gender() {
+        // The reported bug: a 1girl prompt comes back with a random 1boy.
+        let out = reconcile_enhance(
+            "1girl, solo",
+            "1girl, solo, 1boy, detailed background",
+            GenMode::Enhance,
+        );
+        assert!(out.contains("1girl"), "got: {out}");
+        assert!(out.contains("solo"), "got: {out}");
+        assert!(out.contains("detailed background"), "got: {out}");
+        assert!(!out.contains("1boy"), "added 1boy must be dropped: {out}");
+    }
+
+    #[test]
+    fn enhance_blocks_count_escalation_and_restores_input() {
+        // Model dropped the user's 1girl and escalated to 2girls: drop 2girls, restore 1girl.
+        let out = reconcile_enhance("1girl", "2girls, long hair", GenMode::Enhance);
+        assert!(out.contains("1girl"), "input count restored: {out}");
+        assert!(!out.contains("2girls"), "escalated count dropped: {out}");
+        assert!(out.contains("long hair"), "got: {out}");
+    }
+
+    #[test]
+    fn enhance_keeps_user_supplied_multi_subject() {
+        // If the user themselves asked for 1girl AND 1boy, both survive.
+        let out = reconcile_enhance(
+            "1girl, 1boy",
+            "1girl, 1boy, holding hands",
+            GenMode::Enhance,
+        );
+        assert!(out.contains("1girl") && out.contains("1boy"), "got: {out}");
+        assert!(out.contains("holding hands"), "got: {out}");
+    }
+
+    #[test]
+    fn enhance_handles_space_separated_input() {
+        // Space-separated prompt: a 1boy added to "1girl solo masterpiece" is still dropped.
+        let out = reconcile_enhance(
+            "1girl solo masterpiece",
+            "1girl, solo, masterpiece, 1boy",
+            GenMode::Enhance,
+        );
+        assert!(!out.contains("1boy"), "got: {out}");
+        assert!(out.contains("1girl") && out.contains("solo"), "got: {out}");
+    }
+
+    #[test]
+    fn compose_leaves_counts_untouched() {
+        // Compose invents the subject from prose, so nothing is locked.
+        let out = reconcile_enhance("a girl and a boy", "1girl, 1boy, park", GenMode::Compose);
+        assert_eq!(out, "1girl, 1boy, park");
+    }
+
+    #[test]
+    fn enhance_preserves_named_character() {
+        // The reported regression: enhancement dropped a named character. Even when the
+        // model omits it, survival must re-inject the user's character tag.
+        let out = reconcile_enhance(
+            "1girl, hatsune miku, blue hair",
+            "1girl, blue hair, stage lights",
+            GenMode::Enhance,
+        );
+        assert!(
+            out.contains("hatsune miku"),
+            "character must survive: {out}"
+        );
+        assert!(
+            out.contains("1girl") && out.contains("blue hair"),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn enhance_user_hair_overrides_character_default() {
+        // User pinned "blue hair"; the model added the character's canonical "red hair".
+        // The user's colour wins: red hair is dropped, blue hair restored.
+        let out = reconcile_enhance(
+            "1girl, hatsune miku, blue hair",
+            "1girl, hatsune miku, red hair, stage",
+            GenMode::Enhance,
+        );
+        assert!(out.contains("blue hair"), "user colour kept: {out}");
+        assert!(
+            !out.contains("red hair"),
+            "conflicting default dropped: {out}"
+        );
+        assert!(out.contains("hatsune miku"), "character kept: {out}");
+    }
+
+    #[test]
+    fn enhance_plays_into_character_when_attribute_unspecified() {
+        // The user did not pin a hair colour, so the model is free to add the
+        // character's canonical one — "play into the character".
+        let out = reconcile_enhance(
+            "1girl, hatsune miku",
+            "1girl, hatsune miku, aqua hair, detailed background",
+            GenMode::Enhance,
+        );
+        assert!(out.contains("aqua hair"), "character trait allowed: {out}");
+        assert!(out.contains("hatsune miku"), "got: {out}");
+    }
+
+    #[test]
+    fn enhance_user_eye_color_overrides() {
+        // Eye colour is a pinned family too: a "red eyes" prompt must not gain "blue eyes".
+        let out = reconcile_enhance(
+            "1girl, red eyes",
+            "1girl, blue eyes, smile",
+            GenMode::Enhance,
+        );
+        assert!(out.contains("red eyes"), "user eye colour kept: {out}");
+        assert!(
+            !out.contains("blue eyes"),
+            "conflicting eye colour dropped: {out}"
+        );
+        assert!(out.contains("smile"), "supporting tag kept: {out}");
     }
 }

@@ -94,7 +94,9 @@ impl PromptAssistant {
         if dest.exists() {
             return Ok(());
         }
-        std::fs::create_dir_all(dest.parent().unwrap())?;
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         // HuggingFace resolve URL (mirrors interrogator's HF_BASE_URL pattern).
         let url = format!(
             "https://huggingface.co/{}/resolve/main/{}",
@@ -129,7 +131,14 @@ impl PromptAssistant {
         let backend = server::default_backend();
         self.server.ensure_binary(client, backend, progress).await?;
 
-        // Offload all layers when the model fits comfortably in VRAM, else CPU.
+        // Decide GPU offload. The model must (a) physically fit in the card and
+        // (b) fit in the VRAM that is *currently free*. Gating on free (not just
+        // total) VRAM is what keeps a later image generation fast: loading the
+        // LLM fully onto a GPU that ComfyUI's diffusion model already occupies
+        // makes WDDM demote those weights into shared system memory, and it is
+        // never migrated back — so the next generation samples from RAM and
+        // crawls. When the GPU is busy we fall back to CPU inference: a slower
+        // enhance, but generation stays fast.
         let variant_vram = catalog::entry(model_id)
             .and_then(|e| {
                 e.variants
@@ -138,10 +147,27 @@ impl PromptAssistant {
             })
             .map(|v| v.vram_mb)
             .unwrap_or(u64::MAX);
-        let n_gpu_layers = if total_vram_mb >= variant_vram {
-            999
-        } else {
+        // Free VRAM is NVIDIA-only (nvidia-smi). When unknown (AMD/Intel/Apple,
+        // or no GPU) fall back to the total-VRAM decision so those hosts are not
+        // needlessly forced onto CPU.
+        let free_vram_mb =
+            tokio::task::spawn_blocking(crate::comfyui::gpu_manager::detect_free_vram_mb)
+                .await
+                .ok()
+                .flatten();
+        let n_gpu_layers = if total_vram_mb < variant_vram {
             0
+        } else {
+            match free_vram_mb {
+                Some(free) if free < variant_vram => {
+                    log::info!(
+                        "[prompt-assistant] GPU busy ({free} MB free < {variant_vram} MB needed); \
+                         loading LLM on CPU to avoid evicting ComfyUI's model"
+                    );
+                    0
+                }
+                _ => 999,
+            }
         };
 
         let port = self

@@ -887,6 +887,8 @@ const fr: Record<string, string> = {
   "bottom_panel.prompt_search_placeholder": "Rechercher des prompts...",
   "bottom_panel.no_prompt_results": "Aucun prompt ne correspond à votre recherche",
   "bottom_panel.card_size": "Taille de la carte",
+  "bottom_panel.delete_all": "Tout supprimer",
+  "bottom_panel.delete_all_confirm": "Supprimer les {count} images générées pendant cette session ? Cette action est irréversible.",
 
   // ── Téléchargements ─────────────────────────────────────
   "downloads.downloading": "Téléchargement de {filename}",

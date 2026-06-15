@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ArtistEntry } from "../types.js";
+  import type { ArtistEntry, ArtistImage } from "../types.js";
   import { formatPostCount } from "../counts.js";
   import { cachedSrc } from "../imageCache.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -17,6 +17,15 @@
   }
 
   let { entry, onclose, oninsertTag, onprev, onnext, zoomed, ontogglezoom }: Props = $props();
+
+  /** Index v2+: variants with confirmed images. Falls back to the v1 primary when absent. */
+  const visibleImages = $derived(
+    entry.images
+      ? entry.images.filter((i: ArtistImage) => i.hasImage)
+      : entry.hasImage && entry.imageUrl
+        ? [{ variantId: "p1", imageId: entry.imageId, imageUrl: entry.imageUrl, objectKey: entry.objectKey, hasImage: true }]
+        : []
+  );
 
   function toggleZoom() { ontogglezoom(); }
 
@@ -77,15 +86,19 @@
         →
       </button>
     {/if}
-    {#if entry.hasImage && entry.imageUrl}
-      <img
-        use:cachedSrc={entry.imageUrl}
-        src={entry.imageUrl}
-        alt={entry.tag}
-        class="max-h-[80vh] max-w-[92vw] w-auto rounded-lg border border-neutral-800 object-contain shadow-2xl"
-        style="zoom: {zoomed ? 1.5 : 1}; transition: zoom 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: {zoomed ? 'zoom-out' : 'zoom-in'};"
-        onclick={toggleZoom}
-      />
+    {#if visibleImages.length > 0}
+      <div class="flex flex-wrap items-start justify-center gap-3">
+        {#each visibleImages as img (img.variantId)}
+          <img
+            use:cachedSrc={img.imageUrl}
+            src={img.imageUrl}
+            alt="{entry.tag} {img.variantId}"
+            class="max-h-[80vh] max-w-[92vw] w-auto rounded-lg border border-neutral-800 object-contain shadow-2xl"
+            style="zoom: {zoomed ? 1.5 : 1}; transition: zoom 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: {zoomed ? 'zoom-out' : 'zoom-in'};"
+            onclick={toggleZoom}
+          />
+        {/each}
+      </div>
     {:else}
       <div
         class="flex aspect-3/4 w-[60vh] max-w-[92vw] items-center justify-center rounded-lg border border-neutral-800 bg-neutral-900 text-sm text-neutral-500"

@@ -865,6 +865,8 @@ const ru: Record<string, string> = {
   "bottom_panel.prompt_search_placeholder": "Поиск промптов...",
   "bottom_panel.no_prompt_results": "Промпты не найдены",
   "bottom_panel.card_size": "Размер карточки",
+  "bottom_panel.delete_all": "Удалить все",
+  "bottom_panel.delete_all_confirm": "Удалить все изображения, созданные в этой сессии ({count})? Это действие нельзя отменить.",
 
   // ── Загрузки ────────────────────────────────────────────
   "downloads.downloading": "Скачивание {filename}",

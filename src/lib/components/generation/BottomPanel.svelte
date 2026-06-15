@@ -296,6 +296,34 @@
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
   }
 
+  /**
+   * Delete the image under the floating bar, then re-target the bar to whatever
+   * image shifts into the same grid slot. The slot's screen position is fixed,
+   * so the bar stays put and the user can keep clicking delete to remove the
+   * latest image at that position one after another.
+   */
+  async function deleteHoveredImage(image: OutputImage) {
+    const idx = filteredSessionImages.indexOf(image);
+    await gallery.deleteImage(image);
+    const remaining = filteredSessionImages;
+    if (idx < 0 || idx >= remaining.length) {
+      // The deleted image was the last in its slot — nothing took its place.
+      hoveredImage = null;
+      actionBarPos = null;
+      return;
+    }
+    hoveredImage = remaining[idx];
+  }
+
+  function confirmDeleteAllSessionImages() {
+    const count = gallery.sessionImages.length;
+    if (count === 0) return;
+    if (!confirm(locale.t('bottom_panel.delete_all_confirm', { count: String(count) }))) return;
+    hoveredImage = null;
+    actionBarPos = null;
+    void gallery.deleteAllSessionImages();
+  }
+
   function actionBarOut(node: Element, { duration = 260 } = {}) {
     return {
       duration,
@@ -374,7 +402,7 @@
   </div>
 
   <!-- Tab content -->
-  <div class="flex-1 min-h-0 min-w-0 overflow-auto">
+  <div class="flex-1 min-h-0 min-w-0 overflow-auto [scrollbar-gutter:stable]">
     {#if activeTab === "loras"}
       <LoraGallery cardSize={loraCardSize} onCardSizeChange={(s) => { loraCardSize = s; }} />    {:else if activeTab === "checkpoints"}
       <CheckpointGallery />    {:else if activeTab === "images"}
@@ -417,13 +445,23 @@
                 title={locale.t('bottom_panel.card_size')}
               />
             </div>
+            <button
+              type="button"
+              class="shrink-0 w-7 h-7 flex items-center justify-center rounded border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300 hover:bg-red-600/10 transition-colors"
+              title={locale.t('bottom_panel.delete_all')}
+              aria-label={locale.t('bottom_panel.delete_all')}
+              onclick={confirmDeleteAllSessionImages}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+            </button>
           </div>
           {#if filteredSessionImages.length === 0}
             <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
               <p>{locale.t('bottom_panel.no_image_results')}</p>
             </div>
           {:else}
-            <div class="grid gap-2 flex-1 min-h-0 overflow-y-auto px-2 py-2" style="grid-template-columns: repeat(auto-fill, minmax({imageCardSize}px, 1fr)); align-content: start;">
+            <div class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-2 py-2">
+              <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(min({imageCardSize}px, 100%), 1fr)); align-content: start;">
               {#each filteredSessionImages as image}
                 <div
                   class="relative w-full rounded-lg overflow-hidden border transition-colors {hoveredImage === image ? 'border-indigo-500' : 'border-neutral-800'}"
@@ -444,6 +482,7 @@
                   </button>
                 </div>
               {/each}
+              </div>
             </div>
           {/if}
         </div>
@@ -469,7 +508,7 @@
               <p>{locale.t('bottom_panel.no_prompt_results')}</p>
             </div>
           {:else}
-            <div class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto px-2 py-2">
+            <div class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-2 py-2">
               {#each filteredPromptHistory as entry}
                 <div class="shrink-0 rounded-lg border bg-neutral-900/60 overflow-hidden {entry.favorite ? 'border-amber-500/40' : 'border-neutral-800 hover:border-neutral-700'} transition-colors">
               <button
@@ -575,10 +614,11 @@
               <p>{locale.t('bottom_panel.no_artist_results')}</p>
             </div>
           {:else}
-            <div
-              class="grid gap-2 flex-1 min-h-0 overflow-y-auto px-2 py-2"
-              style="grid-template-columns: repeat(auto-fill, minmax({artistCardSize}px, 1fr)); align-content: start;"
-            >
+            <div class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-2 py-2">
+              <div
+                class="grid gap-2"
+                style="grid-template-columns: repeat(auto-fill, minmax(min({artistCardSize}px, 100%), 1fr)); align-content: start;"
+              >
               {#each filteredFavouriteArtists as hit (hit.slug)}
                 {@const thumb = artistThumbUrl(hit)}
                 {@const favCat = artistFavourites.categoryOf(hit.slug)}
@@ -620,6 +660,7 @@
                   </div>
                 </div>
               {/each}
+              </div>
             </div>
           {/if}
         </div>
@@ -697,7 +738,7 @@
       <button
         class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-red-600/80 text-neutral-400 hover:text-red-200 transition-colors"
         title={locale.t('bottom_panel.delete')}
-        onclick={() => gallery.deleteImage(image)}
+        onclick={() => deleteHoveredImage(image)}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       </button>

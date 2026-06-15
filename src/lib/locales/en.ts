@@ -1066,6 +1066,8 @@ const en: Record<string, string> = {
   "bottom_panel.prompt_search_placeholder": "Search prompts...",
   "bottom_panel.no_prompt_results": "No prompts match your search",
   "bottom_panel.card_size": "Card size",
+  "bottom_panel.delete_all": "Delete all",
+  "bottom_panel.delete_all_confirm": "Delete all {count} images generated this session? This cannot be undone.",
   "bottom_panel.tab.compare": "Compare",
   "bottom_panel.tab.artists": "Artists",
   "bottom_panel.tab.styles": "Artist Styles",

@@ -236,7 +236,15 @@ impl LlamaServer {
                 self.unload().await;
                 return Err(AppError::LlmError("llama-server health timeout".into()));
             }
-            if let Ok(resp) = client.get(&health).send().await {
+            // Per-request timeout: the shared http_client has no default, so a
+            // stalled /health connection would otherwise block this GET forever
+            // and the deadline above could never fire (the enhance hangs).
+            if let Ok(resp) = client
+                .get(&health)
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await
+            {
                 if resp.status().is_success() {
                     break;
                 }

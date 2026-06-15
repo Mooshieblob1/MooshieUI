@@ -171,6 +171,10 @@ async fn run_generation(
         .chat(&state.http_client, port, &system, input, max_tokens)
         .await?;
     let cleaned = grounding::repair(&raw, tag_only);
+    // Enhance is additive: keep every user tag (named characters included) and don't
+    // let the model switch a pinned attribute (a 1boy on a 1girl prompt, red hair on a
+    // "blue hair" prompt). No-op for Compose.
+    let cleaned = grounding::reconcile_enhance(input, &cleaned, mode);
     Ok(cleaned)
 }
 

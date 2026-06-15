@@ -887,6 +887,8 @@ const ja: Record<string, string> = {
   "bottom_panel.prompt_search_placeholder": "プロンプトを検索...",
   "bottom_panel.no_prompt_results": "検索に一致するプロンプトがありません",
   "bottom_panel.card_size": "カードサイズ",
+  "bottom_panel.delete_all": "すべて削除",
+  "bottom_panel.delete_all_confirm": "このセッションで生成した {count} 枚の画像をすべて削除しますか？この操作は元に戻せません。",
 
   // ── ダウンロード ────────────────────────────────────────
   "downloads.downloading": "{filename}をダウンロード中",

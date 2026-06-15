@@ -1164,6 +1164,48 @@ class GalleryStore {
     }
   }
 
+  /**
+   * Delete every image generated during this session — removes each from disk
+   * (and the persistent gallery), revokes its blob URL, and clears the session
+   * list. Mirrors deleteImage() applied to all session images at once.
+   */
+  async deleteAllSessionImages() {
+    const targets = new Set(this.sessionImages);
+    if (targets.size === 0) return;
+
+    const nextAssignments = { ...this.boardAssignments };
+    let assignmentsChanged = false;
+    for (const image of targets) {
+      try {
+        if (image.gallery_filename) {
+          await deleteGalleryImage(image.gallery_filename);
+          if (nextAssignments[image.gallery_filename] !== undefined) {
+            delete nextAssignments[image.gallery_filename];
+            assignmentsChanged = true;
+          }
+        }
+        if (image.url) {
+          URL.revokeObjectURL(image.url);
+        }
+      } catch (e) {
+        console.error("Failed to delete session image:", e);
+      }
+    }
+
+    if (assignmentsChanged) {
+      this.boardAssignments = nextAssignments;
+      this.saveBoardAssignments();
+    }
+    this.images = this.images.filter((i) => !targets.has(i));
+    this.sessionImages = this.sessionImages.filter((i) => !targets.has(i));
+    if (this.selectedImage && targets.has(this.selectedImage)) {
+      this.closeLightbox();
+    }
+    if (this.lastSelectedImage && targets.has(this.lastSelectedImage)) {
+      this.lastSelectedImage = null;
+    }
+  }
+
   private inferModeFromFilename(
     image: OutputImage,
   ): "txt2img" | "img2img" | "inpainting" {

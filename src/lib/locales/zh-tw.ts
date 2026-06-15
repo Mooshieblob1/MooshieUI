@@ -865,6 +865,8 @@ const zhTw: Record<string, string> = {
   "bottom_panel.prompt_search_placeholder": "搜尋提示詞...",
   "bottom_panel.no_prompt_results": "沒有符合搜尋條件的提示詞",
   "bottom_panel.card_size": "卡片大小",
+  "bottom_panel.delete_all": "全部刪除",
+  "bottom_panel.delete_all_confirm": "刪除本次工作階段產生的全部 {count} 張圖片？此操作無法復原。",
 
   // ── 下載 ────────────────────────────────────────────────
   "downloads.downloading": "正在下載 {filename}",

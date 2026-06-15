@@ -865,6 +865,8 @@ const zh: Record<string, string> = {
   "bottom_panel.prompt_search_placeholder": "搜索提示词...",
   "bottom_panel.no_prompt_results": "没有符合搜索条件的提示词",
   "bottom_panel.card_size": "卡片大小",
+  "bottom_panel.delete_all": "全部删除",
+  "bottom_panel.delete_all_confirm": "删除本次会话生成的全部 {count} 张图片？此操作无法撤销。",
 
   // ── 下载 ────────────────────────────────────────────────
   "downloads.downloading": "正在下载 {filename}",

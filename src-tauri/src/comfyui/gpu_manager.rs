@@ -551,6 +551,25 @@ pub fn detect_gpus() -> Vec<(u32, String, u64)> {
     }
 }
 
+/// Query the largest amount of currently-free VRAM (MB) across NVIDIA GPUs.
+///
+/// Mirrors `detect_gpus`' use of the biggest card. Returns `None` when
+/// nvidia-smi is unavailable (non-NVIDIA hosts) so callers can fall back to
+/// total-VRAM heuristics rather than wrongly assuming the GPU is full.
+pub fn detect_free_vram_mb() -> Option<u64> {
+    let output = crate::comfyui::process::std_command_no_window("nvidia-smi")
+        .args(["--query-gpu=memory.free", "--format=csv,noheader,nounits"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<u64>().ok())
+        .max()
+}
+
 /// Auto-generate worker configs from detected GPUs.
 /// Each GPU gets its own worker with sequential ports starting from base_port.
 pub fn auto_configure_workers(base_port: u16) -> Vec<GpuWorkerConfig> {
