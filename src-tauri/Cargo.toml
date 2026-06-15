@@ -82,7 +82,7 @@ rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 sysinfo = "0.33"
 # llama.cpp (prompt assistant) ships `.zip` assets on every platform at the
 # pinned release, so zip extraction is needed on all targets, not just Windows.
-zip = "8"
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "=2.0.2", optional = true }
