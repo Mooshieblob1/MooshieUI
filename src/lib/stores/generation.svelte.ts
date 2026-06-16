@@ -363,7 +363,8 @@ class GenerationStore {
   autoSaveDirs = $state<string[]>([]);
   /** When true, swapping checkpoints no longer auto-applies per-model generation params
    *  (steps/cfg/sampler/scheduler/dimensions). Family/metadata detection still runs.
-   *  The first preset application in a session is exempt so fresh users still get sane defaults. */
+   *  The first-ever preset application (while `modelPresetAppliedKey` is still unset) is
+   *  exempt so a fresh profile still gets sane defaults; every later swap preserves. */
   advancedMode = $state(false);
   regionalPrompts = $state<RegionalPromptSelection[]>([]);
   /** SDXL/Illustrious: conditioning areas vs sequential inpaint. Anima always uses inpaint chain. */
@@ -873,8 +874,9 @@ class GenerationStore {
     if (presetKey === this.modelPresetAppliedKey) return;
     const isFirstPresetApplication = !this.modelPresetAppliedKey;
     this.modelPresetAppliedKey = presetKey;
-    // Advanced Mode: after the first application, preserve the user's generation
-    // params on checkpoint swaps. Family/metadata detection already ran above.
+    // Advanced Mode: after the first-ever application, preserve the user's generation
+    // params on checkpoint swaps. Family/metadata detection runs separately in
+    // applyModelMetadata(); only the param writes below are skipped.
     if (this.advancedMode && !isFirstPresetApplication) return;
 
     let preset: ModelPreset;
