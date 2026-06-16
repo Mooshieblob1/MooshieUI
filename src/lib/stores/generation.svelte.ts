@@ -54,6 +54,8 @@ interface ModelPreset {
   width: number;
   height: number;
   upscaleDenoise?: number;
+  /** Sampler to use when `samplerName` is absent from the backend's enumerated list. Defaults to "euler". */
+  samplerFallback?: string;
 }
 
 function isModelFamily(value: unknown): value is ModelFamily {
@@ -841,7 +843,7 @@ class GenerationStore {
   private applyResolvedPreset(preset: ModelPreset) {
     this.steps = preset.steps;
     this.cfg = preset.cfg;
-    this.samplerName = this.resolveAvailableOption(models.samplers, preset.samplerName, "euler");
+    this.samplerName = this.resolveAvailableOption(models.samplers, preset.samplerName, preset.samplerFallback ?? "euler");
     this.scheduler = this.resolveAvailableOption(models.schedulers, preset.scheduler, "normal");
     this.width = preset.width;
     this.height = preset.height;
@@ -1069,8 +1071,12 @@ class GenerationStore {
       case "illustrious":
         preset = {
           steps: this.hasTurboModelVariant ? 10 : 20,
-          cfg: this.hasTurboModelVariant ? 1.0 : 5.0,
-          samplerName: this.hasTurboModelVariant ? "euler" : "euler_cfg_pp",
+          // euler_ancestral_cfg_pp is a CFG++ sampler tuned for low CFG (~1.5-2.2);
+          // CFG 2.0 keeps it inside its band. Falls back to plain euler_ancestral
+          // on older ComfyUI builds that lack the cfg_pp variant.
+          cfg: this.hasTurboModelVariant ? 1.0 : 2.0,
+          samplerName: this.hasTurboModelVariant ? "euler" : "euler_ancestral_cfg_pp",
+          samplerFallback: this.hasTurboModelVariant ? "euler" : "euler_ancestral",
           scheduler: this.hasTurboModelVariant ? "normal" : "sgm_uniform",
           width: 1024,
           height: 1024,
