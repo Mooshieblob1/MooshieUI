@@ -1,3 +1,12 @@
+## What's New in v1.4.22
+
+### Artist Gallery
+- **Grid thumbnails now render**: the gallery grid built `.webp` image URLs while the v2 dataset ships AVIF, so cards showed blank previews even though the lightbox (which uses the real image URL) worked. Thumbnails, the instant-open lightbox, and the preload cache now pick the correct extension from the index version, and the grid variant toggle resolves the second image directly from search hits.
+- **Updated generation parameters panel**: the preview-params dialog now reflects the actual pipeline (anima-base v1.0, qwen text encoder/VAE, er_sde / sgm_uniform, 25 steps, CFG 4.0, AVIF output) and lists both per-image prompts.
+- **Search bar moved into the toolbar row**: the search box now sits alongside the sort, page-size, image-size, and variant controls instead of in the header.
+
+---
+
 ## What's New in v1.4.21
 
 ### Artist Gallery

@@ -1568,7 +1568,12 @@ const en: Record<string, string> = {
   "artist_gallery.gen_params.cfg_scale": "CFG Scale",
   "artist_gallery.gen_params.seed": "Seed",
   "artist_gallery.gen_params.resolution": "Resolution",
+  "artist_gallery.gen_params.denoise": "Denoise",
   "artist_gallery.gen_params.output": "Output",
+  "artist_gallery.gen_params.delivered_size": "Delivered Size",
+  "artist_gallery.gen_params.quality": "Quality",
+  "artist_gallery.gen_params.positive_1": "Positive Prompt (Image 1)",
+  "artist_gallery.gen_params.positive_2": "Positive Prompt (Image 2)",
 
   // Lightbox
   "artist_gallery.lightbox.aria": "Artist preview: {tag}",
