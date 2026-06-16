@@ -1,3 +1,10 @@
+## What's New in v1.4.21
+
+### Artist Gallery
+- **Point the gallery at the new multi-variant dataset**: 1.4.20 added the image-variant flip controls but the app was still loading the previous single-image index, so the second image never appeared. The manifest now points at the v2 release (`20260425_anima_all_artists`), so artists with two reference images expose the flip toggle as intended.
+
+---
+
 ## What's New in v1.4.20
 
 ### Artist Gallery

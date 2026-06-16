@@ -9,7 +9,7 @@ class ConnectionStore {
   serverUrl = $state("http://127.0.0.1:8188");
   /** Manifest URL for the Anima artist gallery. Proxied in browser mode to avoid CORS. */
   artistGalleryManifestUrl = $state(
-    `${CDN_BASE}/20260325_anima_all_artists/indices/manifest.json`,
+    `${CDN_BASE}/20260425_anima_all_artists/indices/manifest.json`,
   );
 }
 
