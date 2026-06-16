@@ -429,6 +429,12 @@ const zhTw: Record<string, string> = {
   "settings.quality_warning.body2": "僅在您想完全手動控制提示時才停用。",
   "settings.quality_warning.keep": "保持啟用",
   "settings.quality_warning.disable": "仍然停用",
+  "settings.advanced_mode.label": "Advanced Mode",
+  "settings.advanced_mode.desc": "Stop auto-applying recommended steps, CFG, sampler, scheduler, and dimensions when you switch checkpoints. Your current settings are kept on every model swap.",
+  "settings.advanced_mode.warning_title": "Enable Advanced Mode?",
+  "settings.advanced_mode.warning_body": "With Advanced Mode on, switching checkpoints will no longer auto-tune steps, CFG, sampler, scheduler, or dimensions for the selected model. You'll set these yourself. Model family detection still works.",
+  "settings.advanced_mode.enable": "Enable",
+  "settings.advanced_mode.cancel": "Cancel",
 
   // ── 生成 ────────────────────────────────────────────────
   "generation.mode.txt2img": "文字生圖",

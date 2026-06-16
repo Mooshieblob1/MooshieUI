@@ -438,6 +438,12 @@ const fr: Record<string, string> = {
   "settings.quality_warning.body2": "Ne désactivez ceci que si vous savez ce que vous faites et souhaitez un contrôle entièrement manuel de vos prompts.",
   "settings.quality_warning.keep": "Garder activé",
   "settings.quality_warning.disable": "Désactiver quand même",
+  "settings.advanced_mode.label": "Advanced Mode",
+  "settings.advanced_mode.desc": "Stop auto-applying recommended steps, CFG, sampler, scheduler, and dimensions when you switch checkpoints. Your current settings are kept on every model swap.",
+  "settings.advanced_mode.warning_title": "Enable Advanced Mode?",
+  "settings.advanced_mode.warning_body": "With Advanced Mode on, switching checkpoints will no longer auto-tune steps, CFG, sampler, scheduler, or dimensions for the selected model. You'll set these yourself. Model family detection still works.",
+  "settings.advanced_mode.enable": "Enable",
+  "settings.advanced_mode.cancel": "Cancel",
 
   // ── Génération ──────────────────────────────────────────
   "generation.mode.txt2img": "Texte vers image",

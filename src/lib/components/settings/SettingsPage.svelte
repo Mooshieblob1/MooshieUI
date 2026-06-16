@@ -82,6 +82,7 @@
   let tagUrlInput = $state("");
   let tagFileLoading = $state(false);
   let showQualityTagsWarning = $state(false);
+  let showAdvancedModeWarning = $state(false);
   let showCustomQualityTags = $state(false);
 
   // Attention backend state
@@ -2566,6 +2567,30 @@
             </div>
           </div>
 
+          <div class="flex items-start gap-3">
+            <input
+              type="checkbox"
+              id="advanced-mode"
+              checked={generation.advancedMode}
+              onchange={(e) => {
+                const target = e.target as HTMLInputElement;
+                if (target.checked) {
+                  // Revert — confirm via popup before enabling
+                  target.checked = false;
+                  showAdvancedModeWarning = true;
+                } else {
+                  generation.advancedMode = false;
+                  generation.saveSettings();
+                }
+              }}
+              class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
+            />
+            <div>
+              <label for="advanced-mode" class="text-sm text-neutral-200">{locale.t('settings.advanced_mode.label')}</label>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.advanced_mode.desc')}</p>
+            </div>
+          </div>
+
           {#if generation.autoQualityTags}
           <div class="flex items-start gap-3">
             <input
@@ -4168,6 +4193,33 @@
         class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
       >
         {locale.t('settings.quality_warning.disable')}
+      </button>
+    </div>
+  </div>
+</div>
+{/if}
+
+{#if showAdvancedModeWarning}
+<div class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" role="dialog">
+  <div class="bg-neutral-900 border border-neutral-700 rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+    <h3 class="text-sm font-semibold text-neutral-100 mb-3">{locale.t('settings.advanced_mode.warning_title')}</h3>
+    <p class="text-xs text-neutral-400 mb-4">{locale.t('settings.advanced_mode.warning_body')}</p>
+    <div class="flex gap-3 justify-end">
+      <button
+        onclick={() => { showAdvancedModeWarning = false; }}
+        class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
+      >
+        {locale.t('settings.advanced_mode.cancel')}
+      </button>
+      <button
+        onclick={() => {
+          generation.advancedMode = true;
+          generation.saveSettings();
+          showAdvancedModeWarning = false;
+        }}
+        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors cursor-pointer"
+      >
+        {locale.t('settings.advanced_mode.enable')}
       </button>
     </div>
   </div>
