@@ -765,8 +765,6 @@ async fn uv_pip(
     let mut cmd = tokio::process::Command::new(uv);
     cmd.arg("pip")
         .arg("install")
-        .arg("--progress")
-        .arg("always")
         .arg("--python")
         .arg(&python_str)
         .args(args)
@@ -1075,8 +1073,6 @@ async fn step_install_deps(
     let mut cmd = tokio::process::Command::new(uv);
     cmd.arg("pip")
         .arg("install")
-        .arg("--progress")
-        .arg("always")
         .arg("--python")
         .arg(&python_str)
         .arg("-r")
