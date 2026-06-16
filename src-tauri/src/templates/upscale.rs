@@ -190,6 +190,12 @@ pub fn append_upscale_chain(
 
     // Second KSampler pass at low denoise
     let sampler_id = next_id.to_string();
+    let is_cfgpp_sampler = params.sampler_name.to_lowercase().contains("cfg_pp");
+    let upscale_cfg = if is_cfgpp_sampler {
+        (params.cfg / 2.0).max(2.0)
+    } else {
+        params.cfg / 2.0
+    };
     workflow.insert(
         sampler_id.clone(),
         json!({
@@ -201,7 +207,7 @@ pub fn append_upscale_chain(
                 "latent_image": [latent_source.0.clone(), latent_source.1],
                 "seed": seed + 1,
                 "steps": params.upscale_steps,
-                "cfg": params.cfg / 2.0,
+                "cfg": upscale_cfg,
                 "sampler_name": params.sampler_name,
                 "scheduler": params.scheduler,
                 "denoise": params.upscale_denoise
