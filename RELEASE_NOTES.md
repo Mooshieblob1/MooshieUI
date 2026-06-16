@@ -1,3 +1,25 @@
+## What's New in v1.4.23
+
+### Illustrious models
+- **Stable output on non-turbo Illustrious checkpoints**: the default sampler is now `euler_ancestral_cfg_pp` at CFG 2.0 (previously `euler_cfg_pp` at CFG 5.0, which ran a CFG++ sampler far outside its intended low-CFG band and over-baked results). On older ComfyUI builds that lack the ancestral CFG++ sampler, it falls back gracefully to `euler_ancestral`.
+
+### CFG guidance
+- **Loud CFG 1 warning**: setting CFG to 1.0 now shows a prominent, non-blocking warning explaining that it disables prompt guidance and breaks CFG++ samplers entirely (only Turbo, distilled, and Lightning models tolerate it). Generation still proceeds.
+- **Corrected recommended CFG range for CFG++ samplers**: the recommended band is now 1.5 to 2.2 (target 1.8). The previous range treated the value that breaks these samplers as in-range.
+- **Sampler switch snaps to the right CFG**: switching to a CFG++ sampler from a high CFG now snaps to the recommended target (1.8) instead of a stale 1.4 that read as out-of-range.
+
+### Advanced Mode
+- **New opt-in Advanced Mode (Settings)**: when enabled, swapping checkpoints no longer overwrites your steps, CFG, sampler, scheduler, or dimensions, so power users keep their tuned parameters across model changes. Model family detection still runs so the generation pipeline stays correct. Enabling it shows a confirmation dialog; the first model selected on a fresh profile still gets sensible defaults.
+
+### Upscale
+- **Upscale CFG floor for CFG++ samplers**: the high-res upscale pass halves the base CFG, which would drop the new Illustrious default to CFG 1.0 and collapse the CFG++ sampler. The upscale CFG is now floored at 2.0 whenever a CFG++ sampler is in use.
+
+### Artist Gallery
+- **Favourite-artist thumbnails now render on the generation page**: the bottom-panel Artists tab still built `.webp` image URLs while the v2 dataset ships AVIF, so favourited artists showed blank previews (the same fix v1.4.22 applied to the gallery grid, missed here). The thumbnail URL now picks the correct extension from the index version.
+- **Removed the stray horizontal scrollbar in the artist lightbox**: clicking an artist card to view it larger showed an unwanted horizontal scrollbar. The prev/next arrow overlays sit just outside the content box and were being counted as horizontal overflow by the scroll container. Scrolling is now confined to an inner wrapper so the arrows no longer trigger it.
+
+---
+
 ## What's New in v1.4.22
 
 ### Artist Gallery

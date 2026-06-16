@@ -238,7 +238,10 @@
   function artistThumbUrl(hit: ArtistSearchHit): string {
     const m = artistStore?.manifest;
     if (!m || !hit.hasImage || !hit.imageId) return "";
-    return `${m.imageBaseUrl}/${m.releasePrefix}/images/${hit.imageId}.webp`;
+    // Match the gallery page's imgExt(): index v2+ stores AVIF, v1 stored WebP.
+    // Hardcoding .webp here 404s against the v2 multi-variant dataset.
+    const ext = (m.version ?? 1) >= 2 ? "avif" : "webp";
+    return `${m.imageBaseUrl}/${m.releasePrefix}/images/${hit.imageId}.${ext}`;
   }
 
   function applyArtistTag(hit: ArtistSearchHit) {

@@ -104,8 +104,10 @@
     onclick={onclose}
   ></button>
 
-  <div class="relative z-10 flex max-h-[92vh] overflow-y-auto flex-col items-center gap-3 p-4">
-    <!-- Prev / Next arrow overlays -->
+  <div class="relative z-10 flex max-h-[92vh] flex-col items-center">
+    <!-- Prev / Next arrow overlays. Kept on this non-scrolling positioned
+         parent so their negative offsets never add to the scroll container's
+         horizontal overflow (which would surface a stray horizontal scrollbar). -->
     {#if onprev}
       <button
         type="button"
@@ -126,6 +128,7 @@
         →
       </button>
     {/if}
+    <div class="flex w-full max-h-[92vh] flex-col items-center gap-3 overflow-y-auto p-4">
     {#if currentImage}
       <div class="flex items-start justify-center">
         <img
@@ -199,6 +202,7 @@
           {locale.t('artist_gallery.lightbox.close')}
         </button>
       </div>
+    </div>
     </div>
   </div>
 </div>
