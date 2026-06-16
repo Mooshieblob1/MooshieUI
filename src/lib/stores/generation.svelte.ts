@@ -873,11 +873,15 @@ class GenerationStore {
     ].join("|");
     if (presetKey === this.modelPresetAppliedKey) return;
     const isFirstPresetApplication = !this.modelPresetAppliedKey;
-    this.modelPresetAppliedKey = presetKey;
     // Advanced Mode: after the first-ever application, preserve the user's generation
     // params on checkpoint swaps. Family/metadata detection runs separately in
     // applyModelMetadata(); only the param writes below are skipped.
+    // Record the key only once the preset is actually applied (below) — recording
+    // it here would let the idempotency guard suppress the preset forever if the
+    // user later disables Advanced Mode on the same model.
     if (this.advancedMode && !isFirstPresetApplication) return;
+
+    this.modelPresetAppliedKey = presetKey;
 
     let preset: ModelPreset;
     switch (this.modelFamily) {
