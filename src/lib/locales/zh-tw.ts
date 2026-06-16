@@ -2155,5 +2155,13 @@ const zhTw: Record<string, string> = {
   "prompt_assistant.busy_generation": "正在生成中 — 請等待完成後再試。",
   "prompt_assistant.no_model": "未安裝提示詞助手模型。",
   "prompt_assistant.error_generic": "提示詞助手錯誤，請重試。",
+  "artist_gallery.variant_label": "變體",
+
+  "artist_gallery.variant_n": "圖片 {n}",
+
+  "artist_gallery.flip_variant_aria": "切換圖片變體",
+
+  "artist_gallery.lightbox.flip": "⇄ 圖片 {n}",
+
 };
 export default zhTw;

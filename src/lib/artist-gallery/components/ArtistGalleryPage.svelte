@@ -150,10 +150,14 @@
       : "";
     store.lightboxEntry = { tag: hit.tag, slug: hit.slug, imageId: hit.imageId, imageUrl, objectKey: "", postCount: hit.postCount, belowThreshold: hit.belowThreshold, b: hit.b, aliases: [], hasImage: hit.hasImage };
     store.lightboxIndex = index;
-    // Background: fetch full shard entry to patch in aliases once loaded
+    // Background: fetch full shard entry to patch in aliases (and v2 variants) once loaded
     store.client.getArtist(hit.slug).then((full) => {
       if (full && store.lightboxEntry?.slug === hit.slug) {
-        store.lightboxEntry = { ...full, imageUrl: proxiedCdnUrl(full.imageUrl) };
+        store.lightboxEntry = {
+          ...full,
+          imageUrl: proxiedCdnUrl(full.imageUrl),
+          images: full.images?.map((img) => ({ ...img, imageUrl: proxiedCdnUrl(img.imageUrl) })),
+        };
       }
     }).catch(() => {});
   }
@@ -189,9 +193,68 @@
     pageInputValue = "";
   }
 
+  // ---------------------------------------------------------------------------
+  // Image variant toggle (index v2+; inert on single-variant v1 data)
+  // ---------------------------------------------------------------------------
+  let globalVariant = $derived(store.globalVariant);
+
+  /** Variant count for a hit; defaults to 1 on v1 data. */
+  function variantCountOf(hit: ArtistSearchHit): number {
+    return Math.max(1, hit.variantCount ?? hit.images?.length ?? 1);
+  }
+
+  /** True when ANY entry in the dataset exposes >= 2 variants. */
+  const hasVariants = $derived.by(() => allEntries.some((e) => variantCountOf(e) >= 2));
+  /** Largest variant count across the dataset (drives the toolbar toggle). */
+  const maxVariants = $derived.by(() =>
+    allEntries.reduce((m, e) => Math.max(m, variantCountOf(e)), 1),
+  );
+
+  function setGlobalVariant(value: number) {
+    store.setGlobalVariant(value);
+  }
+
+  function flipCard(hit: ArtistSearchHit, e: MouseEvent) {
+    e.stopPropagation();
+    const count = variantCountOf(hit);
+    if (count < 2) return;
+    const current = Math.min(store.resolveVariant(hit.slug), count);
+    const next = (current % count) + 1;
+    store.setVariant(hit.slug, next);
+  }
+
+  function imageIdForVariant(hit: ArtistSearchHit, variant: number): string {
+    const img = hit.images?.[variant - 1];
+    return img?.imageId || hit.imageId;
+  }
+
   function thumbUrl(hit: ArtistSearchHit): string {
-    if (!store.manifest || !hit.hasImage || !hit.imageId) return "";
-    return `${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${hit.imageId}.webp`;
+    if (!store.manifest || !hit.hasImage) return "";
+    const count = variantCountOf(hit);
+    const variant = Math.min(store.resolveVariant(hit.slug), count);
+    const imageId = imageIdForVariant(hit, variant);
+    if (!imageId) return "";
+    return `${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${imageId}.webp`;
+  }
+
+  // Variant state for the open lightbox entry (kept in sync with its grid card).
+  const activeVariantCount = $derived.by(() => {
+    if (!active) return 1;
+    const hit = gridEntries.find((h) => h.slug === active.slug);
+    return Math.max(1, hit ? variantCountOf(hit) : active.images?.length ?? 1);
+  });
+  const activeVariant = $derived(
+    active ? Math.min(store.resolveVariant(active.slug), activeVariantCount) : 1,
+  );
+  const activeCanFlip = $derived(activeVariantCount >= 2);
+
+  function flipActiveVariant() {
+    if (!active) return;
+    const count = activeVariantCount;
+    if (count < 2) return;
+    const current = Math.min(store.resolveVariant(active.slug), count);
+    const next = (current % count) + 1;
+    store.setVariant(active.slug, next);
   }
 
   function displayTag(tag: string): string {
@@ -566,6 +629,22 @@
           />
         </div>
 
+        {#if hasVariants}
+          <div class="flex items-center gap-0.5 rounded-lg border border-neutral-800 bg-neutral-900/50 p-1">
+            <span class="px-1.5 text-xs text-neutral-500">{locale.t('artist_gallery.variant_label')}</span>
+            {#each Array(maxVariants) as _, idx}
+              {@const n = idx + 1}
+              <button
+                type="button"
+                class="rounded px-2 py-0.5 text-xs transition-colors {globalVariant === n ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
+                onclick={() => setGlobalVariant(n)}
+              >
+                {locale.t('artist_gallery.variant_n', { n })}
+              </button>
+            {/each}
+          </div>
+        {/if}
+
         <button
           type="button"
           class="rounded-lg border px-2 py-1 text-xs transition-colors {showOnlyFavourites ? 'border-red-500 bg-red-950/50 text-red-300' : 'border-neutral-800 bg-neutral-900/50 text-neutral-400 hover:text-neutral-200'}"
@@ -730,6 +809,17 @@
               >
                 {locale.t('artist_gallery.copy_btn')}
               </button>
+              {#if variantCountOf(hit) >= 2}
+                <button
+                  type="button"
+                  class="absolute bottom-1 left-1 rounded border border-neutral-700 bg-neutral-900/90 px-1.5 py-0.5 text-[10px] text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100 hover:border-indigo-500"
+                  onclick={(e) => flipCard(hit, e)}
+                  aria-label={locale.t('artist_gallery.flip_variant_aria')}
+                  title={locale.t('artist_gallery.flip_variant_aria')}
+                >
+                  ⇄ {Math.min(store.resolveVariant(hit.slug), variantCountOf(hit))}
+                </button>
+              {/if}
               {#if copiedSlug === hit.slug}
                 <div class="absolute inset-0 flex items-center justify-center bg-neutral-900/80">
                   <span class="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-white">{locale.t('artist_gallery.copied')}</span>
@@ -874,6 +964,9 @@
     ontogglezoom={() => store.lightboxZoomed = !store.lightboxZoomed}
     onprev={activeIndex > 0 ? () => navigateTo(activeIndex - 1) : undefined}
     onnext={activeIndex >= 0 && activeIndex < gridEntries.length - 1 ? () => navigateTo(activeIndex + 1) : undefined}
+    variant={activeVariant}
+    canFlip={activeCanFlip}
+    onflip={flipActiveVariant}
   />
 {/if}
 

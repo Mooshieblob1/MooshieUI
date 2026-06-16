@@ -2158,5 +2158,13 @@ const de: Record<string, string> = {
   "prompt_assistant.busy_generation": "Beschäftigt mit Generierung — nach Abschluss erneut versuchen.",
   "prompt_assistant.no_model": "Kein Prompt-Assistent-Modell installiert.",
   "prompt_assistant.error_generic": "Fehler beim Prompt-Assistenten, erneut versuchen.",
+  "artist_gallery.variant_label": "Variante",
+
+  "artist_gallery.variant_n": "Bild {n}",
+
+  "artist_gallery.flip_variant_aria": "Bildvariante wechseln",
+
+  "artist_gallery.lightbox.flip": "⇄ Bild {n}",
+
 };
 export default de;

@@ -1,3 +1,13 @@
+## What's New in v1.4.20
+
+### Artist Gallery
+- **Image variant support**: artist cards now show all available reference images for an artist. A flip button on each card cycles through variants, and a global variant selector in the toolbar lets you switch the entire gallery at once. The lightbox also gains a flip control for the active entry.
+
+### Prompt Assistant (hosted server)
+- **Fix 524 timeout on compose/enhance right after a generation**: on the hosted deployment, the diffusion model was staying resident in VRAM after a generation completed, forcing the LLM to load on CPU where it exceeds Cloudflare's 100-second proxy timeout. The server now unloads idle ComfyUI workers before starting the LLM so it can load on the GPU instead.
+
+---
+
 ## What's New in v1.4.19
 
 ### Brand and design refresh

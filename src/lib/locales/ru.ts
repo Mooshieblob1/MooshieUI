@@ -2155,5 +2155,13 @@ const ru: Record<string, string> = {
   "prompt_assistant.busy_generation": "Идёт генерация — попробуйте после завершения.",
   "prompt_assistant.no_model": "Модель ассистента промптов не установлена.",
   "prompt_assistant.error_generic": "Ошибка ассистента промптов, попробуйте ещё раз.",
+  "artist_gallery.variant_label": "Вариант",
+
+  "artist_gallery.variant_n": "Изображение {n}",
+
+  "artist_gallery.flip_variant_aria": "Сменить вариант изображения",
+
+  "artist_gallery.lightbox.flip": "⇄ Изображение {n}",
+
 };
 export default ru;

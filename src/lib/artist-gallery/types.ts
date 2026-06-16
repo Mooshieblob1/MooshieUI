@@ -73,6 +73,12 @@ export interface ArtistSearchHit {
   hasImage: boolean;
   /** Number of image variants available; present in index v2+. */
   variantCount?: number;
+  /**
+   * Per-variant images; present in index v2+. Lets grid cards resolve a
+   * non-primary variant's thumbnail without a shard fetch. Absent in v1 —
+   * always fall back to `imageId`.
+   */
+  images?: ArtistImage[];
 }
 
 export interface SearchOptions {

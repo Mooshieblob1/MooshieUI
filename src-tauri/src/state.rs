@@ -582,6 +582,86 @@ impl AppState {
         }
     }
 
+    /// Free idle ComfyUI workers' VRAM before loading the prompt-assistant LLM.
+    ///
+    /// The mirror image of `free_llm_vram_for_generation`. On a shared GPU
+    /// deployment a compose/enhance that lands right after a generation finds
+    /// ComfyUI's diffusion model still resident in VRAM, so the free-VRAM check
+    /// in `PromptAssistant::ensure_running` drops the LLM onto CPU. A 7B model on
+    /// CPU is slow enough to trip Cloudflare's 100s proxy timeout (a 524 on the
+    /// hosted instance). Unloading the models from workers that are not currently
+    /// executing reclaims the VRAM so the LLM loads on the GPU instead. Workers
+    /// that are reserved or running are skipped so an in-flight generation for
+    /// another user is never disrupted; ComfyUI transparently reloads its model
+    /// on the next generation.
+    #[cfg(any(feature = "desktop", feature = "server"))]
+    pub async fn free_comfyui_vram_for_llm(&self) {
+        use crate::comfyui::gpu_manager::{detect_free_vram_mb, WorkerStatus};
+
+        let before = tokio::task::spawn_blocking(detect_free_vram_mb)
+            .await
+            .ok()
+            .flatten();
+
+        let mut freed_any = false;
+        for worker in &self.gpu_manager.workers {
+            if worker.reserved.load(std::sync::atomic::Ordering::SeqCst) {
+                continue;
+            }
+            if *worker.status.read().await == WorkerStatus::Running {
+                continue;
+            }
+            log::info!(
+                "[prompt-assistant] freeing ComfyUI VRAM on worker {} before LLM load",
+                worker.id
+            );
+            let _ = self
+                .http_client
+                .post(format!("{}/free", worker.base_url))
+                .json(&serde_json::json!({
+                    "unload_models": true,
+                    "free_memory": true,
+                }))
+                .send()
+                .await;
+            freed_any = true;
+        }
+
+        if !freed_any {
+            return;
+        }
+
+        // ComfyUI's /free only *flags* the unload; the worker thread reclaims the
+        // VRAM a moment later. Wait until nvidia-smi reports the memory actually
+        // came back (or give up after a short cap) so the subsequent free-VRAM
+        // check in `ensure_running` sees the freed GPU and offloads to it instead
+        // of falling back to CPU. Only meaningful on NVIDIA, where free VRAM is
+        // observable; elsewhere `before` is None and we just settle briefly.
+        let Some(before_mb) = before else {
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            return;
+        };
+        for _ in 0..10 {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            let now = tokio::task::spawn_blocking(detect_free_vram_mb)
+                .await
+                .ok()
+                .flatten();
+            if let Some(now_mb) = now {
+                if now_mb >= before_mb.saturating_add(1024) {
+                    log::info!(
+                        "[prompt-assistant] ComfyUI VRAM reclaimed: {before_mb} -> {now_mb} MB free"
+                    );
+                    return;
+                }
+            }
+        }
+        log::warn!(
+            "[prompt-assistant] ComfyUI VRAM not visibly reclaimed within timeout; \
+             LLM may load on CPU"
+        );
+    }
+
     pub async fn dispatch_webhook_event(
         &self,
         event: &str,

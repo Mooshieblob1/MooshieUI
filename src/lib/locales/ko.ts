@@ -2155,5 +2155,13 @@ const ko: Record<string, string> = {
   "prompt_assistant.busy_generation": "생성 중입니다 — 완료 후 다시 시도하세요.",
   "prompt_assistant.no_model": "프롬프트 어시스턴트 모델이 설치되지 않았습니다.",
   "prompt_assistant.error_generic": "프롬프트 어시스턴트 오류, 다시 시도하세요.",
+  "artist_gallery.variant_label": "변형",
+
+  "artist_gallery.variant_n": "이미지 {n}",
+
+  "artist_gallery.flip_variant_aria": "이미지 변형 전환",
+
+  "artist_gallery.lightbox.flip": "⇄ 이미지 {n}",
+
 };
 export default ko;

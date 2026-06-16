@@ -2156,5 +2156,13 @@ const zh: Record<string, string> = {
   "prompt_assistant.busy_generation": "正在生成中 — 请等待完成后重试。",
   "prompt_assistant.no_model": "未安装提示词助手模型。",
   "prompt_assistant.error_generic": "提示词助手错误，请重试。",
+  "artist_gallery.variant_label": "变体",
+
+  "artist_gallery.variant_n": "图片 {n}",
+
+  "artist_gallery.flip_variant_aria": "切换图片变体",
+
+  "artist_gallery.lightbox.flip": "⇄ 图片 {n}",
+
 };
 export default zh;

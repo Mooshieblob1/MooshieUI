@@ -4433,6 +4433,11 @@ pub async fn run_prompt_assistant_headless(
     let hw = tokio::task::spawn_blocking(hardware::detect)
         .await
         .map_err(|e| e.to_string())?;
+    // Reclaim VRAM from idle ComfyUI workers so the LLM can load on the GPU.
+    // Without this, a compose/enhance right after a generation falls back to CPU
+    // (ComfyUI's model is still resident), and a 7B model on CPU overruns
+    // Cloudflare's 100s proxy timeout with a 524 on the hosted deployment.
+    state.free_comfyui_vram_for_llm().await;
     let noop = |_: &str, _: u64, _: u64, _: bool| {};
     let port = state
         .prompt_assistant

@@ -2156,5 +2156,13 @@ const pt: Record<string, string> = {
   "prompt_assistant.busy_generation": "Gerando — tente novamente após concluir.",
   "prompt_assistant.no_model": "Nenhum modelo de assistente de prompt instalado.",
   "prompt_assistant.error_generic": "Erro do assistente de prompt, tente novamente.",
+  "artist_gallery.variant_label": "Variante",
+
+  "artist_gallery.variant_n": "Imagem {n}",
+
+  "artist_gallery.flip_variant_aria": "Alternar variante de imagem",
+
+  "artist_gallery.lightbox.flip": "⇄ Imagem {n}",
+
 };
 export default pt;

@@ -2184,5 +2184,13 @@ const es: Record<string, string> = {
   "prompt_assistant.busy_generation": "Ocupado generando — inténtalo de nuevo cuando termine.",
   "prompt_assistant.no_model": "No hay modelo de asistente de prompt instalado.",
   "prompt_assistant.error_generic": "Error del asistente de prompt, inténtalo de nuevo.",
+  "artist_gallery.variant_label": "Variante",
+
+  "artist_gallery.variant_n": "Imagen {n}",
+
+  "artist_gallery.flip_variant_aria": "Cambiar variante de imagen",
+
+  "artist_gallery.lightbox.flip": "⇄ Imagen {n}",
+
 };
 export default es;

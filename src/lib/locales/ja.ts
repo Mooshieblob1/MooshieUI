@@ -2180,5 +2180,13 @@ const ja: Record<string, string> = {
   "prompt_assistant.busy_generation": "生成中です — 完了後にもう一度お試しください。",
   "prompt_assistant.no_model": "プロンプトアシスタントモデルがインストールされていません。",
   "prompt_assistant.error_generic": "プロンプトアシスタントエラー、もう一度お試しください。",
+  "artist_gallery.variant_label": "バリエーション",
+
+  "artist_gallery.variant_n": "画像{n}",
+
+  "artist_gallery.flip_variant_aria": "画像バリエーションを切り替え",
+
+  "artist_gallery.lightbox.flip": "⇄ 画像{n}",
+
 };
 export default ja;

@@ -2155,5 +2155,13 @@ const it: Record<string, string> = {
   "prompt_assistant.busy_generation": "Generazione in corso — riprova al termine.",
   "prompt_assistant.no_model": "Nessun modello assistente prompt installato.",
   "prompt_assistant.error_generic": "Errore assistente prompt, riprova.",
+  "artist_gallery.variant_label": "Variante",
+
+  "artist_gallery.variant_n": "Immagine {n}",
+
+  "artist_gallery.flip_variant_aria": "Cambia variante immagine",
+
+  "artist_gallery.lightbox.flip": "⇄ Immagine {n}",
+
 };
 export default it;

@@ -1549,6 +1549,9 @@ const en: Record<string, string> = {
   "artist_gallery.cat_uncategorised": "Uncategorised",
   "artist_gallery.cat_new": "＋ New category…",
   "artist_gallery.card_title": "{tag} · Right-click to copy tag",
+  "artist_gallery.variant_label": "Variant",
+  "artist_gallery.variant_n": "Image {n}",
+  "artist_gallery.flip_variant_aria": "Flip image variant",
 
   // Gen params modal
   "artist_gallery.gen_params.title": "Preview Generation Parameters",
@@ -1578,6 +1581,7 @@ const en: Record<string, string> = {
   "artist_gallery.lightbox.copy_tag": "Copy tag",
   "artist_gallery.lightbox.insert": "Insert into prompt",
   "artist_gallery.lightbox.close": "Close",
+  "artist_gallery.lightbox.flip": "⇄ Image {n}",
 
   // Favourites Manager
   "artist_gallery.fav_manager.aria": "Manage favourite categories",
