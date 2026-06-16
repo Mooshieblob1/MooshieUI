@@ -57,7 +57,7 @@
 
   function onSamplerChange() {
     if (isCfgPpSampler(generation.samplerName) && generation.cfg > 5) {
-      generation.cfg = 1.4;
+      generation.cfg = recommendedCfgRange().target;
     }
   }
 
