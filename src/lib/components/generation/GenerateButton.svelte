@@ -265,7 +265,7 @@
       }
 
       const skippedEmpty = generation.regionalPrompts.length - configuredRegions;
-      if (skippedEmpty > 0) {
+      if (skippedEmpty > 0 && configuredRegions > 0) {
         gallery.showToast(
           locale.t("generation.regional.empty_skipped_warning", { count: String(skippedEmpty) }),
           "warning",
