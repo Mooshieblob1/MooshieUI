@@ -518,6 +518,8 @@ const zh: Record<string, string> = {
   "generation.sampler.sih_hint": "无公开 SIH 模型卡设置。使用项目默认值：20 步，CFG 1.4，euler_cfg_pp，sgm_uniform。",
   "generation.sampler.juice_recommended": "Juice 推荐设置",
   "generation.sampler.juice_hint": "Juice 项目默认值：20 步，CFG 1.4，euler_cfg_pp，sgm_uniform。",
+  "generation.sampler.cfg1_warning_title": "CFG 1 disables prompt guidance",
+  "generation.sampler.cfg1_warning_body": "At CFG 1 the model ignores your prompt's guidance. This only produces good results on Turbo, distilled, or Lightning models, and it breaks CFG++ samplers (like euler_cfg_pp / euler_ancestral_cfg_pp) entirely. Raise CFG to the recommended range unless you know your model needs CFG 1.",
   "generation.sampler.nanosaur_recommended": "Nanosaur 推荐设置",
   "generation.sampler.nanosaur_hint": "40 步，CFG 7，euler 采样器，simple 调度器。默认分辨率 896×1152。",
   "generation.sampler.fix": "修复",

@@ -531,6 +531,8 @@ const ja: Record<string, string> = {
   "generation.sampler.sih_hint": "公開SIHモデルカード設定なし。プロジェクトデフォルト使用：20ステップ、CFG 1.4、euler_cfg_pp、sgm_uniform。",
   "generation.sampler.juice_recommended": "Juice推奨設定",
   "generation.sampler.juice_hint": "Juice向けプロジェクトデフォルト：20ステップ、CFG 1.4、euler_cfg_pp、sgm_uniform。",
+  "generation.sampler.cfg1_warning_title": "CFG 1 disables prompt guidance",
+  "generation.sampler.cfg1_warning_body": "At CFG 1 the model ignores your prompt's guidance. This only produces good results on Turbo, distilled, or Lightning models, and it breaks CFG++ samplers (like euler_cfg_pp / euler_ancestral_cfg_pp) entirely. Raise CFG to the recommended range unless you know your model needs CFG 1.",
   "generation.sampler.nanosaur_recommended": "Nanosaur推奨設定",
   "generation.sampler.nanosaur_hint": "40ステップ、CFG 7、eulerサンプラー、simpleスケジューラー。デフォルト解像度896×1152。",
   "generation.sampler.fix": "修正",

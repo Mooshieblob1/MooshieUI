@@ -518,6 +518,8 @@ const it: Record<string, string> = {
   "generation.sampler.sih_hint": "Nessuna impostazione pubblica per il modello SIH; predefiniti del progetto: 20 passi, CFG 1.4, euler_cfg_pp, sgm_uniform.",
   "generation.sampler.juice_recommended": "Impostazioni consigliate Juice",
   "generation.sampler.juice_hint": "Predefiniti del progetto per Juice: 20 passi, CFG 1.4, euler_cfg_pp, sgm_uniform.",
+  "generation.sampler.cfg1_warning_title": "CFG 1 disables prompt guidance",
+  "generation.sampler.cfg1_warning_body": "At CFG 1 the model ignores your prompt's guidance. This only produces good results on Turbo, distilled, or Lightning models, and it breaks CFG++ samplers (like euler_cfg_pp / euler_ancestral_cfg_pp) entirely. Raise CFG to the recommended range unless you know your model needs CFG 1.",
   "generation.sampler.nanosaur_recommended": "Impostazioni consigliate Nanosaur",
   "generation.sampler.nanosaur_hint": "40 passi, CFG 7, sampler euler, scheduler simple. Risoluzione predefinita 896×1152.",
   "generation.sampler.fix": "Correggi",
