@@ -90,3 +90,33 @@ export function signalsIndicateVPred(signals: ModelFamilySignals): boolean {
   ) return true;
   return filenameIndicatesVPred(signals.filename);
 }
+
+/**
+ * Families that have no text encoder baked into a single checkpoint file — they
+ * must be loaded as a separate diffusion model + text encoder (ComfyUI's
+ * `diffusion_models/` + `text_encoders/`). If a file from one of these families
+ * is loaded via `CheckpointLoaderSimple` (i.e. it was placed in `checkpoints/`),
+ * ComfyUI returns a `None` CLIP and conditioning fails with
+ * "clip input is invalid: None". Conservative list — only families that are
+ * never distributed as a full single-file checkpoint with baked CLIP.
+ */
+export const SPLIT_ONLY_FAMILIES: ReadonlySet<ModelFamily> = new Set([
+  "anima",
+  "wan",
+  "qwen",
+  "flux",
+  "flux1d",
+  "flux1s",
+  "flux1krea",
+  "flux2d",
+  "flux2klein9b",
+  "flux2klein9bbase",
+  "flux2klein4b",
+  "flux2klein4bbase",
+  "chroma",
+]);
+
+/** True when a family requires a separate text encoder (no baked CLIP). */
+export function familyRequiresSeparateClip(family: ModelFamily | null | undefined): boolean {
+  return !!family && SPLIT_ONLY_FAMILIES.has(family);
+}

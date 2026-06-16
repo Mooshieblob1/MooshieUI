@@ -11,6 +11,7 @@ import {
   MODEL_FAMILIES,
   TURBO_MODEL_VARIANTS,
   signalsIndicateVPred,
+  familyRequiresSeparateClip,
 } from "../utils/modelFamily.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import type {
@@ -1483,6 +1484,18 @@ class GenerationStore {
       if (!this.vae) {
         throw new Error("Split model VAE is still loading.");
       }
+    }
+
+    // Diffusion-only families (Flux, Anima, Wan, Qwen, Chroma, ...) carry no
+    // text encoder in a single checkpoint. If one was placed in `checkpoints/`
+    // and loaded via CheckpointLoaderSimple, ComfyUI returns a None CLIP and
+    // fails with "clip input is invalid: None". Surface an actionable error.
+    if (!this.useSplitModel && familyRequiresSeparateClip(this.modelFamily)) {
+      throw new Error(
+        `"${this.checkpoint}" is a ${this.modelFamily} diffusion model with no built-in text encoder. ` +
+          `Move it to ComfyUI's diffusion_models/ folder and select it as a diffusion model, ` +
+          `or choose a full checkpoint instead.`,
+      );
     }
 
     const style = this.stylePresetsEnabled
