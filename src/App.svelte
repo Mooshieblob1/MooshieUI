@@ -1928,13 +1928,25 @@
         if (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId) return;
 
         if (data.temp_filename) {
-          // SSE/browser path: fetch image from temp endpoint
+          // The worker WebSocket delivers preview frames as temp-file
+          // references (not inline base64). On desktop there is no HTTP server,
+          // so a fetch to /internal-api would resolve to the SPA shell and
+          // produce a broken <img>. Read the temp file via invoke() instead,
+          // mirroring the output_image handler. See issue #309.
           try {
-            const resp = await fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`, {
-              headers: authHeaders(),
-            });
-            if (!resp.ok) return;
-            const blob = await resp.blob();
+            let blob: Blob;
+            if (isTauri) {
+              const rawBytes = await readTempImage(data.temp_filename);
+              const mime = data.format === "png" ? "image/png" : "image/jpeg";
+              blob = new Blob([new Uint8Array(rawBytes)], { type: mime });
+            } else {
+              // SSE/browser path: fetch image from temp endpoint
+              const resp = await fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`, {
+                headers: authHeaders(),
+              });
+              if (!resp.ok) return;
+              blob = await resp.blob();
+            }
             // The prompt may have completed while the fetch was in flight
             // (common on remote browser mode with inpaint chains). Setting
             // previewImage now would overwrite the finalized output in the
