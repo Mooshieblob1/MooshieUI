@@ -476,8 +476,10 @@
     try {
       const dataUrl = await fetchCachedImage(url);
       resolvedImages = { ...resolvedImages, [url]: dataUrl };
-    } catch {
-      // Leave unresolved — the fallback placeholder will show.
+    } catch (e) {
+      // Leave unresolved — the fallback placeholder will show. Log so a broken
+      // preview fetch is diagnosable instead of silently blank.
+      console.warn(`LoraGallery: failed to load preview ${url}`, e);
     } finally {
       resolvingImages.delete(url);
     }

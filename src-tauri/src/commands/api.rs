@@ -2448,10 +2448,11 @@ fn parse_civitai_image_id(image_ref: &str) -> Result<u64, AppError> {
 }
 
 fn is_allowed_civitai_image_host(host: &str) -> bool {
-    matches!(
-        host.to_ascii_lowercase().as_str(),
-        "civitai.com" | "www.civitai.com" | "image.civitai.com" | "cdn.civitai.com"
-    )
+    // Accept civitai.com and any of its subdomains (image.civitai.com,
+    // cdn.civitai.com, and any future image host CivitAI introduces). The
+    // trailing-dot match keeps look-alikes like "civitai.com.evil.test" out.
+    let host = host.to_ascii_lowercase();
+    host == "civitai.com" || host.ends_with(".civitai.com")
 }
 
 pub(crate) fn parse_civitai_image_url(url: &str) -> Result<reqwest::Url, AppError> {
@@ -2479,15 +2480,27 @@ pub(crate) async fn fetch_civitai_image_bytes(
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| AppError::Other(format!("Failed to build image fetch client: {}", e)))?;
+    // The initial URL must be a CivitAI host so this command can't be turned into
+    // a generic server-side fetch primitive (it is reachable through browser-mode
+    // LAN auth and carries the user's CivitAI token).
     let mut current = parse_civitai_image_url(url)?;
     let civitai_api_key = state.config.read().await.civitai_api_key.clone();
 
     for _ in 0..5 {
+        // CivitAI redirects image requests to its CDN, which is not on a
+        // civitai.com host. Only attach the user's token while we are still on a
+        // CivitAI host so it can never leak to the CDN or any other origin.
+        let on_civitai_host = current
+            .host_str()
+            .map(is_allowed_civitai_image_host)
+            .unwrap_or(false);
         let mut req = client
             .get(current.clone())
             .header("User-Agent", "MooshieUI/0.5.7");
-        if let Some(key) = civitai_api_key.as_ref().filter(|v| !v.trim().is_empty()) {
-            req = req.bearer_auth(key);
+        if on_civitai_host {
+            if let Some(key) = civitai_api_key.as_ref().filter(|v| !v.trim().is_empty()) {
+                req = req.bearer_auth(key);
+            }
         }
 
         let resp = req
@@ -2504,7 +2517,14 @@ pub(crate) async fn fetch_civitai_image_bytes(
             current = current
                 .join(location)
                 .map_err(|e| AppError::Other(format!("Image fetch redirect invalid: {}", e)))?;
-            parse_civitai_image_url(current.as_str())?;
+            // Follow the redirect to CivitAI's CDN, but keep it HTTPS-only so a
+            // redirect can never reach an internal http service. The token is
+            // gated on the host check above, not on the target being CivitAI.
+            if current.scheme() != "https" {
+                return Err(AppError::Other(
+                    "CivitAI image redirect must use HTTPS".into(),
+                ));
+            }
             continue;
         }
         if !resp.status().is_success() {
@@ -2532,6 +2552,8 @@ mod sidecar_thumbnail_tests {
         assert!(parse_civitai_image_url("https://image.civitai.com/example.jpeg").is_ok());
         assert!(parse_civitai_image_url("https://cdn.civitai.com/example.png").is_ok());
         assert!(parse_civitai_image_url("https://civitai.com/images/123").is_ok());
+        // Any civitai.com subdomain is accepted so new image hosts keep working.
+        assert!(parse_civitai_image_url("https://imagecache.civitai.com/example.jpeg").is_ok());
     }
 
     #[test]
