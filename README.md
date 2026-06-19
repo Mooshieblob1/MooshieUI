@@ -110,7 +110,7 @@ Hover over any generated image to reveal an **Upscale** button - instantly upsca
 ### 🌐 Internationalization (11 Languages)
 
 - **11 languages** - English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Russian, Chinese (Simplified), and Chinese (Traditional)
-- **860+ translation keys** covering every UI string - generation controls, settings, setup wizard, canvas, model hub, compare grid, tooltips, and more
+- **2,000+ translation keys** covering every UI string - generation controls, settings, setup wizard, canvas, model hub, compare grid, tooltips, and more
 - **Instant switching** in Settings → Appearance - no restart needed
 - **Full parity** - all keys present in all locales with native translations
 
@@ -143,14 +143,14 @@ All settings are automatically saved to disk and restored on next launch:
 
 ### 🧬 Smart Model Detection & Architecture Presets
 
-- **13 model architectures** - SD 1.5, SDXL, Illustrious/NoobAI, SD3/SD3.5, Flux, Pony Diffusion, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, Kolors, Mugen (Flux2VAE SDXL), and Nanosaur (1.2B DiT)
+- **20+ model architectures** - SD 1.5, SDXL, Illustrious/NoobAI, Pony Diffusion, SD3/SD3.5, the Flux family (Flux.1 Dev/Schnell/Krea and Flux.2 Dev/Klein 4B/9B), Chroma, Z-Image (Base/Turbo), Wan, Qwen, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, Kolors, Anima (COSMOS), Mugen (Flux2VAE SDXL), and Nanosaur (1.2B DiT)
 - **Auto-presets** - each architecture auto-applies optimal sampler, scheduler, steps, CFG, and resolution when selected
 - **Accelerated model detection** - models with "turbo", "lightning", "lcm", or "hyper" in the name get reduced steps (4–6), lower CFG, and appropriate settings
 - **Rectified flow scheduling** - SD3, Flux, AuraFlow, Mugen, and Nanosaur models automatically inject the correct ModelSampling node with architecture-specific shift values
 - **FluxGuidance** - Flux Dev models auto-inject a FluxGuidance node; Flux Schnell (guidance-distilled) is detected and skipped
 - **Hash-based identification** - Models are recognized by SHA256 hash (CivitAI AutoV2 format), not just filename - renamed files are still detected
 - **CivitAI integration** - Look up any model's metadata (name, version, preview images) via CivitAI's hash database
-- **Recommended models** - ΣIH-1.5 (~7.5 GB) and Anima Base v1.0 (~13 GB) auto-download on selection with real-time progress bars and file size display
+- **Recommended models** - Juice (~6.9 GB) and Anima Base v1.0 (~13 GB) auto-download on selection with real-time progress bars and file size display
 - **Mugen support** - SDXL models using the Flux2 VAE (128-channel latents) with rectified flow scheduling, auto-detected and routed through dedicated VAE conversion nodes
 - **Nanosaur support** - 1.2B DiT architecture with 96-channel VAE, custom ComfyUI nodes for model loading, text encoding, and VAE decode, auto-installed alongside MooshieUI's node pack
 
@@ -411,6 +411,10 @@ Custom ComfyUI nodes for the **Nanosaur** 1.2B DiT architecture:
 
 ---
 
+## 📚 Documentation
+
+User guides live in the **[MooshieUI Wiki](https://github.com/Mooshieblob1/MooshieUI/wiki)** - prompting and wildcards, the prompt assistant, upscaling, ControlNet, inpainting, the model hub, server/LAN setup, and an FAQ.
+
 ## 📋 Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
@@ -421,7 +425,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | Svelte 5, TypeScript 5, Tailwind CSS 4 |
+| Frontend | Svelte 5, TypeScript 6, Tailwind CSS 4 |
 | Runtime modes | Tauri desktop app + axum headless web server |
 | State | Svelte 5 runes (`$state`, `$derived`) - class-based singleton stores |
 | Canvas | Konva + svelte-konva (inpainting editor, mask painting) |
@@ -432,8 +436,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 | WebSocket/SSE | tokio-tungstenite + tokio-stream event fanout |
 | Inference | ONNX Runtime (`ort` crate) for WD EVA02 image interrogation/tagging |
 | Model API | CivitAI REST API (hash-based model lookup), HuggingFace |
-| Autocomplete | Danbooru + Anima tag databases (~100k tags) |
-| i18n | 11 languages, 860+ keys, runtime switching |
+| Autocomplete | Danbooru + Anima tag databases (~140k tags) |
+| i18n | 11 languages, 2,000+ keys, runtime switching |
 | Styling | Tailwind CSS with neutral/indigo dark theme |
 | Build | Vite 6 + `@sveltejs/vite-plugin-svelte` |
 
@@ -481,7 +485,7 @@ This project is licensed under the [GNU Affero General Public License v3.0](LICE
 - [Tailwind CSS](https://tailwindcss.com/) - Utility-first CSS framework
 
 ### AI Models & Research
-- **ΣIH** - Illustrious-family checkpoint with curated defaults, auto-download support
+- **Juice** - NoobAI/Illustrious-family checkpoint with curated defaults, auto-download support
 - **Anima (COSMOS)** - Breakthrough anime model with 5D latent space, split model loading (diffusion + CLIP + VAE), custom quality tags
 - **Nanosaur** - 1.2B DiT architecture with 96-channel VAE; custom ComfyUI nodes for model loading, text encoding, and inference
 - **Mugen** - SDXL models using Flux2 VAE (128-channel latents) with rectified flow scheduling
