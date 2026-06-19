@@ -1,8 +1,8 @@
 # MooshieUI
 
-MooshieUI is a beginner-friendly interface for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) that now runs in two modes:
-- **Desktop app mode** via Tauri (Windows/Linux, macOS source build)
-- **Browser/server mode** via the built-in web server (LAN/Docker friendly, mobile-friendly UI)
+MooshieUI is a beginner-friendly interface for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) that runs in two modes:
+- **Desktop app** via Tauri (Windows/Linux, macOS source build)
+- **Browser/server mode** via the built-in web server (LAN/Docker friendly, mobile UI)
 
 Built with **Svelte 5** + **Rust**, it hides ComfyUI's node-graph complexity behind a clean, guided workflow so you can generate without hand-editing graphs.
 
@@ -16,404 +16,118 @@ Built with **Svelte 5** + **Rust**, it hides ComfyUI's node-graph complexity beh
 
 ---
 
-## ✨ Features
-
-### 🎨 Three Generation Modes
-
-| Mode | Status | Description |
-|------|--------|-------------|
-| **Text to Image** | ✅ | Generate images from scratch using positive & negative prompts |
-| **Image to Image** | ✅ | Transform existing images with adjustable denoise strength |
-| **Inpainting** | ✅ | Selectively edit parts of images using a built-in canvas editor with mask painting |
-
-Switch between modes with a single click - all settings carry over.
-
-### 🔧 Full Generation Controls
-
-- **Positive & Negative Prompts** - Multi-line text areas, manually resizable height
-- **Checkpoint Selector** - Searchable dropdown, auto-populated from ComfyUI, with recommended models (auto-download on selection with progress bars and file size display)
-- **VAE Selector** - Optional override (defaults to checkpoint's built-in VAE)
-- **LoRA Support** - Add unlimited LoRAs with independent model/CLIP strength sliders (0–2), per-LoRA enable/disable toggle, searchable dropdown, and active count badge
-- **Sampler & Scheduler** - All ComfyUI samplers and schedulers available
-- **Steps** - 1 to 150 (slider)
-- **CFG Scale** - 0 to 30 with 0.1 precision (number input + slider)
-- **Seed** - Fixed or random (-1 for new seed each generation)
-- **Batch Size** - Generate 1–8 images per prompt
-- **Denoise Strength** - 0 to 1 for img2img and inpainting modes
-
-### 📐 Smart Dimension Controls
-
-- **Aspect Ratio Presets** - 1:1, 4:3, 3:2, 16:9, 21:9, 3:4, 2:3, 9:16
-- **Custom Aspect Ratio** - Enter any width/height, ratio is maintained when adjusting resolution
-- **Swap Dimensions** - One-click width↔height swap
-- **Resolution Slider** - 64px to 2048px, automatically calculates dimensions from your aspect ratio
-
-### 🔍 Upscale (Tiled Diffusion)
-
-Built-in upscaling with **MultiDiffusion** tiled diffusion - the same approach used by SwarmUI. No slow tile-by-tile processing; all tiles are denoised simultaneously each step for seamless, high-quality results.
-
-#### Upscale Methods
-- **Model-based** - Uses dedicated upscale models (e.g., Omni-SR). Scale is determined by the model (2x, 4x, etc.)
-- **Algorithmic (Lanczos)** - Fast pixel-space upscaling with adjustable 1–4x scale
-
-#### Recommended Models (Auto-Download)
-When you select a recommended model that isn't installed, MooshieUI automatically downloads it to ComfyUI's `models/upscale_models/` directory:
-
-| Model | Scale | Size | Source |
-|-------|-------|------|--------|
-| **Omni 2x** (Recommended) | 2x | ~1.6 MB | [Acly/Omni-SR](https://huggingface.co/Acly/Omni-SR) |
-| **Omni 4x** (Recommended) | 4x | ~1.6 MB | [Acly/Omni-SR](https://huggingface.co/Acly/Omni-SR) |
-
-Any other upscale models you place in `models/upscale_models/` will also appear in the dropdown.
-
-#### Tiled Diffusion (Optional)
-- Toggle on/off per generation - recommended for large images and **required for Anima (COSMOS) models**
-- Adjustable tile size (256–2048px)
-- Uses cosine-feathered blending for seamless tile boundaries
-- Supports both **MultiDiffusion** and **SpotDiffusion** algorithms
-
-#### Guidance Nodes (Anti-Hallucination)
-- **Soft Guidance** (CFG Rescale) - toggle in Upscale Settings to reduce extra hands, objects, and other hallucinations at low denoise; adjustable multiplier (0.0–1.0, default 0.4)
-- **Smart Guidance** (Positive-Biased Adaptive) - toggle in Sampler Settings to bias the model toward positive conditioning across all passes
-- Custom ComfyUI nodes (`MooshieSoftGuidance`, `MooshieSmartGuidance`) auto-installed alongside tiled diffusion
-
-#### Upscale Sampler Controls
-- **Denoise** - 0 to 1 (lower = more detail preservation from original)
-- **Steps** - 1 to 50
-
-#### One-Click Upscale
-Hover over any generated image to reveal an **Upscale** button - instantly upscale the last output without changing your settings.
-
-### 🖼️ Gallery
-
-- **Persistent Gallery** - All generated images are saved to disk and available across sessions
-- **Thumbnail Grid** - Responsive grid with sorting by date
-- **Lightbox** - Click any image to view full-size; scroll-wheel zoom at cursor, Escape or click-outside to close, double-click to reset zoom
-- **Image Management** - Rename, delete, copy to clipboard, and upscale from the gallery
-- **Generation Mode Labels** - Each image shows whether it was created via txt2img, img2img, or inpainting
-
-### Compare Grid (XYZ Grid)
-
-- **Multi-cell comparison** - create a grid of cells in the Compare tab (bottom panel), each with its own generation parameters; tweak prompts, checkpoints, samplers, seeds, or any setting per cell
-- **Grid generation** - pressing Generate queues all cells sequentially with a shared random seed for consistent side-by-side comparison
-- **Auto-stitching** - completed grids are stitched into a single labelled image with per-cell annotations showing only what differs (e.g., "blue eyes" vs "green eyes") and a MooshieUI watermark
-- **Spreadsheet naming** - cells use A1/B1/C1 labels with position-stable colors
-- **Add/remove columns & rows** - new cells clone the adjacent neighbor for quick parameter variation
-
-### Real-Time Progress
-
-- **Live Preview** - See the image as it's being generated (latent previews streamed via WebSocket)
-- **Phase Labels** - "Generating...", "Upscaling...", or "Preparing..." with step counter
-- **Progress Bar** - Smooth animated bar (indigo for generation, emerald for upscale pass)
-- **Cancel Button** - Interrupt any generation in progress
-
-### 🌐 Internationalization (11 Languages)
-
-- **11 languages** - English, German, Spanish, French, Italian, Japanese, Korean, Portuguese, Russian, Chinese (Simplified), and Chinese (Traditional)
-- **2,000+ translation keys** covering every UI string - generation controls, settings, setup wizard, canvas, model hub, compare grid, tooltips, and more
-- **Instant switching** in Settings → Appearance - no restart needed
-- **Full parity** - all keys present in all locales with native translations
-
-### 🏷️ Quality Tags
-
-- **Anima & Illustrious** - customizable positive/negative quality tags auto-injected into prompts
-- **Pony Diffusion** - auto-applied score-based quality tags (`score_9, score_8_up, score_7_up, source_anime`)
-- All customizable in Settings and persisted across sessions
-
-### 💾 Settings Persistence
-
-All settings are automatically saved to disk and restored on next launch:
-- Generation mode, prompts, model selections
-- Sampler, scheduler, steps, CFG, seed, dimensions
-- All upscale settings (enabled, method, model, tiling, etc.)
-
-### 🖥️ Flexible Layout
-
-- **Three-panel layout** - Image settings (left), preview (center), model & sampler settings (right)
-- **Resizable panels** - Drag dividers between panels to adjust widths
-- **Resizable prompts** - Drag prompt text areas to adjust height
-
-### 🔌 Connection Management
-
-- **Auto-connect** to ComfyUI on startup
-- **Status indicator** - Green/red dot shows connection state with version number
-- **WebSocket streaming** - Real-time progress, previews, and completion events
-- Works with both local and remote ComfyUI instances
-- **Silent background process** - ComfyUI runs without any visible terminal windows (Windows)
-
-### 🧬 Smart Model Detection & Architecture Presets
-
-- **20+ model architectures** - SD 1.5, SDXL, Illustrious/NoobAI, Pony Diffusion, SD3/SD3.5, the Flux family (Flux.1 Dev/Schnell/Krea and Flux.2 Dev/Klein 4B/9B), Chroma, Z-Image (Base/Turbo), Wan, Qwen, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, Kolors, Anima (COSMOS), Mugen (Flux2VAE SDXL), and Nanosaur (1.2B DiT)
-- **Auto-presets** - each architecture auto-applies optimal sampler, scheduler, steps, CFG, and resolution when selected
-- **Accelerated model detection** - models with "turbo", "lightning", "lcm", or "hyper" in the name get reduced steps (4–6), lower CFG, and appropriate settings
-- **Rectified flow scheduling** - SD3, Flux, AuraFlow, Mugen, and Nanosaur models automatically inject the correct ModelSampling node with architecture-specific shift values
-- **FluxGuidance** - Flux Dev models auto-inject a FluxGuidance node; Flux Schnell (guidance-distilled) is detected and skipped
-- **Hash-based identification** - Models are recognized by SHA256 hash (CivitAI AutoV2 format), not just filename - renamed files are still detected
-- **CivitAI integration** - Look up any model's metadata (name, version, preview images) via CivitAI's hash database
-- **Recommended models** - Juice (~6.9 GB) and Anima Base v1.0 (~13 GB) auto-download on selection with real-time progress bars and file size display
-- **Mugen support** - SDXL models using the Flux2 VAE (128-channel latents) with rectified flow scheduling, auto-detected and routed through dedicated VAE conversion nodes
-- **Nanosaur support** - 1.2B DiT architecture with 96-channel VAE, custom ComfyUI nodes for model loading, text encoding, and VAE decode, auto-installed alongside MooshieUI's node pack
-
----
-
-## 🏗️ Architecture
-
-```
-MooshieUI
-├── src/                    # Svelte 5 frontend (UI)
-│   ├── App.svelte          # Main app shell, gallery, WebSocket listeners, grid stitching
-│   ├── lib/
-│   │   ├── components/     # UI components
-│   │   │   ├── generation/ # Model selector, prompts, dimensions, upscale, compare grid
-│   │   │   ├── canvas/     # Inpainting canvas editor (Konva)
-│   │   │   ├── mask-editor/# Mask painting for inpainting
-│   │   │   ├── modelhub/   # CivitAI/HuggingFace model browser
-│   │   │   ├── downloads/  # Download progress manager
-│   │   │   ├── progress/   # Live preview and progress display
-│   │   │   ├── queue/      # Batch queue management
-│   │   │   ├── settings/   # Settings pages (paths, appearance, accessibility)
-│   │   │   ├── setup/      # Setup wizard with streaming installer
-│   │   │   ├── updater/    # In-app auto-update UI
-│   │   │   └── ui/         # Shared UI components (tooltips, etc.)
-│   │   ├── stores/         # Svelte 5 rune-based state ($state, $derived)
-│   │   ├── assets/         # Danbooru & Anima tag databases, logo
-│   │   ├── config/         # ControlNet presets
-│   │   ├── locales/        # 11 language translation files
-│   │   ├── types/          # TypeScript interfaces
-│   │   └── utils/          # Tauri API bridge (models, gallery, hashing, CivitAI)
-├── src-tauri/              # Rust/Tauri backend
-│   └── src/
-│       ├── commands/       # Tauri command handlers (API, config, server, WebSocket, workflow)
-│       ├── comfyui/        # ComfyUI API client, WebSocket, process management
-│       ├── setup.rs        # One-click installer (uv, Python, ComfyUI, PyTorch)
-│       ├── metadata.rs     # PNG metadata embedding (text chunk + stealth alpha)
-│       └── templates/      # Workflow builders (txt2img, img2img, inpainting, upscale, facefix, controlnet)
-└── comfyui-nodes/          # Custom ComfyUI nodes (auto-installed)
-    ├── nodes_tiled_diffusion.py  # MultiDiffusion & SpotDiffusion
-    ├── nodes_guidance.py         # Soft & Smart Guidance
-    ├── nodes_sdxl_flux2vae.py    # SDXL↔Flux VAE adapter (Mugen)
-    └── nanosaur_support/         # Nanosaur DiT model loader & VAE
-```
-
-**How it works:**
-1. User adjusts settings in the Svelte UI
-2. On "Generate", settings are sent to the Rust backend through the app IPC bridge (`ipcInvoke()` in desktop mode, HTTP/SSE in browser mode)
-3. Rust builds a ComfyUI workflow JSON from templates (no node graph exposed)
-4. Workflow is submitted to ComfyUI's `/prompt` API
-5. WebSocket streams progress/previews back to the UI in real-time
-
----
-
-## 📦 Installation
-
-### One-Click Setup (Windows/Linux Releases)
-
-MooshieUI handles everything automatically on first launch:
-
-1. **Download** a release from [Releases](https://github.com/Mooshieblob1/MooshieUI/releases) (Windows/Linux artifacts)
-2. **Run the app** - the setup wizard will:
-  - Download [uv](https://github.com/astral-sh/uv) (fast Python package manager)
-  - Install Python 3.11 (isolated, won't affect your system)
-  - Download ComfyUI (latest from GitHub)
-  - Create a virtual environment
-  - Auto-detect your GPU (NVIDIA CUDA / AMD ROCm / Intel XPU / CPU)
-  - Install PyTorch with the right acceleration backend (including CUDA 13.0 for Blackwell GPUs)
-  - Install all ComfyUI dependencies
-  - Install MooshieUI's custom nodes
-3. **Start generating** - ComfyUI launches automatically
-
-The installer shows real-time terminal output streamed as a matrix-style backdrop behind the setup UI, with per-step progress bars and a checklist so you always know what's happening. No separate terminal windows are opened.
-
-**No Python, no pip, no manual configuration required.** Everything is self-contained in the app's data directory.
-
-> **Disk space:** ~5–10 GB (Python + PyTorch + ComfyUI). Installation takes 5–15 minutes depending on your internet connection.
-
-### Self-Host / Server Mode (Docker)
-
-MooshieUI can run as a headless server that serves the same web UI over your network.
-
-```bash
-# Optional: configure credentials/ports
-cp .env.example .env
-
-# Build and run
-docker compose up -d --build
-```
-
-Then open `http://localhost:3200` (or your configured `MOOSHIEUI_PORT`).
-
-The default `docker-compose.yml` includes:
-- Persistent app data volume (`mooshie-data`)
-- Optional mounted models directory (`MODELS_PATH`)
-- Admin bootstrap via `MOOSHIEUI_ADMIN_USER` / `MOOSHIEUI_ADMIN_PASS`
-- NVIDIA GPU reservation for Docker hosts with NVIDIA runtime support
-
-### Remote / cloud ComfyUI (RunPod, Vast.ai, etc.)
-
-Use this path when you want MooshieUI on your desktop (or another machine) but ComfyUI runs on a cloud GPU.
-
-**1. Deploy the MooshieUI server build on your cloud instance**
-
-The Docker image includes ComfyUI, PyTorch, and all MooshieUI custom nodes pre-installed. This is the supported way to get the required nodes on a remote server. Copying node files by hand is not supported.
-
-```bash
-# On your cloud pod (RunPod, Vast.ai, your own VPS, etc.)
-docker compose up -d --build
-# or: docker pull ghcr.io/mooshieblob1/mooshieui:latest
-```
-
-**2. Expose ComfyUI to your client**
-
-- **Browser-only:** open the MooshieUI web UI at port `3200` on the server. No desktop remote setup needed.
-- **Desktop as a thin client:** expose ComfyUI port `8188` from the pod (RunPod HTTP proxy URLs look like `https://xxxxx-8188.proxy.runpod.net`).
-
-**3. Connect from the MooshieUI desktop app**
-
-On first launch, choose **Remote server** in the setup wizard, paste your public ComfyUI URL, and click **Validate remote server**. MooshieUI skips the local ComfyUI/Python/PyTorch install entirely.
-
-You can change the endpoint later in **Settings → Connection** (Server Mode: Remote).
-
-If validation fails with missing custom nodes, redeploy or update the MooshieUI server build on the cloud instance and fully restart ComfyUI there before retrying.
-
-### macOS (Manual Build From Source)
-
-macOS prebuilt release artifacts are currently disabled. On macOS, use a source build:
-
-**Prerequisites:**
-- [Node.js](https://nodejs.org/) 18+
-- [Rust](https://rustup.rs/) (latest stable)
-- Xcode Command Line Tools (`xcode-select --install`)
-- Tauri prerequisites - see [Tauri v2 docs](https://v2.tauri.app/start/prerequisites/)
-
-```bash
-# Clone the repository
-git clone https://github.com/Mooshieblob1/MooshieUI.git
-cd MooshieUI
-
-# Install dependencies
-npm install
-
-# Development mode
-npm run tauri dev
-
-# Production build
-npm run tauri build
-```
-
-After first launch, the setup wizard still installs ComfyUI/Python/PyTorch automatically.
-
-### Development Setup (All Platforms)
-
-If you want to build from source:
-
-**Prerequisites:**
-- [Node.js](https://nodejs.org/) 18+
-- [Rust](https://rustup.rs/) (latest stable)
-- Tauri prerequisites - see [Tauri v2 docs](https://v2.tauri.app/start/prerequisites/)
-
-```bash
-# Clone the repository
-git clone https://github.com/Mooshieblob1/MooshieUI.git
-cd MooshieUI
-
-# Install frontend dependencies
-npm install
-
-# Run in development mode (hot-reload)
-npm run tauri dev
-
-# Build for production
-npm run tauri build
-```
-
-The app will run the one-click setup wizard on first launch - no manual ComfyUI installation needed.
-
----
-
-## Contributing
-
-Pull requests are welcome. `main` is protected: open a PR from a `chore/<topic>` branch after local validation and GlassWorm pre-commit checks.
-
-See **[push-instructions.md](push-instructions.md)** for the full workflow (branch naming, build gates, IPC/gallery conventions, CI, and how releases differ from everyday contributions).
-
----
-
-## 🧩 Custom Nodes
-
-MooshieUI ships with custom ComfyUI nodes that are auto-installed into ComfyUI's `custom_nodes/` directory.
-
-### Tiled Diffusion (`nodes_tiled_diffusion.py`)
-
-### MultiDiffusion
-*Bar-Tal et al., "MultiDiffusion: Fusing Diffusion Paths for Controlled Image Generation", ICML 2023*
-
-- Splits the latent into overlapping tiles at each denoising step
-- All tiles are denoised in parallel (not one-by-one)
-- Results are blended using cosine (Hann window) feathering
-- Seamless output with no visible tile boundaries
-
-### SpotDiffusion
-*Ding et al., 2024*
-
-- Applies random circular shifts before non-overlapping tiling
-- Even faster than MultiDiffusion (no overlap computation)
-- Seams are eliminated by randomization across many steps
-
-Both methods:
-- Work with all model architectures (SD 1.5, SDXL, Flux, COSMOS/Anima)
-- Automatically detect the model's latent downscale ratio
-- Support ControlNet (proportional cropping/shifting per tile)
-- Handle inpainting conditioning (c_concat)
-
-### Guidance Nodes (`nodes_guidance.py`)
-
-**MooshieSoftGuidance** - CFG Rescale for upscale passes. Rescales classifier-free guidance to reduce hallucinated details (extra hands, objects) that appear at low denoise strengths. Adjustable multiplier (0.0 = off, 0.4 = recommended for upscale).
-
-**MooshieSmartGuidance** - Positive-Biased Adaptive guidance. Patches the model's forward pass to bias toward positive conditioning, reducing negative prompt interference. Applied globally across all generation passes.
-
-### SDXL↔Flux VAE Adapter (`nodes_sdxl_flux2vae.py`)
-
-Patches the SDXL model forward pass to convert between packed (128-channel) Flux2 latents and standard (32-channel) SDXL latents. Used automatically for **Mugen** models that pair an SDXL UNet with the Flux VAE for higher-fidelity decoding.
-
-### Nanosaur Support (`nanosaur_support/`)
-
-Custom ComfyUI nodes for the **Nanosaur** 1.2B DiT architecture:
-- **NanoSaurModelLoader** - loads the DiT transformer with correct configuration
-- **NanoSaurTextEncoder** - tokenizer and text encoder adapted for Nanosaur's conditioning format
-- **NanoSaurVAEDecode** - decodes 96-channel latents through Nanosaur's custom VAE
-- RGB factors computed from the model's VAE for accurate latent previews
-
-### Face Fix (`mooshie_nodes.py`)
-
-**MooshieFaceFix** - lightweight face detection and re-denoising using YOLOv8 (via the `ultralytics` Python package). Detects faces, crops them with configurable padding, re-denoises at higher resolution, then composites back using smooth cosine-falloff blending. No Impact Pack dependency - bundled as a self-contained node with auto-download of detection models (`.pt` PyTorch weights).
-
----
-
-## Roadmap
-
-### Recently Shipped
-- [x] **Dual-mode runtime** - desktop app mode and browser/server mode share the same UI and generation pipeline.
-- [x] **LAN + Docker deployment** - run MooshieUI as a hosted web app for phones, tablets, and other machines on your network.
-- [x] **Mobile UI shell** - dedicated mobile flow for browser sessions.
-- [x] **Compare Grid (XYZ)** - side-by-side parameter sweeps with stitched output labels.
-- [x] **Model Manager** - list, move, and delete local models from Settings.
-- [x] **Robust startup recovery** - clearer handling for external ComfyUI port conflicts and missing custom-node scenarios.
-- [x] **Better browser-mode reliability** - safer temp image handling, JXL persistence fixes, and reconnect recovery.
-- [x] **Admin/network controls** - proxy and PyPI mirror support for installs in restricted network environments.
-- [x] **ControlNet resiliency** - ControlNet node/package setup failures no longer block core generation startup.
-
-### Next Up
-- [ ] **Theme customization** - custom accent colors and additional theme presets.
-- [ ] **Video workflows** - AnimateDiff/COSMOS video generation support.
-- [ ] **Training UX** - in-app LoRA training flows.
-- [ ] **Plugin system** - extensible panel/plugin architecture for advanced users.
-- [ ] **Model + prompt workflow polish** - keep improving metadata import/remix and batch/queue ergonomics.
-
----
-
 ## 📚 Documentation
 
-User guides live in the **[MooshieUI Wiki](https://github.com/Mooshieblob1/MooshieUI/wiki)** - prompting and wildcards, the prompt assistant, upscaling, ControlNet, inpainting, the model hub, server/LAN setup, and an FAQ.
+Full guides live in the **[MooshieUI Wiki](https://github.com/Mooshieblob1/MooshieUI/wiki)**:
+
+| Guide | Covers |
+|-------|--------|
+| [Installation](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation) | Desktop, Docker, remote/cloud ComfyUI, macOS source build |
+| [Generation Basics](https://github.com/Mooshieblob1/MooshieUI/wiki/Generation-Basics) | Modes, generation controls, dimensions |
+| [Prompting Guide](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompting-Guide) | Autocomplete, presets, wildcards, interrogation |
+| [Prompt Assistant](https://github.com/Mooshieblob1/MooshieUI/wiki/Prompt-Assistant) | LLM-assisted prompt building |
+| [Models & the Model Hub](https://github.com/Mooshieblob1/MooshieUI/wiki/Models-and-the-Model-Hub) | Supported architectures, auto-detection, downloads |
+| [Upscaling & Face Fix](https://github.com/Mooshieblob1/MooshieUI/wiki/Upscaling-and-Face-Fix) | Tiled diffusion, guidance nodes, face fix |
+| [ControlNet & Style Transfer](https://github.com/Mooshieblob1/MooshieUI/wiki/ControlNet-and-Style-Transfer) | ControlNet and reference/style transfer |
+| [Inpainting & the Canvas Editor](https://github.com/Mooshieblob1/MooshieUI/wiki/Inpainting-and-the-Canvas-Editor) | Mask painting and selective edits |
+| [Compare Grid](https://github.com/Mooshieblob1/MooshieUI/wiki/Compare-Grid) | XYZ parameter sweeps |
+| [Gallery & Metadata](https://github.com/Mooshieblob1/MooshieUI/wiki/Gallery-and-Metadata) | Persistent gallery, metadata import/remix |
+| [Server, LAN & Multi-User](https://github.com/Mooshieblob1/MooshieUI/wiki/Server,-LAN-and-Multi-User) | Self-hosting, roles, auth, mobile |
+| [Settings & Accessibility](https://github.com/Mooshieblob1/MooshieUI/wiki/Settings-and-Accessibility) | Persistence, i18n, accessibility |
+| [FAQ](https://github.com/Mooshieblob1/MooshieUI/wiki/FAQ) | Common questions |
+
+---
+
+## ✨ Highlights
+
+- **Three generation modes** - text to image, image to image, and inpainting with a built-in canvas/mask editor; settings carry over between modes.
+- **Full generation controls** - searchable checkpoint/VAE/LoRA pickers with auto-download, all ComfyUI samplers and schedulers, steps/CFG/seed/batch, and smart dimension presets.
+- **Smart model detection** - 20+ architectures (SD 1.5, SDXL, Illustrious/NoobAI, Pony, SD3/3.5, the Flux family, Chroma, Z-Image, Wan, Qwen, AuraFlow, PixArt, HunyuanDiT, Stable Cascade, Kolors, Anima, Mugen, Nanosaur) identified by SHA256 hash, each with auto-applied sampler/scheduler/CFG presets.
+- **Tiled-diffusion upscaling** - MultiDiffusion/SpotDiffusion with anti-hallucination guidance nodes, one-click upscale, and YOLOv8 face fix.
+- **Compare Grid (XYZ)** - per-cell parameter sweeps stitched into a single labelled image.
+- **Real-time feedback** - live latent previews, progress phases, and cancel, streamed over WebSocket.
+- **Gallery & metadata** - persistent SQLite-backed gallery; drag a PNG back in to restore its settings (SwarmUI/A1111 metadata + stealth alpha).
+- **Self-hostable** - headless web server with roles, per-user galleries, auth, and a dedicated mobile layout.
+- **11 languages** - 2,000+ translation keys with full locale parity, switchable without restart.
+
+See the [Wiki](https://github.com/Mooshieblob1/MooshieUI/wiki) for the full feature reference.
+
+---
+
+## 📦 Quick Start
+
+### Desktop (Windows/Linux)
+
+1. Download a release from [Releases](https://github.com/Mooshieblob1/MooshieUI/releases).
+2. Run the app. The setup wizard downloads uv, Python, ComfyUI, and PyTorch (GPU auto-detected) and installs MooshieUI's custom nodes - no Python or pip setup required.
+3. Start generating; ComfyUI launches automatically.
+
+> ~5–10 GB disk, 5–15 minutes on first launch. macOS, Docker, and remote/cloud ComfyUI setups are covered in [Installation](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation).
+
+### Self-host (Docker)
+
+```bash
+cp .env.example .env   # optional: credentials/ports
+docker compose up -d --build
+```
+
+Open `http://localhost:3200` (or your configured `MOOSHIEUI_PORT`). Full server/LAN/multi-user setup: [Server, LAN & Multi-User](https://github.com/Mooshieblob1/MooshieUI/wiki/Server,-LAN-and-Multi-User).
+
+### Build from source
+
+```bash
+git clone https://github.com/Mooshieblob1/MooshieUI.git
+cd MooshieUI
+npm install
+npm run tauri dev      # hot-reload dev
+npm run tauri build    # production build
+```
+
+---
+
+## 🏗️ How it works
+
+1. You adjust settings in the Svelte UI.
+2. On Generate, settings go to the Rust backend via the IPC bridge (`ipcInvoke()` on desktop, HTTP/SSE in browser mode).
+3. Rust builds a ComfyUI workflow JSON from templates - no node graph exposed.
+4. The workflow is submitted to ComfyUI's `/prompt` API.
+5. WebSocket streams progress and previews back to the UI in real time.
+
+MooshieUI also ships custom ComfyUI nodes (tiled diffusion, soft/smart guidance, an SDXL↔Flux2 VAE adapter, Nanosaur DiT support, and face fix) that are auto-installed into ComfyUI. Details live in [Models & the Model Hub](https://github.com/Mooshieblob1/MooshieUI/wiki/Models-and-the-Model-Hub).
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | Svelte 5, TypeScript 6, Tailwind CSS 4 |
+| Runtime | Tauri desktop app + axum headless web server |
+| State | Svelte 5 runes - class-based singleton stores |
+| Persistence | Tauri Store (JSON) + SQLite (`rusqlite`) |
+| ComfyUI transport | REST + WebSocket via Rust (reqwest, tokio-tungstenite) |
+| Inference | ONNX Runtime (`ort`) for WD EVA02 image interrogation |
+| Autocomplete | Danbooru + Anima tag databases (~140k tags) |
+| i18n | 11 languages, 2,000+ keys, runtime switching |
+| Build | Vite 6 + `@sveltejs/vite-plugin-svelte` |
+
+---
+
+## 🔒 Security
+
+Automated **GlassWorm resistance checks** run on every push and pull request to catch supply-chain attacks that hide payloads in invisible Unicode variation selectors or tamper with git timestamps. The CI workflow (`.github/workflows/glassworm-scan.yml`) blocks merges on failure. Contributors should enable the same checks locally:
+
+```bash
+bash scripts/setup-hooks.sh
+```
+
+---
+
+## 🤝 Contributing
+
+Pull requests are welcome. `main` is protected: open a PR from a `chore/<topic>` branch after local validation and GlassWorm pre-commit checks. See **[push-instructions.md](push-instructions.md)** for the full workflow (branch naming, build gates, IPC/gallery conventions, and CI).
+
+---
 
 ## 📋 Changelog
 
@@ -421,103 +135,12 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 ---
 
-## Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Frontend | Svelte 5, TypeScript 6, Tailwind CSS 4 |
-| Runtime modes | Tauri desktop app + axum headless web server |
-| State | Svelte 5 runes (`$state`, `$derived`) - class-based singleton stores |
-| Canvas | Konva + svelte-konva (inpainting editor, mask painting) |
-| Persistence | Tauri Store (JSON) + SQLite (`rusqlite`) |
-| Backend API bridge | `ipcInvoke()` / `ipcListen()` (desktop IPC + browser HTTP/SSE routing) |
-| ComfyUI transport | REST + WebSocket via Rust backend |
-| HTTP Client | reqwest (Rust) - shared connection pool |
-| WebSocket/SSE | tokio-tungstenite + tokio-stream event fanout |
-| Inference | ONNX Runtime (`ort` crate) for WD EVA02 image interrogation/tagging |
-| Model API | CivitAI REST API (hash-based model lookup), HuggingFace |
-| Autocomplete | Danbooru + Anima tag databases (~140k tags) |
-| i18n | 11 languages, 2,000+ keys, runtime switching |
-| Styling | Tailwind CSS with neutral/indigo dark theme |
-| Build | Vite 6 + `@sveltejs/vite-plugin-svelte` |
-
----
-
-## 🔒 Security
-
-This repository runs automated **GlassWorm resistance checks** on every push and pull request to detect a class of supply-chain attacks that use invisible Unicode variation-selector characters to embed hidden payloads in source files, combined with force-pushed commits whose author/committer timestamps have been tampered with to conceal the injection.
-
-### What is checked
-
-| Check | Scope | Details |
-|-------|-------|---------|
-| Marker variable | Full repo | Detects the known GlassWorm beacon string |
-| Unicode steganography | `.py .js .ts .svelte .rs` | Scans for codepoints U+FE00–FE0F and U+E0100–E01EF (zero-width variation selectors used to encode payloads) |
-| Git date tampering | Full history | Flags any commit where the committer timestamp is more than 1 hour ahead of the author timestamp - a sign of force-pushed history rewriting |
-| Obfuscated `eval()` | `.py .js .ts .svelte` | Detects `eval()` calls whose argument contains `decode`, `atob`, `fromCharCode`, `Buffer.from`, or `base64` - the execution pattern used by the Unicode loader |
-
-The CI workflow (`.github/workflows/glassworm-scan.yml`) runs all four checks and **blocks merges** if any check fails.
-
-### Local pre-commit hook
-
-Contributors should activate the same checks locally so issues are caught before they reach CI:
-
-```bash
-bash scripts/setup-hooks.sh
-```
-
-This sets `core.hooksPath` to `.githooks` and makes the pre-commit script executable. The hook runs automatically on every `git commit` and blocks the commit with a clear error message if anything suspicious is found.
-
----
-
 ## 📄 License
 
-This project is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+Licensed under the [GNU Affero General Public License v3.0](LICENSE).
 
 ---
 
 ## 🙏 Acknowledgments
 
-### Core Infrastructure
-- [ComfyUI](https://github.com/comfyanonymous/ComfyUI) - The powerful node-based Stable Diffusion backend that MooshieUI wraps
-- [Tauri](https://tauri.app/) - Lightweight, secure desktop app framework (Rust + WebView)
-- [Svelte](https://svelte.dev/) - Reactive UI framework with rune-based state management
-- [Tailwind CSS](https://tailwindcss.com/) - Utility-first CSS framework
-
-### AI Models & Research
-- **Juice** - NoobAI/Illustrious-family checkpoint with curated defaults, auto-download support
-- **Anima (COSMOS)** - Breakthrough anime model with 5D latent space, split model loading (diffusion + CLIP + VAE), custom quality tags
-- **Nanosaur** - 1.2B DiT architecture with 96-channel VAE; custom ComfyUI nodes for model loading, text encoding, and inference
-- **Mugen** - SDXL models using Flux2 VAE (128-channel latents) with rectified flow scheduling
-- [OmniSR](https://huggingface.co/Acly/Omni-SR) - Recommended lightweight upscale models (2x/4x) by Acly
-- [YOLOv8](https://docs.ultralytics.com/) - Face detection model used by MooshieFaceFix via the `ultralytics` Python package (`.pt` weights)
-
-### Research Papers
-- Bar-Tal et al., "MultiDiffusion: Fusing Diffusion Paths for Controlled Image Generation" (ICML 2023) - Tiled diffusion algorithm
-- Ding et al., "SpotDiffusion" (2024) - Fast tiled diffusion variant using random circular shifts
-
-### APIs & Data
-- [CivitAI](https://civitai.com/) - Model hash database, metadata API, and model marketplace
-- [Danbooru](https://danbooru.donmai.us/) - Tag database used for prompt autocomplete
-- [HuggingFace](https://huggingface.co/) - Model hosting and direct download support
-
-### Frontend Libraries
-- [Konva](https://konvajs.org/) + [svelte-konva](https://github.com/konvajs/svelte-konva) - HTML5 Canvas framework for the inpainting editor and mask painting
-- [SortableJS](https://sortablejs.github.io/Sortable/) - Drag-and-drop reordering for the two-column layout
-- [marked](https://marked.js.org/) - Markdown rendering for release notes display in-app
-- [ntc-ts](https://www.npmjs.com/package/ntc-ts) - Nearest color name lookup
-
-### Rust Crates
-- [reqwest](https://docs.rs/reqwest) - HTTP client for ComfyUI API and model downloads
-- [tokio-tungstenite](https://docs.rs/tokio-tungstenite) - WebSocket client for real-time progress streaming
-- [ort](https://docs.rs/ort) - ONNX Runtime bindings for WD EVA02 image interrogation/tag inference
-- [image](https://docs.rs/image) - Image processing (PNG, JPEG, WebP)
-- [serde](https://serde.rs/) / [serde_json](https://docs.rs/serde_json) - Serialization for ComfyUI workflow JSON and config persistence
-
-### Tauri Plugins
-- `@tauri-apps/plugin-store` - JSON key-value persistence for settings
-- `@tauri-apps/plugin-updater` - In-app auto-update with signature verification
-- `@tauri-apps/plugin-fs` - Native filesystem access for gallery and model management
-- `@tauri-apps/plugin-dialog` - Native file/folder picker dialogs
-- `@tauri-apps/plugin-clipboard-manager` - Native clipboard operations (copy images as files)
-- `@tauri-apps/plugin-shell` - Subprocess management for ComfyUI process lifecycle
+Built on [ComfyUI](https://github.com/comfyanonymous/ComfyUI), [Tauri](https://tauri.app/), [Svelte](https://svelte.dev/), and [Tailwind CSS](https://tailwindcss.com/). Uses [CivitAI](https://civitai.com/) and [HuggingFace](https://huggingface.co/) for model data, [Danbooru](https://danbooru.donmai.us/) tags, [OmniSR](https://huggingface.co/Acly/Omni-SR) upscalers, [YOLOv8](https://docs.ultralytics.com/) face detection, and [Konva](https://konvajs.org/) for the canvas editor. Tiled diffusion implements MultiDiffusion (Bar-Tal et al., ICML 2023) and SpotDiffusion (Ding et al., 2024).
