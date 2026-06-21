@@ -3718,11 +3718,27 @@ pub(crate) async fn read_modelspec_internal(
 
     // Merge the full ModelSpec display fields (title, author, description,
     // trigger phrase, ...) for the model info panel. Header-only read — no
-    // hashing. Runtime keys resolved above take precedence.
+    // hashing. Runtime keys resolved above take precedence. This also populates
+    // an inferred `architecture` (from tensor-key patterns) when the file has no
+    // declared modelspec.architecture.
     if let Ok(Some(display_meta)) = read_safetensors_modelspec(&path) {
         for (key, value) in display_meta {
             result.entry(key).or_insert(value);
         }
+    }
+
+    // Tensor-key architecture is ground truth for Wan2.1 / Anima checkpoints:
+    // they are DiT models, not classic UNets, so standard ControlNet cannot be
+    // applied to them — only the Anima LLLite path works. The soft filename and
+    // baseModel heuristics above miss Anima fine-tunes that were renamed without
+    // an `anima`/`yume` token (e.g. "PerfectDeliberate") and have no Wan
+    // baseModel sidecar/CivitAI tag. When the structural inference says Wan, it
+    // overrides the softer signals so ControlNet routes to Anima LLLite.
+    if result.get("family").map(String::as_str) != Some("anima")
+        && result.get("architecture").map(String::as_str) == Some("wan2.1")
+    {
+        result.insert("family".to_string(), "anima".to_string());
+        result.insert("is_sdxl_like".to_string(), "false".to_string());
     }
 
     if category == "diffusion_models" {
