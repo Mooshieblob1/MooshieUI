@@ -641,6 +641,15 @@
       }
     });
   });
+
+  $effect(() => {
+    // Reset the category filter whenever the panel closes so a fresh tag always
+    // starts from "all". Otherwise a category chosen for one tag stays active and
+    // silently hides the panel for later tags with no match in it (issue #342).
+    if (!showSuggestions) {
+      categoryFilter = null;
+    }
+  });
 </script>
 
 <div class="relative">
