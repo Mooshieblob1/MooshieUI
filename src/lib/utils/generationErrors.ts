@@ -78,7 +78,7 @@ function extractMissingModel(raw: string): string | undefined {
   const m = raw.match(/(\w+):\s*'([^']+)'\s+not in/i);
   if (m) return m[2];
   // Also handle the node_errors JSON `details` form without quotes.
-  const m2 = raw.match(/(?:ckpt_name|vae_name|lora_name|control_net_name|unet_name|clip_name|model_name|upscale_model)[^A-Za-z0-9]+([\w.\- ]+\.(?:safetensors|ckpt|pt|pth|bin|gguf))/i);
+  const m2 = raw.match(/(?:ckpt_name|vae_name|lora_name|control_net_name|unet_name|clip_name|model_name|upscale_model)[^A-Za-z0-9]+([^'"\r\n,;]+?\.(?:safetensors|ckpt|pt|pth|bin|gguf))/i);
   if (m2) return m2[1].trim();
   return undefined;
 }
