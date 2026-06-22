@@ -424,7 +424,7 @@ impl AppState {
         let part = multipart::Part::bytes(file_bytes)
             .file_name(file_name)
             .mime_str("image/png")
-            .unwrap();
+            .map_err(|e| AppError::Other(format!("Failed to set upload MIME type: {}", e)))?;
 
         let form = multipart::Form::new()
             .part("image", part)
@@ -452,7 +452,7 @@ impl AppState {
         let part = multipart::Part::bytes(bytes)
             .file_name(filename)
             .mime_str("image/png")
-            .unwrap();
+            .map_err(|e| AppError::Other(format!("Failed to set upload MIME type: {}", e)))?;
 
         let form = multipart::Form::new()
             .part("image", part)

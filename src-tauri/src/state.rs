@@ -474,6 +474,12 @@ pub struct AppState {
     pub ws_handle: Mutex<Option<JoinHandle<()>>>,
     pub client_id: String,
     pub http_client: reqwest::Client,
+    /// Shared client that does NOT follow redirects. Used where redirects must
+    /// be handled manually for security (e.g. CivitAI image fetches gate the
+    /// user's API token on a per-host basis, so the token can never be carried
+    /// across a redirect to the CDN). Reuses one client to keep connection
+    /// pooling instead of building a fresh client per call.
+    pub http_client_no_redirect: reqwest::Client,
     #[cfg(any(feature = "desktop", feature = "server"))]
     pub interrogator: Arc<RwLock<InterrogatorState>>,
     #[cfg(any(feature = "desktop", feature = "server"))]
@@ -534,6 +540,10 @@ impl AppState {
     pub fn new(config: AppConfig) -> Self {
         let (event_tx, _) = broadcast::channel(1024);
         let http_client = reqwest::Client::new();
+        let http_client_no_redirect = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         let gpu_manager = GpuManager::new(&config, http_client.clone());
         Self {
             config: RwLock::new(config),
@@ -541,6 +551,7 @@ impl AppState {
             ws_handle: Mutex::new(None),
             client_id: uuid::Uuid::new_v4().to_string(),
             http_client,
+            http_client_no_redirect,
             #[cfg(any(feature = "desktop", feature = "server"))]
             interrogator: Arc::new(RwLock::new(InterrogatorState::new())),
             #[cfg(any(feature = "desktop", feature = "server"))]

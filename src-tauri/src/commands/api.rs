@@ -2482,10 +2482,9 @@ pub(crate) async fn fetch_civitai_image_bytes(
     state: &AppState,
     url: &str,
 ) -> Result<Vec<u8>, AppError> {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| AppError::Other(format!("Failed to build image fetch client: {}", e)))?;
+    // Reuse the shared no-redirect client so redirects stay manual (the token is
+    // gated per-host below) while still benefiting from connection pooling.
+    let client = &state.http_client_no_redirect;
     // The initial URL must be a CivitAI host so this command can't be turned into
     // a generic server-side fetch primitive (it is reachable through browser-mode
     // LAN auth and carries the user's CivitAI token).
