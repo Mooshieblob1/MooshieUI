@@ -4030,7 +4030,29 @@ async fn dispatch_command(
                 .await
                 .map_err(|e| e.to_string())?;
             let releases: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-            Ok(releases)
+            // Map to the same { version, body, published_at } shape the desktop
+            // command (commands::api::fetch_release_notes) returns, so the
+            // browser-mode client sees a defined `version` instead of raw GitHub
+            // release objects (which carry `tag_name`, not `version`).
+            let notes: Vec<serde_json::Value> = releases
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|r| {
+                            let tag = r.get("tag_name")?.as_str()?;
+                            Some(serde_json::json!({
+                                "version": tag,
+                                "body": r.get("body").and_then(|b| b.as_str()).unwrap_or(""),
+                                "published_at": r
+                                    .get("published_at")
+                                    .and_then(|p| p.as_str())
+                                    .unwrap_or(""),
+                            }))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(serde_json::json!(notes))
         }
         "export_logs" => {
             // In server/browser mode there is no meaningful host filesystem path

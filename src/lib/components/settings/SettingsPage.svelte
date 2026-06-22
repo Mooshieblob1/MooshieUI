@@ -1037,6 +1037,9 @@
           updateState = "ready";
         }
       });
+      // Record the expected version so UpdateNotification can verify on the
+      // next launch that the update actually applied (mirrors the banner path).
+      if (updateVersion) localStorage.setItem("mooshieui_pending_update", updateVersion);
       updateState = "ready";
     } catch (e) {
       updateState = "error";

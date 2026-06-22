@@ -1742,6 +1742,9 @@
 
       gallery.addImages([gridImage]);
       gallery.persistImages([gridImage], undefined, [gridBlob], generation.metadataMode);
+      // Mirror the single-image path (finalizeOutputImages) so a completed grid
+      // also surfaces a done toast / notification when off the generate page.
+      showGenerationDoneToast([gridImage]);
     } catch (e) {
       console.error("Grid stitching failed:", e);
     }
