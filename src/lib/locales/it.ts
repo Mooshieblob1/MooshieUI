@@ -210,6 +210,10 @@ const it: Record<string, string> = {
   "settings.connection.pip_index_placeholder": "https://pypi.tuna.tsinghua.edu.cn/simple",
 
   "settings.appearance.title": "Aspetto",
+  "settings.appearance.layout_title": "Layout",
+  "settings.appearance.layout_desc": "Scegli tra il layout mobile ottimizzato per il tocco e l'interfaccia desktop completa.",
+  "settings.appearance.layout_use_desktop": "Passa al layout desktop",
+  "settings.appearance.layout_use_mobile": "Passa al layout mobile",
   "settings.appearance.theme": "Tema",
   "settings.appearance.theme_dark": "Scuro",
   "settings.appearance.theme_light": "Chiaro",

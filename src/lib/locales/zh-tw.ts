@@ -210,6 +210,10 @@ const zhTw: Record<string, string> = {
   "settings.connection.pip_index_placeholder": "https://pypi.tuna.tsinghua.edu.cn/simple",
 
   "settings.appearance.title": "外觀",
+  "settings.appearance.layout_title": "版面配置",
+  "settings.appearance.layout_desc": "在觸控最佳化的行動裝置版面與完整桌面介面之間選擇。",
+  "settings.appearance.layout_use_desktop": "切換至桌面版面",
+  "settings.appearance.layout_use_mobile": "切換至行動版面",
   "settings.appearance.theme": "主題",
   "settings.appearance.theme_dark": "深色",
   "settings.appearance.theme_light": "淺色",

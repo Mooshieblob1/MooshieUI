@@ -210,6 +210,10 @@ const ru: Record<string, string> = {
   "settings.connection.pip_index_placeholder": "https://pypi.tuna.tsinghua.edu.cn/simple",
 
   "settings.appearance.title": "Внешний вид",
+  "settings.appearance.layout_title": "Макет",
+  "settings.appearance.layout_desc": "Выберите между оптимизированным для сенсорного управления мобильным макетом и полным интерфейсом для настольных устройств.",
+  "settings.appearance.layout_use_desktop": "Перейти к десктопному макету",
+  "settings.appearance.layout_use_mobile": "Перейти к мобильному макету",
   "settings.appearance.theme": "Тема",
   "settings.appearance.theme_dark": "Тёмная",
   "settings.appearance.theme_light": "Светлая",

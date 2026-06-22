@@ -210,6 +210,10 @@ const ko: Record<string, string> = {
   "settings.connection.pip_index_placeholder": "https://pypi.tuna.tsinghua.edu.cn/simple",
 
   "settings.appearance.title": "외관",
+  "settings.appearance.layout_title": "레이아웃",
+  "settings.appearance.layout_desc": "터치에 최적화된 모바일 레이아웃과 전체 데스크탑 인터페이스 중에서 선택하세요.",
+  "settings.appearance.layout_use_desktop": "데스크탑 레이아웃으로 전환",
+  "settings.appearance.layout_use_mobile": "모바일 레이아웃으로 전환",
   "settings.appearance.theme": "테마",
   "settings.appearance.theme_dark": "다크",
   "settings.appearance.theme_light": "라이트",

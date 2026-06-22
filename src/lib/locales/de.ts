@@ -212,6 +212,10 @@ const de: Record<string, string> = {
   "settings.connection.pip_index_placeholder": "https://pypi.tuna.tsinghua.edu.cn/simple",
 
   "settings.appearance.title": "Erscheinung",
+  "settings.appearance.layout_title": "Layout",
+  "settings.appearance.layout_desc": "Wahlen Sie zwischen dem touchoptimierten mobilen Layout und der vollstandigen Desktop-Oberflache.",
+  "settings.appearance.layout_use_desktop": "Zum Desktop-Layout wechseln",
+  "settings.appearance.layout_use_mobile": "Zum mobilen Layout wechseln",
   "settings.appearance.theme": "Design",
   "settings.appearance.theme_dark": "Dunkel",
   "settings.appearance.theme_light": "Hell",

@@ -204,6 +204,10 @@ const en: Record<string, string> = {
 
   // Appearance
   "settings.appearance.title": "Appearance",
+  "settings.appearance.layout_title": "Layout",
+  "settings.appearance.layout_desc": "Choose between the touch-optimised mobile layout and the full desktop interface.",
+  "settings.appearance.layout_use_desktop": "Switch to desktop layout",
+  "settings.appearance.layout_use_mobile": "Switch to mobile layout",
   "settings.appearance.theme": "Theme",
   "settings.appearance.theme_dark": "Dark",
   "settings.appearance.theme_light": "Light",

@@ -183,6 +183,10 @@ const es: Record<string, string> = {
 
   // Apariencia
   "settings.appearance.title": "Apariencia",
+  "settings.appearance.layout_title": "Disposición",
+  "settings.appearance.layout_desc": "Elige entre la disposición móvil optimizada para táctil y la interfaz de escritorio completa.",
+  "settings.appearance.layout_use_desktop": "Cambiar a la disposición de escritorio",
+  "settings.appearance.layout_use_mobile": "Cambiar a la disposición móvil",
   "settings.appearance.theme": "Tema",
   "settings.appearance.theme_dark": "Oscuro",
   "settings.appearance.theme_light": "Claro",

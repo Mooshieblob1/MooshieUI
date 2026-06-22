@@ -212,6 +212,10 @@ const ja: Record<string, string> = {
 
   // 外観
   "settings.appearance.title": "外観",
+  "settings.appearance.layout_title": "レイアウト",
+  "settings.appearance.layout_desc": "タッチ操作向けのモバイルレイアウトと、フルデスクトップインターフェースを切り替えます。",
+  "settings.appearance.layout_use_desktop": "デスクトップレイアウトに切り替え",
+  "settings.appearance.layout_use_mobile": "モバイルレイアウトに切り替え",
   "settings.appearance.theme": "テーマ",
   "settings.appearance.theme_dark": "ダーク",
   "settings.appearance.theme_light": "ライト",

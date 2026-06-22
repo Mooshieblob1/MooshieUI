@@ -16,6 +16,7 @@
   import ModelRequestsPanel from "./ModelRequestsPanel.svelte";
   import QualityTagsEditor from "./QualityTagsEditor.svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
+  import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
   import {
     applyTheme,
     THEME_PALETTES,
@@ -35,6 +36,16 @@
   }
 
   let { userRole = "admin", mobileFriendly = false }: Props = $props();
+
+  // Layout override: only meaningful on a mobile-capable device in browser mode,
+  // where the mobile shell exists. The control lets the user flip between the
+  // touch layout and the full desktop interface (resolved at module load).
+  const deviceSupportsMobileLayout = isBrowserMode && isMobileUA();
+  function switchLayout() {
+    // Currently mobile -> force desktop; currently desktop -> clear the override.
+    setForceDesktopOverride(useMobileLayout);
+    location.reload();
+  }
 
   let settingsScrollEl = $state<HTMLDivElement | null>(null);
   let showScrollToTop = $state(false);
@@ -2168,6 +2179,23 @@
 
           {#if !collapsed.appearance}
           <div class="px-5 pb-5 space-y-4">
+          {#if deviceSupportsMobileLayout}
+            <div class="rounded-lg border border-neutral-700 bg-neutral-950/60 p-4">
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <p class="text-xs font-medium text-neutral-200">{locale.t('settings.appearance.layout_title')}</p>
+                  <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.appearance.layout_desc')}</p>
+                </div>
+                <button
+                  type="button"
+                  class="shrink-0 px-3 py-2 text-xs font-medium rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-100 hover:bg-neutral-700 transition-colors cursor-pointer"
+                  onclick={switchLayout}
+                >
+                  {useMobileLayout ? locale.t('settings.appearance.layout_use_desktop') : locale.t('settings.appearance.layout_use_mobile')}
+                </button>
+              </div>
+            </div>
+          {/if}
           <p class="text-xs font-medium text-neutral-300">{locale.t("settings.appearance.builtin_theme")}</p>
           <p class="text-[10px] text-neutral-500 -mt-2">{locale.t("settings.appearance.builtin_palette_hint")}</p>
           <div class="grid grid-cols-2 gap-3">
