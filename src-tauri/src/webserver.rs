@@ -2014,11 +2014,15 @@ async fn dispatch_command(
             }
             #[cfg(feature = "desktop")]
             {
-                // Step 1: Save config
-                let mut cfg = state.config.write().await;
-                cfg.browser_mode = false;
+                // Step 1: Save config. Snapshot under the guard, then write to
+                // disk after dropping it so the blocking file write doesn't hold
+                // the config write lock.
+                let cfg = {
+                    let mut cfg = state.config.write().await;
+                    cfg.browser_mode = false;
+                    cfg.clone()
+                };
                 config::save_config(&cfg)?;
-                drop(cfg);
 
                 // Step 2: Disarm heartbeat watchdog
                 state
@@ -3974,8 +3978,11 @@ async fn dispatch_command(
             let path = args["path"].as_str().unwrap_or("").to_string();
             let trimmed = path.trim().to_string();
             let resolved = if trimmed.is_empty() {
-                let mut cfg = state.config.write().await;
-                cfg.gallery_path = None;
+                let cfg = {
+                    let mut cfg = state.config.write().await;
+                    cfg.gallery_path = None;
+                    cfg.clone()
+                };
                 config::save_config(&cfg)?;
                 let dir = config::app_data_dir()
                     .ok_or("Cannot find app data directory")?
@@ -3986,8 +3993,11 @@ async fn dispatch_command(
                 let p = std::path::Path::new(&trimmed);
                 std::fs::create_dir_all(p)
                     .map_err(|e| format!("Cannot create gallery directory: {}", e))?;
-                let mut cfg = state.config.write().await;
-                cfg.gallery_path = Some(trimmed.clone());
+                let cfg = {
+                    let mut cfg = state.config.write().await;
+                    cfg.gallery_path = Some(trimmed.clone());
+                    cfg.clone()
+                };
                 config::save_config(&cfg)?;
                 trimmed
             };
@@ -4464,30 +4474,18 @@ async fn run_interrogation_headless(
     state: &Arc<AppState>,
     image_bytes: Vec<u8>,
 ) -> Result<crate::interrogator::InterrogationResult, String> {
-    // Ensure model is downloaded
-    {
-        let interrogator = state.interrogator.read().await;
-        if !interrogator.is_model_downloaded() {
-            drop(interrogator);
-            let interrogator = state.interrogator.read().await;
-            interrogator
-                .ensure_model_downloaded_headless(&state.http_client)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
+    // Resolve the model directory under a brief read lock, then run the
+    // (multi-second, network) downloads WITHOUT holding the guard across await.
+    let model_dir = { state.interrogator.read().await.model_dir() };
+    if !crate::interrogator::is_model_downloaded_at(&model_dir) {
+        crate::interrogator::ensure_model_downloaded_headless_at(&state.http_client, &model_dir)
+            .await
+            .map_err(|e| e.to_string())?;
     }
-
-    // Ensure ONNX Runtime shared library is downloaded
-    {
-        let interrogator = state.interrogator.read().await;
-        if !interrogator.is_ort_library_present() {
-            drop(interrogator);
-            let interrogator = state.interrogator.read().await;
-            interrogator
-                .ensure_ort_library_headless(&state.http_client)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
+    if !crate::interrogator::is_ort_library_present_at(&model_dir) {
+        crate::interrogator::ensure_ort_library_headless_at(&state.http_client, &model_dir)
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
     let (general_threshold, character_threshold) = {

@@ -53,9 +53,13 @@ pub async fn set_gallery_path(
     let trimmed = path.trim().to_string();
 
     let resolved = if trimmed.is_empty() {
-        // Reset to default
-        let mut cfg = state.config.write().await;
-        cfg.gallery_path = None;
+        // Reset to default. Snapshot under the guard, then write to disk after
+        // dropping it so the blocking save doesn't hold the config write lock.
+        let cfg = {
+            let mut cfg = state.config.write().await;
+            cfg.gallery_path = None;
+            cfg.clone()
+        };
         save_config(&cfg).map_err(AppError::Other)?;
         let dir = crate::config::app_data_dir()
             .ok_or_else(|| AppError::Other("Cannot find app data directory".into()))?
@@ -73,8 +77,11 @@ pub async fn set_gallery_path(
             .map_err(|e| AppError::Other(format!("Directory is not writable: {}", e)))?;
         let _ = std::fs::remove_file(&test_file);
 
-        let mut cfg = state.config.write().await;
-        cfg.gallery_path = Some(trimmed.clone());
+        let cfg = {
+            let mut cfg = state.config.write().await;
+            cfg.gallery_path = Some(trimmed.clone());
+            cfg.clone()
+        };
         save_config(&cfg).map_err(AppError::Other)?;
         trimmed
     };
@@ -91,13 +98,14 @@ pub async fn switch_to_browser_mode(
 ) -> Result<(), AppError> {
     log::info!("switch_to_browser_mode: called");
 
-    // Save browser_mode = true
-    let (mut port, lan_enabled) = {
+    // Save browser_mode = true. Snapshot under the guard, then write to disk
+    // after dropping it so the blocking save doesn't hold the config lock.
+    let (mut port, lan_enabled, cfg_snapshot) = {
         let mut cfg = state.config.write().await;
         cfg.browser_mode = true;
-        save_config(&cfg).map_err(AppError::Other)?;
-        (cfg.ui_server_port, cfg.lan_enabled)
+        (cfg.ui_server_port, cfg.lan_enabled, cfg.clone())
     };
+    save_config(&cfg_snapshot).map_err(AppError::Other)?;
     log::info!(
         "switch_to_browser_mode: config saved, port={}, lan={}",
         port,
@@ -130,8 +138,11 @@ pub async fn switch_to_browser_mode(
         let (actual_port, _handle) =
             webserver::start_server(state_for_server, port, lan_enabled).await;
         if actual_port != port {
-            let mut cfg = state.config.write().await;
-            cfg.ui_server_port = actual_port;
+            let cfg = {
+                let mut cfg = state.config.write().await;
+                cfg.ui_server_port = actual_port;
+                cfg.clone()
+            };
             save_config(&cfg).map_err(AppError::Other)?;
             log::info!(
                 "switch_to_browser_mode: persisted fallback ui_server_port={}",
@@ -159,8 +170,11 @@ pub async fn switch_to_browser_mode(
         Err(e) => {
             log::error!("switch_to_browser_mode: open::that failed: {}", e);
             {
-                let mut cfg = state.config.write().await;
-                cfg.browser_mode = false;
+                let cfg = {
+                    let mut cfg = state.config.write().await;
+                    cfg.browser_mode = false;
+                    cfg.clone()
+                };
                 save_config(&cfg).map_err(AppError::Other)?;
             }
             state

@@ -2315,11 +2315,14 @@ pub async fn find_model_by_hash(
         return Err(AppError::Other("Invalid model category".into()));
     }
 
-    let config = state.config.read().await;
-    if config.comfyui_path.is_empty() {
+    let comfyui_path = {
+        let config = state.config.read().await;
+        config.comfyui_path.clone()
+    };
+    if comfyui_path.is_empty() {
         return Ok(None);
     }
-    let models_dir = std::path::Path::new(&config.comfyui_path)
+    let models_dir = std::path::Path::new(&comfyui_path)
         .join("models")
         .join(&category);
 
@@ -2374,11 +2377,14 @@ pub async fn hash_model_file(
         return Err(AppError::Other("Invalid model filename".into()));
     }
 
-    let config = state.config.read().await;
-    if config.comfyui_path.is_empty() {
+    let comfyui_path = {
+        let config = state.config.read().await;
+        config.comfyui_path.clone()
+    };
+    if comfyui_path.is_empty() {
         return Err(AppError::Other("ComfyUI path not configured".into()));
     }
-    let path = std::path::Path::new(&config.comfyui_path)
+    let path = std::path::Path::new(&comfyui_path)
         .join("models")
         .join(&category)
         .join(&filename);
