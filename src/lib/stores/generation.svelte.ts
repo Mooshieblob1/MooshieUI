@@ -20,7 +20,6 @@ import type {
   RegionalPromptSelection,
   RegionalPromptStrategy,
 } from "../types/index.js";
-import { autocomplete } from "./autocomplete.svelte.js";
 import { models } from "./models.svelte.js";
 import { styles } from "./styles.svelte.js";
 import { promptPresets } from "./promptPresets.svelte.js";
@@ -620,7 +619,8 @@ class GenerationStore {
     if (meta.modelRecommendedClipType !== undefined) {
       this.modelRecommendedClipType = meta.modelRecommendedClipType ?? null;
     }
-    autocomplete.notifyModelChanged(this.isAnima);
+    // Autocomplete tag-set sync is handled by an $effect in App.svelte that
+    // watches the model family (stores must not import each other).
   }
 
   setModelFamilyOverride(modelKey: string, family: ModelFamily | null): void {
@@ -860,8 +860,8 @@ class GenerationStore {
   }
 
   applyModelSpecificPreset() {
-    const isAnimaLike = this.isAnima || this.isWan || this.isQwen;
-    autocomplete.notifyModelChanged(isAnimaLike);
+    // Autocomplete tag-set sync on model-family change is handled by an
+    // $effect in App.svelte (stores must not import each other).
 
     // Only apply defaults when the selected model actually changed. Metadata
     // reloads for the same model (page remount on tab switch, app restart)
@@ -1270,8 +1270,8 @@ class GenerationStore {
           localStorage.setItem("mooshieui.metadataMode.v2", "1");
         }
         console.log("Loaded saved settings, checkpoint:", this.checkpoint);
-        // Sync autocomplete tag list with restored model
-        autocomplete.notifyModelChanged(this.isAnima);
+        // Autocomplete tag-set sync with the restored model is handled by an
+        // $effect in App.svelte (stores must not import each other).
       }
     } catch (e) {
       console.error("Failed to load settings:", e);

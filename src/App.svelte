@@ -228,6 +228,16 @@
     lbWasOpen = isOpen;
   });
 
+  // Cross-store bridge (stores must not import each other; see CLAUDE.md):
+  // keep the autocomplete builtin tag set in sync with the active model family.
+  // notifyModelChanged is idempotent, so redundant runs are harmless. This
+  // supersedes the imperative calls generation used to make into autocomplete.
+  $effect(() => {
+    autocomplete.notifyModelChanged(
+      generation.isAnima || generation.isWan || generation.isQwen,
+    );
+  });
+
   // Document-level keyboard handler for lightbox (fallback for browser focus issues)
   $effect(() => {
     if (!gallery.lightboxOpen) return;
