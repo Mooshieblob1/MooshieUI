@@ -5334,6 +5334,20 @@ pub async fn install_attention_backend(
     app_handle: AppHandle,
     backend: String,
 ) -> Result<(), AppError> {
+    install_attention_backend_core(&state, backend, |msg| {
+        app_handle.emit("attention:install_progress", msg).ok();
+    })
+    .await
+}
+
+/// Core of `install_attention_backend`, shared by the desktop Tauri command and
+/// the browser-mode dispatch arm. `emit` reports progress: desktop forwards it to
+/// `attention:install_progress` via the WebView, browser mode via the SSE broadcast.
+pub async fn install_attention_backend_core(
+    state: &Arc<AppState>,
+    backend: String,
+    emit: impl Fn(&str),
+) -> Result<(), AppError> {
     let valid = ["default", "sage_v1", "sage_v2", "flash_v1", "flash_v2"];
     if !valid.contains(&backend.as_str()) {
         return Err(AppError::Other(format!(
@@ -5367,12 +5381,7 @@ pub async fn install_attention_backend(
     let python_str = venv_python.to_string_lossy().to_string();
 
     // Step 1: Uninstall any existing attention packages (ignore errors)
-    app_handle
-        .emit(
-            "attention:install_progress",
-            "Removing old attention packages...",
-        )
-        .ok();
+    emit("Removing old attention packages...");
     let _ = tokio::process::Command::new(&uv)
         .args([
             "pip",
@@ -5389,12 +5398,7 @@ pub async fn install_attention_backend(
     if backend != "default" {
         let install_args: Vec<&str> = match backend.as_str() {
             "sage_v1" => {
-                app_handle
-                    .emit(
-                        "attention:install_progress",
-                        "Installing SageAttention v1 (pure Triton)...",
-                    )
-                    .ok();
+                emit("Installing SageAttention v1 (pure Triton)...");
                 vec![
                     "pip",
                     "install",
@@ -5404,12 +5408,7 @@ pub async fn install_attention_backend(
                 ]
             }
             "sage_v2" => {
-                app_handle
-                    .emit(
-                        "attention:install_progress",
-                        "Installing SageAttention v2 (CUDA kernels — may take a few minutes)...",
-                    )
-                    .ok();
+                emit("Installing SageAttention v2 (CUDA kernels — may take a few minutes)...");
                 vec![
                     "pip",
                     "install",
@@ -5420,12 +5419,7 @@ pub async fn install_attention_backend(
                 ]
             }
             "flash_v1" => {
-                app_handle
-                    .emit(
-                        "attention:install_progress",
-                        "Installing FlashAttention v1...",
-                    )
-                    .ok();
+                emit("Installing FlashAttention v1...");
                 vec![
                     "pip",
                     "install",
@@ -5436,12 +5430,7 @@ pub async fn install_attention_backend(
                 ]
             }
             "flash_v2" => {
-                app_handle
-                    .emit(
-                        "attention:install_progress",
-                        "Installing FlashAttention v2 (may compile from source — this can take 10+ minutes)...",
-                    )
-                    .ok();
+                emit("Installing FlashAttention v2 (may compile from source — this can take 10+ minutes)...");
                 vec![
                     "pip",
                     "install",
@@ -5477,12 +5466,7 @@ pub async fn install_attention_backend(
             .map_err(|e| AppError::Other(format!("Failed to save config: {}", e)))?;
     }
 
-    app_handle
-        .emit(
-            "attention:install_progress",
-            "Attention backend updated. Restart ComfyUI to apply.",
-        )
-        .ok();
+    emit("Attention backend updated. Restart ComfyUI to apply.");
     log::info!("Attention backend set to: {}", backend);
     Ok(())
 }

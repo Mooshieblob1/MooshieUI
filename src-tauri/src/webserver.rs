@@ -210,6 +210,7 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "kill_port_process",
     "export_logs",
     "install_pip_package",
+    "install_attention_backend",
     "clear_all_queues",
     // previously admin-only: mode switching, filesystem, node install
     "switch_to_app_mode",
@@ -1816,6 +1817,12 @@ async fn command_handler(
         state.auth.touch_activity(u);
     }
 
+    // A GUI action (opening a file explorer) only makes sense when the browser
+    // client is on the same machine as the server: localhost-only web mode, or a
+    // localhost request on a LAN-enabled server. A remote LAN client must never
+    // pop a window on the operator's screen.
+    let caller_is_local = !state.lan_enabled || is_localhost(&remote);
+
     match dispatch_command(
         state.app.clone(),
         &state.auth,
@@ -1823,6 +1830,7 @@ async fn command_handler(
         &args,
         username.as_deref(),
         role,
+        caller_is_local,
     )
     .await
     {
@@ -1858,6 +1866,7 @@ async fn dispatch_command(
     args: &serde_json::Value,
     username: Option<&str>,
     caller_role: UserRole,
+    caller_is_local: bool,
 ) -> Result<serde_json::Value, String> {
     match command {
         // --- Config ---
@@ -1922,6 +1931,19 @@ async fn dispatch_command(
                 "venv_packages": venv_packages,
                 "compute_capability": crate::commands::api::detect_compute_capability_pub(),
             }))
+        }
+        "install_attention_backend" => {
+            let backend = args["backend"]
+                .as_str()
+                .ok_or("Missing backend")?
+                .to_string();
+            let bcast = state.clone();
+            crate::commands::api::install_attention_backend_core(&state, backend, move |msg| {
+                bcast.broadcast("attention:install_progress", serde_json::json!(msg));
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
         }
         "switch_to_app_mode" => {
             #[cfg(not(feature = "desktop"))]
@@ -4182,7 +4204,9 @@ async fn dispatch_command(
             } else {
                 crate::prompt_assistant::grounding::GenMode::Compose
             };
-            let result = run_prompt_assistant_headless(&state, &input, &family, mode).await?;
+            let length = args["opts"]["length"].as_str();
+            let result =
+                run_prompt_assistant_headless(&state, &input, &family, mode, length).await?;
             Ok(serde_json::Value::String(result))
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
@@ -4263,8 +4287,15 @@ async fn dispatch_command(
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
         "open_directory" => {
+            // Opening a file explorer is only meaningful when the caller shares the
+            // server's desktop. For a remote LAN client this would pop a window on
+            // the operator's screen, so we no-op (the directory is still ensured to
+            // exist) rather than spawn a GUI the caller can't see.
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
             std::fs::create_dir_all(&path).ok();
+            if !caller_is_local {
+                return Ok(serde_json::json!(null));
+            }
             #[cfg(target_os = "windows")]
             {
                 let _ = tokio::process::Command::new("explorer.exe")
@@ -4280,6 +4311,21 @@ async fn dispatch_command(
                 let _ = tokio::process::Command::new("xdg-open").arg(&path).spawn();
             }
             Ok(serde_json::json!(null))
+        }
+        "read_temp_image" => {
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            let bytes = crate::temp_images::load(&filename)
+                .ok_or_else(|| format!("Temp image not found: {}", filename))?;
+            Ok(serde_json::json!(bytes))
+        }
+        "move_installation" => {
+            // Relocating the on-disk installation depends on the desktop app's
+            // data-dir resolution and a running file picker; it is a desktop-only
+            // maintenance action with no meaningful browser-mode equivalent.
+            Err("Moving the installation is only available in the desktop app.".to_string())
         }
 
         // --- Clipboard ---
@@ -4402,6 +4448,7 @@ pub async fn run_prompt_assistant_headless(
     input: &str,
     family: &str,
     mode: crate::prompt_assistant::grounding::GenMode,
+    length: Option<&str>,
 ) -> Result<String, String> {
     use crate::prompt_assistant::{grounding, hardware};
     // No active-generation guard here: `prompt_queue` is shared across every user
@@ -4438,6 +4485,7 @@ pub async fn run_prompt_assistant_headless(
     // (ComfyUI's model is still resident), and a 7B model on CPU overruns
     // Cloudflare's 100s proxy timeout with a 524 on the hosted deployment.
     state.free_comfyui_vram_for_llm().await;
+    state.broadcast("llm:stage", serde_json::json!("loading_model"));
     let noop = |_: &str, _: u64, _: u64, _: bool| {};
     let port = state
         .prompt_assistant
@@ -4450,6 +4498,7 @@ pub async fn run_prompt_assistant_headless(
         )
         .await
         .map_err(|e| e.to_string())?;
+    state.broadcast("llm:stage", serde_json::json!("generating"));
     // A purpose-built tag upsampler is always tag-only regardless of family.
     let purpose = crate::prompt_assistant::catalog::entry(&model_id)
         .map(|e| e.purpose)
@@ -4457,13 +4506,24 @@ pub async fn run_prompt_assistant_headless(
     let tag_only = grounding::is_tag_only(&purpose, family);
     let candidates = grounding::retrieve_candidates(input, 40);
     let system = grounding::system_prompt(tag_only, mode, &candidates);
+    // Mirror the desktop token budget so browser Enhance/Compose honors the
+    // user's length pick instead of always generating at the medium default.
+    let max_tokens = match length {
+        Some("short") => 96,
+        Some("detailed") => 384,
+        _ => 192,
+    };
     let raw = state
         .prompt_assistant
         .server
-        .chat(&state.http_client, port, &system, input, 192)
+        .chat(&state.http_client, port, &system, input, max_tokens)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(grounding::repair(&raw, tag_only))
+    let cleaned = grounding::repair(&raw, tag_only);
+    // Enhance is additive: keep every user tag and don't let the model swap a
+    // pinned attribute. No-op for Compose. The desktop path runs this too;
+    // omitting it here made browser Enhance silently drop user tags.
+    Ok(grounding::reconcile_enhance(input, &cleaned, mode))
 }
 
 // ---------------------------------------------------------------------------
