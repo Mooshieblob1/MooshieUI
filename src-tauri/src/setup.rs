@@ -5,6 +5,7 @@ use std::process::Stdio;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::config;
+use crate::error::AppError;
 use crate::state::AppState;
 
 #[derive(Clone, serde::Serialize)]
@@ -319,26 +320,68 @@ async fn download_file(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let resp = client
-        .get(url)
+
+    // Stream into a sibling `.part` file and only rename into place once the
+    // transfer completes, so an interrupted download never leaves a truncated
+    // file that later code mistakes for a finished one. If a `.part` already
+    // exists, try to resume from where it left off via a Range request.
+    let part = dest.with_extension(match dest.extension().and_then(|e| e.to_str()) {
+        Some(ext) => format!("{}.part", ext),
+        None => "part".to_string(),
+    });
+    let resume_from = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+
+    let mut req = client.get(url);
+    if resume_from > 0 {
+        req = req.header(reqwest::header::RANGE, format!("bytes={}-", resume_from));
+    }
+    let resp = req
         .send()
         .await
         .map_err(|e| format!("Download failed: {}", e))?;
-    if !resp.status().is_success() {
-        return Err(format!("Download returned status {}", resp.status()));
+
+    use reqwest::StatusCode;
+    let status = resp.status();
+    // 416 means the server considers the existing `.part` already complete.
+    if status == StatusCode::RANGE_NOT_SATISFIABLE && resume_from > 0 {
+        std::fs::rename(&part, dest).map_err(|e| format!("Failed to finalize download: {}", e))?;
+        app.emit(
+            "download:progress",
+            DownloadProgress {
+                filename: label.to_string(),
+                downloaded: resume_from,
+                total: resume_from,
+                done: true,
+            },
+        )
+        .ok();
+        return Ok(());
+    }
+    if !status.is_success() {
+        return Err(format!("Download returned status {}", status));
     }
 
-    let total = resp.content_length().unwrap_or(0);
-    let mut downloaded: u64 = 0;
-    let mut file =
-        std::fs::File::create(dest).map_err(|e| format!("Failed to create file: {}", e))?;
+    use std::io::Write;
+    // The server honors the Range request (206) → append; a plain 200 ignores
+    // it (or there was nothing to resume) → start the `.part` over from scratch.
+    let resuming = status == StatusCode::PARTIAL_CONTENT && resume_from > 0;
+    let mut downloaded: u64 = if resuming { resume_from } else { 0 };
+    let total = resp.content_length().unwrap_or(0) + downloaded;
+    let mut file = if resuming {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&part)
+            .map_err(|e| format!("Failed to open partial file: {}", e))?
+    } else {
+        std::fs::File::create(&part).map_err(|e| format!("Failed to create file: {}", e))?
+    };
 
     // Emit initial progress
     app.emit(
         "download:progress",
         DownloadProgress {
             filename: label.to_string(),
-            downloaded: 0,
+            downloaded,
             total,
             done: false,
         },
@@ -346,14 +389,13 @@ async fn download_file(
     .ok();
 
     // Stream chunks
-    let mut last_emit: u64 = 0;
+    let mut last_emit: u64 = downloaded;
     let mut resp = resp;
     while let Some(chunk) = resp
         .chunk()
         .await
         .map_err(|e| format!("Download read error: {}", e))?
     {
-        use std::io::Write;
         file.write_all(&chunk)
             .map_err(|e| format!("Write error: {}", e))?;
         downloaded += chunk.len() as u64;
@@ -373,6 +415,11 @@ async fn download_file(
             .ok();
         }
     }
+
+    // Flush and atomically move the completed file into place.
+    file.flush().map_err(|e| format!("Flush error: {}", e))?;
+    drop(file);
+    std::fs::rename(&part, dest).map_err(|e| format!("Failed to finalize download: {}", e))?;
 
     app.emit(
         "download:progress",
@@ -592,6 +639,14 @@ async fn step_download_comfyui(
             .map_err(|_| "Failed to extract ComfyUI".to_string())?;
     }
 
+    // A previous interrupted attempt may have left a partial `comfyui` dir.
+    // Renaming onto an existing directory fails on Windows (and on a non-empty
+    // dir on Unix), so clear any stale target before moving the freshly
+    // extracted tree into place.
+    if comfyui_dir.exists() {
+        std::fs::remove_dir_all(&comfyui_dir)
+            .map_err(|e| format!("Failed to clear stale ComfyUI dir: {}", e))?;
+    }
     std::fs::rename(base.join("ComfyUI-master"), &comfyui_dir)
         .map_err(|e| format!("Failed to rename ComfyUI dir: {}", e))?;
     std::fs::remove_file(&zip_path).ok();
@@ -904,10 +959,11 @@ async fn amd_pytorch_index_url() -> &'static str {
 
 /// Pick the correct PyTorch CUDA wheel index for NVIDIA GPUs.
 /// Blackwell (compute ≥ 12.0) needs cu130+; older GPUs use cu128.
-fn nvidia_pytorch_index_url() -> &'static str {
-    let output = std::process::Command::new("nvidia-smi")
+async fn nvidia_pytorch_index_url() -> &'static str {
+    let output = tokio::process::Command::new("nvidia-smi")
         .args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"])
-        .output();
+        .output()
+        .await;
 
     if let Ok(o) = output {
         if o.status.success() {
@@ -960,7 +1016,7 @@ async fn step_install_pytorch(
 
     let result = match gpu {
         "nvidia" => {
-            let index_url = nvidia_pytorch_index_url();
+            let index_url = nvidia_pytorch_index_url().await;
             emit_log(app, &format!("Using PyTorch index: {}", index_url));
             uv_pip(
                 app,
@@ -1280,7 +1336,7 @@ fn recommended_vram_mode(vram_mb: u64) -> &'static str {
 // ─── Tauri commands ─────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn check_setup(app: AppHandle) -> Result<bool, String> {
+pub async fn check_setup(app: AppHandle) -> Result<bool, AppError> {
     let dir = data_dir(&app)?;
 
     // Fast path: setup marker exists
@@ -1320,17 +1376,17 @@ pub async fn check_setup(app: AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub async fn detect_gpu() -> Result<String, String> {
+pub async fn detect_gpu() -> Result<String, AppError> {
     Ok(detect_gpu_type().await)
 }
 
 /// Save a custom install location. Called before `run_setup` so the setup
 /// installs into the chosen directory instead of the platform default.
 #[tauri::command]
-pub async fn set_install_path(path: String) -> Result<(), String> {
+pub async fn set_install_path(path: String) -> Result<(), AppError> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
-        return Err("Install path cannot be empty".to_string());
+        return Err("Install path cannot be empty".into());
     }
     config::save_custom_data_dir(trimmed)?;
     Ok(())
@@ -1338,7 +1394,7 @@ pub async fn set_install_path(path: String) -> Result<(), String> {
 
 /// Return the current resolved data directory path so the frontend can show it.
 #[tauri::command]
-pub async fn get_install_path(app: AppHandle) -> Result<String, String> {
+pub async fn get_install_path(app: AppHandle) -> Result<String, AppError> {
     let dir = data_dir(&app)?;
     Ok(dir.to_string_lossy().to_string())
 }
@@ -1346,7 +1402,7 @@ pub async fn get_install_path(app: AppHandle) -> Result<String, String> {
 /// Scan common locations for existing AI tool model directories.
 /// Returns a list of detected paths with metadata about which tool they belong to.
 #[tauri::command]
-pub async fn detect_model_directories() -> Result<Vec<DetectedModelDir>, String> {
+pub async fn detect_model_directories() -> Result<Vec<DetectedModelDir>, AppError> {
     Ok(scan_model_directories())
 }
 
@@ -1485,17 +1541,17 @@ pub async fn move_installation(
     app: AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
     new_path: String,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let new_path = new_path.trim().to_string();
     if new_path.is_empty() {
-        return Err("New path cannot be empty".to_string());
+        return Err("New path cannot be empty".into());
     }
 
     let current = data_dir(&app)?;
     let dest = PathBuf::from(&new_path);
 
     if current == dest {
-        return Err("New path is the same as the current location".to_string());
+        return Err("New path is the same as the current location".into());
     }
 
     // Prevent recursive nesting: ensure neither path is inside the other.
@@ -1522,7 +1578,8 @@ pub async fn move_installation(
              '{}' is inside '{}'. Choose a location outside the current install folder.",
             dest.display(),
             current.display()
-        ));
+        )
+        .into());
     }
     if current_canon.starts_with(&dest_canon) && current_canon != dest_canon {
         return Err(format!(
@@ -1530,7 +1587,8 @@ pub async fn move_installation(
              '{}' contains '{}'. Choose a different location.",
             dest.display(),
             current.display()
-        ));
+        )
+        .into());
     }
 
     // Verify current installation exists
@@ -1538,7 +1596,8 @@ pub async fn move_installation(
         return Err(format!(
             "Current data directory does not exist: {}",
             current.display()
-        ));
+        )
+        .into());
     }
 
     // Create destination parent if needed
@@ -1557,7 +1616,8 @@ pub async fn move_installation(
             return Err(format!(
                 "Destination already exists and is not empty: {}. Choose an empty folder or a new path.",
                 dest.display()
-            ));
+            )
+            .into());
         }
     }
 
@@ -1813,7 +1873,7 @@ pub async fn reinstall_pytorch(
     app: AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
     index_url: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let base = data_dir(&app)?;
     let gpu = detect_gpu_type().await;
     let net = {
@@ -1824,7 +1884,7 @@ pub async fn reinstall_pytorch(
     let url = match index_url {
         Some(ref url) => url.as_str(),
         None => match gpu.as_str() {
-            "nvidia" => nvidia_pytorch_index_url(),
+            "nvidia" => nvidia_pytorch_index_url().await,
             "amd" => amd_pytorch_index_url().await,
             "intel" => "https://download.pytorch.org/whl/xpu",
             "mps" => "",
@@ -1882,7 +1942,7 @@ pub async fn run_setup(
     attention_backend: Option<String>,
     network_proxy: Option<String>,
     pip_index_url: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let net = SetupNetworkOpts::from_options(network_proxy.clone(), pip_index_url.clone());
     // If user chose a custom install path, save it as the bootstrap pointer
     // before anything else so all subsequent path resolution uses it.
