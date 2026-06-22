@@ -2210,5 +2210,29 @@ const en: Record<string, string> = {
   "prompt_assistant.busy_generation": "Busy generating — try again after it finishes.",
   "prompt_assistant.no_model": "No prompt assistant model installed.",
   "prompt_assistant.error_generic": "Prompt assistant error, try again.",
+
+  // ── i18n audit: previously missing keys / hardcoded strings ──
+  "nav.artists": "Artists",
+  "gallery.toast.copy_failed": "Failed to copy image",
+  "gallery.choose_save_folder": "Choose save folder",
+  "settings.paths.model_dir_dialog_title": "Select model directory",
+  "setup.disk_space_note":
+    "~5-10 GB disk space required. Installation may take 5-15 minutes depending on your connection.",
+  "setup.starting_server": "Starting ComfyUI server...",
+  "setup.retry": "Retry",
+  "setup.tagline": "MooshieUI — A friendly face for ComfyUI",
+  "generation.interrogate.replace_prompt": "Replace prompt",
+  "generation.interrogate.append_prompt": "Append to prompt",
+  "generation.interrogate.keep_artist_tags": "Keep existing artist tags",
+  "generation.style_transfer.nodes_install_detail":
+    "Missing nodes are installed automatically during backend startup. Wait a bit, then restart ComfyUI if they still do not appear.",
+  "generation.style_editor.artists_count": "Artists ({count})",
+  "generation.style_editor.no_artists":
+    "No artists yet. Add some from your favourites, the gallery, or paste tags below.",
+  "generation.style_editor.not_found": "Style not found.",
+  "generation.style_manager.mode_prepend": "Prepend",
+  "generation.style_manager.mode_append": "Append",
+  "generation.style_manager.mode_wildcard": "Wildcard",
+  "generation.style_manager.mode_wildcard_ordered": "Ordered",
 };
 export default en;

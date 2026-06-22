@@ -63,10 +63,10 @@
   }
 
   function presetModeLabel(mode: PresetMode | null): string {
-    if (mode === "prepend") return "Prepend";
-    if (mode === "append") return "Append";
-    if (mode === "wildcard") return "Wildcard";
-    if (mode === "wildcard_ordered") return "Ordered";
+    if (mode === "prepend") return locale.t("generation.style_manager.mode_prepend");
+    if (mode === "append") return locale.t("generation.style_manager.mode_append");
+    if (mode === "wildcard") return locale.t("generation.style_manager.mode_wildcard");
+    if (mode === "wildcard_ordered") return locale.t("generation.style_manager.mode_wildcard_ordered");
     return "";
   }
 

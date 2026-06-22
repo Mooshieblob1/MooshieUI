@@ -294,11 +294,11 @@
       <!-- Artists in this style -->
       <section class="mb-5">
         <h3 class="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-400">
-          Artists ({style.artists.length})
+          {locale.t("generation.style_editor.artists_count", { count: style.artists.length })}
         </h3>
         {#if style.artists.length === 0}
           <p class="rounded border border-dashed border-neutral-800 bg-neutral-950/50 p-3 text-center text-[11px] text-neutral-500">
-            No artists yet. Add some from your favourites, the gallery, or paste tags below.
+            {locale.t("generation.style_editor.no_artists")}
           </p>
         {:else}
           <div class="space-y-1.5">
@@ -439,7 +439,7 @@
     </div>
   {:else}
     <div class="relative z-10 rounded-xl border border-neutral-700 bg-neutral-900 p-5 text-sm text-neutral-300">
-      Style not found.
+      {locale.t("generation.style_editor.not_found")}
       <button class="ml-3 text-indigo-400 hover:text-indigo-300" onclick={onclose}>{locale.t("common.cancel")}</button>
     </div>
   {/if}
