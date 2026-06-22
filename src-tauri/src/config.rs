@@ -431,6 +431,19 @@ pub fn save_config(config: &AppConfig) -> Result<(), String> {
     let dir = app_data_dir().ok_or("Failed to determine app data directory")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create data dir: {}", e))?;
     let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join("config.json"), json).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::write(dir.join("config.json"), json) {
+        // On hosted deployments the config is a read-only mount (e.g. a Kubernetes
+        // ConfigMap), so persistence cannot succeed. Downgrade those cases to a
+        // warning instead of surfacing a hard error for every settings change;
+        // the in-memory config still reflects the user's choice for this session.
+        if matches!(
+            e.kind(),
+            std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+        ) {
+            eprintln!("Skipping config save (read-only config location): {}", e);
+            return Ok(());
+        }
+        return Err(e.to_string());
+    }
     Ok(())
 }

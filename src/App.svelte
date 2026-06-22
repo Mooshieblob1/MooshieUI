@@ -1630,6 +1630,7 @@
     rows: number,
     cols: number,
     cellLabels: string[],
+    mode: "txt2img" | "img2img" | "inpainting",
   ) {
     try {
       const loadImg = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
@@ -1733,7 +1734,7 @@
         subfolder: "",
         type: "output",
         prompt_id: gridPromptId,
-        generation_mode: "txt2img",
+        generation_mode: mode,
         is_upscaled: false,
         url: gridUrl,
         file_size_bytes: gridBlob.size,
@@ -2222,7 +2223,7 @@
             if (images.length > 0 && compare.isGridPrompt(promptId)) {
               const gridResult = compare.addGridResult(promptId, images[0]!);
               if (gridResult) {
-                stitchGrid(gridResult.images, gridResult.rows, gridResult.cols, gridResult.cellLabels);
+                stitchGrid(gridResult.images, gridResult.rows, gridResult.cols, gridResult.cellLabels, item.mode);
               }
             }
           }

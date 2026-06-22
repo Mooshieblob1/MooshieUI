@@ -793,14 +793,15 @@ fn hash_password(password: &str) -> String {
         .to_string()
 }
 
-/// Verify a password against a stored hash.
-/// Supports both Argon2id (PHC string) and legacy SHA-256 (64 hex chars).
+/// Hash a session token (SHA-256) for storage/lookup in the session table.
 fn hash_session_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     format!("{:x}", hasher.finalize())
 }
 
+/// Verify a password against a stored hash.
+/// Supports both Argon2id (PHC string) and legacy SHA-256 (64 hex chars).
 fn verify_password(password: &str, stored_hash: &str) -> bool {
     if is_legacy_sha256(stored_hash) {
         // Legacy path: constant-time SHA-256 comparison (upgraded to Argon2id on login).

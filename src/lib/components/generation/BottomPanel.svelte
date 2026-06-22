@@ -9,6 +9,7 @@
   import { compare } from "../../stores/compare.svelte.js";
   import { artistFavourites } from "../../artist-gallery/favourites.svelte.js";
   import { createArtistGalleryStore } from "../../artist-gallery/store.svelte.js";
+  import { cachedSrc } from "../../artist-gallery/imageCache.js";
   import { artistInsert } from "../../stores/artistInsert.svelte.js";
   import type { ArtistSearchHit } from "../../artist-gallery/types.js";
   import LoraGallery from "./LoraGallery.svelte";
@@ -635,7 +636,7 @@
                 >
                   <div class="relative aspect-3/4 w-full overflow-hidden rounded-t-lg bg-neutral-800">
                     {#if thumb}
-                      <img src={thumb} alt={hit.tag} loading="lazy" decoding="async" class="h-full w-full object-cover" />
+                      <img use:cachedSrc={thumb} alt={hit.tag} loading="lazy" decoding="async" class="h-full w-full object-cover" />
                     {:else}
                       <div class="flex h-full w-full items-center justify-center text-[10px] text-neutral-500">{locale.t("gallery.no_preview")}</div>
                     {/if}

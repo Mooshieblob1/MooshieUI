@@ -134,7 +134,6 @@
         <img
           use:cachedSrc={currentImage.imageUrl}
           use:flipImage={{ slug: entry.slug, variant: clampedVariant }}
-          src={currentImage.imageUrl}
           alt="{entry.tag} {currentImage.variantId}"
           class="max-h-[80vh] max-w-[92vw] w-auto rounded-lg border border-neutral-800 object-contain shadow-2xl"
           style="zoom: {zoomed ? 1.5 : 1}; transition: zoom 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: {zoomed ? 'zoom-out' : 'zoom-in'};"

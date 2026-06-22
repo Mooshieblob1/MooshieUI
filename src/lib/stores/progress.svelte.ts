@@ -212,7 +212,10 @@ class ProgressStore {
 
   /** Called when a progress event arrives — detects pass transitions */
   updateProgress(step: number, max: number, node: string | null) {
-    if (node && node !== this._lastProgressNode) {
+    // Only a multi-step node is a sampling pass; single-step nodes (VAE decode,
+    // upscale model, etc.) report progress too but must not advance the pass
+    // counter, or `samplingPass` would reach the upscale threshold prematurely.
+    if (node && node !== this._lastProgressNode && max > 1) {
       this._lastProgressNode = node;
       this.samplingPass += 1;
     }
