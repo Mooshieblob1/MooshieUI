@@ -79,10 +79,6 @@ export interface GenerationParams {
   negative_segments: PromptSegment[];
   detail_segments: DetailSegment[];
   positive_regions?: PositiveRegion[];
-  /** Raw prompt text with scheduling tags intact, for metadata embedding */
-  raw_positive_prompt: string;
-  /** Raw prompt text with scheduling tags intact, for metadata embedding */
-  raw_negative_prompt: string;
   checkpoint: string;
   vae: string | null;
   loras: LoraPayloadEntry[];
@@ -110,6 +106,10 @@ export interface GenerationParams {
   upscale_fast_refine?: boolean;
   upscale_soft_guidance: boolean;
   upscale_soft_guidance_multiplier: number;
+  /** Quality-prompt override for the upscale pass (family-specific). Null falls back to base conditioning. */
+  upscale_positive_prompt: string | null;
+  /** Negative quality-prompt override for the upscale pass. Null falls back to base conditioning. */
+  upscale_negative_prompt: string | null;
   /** Also save the base image before the upscale chain runs. */
   save_pre_upscale_image?: boolean;
   smart_guidance: boolean;
@@ -122,6 +122,17 @@ export interface GenerationParams {
   diffusion_model: string | null;
   clip_model: string | null;
   clip_type: string | null;
+  /** Auto face-refinement pass after the main sample. */
+  facefix_enabled: boolean;
+  /** YOLO/segmentation detector model filename, or null for the default. */
+  facefix_detector: string | null;
+  facefix_denoise: number;
+  facefix_steps: number;
+  facefix_guide_size: number;
+  /** Cap on faces refined per image; 0 means no limit. */
+  facefix_max_faces: number;
+  /** Reuse the positive prompt for each detected face instead of a generic prompt. */
+  facefix_auto_prompt: boolean;
   controlnet: ControlNetPayload | null;
   model_architecture: string;
   is_sdxl_like?: boolean;

@@ -70,7 +70,8 @@ pub fn append_facefix_chain(
                 "guide_size": params.facefix_guide_size,
                 "bbox_threshold": 0.5,
                 "bbox_padding": 1.5,
-                "feather": 20
+                "feather": 20,
+                "max_faces": params.facefix_max_faces
             }
         }),
     );

@@ -19,7 +19,7 @@
 
   const recommendedModels: RecommendedModel[] = [
     {
-      labelKey: "generation.facefix.yolov8m",
+      labelKey: "generation.facefix.yolo11n",
       filename: "Anzhc Face seg 640 v4 y11n.pt",
       url: "https://huggingface.co/Anzhc/Anzhcs_YOLOs/resolve/0319daeae9ae40752c2fb3904069cb35cc61d2ec/Anzhc%20Face%20seg%20640%20v4%20y11n.pt",
       sha256: "1e77ad7bd349babd8a4a90478bfc965348642b63a8d95d3b43ee13db42fd0a64",

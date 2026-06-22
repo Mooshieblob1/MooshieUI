@@ -624,7 +624,7 @@ const zh: Record<string, string> = {
   "generation.facefix.tip": "检测生成图像中的面部，并对每个面部区域重新去噪以改善细节。在生成后运行（如果启用了精炼器，则在精炼后运行）。",
   "generation.facefix.detector": "检测模型",
   "generation.facefix.detector_tip": "用于面部检测的 YOLO 模型。'YOLO11n Face Seg' 是推荐的高质量选项，'YOLOv8n' 更快更轻量。模型会在首次使用时自动下载。",
-  "generation.facefix.yolov8m": "YOLO11n Face Seg（推荐）",
+  "generation.facefix.yolo11n": "YOLO11n Face Seg（推荐）",
   "generation.facefix.yolov8n": "YOLOv8n 面部（轻量）",
   "generation.facefix.denoise": "去噪",
   "generation.facefix.denoise_tip": "AI 重绘每个检测到的面部的程度。低值（0.2-0.4）忠实保留原始面部，高值添加细节但可能改变面部特征。",

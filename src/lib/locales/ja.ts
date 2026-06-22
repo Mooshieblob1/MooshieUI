@@ -642,7 +642,7 @@ const ja: Record<string, string> = {
   "generation.facefix.tip": "生成画像の顔を検出し、各顔領域を再デノイズしてディテールを改善します。生成後（リファイナー有効時はリファイナー後）に実行されます。",
   "generation.facefix.detector": "検出モデル",
   "generation.facefix.detector_tip": "顔検出に使用するYOLOモデル。'YOLO11n Face Seg'は推奨の高品質オプション、'YOLOv8n'はより高速で軽量。モデルは初回使用時に自動ダウンロードされます。",
-  "generation.facefix.yolov8m": "YOLO11n Face Seg（推奨）",
+  "generation.facefix.yolo11n": "YOLO11n Face Seg（推奨）",
   "generation.facefix.yolov8n": "YOLOv8n 顔（軽量）",
   "generation.facefix.denoise": "デノイズ",
   "generation.facefix.denoise_tip": "検出された各顔をAIがどれだけ描き直すか。低い値（0.2-0.4）は元の顔を忠実に保持、高い値はディテールを追加するが顔の特徴が変わる可能性あり。",

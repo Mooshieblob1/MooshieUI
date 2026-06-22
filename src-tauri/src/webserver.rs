@@ -4299,8 +4299,16 @@ async fn dispatch_command(
                 crate::prompt_assistant::grounding::GenMode::Compose
             };
             let length = args["opts"]["length"].as_str();
-            let result =
-                run_prompt_assistant_headless(&state, &input, &family, mode, length).await?;
+            let include_artists = args["opts"]["include_artists"].as_bool().unwrap_or(false);
+            let result = run_prompt_assistant_headless(
+                &state,
+                &input,
+                &family,
+                mode,
+                length,
+                include_artists,
+            )
+            .await?;
             Ok(serde_json::Value::String(result))
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
@@ -4539,6 +4547,7 @@ pub async fn run_prompt_assistant_headless(
     family: &str,
     mode: crate::prompt_assistant::grounding::GenMode,
     length: Option<&str>,
+    include_artists: bool,
 ) -> Result<String, String> {
     use crate::prompt_assistant::{grounding, hardware};
     // No active-generation guard here: `prompt_queue` is shared across every user
@@ -4595,7 +4604,7 @@ pub async fn run_prompt_assistant_headless(
         .unwrap_or_else(|| "natural_language".to_string());
     let tag_only = grounding::is_tag_only(&purpose, family);
     let candidates = grounding::retrieve_candidates(input, 40);
-    let system = grounding::system_prompt(tag_only, mode, &candidates);
+    let system = grounding::system_prompt(tag_only, mode, &candidates, include_artists);
     // Mirror the desktop token budget so browser Enhance/Compose honors the
     // user's length pick instead of always generating at the medium default.
     let max_tokens = match length {

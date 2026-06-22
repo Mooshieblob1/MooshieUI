@@ -624,7 +624,7 @@ const it: Record<string, string> = {
   "generation.facefix.tip": "Rileva i visi nell'immagine generata e rielabora ogni regione del viso per migliori dettagli. Si esegue dopo la generazione (e dopo il refiner se abilitato).",
   "generation.facefix.detector": "Modello rilevatore",
   "generation.facefix.detector_tip": "Il modello YOLO usato per rilevare i visi. 'YOLO11n Face Seg' è l'opzione consigliata ad alta qualità, 'YOLOv8n' è più veloce e leggero. I modelli vengono scaricati automaticamente al primo utilizzo.",
-  "generation.facefix.yolov8m": "YOLO11n Face Seg (Consigliato)",
+  "generation.facefix.yolo11n": "YOLO11n Face Seg (Consigliato)",
   "generation.facefix.yolov8n": "YOLOv8n Viso (Leggero)",
   "generation.facefix.denoise": "Denoising",
   "generation.facefix.denoise_tip": "Quanto l'IA ridisegna ogni viso rilevato. Valori bassi (0.2-0.4) preservano il viso originale fedelmente, valori alti aggiungono più dettagli ma possono modificare i tratti del viso.",

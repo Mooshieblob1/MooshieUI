@@ -159,7 +159,7 @@ async fn run_generation(
         .unwrap_or_else(|| "natural_language".to_string());
     let tag_only = grounding::is_tag_only(&purpose, family);
     let candidates = grounding::retrieve_candidates(input, 40);
-    let system = grounding::system_prompt(tag_only, mode, &candidates);
+    let system = grounding::system_prompt(tag_only, mode, &candidates, opts.include_artists);
     let max_tokens = match opts.length.as_deref() {
         Some("short") => 96,
         Some("detailed") => 384,

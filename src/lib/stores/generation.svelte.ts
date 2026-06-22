@@ -1397,6 +1397,7 @@ class GenerationStore {
       height: this.height,
       batchSize: this.batchSize,
       denoise: this.denoise,
+      refineOnly: this.refineOnly,
       differentialDiffusion: this.differentialDiffusion,
       upscaleEnabled: this.upscaleEnabled,
       upscaleMethod: this.upscaleMethod,
@@ -1438,6 +1439,7 @@ class GenerationStore {
       styleTransferNormStrength: this.styleTransferNormStrength,
       styleTransferPmiAlpha: this.styleTransferPmiAlpha,
       styleTransferMegapixels: this.styleTransferMegapixels,
+      styleTransferBlocks: this.styleTransferBlocks,
       facefixEnabled: this.facefixEnabled,
       facefixDetector: this.facefixDetector,
       facefixDenoise: this.facefixDenoise,
@@ -1462,6 +1464,7 @@ class GenerationStore {
       autoSaveDirs: this.autoSaveDirs,
       regionalPrompts: this.regionalPrompts,
       regionalPromptStrategy: this.regionalPromptStrategy,
+      modelFamilyOverrides: this.modelFamilyOverrides,
     };
   }
 
@@ -1733,9 +1736,7 @@ class GenerationStore {
         creativity: s.creativity,
         threshold: s.threshold,
       })),
-      raw_positive_prompt: translateNaiWeightSyntax(positivePrompt),
       positive_regions: builtRegions,
-      raw_negative_prompt: translateNaiWeightSyntax(negativePrompt),
       checkpoint: this.checkpoint,
       vae: this.vae || null,
       loras: this.loras

@@ -152,7 +152,14 @@ pub fn is_tag_only(purpose: &str, family: &str) -> bool {
 
 /// Build the system prompt, seeded with grounding candidates. `tag_only`
 /// selects between danbooru-tag and Anima natural-language conventions.
-pub fn system_prompt(tag_only: bool, mode: GenMode, candidates: &[String]) -> String {
+/// `include_artists` relaxes the default artist restriction when the user opts
+/// in, letting the assistant suggest well-known artists for style.
+pub fn system_prompt(
+    tag_only: bool,
+    mode: GenMode,
+    candidates: &[String],
+    include_artists: bool,
+) -> String {
     let cand = if candidates.is_empty() {
         String::new()
     } else {
@@ -181,8 +188,14 @@ matches it. Use concrete, well-known tags; do not invent subjects the descriptio
 mention."
             }
         };
+        let artist_rule = if include_artists {
+            " You may add one or more well-known danbooru artist tags that fit the requested \
+style; only use real artist names you are confident exist."
+        } else {
+            " Do not add artist tags."
+        };
         format!(
-            "You are a danbooru tag prompt writer for an anime image generator. {body} \
+            "You are a danbooru tag prompt writer for an anime image generator. {body}{artist_rule} \
 Output ONLY a comma-separated list of lowercase danbooru tags. \
 No sentences, no explanations, no quotes, no numbering. \
 Prefer concrete, well-known tags.{cand}"
@@ -202,6 +215,13 @@ made-up tag into a real one."
             }
             GenMode::Compose => "Write a prompt from the user's description.",
         };
+        let artist_rule = if include_artists {
+            "You may reference well-known artists as @name to match the requested style; \
+only use real artist names you are confident exist, and never emit a literal placeholder."
+        } else {
+            "Only reference an artist that appears in the user's input, written as @name; \
+never invent one or emit a literal placeholder."
+        };
         format!(
             "You are a prompt writer for the Anima anime image model. {body} \
 For every concept that has a known Gelbooru-style tag, use that tag; only fall back to \
@@ -209,8 +229,7 @@ natural language for ideas that have no matching tag. \
 Put all the tags first as a single comma-separated section, then finish with one \
 detailed, grammatically complete natural-language sentence describing the scene. \
 Keep everything on one line, comma-separated, tags before the sentence. \
-Only reference an artist that appears in the user's input, written as @name; \
-never invent one or emit a literal placeholder. \
+{artist_rule} \
 Do not repeat tags inside the sentence. \
 Do not add headings, labels like 'tags:', or em dashes. No explanations or quotes.{cand}"
         )
@@ -262,36 +281,115 @@ fn count_tag_set() -> &'static HashSet<&'static str> {
 /// dropping scene, pose, clothing, and background tags.
 const FACE_ATOMS: &[&str] = &[
     // hair
-    "hair", "bangs", "ahoge", "ponytail", "ponytails", "twintail", "twintails",
-    "braid", "braids", "sidelocks", "sidelock", "forelock", "bun", "bob", "hime",
-    "drill", "drills", "hairband", "hairclip", "hairpin", "hairpins", "scrunchie",
+    "hair",
+    "bangs",
+    "ahoge",
+    "ponytail",
+    "ponytails",
+    "twintail",
+    "twintails",
+    "braid",
+    "braids",
+    "sidelocks",
+    "sidelock",
+    "forelock",
+    "bun",
+    "bob",
+    "hime",
+    "drill",
+    "drills",
+    "hairband",
+    "hairclip",
+    "hairpin",
+    "hairpins",
+    "scrunchie",
     "fringe",
     // eyes
-    "eye", "eyes", "eyelashes", "eyebrow", "eyebrows", "eyeshadow", "eyeliner",
-    "eyepatch", "eyewear", "heterochromia", "pupils", "pupil", "sclera", "iris",
+    "eye",
+    "eyes",
+    "eyelashes",
+    "eyebrow",
+    "eyebrows",
+    "eyeshadow",
+    "eyeliner",
+    "eyepatch",
+    "eyewear",
+    "heterochromia",
+    "pupils",
+    "pupil",
+    "sclera",
+    "iris",
     // mouth
-    "mouth", "lips", "lip", "teeth", "fang", "fangs", "tongue", "saliva", "drool",
+    "mouth",
+    "lips",
+    "lip",
+    "teeth",
+    "fang",
+    "fangs",
+    "tongue",
+    "saliva",
+    "drool",
     "lipstick",
     // expression
-    "smile", "grin", "smirk", "frown", "pout", "scowl", "blush", "blushing",
-    "wink", "expression", "expressionless", "ahegao", "tears", "teary", "crying",
+    "smile",
+    "grin",
+    "smirk",
+    "frown",
+    "pout",
+    "scowl",
+    "blush",
+    "blushing",
+    "wink",
+    "expression",
+    "expressionless",
+    "ahegao",
+    "tears",
+    "teary",
+    "crying",
     // face features
-    "face", "facial", "nose", "cheek", "cheeks", "chin", "jaw", "forehead",
-    "freckles", "mole", "dimples", "makeup", "mascara",
+    "face",
+    "facial",
+    "nose",
+    "cheek",
+    "cheeks",
+    "chin",
+    "jaw",
+    "forehead",
+    "freckles",
+    "mole",
+    "dimples",
+    "makeup",
+    "mascara",
     // glasses / facial hair
-    "glasses", "sunglasses", "monocle", "beard", "mustache", "goatee", "stubble",
+    "glasses",
+    "sunglasses",
+    "monocle",
+    "beard",
+    "mustache",
+    "goatee",
+    "stubble",
     "sideburns",
     // ears / head ornaments visible in a face crop
-    "ears", "ear", "earrings", "horn", "horns", "antlers", "halo", "head",
-    "headband", "headphones", "headdress", "headgear",
+    "ears",
+    "ear",
+    "earrings",
+    "horn",
+    "horns",
+    "antlers",
+    "halo",
+    "head",
+    "headband",
+    "headphones",
+    "headdress",
+    "headgear",
 ];
 
 /// Danbooru emoticon/expression tags that carry no `_`-separated word a
 /// [`FACE_ATOMS`] check could catch, yet clearly describe a facial expression.
 const EMOTICON_FACE_TAGS: &[&str] = &[
-    ":d", ":3", ":o", ":p", ":q", ":t", ":i", ":<", ":>", ":/", ":|", ";)", ";d",
-    ";o", ";p", ";3", ";q", "xd", "x3", "d:", "o3o", "uwu", ">:)", ">:(", ">_<",
-    "@_@", "+_+", "^_^", "^o^", "0_0", "o_o", "._.", "=_=", "qwq", "tot",
+    ":d", ":3", ":o", ":p", ":q", ":t", ":i", ":<", ":>", ":/", ":|", ";)", ";d", ";o", ";p", ";3",
+    ";q", "xd", "x3", "d:", "o3o", "uwu", ">:)", ">:(", ">_<", "@_@", "+_+", "^_^", "^o^", "0_0",
+    "o_o", "._.", "=_=", "qwq", "tot",
 ];
 
 /// Extract the face/head-relevant subset of a comma-separated prompt, preserving

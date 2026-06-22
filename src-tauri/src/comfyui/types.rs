@@ -178,9 +178,6 @@ pub struct GenerationParams {
     /// True when metadata or filename indicates a v-pred SDXL variant.
     #[serde(default)]
     pub is_vpred_model: bool,
-    /// Whether the model uses rectified flow scheduling (detected from filename or architecture)
-    #[serde(default)]
-    pub uses_rectified_flow: bool,
     /// Enable Smart Guidance (positive-biased) — patches model for all generation passes
     #[serde(default)]
     pub smart_guidance: bool,

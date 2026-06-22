@@ -780,7 +780,7 @@ const en: Record<string, string> = {
   "generation.facefix.tip": "Detects faces in the generated image and re-denoises each face region for better detail. Runs after generation (and after the refiner if enabled).",
   "generation.facefix.detector": "Detector Model",
   "generation.facefix.detector_tip": "The YOLO model used to detect faces. 'YOLO11n Face Seg' is the recommended high-quality option, 'YOLOv8n' is faster and lighter. Models are downloaded automatically on first use.",
-  "generation.facefix.yolov8m": "YOLO11n Face Seg (Recommended)",
+  "generation.facefix.yolo11n": "YOLO11n Face Seg (Recommended)",
   "generation.facefix.yolov8n": "YOLOv8n Face (Lightweight)",
   "generation.facefix.denoise": "Denoise",
   "generation.facefix.denoise_tip": "How much the AI re-draws each detected face. Lower values (0.2-0.4) preserve the original face closely, higher values add more detail but may change facial features.",

@@ -642,7 +642,7 @@ const fr: Record<string, string> = {
   "generation.facefix.tip": "Détecte les visages dans l'image générée et redébruite chaque région faciale pour plus de détails. S'exécute après la génération (et après le refiner si activé).",
   "generation.facefix.detector": "Modèle de détection",
   "generation.facefix.detector_tip": "Le modèle YOLO utilisé pour détecter les visages. 'YOLO11n Face Seg' est l'option recommandée haute qualité, 'YOLOv8n' est plus rapide et léger. Les modèles sont téléchargés automatiquement à la première utilisation.",
-  "generation.facefix.yolov8m": "YOLO11n Face Seg (Recommandé)",
+  "generation.facefix.yolo11n": "YOLO11n Face Seg (Recommandé)",
   "generation.facefix.yolov8n": "YOLOv8n Visage (Léger)",
   "generation.facefix.denoise": "Débruitage",
   "generation.facefix.denoise_tip": "À quel point l'IA redessine chaque visage détecté. Valeurs basses (0.2-0.4) préservent le visage fidèlement, valeurs hautes ajoutent plus de détails mais peuvent modifier les traits du visage.",

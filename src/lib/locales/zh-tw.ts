@@ -624,7 +624,7 @@ const zhTw: Record<string, string> = {
   "generation.facefix.tip": "偵測生成影像中的臉部，並對每個臉部區域重新去雜訊以改善細節。在生成後執行（若啟用了精煉器，則在精煉後執行）。",
   "generation.facefix.detector": "偵測模型",
   "generation.facefix.detector_tip": "用於臉部偵測的 YOLO 模型。'YOLO11n Face Seg' 是建議的高品質選項，'YOLOv8n' 更快更輕量。模型會在首次使用時自動下載。",
-  "generation.facefix.yolov8m": "YOLO11n Face Seg（建議）",
+  "generation.facefix.yolo11n": "YOLO11n Face Seg（建議）",
   "generation.facefix.yolov8n": "YOLOv8n 臉部（輕量）",
   "generation.facefix.denoise": "去雜訊",
   "generation.facefix.denoise_tip": "AI 重繪每個偵測到的臉部的程度。低值（0.2-0.4）忠實保留原始臉部，高值增加細節但可能改變臉部特徵。",

@@ -640,7 +640,7 @@ const de: Record<string, string> = {
   "generation.facefix.tip": "Erkennt Gesichter im erzeugten Bild und entrauscht jeden Gesichtsbereich erneut für bessere Details. Läuft nach der Erzeugung (nach dem Refiner, falls aktiviert).",
   "generation.facefix.detector": "Erkennungsmodell",
   "generation.facefix.detector_tip": "Das YOLO-Modell für die Gesichtserkennung. 'YOLO11n Face Seg' ist die empfohlene hochwertige Option, 'YOLOv8n' ist schneller und leichter. Modelle werden beim ersten Gebrauch automatisch heruntergeladen.",
-  "generation.facefix.yolov8m": "YOLO11n Face Seg (Empfohlen)",
+  "generation.facefix.yolo11n": "YOLO11n Face Seg (Empfohlen)",
   "generation.facefix.yolov8n": "YOLOv8n Gesicht (Leicht)",
   "generation.facefix.denoise": "Entrauschen",
   "generation.facefix.denoise_tip": "Wie stark die KI jedes erkannte Gesicht überarbeitet. Niedrig (0.2-0.4) bewahrt das Originalgesicht treu, hoch fügt Details hinzu, kann aber Gesichtszüge verändern.",

@@ -624,7 +624,7 @@ const ko: Record<string, string> = {
   "generation.facefix.tip": "생성 이미지에서 얼굴을 감지하고 각 얼굴 영역을 재디노이즈하여 디테일을 개선합니다. 생성 후(리파이너가 활성화된 경우 리파이너 후) 실행됩니다.",
   "generation.facefix.detector": "감지 모델",
   "generation.facefix.detector_tip": "얼굴 감지에 사용하는 YOLO 모델. 'YOLO11n Face Seg'는 권장 고품질 옵션, 'YOLOv8n'은 더 빠르고 가볍습니다. 모델은 처음 사용 시 자동 다운로드됩니다.",
-  "generation.facefix.yolov8m": "YOLO11n Face Seg (권장)",
+  "generation.facefix.yolo11n": "YOLO11n Face Seg (권장)",
   "generation.facefix.yolov8n": "YOLOv8n 얼굴 (경량)",
   "generation.facefix.denoise": "디노이즈",
   "generation.facefix.denoise_tip": "감지된 각 얼굴을 AI가 얼마나 다시 그리는지. 낮은 값(0.2-0.4)은 원래 얼굴을 충실히 보존, 높은 값은 디테일을 추가하지만 얼굴 특징이 변할 수 있습니다.",

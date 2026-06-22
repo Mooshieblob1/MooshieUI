@@ -624,7 +624,7 @@ const ru: Record<string, string> = {
   "generation.facefix.tip": "Обнаруживает лица на сгенерированном изображении и повторно обрабатывает каждую область лица для лучших деталей. Запускается после генерации (и после рифайнера, если включено).",
   "generation.facefix.detector": "Модель детектора",
   "generation.facefix.detector_tip": "Модель YOLO для обнаружения лиц. 'YOLO11n Face Seg' — рекомендуемый высококачественный вариант, 'YOLOv8n' быстрее и легче. Модели скачиваются автоматически при первом использовании.",
-  "generation.facefix.yolov8m": "YOLO11n Face Seg (Рекомендуется)",
+  "generation.facefix.yolo11n": "YOLO11n Face Seg (Рекомендуется)",
   "generation.facefix.yolov8n": "YOLOv8n Лицо (Лёгкая)",
   "generation.facefix.denoise": "Шумоподавление",
   "generation.facefix.denoise_tip": "Насколько сильно ИИ перерисовывает каждое обнаруженное лицо. Низкие значения (0.2-0.4) сохраняют оригинальное лицо, высокие добавляют больше деталей, но могут изменить черты лица.",
