@@ -176,6 +176,8 @@ export interface OutputImage {
   displayTempFilename?: string;
   file_size_bytes?: number;
   generated_at_ms?: number;
+  /** Total wall-clock generation time in ms for this image (top-left badge). */
+  generationTimeMs?: number;
   metadata?: Record<string, string> | null;
 }
 

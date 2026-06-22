@@ -130,6 +130,8 @@ type ToastOptions = {
   persistent?: boolean;
   actionLabel?: string;
   onAction?: () => void;
+  /** Auto-dismiss delay in ms (ignored when persistent). Defaults to 2000. */
+  durationMs?: number;
 };
 type GalleryToast = {
   message: string;
@@ -137,6 +139,7 @@ type GalleryToast = {
   persistent?: boolean;
   actionLabel?: string;
   onAction?: () => void;
+  durationMs?: number;
 };
 
 class GalleryStore {
@@ -476,7 +479,7 @@ class GalleryStore {
       this._toastTimer = setTimeout(() => {
         this.toast = null;
         this._toastTimer = null;
-      }, 2000);
+      }, toastOptions.durationMs ?? 2000);
     } else {
       this._toastTimer = null;
     }

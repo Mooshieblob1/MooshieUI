@@ -7,6 +7,10 @@ export interface QueuedPrompt {
   wasUpscaled: boolean;
   params: GenerationParams;
   enqueuedAt: number;
+  /** Timestamp when this prompt started executing (set in setActivePrompt). */
+  startedAt?: number;
+  /** Total wall-clock generation time in ms (computed in completePrompt). */
+  durationMs?: number;
 }
 
 class ProgressStore {
@@ -294,8 +298,18 @@ class ProgressStore {
       this.previewImage = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
-      this.generationStartTime = Date.now();
+      const now = Date.now();
+      this.generationStartTime = now;
       this._startElapsedTimer();
+
+      // Stamp the start time on the matching pending prompt so completePrompt
+      // can compute the total generation time even across concurrent prompts.
+      const idx = this.pendingPrompts.findIndex((p) => p.promptId === promptId);
+      if (idx >= 0 && this.pendingPrompts[idx].startedAt == null) {
+        const next = [...this.pendingPrompts];
+        next[idx] = { ...next[idx], startedAt: now };
+        this.pendingPrompts = next;
+      }
     }
   }
 
@@ -313,6 +327,12 @@ class ProgressStore {
       this._lastCompletedWasUpscaled = item.wasUpscaled;
       if (item.params != null && item.params.seed != null && item.params.seed >= 0) {
         this.lastCompletedSeed = item.params.seed;
+      }
+      // Capture total generation time. Prefer the per-prompt startedAt (robust
+      // across concurrent prompts); fall back to the shared generationStartTime.
+      const startedAt = item.startedAt ?? this.generationStartTime;
+      if (startedAt != null) {
+        item.durationMs = Date.now() - startedAt;
       }
     }
 

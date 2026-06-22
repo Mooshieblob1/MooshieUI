@@ -707,6 +707,7 @@ const ko: Record<string, string> = {
   "generation.error_failed": "생성 실패",
   "generation.error_model_config": "생성 실패 — 모델 또는 VAE가 올바르게 설정되지 않았을 수 있습니다. 모델 설정을 확인하세요.",
   "generation.error_failed_message": "생성 실패: {message}",
+  "generation.gen_time_label": "총 생성 시간",
   "generation.error_cancelled": "생성이 취소되었습니다",
   "generation.downloading_facefix": "Face Detailer 모델 다운로드 중...",
 
@@ -1911,6 +1912,12 @@ const ko: Record<string, string> = {
   "generation.toast.failed_validation": "생성 실패 — 모델 또는 VAE 설정을 확인하세요.",
 
   "generation.toast.failed_detail": "생성 실패: {message}",
+  "generation.error.out_of_memory": "GPU 메모리가 부족합니다. 이미지 크기를 줄이거나 스텝 수를 낮추고, 다른 GPU 앱을 닫거나 저VRAM 모드를 켜보세요. 해상도를 낮추는 것이 가장 효과적입니다.",
+  "generation.error.vae_incompatible": "선택한 VAE가 이 체크포인트와 호환되지 않습니다. 호환되는 VAE를 선택하거나 VAE를 자동으로 설정해 체크포인트에 내장된 VAE를 사용하세요.",
+  "generation.error.model_not_found": "'{model}'을(를) ComfyUI에서 사용할 수 없습니다. 모델을 다시 선택하거나, 방금 파일을 추가하거나 이름을 변경했다면 ComfyUI를 다시 시작하세요.",
+  "generation.error.model_not_found_generic": "선택한 모델을 ComfyUI에서 사용할 수 없습니다. 모델과 VAE 설정을 확인하거나, 방금 파일을 추가하거나 이름을 변경했다면 ComfyUI를 다시 시작하세요.",
+  "generation.error.missing_node": "이 워크플로에는 설치되지 않은 커스텀 노드가 필요합니다: {node}. ComfyUI에 설치하고 다시 시작하세요.",
+  "generation.error.component_mismatch": "이 모델 구성 요소들이 서로 맞지 않습니다. 체크포인트, VAE, LoRA, CLIP이 모두 같은 모델 계열(예: 모두 SDXL)인지 확인하세요.",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",

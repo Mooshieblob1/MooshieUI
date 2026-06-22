@@ -2,7 +2,7 @@
   "name": "comfyui-desktop",
   "private": true,
   "license": "MIT",
-  "version": "1.4.24",
+  "version": "1.4.25",
   "type": "module",
   "scripts": {
     "dev": "vite",

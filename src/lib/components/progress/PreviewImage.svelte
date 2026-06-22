@@ -6,6 +6,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { generate, uploadImageBytes, downloadModel } from "../../utils/api.js";
   import { loadOutputImageForGenerationInput, uploadImageUrlForGenerationInput } from "../../utils/galleryActions.js";
+  import { formatGenerationTime } from "../../utils/localeFormat.js";
   import {
     DEFAULT_REFINE_UPSCALER,
     DEFAULT_REFINE_UPSCALER_SCALE,
@@ -214,6 +215,12 @@
     return progress.displayImage;
   });
 
+  /** Total generation time for the currently shown output, ms (badge). */
+  const activeGenerationTimeMs = $derived.by(() => {
+    if (progress.isGenerating || !progress.lastOutputImage) return null;
+    return getActiveSavedImage()?.generationTimeMs ?? null;
+  });
+
   function openPreviewLightbox() {
     if (Date.now() < suppressOpenUntil) return;
 
@@ -288,6 +295,17 @@
         class="w-full h-full object-contain"
       />
     </button>
+    {#if activeGenerationTimeMs != null}
+      <div
+        class="absolute top-3 left-3 flex items-center gap-1.5 bg-black/60 text-white text-xs font-medium px-2.5 py-1 rounded-lg shadow-lg backdrop-blur-sm pointer-events-none"
+        title={locale.t("generation.gen_time_label")}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+        </svg>
+        {formatGenerationTime(activeGenerationTimeMs, locale.current)}
+      </div>
+    {/if}
     {#if !progress.isGenerating && progress.lastOutputImage}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div

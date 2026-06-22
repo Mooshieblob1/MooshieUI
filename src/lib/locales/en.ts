@@ -66,6 +66,12 @@ const en: Record<string, string> = {
   "generation.toast.failed": "Generation failed",
   "generation.toast.failed_validation": "Generation failed — a model or VAE may not be configured correctly. Check your model settings.",
   "generation.toast.failed_detail": "Generation failed: {message}",
+  "generation.error.out_of_memory": "Out of GPU memory. Try a smaller image size or fewer steps, close other GPU apps, or enable low-VRAM mode. Lowering the resolution usually helps most.",
+  "generation.error.vae_incompatible": "The selected VAE isn't compatible with this checkpoint. Pick a matching VAE, or set VAE to Automatic to use the checkpoint's built-in VAE.",
+  "generation.error.model_not_found": "'{model}' isn't available in ComfyUI. Re-select your model, or restart ComfyUI if you just added or renamed the file.",
+  "generation.error.model_not_found_generic": "A selected model isn't available in ComfyUI. Check your model and VAE settings, or restart ComfyUI if you just added or renamed a file.",
+  "generation.error.missing_node": "This workflow needs a custom node that isn't installed: {node}. Install it in ComfyUI and restart.",
+  "generation.error.component_mismatch": "These model components don't fit together. Make sure the checkpoint, VAE, LoRAs, and CLIP are all for the same model family (for example all SDXL).",
 
   // ── App Status ─────────────────────────────────────────
   "app.status.starting": "Starting...",
@@ -871,6 +877,7 @@ const en: Record<string, string> = {
   "generation.error_failed": "Generation failed",
   "generation.error_model_config": "Generation failed — a model or VAE may not be configured correctly. Check your model settings.",
   "generation.error_failed_message": "Generation failed: {message}",
+  "generation.gen_time_label": "Total generation time",
   "generation.error_lost_connection": "A generation was lost due to a connection issue — please try again.",
   "generation.error_cancelled": "Generation cancelled",
   "generation.downloading_facefix": "Downloading Face Detailer model...",

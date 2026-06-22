@@ -56,9 +56,9 @@
     type ModelPreviewActionDetail,
   } from "./lib/utils/modelPreviewImage.js";
   import {
-    isStyleTransferExecutionError,
     checkStyleTransferNodesReady,
   } from "./lib/utils/styleTransferNodes.js";
+  import { classifyGenerationError } from "./lib/utils/generationErrors.js";
   import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
@@ -1400,6 +1400,7 @@
     wasUpscaled: boolean,
     params: GenerationParams | null,
     images: Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>,
+    generationTimeMs?: number,
   ) {
     if (images.length === 0) return;
 
@@ -1418,6 +1419,7 @@
         displayTempFilename: img.displayTempFilename,
         file_size_bytes: img.blob.size,
         generated_at_ms: Date.now(),
+        generationTimeMs,
       };
     });
 
@@ -2216,7 +2218,7 @@
               clearRegionalChainGallerySuppress(promptId);
               console.log("[regional] Skipping gallery save for chain intermediate:", promptId);
             } else {
-              finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images);
+              finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs);
             }
 
             // Track grid batch completion — stitch when all cells are done
@@ -2237,31 +2239,21 @@
       ipcListen("comfyui:execution_error", (event: any) => {
         console.error("Execution error:", event.payload);
         const data = event.payload;
-        // Build a user-visible error message from the raw error string
-        const rawErr = String(data.error ?? "");
-        let toastMsg = locale.t("generation.toast.failed");
-        if (isStyleTransferExecutionError(rawErr)) {
-          toastMsg = locale.t("generation.style_transfer.execution_failed");
+        // Classify the failure into an actionable message. The raw ComfyUI
+        // desktop payload exposes exception_message/exception_type/node_type/
+        // traceback (no top-level `error`), so pass the whole payload, not just
+        // data.error, or most desktop errors fall through to the generic toast.
+        const classified = classifyGenerationError(data);
+        const toastMsg = locale.t(classified.messageKey, classified.params);
+        if (classified.clearStyleTransfer) {
           // Auto-clear style transfer state on failure so the user is not stuck unable to generate
           // normal images after enabling via a preview button (for example on a LoRA card). This addresses
           // reports of generation loading quickly with no final output.
           generation.styleTransferEnabled = false;
           generation.styleReferenceImage = null;
           generation.saveSettings();
-        } else if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
-          toastMsg = locale.t("generation.toast.failed_validation");
-        } else {
-          try {
-            const m = rawErr.match(/API error \(\d+\): ([\s\S]+)/);
-            if (m) {
-              const parsed = JSON.parse(m[1]);
-              if (parsed.error?.message) {
-                toastMsg = locale.t("generation.toast.failed_detail", { message: parsed.error.message });
-              }
-            }
-          } catch { /* ignore parse errors */ }
         }
-        gallery.showToast(toastMsg, "error");
+        gallery.showToast(toastMsg, "error", classified.durationMs ? { durationMs: classified.durationMs } : false);
         if (data.prompt_id) {
           pendingOutputImages.delete(data.prompt_id);
           pendingOutputFetches.delete(data.prompt_id);
@@ -2353,7 +2345,7 @@
                   clearRegionalChainGallerySuppress(p.promptId);
                   console.log("[regional] Skipping gallery save for chain intermediate:", p.promptId);
                 } else {
-                  finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images);
+                  finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs);
                 }
               } else {
                 const failedStyleTransfer = item.params?.style_transfer_enabled;

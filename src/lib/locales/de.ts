@@ -723,6 +723,7 @@ const de: Record<string, string> = {
   "generation.error_failed": "Generierung fehlgeschlagen",
   "generation.error_model_config": "Generierung fehlgeschlagen — ein Modell oder VAE ist möglicherweise nicht richtig konfiguriert. Prüfen Sie die Modelleinstellungen.",
   "generation.error_failed_message": "Generierung fehlgeschlagen: {message}",
+  "generation.gen_time_label": "Gesamte Generierungszeit",
   "generation.error_cancelled": "Generierung abgebrochen",
   "generation.downloading_facefix": "Face-Detailer-Modell wird heruntergeladen...",
 
@@ -1914,6 +1915,12 @@ const de: Record<string, string> = {
   "generation.toast.failed_validation": "Generierung fehlgeschlagen — ein Modell oder VAE ist möglicherweise falsch konfiguriert. Prüfen Sie die Modelleinstellungen.",
 
   "generation.toast.failed_detail": "Generierung fehlgeschlagen: {message}",
+  "generation.error.out_of_memory": "Kein GPU-Speicher mehr verfügbar. Versuche eine kleinere Bildgröße oder weniger Schritte, schließe andere GPU-Apps oder aktiviere den Low-VRAM-Modus. Eine niedrigere Auflösung hilft meist am meisten.",
+  "generation.error.vae_incompatible": "Der ausgewählte VAE ist mit diesem Checkpoint nicht kompatibel. Wähle einen passenden VAE oder stelle VAE auf Automatisch, um den im Checkpoint enthaltenen VAE zu verwenden.",
+  "generation.error.model_not_found": "'{model}' ist in ComfyUI nicht verfügbar. Wähle dein Modell erneut aus oder starte ComfyUI neu, falls du die Datei gerade hinzugefügt oder umbenannt hast.",
+  "generation.error.model_not_found_generic": "Ein ausgewähltes Modell ist in ComfyUI nicht verfügbar. Überprüfe deine Modell- und VAE-Einstellungen oder starte ComfyUI neu, falls du gerade eine Datei hinzugefügt oder umbenannt hast.",
+  "generation.error.missing_node": "Dieser Workflow benötigt einen Custom Node, der nicht installiert ist: {node}. Installiere ihn in ComfyUI und starte neu.",
+  "generation.error.component_mismatch": "Diese Modellkomponenten passen nicht zusammen. Stelle sicher, dass Checkpoint, VAE, LoRAs und CLIP alle zur selben Modellfamilie gehören (zum Beispiel alle SDXL).",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",

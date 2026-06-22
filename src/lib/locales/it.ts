@@ -707,6 +707,7 @@ const it: Record<string, string> = {
   "generation.error_failed": "Generazione non riuscita",
   "generation.error_model_config": "Generazione non riuscita — un modello o VAE potrebbe non essere configurato correttamente. Controlla le impostazioni del modello.",
   "generation.error_failed_message": "Generazione non riuscita: {message}",
+  "generation.gen_time_label": "Tempo di generazione totale",
   "generation.error_cancelled": "Generazione annullata",
   "generation.downloading_facefix": "Download modello Face Detailer...",
 
@@ -1911,6 +1912,12 @@ const it: Record<string, string> = {
   "generation.toast.failed_validation": "Generazione non riuscita — un modello o VAE potrebbe non essere configurato correttamente. Controlla le impostazioni dei modelli.",
 
   "generation.toast.failed_detail": "Generazione non riuscita: {message}",
+  "generation.error.out_of_memory": "Memoria GPU esaurita. Prova con una dimensione dell'immagine più piccola o meno passi, chiudi altre app che usano la GPU o attiva la modalità a bassa VRAM. Ridurre la risoluzione di solito aiuta di più.",
+  "generation.error.vae_incompatible": "Il VAE selezionato non è compatibile con questo checkpoint. Scegli un VAE compatibile oppure imposta il VAE su Automatico per usare il VAE incluso nel checkpoint.",
+  "generation.error.model_not_found": "'{model}' non è disponibile in ComfyUI. Riseleziona il modello o riavvia ComfyUI se hai appena aggiunto o rinominato il file.",
+  "generation.error.model_not_found_generic": "Un modello selezionato non è disponibile in ComfyUI. Controlla le impostazioni di modello e VAE oppure riavvia ComfyUI se hai appena aggiunto o rinominato un file.",
+  "generation.error.missing_node": "Questo workflow richiede un nodo personalizzato non installato: {node}. Installalo in ComfyUI e riavvia.",
+  "generation.error.component_mismatch": "Questi componenti del modello non sono compatibili tra loro. Assicurati che checkpoint, VAE, LoRA e CLIP appartengano tutti alla stessa famiglia di modelli (ad esempio tutti SDXL).",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",

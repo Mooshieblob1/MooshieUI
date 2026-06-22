@@ -1,5 +1,20 @@
 # Changelog
 
+## What's New in v1.4.25
+
+This release makes generation failures explain themselves and adds a per-image generation-time readout.
+
+### Clearer error messages
+- **Actionable failure messages**: generation errors are now classified into specific, fixable causes instead of a generic "Generation failed". Covered cases include out-of-memory, an incompatible VAE, a checkpoint or model that is not in your list, a missing custom node, and component/shape mismatches.
+- **Desktop errors no longer go blank**: failures that previously surfaced no detail (the raw ComfyUI error carries no top-level message field) are now read from the underlying exception so you see what actually went wrong.
+- **Longer dwell on actionable errors**: messages that tell you how to fix something stay on screen longer before dismissing.
+
+### Generation time
+- **Time per image**: the total generation time now shows in the top-left corner of the result preview.
+- **On hover in the session gallery**: hovering a session thumbnail shows that image's generation time in the top-left corner.
+
+---
+
 ## What's New in v1.4.24
 
 This release lands a large code-audit pass (18 reviewed fixes) that hardens the backend, generation pipeline, gallery, canvas, and setup flow. Most changes are correctness and reliability fixes that you should simply notice as fewer glitches.

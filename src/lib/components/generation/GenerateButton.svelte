@@ -23,6 +23,7 @@
     clearAllRegionalChainGallerySuppress,
   } from "../../utils/regionalChainGallery.js";
   import { checkStyleTransferNodesReady } from "../../utils/styleTransferNodes.js";
+  import { classifyGenerationError } from "../../utils/generationErrors.js";
   import { parseSegmentDetailPrompt, yoloTargetFilename } from "../../utils/promptSegmentDetail.js";
 
   interface Props {
@@ -348,7 +349,14 @@
       if (runToken === submitRunToken) {
         console.error("Generation failed:", e);
         const message = e instanceof Error ? e.message : String(e);
-        errorMsg = locale.t("generation.error_failed_message", { message });
+        // Classify submission failures (stale model cache, incompatible VAE,
+        // OOM, missing node, etc.) into actionable guidance. Fall back to the
+        // raw message only when nothing matched.
+        const classified = classifyGenerationError(message);
+        errorMsg =
+          classified.messageKey === "generation.toast.failed"
+            ? locale.t("generation.error_failed_message", { message })
+            : locale.t(classified.messageKey, classified.params);
       }
     } finally {
       if (sequential) finishSubmitRun(runToken);

@@ -707,6 +707,7 @@ const pt: Record<string, string> = {
   "generation.error_failed": "Falha na geração",
   "generation.error_model_config": "Falha na geração — um modelo ou VAE pode não estar configurado corretamente. Verifique as configurações do modelo.",
   "generation.error_failed_message": "Falha na geração: {message}",
+  "generation.gen_time_label": "Tempo total de geração",
   "generation.error_cancelled": "Geração cancelada",
   "generation.downloading_facefix": "Baixando modelo Face Detailer...",
 
@@ -1912,6 +1913,12 @@ const pt: Record<string, string> = {
   "generation.toast.failed_validation": "Geração falhou — um modelo ou VAE pode estar mal configurado. Verifique as configurações de modelos.",
 
   "generation.toast.failed_detail": "Geração falhou: {message}",
+  "generation.error.out_of_memory": "Sem memória de GPU. Tente um tamanho de imagem menor ou menos passos, feche outros apps que usam a GPU ou ative o modo de pouca VRAM. Reduzir a resolução costuma ajudar mais.",
+  "generation.error.vae_incompatible": "O VAE selecionado não é compatível com este checkpoint. Escolha um VAE compatível ou defina o VAE como Automático para usar o VAE incluído no checkpoint.",
+  "generation.error.model_not_found": "'{model}' não está disponível no ComfyUI. Selecione o modelo novamente ou reinicie o ComfyUI se você acabou de adicionar ou renomear o arquivo.",
+  "generation.error.model_not_found_generic": "Um modelo selecionado não está disponível no ComfyUI. Verifique as configurações de modelo e VAE ou reinicie o ComfyUI se você acabou de adicionar ou renomear um arquivo.",
+  "generation.error.missing_node": "Este fluxo de trabalho precisa de um nó personalizado que não está instalado: {node}. Instale-o no ComfyUI e reinicie.",
+  "generation.error.component_mismatch": "Esses componentes do modelo não combinam entre si. Verifique se o checkpoint, o VAE, os LoRAs e o CLIP são todos da mesma família de modelos (por exemplo, todos SDXL).",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",

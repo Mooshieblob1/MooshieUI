@@ -756,6 +756,7 @@ const es: Record<string, string> = {
   "generation.error_failed": "La generación falló",
   "generation.error_model_config": "La generación falló — puede que un modelo o VAE no esté configurado correctamente. Revisa la configuración del modelo.",
   "generation.error_failed_message": "La generación falló: {message}",
+  "generation.gen_time_label": "Tiempo total de generación",
   "generation.error_lost_connection": "Se perdió una generación por un problema de conexión — inténtalo de nuevo.",
   "generation.error_cancelled": "Generación cancelada",
   "generation.downloading_facefix": "Descargando modelo Face Detailer...",
@@ -1946,6 +1947,12 @@ const es: Record<string, string> = {
   "generation.toast.failed_validation": "Generación fallida — un modelo o VAE puede estar mal configurado. Revise la configuración de modelos.",
 
   "generation.toast.failed_detail": "Generación fallida: {message}",
+  "generation.error.out_of_memory": "Sin memoria de GPU. Prueba con un tamaño de imagen menor o menos pasos, cierra otras apps que usen la GPU o activa el modo de poca VRAM. Bajar la resolución suele ayudar más.",
+  "generation.error.vae_incompatible": "El VAE seleccionado no es compatible con este checkpoint. Elige un VAE compatible o pon VAE en Automático para usar el VAE incluido en el checkpoint.",
+  "generation.error.model_not_found": "'{model}' no está disponible en ComfyUI. Vuelve a seleccionar tu modelo o reinicia ComfyUI si acabas de añadir o renombrar el archivo.",
+  "generation.error.model_not_found_generic": "Un modelo seleccionado no está disponible en ComfyUI. Revisa la configuración de modelo y VAE, o reinicia ComfyUI si acabas de añadir o renombrar un archivo.",
+  "generation.error.missing_node": "Este flujo de trabajo necesita un nodo personalizado que no está instalado: {node}. Instálalo en ComfyUI y reinicia.",
+  "generation.error.component_mismatch": "Estos componentes del modelo no encajan entre sí. Asegúrate de que el checkpoint, el VAE, los LoRA y el CLIP sean de la misma familia de modelos (por ejemplo, todos SDXL).",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",

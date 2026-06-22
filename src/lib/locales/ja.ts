@@ -728,6 +728,7 @@ const ja: Record<string, string> = {
   "generation.error_failed": "生成に失敗しました",
   "generation.error_model_config": "生成に失敗しました — モデルまたはVAEが正しく設定されていない可能性があります。モデル設定を確認してください。",
   "generation.error_failed_message": "生成に失敗しました: {message}",
+  "generation.gen_time_label": "総生成時間",
   "generation.error_cancelled": "生成をキャンセルしました",
   "generation.downloading_facefix": "Face Detailerモデルをダウンロード中...",
 
@@ -1936,6 +1937,12 @@ const ja: Record<string, string> = {
   "generation.toast.failed_validation": "生成に失敗しました — モデルまたは VAE の設定を確認してください。",
 
   "generation.toast.failed_detail": "生成に失敗しました: {message}",
+  "generation.error.out_of_memory": "GPUメモリが不足しています。画像サイズを小さくするかステップ数を減らす、他のGPUアプリを閉じる、または低VRAMモードを有効にしてください。解像度を下げるのが最も効果的です。",
+  "generation.error.vae_incompatible": "選択したVAEはこのチェックポイントと互換性がありません。対応するVAEを選ぶか、VAEを「自動」に設定してチェックポイント内蔵のVAEを使用してください。",
+  "generation.error.model_not_found": "'{model}' はComfyUIで利用できません。モデルを選び直すか、ファイルを追加・名前変更した直後の場合はComfyUIを再起動してください。",
+  "generation.error.model_not_found_generic": "選択したモデルがComfyUIで利用できません。モデルとVAEの設定を確認するか、ファイルを追加・名前変更した直後の場合はComfyUIを再起動してください。",
+  "generation.error.missing_node": "このワークフローには未インストールのカスタムノードが必要です: {node}。ComfyUIにインストールして再起動してください。",
+  "generation.error.component_mismatch": "これらのモデルコンポーネントは組み合わせできません。チェックポイント、VAE、LoRA、CLIPがすべて同じモデルファミリー(例: すべてSDXL)であることを確認してください。",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",

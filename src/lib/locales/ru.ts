@@ -707,6 +707,7 @@ const ru: Record<string, string> = {
   "generation.error_failed": "Генерация не удалась",
   "generation.error_model_config": "Генерация не удалась — модель или VAE могут быть настроены неправильно. Проверьте настройки модели.",
   "generation.error_failed_message": "Генерация не удалась: {message}",
+  "generation.gen_time_label": "Общее время генерации",
   "generation.error_cancelled": "Генерация отменена",
   "generation.downloading_facefix": "Скачивание модели Face Detailer...",
 
@@ -1911,6 +1912,12 @@ const ru: Record<string, string> = {
   "generation.toast.failed_validation": "Генерация не удалась — модель или VAE могут быть настроены неверно. Проверьте настройки моделей.",
 
   "generation.toast.failed_detail": "Генерация не удалась: {message}",
+  "generation.error.out_of_memory": "Недостаточно памяти GPU. Попробуйте уменьшить размер изображения или число шагов, закройте другие приложения, использующие GPU, или включите режим низкого VRAM. Снижение разрешения обычно помогает больше всего.",
+  "generation.error.vae_incompatible": "Выбранный VAE несовместим с этим чекпойнтом. Выберите подходящий VAE или установите для VAE значение «Автоматически», чтобы использовать встроенный VAE чекпойнта.",
+  "generation.error.model_not_found": "«{model}» недоступна в ComfyUI. Выберите модель заново или перезапустите ComfyUI, если вы только что добавили или переименовали файл.",
+  "generation.error.model_not_found_generic": "Выбранная модель недоступна в ComfyUI. Проверьте настройки модели и VAE или перезапустите ComfyUI, если вы только что добавили или переименовали файл.",
+  "generation.error.missing_node": "Для этого рабочего процесса нужен пользовательский узел, который не установлен: {node}. Установите его в ComfyUI и перезапустите.",
+  "generation.error.component_mismatch": "Эти компоненты модели несовместимы друг с другом. Убедитесь, что чекпойнт, VAE, LoRA и CLIP относятся к одному семейству моделей (например, все SDXL).",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",

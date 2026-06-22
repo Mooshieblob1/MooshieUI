@@ -6,6 +6,7 @@
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { models } from "../../stores/models.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
+  import { formatGenerationTime } from "../../utils/localeFormat.js";
   import { compare } from "../../stores/compare.svelte.js";
   import { artistFavourites } from "../../artist-gallery/favourites.svelte.js";
   import { createArtistGalleryStore } from "../../artist-gallery/store.svelte.js";
@@ -484,6 +485,17 @@
                       class="w-full h-full object-cover"
                     />
                   </button>
+                  {#if hoveredImage === image && image.generationTimeMs != null}
+                    <div
+                      class="absolute top-1.5 left-1.5 flex items-center gap-1 bg-black/65 text-white text-[10px] font-medium px-1.5 py-0.5 rounded backdrop-blur-sm pointer-events-none"
+                      title={locale.t("generation.gen_time_label")}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+                      </svg>
+                      {formatGenerationTime(image.generationTimeMs, locale.current)}
+                    </div>
+                  {/if}
                 </div>
               {/each}
               </div>

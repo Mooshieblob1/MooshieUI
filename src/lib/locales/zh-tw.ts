@@ -707,6 +707,7 @@ const zhTw: Record<string, string> = {
   "generation.error_failed": "生成失敗",
   "generation.error_model_config": "生成失敗 — 模型或 VAE 可能設定不正確。請檢查模型設定。",
   "generation.error_failed_message": "生成失敗：{message}",
+  "generation.gen_time_label": "總生成時間",
   "generation.error_cancelled": "生成已取消",
   "generation.downloading_facefix": "正在下載 Face Detailer 模型...",
 
@@ -1911,6 +1912,12 @@ const zhTw: Record<string, string> = {
   "generation.toast.failed_validation": "生成失敗 — 模型或 VAE 可能設定不正確，請檢查模型設定。",
 
   "generation.toast.failed_detail": "生成失敗：{message}",
+  "generation.error.out_of_memory": "GPU 記憶體不足。請嘗試更小的圖片尺寸或更少的步數，關閉其他佔用 GPU 的應用程式，或啟用低顯存模式。降低解析度通常最有效。",
+  "generation.error.vae_incompatible": "所選 VAE 與此檢查點不相容。請選擇相符的 VAE，或將 VAE 設為自動以使用檢查點內建的 VAE。",
+  "generation.error.model_not_found": "ComfyUI 中沒有「{model}」。請重新選擇模型，或者如果你剛新增或重新命名了檔案，請重新啟動 ComfyUI。",
+  "generation.error.model_not_found_generic": "ComfyUI 中沒有所選的模型。請檢查模型和 VAE 設定，或者如果你剛新增或重新命名了檔案，請重新啟動 ComfyUI。",
+  "generation.error.missing_node": "此工作流程需要一個尚未安裝的自訂節點：{node}。請在 ComfyUI 中安裝並重新啟動。",
+  "generation.error.component_mismatch": "這些模型元件彼此不相容。請確保檢查點、VAE、LoRA 和 CLIP 都屬於同一模型系列（例如都是 SDXL）。",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",
