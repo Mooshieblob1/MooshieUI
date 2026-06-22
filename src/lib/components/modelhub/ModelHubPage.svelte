@@ -312,6 +312,7 @@
     if (type === "Upscaler") return "upscale_models";
     if (type === "VAE") return "vae";
     if (type === "Controlnet") return "controlnet";
+    if (type === "TextualInversion") return "embeddings";
     return null;
   }
 

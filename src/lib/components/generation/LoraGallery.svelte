@@ -360,7 +360,6 @@
 
   async function invalidateLoraCache(filename: string) {
     delete cache[filename];
-    fetchedSet.delete(filename);
     cache = { ...cache };
     await fetchLoraInfo(filename);
   }
@@ -458,6 +457,7 @@
     const current = generation.positivePrompt.trim();
     if (current.includes(word)) return;
     generation.positivePrompt = current ? `${current}, ${word}` : word;
+    generation.saveSettings();
   }
 
   function formatCount(n: number | undefined): string {
