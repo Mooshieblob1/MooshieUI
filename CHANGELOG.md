@@ -1,5 +1,42 @@
 # Changelog
 
+## What's New in v1.4.24
+
+This release lands a large code-audit pass (18 reviewed fixes) that hardens the backend, generation pipeline, gallery, canvas, and setup flow. Most changes are correctness and reliability fixes that you should simply notice as fewer glitches.
+
+### Backend reliability
+- **Locks no longer held across I/O**: RwLock guards are dropped before blocking and async file or network work, so long-running operations no longer stall unrelated requests.
+- **Sturdier multi-GPU**: worker readiness checks were hardened and a stuck-worker watchdog now recovers a worker that stops responding instead of hanging the queue.
+- **Shared HTTP client**: requests reuse the single shared client instead of spinning up new ones, and a MIME-parsing panic path was removed.
+- **Browser and LAN-mode security gaps closed**: tightened the web-server surface used in browser/LAN mode.
+- **Read-only config locations**: saving settings where the config file is read-only (such as a mounted ConfigMap in hosted deployments) now skips quietly instead of erroring.
+
+### Browser / desktop parity
+- **IPC parity gaps closed**: several backend calls that worked on desktop but silently failed in browser mode now behave identically.
+- **Preference sync wired end to end**: server-side preference sync is fully plumbed so settings round-trip correctly in browser mode.
+- **Release-notes fetch hardened**: the browser-mode release-notes endpoint now checks the GitHub API response status before parsing, matching the desktop command.
+
+### Generation pipeline
+- **Correct inpainting and diffusion routing**: workflow parameters for inpainting and diffusion are routed to the right nodes.
+- **No more dropped parameters**: generation params that were being silently dropped are now plumbed through, and dead fields were removed.
+- **Prompt editing fixes**: corrected several prompt-editing utility bugs flagged in the audit.
+
+### Gallery and canvas
+- **Gallery index stays consistent**: the gallery SQLite index and image metadata are kept in sync.
+- **Canvas drawing fixes**: corrected canvas redraw, history reset, and removed dead mask stubs.
+- **Store save fixes**: fixed mutation and persistence bugs across LoRA, ModelHub, and Compare.
+- **Fewer redundant image fetches**: favourite-artist thumbnails and artist cards/lightbox now reuse the image cache instead of triggering an extra raw CDN fetch.
+
+### Setup and updates
+- **Hardened setup wizard**: more robust download and error handling during first-run setup.
+- **Notification and updater follow-through**: closed gaps in the notification and updater flows.
+
+### UI and localisation
+- **More complete translations**: added missing i18n keys and replaced remaining hardcoded UI strings; corrected the new layout-toggle strings for German and French.
+- **Layout override toggle**: removed dead mobile components and added an explicit toggle to switch between the mobile and desktop layouts.
+
+---
+
 ## What's New in v1.4.23
 
 ### Illustrious models

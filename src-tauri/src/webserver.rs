@@ -4029,6 +4029,9 @@ async fn dispatch_command(
                 .send()
                 .await
                 .map_err(|e| e.to_string())?;
+            if !resp.status().is_success() {
+                return Err(format!("GitHub API returned {}", resp.status()));
+            }
             let releases: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
             // Map to the same { version, body, published_at } shape the desktop
             // command (commands::api::fetch_release_notes) returns, so the

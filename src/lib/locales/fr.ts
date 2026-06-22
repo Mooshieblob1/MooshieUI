@@ -213,9 +213,9 @@ const fr: Record<string, string> = {
   // Apparence
   "settings.appearance.title": "Apparence",
   "settings.appearance.layout_title": "Mise en page",
-  "settings.appearance.layout_desc": "Choisissez entre la mise en page mobile optimisee pour le tactile et l'interface complete pour ordinateur.",
-  "settings.appearance.layout_use_desktop": "Passer a l'interface bureau",
-  "settings.appearance.layout_use_mobile": "Passer a l'interface mobile",
+  "settings.appearance.layout_desc": "Choisissez entre la mise en page mobile optimisée pour le tactile et l'interface complète pour ordinateur.",
+  "settings.appearance.layout_use_desktop": "Passer à l'interface bureau",
+  "settings.appearance.layout_use_mobile": "Passer à l'interface mobile",
   "settings.appearance.theme": "Thème",
   "settings.appearance.theme_dark": "Sombre",
   "settings.appearance.theme_light": "Clair",
