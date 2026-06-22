@@ -49,6 +49,11 @@ pub struct GpuWorker {
     pub status: RwLock<WorkerStatus>,
     /// Whether this worker is currently reserved (executing a prompt).
     pub reserved: AtomicBool,
+    /// Timestamp (millis since epoch) of the last successful `try_reserve`.
+    /// Zero until the worker is reserved for the first time. The stuck-worker
+    /// watchdog measures reservation age from this, not `last_released`, so a
+    /// freshly-started worker on its first job is never force-released.
+    pub reserved_at: AtomicU64,
     /// Timestamp (millis since epoch) of last time this worker was released.
     pub last_released: AtomicU64,
     /// The child process handle.
@@ -75,6 +80,7 @@ impl GpuWorker {
                 WorkerStatus::Disabled
             }),
             reserved: AtomicBool::new(false),
+            reserved_at: AtomicU64::new(0),
             last_released: AtomicU64::new(0),
             process: Mutex::new(None),
             ws_handle: Mutex::new(None),
@@ -94,9 +100,18 @@ impl GpuWorker {
 
     /// Reserve this worker for a prompt. Returns false if already reserved.
     pub fn try_reserve(&self) -> bool {
-        self.reserved
+        let reserved = self
+            .reserved
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
+            .is_ok();
+        if reserved {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            self.reserved_at.store(now, Ordering::Release);
+        }
+        reserved
     }
 
     /// Release this worker after prompt completion/error.

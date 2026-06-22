@@ -1433,6 +1433,45 @@ pub async fn wait_all_workers_ready(state: &AppState, timeout_secs: u64) {
             for i in 0..iterations {
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 if comfyui_health_ok(&http_client, &url).await {
+                    // Health endpoint responding is not enough: verify the
+                    // required MooshieUI custom nodes are actually loaded before
+                    // marking the worker Idle, mirroring wait_for_worker_ready.
+                    // Otherwise a node-less worker gets handed generation jobs
+                    // and fails them.
+                    if let Err(e) =
+                        super::nodes::verify_required_mooshie_nodes(&http_client, &base_url).await
+                    {
+                        let mut status = w.status.write().await;
+                        *status = WorkerStatus::Error;
+                        log::error!(
+                            "Worker {} (GPU {}): MooshieUI nodes not loaded at {}: {}",
+                            worker_id,
+                            gpu_index,
+                            base_url,
+                            e
+                        );
+                        return Err(worker_id);
+                    }
+                    if let Err(e) =
+                        super::nodes::verify_required_controlnet_nodes(&http_client, &base_url)
+                            .await
+                    {
+                        log::warn!(
+                            "Worker {}: ControlNet custom nodes not loaded (optional): {}",
+                            worker_id,
+                            e
+                        );
+                    }
+                    if let Err(e) =
+                        super::nodes::verify_required_style_transfer_nodes(&http_client, &base_url)
+                            .await
+                    {
+                        log::warn!(
+                            "Worker {}: style transfer custom nodes not loaded (optional): {}",
+                            worker_id,
+                            e
+                        );
+                    }
                     let mut status = w.status.write().await;
                     *status = WorkerStatus::Idle;
                     log::info!(

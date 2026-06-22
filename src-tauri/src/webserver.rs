@@ -494,17 +494,29 @@ pub fn spawn_stuck_worker_watchdog(state: Arc<AppState>) {
                         wmap.values().any(|&wid| wid == worker.id)
                     };
                     if !has_active_prompt {
-                        let last_released = worker
-                            .last_released
+                        // Measure reservation age from when the worker was
+                        // reserved, NOT from `last_released`. The old code used
+                        // `now_ms / 1000` (epoch seconds, ~1.7e9) whenever
+                        // `last_released == 0`, which is always > 600, so a
+                        // freshly-started worker running its very first job got
+                        // force-released the instant the watchdog observed it in
+                        // the brief window before the dispatcher records its
+                        // prompt in the worker map.
+                        let reserved_at = worker
+                            .reserved_at
                             .load(std::sync::atomic::Ordering::Acquire);
                         let now_ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_millis() as u64;
-                        let stuck_secs = if last_released == 0 {
-                            now_ms / 1000
+                        // reserved_at == 0 means the current reservation predates
+                        // this field (or we observed the tiny race between the
+                        // reserve CAS and the timestamp store) — treat as not-yet-
+                        // stuck rather than releasing an in-flight job.
+                        let stuck_secs = if reserved_at == 0 {
+                            0
                         } else {
-                            (now_ms.saturating_sub(last_released)) / 1000
+                            (now_ms.saturating_sub(reserved_at)) / 1000
                         };
                         if stuck_secs > max_stuck_secs {
                             log::warn!(
