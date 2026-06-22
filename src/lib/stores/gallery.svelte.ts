@@ -665,7 +665,12 @@ class GalleryStore {
    */
   async hydrateMetadataInBackground(): Promise<void> {
     if (this._metadataHydrationPromise) return this._metadataHydrationPromise;
-    this._metadataHydrationPromise = this._runMetadataHydration();
+    // Reset on completion so images added after this run can be hydrated by a
+    // later call. Without the reset the memoized promise stays resolved forever
+    // and newly inserted images never get their metadata.
+    this._metadataHydrationPromise = this._runMetadataHydration().finally(() => {
+      this._metadataHydrationPromise = null;
+    });
     return this._metadataHydrationPromise;
   }
 

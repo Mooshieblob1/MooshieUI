@@ -1277,7 +1277,19 @@ pub(crate) async fn load_gallery_image_png_from_dir(
             let mut buf = std::io::Cursor::new(Vec::new());
             img.write_to(&mut buf, image::ImageFormat::Png)
                 .map_err(|e| format!("PNG encode failed: {}", e))?;
-            Ok(buf.into_inner())
+            let png = buf.into_inner();
+            // The JXL may carry embedded generation metadata; the freshly encoded
+            // PNG does not. Re-embed it as a standard PNG text chunk so the
+            // exported file stays portable and metadata-complete.
+            match crate::metadata::read_image_metadata(&bytes) {
+                Ok(Some(meta)) => Ok(crate::metadata::embed_png_metadata(
+                    &png,
+                    &meta,
+                    crate::metadata::MetadataMode::TextChunk,
+                )
+                .unwrap_or(png)),
+                _ => Ok(png),
+            }
         })
         .await
         .map_err(|e| AppError::Other(format!("Task panicked: {}", e)))?
@@ -1594,6 +1606,7 @@ pub async fn rename_gallery_image(
     }
 
     std::fs::rename(&old_path, &new_path)?;
+    crate::gallery_index::rename(&old_path, &new_path);
     Ok(new_filename)
 }
 

@@ -3074,6 +3074,7 @@ async fn dispatch_command(
             if path.exists() {
                 std::fs::remove_file(&path).map_err(|e| e.to_string())?;
             }
+            crate::gallery_index::remove(&path);
             Ok(serde_json::json!(null))
         }
         "rename_gallery_image" => {
@@ -3098,6 +3099,7 @@ async fn dispatch_command(
             let old_path = dir.join(&old);
             let new_path = dir.join(&new_name);
             std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+            crate::gallery_index::rename(&old_path, &new_path);
             Ok(serde_json::json!(new_name))
         }
         "import_image_directory" => {
@@ -5408,6 +5410,7 @@ fn save_to_gallery_in_dir(
     };
 
     std::fs::write(&path, &final_bytes).map_err(|e| e.to_string())?;
+    crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
     Ok(gallery_filename)
 }
 

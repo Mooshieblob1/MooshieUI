@@ -252,6 +252,27 @@ pub fn upsert(
     }
 }
 
+/// Update an image's path in the index after a rename. Best-effort: errors are
+/// logged. Preserves the existing row (and its metadata/created_at) rather than
+/// dropping and re-inserting.
+pub fn rename(old_path: &Path, new_path: &Path) {
+    let guard = conn().lock();
+    let Ok(guard) = guard else {
+        return;
+    };
+    let Some(ref c) = *guard else {
+        return;
+    };
+    let old_str = old_path.to_string_lossy().to_string();
+    let new_str = new_path.to_string_lossy().to_string();
+    if let Err(e) = c.execute(
+        "UPDATE images SET path = ?1 WHERE path = ?2",
+        params![new_str, old_str],
+    ) {
+        log::warn!("gallery_index: rename failed for {old_str} -> {new_str}: {e}");
+    }
+}
+
 /// Remove a gallery image from the index. Best-effort: errors are logged.
 pub fn remove(path: &Path) {
     let guard = conn().lock();
