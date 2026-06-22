@@ -107,7 +107,7 @@ class CanvasHistoryStore {
       redoEntries.push({ layerId: entry.layerId, imageData: dataUrl });
     }
 
-    this.redoStack = [...this.redoStack, redoEntries];
+    this.redoStack = [...this.redoStack.slice(-(MAX_HISTORY - 1)), redoEntries];
     this.undoStack = this.undoStack.slice(0, -1);
 
     // Restore layers from snapshot
@@ -147,7 +147,7 @@ class CanvasHistoryStore {
       undoEntries.push({ layerId: entry.layerId, imageData: dataUrl });
     }
 
-    this.undoStack = [...this.undoStack, undoEntries];
+    this.undoStack = [...this.undoStack.slice(-(MAX_HISTORY - 1)), undoEntries];
     this.redoStack = this.redoStack.slice(0, -1);
 
     await this._restoreEntries(entries);
