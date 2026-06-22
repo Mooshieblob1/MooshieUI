@@ -543,6 +543,11 @@ pub async fn start_server(
         )
         .route("/internal-api/_auth/logout", post(auth_logout_handler))
         .route("/internal-api/_auth/lan_info", get(auth_lan_info_handler))
+        // Per-user preference sync (cross-device prefs in browser/LAN mode)
+        .route(
+            "/internal-api/_user/prefs",
+            get(user_prefs_get_handler).put(user_prefs_put_handler),
+        )
         // Storage management
         .route("/internal-api/_storage/info", get(storage_info_handler))
         .route(
@@ -5331,6 +5336,53 @@ fn dir_usage_bytes(dir: &std::path::Path) -> u64 {
                 .sum()
         })
         .unwrap_or(0)
+}
+
+/// The username key used for localhost / single-admin sessions, where
+/// `resolve_username` returns `None`. Matches the convention documented in
+/// `user_prefs.rs`.
+const ADMIN_PREFS_KEY: &str = "_admin";
+
+/// GET /internal-api/_user/prefs — fetch the current user's saved preferences.
+/// Returns 204 when the user has no saved prefs yet.
+async fn user_prefs_get_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if resolve_role(&state, &headers, &remote) == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| ADMIN_PREFS_KEY.to_string());
+    match crate::user_prefs::load(&username).await {
+        Some(prefs) => (StatusCode::OK, Json(prefs)).into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
+}
+
+/// PUT /internal-api/_user/prefs — replace the current user's saved preferences.
+/// The `updated_at` timestamp is set server-side, ignoring any client value.
+async fn user_prefs_put_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(mut prefs): Json<crate::user_prefs::UserPrefs>,
+) -> Response {
+    if resolve_role(&state, &headers, &remote) == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| ADMIN_PREFS_KEY.to_string());
+    prefs.updated_at = Some(chrono::Utc::now().to_rfc3339());
+    match crate::user_prefs::save(&username, &prefs).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
 }
 
 /// GET /internal-api/_storage/info — returns current user's storage usage,

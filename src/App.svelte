@@ -21,6 +21,7 @@
   import { canvas } from "./lib/stores/canvas.svelte.js";
   import { accessibility } from "./lib/stores/accessibility.svelte.js";
   import { locale } from "./lib/stores/locale.svelte.js";
+  import { prefsSync } from "./lib/stores/prefsSync.svelte.js";
   import type { GenerationParams, OutputImage, InterrogationResult } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
@@ -1837,6 +1838,13 @@
 
     // Load persisted settings
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
+
+    // Browser/LAN mode: pull the server-side preference snapshot (or seed it
+    // from current local state) once local settings have loaded and the auth
+    // token is available. No-op in Tauri desktop mode.
+    if (isBrowserMode) {
+      void prefsSync.loadAndApply();
+    }
 
     // Prompt assistant: detect hardware + pre-select recommended model at launch.
     promptAssistant.init();
