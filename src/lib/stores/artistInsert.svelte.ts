@@ -31,6 +31,18 @@ function artistTagsMatch(a: string, b: string): boolean {
   return normalizeArtistTag(a).toLowerCase() === normalizeArtistTag(b).toLowerCase();
 }
 
+/**
+ * Split a prompt into individual tags. Tags are separated by commas *or*
+ * newlines, so detecting/removing artist tags must honour both, otherwise a
+ * tag on its own line escapes duplicate detection and toggle-off.
+ */
+function splitPromptTags(prompt: string): string[] {
+  return prompt
+    .split(/[\n,]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 class ArtistInsertStore {
   pending = $state<ArtistInsertPending | null>(null);
 
@@ -50,10 +62,7 @@ class ArtistInsertStore {
     // round-trip correctly through the scheduler/highlight parser.
     const withAt = normalizeArtistTag(tag);
     const existing = generation.positivePrompt.trim();
-    const existingArtistTags = existing
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.startsWith("@"));
+    const existingArtistTags = splitPromptTags(existing).filter((s) => s.startsWith("@"));
     if (existingArtistTags.some((t) => artistTagsMatch(t, withAt))) {
       this.remove(withAt);
       return;
@@ -69,7 +78,7 @@ class ArtistInsertStore {
     const target = normalizeArtistTag(withAt);
     const existing = generation.positivePrompt.trim();
     if (!existing) return;
-    const tags = existing.split(",").map((s) => s.trim()).filter(Boolean);
+    const tags = splitPromptTags(existing);
     const filtered = tags.filter(
       (t) => !(t.startsWith("@") && artistTagsMatch(t, target)),
     );
@@ -86,9 +95,7 @@ class ArtistInsertStore {
     const existing = generation.positivePrompt.trim();
     let newPrompt: string;
     if (mode === "replace") {
-      const stripped = existing
-        .split(",")
-        .map((s) => s.trim())
+      const stripped = splitPromptTags(existing)
         .filter((s) => !s.startsWith("@"))
         .join(", ");
       newPrompt = stripped ? `${cleaned}, ${stripped}` : cleaned;

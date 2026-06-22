@@ -179,8 +179,10 @@
       return;
     }
 
-    // Skip if the fragment looks like a weight expression
-    if (/^\(.*:\d/.test(searchFragment)) {
+    // Skip only while typing an in-progress weight expression like `(tag:1.2`.
+    // Anchoring to the caret (no closing paren, ending at the number) means a
+    // completed `(tag:1.2)` followed by a fresh tag still autocompletes.
+    if (/^\([^)]*:\d[\d.]*$/.test(searchFragment)) {
       showSuggestions = false;
       suggestions = [];
       return;
