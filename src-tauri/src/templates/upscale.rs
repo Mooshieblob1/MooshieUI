@@ -143,11 +143,12 @@ pub fn append_upscale_chain(
     };
 
     // For tiled upscales, use quality-only prompts to reduce tile seam artifacts.
-    let (pos_source, neg_source) = if use_tiling {
-        if let (Some(ref pos_text), Some(ref neg_text)) = (
-            &params.upscale_positive_prompt,
-            &params.upscale_negative_prompt,
-        ) {
+    // Each override is applied independently: a positive-only or negative-only
+    // override is honoured on its own. The old paired `if let` required BOTH the
+    // positive AND negative override to be set, so supplying just one silently
+    // discarded it and fell back to the original generation conditioning.
+    let pos_source = if use_tiling {
+        if let Some(ref pos_text) = params.upscale_positive_prompt {
             let up_pos_id = next_id.to_string();
             workflow.insert(
                 up_pos_id.clone(),
@@ -160,7 +161,16 @@ pub fn append_upscale_chain(
                 }),
             );
             *next_id += 1;
+            (up_pos_id, 0u32)
+        } else {
+            (result.positive_source.0.clone(), result.positive_source.1)
+        }
+    } else {
+        (result.positive_source.0.clone(), result.positive_source.1)
+    };
 
+    let neg_source = if use_tiling {
+        if let Some(ref neg_text) = params.upscale_negative_prompt {
             let up_neg_id = next_id.to_string();
             workflow.insert(
                 up_neg_id.clone(),
@@ -173,28 +183,24 @@ pub fn append_upscale_chain(
                 }),
             );
             *next_id += 1;
-
-            ((up_pos_id, 0u32), (up_neg_id, 0u32))
+            (up_neg_id, 0u32)
         } else {
-            (
-                (result.positive_source.0.clone(), result.positive_source.1),
-                (result.negative_source.0.clone(), result.negative_source.1),
-            )
+            (result.negative_source.0.clone(), result.negative_source.1)
         }
     } else {
-        (
-            (result.positive_source.0.clone(), result.positive_source.1),
-            (result.negative_source.0.clone(), result.negative_source.1),
-        )
+        (result.negative_source.0.clone(), result.negative_source.1)
     };
 
     // Second KSampler pass at low denoise
     let sampler_id = next_id.to_string();
     let is_cfgpp_sampler = params.sampler_name.to_lowercase().contains("cfg_pp");
+    // Halve CFG for the low-denoise refine pass, but keep a floor so a low base
+    // CFG (or a Flux/distilled model at cfg 0-1) can't drive the upscale sampler
+    // to a near-zero CFG, which disables guidance and yields noise.
     let upscale_cfg = if is_cfgpp_sampler {
         (params.cfg / 2.0).max(2.0)
     } else {
-        params.cfg / 2.0
+        (params.cfg / 2.0).max(1.0)
     };
     workflow.insert(
         sampler_id.clone(),

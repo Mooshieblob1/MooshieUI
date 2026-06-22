@@ -483,6 +483,16 @@
 
       const params = generation.toParams();
 
+      // Anima models produce poor results below 1024 — clamp to 1024² area
+      // preserving aspect ratio. The single-image path does this on the store;
+      // the grid path builds params per cell, so mirror it here.
+      if (generation.isAnima && (params.width < 1024 || params.height < 1024)) {
+        const ratio = params.width / params.height;
+        const area = 1024 * 1024;
+        params.width = Math.round(Math.sqrt(area * ratio) / 8) * 8;
+        params.height = Math.round(Math.sqrt(area / ratio) / 8) * 8;
+      }
+
       // Use shared seed for random seeds so the grid is consistent
       if (params.seed < 0) {
         params.seed = sharedSeed;

@@ -81,6 +81,28 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
     );
     next_id += 1;
 
+    // Optionally grow (dilate) the mask so the inpaint blends past the hard
+    // mask edge. The user-configured `grow_mask_by` was previously read into
+    // GenerationParams but never wired into the graph. Skipped when 0/None.
+    let mask_source = if params.grow_mask_by.unwrap_or(0) > 0 {
+        let grow_id = next_id.to_string();
+        workflow.insert(
+            grow_id.clone(),
+            json!({
+                "class_type": "GrowMask",
+                "inputs": {
+                    "mask": [load_mask_id, 0],
+                    "expand": params.grow_mask_by.unwrap_or(0),
+                    "tapered_corners": true
+                }
+            }),
+        );
+        next_id += 1;
+        grow_id
+    } else {
+        load_mask_id
+    };
+
     // Encode source image to latent space.
     let encode_id = next_id.to_string();
     workflow.insert(
@@ -103,7 +125,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
             "class_type": "SetLatentNoiseMask",
             "inputs": {
                 "samples": [encode_id, 0],
-                "mask": [load_mask_id, 0]
+                "mask": [mask_source, 0]
             }
         }),
     );
@@ -162,7 +184,15 @@ pub fn build(params: &GenerationParams, seed: i64) -> WorkflowResult {
         workflow,
         next_id,
         image_output: (decode_id, 0),
-        model_source,
+        // Expose the model the KSampler is actually wired to (the
+        // DifferentialDiffusion node when enabled), not the raw checkpoint.
+        // The post-build injectors (vpred/zsnr, cascade, smart-guidance, ...)
+        // chain new model patches onto `model_source` and rewire the sampler
+        // to them. Returning the raw model here let those injectors re-point
+        // the sampler past the DifferentialDiffusion node, silently dropping
+        // it — which is exactly the v-pred/Anima inpaint case where it is
+        // auto-enabled. Anchoring on the wired model keeps it in the chain.
+        model_source: sampler_model_source,
         clip_source,
         positive_source: pos_source,
         negative_source: neg_source,
