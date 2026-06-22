@@ -14,13 +14,21 @@
  * Plain `<img src>` loads can display CDN images, but cached image fetches and
  * JSON requests still need the proxy in browser/server mode.
  */
-import { ipcInvoke, isBrowserMode, isTauri } from "./ipc.js";
+import { getAuthToken, ipcInvoke, isBrowserMode, isTauri } from "./ipc.js";
 
 const CDN_PREFIX = "https://cdn.mooshieblob.com/";
 
+/** Append the auth token as a query param so `<img src>` loads pass LAN auth. */
+function withToken(url: string): string {
+  const token = getAuthToken();
+  if (!token) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}token=${encodeURIComponent(token)}`;
+}
+
 export function proxiedCdnUrl(url: string): string {
   if (isBrowserMode && url.startsWith(CDN_PREFIX)) {
-    return `/internal-api/_cdn/${url.slice(CDN_PREFIX.length)}`;
+    return withToken(`/internal-api/_cdn/${url.slice(CDN_PREFIX.length)}`);
   }
   return url;
 }

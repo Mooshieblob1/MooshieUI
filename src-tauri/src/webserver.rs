@@ -189,6 +189,38 @@ fn resolve_username_with_query_token(
     None
 }
 
+/// Authentication gate for the read-only external proxies (cdn/animadex).
+/// These serve `<img>`-style requests that cannot set an Authorization header,
+/// so a `?token=` query param is also accepted. Localhost / non-LAN callers are
+/// always allowed; remote LAN clients must present valid credentials.
+fn proxy_request_authed(
+    state: &WebState,
+    headers: &HeaderMap,
+    remote: &SocketAddr,
+    query: &str,
+) -> bool {
+    if !state.lan_enabled || is_localhost(remote) {
+        return true;
+    }
+    if resolve_role(state, headers, remote) != UserRole::Anonymous {
+        return true;
+    }
+    query_param(query, "token")
+        .and_then(|t| state.auth.validate_token(t))
+        .is_some()
+}
+
+/// Progress/log events emitted only by admin/moderator operations (setup,
+/// model downloads, package/backend installs). Regular LAN users must not
+/// receive these on their SSE stream.
+fn is_staff_only_event(event: &str) -> bool {
+    event.starts_with("setup:")
+        || event.starts_with("download:")
+        || event.starts_with("install:")
+        || event.starts_with("attention:")
+        || event == "custom_node:installed"
+}
+
 /// Gallery files we list, count against storage quotas, and expire — must stay
 /// in sync with the formats `save_to_gallery` can write (JXL included).
 fn is_gallery_image_filename(name: &str) -> bool {
@@ -1211,6 +1243,8 @@ async fn sse_handler(
     if role == UserRole::Anonymous {
         return unauthorized_response("Authentication required");
     }
+    // Only admins/moderators receive setup/download/install progress events.
+    let is_staff = matches!(role, UserRole::Admin | UserRole::Moderator);
 
     // Resolve the username for this SSE connection (None = admin)
     let sse_username = resolve_username(&state, &hdrs, &remote);
@@ -1257,6 +1291,10 @@ async fn sse_handler(
         let prompt_queue = prompt_queue.clone();
         match result {
             Ok(evt) => {
+                // Admin-only operation progress must not leak to regular users.
+                if !is_staff && is_staff_only_event(&evt.event) {
+                    return None;
+                }
                 // Resolve alias: translate ComfyUI's real prompt_id to our placeholder
                 let raw_prompt_id = evt
                     .payload
@@ -1318,7 +1356,16 @@ async fn sse_handler(
 }
 
 /// Heartbeat — browser pings this to keep the backend alive.
-async fn heartbeat_handler(AxumState(state): AxumState<SharedState>) -> StatusCode {
+/// Requires authentication so an unauthenticated LAN client cannot keep the
+/// embedded server awake against the idle watchdog.
+async fn heartbeat_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> StatusCode {
+    if resolve_role(&state, &headers, &remote) == UserRole::Anonymous {
+        return StatusCode::UNAUTHORIZED;
+    }
     let mut hb = state.app.last_heartbeat.lock().await;
     *hb = std::time::Instant::now();
     StatusCode::OK
@@ -1686,9 +1733,14 @@ async fn gpu_stats_handler(
 /// Animadex API proxy — characters search/facets only.
 async fn animadex_proxy_handler(
     AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Path(path): Path<String>,
     uri: axum::http::Uri,
 ) -> Response {
+    if !proxy_request_authed(&state, &headers, &remote, uri.query().unwrap_or("")) {
+        return unauthorized_response("Authentication required");
+    }
     let clean = path.trim_start_matches('/');
     if !clean.starts_with("api/characters/") {
         return StatusCode::BAD_REQUEST.into_response();
@@ -1730,9 +1782,14 @@ async fn animadex_proxy_handler(
 /// Only proxies from the hardcoded CDN origin; this is NOT an open proxy.
 async fn cdn_proxy_handler(
     AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Path(path): Path<String>,
     uri: axum::http::Uri,
 ) -> Response {
+    if !proxy_request_authed(&state, &headers, &remote, uri.query().unwrap_or("")) {
+        return unauthorized_response("Authentication required");
+    }
     let mut target_url = format!("https://cdn.mooshieblob.com/{}", path);
     if let Some(query) = uri.query() {
         target_url.push('?');
@@ -4142,6 +4199,14 @@ async fn dispatch_command(
                             .map_err(|e| format!("Invalid base64: {}", e))?
                     }
                     "interrogate_image_path" => {
+                        // Reading an arbitrary on-disk path is a desktop-only action.
+                        // Allowing it for remote LAN clients is an arbitrary file read.
+                        if !caller_is_local {
+                            return Err(
+                                "Reading arbitrary file paths is not available in browser mode."
+                                    .to_string(),
+                            );
+                        }
                         let path = args["path"].as_str().ok_or("Missing path")?.to_string();
                         std::fs::read(&path).map_err(|e| format!("Failed to read image: {}", e))?
                     }
@@ -4156,8 +4221,10 @@ async fn dispatch_command(
                         {
                             return Err("Invalid filename".to_string());
                         }
+                        // Resolve within the caller's own gallery directory so a LAN
+                        // user cannot read another user's (or the admin's) images.
                         let dir =
-                            crate::config::gallery_dir().ok_or("Cannot find gallery directory")?;
+                            user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
                         let path = dir.join(&filename);
                         std::fs::read(&path).map_err(|e| e.to_string())?
                     }
@@ -4334,6 +4401,14 @@ async fn dispatch_command(
         }
 
         // --- Clipboard ---
+        // The clipboard physically belongs to the machine running the server, not
+        // the remote LAN client. Restrict every clipboard command to local callers
+        // so a LAN user can neither write to nor read the operator's clipboard.
+        "copy_image_to_clipboard" | "copy_bytes_to_clipboard" | "read_clipboard_image"
+            if !caller_is_local =>
+        {
+            Err("Clipboard access is only available on the local machine.".to_string())
+        }
         "copy_image_to_clipboard" => {
             let file_path = args["filePath"]
                 .as_str()
@@ -5493,11 +5568,12 @@ async fn storage_set_limit_handler(
         }
     };
 
-    // Moderators cannot change storage limits for admin accounts
+    // Moderators may only manage regular user accounts, consistent with the
+    // delete / reset-password / set-role / modelhub handlers.
     if role == UserRole::Moderator {
         if let Some(target_role) = state.auth.get_account_role(username) {
-            if target_role == "admin" {
-                return forbidden_response("Moderators cannot modify admin storage limits.");
+            if target_role == "admin" || target_role == "moderator" {
+                return forbidden_response("Moderators can only manage regular user accounts.");
             }
         }
     }
@@ -5738,18 +5814,27 @@ async fn model_requests_add_handler(
         &category,
     );
 
-    // Notify all mods/admins about the new request
-    let _ = state.app.notifications.create_i18n(
-        "global",
-        "notifications.model_request.new_title",
-        Some("notifications.model_request.new_body"),
-        Some(serde_json::json!({
-            "username": username,
-            "model_name": model_name,
-            "model_type": model_type,
-        })),
-        "info",
-    );
+    // Notify mods/admins about the new request. A "global" notification would
+    // leak the request (and requester's username) to every user, so target each
+    // staff account individually. The localhost super-admin reads notifications
+    // under the literal "admin" key, so include it explicitly.
+    let mut recipients = state.auth.usernames_with_roles(&["admin", "moderator"]);
+    if !recipients.iter().any(|u| u.eq_ignore_ascii_case("admin")) {
+        recipients.push("admin".to_string());
+    }
+    for recipient in recipients {
+        let _ = state.app.notifications.create_i18n(
+            &recipient,
+            "notifications.model_request.new_title",
+            Some("notifications.model_request.new_body"),
+            Some(serde_json::json!({
+                "username": username,
+                "model_name": model_name,
+                "model_type": model_type,
+            })),
+            "info",
+        );
+    }
 
     (
         StatusCode::OK,

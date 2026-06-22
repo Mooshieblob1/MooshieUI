@@ -204,7 +204,7 @@ export function startHeartbeat() {
   if (!isBrowserMode || heartbeatInterval) return;
   heartbeatInterval = setInterval(async () => {
     try {
-      await fetch("/internal-api/_heartbeat", { method: "POST" });
+      await fetch("/internal-api/_heartbeat", { method: "POST", headers: authHeaders() });
     } catch {
       // Server unreachable — nothing we can do
     }
@@ -214,7 +214,7 @@ export function startHeartbeat() {
   document.addEventListener("visibilitychange", () => {
     // Send on both hide and show: when hiding, reset the timestamp so the
     // 120s watchdog clock starts fresh *before* browser throttling kicks in.
-    fetch("/internal-api/_heartbeat", { method: "POST" }).catch(() => {});
+    fetch("/internal-api/_heartbeat", { method: "POST", headers: authHeaders() }).catch(() => {});
   });
 
   // Send heartbeat before unload to give a final ping

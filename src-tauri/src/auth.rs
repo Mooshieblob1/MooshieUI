@@ -576,6 +576,18 @@ impl AuthState {
             .map(|a| a.role.clone())
     }
 
+    /// Usernames of every account whose role is in `roles`. Used to target
+    /// notifications at staff (admins/moderators) instead of broadcasting them
+    /// to all users.
+    pub fn usernames_with_roles(&self, roles: &[&str]) -> Vec<String> {
+        let db = self.db.read().unwrap();
+        db.accounts
+            .iter()
+            .filter(|a| roles.iter().any(|r| a.role.eq_ignore_ascii_case(r)))
+            .map(|a| a.username.clone())
+            .collect()
+    }
+
     /// Set the role of an account. Valid roles: "user", "moderator", "admin".
     pub fn set_account_role(&self, username: &str, role: &str) -> Result<(), String> {
         if role != "user" && role != "moderator" && role != "admin" {
