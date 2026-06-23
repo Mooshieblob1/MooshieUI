@@ -1,3 +1,10 @@
+## What's New in v1.4.26
+
+### Fixes and maintenance
+- **Artist gallery loads over LAN again**: in browser/LAN mode the artist gallery manifest, shard, and search-index requests now carry the auth token, so they no longer fail with a 401 from the proxy.
+
+---
+
 ## What's New in v1.4.25
 
 This release makes generation failures explain themselves and adds a per-image generation-time readout.
