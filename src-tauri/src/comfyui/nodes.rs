@@ -70,7 +70,9 @@ const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
 // Python deps the mooshie-nodes package imports but ComfyUI does not ship.
 // `ultralytics` (YOLOv8) backs the face-detailer node. torch/torchvision are
 // already provided by ComfyUI's own requirements, so they are not repeated.
-const MOOSHIE_NODES_REQUIREMENTS: &str = "ultralytics\n";
+// Pinned per the project's supply-chain policy (docs/BOT_REVIEW_TRIAGE.md); this
+// is the version verified against the bundled ComfyUI torch.
+const MOOSHIE_NODES_REQUIREMENTS: &str = "ultralytics==8.4.75\n";
 const TILED_DIFFUSION_PY: &str = include_str!("../../../comfyui-nodes/nodes_tiled_diffusion.py");
 const GUIDANCE_PY: &str = include_str!("../../../comfyui-nodes/nodes_guidance.py");
 /// Combined flat file: nodes.py content + NODE_CLASS_MAPPINGS.
