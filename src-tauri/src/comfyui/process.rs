@@ -208,6 +208,15 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         if main_exists {
             super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
                 .map_err(AppError::ProcessSpawnFailed)?;
+            // Non-fatal: logs a warning on failure rather than blocking startup.
+            super::nodes::ensure_mooshie_node_requirements(
+                &config.comfyui_path,
+                &config.venv_path,
+                config.network_proxy.as_deref(),
+                config.pip_index_url.as_deref(),
+            )
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
             super::nodes::ensure_required_controlnet_nodes(
                 &config.comfyui_path,
                 &config.venv_path,
@@ -1023,6 +1032,15 @@ pub async fn start_worker_process(
         if main_exists {
             super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
                 .map_err(AppError::ProcessSpawnFailed)?;
+            // Non-fatal: logs a warning on failure rather than blocking startup.
+            super::nodes::ensure_mooshie_node_requirements(
+                &config.comfyui_path,
+                &config.venv_path,
+                config.network_proxy.as_deref(),
+                config.pip_index_url.as_deref(),
+            )
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
             super::nodes::ensure_required_controlnet_nodes(
                 &config.comfyui_path,
                 &config.venv_path,
