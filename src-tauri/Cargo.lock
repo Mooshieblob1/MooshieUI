@@ -2481,9 +2481,9 @@ dependencies = [
 
 [[package]]
 name = "jxl-encoder"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8e4f108b3d4dbffbf2b5d04bb0c77cdd8eb7940020b5272a226e808d88e5852"
+checksum = "0a2883a4596ba0212a4f005c29f55cc7d4e91603cc6574a91fe67338091849ac"
 dependencies = [
  "archmage",
  "bytemuck",
