@@ -1,3 +1,10 @@
+## What's New in v1.4.27
+
+### Fixes and maintenance
+- **Artist gallery previews load over LAN again**: grid thumbnails, prefetched images, and the lightbox now carry the auth token in browser/LAN mode, so they no longer fail with a 401 from the proxy.
+
+---
+
 ## What's New in v1.4.26
 
 ### Fixes and maintenance
