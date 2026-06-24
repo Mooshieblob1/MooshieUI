@@ -26,7 +26,7 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage, InterrogationResult } from "../../types/index.js";
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import BottomPanel from "./BottomPanel.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "../ui/ContextMenu.svelte";
@@ -644,12 +644,22 @@
     }
   }
 
+  /** Open the image-input section and scroll it into view so a "send to img2img"
+   *  action visibly lands somewhere — otherwise switching to img2img mode loads
+   *  the source image into a section the user may not have on screen (#398). */
+  async function revealImageInputSection() {
+    imageSectionOpen = true;
+    await tick();
+    sectionRefs['imageInputs']?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   async function refineImage(image: OutputImage) {
     try {
       generation.inputImage = await uploadOutputImageForGenerationInput(image, "img2img_input.png");
       generation.mode = "img2img";
       generation.upscaleEnabled = false;
       gallery.showToast(locale.t('gallery.toast.loaded_img2img'), "success");
+      await revealImageInputSection();
     } catch (e) {
       console.error("Failed to set up refine:", e);
       gallery.showToast(locale.t('gallery.toast.failed_load'), "error");
@@ -662,6 +672,7 @@
       generation.mode = "img2img";
       generation.upscaleEnabled = true;
       gallery.showToast(locale.t('generation.toast.loaded_upscale'), "success");
+      await revealImageInputSection();
     } catch (e) {
       console.error("Failed to set up upscale:", e);
       gallery.showToast(locale.t('generation.toast.failed_load'), "error");
@@ -1385,6 +1396,18 @@
         e.preventDefault();
         e.stopPropagation();
         await handleMaskPaste();
+        return;
+      }
+
+      // No drop zone hovered. In a mode that consumes an input image, treat Ctrl+V
+      // as pasting into the image input so the advertised "Ctrl+V Paste" works without
+      // hovering the field first. handleImagePaste reads the system clipboard, so this
+      // also works on desktop where the paste event's clipboardData is empty for
+      // OS-copied images (#396).
+      if (generation.mode === "img2img" || generation.mode === "inpainting") {
+        e.preventDefault();
+        e.stopPropagation();
+        await handleImagePaste();
         return;
       }
 

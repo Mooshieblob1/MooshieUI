@@ -524,6 +524,8 @@ const de: Record<string, string> = {
   "generation.sampler.seed_tip": "Die Zahl, die die 'Zufälligkeit' des Bildes bestimmt. Gleicher Seed + gleiche Einstellungen = gleiches Bild. 'Zufällig' für Vielfalt, bestimmter Seed zum Reproduzieren von Ergebnissen.",
   "generation.sampler.seed_random": "Zufällig",
   "generation.sampler.random_display": "Zufällig",
+  "generation.sampler.seed_use_last": "Letzter",
+  "generation.sampler.seed_use_last_tip": "Den Seed der letzten Generierung verwenden",
   "generation.sampler.batch": "Batch",
   "generation.sampler.batch_tip": "Anzahl der gleichzeitig erzeugten Bilder. Mehr = höherer VRAM-Verbrauch, aber schnellerer Ergebnisvergleich.",
   "generation.sampler.denoise": "Entrauschen",
@@ -900,6 +902,7 @@ const de: Record<string, string> = {
   "bottom_panel.delete_all_confirm": "Alle {count} in dieser Sitzung erzeugten Bilder löschen? Dies kann nicht rückgängig gemacht werden.",
 
   // ── Downloads ───────────────────────────────────────────
+  "downloads.cancel": "Download abbrechen",
   "downloads.downloading": "{filename} wird heruntergeladen",
   "downloads.downloaded": "{filename} heruntergeladen",
 
@@ -2151,6 +2154,12 @@ const de: Record<string, string> = {
   "settings.prompt_assistant.delete": "Löschen",
   "settings.prompt_assistant.unload_now": "Jetzt entladen",
   "settings.prompt_assistant.idle_timeout": "Leerlauf-Entladung nach",
+  "settings.prompt_assistant.external_title": "Externer LLM-Endpunkt",
+  "settings.prompt_assistant.external_desc": "Eine OpenAI-kompatible API (LM Studio, OpenAI, OpenRouter) statt des integrierten lokalen Modells verwenden.",
+  "settings.prompt_assistant.external_url": "API-Basis-URL",
+  "settings.prompt_assistant.external_model": "Modell",
+  "settings.prompt_assistant.external_key": "API-Schlüssel",
+  "settings.prompt_assistant.external_key_hint": "Für lokale Server ohne Schlüssel (z. B. LM Studio) leer lassen.",
   "prompt_assistant.enhance": "Verbessern",
   "prompt_assistant.compose": "Verfassen",
   "prompt_assistant.enhance_tooltip": "Aktuellen Prompt verbessern",

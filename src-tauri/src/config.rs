@@ -145,6 +145,20 @@ pub struct AppConfig {
     pub tls_cert_path: Option<String>,
     /// Optional TLS private key PEM path for the browser-mode web server.
     pub tls_key_path: Option<String>,
+    /// Prompt assistant: use an external OpenAI-compatible endpoint (LM Studio,
+    /// OpenAI, OpenRouter, ...) instead of the bundled local llama-server.
+    #[serde(default)]
+    pub llm_external_enabled: bool,
+    /// External LLM API root, e.g. `http://localhost:1234/v1` or `https://api.openai.com/v1`.
+    /// `/chat/completions` is appended.
+    #[serde(default)]
+    pub llm_external_base_url: String,
+    /// External LLM API key (sent as a Bearer token; leave empty for keyless local servers).
+    #[serde(default)]
+    pub llm_external_api_key: String,
+    /// External LLM model name (e.g. `gpt-4o-mini`, or the model id LM Studio exposes).
+    #[serde(default)]
+    pub llm_external_model: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -203,6 +217,10 @@ impl Default for AppConfig {
             theme_profiles: vec![],
             tls_cert_path: None,
             tls_key_path: None,
+            llm_external_enabled: false,
+            llm_external_base_url: String::new(),
+            llm_external_api_key: String::new(),
+            llm_external_model: String::new(),
         }
     }
 }

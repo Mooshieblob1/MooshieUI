@@ -13,7 +13,7 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { getOutputImage, uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
+  import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput } from "./lib/utils/galleryActions.js";
   import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
   import { generation } from "./lib/stores/generation.svelte.js";
@@ -1032,7 +1032,10 @@
       if (image.gallery_filename) {
         result = await interrogateGalleryImage(image.gallery_filename);
       } else {
-        const bytes = await getOutputImage(image.filename, image.subfolder);
+        // Session images aren't in the gallery DB yet, and their synthetic
+        // filename doesn't exist in ComfyUI's output dir — resolve the pixels
+        // from the in-memory session blob / temp file instead (issue #397).
+        const bytes = await gallery.resolveImagePngBytes(image);
         const uint8 = new Uint8Array(bytes);
         let binary = "";
         for (let i = 0; i < uint8.length; i++) {
@@ -1771,6 +1774,18 @@
   onMount(async () => {
     // Start heartbeat in browser mode to keep backend alive
     startHeartbeat();
+
+    // Suppress the native WebView context menu (the "Share", "Save As" (html),
+    // "Print" and "Send link to..." entries that point at tauri.localhost and make
+    // no sense in-app) everywhere except editable text, where the native
+    // copy/paste/spellcheck menu is still useful. App-specific right-click menus
+    // (gallery/session images, artist tags) call preventDefault themselves and are
+    // unaffected — this only blocks the default menu where nothing else handles it (#392).
+    window.addEventListener("contextmenu", (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+      e.preventDefault();
+    });
 
     // Restore window maximize state (Tauri only)
     if (isTauri) {

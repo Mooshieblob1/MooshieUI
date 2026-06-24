@@ -508,6 +508,8 @@ const pt: Record<string, string> = {
   "generation.sampler.seed_tip": "Um número que determina a 'aleatoriedade' da sua imagem. Mesmo seed + mesmas configurações = mesma imagem. Use 'Aleatório' para variedade, ou defina um seed específico para reproduzir ou iterar um resultado.",
   "generation.sampler.seed_random": "Aleat.",
   "generation.sampler.random_display": "Aleatório",
+  "generation.sampler.seed_use_last": "Última",
+  "generation.sampler.seed_use_last_tip": "Usar a seed da última geração",
   "generation.sampler.batch": "Lote",
   "generation.sampler.batch_tip": "Quantas imagens gerar de uma vez. Valores mais altos usam mais VRAM, mas permitem comparar resultados rapidamente.",
   "generation.sampler.denoise": "Ruído",
@@ -884,6 +886,7 @@ const pt: Record<string, string> = {
   "bottom_panel.delete_all_confirm": "Excluir todas as {count} imagens geradas nesta sessão? Isso não pode ser desfeito.",
 
   // ── Downloads ───────────────────────────────────────────
+  "downloads.cancel": "Cancelar download",
   "downloads.downloading": "Baixando {filename}",
   "downloads.downloaded": "{filename} baixado",
 
@@ -2149,6 +2152,12 @@ const pt: Record<string, string> = {
   "settings.prompt_assistant.delete": "Excluir",
   "settings.prompt_assistant.unload_now": "Descarregar agora",
   "settings.prompt_assistant.idle_timeout": "Descarregar após inatividade",
+  "settings.prompt_assistant.external_title": "Endpoint LLM externo",
+  "settings.prompt_assistant.external_desc": "Usar uma API compatível com OpenAI (LM Studio, OpenAI, OpenRouter) em vez do modelo local integrado.",
+  "settings.prompt_assistant.external_url": "URL base da API",
+  "settings.prompt_assistant.external_model": "Modelo",
+  "settings.prompt_assistant.external_key": "Chave de API",
+  "settings.prompt_assistant.external_key_hint": "Deixe vazio para servidores locais sem chave como o LM Studio.",
   "prompt_assistant.enhance": "Melhorar",
   "prompt_assistant.compose": "Compor",
   "prompt_assistant.enhance_tooltip": "Melhorar o prompt atual",

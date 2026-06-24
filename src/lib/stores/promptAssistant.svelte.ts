@@ -46,6 +46,12 @@ class PromptAssistantStore {
     return !!this.status && this.status.installed_models.length > 0;
   }
 
+  /** True when the assistant can run: a local model is installed, or an external
+   *  OpenAI-compatible endpoint is configured. Gates the enhance/compose actions. */
+  get isAvailable(): boolean {
+    return this.hasInstalledModel || !!this.status?.external_enabled;
+  }
+
   /** Launch-time bootstrap: detect hardware, load catalog + status, pre-select. */
   async init(): Promise<void> {
     try {
