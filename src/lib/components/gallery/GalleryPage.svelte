@@ -2,10 +2,12 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { progress } from "../../stores/progress.svelte.js";
   import { canvas } from "../../stores/canvas.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
-  import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
+  import { uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
+  import { prepareOutputImageForEditMode } from "../../utils/editImagePreparation.js";
   import { uploadImageBytes } from "../../utils/api.js";
   import type { OutputImage } from "../../types/index.js";
 
@@ -15,7 +17,6 @@
 
   let { onSwitchToGenerate }: Props = $props();
 
-  const MAX_INPUT_PIXELS = 1024 * 1024;
   const GALLERY_PREFS_KEY = "mooshieui.gallery.prefs.v1";
 
   let galleryImagesPerRow = $state(5);
@@ -124,72 +125,28 @@
     } catch {}
   }
 
-  async function normalizeImageBytes(
-    imageBytes: number[],
-    fallbackFilename: string,
-  ): Promise<{ bytes: number[]; previewUrl: string; width: number; height: number; filename: string }> {
-    const sourceBlob = new Blob([new Uint8Array(imageBytes)], { type: "image/png" });
-    const sourceUrl = URL.createObjectURL(sourceBlob);
-
-    const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-      img.onerror = () => reject(new Error("Failed to read image dimensions"));
-      img.src = sourceUrl;
-    });
-
-    const sourcePixels = dims.width * dims.height;
-    if (sourcePixels <= MAX_INPUT_PIXELS) {
-      return { bytes: imageBytes, previewUrl: sourceUrl, width: dims.width, height: dims.height, filename: fallbackFilename };
-    }
-
-    const scale = Math.sqrt(MAX_INPUT_PIXELS / sourcePixels);
-    const targetWidth = Math.max(8, Math.round(dims.width * scale));
-    const targetHeight = Math.max(8, Math.round(dims.height * scale));
-
-    const resizedBlob = await new Promise<Blob>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const out = document.createElement("canvas");
-        out.width = targetWidth;
-        out.height = targetHeight;
-        const ctx = out.getContext("2d");
-        if (!ctx) return reject(new Error("Failed to create resize context"));
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-        out.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Failed to encode resized image"))), "image/png");
-      };
-      img.onerror = () => reject(new Error("Failed to decode source image"));
-      img.src = sourceUrl;
-    });
-
-    URL.revokeObjectURL(sourceUrl);
-    const resizedBuffer = await resizedBlob.arrayBuffer();
-    const resizedBytes = Array.from(new Uint8Array(resizedBuffer));
-    const resizedPreview = URL.createObjectURL(resizedBlob);
-    return { bytes: resizedBytes, previewUrl: resizedPreview, width: targetWidth, height: targetHeight, filename: fallbackFilename };
-  }
-
   async function loadImageForMode(image: OutputImage, mode: "img2img" | "inpainting") {
     try {
-      const source = await loadOutputImageForGenerationInput(
-        image,
-        mode === "inpainting" ? "inpaint_input.png" : "img2img_input.png",
-      );
-      const normalized = mode === "inpainting" ? await normalizeImageBytes(source.bytes, source.filename) : null;
-      const response = await uploadImageBytes(normalized ? normalized.bytes : source.bytes, normalized ? normalized.filename : source.filename);
+      const prepared = await prepareOutputImageForEditMode(image, mode);
+      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename);
       generation.inputImage = response.name;
       canvas.clearMask();
       generation.mode = mode;
       generation.upscaleEnabled = false;
-      if (mode === "inpainting" && normalized) {
+      if (mode === "inpainting" && prepared.normalized) {
+        const normalized = prepared.normalized;
         generation.width = normalized.width;
         generation.height = normalized.height;
+        progress.setLastOutputForMode("inpainting", null);
         canvas.setInpaintDrawMode("mask");
         canvas.isCanvasMode = true;
-        canvas.stageImage(normalized.previewUrl);
-        canvas.setReferenceImage(normalized.previewUrl);
+        canvas.clearStaging();
+        canvas.setInpaintOriginalSource({
+          previewUrl: normalized.previewUrl,
+          width: normalized.width,
+          height: normalized.height,
+          uploadedInputName: response.name,
+        });
         if (canvas.layers.length === 0 || canvas.canvasWidth !== normalized.width || canvas.canvasHeight !== normalized.height) {
           canvas.initCanvas(normalized.width, normalized.height);
         }
