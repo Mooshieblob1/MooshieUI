@@ -536,6 +536,18 @@
     }
   }
 
+  /** Normalise image bytes, show the preview, upload to ComfyUI, and set them as the
+   *  img2img/inpaint input. Shared by drag-drop and paste. */
+  async function setInputImageFromBytes(bytes: number[], filename: string) {
+    const normalized = await normalizeImageBytes(bytes, filename);
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    imagePreviewUrl = normalized.previewUrl;
+    applyImageGeometry(normalized.width, normalized.height);
+    canvas.setReferenceImage(imagePreviewUrl);
+    const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+    generation.inputImage = response.name;
+  }
+
   async function handleImageDrop(e: DragEvent) {
     e.preventDefault();
     dragOver = false;
@@ -544,17 +556,8 @@
 
     uploading = true;
     try {
-      const buffer = await file.arrayBuffer();
-      const bytes = Array.from(new Uint8Array(buffer));
-      const normalized = await normalizeImageBytes(bytes, file.name || "dropped_image.png");
-
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-      imagePreviewUrl = normalized.previewUrl;
-      applyImageGeometry(normalized.width, normalized.height);
-      canvas.setReferenceImage(imagePreviewUrl);
-
-      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
-      generation.inputImage = response.name;
+      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      await setInputImageFromBytes(bytes, file.name || "dropped_image.png");
     } catch (e) {
       console.error("Failed to handle dropped image:", e);
       gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
@@ -588,19 +591,16 @@
     }
   }
 
-  async function handleImagePaste() {
+  /** Paste an image into the img2img/inpaint input. Prefers the image carried by the
+   *  paste event's clipboardData (webkit2gtk populates this on Linux, where the native
+   *  clipboard `read_image` is unreliable), falling back to the system clipboard read. */
+  async function handleImagePaste(file?: File | null) {
+    uploading = true;
     try {
-      const bytes = await readClipboardImageSafe();
-      uploading = true;
-      const normalized = await normalizeImageBytes(bytes, "pasted_image.png");
-
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-      imagePreviewUrl = normalized.previewUrl;
-      applyImageGeometry(normalized.width, normalized.height);
-      canvas.setReferenceImage(imagePreviewUrl);
-
-      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
-      generation.inputImage = response.name;
+      const bytes = file
+        ? Array.from(new Uint8Array(await file.arrayBuffer()))
+        : await readClipboardImageSafe();
+      await setInputImageFromBytes(bytes, file?.name || "pasted_image.png");
     } catch (e) {
       console.error("Failed to paste image:", e);
     } finally {
@@ -1388,7 +1388,7 @@
       if (imagePasteTarget === "input") {
         e.preventDefault();
         e.stopPropagation();
-        await handleImagePaste();
+        await handleImagePaste(getClipboardImageFile(e));
         return;
       }
 
@@ -1401,13 +1401,12 @@
 
       // No drop zone hovered. In a mode that consumes an input image, treat Ctrl+V
       // as pasting into the image input so the advertised "Ctrl+V Paste" works without
-      // hovering the field first. handleImagePaste reads the system clipboard, so this
-      // also works on desktop where the paste event's clipboardData is empty for
-      // OS-copied images (#396).
+      // hovering the field first. Prefer the image in the paste event (works on Linux
+      // where the native clipboard read is unreliable), else read the system clipboard (#396).
       if (generation.mode === "img2img" || generation.mode === "inpainting") {
         e.preventDefault();
         e.stopPropagation();
-        await handleImagePaste();
+        await handleImagePaste(getClipboardImageFile(e));
         return;
       }
 
@@ -1617,7 +1616,7 @@
                     <p class="text-[10px] text-neutral-600">{locale.t('generation.image.drag_drop_or')}</p>
                     <button
                       type="button"
-                      onclick={handleImagePaste}
+                      onclick={() => handleImagePaste()}
                       class="flex items-center gap-1 text-xs text-emerald-500/70 transition-colors hover:text-emerald-400"
                     >
                       <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
