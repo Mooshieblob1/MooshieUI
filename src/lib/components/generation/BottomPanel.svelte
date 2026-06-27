@@ -698,14 +698,14 @@
     <div class="flex items-center gap-0.5 px-1.5 py-1 rounded-lg bg-neutral-900/95 border border-neutral-700/80 shadow-lg shadow-black/40 backdrop-blur-sm">
       {#if !image.is_upscaled}
         <button
-          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-indigo-600/80 text-neutral-300 hover:text-white transition-colors"
+          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
           title={locale.t('bottom_panel.upscale')}
           onclick={() => onupscale(image)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
         </button>
         <button
-          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-indigo-600/80 text-neutral-300 hover:text-white transition-colors"
+          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
           title={locale.t('gallery.send_to_img2img')}
           onclick={() => onrefine(image)}
         >
@@ -728,7 +728,7 @@
         </button>
       {/if}
       <button
-        class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-indigo-600/80 text-neutral-300 hover:text-white transition-colors"
+        class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
         title={locale.t('bottom_panel.inpaint')}
         onclick={() => oninpaint(image)}
       >
