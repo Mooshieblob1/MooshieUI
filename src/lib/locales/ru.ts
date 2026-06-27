@@ -508,6 +508,8 @@ const ru: Record<string, string> = {
   "generation.sampler.seed_tip": "Число, определяющее 'случайность' вашего изображения. Тот же сид + те же настройки = то же изображение. Используйте 'Случайный' для разнообразия или задайте конкретный сид для воспроизведения результата.",
   "generation.sampler.seed_random": "Случ.",
   "generation.sampler.random_display": "Случайный",
+  "generation.sampler.seed_use_last": "Последний",
+  "generation.sampler.seed_use_last_tip": "Использовать сид последней генерации",
   "generation.sampler.batch": "Пакет",
   "generation.sampler.batch_tip": "Сколько изображений генерировать за раз. Большие значения используют больше VRAM, но позволяют быстро сравнить результаты.",
   "generation.sampler.denoise": "Шумоподавление",
@@ -884,6 +886,7 @@ const ru: Record<string, string> = {
   "bottom_panel.delete_all_confirm": "Удалить все изображения, созданные в этой сессии ({count})? Это действие нельзя отменить.",
 
   // ── Загрузки ────────────────────────────────────────────
+  "downloads.cancel": "Отменить загрузку",
   "downloads.downloading": "Скачивание {filename}",
   "downloads.downloaded": "{filename} скачан",
 
@@ -2148,6 +2151,12 @@ const ru: Record<string, string> = {
   "settings.prompt_assistant.delete": "Удалить",
   "settings.prompt_assistant.unload_now": "Выгрузить сейчас",
   "settings.prompt_assistant.idle_timeout": "Выгрузить после простоя",
+  "settings.prompt_assistant.external_title": "Внешний LLM-эндпоинт",
+  "settings.prompt_assistant.external_desc": "Использовать OpenAI-совместимый API (LM Studio, OpenAI, OpenRouter) вместо встроенной локальной модели.",
+  "settings.prompt_assistant.external_url": "Базовый URL API",
+  "settings.prompt_assistant.external_model": "Модель",
+  "settings.prompt_assistant.external_key": "Ключ API",
+  "settings.prompt_assistant.external_key_hint": "Оставьте пустым для локальных серверов без ключа, например LM Studio.",
   "prompt_assistant.enhance": "Улучшить",
   "prompt_assistant.compose": "Составить",
   "prompt_assistant.enhance_tooltip": "Улучшить текущий промпт",

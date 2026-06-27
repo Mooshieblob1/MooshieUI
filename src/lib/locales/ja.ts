@@ -521,6 +521,8 @@ const ja: Record<string, string> = {
   "generation.sampler.seed_tip": "画像の「ランダム性」を決定する数値。同じシード + 同じ設定 = 同じ画像。多様性を求めるなら「ランダム」、結果を再現・改良するなら特定のシードを設定。",
   "generation.sampler.seed_random": "乱数",
   "generation.sampler.random_display": "ランダム",
+  "generation.sampler.seed_use_last": "前回",
+  "generation.sampler.seed_use_last_tip": "前回の生成のシードを使用",
   "generation.sampler.batch": "バッチ",
   "generation.sampler.batch_tip": "一度に生成する画像数。値が大きいほどVRAMを使用しますが、結果をすばやく比較できます。各画像は同じプロンプトで異なるシードを使用します。",
   "generation.sampler.denoise": "デノイズ",
@@ -906,6 +908,7 @@ const ja: Record<string, string> = {
   "bottom_panel.delete_all_confirm": "このセッションで生成した {count} 枚の画像をすべて削除しますか？この操作は元に戻せません。",
 
   // ── ダウンロード ────────────────────────────────────────
+  "downloads.cancel": "ダウンロードをキャンセル",
   "downloads.downloading": "{filename}をダウンロード中",
   "downloads.downloaded": "{filename}をダウンロード済み",
 
@@ -2173,6 +2176,12 @@ const ja: Record<string, string> = {
   "settings.prompt_assistant.delete": "削除",
   "settings.prompt_assistant.unload_now": "今すぐアンロード",
   "settings.prompt_assistant.idle_timeout": "アイドル後にアンロード",
+  "settings.prompt_assistant.external_title": "外部LLMエンドポイント",
+  "settings.prompt_assistant.external_desc": "内蔵のローカルモデルの代わりにOpenAI互換API（LM Studio、OpenAI、OpenRouter）を使用します。",
+  "settings.prompt_assistant.external_url": "APIベースURL",
+  "settings.prompt_assistant.external_model": "モデル",
+  "settings.prompt_assistant.external_key": "APIキー",
+  "settings.prompt_assistant.external_key_hint": "LM Studioなどキー不要のローカルサーバーでは空のままにします。",
   "prompt_assistant.enhance": "改善",
   "prompt_assistant.compose": "作成",
   "prompt_assistant.enhance_tooltip": "現在のプロンプトを改善",

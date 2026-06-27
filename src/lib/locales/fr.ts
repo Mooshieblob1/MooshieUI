@@ -521,6 +521,8 @@ const fr: Record<string, string> = {
   "generation.sampler.seed_tip": "Un nombre qui détermine le « hasard » de votre image. Même graine + mêmes paramètres = même image. Utilisez « Aléatoire » pour la variété, ou définissez une graine spécifique pour reproduire ou itérer un résultat.",
   "generation.sampler.seed_random": "Aléa",
   "generation.sampler.random_display": "Aléatoire",
+  "generation.sampler.seed_use_last": "Dernier",
+  "generation.sampler.seed_use_last_tip": "Utiliser la graine de la dernière génération",
   "generation.sampler.batch": "Lot",
   "generation.sampler.batch_tip": "Nombre d'images à générer en une fois. Des valeurs plus élevées utilisent plus de VRAM mais permettent de comparer rapidement les résultats. Chaque image utilise le même prompt mais une graine différente.",
   "generation.sampler.denoise": "Débruitage",
@@ -906,6 +908,7 @@ const fr: Record<string, string> = {
   "bottom_panel.delete_all_confirm": "Supprimer les {count} images générées pendant cette session ? Cette action est irréversible.",
 
   // ── Téléchargements ─────────────────────────────────────
+  "downloads.cancel": "Annuler le téléchargement",
   "downloads.downloading": "Téléchargement de {filename}",
   "downloads.downloaded": "{filename} téléchargé",
 
@@ -2174,6 +2177,12 @@ const fr: Record<string, string> = {
   "settings.prompt_assistant.delete": "Supprimer",
   "settings.prompt_assistant.unload_now": "Décharger maintenant",
   "settings.prompt_assistant.idle_timeout": "Décharger après inactivité",
+  "settings.prompt_assistant.external_title": "Point de terminaison LLM externe",
+  "settings.prompt_assistant.external_desc": "Utiliser une API compatible OpenAI (LM Studio, OpenAI, OpenRouter) au lieu du modèle local intégré.",
+  "settings.prompt_assistant.external_url": "URL de base de l'API",
+  "settings.prompt_assistant.external_model": "Modèle",
+  "settings.prompt_assistant.external_key": "Clé d'API",
+  "settings.prompt_assistant.external_key_hint": "Laisser vide pour les serveurs locaux sans clé comme LM Studio.",
   "prompt_assistant.enhance": "Améliorer",
   "prompt_assistant.compose": "Composer",
   "prompt_assistant.enhance_tooltip": "Améliorer le prompt actuel",

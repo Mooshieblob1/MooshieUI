@@ -54,6 +54,20 @@
               {locale.formatBytes(dl.downloaded)}{#if dl.speed > 0} · {locale.formatBytesPerSecond(dl.speed)}{/if}
             {/if}
           </span>
+
+          <button
+            class="shrink-0 flex h-5 w-5 items-center justify-center rounded text-neutral-500 hover:bg-neutral-700 hover:text-red-400 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-neutral-500"
+            onclick={() => downloads.cancel(dl.filename)}
+            disabled={downloads.cancelling.has(dl.filename)}
+            title={locale.t('downloads.cancel')}
+            aria-label={locale.t('downloads.cancel')}
+          >
+            {#if downloads.cancelling.has(dl.filename)}
+              <div class="w-3 h-3 border-2 border-neutral-500 border-t-transparent rounded-full animate-spin"></div>
+            {:else}
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            {/if}
+          </button>
         {/if}
       </div>
     {/each}
