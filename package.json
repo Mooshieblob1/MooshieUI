@@ -34,7 +34,7 @@
     "@types/dompurify": "^3.0.5",
     "svelte": "^5.56.3",
     "svelte-check": "^4",
-    "tailwindcss": "^4",
+    "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",
     "vite": "^6"
   }
