@@ -37,6 +37,8 @@ class AutocompleteStore {
   enabled = $state(true);
   /** Whether prompt textareas show the clickable tag/weight overlay */
   clickableOverlayEnabled = $state(true);
+  /** Whether the Danbooru tag-aware spell checker (underlines + right-click suggestions) is on */
+  spellcheckEnabled = $state(true);
   /** Whether a custom taglist is currently loading */
   loading = $state(false);
   /** Error message if loading failed */
@@ -305,6 +307,7 @@ class AutocompleteStore {
       if (saved) {
         if (saved.enabled === false) this.enabled = false;
         if (saved.clickableOverlayEnabled === false) this.clickableOverlayEnabled = false;
+        if (saved.spellcheckEnabled === false) this.spellcheckEnabled = false;
         if (saved.maxResults) this.maxResults = saved.maxResults;
         if (saved.sourceMode) this.sourceMode = saved.sourceMode;
         if (saved.sourceUrl) this.sourceUrl = saved.sourceUrl;
@@ -341,6 +344,7 @@ class AutocompleteStore {
       await ipcStore.set(STORE_KEY, {
         enabled: this.enabled,
         clickableOverlayEnabled: this.clickableOverlayEnabled,
+        spellcheckEnabled: this.spellcheckEnabled,
         maxResults: this.maxResults,
         sourceMode: this.sourceMode,
         sourceUrl: this.sourceUrl,
@@ -471,6 +475,7 @@ class AutocompleteStore {
   collectPrefs(): Record<string, unknown> {
     return {
       clickableOverlayEnabled: this.clickableOverlayEnabled,
+      spellcheckEnabled: this.spellcheckEnabled,
       maxResults: this.maxResults,
       sourceMode: this.sourceMode,
       sourceUrl: this.sourceUrl,
