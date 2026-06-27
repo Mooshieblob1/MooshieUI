@@ -21,6 +21,7 @@
     type SpellcheckPiece,
   } from "../../utils/promptSpellcheck.js";
   import { SYNTAX_ANGLE_LOOKBEHIND } from "../../utils/promptSyntaxEscape.js";
+  import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
 
   interface Props {
     value: string;
@@ -49,6 +50,10 @@
   let backdropEl = $state<HTMLDivElement | null>(null);
   let clickOverlayEl = $state<HTMLDivElement | null>(null);
   let spellcheckOverlayEl = $state<HTMLDivElement | null>(null);
+  let spellMenuVisible = $state(false);
+  let spellMenuX = $state(0);
+  let spellMenuY = $state(0);
+  let spellMenuItems = $state<ContextMenuItem[]>([]);
   let scrollbarWidth = $state(0);
 
   function updateScrollbarWidth() {
@@ -537,6 +542,50 @@
     syncSelectionRange();
   }
 
+  function replaceRange(start: number, end: number, replacement: string) {
+    if (!textareaEl) return;
+    undoStack = [...undoStack, value];
+    redoStack = [];
+    const before = value.substring(0, start);
+    const after = value.substring(end);
+    value = before + replacement + after;
+    const caret = before.length + replacement.length;
+    requestAnimationFrame(() => {
+      textareaEl?.focus();
+      textareaEl?.setSelectionRange(caret, caret);
+      syncSelectionRange();
+    });
+  }
+
+  function openSpellMenu(event: MouseEvent, piece: SpellcheckPiece) {
+    if (!textareaEl || !piece.name) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Select the offending tag so the replacement target is visible.
+    textareaEl.focus();
+    textareaEl.setSelectionRange(piece.start, piece.end);
+    syncSelectionRange();
+
+    const suggestions = autocomplete.suggestSimilar(piece.name);
+    if (suggestions.length === 0) {
+      spellMenuItems = [
+        {
+          label: locale.t("generation.prompt.spellcheck_no_suggestions"),
+          action: () => {},
+        },
+      ];
+    } else {
+      spellMenuItems = suggestions.map((tag) => ({
+        label: tag.n.replace(/_/g, " "),
+        action: () => replaceRange(piece.start, piece.end, formatTagForPrompt(tag.n)),
+      }));
+    }
+    spellMenuX = event.clientX;
+    spellMenuY = event.clientY;
+    spellMenuVisible = true;
+  }
+
   function syncScroll() {
     if (textareaEl && backdropEl) {
       backdropEl.scrollTop = textareaEl.scrollTop;
@@ -789,9 +838,11 @@
       >
         {#each spellcheckPieces as piece (piece.start + ':' + piece.end)}
           {#if piece.unknown}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <span
-              class="underline decoration-wavy decoration-red-500 underline-offset-2"
+              class="pointer-events-auto cursor-context-menu underline decoration-wavy decoration-red-500 underline-offset-2"
               style="color: transparent; text-decoration-skip-ink: none;"
+              oncontextmenu={(event) => openSpellMenu(event, piece)}
             >{value.slice(piece.start, piece.end)}</span>
           {:else}
             <span style="color: transparent;">{value.slice(piece.start, piece.end)}</span>
@@ -837,4 +888,11 @@
       {/each}
     </div>
   {/if}
+  <ContextMenu
+    items={spellMenuItems}
+    x={spellMenuX}
+    y={spellMenuY}
+    visible={spellMenuVisible}
+    onclose={() => (spellMenuVisible = false)}
+  />
 </div>
