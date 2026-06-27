@@ -2,6 +2,7 @@ import { ipcStore } from "../utils/ipc.js";
 import { triggerSync } from "../utils/syncTrigger.js";
 import { locale } from "./locale.svelte.js";
 import builtinTags from "../assets/danbooru-tags.json";
+import { damerauLevenshtein } from "../utils/promptSpellcheck.js";
 
 export interface TagEntry {
   n: string; // name
@@ -318,6 +319,29 @@ class AutocompleteStore {
     const q = this.normalizeQuery(name);
     if (!q) return true;
     return this._knownTagSet.has(q);
+  }
+
+  /**
+   * Fuzzy "did you mean" matches for an unknown tag. Damerau-Levenshtein over the
+   * active corpus, length-windowed and early-exited so it stays cheap even on large
+   * custom lists. Only ever called on a right-click, never per keystroke.
+   */
+  suggestSimilar(name: string, limit = 6): TagEntry[] {
+    const q = this.normalizeQuery(name);
+    if (!q) return [];
+    const maxDist = q.length <= 4 ? 1 : q.length <= 8 ? 2 : 3;
+
+    const scored: { tag: TagEntry; dist: number }[] = [];
+    const entries = this._searchEntries;
+    for (let i = 0; i < entries.length; i++) {
+      const n = entries[i].nameLower;
+      if (Math.abs(n.length - q.length) > maxDist) continue;
+      const d = damerauLevenshtein(q, n, maxDist);
+      if (d <= maxDist) scored.push({ tag: entries[i].tag, dist: d });
+    }
+
+    scored.sort((a, b) => a.dist - b.dist || b.tag.p - a.tag.p);
+    return scored.slice(0, Math.max(1, limit)).map((s) => s.tag);
   }
 
   async loadSettings() {
