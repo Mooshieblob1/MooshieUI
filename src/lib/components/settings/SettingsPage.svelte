@@ -3240,6 +3240,23 @@
               </button>
             </label>
 
+            <label class="flex items-center justify-between gap-3 cursor-pointer">
+              <div>
+                <p class="text-sm text-neutral-200">{locale.t('settings.autocomplete.spellcheck')}</p>
+                <p class="text-[11px] text-neutral-500 mt-0.5">{locale.t('settings.autocomplete.spellcheck_desc')}</p>
+              </div>
+              <button
+                class="relative w-10 h-5 rounded-full transition-colors shrink-0 {autocomplete.spellcheckEnabled ? 'bg-indigo-600' : 'bg-neutral-700'}"
+                onclick={() => { autocomplete.spellcheckEnabled = !autocomplete.spellcheckEnabled; autocomplete.saveSettings(); }}
+                role="switch"
+                aria-checked={autocomplete.spellcheckEnabled}
+                aria-label={locale.t('settings.autocomplete.spellcheck')}
+                title={locale.t('settings.autocomplete.spellcheck')}
+              >
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {autocomplete.spellcheckEnabled ? 'translate-x-5' : ''}"></span>
+              </button>
+            </label>
+
             {#if isAdmin}
             <!-- Current source -->
             <div>
