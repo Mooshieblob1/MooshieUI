@@ -387,6 +387,64 @@ impl Drop for InflightGuard<'_> {
     }
 }
 
+/// Send a chat completion to an external OpenAI-compatible endpoint (LM Studio,
+/// OpenAI, OpenRouter, ...) instead of the bundled local llama-server. `base_url`
+/// is the API root (e.g. `http://localhost:1234/v1` or `https://api.openai.com/v1`);
+/// `/chat/completions` is appended. Bearer auth is added when `api_key` is non-empty.
+pub async fn chat_external(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    system: &str,
+    user: &str,
+    max_tokens: u32,
+) -> Result<String, AppError> {
+    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+    let body = json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": system },
+            { "role": "user", "content": user }
+        ],
+        "temperature": 0.7,
+        "max_tokens": max_tokens,
+        "stream": false
+    });
+    let mut req = client
+        .post(&url)
+        .json(&body)
+        .timeout(Duration::from_secs(120));
+    if !api_key.is_empty() {
+        req = req.bearer_auth(api_key);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| AppError::LlmError(format!("External LLM request failed: {e}")))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let detail: String = resp
+            .text()
+            .await
+            .unwrap_or_default()
+            .chars()
+            .take(300)
+            .collect();
+        return Err(AppError::LlmError(format!(
+            "External LLM returned {status}: {detail}"
+        )));
+    }
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| AppError::LlmError(format!("Bad external LLM response: {e}")))?;
+    Ok(v["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string())
+}
+
 /// Idle watchdog implemented as a free function so it can hold an Arc clone.
 pub fn start_idle_watchdog(server: std::sync::Arc<LlamaServer>, idle_secs: u64) {
     if server

@@ -508,6 +508,8 @@ const ko: Record<string, string> = {
   "generation.sampler.seed_tip": "이미지의 '무작위성'을 결정하는 숫자. 같은 시드 + 같은 설정 = 같은 이미지. 다양성을 원하면 '랜덤', 결과를 재현하려면 특정 시드를 설정하세요.",
   "generation.sampler.seed_random": "랜덤",
   "generation.sampler.random_display": "랜덤",
+  "generation.sampler.seed_use_last": "마지막",
+  "generation.sampler.seed_use_last_tip": "마지막 생성의 시드 사용",
   "generation.sampler.batch": "배치",
   "generation.sampler.batch_tip": "한 번에 생성할 이미지 수. 값이 클수록 VRAM을 더 사용하지만 결과를 빠르게 비교할 수 있습니다.",
   "generation.sampler.denoise": "디노이즈",
@@ -884,6 +886,7 @@ const ko: Record<string, string> = {
   "bottom_panel.delete_all_confirm": "이 세션에서 생성한 이미지 {count}개를 모두 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
 
   // ── 다운로드 ────────────────────────────────────────────
+  "downloads.cancel": "다운로드 취소",
   "downloads.downloading": "{filename} 다운로드 중",
   "downloads.downloaded": "{filename} 다운로드 완료",
 
@@ -2148,6 +2151,12 @@ const ko: Record<string, string> = {
   "settings.prompt_assistant.delete": "삭제",
   "settings.prompt_assistant.unload_now": "지금 언로드",
   "settings.prompt_assistant.idle_timeout": "유휴 후 언로드",
+  "settings.prompt_assistant.external_title": "외부 LLM 엔드포인트",
+  "settings.prompt_assistant.external_desc": "내장 로컬 모델 대신 OpenAI 호환 API(LM Studio, OpenAI, OpenRouter)를 사용합니다.",
+  "settings.prompt_assistant.external_url": "API 기본 URL",
+  "settings.prompt_assistant.external_model": "모델",
+  "settings.prompt_assistant.external_key": "API 키",
+  "settings.prompt_assistant.external_key_hint": "LM Studio 같은 키가 필요 없는 로컬 서버에서는 비워 두세요.",
   "prompt_assistant.enhance": "개선",
   "prompt_assistant.compose": "작성",
   "prompt_assistant.enhance_tooltip": "현재 프롬프트 개선",

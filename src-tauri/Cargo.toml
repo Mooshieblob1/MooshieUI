@@ -79,7 +79,7 @@ open = "5"
 hex = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 rust-embed = { version = "8", features = ["interpolate-folder-path"] }
-sysinfo = "0.33"
+sysinfo = "0.39"
 # llama.cpp (prompt assistant) ships `.zip` assets on every platform at the
 # pinned release, so zip extraction is needed on all targets, not just Windows.
 zip = { version = "8", default-features = false, features = ["deflate"] }

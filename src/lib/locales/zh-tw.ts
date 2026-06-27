@@ -508,6 +508,8 @@ const zhTw: Record<string, string> = {
   "generation.sampler.seed_tip": "決定影像「隨機性」的數字。相同種子 + 相同設定 = 相同影像。想要多樣性用「隨機」，想要重現結果設定特定種子。",
   "generation.sampler.seed_random": "隨機",
   "generation.sampler.random_display": "隨機",
+  "generation.sampler.seed_use_last": "上次",
+  "generation.sampler.seed_use_last_tip": "使用上次生成的種子",
   "generation.sampler.batch": "批次",
   "generation.sampler.batch_tip": "一次生成的影像數量。數量越大顯存佔用越多，但可以更快比較結果。",
   "generation.sampler.denoise": "去雜訊",
@@ -884,6 +886,7 @@ const zhTw: Record<string, string> = {
   "bottom_panel.delete_all_confirm": "刪除本次工作階段產生的全部 {count} 張圖片？此操作無法復原。",
 
   // ── 下載 ────────────────────────────────────────────────
+  "downloads.cancel": "取消下載",
   "downloads.downloading": "正在下載 {filename}",
   "downloads.downloaded": "{filename} 下載完成",
 
@@ -2148,6 +2151,12 @@ const zhTw: Record<string, string> = {
   "settings.prompt_assistant.delete": "刪除",
   "settings.prompt_assistant.unload_now": "立即卸載",
   "settings.prompt_assistant.idle_timeout": "閒置後卸載",
+  "settings.prompt_assistant.external_title": "外部 LLM 端點",
+  "settings.prompt_assistant.external_desc": "使用與 OpenAI 相容的 API（LM Studio、OpenAI、OpenRouter）取代內建的本機模型。",
+  "settings.prompt_assistant.external_url": "API 基礎 URL",
+  "settings.prompt_assistant.external_model": "模型",
+  "settings.prompt_assistant.external_key": "API 金鑰",
+  "settings.prompt_assistant.external_key_hint": "對於 LM Studio 等不需金鑰的本機伺服器，請留空。",
   "prompt_assistant.enhance": "改善",
   "prompt_assistant.compose": "撰寫",
   "prompt_assistant.enhance_tooltip": "改善目前的提示詞",

@@ -546,6 +546,8 @@ const es: Record<string, string> = {
   "generation.sampler.seed_tip": "Un número que determina la 'aleatoriedad' de tu imagen. Misma semilla + mismos ajustes = misma imagen. Usa 'Aleatorio' para variedad, o establece una semilla específica para reproducir o iterar sobre un resultado.",
   "generation.sampler.seed_random": "Rng",
   "generation.sampler.random_display": "Aleatorio",
+  "generation.sampler.seed_use_last": "Última",
+  "generation.sampler.seed_use_last_tip": "Usar la semilla de la última generación",
   "generation.sampler.batch": "Lote",
   "generation.sampler.batch_tip": "Cuántas imágenes generar a la vez. Valores más altos usan más VRAM pero te permiten comparar resultados rápidamente. Cada imagen usa el mismo prompt pero una semilla diferente.",
   "generation.sampler.denoise": "Eliminación de ruido",
@@ -936,6 +938,7 @@ const es: Record<string, string> = {
   "bottom_panel.delete_all_confirm": "¿Eliminar las {count} imágenes generadas en esta sesión? Esta acción no se puede deshacer.",
 
   // ── Descargas ───────────────────────────────────────────
+  "downloads.cancel": "Cancelar descarga",
   "downloads.downloading": "Descargando {filename}",
   "downloads.downloaded": "Descargado {filename}",
 
@@ -2177,6 +2180,12 @@ const es: Record<string, string> = {
   "settings.prompt_assistant.delete": "Eliminar",
   "settings.prompt_assistant.unload_now": "Descargar ahora",
   "settings.prompt_assistant.idle_timeout": "Descargar tras inactividad",
+  "settings.prompt_assistant.external_title": "Endpoint LLM externo",
+  "settings.prompt_assistant.external_desc": "Usar una API compatible con OpenAI (LM Studio, OpenAI, OpenRouter) en lugar del modelo local integrado.",
+  "settings.prompt_assistant.external_url": "URL base de la API",
+  "settings.prompt_assistant.external_model": "Modelo",
+  "settings.prompt_assistant.external_key": "Clave de API",
+  "settings.prompt_assistant.external_key_hint": "Déjalo vacío para servidores locales sin clave como LM Studio.",
   "prompt_assistant.enhance": "Mejorar",
   "prompt_assistant.compose": "Componer",
   "prompt_assistant.enhance_tooltip": "Mejorar el prompt actual",

@@ -809,6 +809,18 @@ pub async fn download_model(
         .await
 }
 
+/// Request cancellation of an in-progress model download by filename. The running
+/// download loop checks this flag each chunk, deletes the partial file and stops (#399).
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn cancel_download(
+    state: State<'_, Arc<AppState>>,
+    filename: String,
+) -> Result<(), AppError> {
+    state.request_download_cancel(&filename);
+    Ok(())
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_image_file(image_bytes: Vec<u8>, path: String) -> Result<(), AppError> {

@@ -1322,10 +1322,10 @@ async fn detect_vram_mb() -> u64 {
 
 /// Choose the best VRAM mode based on detected VRAM.
 fn recommended_vram_mode(vram_mb: u64) -> &'static str {
-    if vram_mb >= 8000 {
-        "high" // 8 GB+ — keep everything in VRAM
+    if vram_mb >= 24000 {
+        "high" // 24 GB+ — --highvram keeps everything resident; only safe with headroom
     } else if vram_mb >= 4000 {
-        "normal" // 4-8 GB — load fully for sampling, offload between gens
+        "normal" // 4-24 GB — load fully for sampling, offload between gens
     } else if vram_mb > 0 {
         "low" // < 4 GB
     } else {
