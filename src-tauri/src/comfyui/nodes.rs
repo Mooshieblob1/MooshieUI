@@ -67,6 +67,12 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
 ];
 
 const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
+// Python deps the mooshie-nodes package imports but ComfyUI does not ship.
+// `ultralytics` (YOLOv8) backs the face-detailer node. torch/torchvision are
+// already provided by ComfyUI's own requirements, so they are not repeated.
+// Pinned per the project's supply-chain policy (docs/BOT_REVIEW_TRIAGE.md); this
+// is the version verified against the bundled ComfyUI torch.
+const MOOSHIE_NODES_REQUIREMENTS: &str = "ultralytics==8.4.75\n";
 const TILED_DIFFUSION_PY: &str = include_str!("../../../comfyui-nodes/nodes_tiled_diffusion.py");
 const GUIDANCE_PY: &str = include_str!("../../../comfyui-nodes/nodes_guidance.py");
 /// Combined flat file: nodes.py content + NODE_CLASS_MAPPINGS.
@@ -104,6 +110,19 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         format!(
             "Failed to write mooshie-nodes/__init__.py at '{}': {}",
             init_path.display(),
+            e
+        )
+    })?;
+
+    // The face-detailer node does `from ultralytics import YOLO`, which is not a
+    // stock ComfyUI dependency. Declare it here so ensure_mooshie_node_requirements()
+    // pip-installs it into the venv; otherwise the node fails at run time with
+    // "No module named 'ultralytics'".
+    let mooshie_reqs = mooshie_dir.join("requirements.txt");
+    std::fs::write(&mooshie_reqs, MOOSHIE_NODES_REQUIREMENTS).map_err(|e| {
+        format!(
+            "Failed to write mooshie-nodes/requirements.txt at '{}': {}",
+            mooshie_reqs.display(),
             e
         )
     })?;
@@ -185,6 +204,46 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         "Deployed mooshie custom nodes to {}",
         custom_nodes.display()
     );
+    Ok(())
+}
+
+/// Install the Python dependencies the bundled mooshie-nodes package imports
+/// (currently `ultralytics`, used by the face-detailer node). Hash-stamped via
+/// install_requirements_if_needed, so it only runs once per requirements.txt
+/// change. Failures are non-fatal and only logged: core generation keeps
+/// working, the face-detailer node stays unavailable until the install succeeds.
+pub async fn ensure_mooshie_node_requirements(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+) -> Result<(), String> {
+    let target_dir = Path::new(comfyui_path)
+        .join("custom_nodes")
+        .join("mooshie-nodes");
+    let requirements = target_dir.join("requirements.txt");
+    if !requirements.exists() {
+        return Ok(());
+    }
+
+    if let Err(e) = install_requirements_if_needed(
+        &requirements,
+        &target_dir,
+        venv_path,
+        network_proxy,
+        pip_index_url,
+        "mooshie-nodes",
+    )
+    .await
+    {
+        log::warn!(
+            "mooshie-nodes requirements (ultralytics) install failed (optional): {}. \
+             The face-detailer node will be unavailable until this succeeds. \
+             If pip timed out, set Settings → Connection → PyPI mirror URL.",
+            e
+        );
+    }
+
     Ok(())
 }
 

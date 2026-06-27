@@ -508,6 +508,8 @@ const it: Record<string, string> = {
   "generation.sampler.seed_tip": "Un numero che determina la 'casualità' dell'immagine. Stesso seed + stesse impostazioni = stessa immagine. Usa 'Casuale' per varietà, o imposta un seed specifico per riprodurre un risultato.",
   "generation.sampler.seed_random": "Cas.",
   "generation.sampler.random_display": "Casuale",
+  "generation.sampler.seed_use_last": "Ultimo",
+  "generation.sampler.seed_use_last_tip": "Usa il seed dell'ultima generazione",
   "generation.sampler.batch": "Batch",
   "generation.sampler.batch_tip": "Quante immagini generare contemporaneamente. Valori più alti usano più VRAM ma permettono di confrontare i risultati velocemente.",
   "generation.sampler.denoise": "Denoising",
@@ -884,6 +886,7 @@ const it: Record<string, string> = {
   "bottom_panel.delete_all_confirm": "Eliminare tutte le {count} immagini generate in questa sessione? L'operazione non può essere annullata.",
 
   // ── Download ────────────────────────────────────────────
+  "downloads.cancel": "Annulla download",
   "downloads.downloading": "Download {filename}",
   "downloads.downloaded": "{filename} scaricato",
 
@@ -2148,6 +2151,12 @@ const it: Record<string, string> = {
   "settings.prompt_assistant.delete": "Elimina",
   "settings.prompt_assistant.unload_now": "Scarica ora",
   "settings.prompt_assistant.idle_timeout": "Scarica dopo inattività",
+  "settings.prompt_assistant.external_title": "Endpoint LLM esterno",
+  "settings.prompt_assistant.external_desc": "Usa un'API compatibile con OpenAI (LM Studio, OpenAI, OpenRouter) invece del modello locale incluso.",
+  "settings.prompt_assistant.external_url": "URL base API",
+  "settings.prompt_assistant.external_model": "Modello",
+  "settings.prompt_assistant.external_key": "Chiave API",
+  "settings.prompt_assistant.external_key_hint": "Lascia vuoto per server locali senza chiave come LM Studio.",
   "prompt_assistant.enhance": "Migliora",
   "prompt_assistant.compose": "Componi",
   "prompt_assistant.enhance_tooltip": "Migliora il prompt attuale",

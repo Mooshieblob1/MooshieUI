@@ -3485,6 +3485,56 @@
                 class="w-full accent-indigo-500"
               />
             </div>
+
+            <!-- External OpenAI-compatible LLM endpoint (#389) -->
+            <div class="border-t border-neutral-800 pt-3 mt-1 space-y-3">
+              <label class="flex items-center justify-between gap-3 cursor-pointer">
+                <span>
+                  <span class="text-xs text-neutral-300 block">{locale.t('settings.prompt_assistant.external_title')}</span>
+                  <span class="text-[10px] text-neutral-500">{locale.t('settings.prompt_assistant.external_desc')}</span>
+                </span>
+                <input
+                  type="checkbox"
+                  bind:checked={config.llm_external_enabled}
+                  onchange={async () => { await autoSave(); await promptAssistant.refreshStatus(); }}
+                  class="accent-indigo-500 w-4 h-4 shrink-0"
+                />
+              </label>
+              {#if config.llm_external_enabled}
+                <div>
+                  <label class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.external_url')}</label>
+                  <input
+                    type="text"
+                    bind:value={config.llm_external_base_url}
+                    onchange={() => autoSave()}
+                    placeholder="http://localhost:1234/v1"
+                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                </div>
+                <div>
+                  <label class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.external_model')}</label>
+                  <input
+                    type="text"
+                    bind:value={config.llm_external_model}
+                    onchange={() => autoSave()}
+                    placeholder="gpt-4o-mini"
+                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                </div>
+                <div>
+                  <label class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.external_key')}</label>
+                  <input
+                    type="password"
+                    bind:value={config.llm_external_api_key}
+                    onchange={() => autoSave()}
+                    placeholder="sk-..."
+                    autocomplete="off"
+                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                  <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.prompt_assistant.external_key_hint')}</p>
+                </div>
+              {/if}
+            </div>
           </div>
           {/if}
         </section>

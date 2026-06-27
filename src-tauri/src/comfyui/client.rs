@@ -486,6 +486,9 @@ impl AppState {
     ) -> Result<(), AppError> {
         use tauri::Emitter;
 
+        // Drop any stale cancel flag from a previous attempt so this download starts clean (#399).
+        self.clear_download_cancel(filename);
+
         let models_dir = if let Some(dir) = dest_dir_override {
             std::path::PathBuf::from(dir)
         } else {
@@ -578,6 +581,23 @@ impl AppState {
         let mut resp = resp;
         while let Some(chunk) = resp.chunk().await? {
             use std::io::Write;
+            // Abort cleanly if the user cancelled this download (#399).
+            if self.is_download_cancelled(filename) {
+                drop(file);
+                let _ = std::fs::remove_file(&dest);
+                self.clear_download_cancel(filename);
+                app.emit(
+                    "download:progress",
+                    crate::setup::DownloadProgress {
+                        filename: filename.to_string(),
+                        downloaded,
+                        total,
+                        done: true,
+                    },
+                )
+                .ok();
+                return Err(AppError::Other(format!("Download cancelled: {}", filename)));
+            }
             if let Err(e) = file.write_all(&chunk) {
                 drop(file);
                 let _ = std::fs::remove_file(&dest);

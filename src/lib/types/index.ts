@@ -264,6 +264,14 @@ export interface AppConfig {
   webhook_allow_private_targets: boolean;
   theme_profile_id: string | null;
   theme_profiles: ThemeProfile[];
+  /** Prompt assistant: use an external OpenAI-compatible endpoint instead of the local llama-server. */
+  llm_external_enabled: boolean;
+  /** External LLM API root, e.g. http://localhost:1234/v1 or https://api.openai.com/v1. */
+  llm_external_base_url: string;
+  /** External LLM API key (Bearer token; empty for keyless local servers). */
+  llm_external_api_key: string;
+  /** External LLM model name (e.g. gpt-4o-mini). */
+  llm_external_model: string;
 }
 
 export interface ThemeTone {
@@ -376,6 +384,7 @@ export interface LlmStatus {
   installed_models: string[];
   active_model: string | null;
   server_running: boolean;
+  external_enabled: boolean;
 }
 
 export interface PromptAssistantOpts {

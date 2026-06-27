@@ -577,6 +577,8 @@ const en: Record<string, string> = {
   "generation.sampler.seed_tip": "A number that determines the 'randomness' of your image. Same seed + same settings = same image. Use 'Random' for variety, or set a specific seed to reproduce or iterate on a result.",
   "generation.sampler.seed_random": "Rng",
   "generation.sampler.random_display": "Random",
+  "generation.sampler.seed_use_last": "Last",
+  "generation.sampler.seed_use_last_tip": "Use the seed from your last generation",
   "generation.sampler.batch": "Batch",
   "generation.sampler.batch_tip": "How many images to generate at once. Higher values use more VRAM but let you compare results quickly. Each image uses the same prompt but a different seed.",
   "generation.sampler.denoise": "Denoise",
@@ -1115,6 +1117,7 @@ const en: Record<string, string> = {
   "compare.grid_cells_failed": "Cell(s) {cells} failed — check checkpoint/model availability",
 
   // ── Downloads ───────────────────────────────────────────
+  "downloads.cancel": "Cancel download",
   "downloads.downloading": "Downloading {filename}",
   "downloads.downloaded": "Downloaded {filename}",
 
@@ -2190,6 +2193,12 @@ const en: Record<string, string> = {
   "settings.prompt_assistant.delete": "Delete",
   "settings.prompt_assistant.unload_now": "Unload now",
   "settings.prompt_assistant.idle_timeout": "Idle unload after",
+  "settings.prompt_assistant.external_title": "External LLM endpoint",
+  "settings.prompt_assistant.external_desc": "Use an OpenAI-compatible API (LM Studio, OpenAI, OpenRouter) instead of the bundled local model.",
+  "settings.prompt_assistant.external_url": "API base URL",
+  "settings.prompt_assistant.external_model": "Model",
+  "settings.prompt_assistant.external_key": "API key",
+  "settings.prompt_assistant.external_key_hint": "Leave empty for keyless local servers like LM Studio.",
   "prompt_assistant.enhance": "Enhance",
   "prompt_assistant.compose": "Compose",
   "prompt_assistant.enhance_tooltip": "Enhance the current prompt",

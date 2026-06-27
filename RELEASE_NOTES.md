@@ -1,3 +1,27 @@
+## What's New in v1.4.28
+
+### Fixes
+- **Face detailer works out of the box**: the bundled face-detailer custom node needs `ultralytics` (YOLOv8), which ComfyUI does not install. MooshieUI now ships a requirements file for its nodes and installs ultralytics into the ComfyUI environment on launch (one time, only when it changes), so face-detailer workflows no longer fail with "No module named 'ultralytics'". Applies to Windows, macOS, and Linux.
+
+### Packaging
+- **Nix flake for Linux/NixOS**: the repo now includes a `flake.nix`, so you can build and run MooshieUI with `nix build` / `nix profile add`. The app runs inside an FHS sandbox so the setup wizard's downloaded uv/Python and the pip wheels it installs work on NixOS.
+
+---
+
+## What's New in v1.4.27
+
+### Fixes and maintenance
+- **Artist gallery previews load over LAN again**: grid thumbnails, prefetched images, and the lightbox now carry the auth token in browser/LAN mode, so they no longer fail with a 401 from the proxy.
+
+---
+
+## What's New in v1.4.26
+
+### Fixes and maintenance
+- **Artist gallery loads over LAN again**: in browser/LAN mode the artist gallery manifest, shard, and search-index requests now carry the auth token, so they no longer fail with a 401 from the proxy.
+
+---
+
 ## What's New in v1.4.25
 
 This release makes generation failures explain themselves and adds a per-image generation-time readout.
