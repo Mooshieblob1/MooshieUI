@@ -524,6 +524,13 @@
     showSpellcheckOverlay ? buildSpellcheckPieces(value.length, spellcheckRanges) : [],
   );
 
+  // Dismiss the right-click suggestion menu on any prompt edit: its items close over
+  // fixed offsets, so editing the prompt while it is open would splice at stale positions.
+  $effect(() => {
+    void value;
+    if (spellMenuVisible) spellMenuVisible = false;
+  });
+
   function handleClickableSegmentMouseDown(event: MouseEvent, segment: PromptClickableSegment) {
     if (!textareaEl || !segment.clickable) return;
 
