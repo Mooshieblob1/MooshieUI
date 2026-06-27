@@ -51,6 +51,8 @@ class AutocompleteStore {
   private _nameFirstChar: Map<string, SearchEntry[]> = new Map();
   /** First-character bucket index on aliases. */
   private _aliasFirstChar: Map<string, SearchEntry[]> = new Map();
+  /** Normalized known tag names + aliases for spell-check membership tests. */
+  private _knownTagSet: Set<string> = new Set();
   /** Bumps every rebuild so a stale chunked build can abort itself. */
   private _indexVersion = 0;
   private _isAnima = false;
@@ -72,12 +74,14 @@ class AutocompleteStore {
     tag: TagEntry,
     nameBuckets: Map<string, SearchEntry[]>,
     aliasBuckets: Map<string, SearchEntry[]>,
+    knownSet: Set<string>,
   ): SearchEntry {
     const nameLower = tag.n.toLowerCase();
     const aliasesLower = tag.a ? tag.a.map((alias) => alias.toLowerCase()) : [];
     const entry: SearchEntry = { tag, nameLower, aliasesLower };
 
     if (nameLower.length > 0) {
+      knownSet.add(this.normalizeQuery(nameLower));
       const key = nameLower.charAt(0);
       let bucket = nameBuckets.get(key);
       if (!bucket) {
@@ -91,6 +95,7 @@ class AutocompleteStore {
       const seen = new Set<string>();
       for (const alias of aliasesLower) {
         if (alias.length === 0) continue;
+        knownSet.add(this.normalizeQuery(alias));
         const key = alias.charAt(0);
         if (seen.has(key)) continue;
         seen.add(key);
@@ -118,15 +123,17 @@ class AutocompleteStore {
     const SYNC_THRESHOLD = 20000;
     const nameBuckets = new Map<string, SearchEntry[]>();
     const aliasBuckets = new Map<string, SearchEntry[]>();
+    const knownSet = new Set<string>();
 
     if (tags.length <= SYNC_THRESHOLD) {
       const entries: SearchEntry[] = new Array(tags.length);
       for (let i = 0; i < tags.length; i++) {
-        entries[i] = this.indexOne(tags[i], nameBuckets, aliasBuckets);
+        entries[i] = this.indexOne(tags[i], nameBuckets, aliasBuckets, knownSet);
       }
       this._searchEntries = entries;
       this._nameFirstChar = nameBuckets;
       this._aliasFirstChar = aliasBuckets;
+      this._knownTagSet = knownSet;
       return;
     }
 
@@ -136,7 +143,7 @@ class AutocompleteStore {
       if (version !== this._indexVersion) return;
       const end = Math.min(start + CHUNK, tags.length);
       for (let i = start; i < end; i++) {
-        entries[i] = this.indexOne(tags[i], nameBuckets, aliasBuckets);
+        entries[i] = this.indexOne(tags[i], nameBuckets, aliasBuckets, knownSet);
       }
       if (end < tags.length) {
         setTimeout(() => buildChunk(end), 0);
@@ -146,6 +153,7 @@ class AutocompleteStore {
       this._searchEntries = entries;
       this._nameFirstChar = nameBuckets;
       this._aliasFirstChar = aliasBuckets;
+      this._knownTagSet = knownSet;
     };
     buildChunk(0);
   }
@@ -298,6 +306,18 @@ class AutocompleteStore {
     }
 
     return [exactMatch, ...combined.filter((tag) => tag.n !== exactMatch.n)].slice(0, safeLimit);
+  }
+
+  /**
+   * True if `name` normalizes to a known tag name or alias in the active corpus.
+   * Blank input and an empty/not-yet-built index both return true so nothing is
+   * spuriously flagged as misspelled.
+   */
+  isKnownTag(name: string): boolean {
+    if (this._knownTagSet.size === 0) return true;
+    const q = this.normalizeQuery(name);
+    if (!q) return true;
+    return this._knownTagSet.has(q);
   }
 
   async loadSettings() {
