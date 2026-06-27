@@ -265,6 +265,7 @@ const MODELHUB_COMMANDS: &[&str] = &[
     "civitai_list_architectures",
     "civitai_lookup_hash",
     "download_model",
+    "cancel_download",
     "get_model_install_dirs",
 ];
 
@@ -4075,6 +4076,14 @@ async fn dispatch_command(
             Ok(serde_json::json!({ "content": content }))
         }
 
+        "cancel_download" => {
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            state.request_download_cancel(&filename);
+            Ok(serde_json::Value::Null)
+        }
         "download_model" => {
             let url = args["url"].as_str().ok_or("Missing url")?.to_string();
             let category = args["category"]
@@ -4183,10 +4192,19 @@ async fn dispatch_command(
                     });
                 };
 
+            state.clear_download_cancel(&filename);
             progress_event(&event_tx, &filename, 0, total, false);
             let mut resp = resp;
             while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
                 use std::io::Write;
+                // Abort cleanly if the user cancelled this download (#399).
+                if state.is_download_cancelled(&filename) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&dest);
+                    state.clear_download_cancel(&filename);
+                    progress_event(&event_tx, &filename, downloaded, total, true);
+                    return Err(format!("Download cancelled: {}", filename));
+                }
                 if let Err(e) = file.write_all(&chunk) {
                     drop(file);
                     let _ = std::fs::remove_file(&dest);

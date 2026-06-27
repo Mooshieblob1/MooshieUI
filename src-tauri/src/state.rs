@@ -515,6 +515,10 @@ pub struct AppState {
     pub model_requests: ModelRequestState,
     /// Notification system for global and per-user notifications.
     pub notifications: NotificationState,
+    /// Filenames whose in-progress model download has been asked to cancel.
+    /// `download_model_file` (and the browser-mode download loop) check this each
+    /// chunk and abort cleanly, deleting the partial file (#399).
+    pub download_cancels: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 fn is_private_or_local_host(host: &str) -> bool {
@@ -569,12 +573,36 @@ impl AppState {
             last_preview_by_prompt: std::sync::RwLock::new(HashMap::new()),
             model_requests: ModelRequestState::new(),
             notifications: NotificationState::new(),
+            download_cancels: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
     pub async fn base_url(&self) -> String {
         let config = self.config.read().await;
         config.server_url.clone()
+    }
+
+    /// Request cancellation of an in-progress model download by filename (#399).
+    pub fn request_download_cancel(&self, filename: &str) {
+        if let Ok(mut set) = self.download_cancels.lock() {
+            set.insert(filename.to_string());
+        }
+    }
+
+    /// Whether a cancel has been requested for `filename`. Does not clear the flag.
+    pub fn is_download_cancelled(&self, filename: &str) -> bool {
+        self.download_cancels
+            .lock()
+            .map(|set| set.contains(filename))
+            .unwrap_or(false)
+    }
+
+    /// Clear any pending cancel flag for `filename` (called when a download
+    /// starts and when it finishes/aborts) so a later retry is not killed instantly.
+    pub fn clear_download_cancel(&self, filename: &str) {
+        if let Ok(mut set) = self.download_cancels.lock() {
+            set.remove(filename);
+        }
     }
 
     /// Free the prompt-assistant LLM's GPU memory before an image generation.
