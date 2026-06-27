@@ -15,6 +15,11 @@
     getPromptClickableSegments,
     type PromptClickableSegment,
   } from "../../utils/promptClickableRanges.js";
+  import {
+    getUnknownTagRanges,
+    buildSpellcheckPieces,
+    type SpellcheckPiece,
+  } from "../../utils/promptSpellcheck.js";
   import { SYNTAX_ANGLE_LOOKBEHIND } from "../../utils/promptSyntaxEscape.js";
 
   interface Props {
@@ -43,6 +48,7 @@
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
   let backdropEl = $state<HTMLDivElement | null>(null);
   let clickOverlayEl = $state<HTMLDivElement | null>(null);
+  let spellcheckOverlayEl = $state<HTMLDivElement | null>(null);
   let scrollbarWidth = $state(0);
 
   function updateScrollbarWidth() {
@@ -499,6 +505,20 @@
   );
   const showClickableOverlay = $derived(autocomplete.clickableOverlayEnabled && clickableSegments.length > 0);
 
+  // Exclude the token under the caret only when there's no active selection.
+  const spellcheckCaret = $derived(selectionStart === selectionEnd ? selectionStart : -1);
+  const spellcheckRanges = $derived(
+    autocomplete.spellcheckEnabled
+      ? getUnknownTagRanges(value, (n) => autocomplete.isKnownTag(n), spellcheckCaret)
+      : [],
+  );
+  const showSpellcheckOverlay = $derived(
+    autocomplete.spellcheckEnabled && spellcheckRanges.length > 0,
+  );
+  const spellcheckPieces = $derived(
+    showSpellcheckOverlay ? buildSpellcheckPieces(value.length, spellcheckRanges) : [],
+  );
+
   function handleClickableSegmentMouseDown(event: MouseEvent, segment: PromptClickableSegment) {
     if (!textareaEl || !segment.clickable) return;
 
@@ -525,6 +545,10 @@
     if (textareaEl && clickOverlayEl) {
       clickOverlayEl.scrollTop = textareaEl.scrollTop;
       clickOverlayEl.scrollLeft = textareaEl.scrollLeft;
+    }
+    if (textareaEl && spellcheckOverlayEl) {
+      spellcheckOverlayEl.scrollTop = textareaEl.scrollTop;
+      spellcheckOverlayEl.scrollLeft = textareaEl.scrollLeft;
     }
   }
 
@@ -714,6 +738,7 @@
     <textarea
       bind:this={textareaEl}
       bind:value
+      spellcheck={false}
       {placeholder}
       {rows}
       class="w-full border border-neutral-700 rounded-lg px-3 py-2 text-sm leading-5 text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors break-words {minHeight} {showBackdrop ? 'bg-transparent' : 'bg-neutral-800'}"
@@ -750,6 +775,26 @@
             >{value.slice(segment.start, segment.end)}</span>
           {:else}
             <span style="color: transparent;">{value.slice(segment.start, segment.end)}</span>
+          {/if}
+        {/each}
+      </div>
+    {/if}
+
+    {#if showSpellcheckOverlay}
+      <div
+        bind:this={spellcheckOverlayEl}
+        aria-hidden="true"
+        class="absolute inset-0 overflow-hidden rounded-lg px-3 py-2 text-sm leading-5 whitespace-pre-wrap break-words border border-transparent select-none"
+        style="pointer-events: none; color: transparent; z-index: 3; right: {scrollbarWidth}px;"
+      >
+        {#each spellcheckPieces as piece (piece.start + ':' + piece.end)}
+          {#if piece.unknown}
+            <span
+              class="underline decoration-wavy decoration-red-500 underline-offset-2"
+              style="color: transparent; text-decoration-skip-ink: none;"
+            >{value.slice(piece.start, piece.end)}</span>
+          {:else}
+            <span style="color: transparent;">{value.slice(piece.start, piece.end)}</span>
           {/if}
         {/each}
       </div>
