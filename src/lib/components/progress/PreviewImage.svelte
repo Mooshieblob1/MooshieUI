@@ -2,6 +2,7 @@
   import { progress } from "../../stores/progress.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { canvas } from "../../stores/canvas.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { generate, uploadImageBytes, downloadModel } from "../../utils/api.js";
@@ -120,6 +121,64 @@
     }
   }
 
+  /** Resolve the current preview image to a ComfyUI input/ filename, uploading the
+   *  client-held bytes (saved gallery image) or the preview URL (browser-mode blob:)
+   *  as needed. Returns null (and toasts) when there is no usable image. Shared by
+   *  Refine and the send-to-img2img / send-to-inpaint buttons. */
+  async function resolvePreviewUploadName(prefix: string): Promise<string | null> {
+    const savedImage = getActiveSavedImage();
+    if (!savedImage && !progress.lastOutputImage) {
+      gallery.showToast(locale.t("preview.not_available"), "info");
+      return null;
+    }
+    if (savedImage) {
+      const source = await loadOutputImageForGenerationInput(savedImage, `${prefix}_${Date.now()}.png`);
+      const upload = await uploadImageBytes(source.bytes, source.filename);
+      return upload.name;
+    }
+    const sourceUrl = previewSrc ?? progress.lastOutputImage;
+    if (!sourceUrl) {
+      gallery.showToast(locale.t("preview.not_available"), "info");
+      return null;
+    }
+    return uploadImageUrlForGenerationInput(sourceUrl, `${prefix}_${Date.now()}.png`);
+  }
+
+  /** Load the current preview into img2img mode without starting a generation (#391). */
+  async function sendToImg2img() {
+    try {
+      const uploadName = await resolvePreviewUploadName("img2img");
+      if (!uploadName) return;
+      generation.inputImage = uploadName;
+      generation.mode = "img2img";
+      generation.refineOnly = false;
+      generation.upscaleEnabled = false;
+      gallery.showToast(locale.t("gallery.toast.loaded_img2img"), "success");
+    } catch (e) {
+      console.error("Send to img2img failed:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
+    }
+  }
+
+  /** Load the current preview into inpainting mode (with canvas) without generating (#391). */
+  async function sendToInpaint() {
+    try {
+      const uploadName = await resolvePreviewUploadName("inpaint");
+      if (!uploadName) return;
+      generation.inputImage = uploadName;
+      generation.mode = "inpainting";
+      canvas.clearMask();
+      canvas.isCanvasMode = true;
+      const refUrl = previewSrc ?? progress.lastOutputImage;
+      if (refUrl) canvas.setReferenceImage(refUrl);
+      if (canvas.layers.length === 0) canvas.initCanvas(generation.width, generation.height);
+      gallery.showToast(locale.t("generation.toast.loaded_inpaint"), "success");
+    } catch (e) {
+      console.error("Send to inpaint failed:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
+    }
+  }
+
   async function upscaleImage() {
     // The Refine button takes the most-recent output and runs it back through
     // the upscale chain (MooshieUI's "refiner") at low denoise — analogous to
@@ -127,26 +186,9 @@
     //
     // ComfyUI needs a real input/ filename here. Browser-mode preview URLs can
     // be blob: URLs, so resolve the client-held bytes first and upload them.
-    const savedImage = getActiveSavedImage();
-    if (!savedImage && !progress.lastOutputImage) {
-      gallery.showToast(locale.t("preview.not_available"), "info");
-      return;
-    }
-
     try {
-      let uploadName: string;
-      if (savedImage) {
-        const source = await loadOutputImageForGenerationInput(savedImage, `refine_${Date.now()}.png`);
-        const upload = await uploadImageBytes(source.bytes, source.filename);
-        uploadName = upload.name;
-      } else {
-        const sourceUrl = previewSrc ?? progress.lastOutputImage;
-        if (!sourceUrl) {
-          gallery.showToast(locale.t("preview.not_available"), "info");
-          return;
-        }
-        uploadName = await uploadImageUrlForGenerationInput(sourceUrl, `refine_${Date.now()}.png`);
-      }
+      const uploadName = await resolvePreviewUploadName("refine");
+      if (!uploadName) return;
 
       const params = generation.toParams() as GenerationParams;
       params.mode = "img2img";
@@ -324,6 +366,22 @@
             {locale.t('preview.upscale')}
           </button>
         {/if}
+        <button
+          onclick={sendToImg2img}
+          class="flex items-center justify-center w-8 h-8 bg-neutral-700 hover:bg-neutral-600 text-white rounded-lg shadow-lg transition-colors"
+          title={locale.t('gallery.send_to_img2img')}
+          aria-label={locale.t('gallery.send_to_img2img')}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        </button>
+        <button
+          onclick={sendToInpaint}
+          class="flex items-center justify-center w-8 h-8 bg-neutral-700 hover:bg-neutral-600 text-white rounded-lg shadow-lg transition-colors"
+          title={locale.t('gallery.send_to_inpaint')}
+          aria-label={locale.t('gallery.send_to_inpaint')}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+        </button>
         <button
           onclick={handleSave}
           class="flex items-center gap-1.5 bg-neutral-700 hover:bg-neutral-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg shadow-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"

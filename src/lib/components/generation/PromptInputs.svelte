@@ -67,7 +67,7 @@
   let _pendingAction = $state<"enhance" | "compose" | null>(null);
 
   async function onEnhanceClick() {
-    if (!promptAssistant.hasInstalledModel) {
+    if (!promptAssistant.isAvailable) {
       _pendingAction = "enhance";
       promptAssistant.setupModalOpen = true;
       return;
@@ -95,7 +95,7 @@
   }
 
   function onComposeClick() {
-    if (!promptAssistant.hasInstalledModel) {
+    if (!promptAssistant.isAvailable) {
       _pendingAction = "compose";
       promptAssistant.setupModalOpen = true;
       return;

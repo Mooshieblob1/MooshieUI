@@ -1,4 +1,5 @@
 import { ipcListen } from "../utils/ipc.js";
+import { cancelDownload } from "../utils/api.js";
 
 export interface DownloadEntry {
   filename: string;
@@ -21,6 +22,22 @@ class DownloadsStore {
     return this.active.size > 0;
   }
 
+  /** Whether a cancel request is pending for this filename (UI shows a spinner/disabled state) */
+  cancelling = $state<Set<string>>(new Set());
+
+  /** Ask the backend to cancel an in-progress download. The backend deletes the
+   *  partial file and emits a final `done` progress event, which clears the row. */
+  async cancel(filename: string) {
+    this.cancelling = new Set(this.cancelling.add(filename));
+    try {
+      await cancelDownload(filename);
+    } catch (e) {
+      console.error("Failed to cancel download:", e);
+      this.cancelling.delete(filename);
+      this.cancelling = new Set(this.cancelling);
+    }
+  }
+
   /** Start listening for download:progress events from the backend */
   async init() {
     await ipcListen("download:progress", (event: any) => {
@@ -35,6 +52,9 @@ class DownloadsStore {
         this.speedTracker.delete(data.filename);
         const entry: DownloadEntry = { ...data, speed: 0 };
         this.active = new Map(this.active.set(data.filename, entry));
+        if (this.cancelling.delete(data.filename)) {
+          this.cancelling = new Set(this.cancelling);
+        }
         setTimeout(() => {
           this.active.delete(data.filename);
           this.active = new Map(this.active);

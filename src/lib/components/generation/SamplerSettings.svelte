@@ -263,27 +263,40 @@
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.sampler.seed')}<InfoTip text={locale.t('generation.sampler.seed_tip')} /></span>
-        <button
-          class="text-[10px] px-1.5 py-0.5 rounded {randomSeed
-            ? 'bg-indigo-600 text-white'
-            : 'bg-neutral-700 text-neutral-300'} transition-colors"
-          onclick={() => (generation.seed = randomSeed ? (progress.lastCompletedSeed ?? 0) : -1)}
-        >
-          {locale.t('generation.sampler.seed_random')}
-        </button>
-      </label>
-      {#if !randomSeed}
-        <input
-          type="number"
-          bind:value={generation.seed}
-          min="0"
-          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
-        />
-      {:else}
-        <div class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-500">
-          {locale.t('generation.sampler.random_display')}
+        <div class="flex items-center gap-1">
+          {#if progress.lastCompletedSeed != null}
+            <button
+              class="text-[10px] px-1.5 py-0.5 rounded bg-neutral-700 text-neutral-300 hover:bg-neutral-600 transition-colors"
+              onclick={() => (generation.seed = progress.lastCompletedSeed!)}
+              title={locale.t('generation.sampler.seed_use_last_tip')}
+            >
+              {locale.t('generation.sampler.seed_use_last')}
+            </button>
+          {/if}
+          <button
+            class="text-[10px] px-1.5 py-0.5 rounded {randomSeed
+              ? 'bg-indigo-600 text-white'
+              : 'bg-neutral-700 text-neutral-300'} transition-colors"
+            onclick={() => (generation.seed = randomSeed ? (progress.lastCompletedSeed ?? 0) : -1)}
+          >
+            {locale.t('generation.sampler.seed_random')}
+          </button>
         </div>
-      {/if}
+      </label>
+      <!-- Single editable box: shows "Random" as a placeholder when RNG is on, and
+           typing a value switches off RNG automatically — no need to toggle first (#394). -->
+      <input
+        type="number"
+        min="0"
+        value={randomSeed ? '' : generation.seed}
+        placeholder={locale.t('generation.sampler.random_display')}
+        oninput={(e) => {
+          const raw = e.currentTarget.value.trim();
+          const n = Number(raw);
+          generation.seed = raw === '' || Number.isNaN(n) ? -1 : Math.max(0, Math.floor(n));
+        }}
+        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+      />
     </div>
     <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">

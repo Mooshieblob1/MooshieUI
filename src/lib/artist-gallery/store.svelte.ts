@@ -1,6 +1,5 @@
 import { createArtistGalleryClient } from "./client.js";
 import { cdnFetch, proxiedCdnUrl } from "../utils/cdnFetch.js";
-import { isBrowserMode } from "../utils/ipc.js";
 import type {
   ArtistEntry,
   ArtistGalleryClient,
@@ -160,19 +159,12 @@ export class ArtistGalleryStore {
     this.manifestError = null;
     try {
       const manifest = await this.client.loadManifest();
-      // In browser/server mode, rewrite the manifest's `imageBaseUrl` so that
-      // image URLs used by `<img src>` and `imageCache.fetch()` go through the
-      // server's `/internal-api/_cdn/...` proxy. Otherwise the CDN's missing
-      // CORS headers block every fetch from the gallery's origin (e.g.
-      // `mooshieui.gpu.garden`). In Tauri mode the CDN is hit directly because
-      // image element loads bypass CORS and JSON fetches are routed through
-      // the `cdn_proxy_fetch` command.
-      if (isBrowserMode && manifest.imageBaseUrl?.startsWith("https://cdn.mooshieblob.com")) {
-        manifest.imageBaseUrl = manifest.imageBaseUrl.replace(
-          "https://cdn.mooshieblob.com",
-          "/internal-api/_cdn",
-        );
-      }
+      // `imageBaseUrl` stays absolute (cdn.mooshieblob.com). The browser-mode
+      // proxy rewrite (`/internal-api/_cdn/...`) AND the LAN auth-token
+      // injection happen at the point of use via `proxiedCdnUrl()` / `cachedSrc`.
+      // Rewriting the base here would drop the token — a query param can't ride
+      // on a base URL that later has `/images/...` concatenated onto it — so
+      // every `<img src>` would be rejected with a 401 by the LAN auth gate.
       this.manifest = manifest;
     } catch (err) {
       this.manifestError = err instanceof Error ? err.message : String(err);

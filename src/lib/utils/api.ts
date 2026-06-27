@@ -141,6 +141,11 @@ export async function downloadModel(
   return ipcInvoke("download_model", { url, category, filename, installDir, expectedSha256 });
 }
 
+/** Cancel an in-progress model download by filename. The backend deletes the partial file. */
+export async function cancelDownload(filename: string): Promise<void> {
+  return ipcInvoke("cancel_download", { filename });
+}
+
 export interface ModelInstallDir {
   path: string;
   label: string;

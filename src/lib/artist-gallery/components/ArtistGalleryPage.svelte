@@ -146,7 +146,7 @@
   async function openHit(hit: ArtistSearchHit, index = -1) {
     // Instant open: build entry immediately from cached search index data
     const imageUrl = store.manifest && hit.hasImage && hit.imageId
-      ? `${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${hit.imageId}.${imgExt()}`
+      ? proxiedCdnUrl(`${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${hit.imageId}.${imgExt()}`)
       : "";
     store.lightboxEntry = { tag: hit.tag, slug: hit.slug, imageId: hit.imageId, imageUrl, objectKey: "", postCount: hit.postCount, belowThreshold: hit.belowThreshold, b: hit.b, aliases: [], hasImage: hit.hasImage };
     store.lightboxIndex = index;
@@ -243,7 +243,7 @@
     const variant = Math.min(store.resolveVariant(hit.slug), count);
     const imageId = imageIdForVariant(hit, variant);
     if (!imageId) return "";
-    return `${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${imageId}.${imgExt()}`;
+    return proxiedCdnUrl(`${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${imageId}.${imgExt()}`);
   }
 
   // Variant state for the open lightbox entry (kept in sync with its grid card).
@@ -478,7 +478,7 @@
     for (let p = start; p <= end; p++) {
       for (const hit of sortedEntries.slice((p - 1) * pageSize, p * pageSize)) {
         if (hit.hasImage && hit.imageId) {
-          urls.push(`${imageBaseUrl}/${releasePrefix}/images/${hit.imageId}.${imgExt()}`);
+          urls.push(proxiedCdnUrl(`${imageBaseUrl}/${releasePrefix}/images/${hit.imageId}.${imgExt()}`));
         }
       }
     }
