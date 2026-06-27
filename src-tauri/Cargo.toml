@@ -71,7 +71,7 @@ ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "n
 csv = { version = "1", optional = true }
 axum = { version = "0.8", features = ["tokio"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
-tower-http = { version = "0.6", features = ["fs", "cors"] }
+tower-http = { version = "0.7", features = ["fs", "cors"] }
 subtle = "2"
 mime_guess = "2"
 tokio-stream = { version = "0.1", features = ["sync"] }
