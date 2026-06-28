@@ -809,6 +809,20 @@ pub async fn download_model(
         .await
 }
 
+/// Resolve the real filename a download URL points to (read from the server's
+/// `Content-Disposition` header) without downloading the file. Returns `None`
+/// when the server reports no usable name, so the Model Hub can fall back to
+/// URL-based inference. Used to autopopulate the direct-download filename field,
+/// including for CivitAI links whose filename is not present in the URL.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn resolve_download_filename(
+    state: State<'_, Arc<AppState>>,
+    url: String,
+) -> Result<Option<String>, AppError> {
+    state.resolve_download_filename(&url).await
+}
+
 /// Request cancellation of an in-progress model download by filename. The running
 /// download loop checks this flag each chunk, deletes the partial file and stops (#399).
 #[cfg(feature = "desktop")]

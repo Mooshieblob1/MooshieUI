@@ -20,6 +20,13 @@ fn is_huggingface_url(url: &str) -> bool {
         .is_some_and(|host| host == "huggingface.co" || host.ends_with(".huggingface.co"))
 }
 
+fn is_civitai_url(url: &str) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(|host| host.to_ascii_lowercase()))
+        .is_some_and(|host| host == "civitai.com" || host.ends_with(".civitai.com"))
+}
+
 pub fn huggingface_token_for_url(url: &str) -> Option<String> {
     if !is_huggingface_url(url) {
         return None;
@@ -39,9 +46,74 @@ pub fn download_status_error_message(url: &str, status: reqwest::StatusCode) -> 
         format!(
             "Failed to download {url}: HTTP {status}. This Hugging Face file requires access; set HF_TOKEN, HUGGINGFACE_HUB_TOKEN, or HUGGINGFACE_TOKEN, or install the file manually."
         )
+    } else if is_civitai_url(url) && matches!(status.as_u16(), 401 | 403 | 404) {
+        format!(
+            "Failed to download {url}: HTTP {status}. CivitAI rejected this download. The model version may have been removed, or it requires an account that can view restricted/mature content. Add a valid CivitAI API key in Settings (it is shared with the Model Hub) and confirm your account can access this model."
+        )
     } else {
         format!("Failed to download {url}: HTTP {status}")
     }
+}
+
+/// Decode a percent-encoded string (`%XX` sequences). Invalid sequences are kept
+/// verbatim. Used for RFC 5987 `filename*=UTF-8''...` Content-Disposition values.
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Reject path separators / traversal so a server-supplied filename can never
+/// escape the destination directory.
+fn sanitize_download_filename(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+        return None;
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains('\0') {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+/// Extract a safe filename from a `Content-Disposition` header value, handling
+/// RFC 5987 `filename*=UTF-8''...` (percent-encoded) and quoted/plain `filename=`.
+fn filename_from_content_disposition(value: &str) -> Option<String> {
+    let lower = value.to_ascii_lowercase();
+
+    if let Some(idx) = lower.find("filename*=") {
+        let rest = &value[idx + "filename*=".len()..];
+        let token = rest.split(';').next().unwrap_or("").trim();
+        // Strip an optional `charset'lang'` prefix (e.g. `UTF-8''name`).
+        let encoded = token.rsplit('\'').next().unwrap_or(token);
+        if let Some(name) = sanitize_download_filename(&percent_decode(encoded)) {
+            return Some(name);
+        }
+    }
+
+    if let Some(idx) = lower.find("filename=") {
+        let rest = &value[idx + "filename=".len()..];
+        let token = rest.split(';').next().unwrap_or("");
+        if let Some(name) = sanitize_download_filename(token) {
+            return Some(name);
+        }
+    }
+
+    None
 }
 
 pub fn reject_non_model_download_content_type(
@@ -651,6 +723,55 @@ impl AppState {
         validate_downloaded_model_file(&dest, filename)?;
 
         Ok(())
+    }
+
+    /// Resolve the real filename a URL would download to, without downloading the
+    /// file. Sends a ranged GET so only headers (not the body) cross the wire,
+    /// follows redirects, and reads the `Content-Disposition` filename the server
+    /// reports — CivitAI download links carry the name there, not in the URL.
+    /// Auth is attached per host (CivitAI key from config, Hugging Face token from
+    /// env) so the lookup matches what an authenticated download would see, with no
+    /// cross-host token leakage. Returns `Ok(None)` (never an error) when no usable
+    /// filename is found, so callers can silently fall back to URL-based inference.
+    pub async fn resolve_download_filename(&self, url: &str) -> Result<Option<String>, AppError> {
+        let parsed = match reqwest::Url::parse(url) {
+            Ok(parsed) => parsed,
+            Err(_) => return Ok(None),
+        };
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Ok(None);
+        }
+
+        let mut req = self
+            .http_client
+            .get(url)
+            .header(reqwest::header::RANGE, "bytes=0-0");
+        if is_civitai_url(url) {
+            let key = self.config.read().await.civitai_api_key.clone();
+            if let Some(key) = key.filter(|v| !v.trim().is_empty()) {
+                req = req.bearer_auth(key);
+            }
+        } else if let Some(token) = huggingface_token_for_url(url) {
+            req = req.bearer_auth(token);
+        }
+
+        let resp = match req.send().await {
+            Ok(resp) => resp,
+            Err(_) => return Ok(None),
+        };
+        let status = resp.status();
+        if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Ok(None);
+        }
+
+        let filename = resp
+            .headers()
+            .get(reqwest::header::CONTENT_DISPOSITION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(filename_from_content_disposition);
+        // Drop the response without reading the body so the file never streams.
+        drop(resp);
+        Ok(filename)
     }
 
     pub async fn get_output_image_bytes(

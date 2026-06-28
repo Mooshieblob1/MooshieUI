@@ -1398,6 +1398,9 @@ const en: Record<string, string> = {
   "settings.autocomplete.enabled_desc": "Show tag suggestions while typing in the prompt box.",
   "settings.autocomplete.clickable_overlay": "Enable clickable tag overlay",
   "settings.autocomplete.clickable_overlay_desc": "Show clickable tag and weight highlights in prompt boxes for quick selection. Schedule and preset highlighting stays separate.",
+  "settings.autocomplete.spellcheck": "Tag spell check",
+  "settings.autocomplete.spellcheck_desc": "Underline tags that aren't known Danbooru tags and suggest corrections on right-click.",
+  "generation.prompt.spellcheck_no_suggestions": "No suggestions",
 
   "settings.interrogator.thresholds_desc": "Controls confidence thresholds for the image interrogator (pixai-tagger). Lower values return more tags, higher values are more selective.",
   "settings.interrogator.more_tags": "More tags",

@@ -2,6 +2,7 @@ import { ipcStore } from "../utils/ipc.js";
 import { triggerSync } from "../utils/syncTrigger.js";
 import { locale } from "./locale.svelte.js";
 import builtinTags from "../assets/danbooru-tags.json";
+import { damerauLevenshtein } from "../utils/promptSpellcheck.js";
 
 export interface TagEntry {
   n: string; // name
@@ -37,6 +38,8 @@ class AutocompleteStore {
   enabled = $state(true);
   /** Whether prompt textareas show the clickable tag/weight overlay */
   clickableOverlayEnabled = $state(true);
+  /** Whether the Danbooru tag-aware spell checker (underlines + right-click suggestions) is on */
+  spellcheckEnabled = $state(true);
   /** Whether a custom taglist is currently loading */
   loading = $state(false);
   /** Error message if loading failed */
@@ -49,6 +52,8 @@ class AutocompleteStore {
   private _nameFirstChar: Map<string, SearchEntry[]> = new Map();
   /** First-character bucket index on aliases. */
   private _aliasFirstChar: Map<string, SearchEntry[]> = new Map();
+  /** Normalized known tag names + aliases for spell-check membership tests. */
+  private _knownTagSet: Set<string> = new Set();
   /** Bumps every rebuild so a stale chunked build can abort itself. */
   private _indexVersion = 0;
   private _isAnima = false;
@@ -70,12 +75,14 @@ class AutocompleteStore {
     tag: TagEntry,
     nameBuckets: Map<string, SearchEntry[]>,
     aliasBuckets: Map<string, SearchEntry[]>,
+    knownSet: Set<string>,
   ): SearchEntry {
     const nameLower = tag.n.toLowerCase();
     const aliasesLower = tag.a ? tag.a.map((alias) => alias.toLowerCase()) : [];
     const entry: SearchEntry = { tag, nameLower, aliasesLower };
 
     if (nameLower.length > 0) {
+      knownSet.add(this.normalizeQuery(nameLower));
       const key = nameLower.charAt(0);
       let bucket = nameBuckets.get(key);
       if (!bucket) {
@@ -89,6 +96,7 @@ class AutocompleteStore {
       const seen = new Set<string>();
       for (const alias of aliasesLower) {
         if (alias.length === 0) continue;
+        knownSet.add(this.normalizeQuery(alias));
         const key = alias.charAt(0);
         if (seen.has(key)) continue;
         seen.add(key);
@@ -116,15 +124,17 @@ class AutocompleteStore {
     const SYNC_THRESHOLD = 20000;
     const nameBuckets = new Map<string, SearchEntry[]>();
     const aliasBuckets = new Map<string, SearchEntry[]>();
+    const knownSet = new Set<string>();
 
     if (tags.length <= SYNC_THRESHOLD) {
       const entries: SearchEntry[] = new Array(tags.length);
       for (let i = 0; i < tags.length; i++) {
-        entries[i] = this.indexOne(tags[i], nameBuckets, aliasBuckets);
+        entries[i] = this.indexOne(tags[i], nameBuckets, aliasBuckets, knownSet);
       }
       this._searchEntries = entries;
       this._nameFirstChar = nameBuckets;
       this._aliasFirstChar = aliasBuckets;
+      this._knownTagSet = knownSet;
       return;
     }
 
@@ -134,7 +144,7 @@ class AutocompleteStore {
       if (version !== this._indexVersion) return;
       const end = Math.min(start + CHUNK, tags.length);
       for (let i = start; i < end; i++) {
-        entries[i] = this.indexOne(tags[i], nameBuckets, aliasBuckets);
+        entries[i] = this.indexOne(tags[i], nameBuckets, aliasBuckets, knownSet);
       }
       if (end < tags.length) {
         setTimeout(() => buildChunk(end), 0);
@@ -144,6 +154,7 @@ class AutocompleteStore {
       this._searchEntries = entries;
       this._nameFirstChar = nameBuckets;
       this._aliasFirstChar = aliasBuckets;
+      this._knownTagSet = knownSet;
     };
     buildChunk(0);
   }
@@ -298,6 +309,41 @@ class AutocompleteStore {
     return [exactMatch, ...combined.filter((tag) => tag.n !== exactMatch.n)].slice(0, safeLimit);
   }
 
+  /**
+   * True if `name` normalizes to a known tag name or alias in the active corpus.
+   * Blank input and an empty/not-yet-built index both return true so nothing is
+   * spuriously flagged as misspelled.
+   */
+  isKnownTag(name: string): boolean {
+    if (this._knownTagSet.size === 0) return true;
+    const q = this.normalizeQuery(name);
+    if (!q) return true;
+    return this._knownTagSet.has(q);
+  }
+
+  /**
+   * Fuzzy "did you mean" matches for an unknown tag. Damerau-Levenshtein over the
+   * active corpus, length-windowed and early-exited so it stays cheap even on large
+   * custom lists. Only ever called on a right-click, never per keystroke.
+   */
+  suggestSimilar(name: string, limit = 6): TagEntry[] {
+    const q = this.normalizeQuery(name);
+    if (!q) return [];
+    const maxDist = q.length <= 4 ? 1 : q.length <= 8 ? 2 : 3;
+
+    const scored: { tag: TagEntry; dist: number }[] = [];
+    const entries = this._searchEntries;
+    for (let i = 0; i < entries.length; i++) {
+      const n = entries[i].nameLower;
+      if (Math.abs(n.length - q.length) > maxDist) continue;
+      const d = damerauLevenshtein(q, n, maxDist);
+      if (d <= maxDist) scored.push({ tag: entries[i].tag, dist: d });
+    }
+
+    scored.sort((a, b) => a.dist - b.dist || b.tag.p - a.tag.p);
+    return scored.slice(0, Math.max(1, limit)).map((s) => s.tag);
+  }
+
   async loadSettings() {
     try {
       this._storeReady = true;
@@ -305,6 +351,7 @@ class AutocompleteStore {
       if (saved) {
         if (saved.enabled === false) this.enabled = false;
         if (saved.clickableOverlayEnabled === false) this.clickableOverlayEnabled = false;
+        if (saved.spellcheckEnabled === false) this.spellcheckEnabled = false;
         if (saved.maxResults) this.maxResults = saved.maxResults;
         if (saved.sourceMode) this.sourceMode = saved.sourceMode;
         if (saved.sourceUrl) this.sourceUrl = saved.sourceUrl;
@@ -341,6 +388,7 @@ class AutocompleteStore {
       await ipcStore.set(STORE_KEY, {
         enabled: this.enabled,
         clickableOverlayEnabled: this.clickableOverlayEnabled,
+        spellcheckEnabled: this.spellcheckEnabled,
         maxResults: this.maxResults,
         sourceMode: this.sourceMode,
         sourceUrl: this.sourceUrl,
@@ -471,6 +519,7 @@ class AutocompleteStore {
   collectPrefs(): Record<string, unknown> {
     return {
       clickableOverlayEnabled: this.clickableOverlayEnabled,
+      spellcheckEnabled: this.spellcheckEnabled,
       maxResults: this.maxResults,
       sourceMode: this.sourceMode,
       sourceUrl: this.sourceUrl,

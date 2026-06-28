@@ -375,6 +375,7 @@ pub fn run() {
             commands::api::get_output_image,
             commands::api::get_client_id,
             commands::api::download_model,
+            commands::api::resolve_download_filename,
             commands::api::cancel_download,
             commands::api::get_model_install_dirs,
             commands::api::list_model_files,

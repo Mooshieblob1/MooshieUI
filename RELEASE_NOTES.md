@@ -1,3 +1,25 @@
+## What's New in v1.4.29
+
+### Prompt tag spell check
+- **Danbooru tag-aware spell checker**: unknown or misspelled prompt tags are now underlined, and right-clicking one offers "did you mean" suggestions drawn from the Danbooru tag set. The browser's native spell check is disabled inside the prompt so it no longer fights the tag checker. The whole feature can be toggled in Settings.
+- **Suggestion menu replaces tags reliably**: choosing a "did you mean" suggestion now replaces the tag as intended. The menu previously closed itself before the replacement could apply, and it now also dismisses when you edit the prompt so it never acts on a stale position.
+
+### Model Hub
+- **One CivitAI API key**: the Model Hub and Settings now share a single CivitAI API key instead of keeping two separate copies. An existing key is migrated automatically, so entering it in either place now applies everywhere.
+- **Filenames fill in from direct URLs**: pasting a direct download URL now reads the filename from the server and fills in the save-as name automatically, instead of leaving it blank.
+- **Clearer CivitAI download failures**: a failed CivitAI download (401, 403, or 404) now explains the likely cause, that the model version may have been removed or that it requires an account that can view restricted or mature content, and points you to the shared API key in Settings, instead of showing a bare "404 Not Found".
+
+### Generation and gallery
+- **Generation and gallery UX fixes**: a batch of generation and gallery issues are resolved.
+- **External LLM endpoint**: the prompt assistant can now be pointed at an external LLM endpoint.
+- **Higher auto VRAM threshold**: automatic VRAM high-mode now engages at 24 GB.
+- **Linux image paste**: Ctrl+V now pastes an image into image-to-image and inpaint on Linux.
+
+### Maintenance
+- Dependency updates across the Rust and frontend packages.
+
+---
+
 ## What's New in v1.4.28
 
 ### Fixes

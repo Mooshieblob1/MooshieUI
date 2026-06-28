@@ -6,6 +6,7 @@
     getConfig,
     getModelInstallDirs,
     listCivitaiArchitectures,
+    resolveDownloadFilename,
     searchCivitaiModels,
     updateConfig,
     type ModelInstallDir,
@@ -410,21 +411,78 @@
     lastInferredDirectFilename = inferred;
   }
 
+  // Guards the async server-side filename lookup: only the newest request may
+  // write a result, and a pending debounce is cancelled when the URL changes.
+  let directFilenameResolveToken = 0;
+  let directFilenameResolveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function resolveDirectFilenameFromServer(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      return; // Not a full URL yet — keep the URL-inferred guess.
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+
+    const token = ++directFilenameResolveToken;
+    try {
+      // Pass the raw URL: the backend attaches per-host auth (CivitAI key /
+      // HF token) itself, so no token is leaked across hosts.
+      const resolved = await resolveDownloadFilename(trimmed);
+      if (token !== directFilenameResolveToken) return; // URL changed mid-flight.
+      const candidate = safeFilenameCandidate(resolved);
+      if (!candidate) return;
+      // Only overwrite when the user has not typed their own filename.
+      if (!directFilename.trim() || directFilename.trim() === lastInferredDirectFilename) {
+        directFilename = candidate;
+      }
+      lastInferredDirectFilename = candidate;
+    } catch {
+      // Best-effort: keep the URL-inferred name on failure.
+    }
+  }
+
   function handleDirectUrlInput(event: Event) {
     const value = (event.currentTarget as HTMLInputElement).value;
     directStatus = null;
     applyDirectUrlFilename(value);
+    // Debounce a server lookup that fills in names the URL itself does not carry
+    // (e.g. CivitAI /api/download/models/{id} links).
+    if (directFilenameResolveTimer) clearTimeout(directFilenameResolveTimer);
+    directFilenameResolveTimer = setTimeout(() => {
+      void resolveDirectFilenameFromServer(value);
+    }, 600);
   }
 
-  function loadApiKey() {
+  async function loadApiKey() {
+    // The CivitAI key now lives in AppConfig (shared with Settings and the backend
+    // lookup/download commands) instead of a separate localStorage copy.
+    let saved = "";
     try {
-      const saved = localStorage.getItem(CIVITAI_API_KEY_KEY) ?? "";
-      apiKey = saved;
-      apiKeyDraft = saved;
+      const cfg = await getConfig();
+      saved = (cfg.civitai_api_key ?? "").trim();
+      // One-time migration: older builds stored the key only in localStorage.
+      if (!saved) {
+        const legacy = (localStorage.getItem(CIVITAI_API_KEY_KEY) ?? "").trim();
+        if (legacy) {
+          saved = legacy;
+          cfg.civitai_api_key = legacy;
+          await updateConfig(cfg);
+        }
+      }
+      try {
+        localStorage.removeItem(CIVITAI_API_KEY_KEY);
+      } catch {
+        // Ignore storage failures — config is the source of truth.
+      }
     } catch {
-      apiKey = "";
-      apiKeyDraft = "";
+      saved = "";
     }
+    apiKey = saved;
+    apiKeyDraft = saved;
   }
 
   function loadCivitaiColumns() {
@@ -453,16 +511,8 @@
     keySaved = true;
     keyRecommended = false;
     error = null;
-    try {
-      if (normalized) {
-        localStorage.setItem(CIVITAI_API_KEY_KEY, normalized);
-      } else {
-        localStorage.removeItem(CIVITAI_API_KEY_KEY);
-      }
-    } catch {
-      // Ignore storage failures and keep runtime key only.
-    }
-    // Also persist to AppConfig so backend hash-lookup commands can use the key
+    // Persist to AppConfig — the single source of truth shared with Settings and
+    // the backend CivitAI lookup/download commands.
     getConfig().then((cfg) => {
       cfg.civitai_api_key = normalized || null;
       return updateConfig(cfg);
@@ -746,7 +796,21 @@
       return;
     }
 
-    const inferredFilename = inferDirectFilenameFromUrl(trimmedUrl);
+    let inferredFilename = inferDirectFilenameFromUrl(trimmedUrl);
+    // If neither the field nor the URL yields a name (e.g. a CivitAI download
+    // link), ask the server before giving up — covers the case where Download is
+    // clicked before the debounced lookup in handleDirectUrlInput has run.
+    if (!directFilename.trim() && !inferredFilename) {
+      try {
+        const resolved = safeFilenameCandidate(await resolveDownloadFilename(trimmedUrl));
+        if (resolved) {
+          inferredFilename = resolved;
+          lastInferredDirectFilename = resolved;
+        }
+      } catch {
+        // Fall through to the required-filename error below.
+      }
+    }
     const finalFilename = filenameWithOriginalExtension(
       directFilename.trim() || inferredFilename || "",
       inferredFilename,
@@ -893,7 +957,7 @@
   onMount(() => {
     let unlisten: (() => void) | null = null;
 
-    loadApiKey();
+    void loadApiKey();
     loadCivitaiColumns();
     loadArchitectureCache();
     void fetchArchitectures();
@@ -931,6 +995,7 @@
 
     return () => {
       if (unlisten) unlisten();
+      if (directFilenameResolveTimer) clearTimeout(directFilenameResolveTimer);
     };
   });
 </script>

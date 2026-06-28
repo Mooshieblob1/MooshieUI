@@ -146,6 +146,16 @@ export async function cancelDownload(filename: string): Promise<void> {
   return ipcInvoke("cancel_download", { filename });
 }
 
+/**
+ * Ask the backend for the real filename a download URL resolves to, read from the
+ * server's Content-Disposition header (no file is downloaded). Returns null when
+ * the server reports no usable name. Used to autopopulate the Model Hub direct
+ * download filename, including for CivitAI links whose name is not in the URL.
+ */
+export async function resolveDownloadFilename(url: string): Promise<string | null> {
+  return ipcInvoke("resolve_download_filename", { url });
+}
+
 export interface ModelInstallDir {
   path: string;
   label: string;
