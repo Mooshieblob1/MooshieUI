@@ -23,6 +23,8 @@ export const MODEL_FAMILIES = [
   "zit",
   "wan",
   "qwen",
+  "ideogram4",
+  "krea2",
   "auraflow",
   "pixart",
   "hunyuandit",
@@ -114,6 +116,8 @@ export const SPLIT_ONLY_FAMILIES: ReadonlySet<ModelFamily> = new Set([
   "flux2klein4b",
   "flux2klein4bbase",
   "chroma",
+  "ideogram4",
+  "krea2",
 ]);
 
 /** True when a family requires a separate text encoder (no baked CLIP). */

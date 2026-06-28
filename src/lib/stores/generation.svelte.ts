@@ -1118,6 +1118,28 @@ class GenerationStore {
         };
         break;
 
+      case "ideogram4":
+        preset = {
+          steps: 20,
+          cfg: 4.0,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      case "krea2":
+        preset = {
+          steps: this.hasTurboModelVariant ? 8 : 30,
+          cfg: this.hasTurboModelVariant ? 1.0 : 4.0,
+          samplerName: this.hasTurboModelVariant ? "euler" : "er_sde",
+          scheduler: this.hasTurboModelVariant ? "simple" : "sgm_uniform",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
       case "sdxl":
       case "mugen":
       case "unknown":

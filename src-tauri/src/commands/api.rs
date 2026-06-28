@@ -2834,6 +2834,12 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("qwen") {
         return "qwen";
     }
+    if bm == "ideogram 4.0" {
+        return "ideogram4";
+    }
+    if bm == "krea 2" {
+        return "krea2";
+    }
     // Wan Video bases are Anima fine-tunes in practice (animayume etc.) — keep
     // the legacy CivitAI baseModel → anima mapping.
     if bm.contains("wan video") || bm.contains("wan 2") || bm.contains("wan2") || bm == "wan" {
@@ -2985,6 +2991,12 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if name.contains("qwen") {
         return Some("qwen");
     }
+    if name.contains("ideogram4") {
+        return Some("ideogram4");
+    }
+    if name.contains("krea2") {
+        return Some("krea2");
+    }
     if name == "wan"
         || name.contains("wan video")
         || name.contains("wan 2")
@@ -3121,6 +3133,15 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
         return find_first_vae_matching(vaes, &["qwen"]).or_else(|| vaes.first().cloned());
     }
 
+    if family == "krea2" {
+        return find_first_vae_matching(vaes, &["qwen"]).or_else(|| vaes.first().cloned());
+    }
+
+    if family == "ideogram4" {
+        return find_first_vae_matching(vaes, &["flux2-vae", "flux2_vae"])
+            .or_else(|| vaes.first().cloned());
+    }
+
     if matches!(
         family,
         "flux2d" | "flux2klein9b" | "flux2klein9bbase" | "flux2klein4b" | "flux2klein4bbase"
@@ -3204,6 +3225,18 @@ fn recommended_clip_from_available(
         let preferred = find_first_text_encoder_matching(encoders, &["flan_t5_xxl", "t5_xxl"])
             .or_else(|| encoders.first().cloned())?;
         return Some((preferred, "chroma"));
+    }
+
+    if family == "ideogram4" {
+        let preferred = find_first_text_encoder_matching(encoders, &["qwen3vl-8b", "qwen3vl_8b", "qwen3-vl-8b", "qwen3_vl_8b"])
+            .or_else(|| encoders.first().cloned())?;
+        return Some((preferred, "ideogram4"));
+    }
+
+    if family == "krea2" {
+        let preferred = find_first_text_encoder_matching(encoders, &["qwen3vl-4b", "qwen3vl_4b", "qwen3-vl-4b", "qwen3_vl_4b"])
+            .or_else(|| encoders.first().cloned())?;
+        return Some((preferred, "krea2"));
     }
 
     Some((encoders.first()?.clone(), "wan"))

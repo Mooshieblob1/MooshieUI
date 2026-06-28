@@ -171,6 +171,8 @@
     zit: "Z-Image Turbo",
     wan: "Wan",
     qwen: "Qwen",
+    ideogram4: "Ideogram 4.0",
+    krea2: "Krea 2",
     auraflow: "AuraFlow",
     pixart: "PixArt",
     hunyuandit: "HunyuanDiT",
