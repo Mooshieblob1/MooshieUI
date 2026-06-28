@@ -1,4 +1,4 @@
-import { ipcInvoke, isBrowserMode, isTauri } from "./ipc.js";
+import { ipcInvoke, ipcListen, isBrowserMode, isTauri } from "./ipc.js";
 import { getLogSnapshot } from "./log-buffer.js";
 import { locale } from "../stores/locale.svelte.js";
 import type {
@@ -772,12 +772,87 @@ export async function unloadLlm(): Promise<void> {
   return ipcInvoke("unload_llm");
 }
 
+/**
+ * Run a prompt-assistant command (enhance/compose).
+ *
+ * Desktop (Tauri) calls the command synchronously — there is no proxy in front.
+ * Browser mode is served through a reverse proxy (Cloudflare on the hosted
+ * deployment) that aborts any request running past ~100s with a 524. Loading a
+ * local LLM and generating can easily outlast that, so rather than block on the
+ * POST body we fire the request with a correlation id and await the result over
+ * the SSE event channel, which keep-alives and isn't bound by the proxy timeout.
+ */
+async function runPromptAssistant(
+  command: "enhance_prompt" | "compose_prompt",
+  args: Record<string, unknown>,
+): Promise<string> {
+  if (!isBrowserMode) {
+    return ipcInvoke<string>(command, args);
+  }
+  const requestId =
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return new Promise<string>((resolve, reject) => {
+    let settled = false;
+    let unlistenResult: (() => void) | null = null;
+    let unlistenError: (() => void) | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      unlistenResult?.();
+      unlistenError?.();
+      action();
+    };
+    Promise.all([
+      ipcListen("llm:result", (e: { payload: any }) => {
+        if (e.payload?.request_id !== requestId) return;
+        finish(() => resolve(String(e.payload.result ?? "")));
+      }),
+      ipcListen("llm:error", (e: { payload: any }) => {
+        if (e.payload?.request_id !== requestId) return;
+        finish(() =>
+          reject(new Error(e.payload.error || "Prompt assistant failed")),
+        );
+      }),
+    ])
+      .then(([ur, ue]) => {
+        // The request settled before listeners attached — clean up immediately.
+        if (settled) {
+          ur();
+          ue();
+          return;
+        }
+        unlistenResult = ur;
+        unlistenError = ue;
+        // Guard against a dropped SSE result so the UI can't hang forever.
+        timer = setTimeout(
+          () => finish(() => reject(new Error("Prompt assistant timed out"))),
+          5 * 60 * 1000,
+        );
+        // Kick off the job; the backend returns { queued: true } right away and
+        // broadcasts the real result/error over SSE when generation completes.
+        ipcInvoke(command, { ...args, requestId }).catch((err) =>
+          finish(() =>
+            reject(err instanceof Error ? err : new Error(String(err))),
+          ),
+        );
+      })
+      .catch((err) =>
+        finish(() =>
+          reject(err instanceof Error ? err : new Error(String(err))),
+        ),
+      );
+  });
+}
+
 export async function enhancePrompt(
   prompt: string,
   family: string,
   opts?: PromptAssistantOpts,
 ): Promise<string> {
-  return ipcInvoke("enhance_prompt", { prompt, family, opts });
+  return runPromptAssistant("enhance_prompt", { prompt, family, opts });
 }
 
 export async function composePrompt(
@@ -785,7 +860,7 @@ export async function composePrompt(
   family: string,
   opts?: PromptAssistantOpts,
 ): Promise<string> {
-  return ipcInvoke("compose_prompt", { description, family, opts });
+  return runPromptAssistant("compose_prompt", { description, family, opts });
 }
 
 export async function readClipboardImage(): Promise<number[]> {
