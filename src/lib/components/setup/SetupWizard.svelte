@@ -660,8 +660,7 @@
             <li>{locale.t('setup.install_nodes')}</li>
           </ul>
           <p class="mt-2 text-neutral-600">
-            ~5-10 GB disk space required. Installation may take 5-15 minutes
-            depending on your connection.
+            {locale.t('setup.disk_space_note')}
           </p>
         </div>
 
@@ -785,7 +784,7 @@
           <div class="text-5xl mb-4">&#10003;</div>
           <h2 class="text-xl font-semibold">{ locale.t('setup.completion_title') }</h2>
           <p class="text-neutral-400 text-sm mt-2">
-            Starting ComfyUI server...
+            {locale.t('setup.starting_server')}
           </p>
         </div>
       {:else if phase === "error"}
@@ -825,14 +824,14 @@
             onclick={retry}
             class="px-6 py-2 bg-neutral-800 hover:bg-neutral-700 rounded-lg text-sm transition-colors cursor-pointer"
           >
-            Retry
+            {locale.t('setup.retry')}
           </button>
         </div>
       {/if}
     </div>
 
     <p class="text-center text-xs text-neutral-700 mt-4">
-      MooshieUI — A friendly face for ComfyUI
+      {locale.t('setup.tagline')}
     </p>
   </div>
 </div>

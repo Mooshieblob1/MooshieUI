@@ -127,6 +127,10 @@ class CompareStore {
     generation.height = snap.height;
     generation.denoise = snap.denoise;
     generation.batchSize = snap.batchSize;
+    // Loading a compare cell into the live generation state must persist, or a
+    // reload reverts to whatever was last saved. selectCell/removeColumn/removeRow
+    // all funnel through here, so saving once here covers every cell switch.
+    generation.saveSettings();
   }
 
   saveActiveCell() {

@@ -40,7 +40,7 @@ Mirrors `.roo/rules-architect/AGENTS.md`.
 
 ## Constraints
 
-- Stores must not import each other — coordinate in `App.svelte`.
+- Stores must not form import cycles. The hub `generation` store and leaf utility stores (e.g. `locale`) must not import feature stores; feature stores (`canvas`, `compare`, `gallery`, ...) may depend one-directionally on `generation`. A store reacting to another store's state (a side-effect push) belongs in an `App.svelte` `$effect`, not an imperative call between stores.
 - `toParams()`: manual camelCase → snake_case (silent breakage if mismatched).
 - i18n: new `en.ts` keys → **all** `src/lib/locales/*.ts`.
 - `setup.rs`: `#[cfg(feature = "desktop")]`, `Result<(), String>`.

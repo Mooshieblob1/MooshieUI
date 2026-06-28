@@ -117,7 +117,11 @@ export function findPromptInertRangeContaining(
 ): PromptTextRange | null {
   const list = ranges ?? getPromptInertRanges(raw);
   for (const range of list) {
-    if (position > range.start && position <= range.end) {
+    // Half-open `[start, end)`, matching isInsidePromptInertRange. A caret at
+    // `end` sits just past the block (the start of the next tag) and a caret at
+    // `start` sits at the block's first character, so the old `> start && <= end`
+    // both swallowed the tag after the block and dropped the block's leading edge.
+    if (position >= range.start && position < range.end) {
       return range;
     }
   }

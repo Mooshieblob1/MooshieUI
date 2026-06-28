@@ -1,5 +1,218 @@
 # Changelog
 
+## What's New in v1.4.29
+
+### Prompt tag spell check
+- **Danbooru tag-aware spell checker**: unknown or misspelled prompt tags are now underlined, and right-clicking one offers "did you mean" suggestions drawn from the Danbooru tag set. The browser's native spell check is disabled inside the prompt so it no longer fights the tag checker. The whole feature can be toggled in Settings.
+- **Suggestion menu replaces tags reliably**: choosing a "did you mean" suggestion now replaces the tag as intended. The menu previously closed itself before the replacement could apply, and it now also dismisses when you edit the prompt so it never acts on a stale position.
+
+### Model Hub
+- **One CivitAI API key**: the Model Hub and Settings now share a single CivitAI API key instead of keeping two separate copies. An existing key is migrated automatically, so entering it in either place now applies everywhere.
+- **Filenames fill in from direct URLs**: pasting a direct download URL now reads the filename from the server and fills in the save-as name automatically, instead of leaving it blank.
+- **Clearer CivitAI download failures**: a failed CivitAI download (401, 403, or 404) now explains the likely cause, that the model version may have been removed or that it requires an account that can view restricted or mature content, and points you to the shared API key in Settings, instead of showing a bare "404 Not Found".
+
+### Generation and gallery
+- **Generation and gallery UX fixes**: a batch of generation and gallery issues are resolved.
+- **External LLM endpoint**: the prompt assistant can now be pointed at an external LLM endpoint.
+- **Higher auto VRAM threshold**: automatic VRAM high-mode now engages at 24 GB.
+- **Linux image paste**: Ctrl+V now pastes an image into image-to-image and inpaint on Linux.
+
+### Maintenance
+- Dependency updates across the Rust and frontend packages.
+
+---
+
+## What's New in v1.4.28
+
+### Fixes
+- **Face detailer works out of the box**: the bundled face-detailer custom node needs `ultralytics` (YOLOv8), which ComfyUI does not install. MooshieUI now ships a requirements file for its nodes and installs ultralytics into the ComfyUI environment on launch (one time, only when it changes), so face-detailer workflows no longer fail with "No module named 'ultralytics'". Applies to Windows, macOS, and Linux.
+
+### Packaging
+- **Nix flake for Linux/NixOS**: the repo now includes a `flake.nix`, so you can build and run MooshieUI with `nix build` / `nix profile add`. The app runs inside an FHS sandbox so the setup wizard's downloaded uv/Python and the pip wheels it installs work on NixOS.
+
+---
+
+## What's New in v1.4.27
+
+### Fixes and maintenance
+- **Artist gallery previews load over LAN again**: grid thumbnails, prefetched images, and the lightbox now carry the auth token in browser/LAN mode, so they no longer fail with a 401 from the proxy.
+
+---
+
+## What's New in v1.4.26
+
+### Fixes and maintenance
+- **Artist gallery loads over LAN again**: in browser/LAN mode the artist gallery manifest, shard, and search-index requests now carry the auth token, so they no longer fail with a 401 from the proxy.
+
+---
+
+## What's New in v1.4.25
+
+This release makes generation failures explain themselves and adds a per-image generation-time readout.
+
+### Clearer error messages
+- **Actionable failure messages**: generation errors are now classified into specific, fixable causes instead of a generic "Generation failed". Covered cases include out-of-memory, an incompatible VAE, a checkpoint or model that is not in your list, a missing custom node, and component/shape mismatches.
+- **Desktop errors no longer go blank**: failures that previously surfaced no detail (the raw ComfyUI error carries no top-level message field) are now read from the underlying exception so you see what actually went wrong.
+- **Longer dwell on actionable errors**: messages that tell you how to fix something stay on screen longer before dismissing.
+
+### Generation time
+- **Time per image**: the total generation time now shows in the top-left corner of the result preview.
+- **On hover in the session gallery**: hovering a session thumbnail shows that image's generation time in the top-left corner.
+
+---
+
+## What's New in v1.4.24
+
+This release lands a large code-audit pass (18 reviewed fixes) that hardens the backend, generation pipeline, gallery, canvas, and setup flow. Most changes are correctness and reliability fixes that you should simply notice as fewer glitches.
+
+### Backend reliability
+- **Locks no longer held across I/O**: RwLock guards are dropped before blocking and async file or network work, so long-running operations no longer stall unrelated requests.
+- **Sturdier multi-GPU**: worker readiness checks were hardened and a stuck-worker watchdog now recovers a worker that stops responding instead of hanging the queue.
+- **Shared HTTP client**: requests reuse the single shared client instead of spinning up new ones, and a MIME-parsing panic path was removed.
+- **Browser and LAN-mode security gaps closed**: tightened the web-server surface used in browser/LAN mode.
+- **Read-only config locations**: saving settings where the config file is read-only (such as a mounted ConfigMap in hosted deployments) now skips quietly instead of erroring.
+
+### Browser / desktop parity
+- **IPC parity gaps closed**: several backend calls that worked on desktop but silently failed in browser mode now behave identically.
+- **Preference sync wired end to end**: server-side preference sync is fully plumbed so settings round-trip correctly in browser mode.
+- **Release-notes fetch hardened**: the browser-mode release-notes endpoint now checks the GitHub API response status before parsing, matching the desktop command.
+
+### Generation pipeline
+- **Correct inpainting and diffusion routing**: workflow parameters for inpainting and diffusion are routed to the right nodes.
+- **No more dropped parameters**: generation params that were being silently dropped are now plumbed through, and dead fields were removed.
+- **Prompt editing fixes**: corrected several prompt-editing utility bugs flagged in the audit.
+
+### Gallery and canvas
+- **Gallery index stays consistent**: the gallery SQLite index and image metadata are kept in sync.
+- **Canvas drawing fixes**: corrected canvas redraw, history reset, and removed dead mask stubs.
+- **Store save fixes**: fixed mutation and persistence bugs across LoRA, ModelHub, and Compare.
+- **Fewer redundant image fetches**: favourite-artist thumbnails and artist cards/lightbox now reuse the image cache instead of triggering an extra raw CDN fetch.
+
+### Setup and updates
+- **Hardened setup wizard**: more robust download and error handling during first-run setup.
+- **Notification and updater follow-through**: closed gaps in the notification and updater flows.
+
+### UI and localisation
+- **More complete translations**: added missing i18n keys and replaced remaining hardcoded UI strings; corrected the new layout-toggle strings for German and French.
+- **Layout override toggle**: removed dead mobile components and added an explicit toggle to switch between the mobile and desktop layouts.
+
+---
+
+## What's New in v1.4.23
+
+### Illustrious models
+- **Stable output on non-turbo Illustrious checkpoints**: the default sampler is now `euler_ancestral_cfg_pp` at CFG 2.0 (previously `euler_cfg_pp` at CFG 5.0, which ran a CFG++ sampler far outside its intended low-CFG band and over-baked results). On older ComfyUI builds that lack the ancestral CFG++ sampler, it falls back gracefully to `euler_ancestral`.
+
+### CFG guidance
+- **Loud CFG 1 warning**: setting CFG to 1.0 now shows a prominent, non-blocking warning explaining that it disables prompt guidance and breaks CFG++ samplers entirely (only Turbo, distilled, and Lightning models tolerate it). Generation still proceeds.
+- **Corrected recommended CFG range for CFG++ samplers**: the recommended band is now 1.5 to 2.2 (target 1.8). The previous range treated the value that breaks these samplers as in-range.
+- **Sampler switch snaps to the right CFG**: switching to a CFG++ sampler from a high CFG now snaps to the recommended target (1.8) instead of a stale 1.4 that read as out-of-range.
+
+### Advanced Mode
+- **New opt-in Advanced Mode (Settings)**: when enabled, swapping checkpoints no longer overwrites your steps, CFG, sampler, scheduler, or dimensions, so power users keep their tuned parameters across model changes. Model family detection still runs so the generation pipeline stays correct. Enabling it shows a confirmation dialog; the first model selected on a fresh profile still gets sensible defaults.
+
+### Upscale
+- **Upscale CFG floor for CFG++ samplers**: the high-res upscale pass halves the base CFG, which would drop the new Illustrious default to CFG 1.0 and collapse the CFG++ sampler. The upscale CFG is now floored at 2.0 whenever a CFG++ sampler is in use.
+
+### Artist Gallery
+- **Favourite-artist thumbnails now render on the generation page**: the bottom-panel Artists tab still built `.webp` image URLs while the v2 dataset ships AVIF, so favourited artists showed blank previews (the same fix v1.4.22 applied to the gallery grid, missed here). The thumbnail URL now picks the correct extension from the index version.
+- **Removed the stray horizontal scrollbar in the artist lightbox**: clicking an artist card to view it larger showed an unwanted horizontal scrollbar. The prev/next arrow overlays sit just outside the content box and were being counted as horizontal overflow by the scroll container. Scrolling is now confined to an inner wrapper so the arrows no longer trigger it.
+
+---
+
+## What's New in v1.4.22
+
+### Artist Gallery
+- **Grid thumbnails now render**: the gallery grid built `.webp` image URLs while the v2 dataset ships AVIF, so cards showed blank previews even though the lightbox (which uses the real image URL) worked. Thumbnails, the instant-open lightbox, and the preload cache now pick the correct extension from the index version, and the grid variant toggle resolves the second image directly from search hits.
+- **Updated generation parameters panel**: the preview-params dialog now reflects the actual pipeline (anima-base v1.0, qwen text encoder/VAE, er_sde / sgm_uniform, 25 steps, CFG 4.0, AVIF output) and lists both per-image prompts.
+- **Search bar moved into the toolbar row**: the search box now sits alongside the sort, page-size, image-size, and variant controls instead of in the header.
+
+---
+
+## What's New in v1.4.21
+
+### Artist Gallery
+- **Point the gallery at the new multi-variant dataset**: 1.4.20 added the image-variant flip controls but the app was still loading the previous single-image index, so the second image never appeared. The manifest now points at the v2 release (`20260425_anima_all_artists`), so artists with two reference images expose the flip toggle as intended.
+
+---
+
+## What's New in v1.4.20
+
+### Artist Gallery
+- **Image variant support**: artist cards now show all available reference images for an artist. A flip button on each card cycles through variants, and a global variant selector in the toolbar lets you switch the entire gallery at once. The lightbox also gains a flip control for the active entry.
+
+### Prompt Assistant (hosted server)
+- **Fix 524 timeout on compose/enhance right after a generation**: on the hosted deployment, the diffusion model was staying resident in VRAM after a generation completed, forcing the LLM to load on CPU where it exceeds Cloudflare's 100-second proxy timeout. The server now unloads idle ComfyUI workers before starting the LLM so it can load on the GPU instead.
+
+---
+
+## What's New in v1.4.19
+
+### Brand and design refresh
+- **New logo across the app and OS icons**: the glossy 3D gummy mark is replaced by a flat, geometric "M" in Mooshie Yellow whose strokes terminate in circular nodes, reading as both the letter M and a ComfyUI node graph. It now ships everywhere: the in-app logo, the favicon, and the full desktop/installer, iOS, and Android icon sets.
+- **New brand typeface: Hanken Grotesk**: the interface now uses Hanken Grotesk, a warm humanist grotesque that keeps the dense control surface approachable while staying crisp at small sizes. It is self-hosted (latin + latin-ext subsets) so it loads offline and within the production content security policy, with the native system font stack as the fallback.
+
+---
+
+## What's New in v1.4.18
+
+### Prompt Assistant (server / read-only config)
+- **Enhance/Compose works on deployments with a read-only config**: when `config.json` is mounted read-only (for example a Kubernetes ConfigMap), the app can never persist the model you pick in the UI, so `prompt_assistant_model_id` stays empty and Enhance failed with `prompt_assistant.no_model`. The server now falls back to whatever prompt-assistant model is already downloaded on disk, so no config write is required.
+
+---
+
+## What's New in v1.4.17
+
+### Prompt Assistant (server / multi-user)
+- **Enhance/Compose no longer blocks when someone else is generating**: on shared server/browser-mode deployments the generation queue is global, so one person running a generation would make everyone else's prompt enhancement fail with `prompt_assistant.busy_generation`. The hard guard is removed; GPU contention is already handled by loading the LLM on CPU when the GPU is busy with a diffusion model.
+
+### Face Detailer
+- **Auto face prompt**: a new toggle conditions each detected face on a face-only subset of your prompt (hair, eyes, expression, named characters) instead of the full prompt, so scene, pose, and background tags don't bleed into the re-denoised face. Falls back to the full prompt when no face tags are present.
+
+---
+
+## What's New in v1.4.16
+
+### Prompt Assistant (server / GPU)
+- **GPU-accelerated enhance/compose on the server image**: the Docker image now ships a CUDA-enabled `llama-server` and points the app at it, so prompt enhancement offloads to the GPU and finishes in seconds. The llama.cpp release only provides a CPU build for Linux, which made a 7B model take longer than Cloudflare's 100s proxy timeout and fail with a 524. The app can now use a pre-provisioned binary via the `MOOSHIEUI_LLAMA_BIN_DIR` environment variable. (Requires rebuilding the Docker image; the CUDA build needs the container to be run with GPU access.)
+
+---
+
+## What's New in v1.4.15
+
+### Fixes and maintenance
+- **Fixed Prompt Assistant "error sending request" on slow/server deployments**: the idle watchdog could unload `llama-server` mid-generation when a CPU-only inference (e.g. a 7B model on a headless server) ran longer than the idle timeout, killing the in-flight request. The watchdog now never unloads while a request is in flight and only starts the idle countdown once the request completes.
+- **Better Prompt Assistant failure reporting**: when `llama-server` dies during inference, the error now includes the child process exit status and the tail of its log instead of a generic connection error.
+
+---
+
+## What's New in v1.4.14
+
+### Fixes and maintenance
+- **Prompt Assistant errors are now visible**: Enhance and Compose failures surface the real backend reason (model-load crash, missing shared library, health timeout) in the toast and console instead of a generic message, so failures are diagnosable from the UI alone, especially on headless server deployments.
+- **Fixed server-mode Enhance/Compose returning HTTP 500**: the Docker image now installs `libgomp1`, which the Prompt Assistant's CPU llama.cpp build requires; without it `llama-server` exited immediately on load and every enhance/compose request failed.
+- **Export Logs now works in browser/server mode**: it produces a downloadable diagnostic log (including the Prompt Assistant `llama-server` log) for remote users, instead of doing nothing.
+
+---
+
+## What's New in v1.4.13
+
+### Prompt Assistant (local LLM)
+- **Enhance & Compose prompts locally**: new Enhance and Compose buttons above the prompt box run a small, curated language model entirely on your machine, no API key or cloud call. Enhance expands your existing prompt; Compose builds one from a plain-language description with selectable length and optional artist suggestions, then replaces or appends to the prompt with one-click Undo.
+- **Curated model catalog with auto-fit**: a guided setup modal detects your GPU VRAM and system RAM (including Blackwell-class cards) and recommends a GGUF model that fits, downloading and installing it on demand. Lower-VRAM systems fall back to CPU automatically.
+- **Model management in Settings**: a new Prompt Assistant settings section lists installed models, lets you switch or delete them, set an idle-unload timeout, and unload immediately to reclaim memory.
+- **Popularity-ranked grounding**: composition is grounded in a popularity-ranked tag/artist corpus (RAG) with an Anima tag/natural-language split, and a post-filter pass that strips em dashes, raw tag dumps, and placeholder artist names for cleaner output.
+- **VRAM-aware**: the assistant frees its model from VRAM before image generation so it never competes with ComfyUI for memory.
+
+### New Features
+- **Delete all session images**: the bottom panel gains a "Delete all" action to clear every image generated in the current session, with a confirmation prompt.
+
+### Bug Fixes
+- Hardened model-download directory creation against a potential panic when resolving the parent path.
+- Fixed the Linux desktop and headless web-server builds, which failed to compile because the Prompt Assistant referenced desktop-only and Windows-only dependencies on every platform.
+
+---
+
 ## What's New in v1.4.11
 
 ### New Features

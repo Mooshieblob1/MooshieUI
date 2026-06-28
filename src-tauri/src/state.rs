@@ -11,6 +11,8 @@ use crate::config::AppConfig;
 use crate::interrogator::InterrogatorState;
 use crate::model_requests::ModelRequestState;
 use crate::notifications::NotificationState;
+#[cfg(any(feature = "desktop", feature = "server"))]
+use crate::prompt_assistant::PromptAssistant;
 
 /// Stored Tauri AppHandle so the headless web server can control the window.
 #[cfg(feature = "desktop")]
@@ -472,8 +474,16 @@ pub struct AppState {
     pub ws_handle: Mutex<Option<JoinHandle<()>>>,
     pub client_id: String,
     pub http_client: reqwest::Client,
+    /// Shared client that does NOT follow redirects. Used where redirects must
+    /// be handled manually for security (e.g. CivitAI image fetches gate the
+    /// user's API token on a per-host basis, so the token can never be carried
+    /// across a redirect to the CDN). Reuses one client to keep connection
+    /// pooling instead of building a fresh client per call.
+    pub http_client_no_redirect: reqwest::Client,
     #[cfg(any(feature = "desktop", feature = "server"))]
     pub interrogator: Arc<RwLock<InterrogatorState>>,
+    #[cfg(any(feature = "desktop", feature = "server"))]
+    pub prompt_assistant: Arc<PromptAssistant>,
     /// Broadcast channel for SSE events in browser mode.
     pub event_tx: broadcast::Sender<BroadcastEvent>,
     /// Timestamp of last heartbeat from browser client.
@@ -505,6 +515,10 @@ pub struct AppState {
     pub model_requests: ModelRequestState,
     /// Notification system for global and per-user notifications.
     pub notifications: NotificationState,
+    /// Filenames whose in-progress model download has been asked to cancel.
+    /// `download_model_file` (and the browser-mode download loop) check this each
+    /// chunk and abort cleanly, deleting the partial file (#399).
+    pub download_cancels: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 fn is_private_or_local_host(host: &str) -> bool {
@@ -530,6 +544,10 @@ impl AppState {
     pub fn new(config: AppConfig) -> Self {
         let (event_tx, _) = broadcast::channel(1024);
         let http_client = reqwest::Client::new();
+        let http_client_no_redirect = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         let gpu_manager = GpuManager::new(&config, http_client.clone());
         Self {
             config: RwLock::new(config),
@@ -537,8 +555,11 @@ impl AppState {
             ws_handle: Mutex::new(None),
             client_id: uuid::Uuid::new_v4().to_string(),
             http_client,
+            http_client_no_redirect,
             #[cfg(any(feature = "desktop", feature = "server"))]
             interrogator: Arc::new(RwLock::new(InterrogatorState::new())),
+            #[cfg(any(feature = "desktop", feature = "server"))]
+            prompt_assistant: Arc::new(PromptAssistant::new()),
             event_tx,
             last_heartbeat: Mutex::new(std::time::Instant::now()),
             #[cfg(feature = "desktop")]
@@ -552,12 +573,132 @@ impl AppState {
             last_preview_by_prompt: std::sync::RwLock::new(HashMap::new()),
             model_requests: ModelRequestState::new(),
             notifications: NotificationState::new(),
+            download_cancels: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
     }
 
     pub async fn base_url(&self) -> String {
         let config = self.config.read().await;
         config.server_url.clone()
+    }
+
+    /// Request cancellation of an in-progress model download by filename (#399).
+    pub fn request_download_cancel(&self, filename: &str) {
+        if let Ok(mut set) = self.download_cancels.lock() {
+            set.insert(filename.to_string());
+        }
+    }
+
+    /// Whether a cancel has been requested for `filename`. Does not clear the flag.
+    pub fn is_download_cancelled(&self, filename: &str) -> bool {
+        self.download_cancels
+            .lock()
+            .map(|set| set.contains(filename))
+            .unwrap_or(false)
+    }
+
+    /// Clear any pending cancel flag for `filename` (called when a download
+    /// starts and when it finishes/aborts) so a later retry is not killed instantly.
+    pub fn clear_download_cancel(&self, filename: &str) {
+        if let Ok(mut set) = self.download_cancels.lock() {
+            set.remove(filename);
+        }
+    }
+
+    /// Free the prompt-assistant LLM's GPU memory before an image generation.
+    ///
+    /// The llama-server keeps its model fully resident in VRAM (≈5 GB for the
+    /// 4B Q8) until its idle watchdog fires, so a compose/enhance immediately
+    /// followed by a generation leaves ComfyUI competing for what's left and
+    /// spilling into shared system memory. Unloading here is cheap (the child
+    /// is killed in well under a second) and the next compose/enhance simply
+    /// respawns it via `ensure_running`.
+    #[cfg(any(feature = "desktop", feature = "server"))]
+    pub async fn free_llm_vram_for_generation(&self) {
+        if self.prompt_assistant.server.is_running() {
+            log::info!("[generate] unloading llama-server to free VRAM before generation");
+            self.prompt_assistant.server.unload().await;
+        }
+    }
+
+    /// Free idle ComfyUI workers' VRAM before loading the prompt-assistant LLM.
+    ///
+    /// The mirror image of `free_llm_vram_for_generation`. On a shared GPU
+    /// deployment a compose/enhance that lands right after a generation finds
+    /// ComfyUI's diffusion model still resident in VRAM, so the free-VRAM check
+    /// in `PromptAssistant::ensure_running` drops the LLM onto CPU. A 7B model on
+    /// CPU is slow enough to trip Cloudflare's 100s proxy timeout (a 524 on the
+    /// hosted instance). Unloading the models from workers that are not currently
+    /// executing reclaims the VRAM so the LLM loads on the GPU instead. Workers
+    /// that are reserved or running are skipped so an in-flight generation for
+    /// another user is never disrupted; ComfyUI transparently reloads its model
+    /// on the next generation.
+    #[cfg(any(feature = "desktop", feature = "server"))]
+    pub async fn free_comfyui_vram_for_llm(&self) {
+        use crate::comfyui::gpu_manager::{detect_free_vram_mb, WorkerStatus};
+
+        let before = tokio::task::spawn_blocking(detect_free_vram_mb)
+            .await
+            .ok()
+            .flatten();
+
+        let mut freed_any = false;
+        for worker in &self.gpu_manager.workers {
+            if worker.reserved.load(std::sync::atomic::Ordering::SeqCst) {
+                continue;
+            }
+            if *worker.status.read().await == WorkerStatus::Running {
+                continue;
+            }
+            log::info!(
+                "[prompt-assistant] freeing ComfyUI VRAM on worker {} before LLM load",
+                worker.id
+            );
+            let _ = self
+                .http_client
+                .post(format!("{}/free", worker.base_url))
+                .json(&serde_json::json!({
+                    "unload_models": true,
+                    "free_memory": true,
+                }))
+                .send()
+                .await;
+            freed_any = true;
+        }
+
+        if !freed_any {
+            return;
+        }
+
+        // ComfyUI's /free only *flags* the unload; the worker thread reclaims the
+        // VRAM a moment later. Wait until nvidia-smi reports the memory actually
+        // came back (or give up after a short cap) so the subsequent free-VRAM
+        // check in `ensure_running` sees the freed GPU and offloads to it instead
+        // of falling back to CPU. Only meaningful on NVIDIA, where free VRAM is
+        // observable; elsewhere `before` is None and we just settle briefly.
+        let Some(before_mb) = before else {
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            return;
+        };
+        for _ in 0..10 {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            let now = tokio::task::spawn_blocking(detect_free_vram_mb)
+                .await
+                .ok()
+                .flatten();
+            if let Some(now_mb) = now {
+                if now_mb >= before_mb.saturating_add(1024) {
+                    log::info!(
+                        "[prompt-assistant] ComfyUI VRAM reclaimed: {before_mb} -> {now_mb} MB free"
+                    );
+                    return;
+                }
+            }
+        }
+        log::warn!(
+            "[prompt-assistant] ComfyUI VRAM not visibly reclaimed within timeout; \
+             LLM may load on CPU"
+        );
     }
 
     pub async fn dispatch_webhook_event(

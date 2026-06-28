@@ -13,7 +13,7 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { getOutputImage, uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
+  import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput } from "./lib/utils/galleryActions.js";
   import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
   import { generation } from "./lib/stores/generation.svelte.js";
@@ -21,6 +21,7 @@
   import { canvas } from "./lib/stores/canvas.svelte.js";
   import { accessibility } from "./lib/stores/accessibility.svelte.js";
   import { locale } from "./lib/stores/locale.svelte.js";
+  import { prefsSync } from "./lib/stores/prefsSync.svelte.js";
   import type { GenerationParams, OutputImage, InterrogationResult } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
@@ -31,6 +32,7 @@
   import CharacterInsertModal from "./lib/animadex/components/CharacterInsertModal.svelte";
   import type { AnimadexCharacter } from "./lib/animadex/types.js";
   import { styles as stylesStore } from "./lib/stores/styles.svelte.js";
+  import { promptAssistant } from "./lib/stores/promptAssistant.svelte.js";
   import { notifications } from "./lib/stores/notifications.svelte.js";
   import NotificationBell from "./lib/components/ui/NotificationBell.svelte";
   import logoUrl from "./lib/assets/logo.png";
@@ -54,9 +56,9 @@
     type ModelPreviewActionDetail,
   } from "./lib/utils/modelPreviewImage.js";
   import {
-    isStyleTransferExecutionError,
     checkStyleTransferNodesReady,
   } from "./lib/utils/styleTransferNodes.js";
+  import { classifyGenerationError } from "./lib/utils/generationErrors.js";
   import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
@@ -224,6 +226,16 @@
     const isOpen = gallery.lightboxOpen;
     if (isOpen && !lbWasOpen) resetLightboxZoom();
     lbWasOpen = isOpen;
+  });
+
+  // Cross-store bridge (stores must not import each other; see CLAUDE.md):
+  // keep the autocomplete builtin tag set in sync with the active model family.
+  // notifyModelChanged is idempotent, so redundant runs are harmless. This
+  // supersedes the imperative calls generation used to make into autocomplete.
+  $effect(() => {
+    autocomplete.notifyModelChanged(
+      generation.isAnima || generation.isWan || generation.isQwen,
+    );
   });
 
   // Document-level keyboard handler for lightbox (fallback for browser focus issues)
@@ -1020,7 +1032,10 @@
       if (image.gallery_filename) {
         result = await interrogateGalleryImage(image.gallery_filename);
       } else {
-        const bytes = await getOutputImage(image.filename, image.subfolder);
+        // Session images aren't in the gallery DB yet, and their synthetic
+        // filename doesn't exist in ComfyUI's output dir — resolve the pixels
+        // from the in-memory session blob / temp file instead (issue #397).
+        const bytes = await gallery.resolveImagePngBytes(image);
         const uint8 = new Uint8Array(bytes);
         let binary = "";
         for (let i = 0; i < uint8.length; i++) {
@@ -1388,6 +1403,7 @@
     wasUpscaled: boolean,
     params: GenerationParams | null,
     images: Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>,
+    generationTimeMs?: number,
   ) {
     if (images.length === 0) return;
 
@@ -1406,6 +1422,7 @@
         displayTempFilename: img.displayTempFilename,
         file_size_bytes: img.blob.size,
         generated_at_ms: Date.now(),
+        generationTimeMs,
       };
     });
 
@@ -1618,6 +1635,7 @@
     rows: number,
     cols: number,
     cellLabels: string[],
+    mode: "txt2img" | "img2img" | "inpainting",
   ) {
     try {
       const loadImg = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
@@ -1721,7 +1739,7 @@
         subfolder: "",
         type: "output",
         prompt_id: gridPromptId,
-        generation_mode: "txt2img",
+        generation_mode: mode,
         is_upscaled: false,
         url: gridUrl,
         file_size_bytes: gridBlob.size,
@@ -1730,6 +1748,9 @@
 
       gallery.addImages([gridImage]);
       gallery.persistImages([gridImage], undefined, [gridBlob], generation.metadataMode);
+      // Mirror the single-image path (finalizeOutputImages) so a completed grid
+      // also surfaces a done toast / notification when off the generate page.
+      showGenerationDoneToast([gridImage]);
     } catch (e) {
       console.error("Grid stitching failed:", e);
     }
@@ -1753,6 +1774,18 @@
   onMount(async () => {
     // Start heartbeat in browser mode to keep backend alive
     startHeartbeat();
+
+    // Suppress the native WebView context menu (the "Share", "Save As" (html),
+    // "Print" and "Send link to..." entries that point at tauri.localhost and make
+    // no sense in-app) everywhere except editable text, where the native
+    // copy/paste/spellcheck menu is still useful. App-specific right-click menus
+    // (gallery/session images, artist tags) call preventDefault themselves and are
+    // unaffected — this only blocks the default menu where nothing else handles it (#392).
+    window.addEventListener("contextmenu", (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+      e.preventDefault();
+    });
 
     // Restore window maximize state (Tauri only)
     if (isTauri) {
@@ -1836,6 +1869,16 @@
 
     // Load persisted settings
     await Promise.all([generation.loadSettings(), autocomplete.loadSettings(), locale.loadSettings()]);
+
+    // Browser/LAN mode: pull the server-side preference snapshot (or seed it
+    // from current local state) once local settings have loaded and the auth
+    // token is available. No-op in Tauri desktop mode.
+    if (isBrowserMode) {
+      void prefsSync.loadAndApply();
+    }
+
+    // Prompt assistant: detect hardware + pre-select recommended model at launch.
+    promptAssistant.init();
 
     // Set up event listeners BEFORE starting so we don't miss events
     await Promise.all([
@@ -1924,13 +1967,25 @@
         if (data.prompt_id && progress.activePromptId && data.prompt_id !== progress.activePromptId) return;
 
         if (data.temp_filename) {
-          // SSE/browser path: fetch image from temp endpoint
+          // The worker WebSocket delivers preview frames as temp-file
+          // references (not inline base64). On desktop there is no HTTP server,
+          // so a fetch to /internal-api would resolve to the SPA shell and
+          // produce a broken <img>. Read the temp file via invoke() instead,
+          // mirroring the output_image handler. See issue #309.
           try {
-            const resp = await fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`, {
-              headers: authHeaders(),
-            });
-            if (!resp.ok) return;
-            const blob = await resp.blob();
+            let blob: Blob;
+            if (isTauri) {
+              const rawBytes = await readTempImage(data.temp_filename);
+              const mime = data.format === "png" ? "image/png" : "image/jpeg";
+              blob = new Blob([new Uint8Array(rawBytes)], { type: mime });
+            } else {
+              // SSE/browser path: fetch image from temp endpoint
+              const resp = await fetch(`/internal-api/_temp_image/${encodeURIComponent(data.temp_filename)}`, {
+                headers: authHeaders(),
+              });
+              if (!resp.ok) return;
+              blob = await resp.blob();
+            }
             // The prompt may have completed while the fetch was in flight
             // (common on remote browser mode with inpaint chains). Setting
             // previewImage now would overwrite the finalized output in the
@@ -2178,14 +2233,14 @@
               clearRegionalChainGallerySuppress(promptId);
               console.log("[regional] Skipping gallery save for chain intermediate:", promptId);
             } else {
-              finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images);
+              finalizeOutputImages(promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs);
             }
 
             // Track grid batch completion — stitch when all cells are done
             if (images.length > 0 && compare.isGridPrompt(promptId)) {
               const gridResult = compare.addGridResult(promptId, images[0]!);
               if (gridResult) {
-                stitchGrid(gridResult.images, gridResult.rows, gridResult.cols, gridResult.cellLabels);
+                stitchGrid(gridResult.images, gridResult.rows, gridResult.cols, gridResult.cellLabels, item.mode);
               }
             }
           }
@@ -2199,31 +2254,21 @@
       ipcListen("comfyui:execution_error", (event: any) => {
         console.error("Execution error:", event.payload);
         const data = event.payload;
-        // Build a user-visible error message from the raw error string
-        const rawErr = String(data.error ?? "");
-        let toastMsg = locale.t("generation.toast.failed");
-        if (isStyleTransferExecutionError(rawErr)) {
-          toastMsg = locale.t("generation.style_transfer.execution_failed");
+        // Classify the failure into an actionable message. The raw ComfyUI
+        // desktop payload exposes exception_message/exception_type/node_type/
+        // traceback (no top-level `error`), so pass the whole payload, not just
+        // data.error, or most desktop errors fall through to the generic toast.
+        const classified = classifyGenerationError(data);
+        const toastMsg = locale.t(classified.messageKey, classified.params);
+        if (classified.clearStyleTransfer) {
           // Auto-clear style transfer state on failure so the user is not stuck unable to generate
           // normal images after enabling via a preview button (for example on a LoRA card). This addresses
           // reports of generation loading quickly with no final output.
           generation.styleTransferEnabled = false;
           generation.styleReferenceImage = null;
           generation.saveSettings();
-        } else if (rawErr.includes("value_not_in_list") || rawErr.includes("Value not in list") || rawErr.includes("prompt_outputs_failed_validation")) {
-          toastMsg = locale.t("generation.toast.failed_validation");
-        } else {
-          try {
-            const m = rawErr.match(/API error \(\d+\): ([\s\S]+)/);
-            if (m) {
-              const parsed = JSON.parse(m[1]);
-              if (parsed.error?.message) {
-                toastMsg = locale.t("generation.toast.failed_detail", { message: parsed.error.message });
-              }
-            }
-          } catch { /* ignore parse errors */ }
         }
-        gallery.showToast(toastMsg, "error");
+        gallery.showToast(toastMsg, "error", classified.durationMs ? { durationMs: classified.durationMs } : false);
         if (data.prompt_id) {
           pendingOutputImages.delete(data.prompt_id);
           pendingOutputFetches.delete(data.prompt_id);
@@ -2315,7 +2360,7 @@
                   clearRegionalChainGallerySuppress(p.promptId);
                   console.log("[regional] Skipping gallery save for chain intermediate:", p.promptId);
                 } else {
-                  finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images);
+                  finalizeOutputImages(p.promptId, item.mode, item.wasUpscaled, item.params, images, item.durationMs);
                 }
               } else {
                 const failedStyleTransfer = item.params?.style_transfer_enabled;

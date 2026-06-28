@@ -44,12 +44,10 @@ class CharacterInsertStore {
   apply(level: CharacterTagLevel, mode: CharacterInsertMode): void {
     const p = this.pending;
     if (!p) return;
-    const resolvedLevel = level ?? p.tagLevel;
-    if (!resolvedLevel) return;
     generation.positivePrompt = applyCharacterInsert(
       generation.positivePrompt,
       p.character,
-      resolvedLevel,
+      level,
       mode,
     );
     generation.saveSettings();

@@ -61,9 +61,15 @@ function parseSegmentSpec(spec: string): ParsedSpec | null {
       : isYolo
         ? DEFAULT_YOLO_THRESHOLD
         : DEFAULT_CLIPSEG_THRESHOLD;
-  if (!(creativity > 0 && creativity <= 1)) return null;
-  if (!(threshold > 0 && threshold < 1)) return null;
-  return { target, creativity, threshold };
+  // Accept the full SwarmUI-compatible closed range [0, 1]; reject only
+  // non-numeric / out-of-range values. Clamp to a safe interior so boundary
+  // values (0, 1) imported from SwarmUI produce a usable mask instead of being
+  // left as broken literal text in the prompt.
+  if (!Number.isFinite(creativity) || creativity < 0 || creativity > 1) return null;
+  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) return null;
+  const safeCreativity = Math.min(1, Math.max(0.05, creativity));
+  const safeThreshold = Math.min(0.99, Math.max(0.01, threshold));
+  return { target, creativity: safeCreativity, threshold: safeThreshold };
 }
 
 /**

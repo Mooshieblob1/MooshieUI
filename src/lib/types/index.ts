@@ -79,10 +79,6 @@ export interface GenerationParams {
   negative_segments: PromptSegment[];
   detail_segments: DetailSegment[];
   positive_regions?: PositiveRegion[];
-  /** Raw prompt text with scheduling tags intact, for metadata embedding */
-  raw_positive_prompt: string;
-  /** Raw prompt text with scheduling tags intact, for metadata embedding */
-  raw_negative_prompt: string;
   checkpoint: string;
   vae: string | null;
   loras: LoraPayloadEntry[];
@@ -110,6 +106,10 @@ export interface GenerationParams {
   upscale_fast_refine?: boolean;
   upscale_soft_guidance: boolean;
   upscale_soft_guidance_multiplier: number;
+  /** Quality-prompt override for the upscale pass (family-specific). Null falls back to base conditioning. */
+  upscale_positive_prompt: string | null;
+  /** Negative quality-prompt override for the upscale pass. Null falls back to base conditioning. */
+  upscale_negative_prompt: string | null;
   /** Also save the base image before the upscale chain runs. */
   save_pre_upscale_image?: boolean;
   smart_guidance: boolean;
@@ -122,6 +122,17 @@ export interface GenerationParams {
   diffusion_model: string | null;
   clip_model: string | null;
   clip_type: string | null;
+  /** Auto face-refinement pass after the main sample. */
+  facefix_enabled: boolean;
+  /** YOLO/segmentation detector model filename, or null for the default. */
+  facefix_detector: string | null;
+  facefix_denoise: number;
+  facefix_steps: number;
+  facefix_guide_size: number;
+  /** Cap on faces refined per image; 0 means no limit. */
+  facefix_max_faces: number;
+  /** Reuse the positive prompt for each detected face instead of a generic prompt. */
+  facefix_auto_prompt: boolean;
   controlnet: ControlNetPayload | null;
   model_architecture: string;
   is_sdxl_like?: boolean;
@@ -165,6 +176,8 @@ export interface OutputImage {
   displayTempFilename?: string;
   file_size_bytes?: number;
   generated_at_ms?: number;
+  /** Total wall-clock generation time in ms for this image (top-left badge). */
+  generationTimeMs?: number;
   metadata?: Record<string, string> | null;
 }
 
@@ -220,6 +233,9 @@ export interface AppConfig {
   extra_model_paths: string | null;
   interrogator_general_threshold: number;
   interrogator_character_threshold: number;
+  prompt_assistant_model_id: string | null;
+  prompt_assistant_idle_timeout_secs: number;
+  prompt_assistant_setup_done: boolean;
   civitai_api_key: string | null;
   /** Present in browser mode for non-admin users when a server-side key is configured. */
   civitai_api_key_configured?: boolean;
@@ -248,6 +264,14 @@ export interface AppConfig {
   webhook_allow_private_targets: boolean;
   theme_profile_id: string | null;
   theme_profiles: ThemeProfile[];
+  /** Prompt assistant: use an external OpenAI-compatible endpoint instead of the local llama-server. */
+  llm_external_enabled: boolean;
+  /** External LLM API root, e.g. http://localhost:1234/v1 or https://api.openai.com/v1. */
+  llm_external_base_url: string;
+  /** External LLM API key (Bearer token; empty for keyless local servers). */
+  llm_external_api_key: string;
+  /** External LLM model name (e.g. gpt-4o-mini). */
+  llm_external_model: string;
 }
 
 export interface ThemeTone {
@@ -321,4 +345,49 @@ export interface GpuStats {
   temperature: number;
   power_draw_w: number;
   worker: GpuWorkerInfo | null;
+}
+
+export interface LlmGpu {
+  name: string;
+  vram_mb: number;
+  vendor: string;
+}
+
+export interface LlmHardware {
+  gpus: LlmGpu[];
+  total_vram_mb: number;
+  system_ram_mb: number;
+  recommended_model_id: string;
+}
+
+export interface LlmVariant {
+  format: "gguf";
+  quant: string | null;
+  size_mb: number;
+  vram_mb: number;
+  repo: string;
+  file: string;
+}
+
+export interface LlmCatalogEntry {
+  id: string;
+  name: string;
+  purpose: "tag_upsampler" | "natural_language";
+  families: string[];
+  variants: LlmVariant[];
+  pros: string;
+  cons: string;
+  best_for: string;
+}
+
+export interface LlmStatus {
+  installed_models: string[];
+  active_model: string | null;
+  server_running: boolean;
+  external_enabled: boolean;
+}
+
+export interface PromptAssistantOpts {
+  length?: "short" | "medium" | "detailed";
+  include_artists?: boolean;
 }

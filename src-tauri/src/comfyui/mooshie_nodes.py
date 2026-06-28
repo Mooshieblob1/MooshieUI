@@ -48,6 +48,7 @@ class MooshieFaceDetailer:
                 "bbox_threshold": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "bbox_padding": ("FLOAT", {"default": 1.5, "min": 1.0, "max": 4.0, "step": 0.1}),
                 "feather": ("INT", {"default": 20, "min": 0, "max": 100}),
+                "max_faces": ("INT", {"default": 0, "min": 0, "max": 100}),
             }
         }
 
@@ -73,6 +74,7 @@ class MooshieFaceDetailer:
         bbox_threshold,
         bbox_padding,
         feather,
+        max_faces=0,
     ):
         from ultralytics import YOLO
 
@@ -97,10 +99,13 @@ class MooshieFaceDetailer:
             if not detections or len(detections[0].boxes) == 0:
                 continue
 
-            for box in detections[0].boxes:
-                conf = box.conf[0].item()
-                if conf < bbox_threshold:
-                    continue
+            # Keep only boxes above threshold, then (when capped) refine the
+            # most-confident faces first so max_faces drops the weakest detections.
+            boxes = [box for box in detections[0].boxes if box.conf[0].item() >= bbox_threshold]
+            if max_faces > 0 and len(boxes) > max_faces:
+                boxes = sorted(boxes, key=lambda box: box.conf[0].item(), reverse=True)[:max_faces]
+
+            for box in boxes:
 
                 x1, y1, x2, y2 = box.xyxy[0].cpu().int().tolist()
 

@@ -28,6 +28,7 @@ import { autocomplete } from "./autocomplete.svelte.js";
 class PrefsSyncStore {
   private _syncTimer: ReturnType<typeof setTimeout> | null = null;
   private _syncing = false;
+  private _pending = false;
 
   constructor() {
     registerSyncHandler(() => this.scheduleSync());
@@ -111,12 +112,23 @@ class PrefsSyncStore {
   }
 
   private async _doSync(): Promise<void> {
-    if (this._syncing) return;
+    // If a push is already in flight, mark that another is needed rather than
+    // dropping it — changes made mid-flight would otherwise never reach the
+    // server until the next unrelated save.
+    if (this._syncing) {
+      this._pending = true;
+      return;
+    }
     this._syncing = true;
     try {
       await pushServerPrefs(this.collectAll());
     } finally {
       this._syncing = false;
+    }
+    if (this._pending) {
+      this._pending = false;
+      // Re-run once to flush the state that changed during the last push.
+      this._doSync().catch(() => {});
     }
   }
 }

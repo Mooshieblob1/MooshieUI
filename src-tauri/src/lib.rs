@@ -11,11 +11,14 @@ pub mod log_buffer;
 pub mod metadata;
 pub mod model_requests;
 pub mod notifications;
+#[cfg(any(feature = "desktop", feature = "server"))]
+pub mod prompt_assistant;
 #[cfg(feature = "desktop")]
 pub mod setup;
 pub mod state;
 pub mod temp_images;
 pub mod templates;
+pub mod user_prefs;
 pub mod webserver;
 
 use std::sync::Arc;
@@ -372,6 +375,8 @@ pub fn run() {
             commands::api::get_output_image,
             commands::api::get_client_id,
             commands::api::download_model,
+            commands::api::resolve_download_filename,
+            commands::api::cancel_download,
             commands::api::get_model_install_dirs,
             commands::api::list_model_files,
             commands::api::delete_model_file,
@@ -431,6 +436,14 @@ pub fn run() {
             commands::interrogator::interrogate_image_path,
             commands::interrogator::interrogate_gallery_image,
             commands::interrogator::interrogate_clipboard,
+            commands::prompt_assistant::detect_llm_hardware,
+            commands::prompt_assistant::list_llm_catalog,
+            commands::prompt_assistant::llm_status,
+            commands::prompt_assistant::download_llm_model,
+            commands::prompt_assistant::delete_llm_model,
+            commands::prompt_assistant::unload_llm,
+            commands::prompt_assistant::enhance_prompt,
+            commands::prompt_assistant::compose_prompt,
             commands::api::fetch_cached_image,
             commands::api::read_clipboard_image,
             commands::api::get_gpu_stats,
@@ -460,6 +473,9 @@ pub fn run() {
             } else {
                 log::info!("Keeping ComfyUI running (keep_alive=true)");
             }
+            // Always stop the prompt-assistant llama-server on exit — it is never
+            // meant to outlive the app, regardless of keep_alive.
+            tauri::async_runtime::block_on(state.prompt_assistant.server.unload());
         }
     });
 }

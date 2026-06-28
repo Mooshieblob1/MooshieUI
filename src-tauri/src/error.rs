@@ -29,8 +29,23 @@ pub enum AppError {
     #[error("Interrogator error: {0}")]
     InterrogatorError(String),
 
+    #[error("Prompt assistant error: {0}")]
+    LlmError(String),
+
     #[error("{0}")]
     Other(String),
+}
+
+impl From<String> for AppError {
+    fn from(s: String) -> Self {
+        AppError::Other(s)
+    }
+}
+
+impl From<&str> for AppError {
+    fn from(s: &str) -> Self {
+        AppError::Other(s.to_string())
+    }
 }
 
 impl Serialize for AppError {

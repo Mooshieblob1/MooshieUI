@@ -15,7 +15,13 @@
     getPromptClickableSegments,
     type PromptClickableSegment,
   } from "../../utils/promptClickableRanges.js";
+  import {
+    getUnknownTagRanges,
+    buildSpellcheckPieces,
+    type SpellcheckPiece,
+  } from "../../utils/promptSpellcheck.js";
   import { SYNTAX_ANGLE_LOOKBEHIND } from "../../utils/promptSyntaxEscape.js";
+  import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
 
   interface Props {
     value: string;
@@ -43,6 +49,11 @@
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
   let backdropEl = $state<HTMLDivElement | null>(null);
   let clickOverlayEl = $state<HTMLDivElement | null>(null);
+  let spellcheckOverlayEl = $state<HTMLDivElement | null>(null);
+  let spellMenuVisible = $state(false);
+  let spellMenuX = $state(0);
+  let spellMenuY = $state(0);
+  let spellMenuItems = $state<ContextMenuItem[]>([]);
   let scrollbarWidth = $state(0);
 
   function updateScrollbarWidth() {
@@ -179,8 +190,10 @@
       return;
     }
 
-    // Skip if the fragment looks like a weight expression
-    if (/^\(.*:\d/.test(searchFragment)) {
+    // Skip only while typing an in-progress weight expression like `(tag:1.2`.
+    // Anchoring to the caret (no closing paren, ending at the number) means a
+    // completed `(tag:1.2)` followed by a fresh tag still autocompletes.
+    if (/^\([^)]*:\d[\d.]*$/.test(searchFragment)) {
       showSuggestions = false;
       suggestions = [];
       return;
@@ -497,6 +510,31 @@
   );
   const showClickableOverlay = $derived(autocomplete.clickableOverlayEnabled && clickableSegments.length > 0);
 
+  // Exclude the token under the caret only when there's no active selection.
+  const spellcheckCaret = $derived(selectionStart === selectionEnd ? selectionStart : -1);
+  const spellcheckRanges = $derived(
+    autocomplete.spellcheckEnabled
+      ? getUnknownTagRanges(value, (n) => autocomplete.isKnownTag(n), spellcheckCaret)
+      : [],
+  );
+  const showSpellcheckOverlay = $derived(
+    autocomplete.spellcheckEnabled && spellcheckRanges.length > 0,
+  );
+  const spellcheckPieces = $derived(
+    showSpellcheckOverlay ? buildSpellcheckPieces(value.length, spellcheckRanges) : [],
+  );
+
+  // Dismiss the right-click suggestion menu on any prompt edit: its items close over
+  // fixed offsets, so editing the prompt while it is open would splice at stale positions.
+  // Only `value` may trigger this — reading spellMenuVisible reactively would make opening
+  // the menu (which sets it true) re-run the effect and immediately close it again.
+  $effect(() => {
+    void value;
+    untrack(() => {
+      if (spellMenuVisible) spellMenuVisible = false;
+    });
+  });
+
   function handleClickableSegmentMouseDown(event: MouseEvent, segment: PromptClickableSegment) {
     if (!textareaEl || !segment.clickable) return;
 
@@ -515,6 +553,50 @@
     syncSelectionRange();
   }
 
+  function replaceRange(start: number, end: number, replacement: string) {
+    if (!textareaEl) return;
+    undoStack = [...undoStack, value];
+    redoStack = [];
+    const before = value.substring(0, start);
+    const after = value.substring(end);
+    value = before + replacement + after;
+    const caret = before.length + replacement.length;
+    requestAnimationFrame(() => {
+      textareaEl?.focus();
+      textareaEl?.setSelectionRange(caret, caret);
+      syncSelectionRange();
+    });
+  }
+
+  function openSpellMenu(event: MouseEvent, piece: SpellcheckPiece) {
+    if (!textareaEl || !piece.name) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Select the offending tag so the replacement target is visible.
+    textareaEl.focus();
+    textareaEl.setSelectionRange(piece.start, piece.end);
+    syncSelectionRange();
+
+    const suggestions = autocomplete.suggestSimilar(piece.name);
+    if (suggestions.length === 0) {
+      spellMenuItems = [
+        {
+          label: locale.t("generation.prompt.spellcheck_no_suggestions"),
+          action: () => {},
+        },
+      ];
+    } else {
+      spellMenuItems = suggestions.map((tag) => ({
+        label: tag.n.replace(/_/g, " "),
+        action: () => replaceRange(piece.start, piece.end, formatTagForPrompt(tag.n)),
+      }));
+    }
+    spellMenuX = event.clientX;
+    spellMenuY = event.clientY;
+    spellMenuVisible = true;
+  }
+
   function syncScroll() {
     if (textareaEl && backdropEl) {
       backdropEl.scrollTop = textareaEl.scrollTop;
@@ -523,6 +605,10 @@
     if (textareaEl && clickOverlayEl) {
       clickOverlayEl.scrollTop = textareaEl.scrollTop;
       clickOverlayEl.scrollLeft = textareaEl.scrollLeft;
+    }
+    if (textareaEl && spellcheckOverlayEl) {
+      spellcheckOverlayEl.scrollTop = textareaEl.scrollTop;
+      spellcheckOverlayEl.scrollLeft = textareaEl.scrollLeft;
     }
   }
 
@@ -641,16 +727,25 @@
       }
     });
   });
+
+  $effect(() => {
+    // Reset the category filter whenever the panel closes so a fresh tag always
+    // starts from "all". Otherwise a category chosen for one tag stays active and
+    // silently hides the panel for later tags with no match in it (issue #342).
+    if (!showSuggestions) {
+      categoryFilter = null;
+    }
+  });
 </script>
 
 <div class="relative">
   <!-- Always rendered so the textarea never shifts; buttons stay disabled until
        text is selected, which guards against inserting empty weight wrappers. -->
-  <div class="mb-2 flex flex-wrap gap-1.5">
+  <div class="mb-2 flex items-center gap-1.5">
     <button
       type="button"
       disabled={!hasSelection}
-      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       title={hasSelection ? locale.t('generation.prompt.weight_up') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => adjustSelectedWeight(0.05)}
@@ -660,7 +755,7 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       title={hasSelection ? locale.t('generation.prompt.weight_down') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => adjustSelectedWeight(-0.05)}
@@ -670,7 +765,7 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       title={hasSelection ? locale.t('generation.prompt.wrap_stronger') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => wrapSelection("brace")}
@@ -680,7 +775,7 @@
     <button
       type="button"
       disabled={!hasSelection}
-      class="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       title={hasSelection ? locale.t('generation.prompt.wrap_weaker') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => wrapSelection("bracket")}
@@ -688,7 +783,7 @@
       []
     </button>
     {#if !hasSelection}
-      <span class="self-center text-[10px] text-neutral-600">{locale.t('generation.prompt.weight_select_hint')}</span>
+      <span class="min-w-0 truncate text-[10px] text-neutral-600" title={locale.t('generation.prompt.weight_select_hint')}>{locale.t('generation.prompt.weight_select_hint')}</span>
     {/if}
   </div>
   <div class="relative">
@@ -703,6 +798,7 @@
     <textarea
       bind:this={textareaEl}
       bind:value
+      spellcheck={false}
       {placeholder}
       {rows}
       class="w-full border border-neutral-700 rounded-lg px-3 py-2 text-sm leading-5 text-neutral-100 placeholder-neutral-500 resize-y focus:outline-none focus:border-indigo-500 transition-colors break-words {minHeight} {showBackdrop ? 'bg-transparent' : 'bg-neutral-800'}"
@@ -739,6 +835,28 @@
             >{value.slice(segment.start, segment.end)}</span>
           {:else}
             <span style="color: transparent;">{value.slice(segment.start, segment.end)}</span>
+          {/if}
+        {/each}
+      </div>
+    {/if}
+
+    {#if showSpellcheckOverlay}
+      <div
+        bind:this={spellcheckOverlayEl}
+        aria-hidden="true"
+        class="absolute inset-0 overflow-hidden rounded-lg px-3 py-2 text-sm leading-5 whitespace-pre-wrap break-words border border-transparent select-none"
+        style="pointer-events: none; color: transparent; z-index: 3; right: {scrollbarWidth}px;"
+      >
+        {#each spellcheckPieces as piece (piece.start + ':' + piece.end)}
+          {#if piece.unknown}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <span
+              class="pointer-events-auto cursor-context-menu underline decoration-wavy decoration-red-500 underline-offset-2"
+              style="color: transparent; text-decoration-skip-ink: none;"
+              oncontextmenu={(event) => openSpellMenu(event, piece)}
+            >{value.slice(piece.start, piece.end)}</span>
+          {:else}
+            <span style="color: transparent;">{value.slice(piece.start, piece.end)}</span>
           {/if}
         {/each}
       </div>
@@ -781,4 +899,11 @@
       {/each}
     </div>
   {/if}
+  <ContextMenu
+    items={spellMenuItems}
+    x={spellMenuX}
+    y={spellMenuY}
+    visible={spellMenuVisible}
+    onclose={() => (spellMenuVisible = false)}
+  />
 </div>

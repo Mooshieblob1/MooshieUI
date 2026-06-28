@@ -11,6 +11,7 @@ import {
   MODEL_FAMILIES,
   TURBO_MODEL_VARIANTS,
   signalsIndicateVPred,
+  familyRequiresSeparateClip,
 } from "../utils/modelFamily.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import type {
@@ -19,7 +20,6 @@ import type {
   RegionalPromptSelection,
   RegionalPromptStrategy,
 } from "../types/index.js";
-import { autocomplete } from "./autocomplete.svelte.js";
 import { models } from "./models.svelte.js";
 import { styles } from "./styles.svelte.js";
 import { promptPresets } from "./promptPresets.svelte.js";
@@ -53,6 +53,8 @@ interface ModelPreset {
   width: number;
   height: number;
   upscaleDenoise?: number;
+  /** Sampler to use when `samplerName` is absent from the backend's enumerated list. Defaults to "euler". */
+  samplerFallback?: string;
 }
 
 function isModelFamily(value: unknown): value is ModelFamily {
@@ -340,6 +342,7 @@ class GenerationStore {
   facefixSteps = $state(20);
   facefixGuideSize = $state(512);
   facefixMaxFaces = $state(8);
+  facefixAutoPrompt = $state(false);
   outputBitDepth = $state<"8bit" | "16bit">("8bit");
   outputFormat = $state<"png" | "jxl">("png");
   metadataMode = $state<"text_chunk" | "stealth" | "both">("both");
@@ -357,6 +360,11 @@ class GenerationStore {
   manualSaveMode = $state(false);
   /** Directories to auto-save images to when manualSaveMode is enabled. */
   autoSaveDirs = $state<string[]>([]);
+  /** When true, swapping checkpoints no longer auto-applies per-model generation params
+   *  (steps/cfg/sampler/scheduler/dimensions). Family/metadata detection still runs.
+   *  The first-ever preset application (while `modelPresetAppliedKey` is still unset) is
+   *  exempt so a fresh profile still gets sane defaults; every later swap preserves. */
+  advancedMode = $state(false);
   regionalPrompts = $state<RegionalPromptSelection[]>([]);
   /** SDXL/Illustrious: conditioning areas vs sequential inpaint. Anima always uses inpaint chain. */
   regionalPromptStrategy = $state<RegionalPromptStrategy>("conditioning");
@@ -611,7 +619,8 @@ class GenerationStore {
     if (meta.modelRecommendedClipType !== undefined) {
       this.modelRecommendedClipType = meta.modelRecommendedClipType ?? null;
     }
-    autocomplete.notifyModelChanged(this.isAnima);
+    // Autocomplete tag-set sync is handled by an $effect in App.svelte that
+    // watches the model family (stores must not import each other).
   }
 
   setModelFamilyOverride(modelKey: string, family: ModelFamily | null): void {
@@ -839,7 +848,7 @@ class GenerationStore {
   private applyResolvedPreset(preset: ModelPreset) {
     this.steps = preset.steps;
     this.cfg = preset.cfg;
-    this.samplerName = this.resolveAvailableOption(models.samplers, preset.samplerName, "euler");
+    this.samplerName = this.resolveAvailableOption(models.samplers, preset.samplerName, preset.samplerFallback ?? "euler");
     this.scheduler = this.resolveAvailableOption(models.schedulers, preset.scheduler, "normal");
     this.width = preset.width;
     this.height = preset.height;
@@ -851,8 +860,8 @@ class GenerationStore {
   }
 
   applyModelSpecificPreset() {
-    const isAnimaLike = this.isAnima || this.isWan || this.isQwen;
-    autocomplete.notifyModelChanged(isAnimaLike);
+    // Autocomplete tag-set sync on model-family change is handled by an
+    // $effect in App.svelte (stores must not import each other).
 
     // Only apply defaults when the selected model actually changed. Metadata
     // reloads for the same model (page remount on tab switch, app restart)
@@ -863,6 +872,15 @@ class GenerationStore {
       this.modelTurboVariant,
     ].join("|");
     if (presetKey === this.modelPresetAppliedKey) return;
+    const isFirstPresetApplication = !this.modelPresetAppliedKey;
+    // Advanced Mode: after the first-ever application, preserve the user's generation
+    // params on checkpoint swaps. Family/metadata detection runs separately in
+    // applyModelMetadata(); only the param writes below are skipped.
+    // Record the key only once the preset is actually applied (below) — recording
+    // it here would let the idempotency guard suppress the preset forever if the
+    // user later disables Advanced Mode on the same model.
+    if (this.advancedMode && !isFirstPresetApplication) return;
+
     this.modelPresetAppliedKey = presetKey;
 
     let preset: ModelPreset;
@@ -1067,8 +1085,12 @@ class GenerationStore {
       case "illustrious":
         preset = {
           steps: this.hasTurboModelVariant ? 10 : 20,
-          cfg: this.hasTurboModelVariant ? 1.0 : 5.0,
-          samplerName: this.hasTurboModelVariant ? "euler" : "euler_cfg_pp",
+          // euler_ancestral_cfg_pp is a CFG++ sampler tuned for low CFG (~1.5-2.2);
+          // CFG 2.0 keeps it inside its band. Falls back to plain euler_ancestral
+          // on older ComfyUI builds that lack the cfg_pp variant.
+          cfg: this.hasTurboModelVariant ? 1.0 : 2.0,
+          samplerName: this.hasTurboModelVariant ? "euler" : "euler_ancestral_cfg_pp",
+          samplerFallback: this.hasTurboModelVariant ? "euler" : "euler_ancestral",
           scheduler: this.hasTurboModelVariant ? "normal" : "sgm_uniform",
           width: 1024,
           height: 1024,
@@ -1184,6 +1206,7 @@ class GenerationStore {
         if (saved.facefixSteps !== undefined) this.facefixSteps = saved.facefixSteps;
         if (saved.facefixGuideSize !== undefined) this.facefixGuideSize = saved.facefixGuideSize;
         if (saved.facefixMaxFaces !== undefined) this.facefixMaxFaces = saved.facefixMaxFaces;
+        if (saved.facefixAutoPrompt !== undefined) this.facefixAutoPrompt = saved.facefixAutoPrompt;
         if (saved.modeToggles !== undefined) {
           this.modeToggles = normalizeModeToggles(saved.modeToggles);
         } else {
@@ -1214,6 +1237,7 @@ class GenerationStore {
           ) as Record<string, ModelFamily>;
         }
         if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
+        if (saved.advancedMode !== undefined) this.advancedMode = saved.advancedMode;
         if (Array.isArray(saved.autoSaveDirs)) this.autoSaveDirs = saved.autoSaveDirs;
         if (saved.regionalPromptStrategy === "conditioning" || saved.regionalPromptStrategy === "inpaint_chain") {
           this.regionalPromptStrategy = saved.regionalPromptStrategy;
@@ -1246,8 +1270,8 @@ class GenerationStore {
           localStorage.setItem("mooshieui.metadataMode.v2", "1");
         }
         console.log("Loaded saved settings, checkpoint:", this.checkpoint);
-        // Sync autocomplete tag list with restored model
-        autocomplete.notifyModelChanged(this.isAnima);
+        // Autocomplete tag-set sync with the restored model is handled by an
+        // $effect in App.svelte (stores must not import each other).
       }
     } catch (e) {
       console.error("Failed to load settings:", e);
@@ -1326,6 +1350,7 @@ class GenerationStore {
         facefixSteps: this.facefixSteps,
         facefixGuideSize: this.facefixGuideSize,
         facefixMaxFaces: this.facefixMaxFaces,
+        facefixAutoPrompt: this.facefixAutoPrompt,
         outputBitDepth: this.outputBitDepth,
         outputFormat: this.outputFormat,
         metadataMode: this.metadataMode,
@@ -1340,6 +1365,7 @@ class GenerationStore {
         customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
         modelFamilyOverrides: this.modelFamilyOverrides,
         manualSaveMode: this.manualSaveMode,
+        advancedMode: this.advancedMode,
         autoSaveDirs: this.autoSaveDirs,
         regionalPrompts: this.regionalPrompts,
         regionalPromptStrategy: this.regionalPromptStrategy,
@@ -1371,6 +1397,7 @@ class GenerationStore {
       height: this.height,
       batchSize: this.batchSize,
       denoise: this.denoise,
+      refineOnly: this.refineOnly,
       differentialDiffusion: this.differentialDiffusion,
       upscaleEnabled: this.upscaleEnabled,
       upscaleMethod: this.upscaleMethod,
@@ -1412,12 +1439,14 @@ class GenerationStore {
       styleTransferNormStrength: this.styleTransferNormStrength,
       styleTransferPmiAlpha: this.styleTransferPmiAlpha,
       styleTransferMegapixels: this.styleTransferMegapixels,
+      styleTransferBlocks: this.styleTransferBlocks,
       facefixEnabled: this.facefixEnabled,
       facefixDetector: this.facefixDetector,
       facefixDenoise: this.facefixDenoise,
       facefixSteps: this.facefixSteps,
       facefixGuideSize: this.facefixGuideSize,
       facefixMaxFaces: this.facefixMaxFaces,
+      facefixAutoPrompt: this.facefixAutoPrompt,
       outputBitDepth: this.outputBitDepth,
       outputFormat: this.outputFormat,
       metadataMode: this.metadataMode,
@@ -1431,9 +1460,11 @@ class GenerationStore {
       customNanosaurPositiveQuality: this.customNanosaurPositiveQuality,
       customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
       manualSaveMode: this.manualSaveMode,
+      advancedMode: this.advancedMode,
       autoSaveDirs: this.autoSaveDirs,
       regionalPrompts: this.regionalPrompts,
       regionalPromptStrategy: this.regionalPromptStrategy,
+      modelFamilyOverrides: this.modelFamilyOverrides,
     };
   }
 
@@ -1479,6 +1510,18 @@ class GenerationStore {
       if (!this.vae) {
         throw new Error("Split model VAE is still loading.");
       }
+    }
+
+    // Diffusion-only families (Flux, Anima, Wan, Qwen, Chroma, ...) carry no
+    // text encoder in a single checkpoint. If one was placed in `checkpoints/`
+    // and loaded via CheckpointLoaderSimple, ComfyUI returns a None CLIP and
+    // fails with "clip input is invalid: None". Surface an actionable error.
+    if (!this.useSplitModel && familyRequiresSeparateClip(this.modelFamily)) {
+      throw new Error(
+        `"${this.checkpoint}" is a ${this.modelFamily} diffusion model with no built-in text encoder. ` +
+          `Move it to ComfyUI's diffusion_models/ folder and select it as a diffusion model, ` +
+          `or choose a full checkpoint instead.`,
+      );
     }
 
     const style = this.stylePresetsEnabled
@@ -1693,9 +1736,7 @@ class GenerationStore {
         creativity: s.creativity,
         threshold: s.threshold,
       })),
-      raw_positive_prompt: translateNaiWeightSyntax(positivePrompt),
       positive_regions: builtRegions,
-      raw_negative_prompt: translateNaiWeightSyntax(negativePrompt),
       checkpoint: this.checkpoint,
       vae: this.vae || null,
       loras: this.loras
@@ -1758,6 +1799,7 @@ class GenerationStore {
       facefix_steps: this.facefixSteps,
       facefix_guide_size: this.facefixGuideSize,
       facefix_max_faces: this.facefixMaxFaces,
+      facefix_auto_prompt: this.facefixAutoPrompt,
       model_architecture: this.modelFamily,
       is_sdxl_like: this.isSdxlLike,
       is_vpred_model: signalsIndicateVPred(this.modelFamilySignals()),

@@ -717,7 +717,10 @@
 
       const points = currentLine.points();
       currentLine.points([...points, pos.x, pos.y]);
-      getActiveKonvaLayer()?.batchDraw();
+      // Redraw the layer the stroke actually lives on. In inpaint-mask mode the
+      // line is added to the mask layer, not the active layer, so redrawing the
+      // active layer here would leave the in-progress stroke invisible.
+      currentLine.getLayer()?.batchDraw();
     }
 
     // Rectangle preview
@@ -938,6 +941,21 @@
     void canvas.layers;
     syncKonvaLayers();
     applyViewport();
+  });
+
+  let historyDims = { w: 0, h: 0 };
+  $effect(() => {
+    // Keep undo/redo snapshot dimensions in sync with the canvas. When the
+    // canvas is resized (e.g. a new image is loaded) existing snapshots no
+    // longer match the new dimensions, so discard them rather than restoring
+    // stretched or clipped pixels.
+    const w = canvas.canvasWidth;
+    const h = canvas.canvasHeight;
+    if (w === historyDims.w && h === historyDims.h) return;
+    const hadDims = historyDims.w !== 0 || historyDims.h !== 0;
+    historyDims = { w, h };
+    canvasHistory.setRefs(konvaLayers, w, h);
+    if (hadDims) canvasHistory.clear();
   });
 
   $effect(() => {

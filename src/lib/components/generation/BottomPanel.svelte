@@ -6,9 +6,11 @@
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { models } from "../../stores/models.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
+  import { formatGenerationTime } from "../../utils/localeFormat.js";
   import { compare } from "../../stores/compare.svelte.js";
   import { artistFavourites } from "../../artist-gallery/favourites.svelte.js";
   import { createArtistGalleryStore } from "../../artist-gallery/store.svelte.js";
+  import { cachedSrc } from "../../artist-gallery/imageCache.js";
   import { artistInsert } from "../../stores/artistInsert.svelte.js";
   import type { ArtistSearchHit } from "../../artist-gallery/types.js";
   import LoraGallery from "./LoraGallery.svelte";
@@ -238,7 +240,10 @@
   function artistThumbUrl(hit: ArtistSearchHit): string {
     const m = artistStore?.manifest;
     if (!m || !hit.hasImage || !hit.imageId) return "";
-    return `${m.imageBaseUrl}/${m.releasePrefix}/images/${hit.imageId}.webp`;
+    // Match the gallery page's imgExt(): index v2+ stores AVIF, v1 stored WebP.
+    // Hardcoding .webp here 404s against the v2 multi-variant dataset.
+    const ext = (m.version ?? 1) >= 2 ? "avif" : "webp";
+    return `${m.imageBaseUrl}/${m.releasePrefix}/images/${hit.imageId}.${ext}`;
   }
 
   function applyArtistTag(hit: ArtistSearchHit) {
@@ -294,6 +299,34 @@
 
   function cancelHideActionBar() {
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+  }
+
+  /**
+   * Delete the image under the floating bar, then re-target the bar to whatever
+   * image shifts into the same grid slot. The slot's screen position is fixed,
+   * so the bar stays put and the user can keep clicking delete to remove the
+   * latest image at that position one after another.
+   */
+  async function deleteHoveredImage(image: OutputImage) {
+    const idx = filteredSessionImages.indexOf(image);
+    await gallery.deleteImage(image);
+    const remaining = filteredSessionImages;
+    if (idx < 0 || idx >= remaining.length) {
+      // The deleted image was the last in its slot — nothing took its place.
+      hoveredImage = null;
+      actionBarPos = null;
+      return;
+    }
+    hoveredImage = remaining[idx];
+  }
+
+  function confirmDeleteAllSessionImages() {
+    const count = gallery.sessionImages.length;
+    if (count === 0) return;
+    if (!confirm(locale.t('bottom_panel.delete_all_confirm', { count: String(count) }))) return;
+    hoveredImage = null;
+    actionBarPos = null;
+    void gallery.deleteAllSessionImages();
   }
 
   function actionBarOut(node: Element, { duration = 260 } = {}) {
@@ -374,7 +407,7 @@
   </div>
 
   <!-- Tab content -->
-  <div class="flex-1 min-h-0 min-w-0 overflow-auto">
+  <div class="flex-1 min-h-0 min-w-0 overflow-auto [scrollbar-gutter:stable]">
     {#if activeTab === "loras"}
       <LoraGallery cardSize={loraCardSize} onCardSizeChange={(s) => { loraCardSize = s; }} />    {:else if activeTab === "checkpoints"}
       <CheckpointGallery />    {:else if activeTab === "images"}
@@ -417,13 +450,23 @@
                 title={locale.t('bottom_panel.card_size')}
               />
             </div>
+            <button
+              type="button"
+              class="shrink-0 w-7 h-7 flex items-center justify-center rounded border border-neutral-700 text-neutral-400 hover:border-red-500 hover:text-red-300 hover:bg-red-600/10 transition-colors"
+              title={locale.t('bottom_panel.delete_all')}
+              aria-label={locale.t('bottom_panel.delete_all')}
+              onclick={confirmDeleteAllSessionImages}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+            </button>
           </div>
           {#if filteredSessionImages.length === 0}
             <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
               <p>{locale.t('bottom_panel.no_image_results')}</p>
             </div>
           {:else}
-            <div class="grid gap-2 flex-1 min-h-0 overflow-y-auto px-2 py-2" style="grid-template-columns: repeat(auto-fill, minmax({imageCardSize}px, 1fr)); align-content: start;">
+            <div class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-2 py-2">
+              <div class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(min({imageCardSize}px, 100%), 1fr)); align-content: start;">
               {#each filteredSessionImages as image}
                 <div
                   class="relative w-full rounded-lg overflow-hidden border transition-colors {hoveredImage === image ? 'border-indigo-500' : 'border-neutral-800'}"
@@ -442,8 +485,20 @@
                       class="w-full h-full object-cover"
                     />
                   </button>
+                  {#if hoveredImage === image && image.generationTimeMs != null}
+                    <div
+                      class="absolute top-1.5 left-1.5 flex items-center gap-1 bg-black/65 text-white text-[10px] font-medium px-1.5 py-0.5 rounded backdrop-blur-sm pointer-events-none"
+                      title={locale.t("generation.gen_time_label")}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+                      </svg>
+                      {formatGenerationTime(image.generationTimeMs, locale.current)}
+                    </div>
+                  {/if}
                 </div>
               {/each}
+              </div>
             </div>
           {/if}
         </div>
@@ -469,7 +524,7 @@
               <p>{locale.t('bottom_panel.no_prompt_results')}</p>
             </div>
           {:else}
-            <div class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto px-2 py-2">
+            <div class="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-2 py-2">
               {#each filteredPromptHistory as entry}
                 <div class="shrink-0 rounded-lg border bg-neutral-900/60 overflow-hidden {entry.favorite ? 'border-amber-500/40' : 'border-neutral-800 hover:border-neutral-700'} transition-colors">
               <button
@@ -575,10 +630,11 @@
               <p>{locale.t('bottom_panel.no_artist_results')}</p>
             </div>
           {:else}
-            <div
-              class="grid gap-2 flex-1 min-h-0 overflow-y-auto px-2 py-2"
-              style="grid-template-columns: repeat(auto-fill, minmax({artistCardSize}px, 1fr)); align-content: start;"
-            >
+            <div class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-2 py-2">
+              <div
+                class="grid gap-2"
+                style="grid-template-columns: repeat(auto-fill, minmax(min({artistCardSize}px, 100%), 1fr)); align-content: start;"
+              >
               {#each filteredFavouriteArtists as hit (hit.slug)}
                 {@const thumb = artistThumbUrl(hit)}
                 {@const favCat = artistFavourites.categoryOf(hit.slug)}
@@ -592,7 +648,7 @@
                 >
                   <div class="relative aspect-3/4 w-full overflow-hidden rounded-t-lg bg-neutral-800">
                     {#if thumb}
-                      <img src={thumb} alt={hit.tag} loading="lazy" decoding="async" class="h-full w-full object-cover" />
+                      <img use:cachedSrc={thumb} alt={hit.tag} loading="lazy" decoding="async" class="h-full w-full object-cover" />
                     {:else}
                       <div class="flex h-full w-full items-center justify-center text-[10px] text-neutral-500">{locale.t("gallery.no_preview")}</div>
                     {/if}
@@ -620,6 +676,7 @@
                   </div>
                 </div>
               {/each}
+              </div>
             </div>
           {/if}
         </div>
@@ -641,14 +698,14 @@
     <div class="flex items-center gap-0.5 px-1.5 py-1 rounded-lg bg-neutral-900/95 border border-neutral-700/80 shadow-lg shadow-black/40 backdrop-blur-sm">
       {#if !image.is_upscaled}
         <button
-          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-indigo-600/80 text-neutral-300 hover:text-white transition-colors"
+          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
           title={locale.t('bottom_panel.upscale')}
           onclick={() => onupscale(image)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
         </button>
         <button
-          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-indigo-600/80 text-neutral-300 hover:text-white transition-colors"
+          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
           title={locale.t('gallery.send_to_img2img')}
           onclick={() => onrefine(image)}
         >
@@ -671,7 +728,7 @@
         </button>
       {/if}
       <button
-        class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-indigo-600/80 text-neutral-300 hover:text-white transition-colors"
+        class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
         title={locale.t('bottom_panel.inpaint')}
         onclick={() => oninpaint(image)}
       >
@@ -697,7 +754,7 @@
       <button
         class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-red-600/80 text-neutral-400 hover:text-red-200 transition-colors"
         title={locale.t('bottom_panel.delete')}
-        onclick={() => gallery.deleteImage(image)}
+        onclick={() => deleteHoveredImage(image)}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       </button>

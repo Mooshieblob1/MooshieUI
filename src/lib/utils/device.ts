@@ -19,11 +19,16 @@ export function isMobileUA(): boolean {
     /Android.*Mobile|iPhone|iPod|webOS|BlackBerry|IEMobile|Opera Mini|Mobile Safari/i;
   const tabletRe = /iPad|Android(?!.*Mobile)|Tablet|PlayBook|Silk/i;
   if (phoneRe.test(ua) || tabletRe.test(ua)) return true;
-  // iPadOS 13+ reports desktop Safari UA; detect via touch + macOS.
+  // iPadOS 13+ reports a desktop Safari UA. Distinguish a real iPad from a
+  // desktop Mac (including one with an attached touchscreen) by requiring both
+  // multi-touch AND a coarse primary pointer — a trackpad/mouse Mac reports a
+  // fine pointer, so this avoids the desktop-Mac false positive.
   if (
     /Macintosh/.test(ua) &&
     typeof navigator.maxTouchPoints === "number" &&
-    navigator.maxTouchPoints > 1
+    navigator.maxTouchPoints > 1 &&
+    typeof matchMedia === "function" &&
+    matchMedia("(pointer: coarse)").matches
   ) {
     return true;
   }

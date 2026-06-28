@@ -1,6 +1,7 @@
 <script lang="ts">
   import { modelRequests, type ModelRequest } from "../../stores/modelRequests.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { downloadModel } from "../../utils/api.js";
   import { onMount } from "svelte";
 
   let { userRole = "user" }: { userRole?: string } = $props();
@@ -23,7 +24,17 @@
   }
 
   async function handleApprove(req: ModelRequest) {
-    await modelRequests.approveRequest(req.id);
+    const approved = await modelRequests.approveRequest(req.id);
+    if (approved) {
+      // The button is "Approve & Download" — approving only flips the request
+      // status, so actually kick off the (server-side) download of the file now.
+      // A download failure is surfaced but does not undo the approval.
+      try {
+        await downloadModel(approved.file_url, approved.category, approved.file_name);
+      } catch (e) {
+        modelRequests.showToast(String(e), "error");
+      }
+    }
     await modelRequests.fetchRequests(statusFilter || undefined);
   }
 

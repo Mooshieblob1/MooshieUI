@@ -354,15 +354,17 @@
       <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
       {locale.t('generation.interrogate.paste')}
     </button>
-    <span class="text-neutral-700">|</span>
-    <button
-      type="button"
-      onclick={handleInterrogateFromFile}
-      class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors flex items-center gap-1"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
-      {locale.t('generation.interrogate.select_image')}
-    </button>
+    {#if isTauri}
+      <span class="text-neutral-700">|</span>
+      <button
+        type="button"
+        onclick={handleInterrogateFromFile}
+        class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors flex items-center gap-1"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
+        {locale.t('generation.interrogate.select_image')}
+      </button>
+    {/if}
     <span class="text-neutral-700">|</span>
     <button
       type="button"

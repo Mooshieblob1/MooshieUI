@@ -809,6 +809,32 @@ pub async fn download_model(
         .await
 }
 
+/// Resolve the real filename a download URL points to (read from the server's
+/// `Content-Disposition` header) without downloading the file. Returns `None`
+/// when the server reports no usable name, so the Model Hub can fall back to
+/// URL-based inference. Used to autopopulate the direct-download filename field,
+/// including for CivitAI links whose filename is not present in the URL.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn resolve_download_filename(
+    state: State<'_, Arc<AppState>>,
+    url: String,
+) -> Result<Option<String>, AppError> {
+    state.resolve_download_filename(&url).await
+}
+
+/// Request cancellation of an in-progress model download by filename. The running
+/// download loop checks this flag each chunk, deletes the partial file and stops (#399).
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn cancel_download(
+    state: State<'_, Arc<AppState>>,
+    filename: String,
+) -> Result<(), AppError> {
+    state.request_download_cancel(&filename);
+    Ok(())
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_image_file(image_bytes: Vec<u8>, path: String) -> Result<(), AppError> {
@@ -1277,7 +1303,19 @@ pub(crate) async fn load_gallery_image_png_from_dir(
             let mut buf = std::io::Cursor::new(Vec::new());
             img.write_to(&mut buf, image::ImageFormat::Png)
                 .map_err(|e| format!("PNG encode failed: {}", e))?;
-            Ok(buf.into_inner())
+            let png = buf.into_inner();
+            // The JXL may carry embedded generation metadata; the freshly encoded
+            // PNG does not. Re-embed it as a standard PNG text chunk so the
+            // exported file stays portable and metadata-complete.
+            match crate::metadata::read_image_metadata(&bytes) {
+                Ok(Some(meta)) => Ok(crate::metadata::embed_png_metadata(
+                    &png,
+                    &meta,
+                    crate::metadata::MetadataMode::TextChunk,
+                )
+                .unwrap_or(png)),
+                _ => Ok(png),
+            }
         })
         .await
         .map_err(|e| AppError::Other(format!("Task panicked: {}", e)))?
@@ -1594,6 +1632,7 @@ pub async fn rename_gallery_image(
     }
 
     std::fs::rename(&old_path, &new_path)?;
+    crate::gallery_index::rename(&old_path, &new_path);
     Ok(new_filename)
 }
 
@@ -2315,11 +2354,14 @@ pub async fn find_model_by_hash(
         return Err(AppError::Other("Invalid model category".into()));
     }
 
-    let config = state.config.read().await;
-    if config.comfyui_path.is_empty() {
+    let comfyui_path = {
+        let config = state.config.read().await;
+        config.comfyui_path.clone()
+    };
+    if comfyui_path.is_empty() {
         return Ok(None);
     }
-    let models_dir = std::path::Path::new(&config.comfyui_path)
+    let models_dir = std::path::Path::new(&comfyui_path)
         .join("models")
         .join(&category);
 
@@ -2374,11 +2416,14 @@ pub async fn hash_model_file(
         return Err(AppError::Other("Invalid model filename".into()));
     }
 
-    let config = state.config.read().await;
-    if config.comfyui_path.is_empty() {
+    let comfyui_path = {
+        let config = state.config.read().await;
+        config.comfyui_path.clone()
+    };
+    if comfyui_path.is_empty() {
         return Err(AppError::Other("ComfyUI path not configured".into()));
     }
-    let path = std::path::Path::new(&config.comfyui_path)
+    let path = std::path::Path::new(&comfyui_path)
         .join("models")
         .join(&category)
         .join(&filename);
@@ -2448,10 +2493,11 @@ fn parse_civitai_image_id(image_ref: &str) -> Result<u64, AppError> {
 }
 
 fn is_allowed_civitai_image_host(host: &str) -> bool {
-    matches!(
-        host.to_ascii_lowercase().as_str(),
-        "civitai.com" | "www.civitai.com" | "image.civitai.com" | "cdn.civitai.com"
-    )
+    // Accept civitai.com and any of its subdomains (image.civitai.com,
+    // cdn.civitai.com, and any future image host CivitAI introduces). The
+    // trailing-dot match keeps look-alikes like "civitai.com.evil.test" out.
+    let host = host.to_ascii_lowercase();
+    host == "civitai.com" || host.ends_with(".civitai.com")
 }
 
 pub(crate) fn parse_civitai_image_url(url: &str) -> Result<reqwest::Url, AppError> {
@@ -2475,19 +2521,30 @@ pub(crate) async fn fetch_civitai_image_bytes(
     state: &AppState,
     url: &str,
 ) -> Result<Vec<u8>, AppError> {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| AppError::Other(format!("Failed to build image fetch client: {}", e)))?;
+    // Reuse the shared no-redirect client so redirects stay manual (the token is
+    // gated per-host below) while still benefiting from connection pooling.
+    let client = &state.http_client_no_redirect;
+    // The initial URL must be a CivitAI host so this command can't be turned into
+    // a generic server-side fetch primitive (it is reachable through browser-mode
+    // LAN auth and carries the user's CivitAI token).
     let mut current = parse_civitai_image_url(url)?;
     let civitai_api_key = state.config.read().await.civitai_api_key.clone();
 
     for _ in 0..5 {
+        // CivitAI redirects image requests to its CDN, which is not on a
+        // civitai.com host. Only attach the user's token while we are still on a
+        // CivitAI host so it can never leak to the CDN or any other origin.
+        let on_civitai_host = current
+            .host_str()
+            .map(is_allowed_civitai_image_host)
+            .unwrap_or(false);
         let mut req = client
             .get(current.clone())
             .header("User-Agent", "MooshieUI/0.5.7");
-        if let Some(key) = civitai_api_key.as_ref().filter(|v| !v.trim().is_empty()) {
-            req = req.bearer_auth(key);
+        if on_civitai_host {
+            if let Some(key) = civitai_api_key.as_ref().filter(|v| !v.trim().is_empty()) {
+                req = req.bearer_auth(key);
+            }
         }
 
         let resp = req
@@ -2504,7 +2561,14 @@ pub(crate) async fn fetch_civitai_image_bytes(
             current = current
                 .join(location)
                 .map_err(|e| AppError::Other(format!("Image fetch redirect invalid: {}", e)))?;
-            parse_civitai_image_url(current.as_str())?;
+            // Follow the redirect to CivitAI's CDN, but keep it HTTPS-only so a
+            // redirect can never reach an internal http service. The token is
+            // gated on the host check above, not on the target being CivitAI.
+            if current.scheme() != "https" {
+                return Err(AppError::Other(
+                    "CivitAI image redirect must use HTTPS".into(),
+                ));
+            }
             continue;
         }
         if !resp.status().is_success() {
@@ -2532,6 +2596,8 @@ mod sidecar_thumbnail_tests {
         assert!(parse_civitai_image_url("https://image.civitai.com/example.jpeg").is_ok());
         assert!(parse_civitai_image_url("https://cdn.civitai.com/example.png").is_ok());
         assert!(parse_civitai_image_url("https://civitai.com/images/123").is_ok());
+        // Any civitai.com subdomain is accepted so new image hosts keep working.
+        assert!(parse_civitai_image_url("https://imagecache.civitai.com/example.jpeg").is_ok());
     }
 
     #[test]
@@ -3696,11 +3762,27 @@ pub(crate) async fn read_modelspec_internal(
 
     // Merge the full ModelSpec display fields (title, author, description,
     // trigger phrase, ...) for the model info panel. Header-only read — no
-    // hashing. Runtime keys resolved above take precedence.
+    // hashing. Runtime keys resolved above take precedence. This also populates
+    // an inferred `architecture` (from tensor-key patterns) when the file has no
+    // declared modelspec.architecture.
     if let Ok(Some(display_meta)) = read_safetensors_modelspec(&path) {
         for (key, value) in display_meta {
             result.entry(key).or_insert(value);
         }
+    }
+
+    // Tensor-key architecture is ground truth for Wan2.1 / Anima checkpoints:
+    // they are DiT models, not classic UNets, so standard ControlNet cannot be
+    // applied to them — only the Anima LLLite path works. The soft filename and
+    // baseModel heuristics above miss Anima fine-tunes that were renamed without
+    // an `anima`/`yume` token (e.g. "PerfectDeliberate") and have no Wan
+    // baseModel sidecar/CivitAI tag. When the structural inference says Wan, it
+    // overrides the softer signals so ControlNet routes to Anima LLLite.
+    if result.get("family").map(String::as_str) != Some("anima")
+        && result.get("architecture").map(String::as_str) == Some("wan2.1")
+    {
+        result.insert("family".to_string(), "anima".to_string());
+        result.insert("is_sdxl_like".to_string(), "false".to_string());
     }
 
     if category == "diffusion_models" {
@@ -4762,6 +4844,17 @@ pub async fn export_logs(
     destination: String,
     frontend_logs: Option<Vec<String>>,
 ) -> Result<(), AppError> {
+    let output = build_diagnostic_log(&state, frontend_logs).await;
+    std::fs::write(&destination, &output)?;
+    Ok(())
+}
+
+/// Build the full diagnostic log text (config, GPU, Python/ComfyUI versions,
+/// ComfyUI + llama-server logs, Rust/frontend ring buffers). Shared by the
+/// desktop `export_logs` command (which writes it to a file) and the
+/// browser/server-mode handler (which returns it for a client-side download).
+#[cfg(any(feature = "desktop", feature = "server"))]
+pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<String>>) -> String {
     use std::fmt::Write;
 
     // Fold any newly-submitted frontend logs into the ring buffer so repeat
@@ -4910,6 +5003,22 @@ pub async fn export_logs(
         }
     }
 
+    // Prompt-assistant llama-server stderr log (model-load diagnostics such as
+    // missing shared libraries, unsupported architectures, health timeouts).
+    let _ = writeln!(output);
+    let _ = writeln!(output, "=== Prompt Assistant (llama-server) Log ===");
+    match state.prompt_assistant.server.read_server_log() {
+        Some(content) if !content.trim().is_empty() => {
+            let _ = write!(output, "{}", content);
+        }
+        Some(_) => {
+            let _ = writeln!(output, "(log file is empty)");
+        }
+        None => {
+            let _ = writeln!(output, "(no llama-server log yet)");
+        }
+    }
+
     // Rust-side log ring buffer (captured by log_buffer::RingLogger)
     let rust_lines = crate::log_buffer::snapshot_rust();
     if !rust_lines.is_empty() {
@@ -4934,9 +5043,7 @@ pub async fn export_logs(
         }
     }
 
-    // Write to destination
-    std::fs::write(&destination, &output)?;
-    Ok(())
+    output
 }
 
 /// Append a batch of frontend console log lines to the in-memory diagnostics
@@ -5271,6 +5378,20 @@ pub async fn install_attention_backend(
     app_handle: AppHandle,
     backend: String,
 ) -> Result<(), AppError> {
+    install_attention_backend_core(&state, backend, |msg| {
+        app_handle.emit("attention:install_progress", msg).ok();
+    })
+    .await
+}
+
+/// Core of `install_attention_backend`, shared by the desktop Tauri command and
+/// the browser-mode dispatch arm. `emit` reports progress: desktop forwards it to
+/// `attention:install_progress` via the WebView, browser mode via the SSE broadcast.
+pub async fn install_attention_backend_core(
+    state: &Arc<AppState>,
+    backend: String,
+    emit: impl Fn(&str),
+) -> Result<(), AppError> {
     let valid = ["default", "sage_v1", "sage_v2", "flash_v1", "flash_v2"];
     if !valid.contains(&backend.as_str()) {
         return Err(AppError::Other(format!(
@@ -5304,12 +5425,7 @@ pub async fn install_attention_backend(
     let python_str = venv_python.to_string_lossy().to_string();
 
     // Step 1: Uninstall any existing attention packages (ignore errors)
-    app_handle
-        .emit(
-            "attention:install_progress",
-            "Removing old attention packages...",
-        )
-        .ok();
+    emit("Removing old attention packages...");
     let _ = tokio::process::Command::new(&uv)
         .args([
             "pip",
@@ -5326,12 +5442,7 @@ pub async fn install_attention_backend(
     if backend != "default" {
         let install_args: Vec<&str> = match backend.as_str() {
             "sage_v1" => {
-                app_handle
-                    .emit(
-                        "attention:install_progress",
-                        "Installing SageAttention v1 (pure Triton)...",
-                    )
-                    .ok();
+                emit("Installing SageAttention v1 (pure Triton)...");
                 vec![
                     "pip",
                     "install",
@@ -5341,12 +5452,7 @@ pub async fn install_attention_backend(
                 ]
             }
             "sage_v2" => {
-                app_handle
-                    .emit(
-                        "attention:install_progress",
-                        "Installing SageAttention v2 (CUDA kernels — may take a few minutes)...",
-                    )
-                    .ok();
+                emit("Installing SageAttention v2 (CUDA kernels — may take a few minutes)...");
                 vec![
                     "pip",
                     "install",
@@ -5357,12 +5463,7 @@ pub async fn install_attention_backend(
                 ]
             }
             "flash_v1" => {
-                app_handle
-                    .emit(
-                        "attention:install_progress",
-                        "Installing FlashAttention v1...",
-                    )
-                    .ok();
+                emit("Installing FlashAttention v1...");
                 vec![
                     "pip",
                     "install",
@@ -5373,12 +5474,7 @@ pub async fn install_attention_backend(
                 ]
             }
             "flash_v2" => {
-                app_handle
-                    .emit(
-                        "attention:install_progress",
-                        "Installing FlashAttention v2 (may compile from source — this can take 10+ minutes)...",
-                    )
-                    .ok();
+                emit("Installing FlashAttention v2 (may compile from source — this can take 10+ minutes)...");
                 vec![
                     "pip",
                     "install",
@@ -5414,12 +5510,7 @@ pub async fn install_attention_backend(
             .map_err(|e| AppError::Other(format!("Failed to save config: {}", e)))?;
     }
 
-    app_handle
-        .emit(
-            "attention:install_progress",
-            "Attention backend updated. Restart ComfyUI to apply.",
-        )
-        .ok();
+    emit("Attention backend updated. Restart ComfyUI to apply.");
     log::info!("Attention backend set to: {}", backend);
     Ok(())
 }

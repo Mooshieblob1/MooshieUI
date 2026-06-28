@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AppConfig, QueueInfo } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
@@ -8,12 +8,15 @@
   import { accessibility } from "../../stores/accessibility.svelte.js";
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
+  import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import PromptAssistantSetupModal from "../generation/PromptAssistantSetupModal.svelte";
   import OpenModelFolders from "./OpenModelFolders.svelte";
   import ModelManagerModal from "./ModelManagerModal.svelte";
   import GpuStatusPanel from "./GpuStatusPanel.svelte";
   import ModelRequestsPanel from "./ModelRequestsPanel.svelte";
   import QualityTagsEditor from "./QualityTagsEditor.svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
+  import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
   import {
     applyTheme,
     THEME_PALETTES,
@@ -33,6 +36,16 @@
   }
 
   let { userRole = "admin", mobileFriendly = false }: Props = $props();
+
+  // Layout override: only meaningful on a mobile-capable device in browser mode,
+  // where the mobile shell exists. The control lets the user flip between the
+  // touch layout and the full desktop interface (resolved at module load).
+  const deviceSupportsMobileLayout = isBrowserMode && isMobileUA();
+  function switchLayout() {
+    // Currently mobile -> force desktop; currently desktop -> clear the override.
+    setForceDesktopOverride(useMobileLayout);
+    location.reload();
+  }
 
   let settingsScrollEl = $state<HTMLDivElement | null>(null);
   let showScrollToTop = $state(false);
@@ -68,6 +81,7 @@
   const appVersion = __APP_VERSION__ ?? "dev";
 
   let config = $state<AppConfig | null>(null);
+  let showPromptAssistantSetup = $state(false);
   let loading = $state(true);
   let saving = $state(false);
   let saved = $state(false);
@@ -79,6 +93,7 @@
   let tagUrlInput = $state("");
   let tagFileLoading = $state(false);
   let showQualityTagsWarning = $state(false);
+  let showAdvancedModeWarning = $state(false);
   let showCustomQualityTags = $state(false);
 
   // Attention backend state
@@ -662,21 +677,43 @@
   let galleryPathMessage = $state<string | null>(null);
 
   async function handleExportLogs() {
-    let destination: string | null = null;
     if (isTauri) {
       const { save: saveDialog } = await import("@tauri-apps/plugin-dialog");
-      destination = await saveDialog({
+      const destination = await saveDialog({
         title: locale.t('settings.about.save_dialog_title'),
         defaultPath: "mooshieui-diagnostics.log",
         filters: [{ name: locale.t("settings.about.log_files_filter"), extensions: ["log", "txt"] }],
       });
+      if (!destination) return;
+      exportingLogs = true;
+      logExportDone = false;
+      logExportError = null;
+      try {
+        await exportLogs(destination);
+        logExportDone = true;
+        setTimeout(() => (logExportDone = false), 4000);
+      } catch (e) {
+        logExportError = String(e);
+      } finally {
+        exportingLogs = false;
+      }
+      return;
     }
-    if (!destination) return;
+    // Browser/server mode: fetch the diagnostic text and download it client-side.
     exportingLogs = true;
     logExportDone = false;
     logExportError = null;
     try {
-      await exportLogs(destination);
+      const content = await exportLogsContent();
+      const blob = new Blob([content], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "mooshieui-diagnostics.log";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
       logExportDone = true;
       setTimeout(() => (logExportDone = false), 4000);
     } catch (e) {
@@ -1000,6 +1037,9 @@
           updateState = "ready";
         }
       });
+      // Record the expected version so UpdateNotification can verify on the
+      // next launch that the update actually applied (mirrors the banner path).
+      if (updateVersion) localStorage.setItem("mooshieui_pending_update", updateVersion);
       updateState = "ready";
     } catch (e) {
       updateState = "error";
@@ -1027,6 +1067,7 @@
       paths: false,
       autocomplete: false,
       interrogator: false,
+      prompt_assistant: false,
       civitai: false,
       about: false,
     };
@@ -1062,6 +1103,7 @@
     { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview upscale pre-upscale before base" },
     { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
     { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
+    { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf ai assistant" },
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
     { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
     { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates about troubleshooting logs export diagnostic github report issue" },
@@ -2140,6 +2182,23 @@
 
           {#if !collapsed.appearance}
           <div class="px-5 pb-5 space-y-4">
+          {#if deviceSupportsMobileLayout}
+            <div class="rounded-lg border border-neutral-700 bg-neutral-950/60 p-4">
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <p class="text-xs font-medium text-neutral-200">{locale.t('settings.appearance.layout_title')}</p>
+                  <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.appearance.layout_desc')}</p>
+                </div>
+                <button
+                  type="button"
+                  class="shrink-0 px-3 py-2 text-xs font-medium rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-100 hover:bg-neutral-700 transition-colors cursor-pointer"
+                  onclick={switchLayout}
+                >
+                  {useMobileLayout ? locale.t('settings.appearance.layout_use_desktop') : locale.t('settings.appearance.layout_use_mobile')}
+                </button>
+              </div>
+            </div>
+          {/if}
           <p class="text-xs font-medium text-neutral-300">{locale.t("settings.appearance.builtin_theme")}</p>
           <p class="text-[10px] text-neutral-500 -mt-2">{locale.t("settings.appearance.builtin_palette_hint")}</p>
           <div class="grid grid-cols-2 gap-3">
@@ -2536,6 +2595,30 @@
             <div>
               <label for="auto-quality-tags" class="text-sm text-neutral-200">{locale.t('settings.performance.auto_quality_tags')}</label>
               <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.performance.auto_quality_tags_desc')}</p>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <input
+              type="checkbox"
+              id="advanced-mode"
+              checked={generation.advancedMode}
+              onchange={(e) => {
+                const target = e.target as HTMLInputElement;
+                if (target.checked) {
+                  // Revert — confirm via popup before enabling
+                  target.checked = false;
+                  showAdvancedModeWarning = true;
+                } else {
+                  generation.advancedMode = false;
+                  generation.saveSettings();
+                }
+              }}
+              class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
+            />
+            <div>
+              <label for="advanced-mode" class="text-sm text-neutral-200">{locale.t('settings.advanced_mode.label')}</label>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.advanced_mode.desc')}</p>
             </div>
           </div>
 
@@ -3157,6 +3240,23 @@
               </button>
             </label>
 
+            <label class="flex items-center justify-between gap-3 cursor-pointer">
+              <div>
+                <p class="text-sm text-neutral-200">{locale.t('settings.autocomplete.spellcheck')}</p>
+                <p class="text-[11px] text-neutral-500 mt-0.5">{locale.t('settings.autocomplete.spellcheck_desc')}</p>
+              </div>
+              <button
+                class="relative w-10 h-5 rounded-full transition-colors shrink-0 {autocomplete.spellcheckEnabled ? 'bg-indigo-600' : 'bg-neutral-700'}"
+                onclick={() => { autocomplete.spellcheckEnabled = !autocomplete.spellcheckEnabled; autocomplete.saveSettings(); }}
+                role="switch"
+                aria-checked={autocomplete.spellcheckEnabled}
+                aria-label={locale.t('settings.autocomplete.spellcheck')}
+                title={locale.t('settings.autocomplete.spellcheck')}
+              >
+                <span class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {autocomplete.spellcheckEnabled ? 'translate-x-5' : ''}"></span>
+              </button>
+            </label>
+
             {#if isAdmin}
             <!-- Current source -->
             <div>
@@ -3330,6 +3430,127 @@
                 <span>{locale.t('settings.interrogator.more_tags')}</span>
                 <span>{locale.t('settings.interrogator.fewer_tags')}</span>
               </div>
+            </div>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
+        <!-- Prompt Assistant -->
+        {#if sectionVisible("prompt_assistant")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.prompt_assistant = !collapsed.prompt_assistant)}
+          >
+            <span class="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+              {locale.t('settings.prompt_assistant.title')}
+            </span>
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-neutral-500 transition-transform {collapsed.prompt_assistant ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.prompt_assistant}
+          <div class="px-5 pb-5 space-y-4">
+            <p class="text-[10px] text-neutral-500">
+              {locale.t('settings.prompt_assistant.desc')}
+            </p>
+
+            <div class="text-sm text-neutral-300">
+              {#if promptAssistant.status && promptAssistant.status.installed_models.length > 0}
+                {locale.t('settings.prompt_assistant.installed_label')}: {promptAssistant.status.installed_models.join(", ")}
+              {:else}
+                {locale.t('settings.prompt_assistant.none_installed')}
+              {/if}
+            </div>
+
+            <div class="flex flex-wrap gap-2">
+              <button
+                class="rounded-lg border border-neutral-600 px-3 py-1 text-sm text-neutral-200 hover:bg-neutral-800 cursor-pointer"
+                onclick={() => (showPromptAssistantSetup = true)}
+              >
+                {locale.t('settings.prompt_assistant.manage_models')}
+              </button>
+              {#each promptAssistant.status?.installed_models ?? [] as id}
+                <button
+                  class="rounded-lg border border-red-700 px-3 py-1 text-sm text-red-300 hover:bg-red-900/30 cursor-pointer"
+                  onclick={() => promptAssistant.deleteModel(id)}
+                >
+                  {locale.t('settings.prompt_assistant.delete')} {id}
+                </button>
+              {/each}
+              <button
+                class="rounded-lg border border-neutral-600 px-3 py-1 text-sm text-neutral-200 hover:bg-neutral-800 cursor-pointer"
+                onclick={() => promptAssistant.unload()}
+              >
+                {locale.t('settings.prompt_assistant.unload_now')}
+              </button>
+            </div>
+
+            <div>
+              <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+                {locale.t('settings.prompt_assistant.idle_timeout')}
+                <span class="text-neutral-300">{config.prompt_assistant_idle_timeout_secs}s</span>
+              </label>
+              <input
+                type="range"
+                bind:value={config.prompt_assistant_idle_timeout_secs}
+                onchange={() => { autoSave(); }}
+                min="30"
+                max="600"
+                step="30"
+                class="w-full accent-indigo-500"
+              />
+            </div>
+
+            <!-- External OpenAI-compatible LLM endpoint (#389) -->
+            <div class="border-t border-neutral-800 pt-3 mt-1 space-y-3">
+              <label class="flex items-center justify-between gap-3 cursor-pointer">
+                <span>
+                  <span class="text-xs text-neutral-300 block">{locale.t('settings.prompt_assistant.external_title')}</span>
+                  <span class="text-[10px] text-neutral-500">{locale.t('settings.prompt_assistant.external_desc')}</span>
+                </span>
+                <input
+                  type="checkbox"
+                  bind:checked={config.llm_external_enabled}
+                  onchange={async () => { await autoSave(); await promptAssistant.refreshStatus(); }}
+                  class="accent-indigo-500 w-4 h-4 shrink-0"
+                />
+              </label>
+              {#if config.llm_external_enabled}
+                <div>
+                  <label class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.external_url')}</label>
+                  <input
+                    type="text"
+                    bind:value={config.llm_external_base_url}
+                    onchange={() => autoSave()}
+                    placeholder="http://localhost:1234/v1"
+                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                </div>
+                <div>
+                  <label class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.external_model')}</label>
+                  <input
+                    type="text"
+                    bind:value={config.llm_external_model}
+                    onchange={() => autoSave()}
+                    placeholder="gpt-4o-mini"
+                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                </div>
+                <div>
+                  <label class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.external_key')}</label>
+                  <input
+                    type="password"
+                    bind:value={config.llm_external_api_key}
+                    onchange={() => autoSave()}
+                    placeholder="sk-..."
+                    autocomplete="off"
+                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                  <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.prompt_assistant.external_key_hint')}</p>
+                </div>
+              {/if}
             </div>
           </div>
           {/if}
@@ -4076,6 +4297,33 @@
 </div>
 {/if}
 
+{#if showAdvancedModeWarning}
+<div class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" role="dialog">
+  <div class="bg-neutral-900 border border-neutral-700 rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+    <h3 class="text-sm font-semibold text-neutral-100 mb-3">{locale.t('settings.advanced_mode.warning_title')}</h3>
+    <p class="text-xs text-neutral-400 mb-4">{locale.t('settings.advanced_mode.warning_body')}</p>
+    <div class="flex gap-3 justify-end">
+      <button
+        onclick={() => { showAdvancedModeWarning = false; }}
+        class="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 rounded-lg text-xs transition-colors cursor-pointer"
+      >
+        {locale.t('settings.advanced_mode.cancel')}
+      </button>
+      <button
+        onclick={() => {
+          generation.advancedMode = true;
+          generation.saveSettings();
+          showAdvancedModeWarning = false;
+        }}
+        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors cursor-pointer"
+      >
+        {locale.t('settings.advanced_mode.enable')}
+      </button>
+    </div>
+  </div>
+</div>
+{/if}
+
 <!-- Add Account Modal -->
 {#if showAddAccountModal}
 <div
@@ -4317,4 +4565,8 @@
     </div>
   </div>
 </div>
+{/if}
+
+{#if showPromptAssistantSetup}
+  <PromptAssistantSetupModal onClose={() => (showPromptAssistantSetup = false)} />
 {/if}
