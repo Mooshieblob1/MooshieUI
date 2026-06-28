@@ -3,6 +3,7 @@
   import { compare } from "../../stores/compare.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
+  import { wheelScrollLock } from "../../utils/wheelScrollLock.js";
   import PromptInputs from "./PromptInputs.svelte";
   import RegionalPromptModal from "./RegionalPromptModal.svelte";
   import ModelSelector from "./ModelSelector.svelte";
@@ -25,7 +26,7 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage, InterrogationResult } from "../../types/index.js";
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import BottomPanel from "./BottomPanel.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "../ui/ContextMenu.svelte";
@@ -535,6 +536,18 @@
     }
   }
 
+  /** Normalise image bytes, show the preview, upload to ComfyUI, and set them as the
+   *  img2img/inpaint input. Shared by drag-drop and paste. */
+  async function setInputImageFromBytes(bytes: number[], filename: string) {
+    const normalized = await normalizeImageBytes(bytes, filename);
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    imagePreviewUrl = normalized.previewUrl;
+    applyImageGeometry(normalized.width, normalized.height);
+    canvas.setReferenceImage(imagePreviewUrl);
+    const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+    generation.inputImage = response.name;
+  }
+
   async function handleImageDrop(e: DragEvent) {
     e.preventDefault();
     dragOver = false;
@@ -543,17 +556,8 @@
 
     uploading = true;
     try {
-      const buffer = await file.arrayBuffer();
-      const bytes = Array.from(new Uint8Array(buffer));
-      const normalized = await normalizeImageBytes(bytes, file.name || "dropped_image.png");
-
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-      imagePreviewUrl = normalized.previewUrl;
-      applyImageGeometry(normalized.width, normalized.height);
-      canvas.setReferenceImage(imagePreviewUrl);
-
-      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
-      generation.inputImage = response.name;
+      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+      await setInputImageFromBytes(bytes, file.name || "dropped_image.png");
     } catch (e) {
       console.error("Failed to handle dropped image:", e);
       gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
@@ -587,19 +591,16 @@
     }
   }
 
-  async function handleImagePaste() {
+  /** Paste an image into the img2img/inpaint input. Prefers the image carried by the
+   *  paste event's clipboardData (webkit2gtk populates this on Linux, where the native
+   *  clipboard `read_image` is unreliable), falling back to the system clipboard read. */
+  async function handleImagePaste(file?: File | null) {
+    uploading = true;
     try {
-      const bytes = await readClipboardImageSafe();
-      uploading = true;
-      const normalized = await normalizeImageBytes(bytes, "pasted_image.png");
-
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-      imagePreviewUrl = normalized.previewUrl;
-      applyImageGeometry(normalized.width, normalized.height);
-      canvas.setReferenceImage(imagePreviewUrl);
-
-      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
-      generation.inputImage = response.name;
+      const bytes = file
+        ? Array.from(new Uint8Array(await file.arrayBuffer()))
+        : await readClipboardImageSafe();
+      await setInputImageFromBytes(bytes, file?.name || "pasted_image.png");
     } catch (e) {
       console.error("Failed to paste image:", e);
     } finally {
@@ -643,12 +644,22 @@
     }
   }
 
+  /** Open the image-input section and scroll it into view so a "send to img2img"
+   *  action visibly lands somewhere — otherwise switching to img2img mode loads
+   *  the source image into a section the user may not have on screen (#398). */
+  async function revealImageInputSection() {
+    imageSectionOpen = true;
+    await tick();
+    sectionRefs['imageInputs']?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   async function refineImage(image: OutputImage) {
     try {
       generation.inputImage = await uploadOutputImageForGenerationInput(image, "img2img_input.png");
       generation.mode = "img2img";
       generation.upscaleEnabled = false;
       gallery.showToast(locale.t('gallery.toast.loaded_img2img'), "success");
+      await revealImageInputSection();
     } catch (e) {
       console.error("Failed to set up refine:", e);
       gallery.showToast(locale.t('gallery.toast.failed_load'), "error");
@@ -661,6 +672,7 @@
       generation.mode = "img2img";
       generation.upscaleEnabled = true;
       gallery.showToast(locale.t('generation.toast.loaded_upscale'), "success");
+      await revealImageInputSection();
     } catch (e) {
       console.error("Failed to set up upscale:", e);
       gallery.showToast(locale.t('generation.toast.failed_load'), "error");
@@ -1376,7 +1388,7 @@
       if (imagePasteTarget === "input") {
         e.preventDefault();
         e.stopPropagation();
-        await handleImagePaste();
+        await handleImagePaste(getClipboardImageFile(e));
         return;
       }
 
@@ -1384,6 +1396,17 @@
         e.preventDefault();
         e.stopPropagation();
         await handleMaskPaste();
+        return;
+      }
+
+      // No drop zone hovered. In a mode that consumes an input image, treat Ctrl+V
+      // as pasting into the image input so the advertised "Ctrl+V Paste" works without
+      // hovering the field first. Prefer the image in the paste event (works on Linux
+      // where the native clipboard read is unreliable), else read the system clipboard (#396).
+      if (generation.mode === "img2img" || generation.mode === "inpainting") {
+        e.preventDefault();
+        e.stopPropagation();
+        await handleImagePaste(getClipboardImageFile(e));
         return;
       }
 
@@ -1593,7 +1616,7 @@
                     <p class="text-[10px] text-neutral-600">{locale.t('generation.image.drag_drop_or')}</p>
                     <button
                       type="button"
-                      onclick={handleImagePaste}
+                      onclick={() => handleImagePaste()}
                       class="flex items-center gap-1 text-xs text-emerald-500/70 transition-colors hover:text-emerald-400"
                     >
                       <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
@@ -2061,9 +2084,10 @@
       {#if !leftCollapsed || mobileFriendly}
         <div
           bind:this={leftColumnRef}
+          use:wheelScrollLock
           class="{mobileFriendly
             ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
-            : 'overflow-y-auto overflow-x-hidden px-3 pt-2 flex flex-col gap-2 shrink-0 border-r'} {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
+            : 'overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] px-3 pt-2 flex flex-col gap-2 shrink-0 border-r'} {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
           style={mobileFriendly
             ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("left")}; transition: ${mobilePanelTransition("left")}; z-index: ${mobilePanelZIndex("left")};${compare.enabled ? ` --compare-color: ${compare.activeColor};` : ""}`
             : `width: ${leftWidth}px${compare.enabled ? `; --compare-color: ${compare.activeColor}` : ""}`}
@@ -2269,9 +2293,10 @@
     {#if (rightHasSections || controlsSide === "right" || draggingSection) && (!rightCollapsed || mobileFriendly)}
       <div
         bind:this={rightColumnRef}
+        use:wheelScrollLock
         class="{mobileFriendly
           ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
-          : 'overflow-y-auto p-3 flex flex-col gap-2 shrink-0 border-l'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
+          : 'overflow-y-auto [scrollbar-gutter:stable] p-3 flex flex-col gap-2 shrink-0 border-l'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
         style={mobileFriendly
           ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("right")}; transition: ${mobilePanelTransition("right")}; z-index: ${mobilePanelZIndex("right")};${compare.enabled ? ` --compare-color: ${compare.activeColor};` : ""}`
           : `width: ${rightWidth}px${compare.enabled ? `; --compare-color: ${compare.activeColor}` : ""}`}

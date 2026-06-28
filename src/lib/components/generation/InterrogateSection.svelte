@@ -5,7 +5,7 @@
   import InterrogateModal from "./InterrogateModal.svelte";
   import { interrogateImage, interrogateImagePath, interrogateClipboard, readClipboardImage } from "../../utils/api.js";
   import { ipcListen, isTauri, isBrowserMode, ipcOpenFileDialog } from "../../utils/ipc.js";
-  import { handleMetadataImport, handleMetadataImportPath } from "../../utils/metadataImport.js";
+  import { handleMetadataImport, handleMetadataImportPath, getClipboardImageFile } from "../../utils/metadataImport.js";
   import type { InterrogationResult } from "../../types/index.js";
 
   // Interrogation state
@@ -277,8 +277,27 @@
     return () => el.removeEventListener("tauri-file-drop", handleTauriFileDrop);
   });
 
-  // Listen for Ctrl+V while this drop zone is active — uses native clipboard (bypasses WebView restrictions)
+  // Browser mode: handle the native paste event directly — clipboardData carries the
+  // pasted image without any clipboard-permission or server-side clipboard access.
   $effect(() => {
+    const handler = (e: ClipboardEvent) => {
+      if (!pasteActive) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable) return;
+      const file = getClipboardImageFile(e);
+      if (!file) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      readFileAsBase64(file);
+    };
+    window.addEventListener("paste", handler, { capture: true });
+    return () => window.removeEventListener("paste", handler, { capture: true });
+  });
+
+  // Tauri desktop: the WebView blocks image clipboardData, so intercept Ctrl+V and
+  // read the clipboard natively instead. In browser mode the paste handler above runs.
+  $effect(() => {
+    if (!isTauri) return;
     const handler = (e: KeyboardEvent) => {
       if (pasteActive && e.ctrlKey && e.key === "v") {
         // Don't intercept if user is typing in an input/textarea
@@ -335,15 +354,17 @@
       <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
       {locale.t('generation.interrogate.paste')}
     </button>
-    <span class="text-neutral-700">|</span>
-    <button
-      type="button"
-      onclick={handleInterrogateFromFile}
-      class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors flex items-center gap-1"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
-      {locale.t('generation.interrogate.select_image')}
-    </button>
+    {#if isTauri}
+      <span class="text-neutral-700">|</span>
+      <button
+        type="button"
+        onclick={handleInterrogateFromFile}
+        class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors flex items-center gap-1"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
+        {locale.t('generation.interrogate.select_image')}
+      </button>
+    {/if}
     <span class="text-neutral-700">|</span>
     <button
       type="button"

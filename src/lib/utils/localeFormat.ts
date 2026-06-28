@@ -110,6 +110,22 @@ export function formatDateTime(
   return date.toLocaleString(intlLocale(appLocale), options);
 }
 
+/** Compact wall-clock duration for the gen-time badge: "12.3s", "1m 05s". */
+export function formatGenerationTime(ms: number, appLocale: string): string {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 60) {
+    return `${formatDecimalTrimmed(totalSeconds, appLocale, 1)}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds - minutes * 60);
+  // Carry a 60s round-up into the minute so we never render "1m 60s".
+  if (seconds === 60) {
+    return `${formatInteger(minutes + 1, appLocale)}m 00s`;
+  }
+  return `${formatInteger(minutes, appLocale)}m ${String(seconds).padStart(2, "0")}s`;
+}
+
 /** Parse typed decimals — accepts `,` or `.` as decimal separator. */
 export function parseLocaleDecimal(raw: string): number {
   const trimmed = raw.trim();

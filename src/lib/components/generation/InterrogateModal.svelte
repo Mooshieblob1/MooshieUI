@@ -488,16 +488,16 @@
         <div class="flex items-center gap-4">
           <label class="flex items-center gap-1.5 text-xs text-neutral-300 cursor-pointer">
             <input type="radio" name="apply-mode" checked={replaceMode} onchange={() => { replaceMode = true; }} class="accent-indigo-500" />
-            Replace prompt
+            {locale.t('generation.interrogate.replace_prompt')}
           </label>
           <label class="flex items-center gap-1.5 text-xs text-neutral-300 cursor-pointer">
             <input type="radio" name="apply-mode" checked={!replaceMode} onchange={() => { replaceMode = false; }} class="accent-indigo-500" />
-            Append to prompt
+            {locale.t('generation.interrogate.append_prompt')}
           </label>
           {#if replaceMode}
             <label class="flex items-center gap-1.5 text-xs text-neutral-400 cursor-pointer ml-2">
               <input type="checkbox" bind:checked={preserveArtistTags} class="accent-indigo-500" />
-              Keep existing artist tags
+              {locale.t('generation.interrogate.keep_artist_tags')}
             </label>
           {/if}
         </div>

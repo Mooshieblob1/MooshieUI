@@ -2,6 +2,10 @@
 
 This file provides guidance to agents when working with code in this repository.
 
+## Non-Negotiable Behavioral Rules
+
+- **No co-authoring**: Never add `Co-Authored-By` trailers to any commit, PR body, issue comment, or PR review comment. Do not attribute AI assistance anywhere in git or GitHub output.
+
 ## Error Logs
 
 - **`error-logs/` directory**: Drop large error logs, stack traces, or debug output here. Files in this directory are excluded from automatic context ingestion (via `.rooignore`), so they won't consume live context tokens. Reference the filename when you need me to read a log on demand. This directory is git-ignored.

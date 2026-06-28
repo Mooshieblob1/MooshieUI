@@ -10,7 +10,7 @@
   let swapPivot = $state(0.5);
   let swapBefore = $state("");
   let swapAfter = $state("");
-  let swapSeparator = $state<"||" | "|" | ",">("||");
+  let swapSeparatorOverride = $state<"||" | "|" | "," | null>(null);
 
   // Schedule (MooshieUI) inputs
   let schedText = $state("");
@@ -27,23 +27,23 @@
   }
 
   /**
-   * Pick the least-intrusive separator for SwarmUI fromto — if either side
-   * already contains `,` we prefer `|`; if either already contains `|` we
-   * prefer `||`. User can override via the dropdown.
+   * Auto-pick a SwarmUI fromto separator that round-trips. The parser
+   * (`splitSwarmContent`) splits on the highest-priority separator present
+   * (`||` > `|` > `,`), so the separator must outrank anything already inside
+   * either side or the block parses back into the wrong two parts. Sides that
+   * themselves contain `||` cannot be represented at all; `||` is the least-bad
+   * fallback there. The user can override this via the dropdown.
    */
-  const autoSeparator = $derived.by(() => {
+  const autoSeparator = $derived.by<"||" | "|" | ",">(() => {
     const combined = `${swapBefore} ${swapAfter}`;
-    if (combined.includes("||")) return ",";
-    if (combined.includes("|")) return "||";
+    if (combined.includes("|")) return "||"; // covers both `|` and `||`
+    if (combined.includes(",")) return "|";
     return "||";
   });
 
-  // Keep dropdown in sync with auto-pick as the user types, but only if they
-  // haven't manually changed it recently. Simpler: always drive from auto, allow
-  // override via dropdown.
-  $effect(() => {
-    swapSeparator = autoSeparator;
-  });
+  // Follow the auto-pick as the user types, but once they manually change the
+  // dropdown keep their choice instead of stomping it on every keystroke.
+  const swapSeparator = $derived<"||" | "|" | ",">(swapSeparatorOverride ?? autoSeparator);
 
   const output = $derived.by(() => {
     if (mode === "fromto") {
@@ -176,7 +176,8 @@
         <label class="flex items-center gap-1 text-[11px] text-neutral-400">
           {locale.t("schedule.sep")}
           <select
-            bind:value={swapSeparator}
+            value={swapSeparator}
+            onchange={(e) => (swapSeparatorOverride = e.currentTarget.value as "||" | "|" | ",")}
             class="rounded border border-neutral-700 bg-neutral-800 px-1.5 py-1 text-[11px] text-neutral-200 focus:border-indigo-500 focus:outline-none"
           >
             <option value="||">||</option>

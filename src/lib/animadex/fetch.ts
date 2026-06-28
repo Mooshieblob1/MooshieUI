@@ -5,14 +5,20 @@
  * because animadex.net does not allow cross-origin fetches from the app origin.
  * Image URLs on blobs.animadex.net load via plain <img src> (no proxy needed).
  */
-import { ipcInvoke, isBrowserMode, isTauri } from "../utils/ipc.js";
+import { getAuthToken, ipcInvoke, isBrowserMode, isTauri } from "../utils/ipc.js";
 
 export const ANIMADEX_ORIGIN = "https://animadex.net/";
 
 export function proxiedAnimadexApiUrl(apiPath: string): string {
   const clean = apiPath.replace(/^\//, "");
   if (isBrowserMode) {
-    return `/internal-api/_animadex/${clean}`;
+    const url = `/internal-api/_animadex/${clean}`;
+    const token = getAuthToken();
+    if (token) {
+      const sep = url.includes("?") ? "&" : "?";
+      return `${url}${sep}token=${encodeURIComponent(token)}`;
+    }
+    return url;
   }
   return `${ANIMADEX_ORIGIN}${clean}`;
 }

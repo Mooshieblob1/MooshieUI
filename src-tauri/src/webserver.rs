@@ -189,6 +189,38 @@ fn resolve_username_with_query_token(
     None
 }
 
+/// Authentication gate for the read-only external proxies (cdn/animadex).
+/// These serve `<img>`-style requests that cannot set an Authorization header,
+/// so a `?token=` query param is also accepted. Localhost / non-LAN callers are
+/// always allowed; remote LAN clients must present valid credentials.
+fn proxy_request_authed(
+    state: &WebState,
+    headers: &HeaderMap,
+    remote: &SocketAddr,
+    query: &str,
+) -> bool {
+    if !state.lan_enabled || is_localhost(remote) {
+        return true;
+    }
+    if resolve_role(state, headers, remote) != UserRole::Anonymous {
+        return true;
+    }
+    query_param(query, "token")
+        .and_then(|t| state.auth.validate_token(t))
+        .is_some()
+}
+
+/// Progress/log events emitted only by admin/moderator operations (setup,
+/// model downloads, package/backend installs). Regular LAN users must not
+/// receive these on their SSE stream.
+fn is_staff_only_event(event: &str) -> bool {
+    event.starts_with("setup:")
+        || event.starts_with("download:")
+        || event.starts_with("install:")
+        || event.starts_with("attention:")
+        || event == "custom_node:installed"
+}
+
 /// Gallery files we list, count against storage quotas, and expire — must stay
 /// in sync with the formats `save_to_gallery` can write (JXL included).
 fn is_gallery_image_filename(name: &str) -> bool {
@@ -210,6 +242,7 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "kill_port_process",
     "export_logs",
     "install_pip_package",
+    "install_attention_backend",
     "clear_all_queues",
     // previously admin-only: mode switching, filesystem, node install
     "switch_to_app_mode",
@@ -232,6 +265,8 @@ const MODELHUB_COMMANDS: &[&str] = &[
     "civitai_list_architectures",
     "civitai_lookup_hash",
     "download_model",
+    "resolve_download_filename",
+    "cancel_download",
     "get_model_install_dirs",
 ];
 
@@ -461,17 +496,29 @@ pub fn spawn_stuck_worker_watchdog(state: Arc<AppState>) {
                         wmap.values().any(|&wid| wid == worker.id)
                     };
                     if !has_active_prompt {
-                        let last_released = worker
-                            .last_released
+                        // Measure reservation age from when the worker was
+                        // reserved, NOT from `last_released`. The old code used
+                        // `now_ms / 1000` (epoch seconds, ~1.7e9) whenever
+                        // `last_released == 0`, which is always > 600, so a
+                        // freshly-started worker running its very first job got
+                        // force-released the instant the watchdog observed it in
+                        // the brief window before the dispatcher records its
+                        // prompt in the worker map.
+                        let reserved_at = worker
+                            .reserved_at
                             .load(std::sync::atomic::Ordering::Acquire);
                         let now_ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_millis() as u64;
-                        let stuck_secs = if last_released == 0 {
-                            now_ms / 1000
+                        // reserved_at == 0 means the current reservation predates
+                        // this field (or we observed the tiny race between the
+                        // reserve CAS and the timestamp store) — treat as not-yet-
+                        // stuck rather than releasing an in-flight job.
+                        let stuck_secs = if reserved_at == 0 {
+                            0
                         } else {
-                            (now_ms.saturating_sub(last_released)) / 1000
+                            (now_ms.saturating_sub(reserved_at)) / 1000
                         };
                         if stuck_secs > max_stuck_secs {
                             log::warn!(
@@ -542,6 +589,11 @@ pub async fn start_server(
         )
         .route("/internal-api/_auth/logout", post(auth_logout_handler))
         .route("/internal-api/_auth/lan_info", get(auth_lan_info_handler))
+        // Per-user preference sync (cross-device prefs in browser/LAN mode)
+        .route(
+            "/internal-api/_user/prefs",
+            get(user_prefs_get_handler).put(user_prefs_put_handler),
+        )
         // Storage management
         .route("/internal-api/_storage/info", get(storage_info_handler))
         .route(
@@ -1205,6 +1257,8 @@ async fn sse_handler(
     if role == UserRole::Anonymous {
         return unauthorized_response("Authentication required");
     }
+    // Only admins/moderators receive setup/download/install progress events.
+    let is_staff = matches!(role, UserRole::Admin | UserRole::Moderator);
 
     // Resolve the username for this SSE connection (None = admin)
     let sse_username = resolve_username(&state, &hdrs, &remote);
@@ -1251,6 +1305,10 @@ async fn sse_handler(
         let prompt_queue = prompt_queue.clone();
         match result {
             Ok(evt) => {
+                // Admin-only operation progress must not leak to regular users.
+                if !is_staff && is_staff_only_event(&evt.event) {
+                    return None;
+                }
                 // Resolve alias: translate ComfyUI's real prompt_id to our placeholder
                 let raw_prompt_id = evt
                     .payload
@@ -1312,7 +1370,16 @@ async fn sse_handler(
 }
 
 /// Heartbeat — browser pings this to keep the backend alive.
-async fn heartbeat_handler(AxumState(state): AxumState<SharedState>) -> StatusCode {
+/// Requires authentication so an unauthenticated LAN client cannot keep the
+/// embedded server awake against the idle watchdog.
+async fn heartbeat_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> StatusCode {
+    if resolve_role(&state, &headers, &remote) == UserRole::Anonymous {
+        return StatusCode::UNAUTHORIZED;
+    }
     let mut hb = state.app.last_heartbeat.lock().await;
     *hb = std::time::Instant::now();
     StatusCode::OK
@@ -1680,9 +1747,14 @@ async fn gpu_stats_handler(
 /// Animadex API proxy — characters search/facets only.
 async fn animadex_proxy_handler(
     AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Path(path): Path<String>,
     uri: axum::http::Uri,
 ) -> Response {
+    if !proxy_request_authed(&state, &headers, &remote, uri.query().unwrap_or("")) {
+        return unauthorized_response("Authentication required");
+    }
     let clean = path.trim_start_matches('/');
     if !clean.starts_with("api/characters/") {
         return StatusCode::BAD_REQUEST.into_response();
@@ -1724,9 +1796,14 @@ async fn animadex_proxy_handler(
 /// Only proxies from the hardcoded CDN origin; this is NOT an open proxy.
 async fn cdn_proxy_handler(
     AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Path(path): Path<String>,
     uri: axum::http::Uri,
 ) -> Response {
+    if !proxy_request_authed(&state, &headers, &remote, uri.query().unwrap_or("")) {
+        return unauthorized_response("Authentication required");
+    }
     let mut target_url = format!("https://cdn.mooshieblob.com/{}", path);
     if let Some(query) = uri.query() {
         target_url.push('?');
@@ -1816,6 +1893,12 @@ async fn command_handler(
         state.auth.touch_activity(u);
     }
 
+    // A GUI action (opening a file explorer) only makes sense when the browser
+    // client is on the same machine as the server: localhost-only web mode, or a
+    // localhost request on a LAN-enabled server. A remote LAN client must never
+    // pop a window on the operator's screen.
+    let caller_is_local = !state.lan_enabled || is_localhost(&remote);
+
     match dispatch_command(
         state.app.clone(),
         &state.auth,
@@ -1823,6 +1906,7 @@ async fn command_handler(
         &args,
         username.as_deref(),
         role,
+        caller_is_local,
     )
     .await
     {
@@ -1858,6 +1942,7 @@ async fn dispatch_command(
     args: &serde_json::Value,
     username: Option<&str>,
     caller_role: UserRole,
+    caller_is_local: bool,
 ) -> Result<serde_json::Value, String> {
     match command {
         // --- Config ---
@@ -1923,6 +2008,19 @@ async fn dispatch_command(
                 "compute_capability": crate::commands::api::detect_compute_capability_pub(),
             }))
         }
+        "install_attention_backend" => {
+            let backend = args["backend"]
+                .as_str()
+                .ok_or("Missing backend")?
+                .to_string();
+            let bcast = state.clone();
+            crate::commands::api::install_attention_backend_core(&state, backend, move |msg| {
+                bcast.broadcast("attention:install_progress", serde_json::json!(msg));
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
+        }
         "switch_to_app_mode" => {
             #[cfg(not(feature = "desktop"))]
             {
@@ -1930,11 +2028,15 @@ async fn dispatch_command(
             }
             #[cfg(feature = "desktop")]
             {
-                // Step 1: Save config
-                let mut cfg = state.config.write().await;
-                cfg.browser_mode = false;
+                // Step 1: Save config. Snapshot under the guard, then write to
+                // disk after dropping it so the blocking file write doesn't hold
+                // the config write lock.
+                let cfg = {
+                    let mut cfg = state.config.write().await;
+                    cfg.browser_mode = false;
+                    cfg.clone()
+                };
                 config::save_config(&cfg)?;
-                drop(cfg);
 
                 // Step 2: Disarm heartbeat watchdog
                 state
@@ -2214,9 +2316,7 @@ async fn dispatch_command(
             let tracked: Vec<String> = {
                 let q = state.prompt_queue.queue.read().unwrap();
                 q.iter()
-                    .filter(|(pid, _)| {
-                        is_privileged || state.prompt_queue.is_owned_by(pid, &caller)
-                    })
+                    .filter(|(_, owner)| is_privileged || *owner == caller)
                     .map(|(pid, _)| pid.clone())
                     .collect()
             };
@@ -2596,6 +2696,10 @@ async fn dispatch_command(
             let bg_state = Arc::clone(&state);
             let bg_placeholder = placeholder_id.clone();
             tokio::spawn(async move {
+                // Release the prompt-assistant LLM's VRAM so it doesn't starve
+                // ComfyUI's diffusion model during this generation. Done inside
+                // the spawned task so it never delays the HTTP acknowledgment.
+                bg_state.free_llm_vram_for_generation().await;
                 if needs_hold {
                     // Fair queue: hold this prompt until a slot opens for this user.
                     let submitted = Arc::new(tokio::sync::Notify::new());
@@ -2972,6 +3076,7 @@ async fn dispatch_command(
             if path.exists() {
                 std::fs::remove_file(&path).map_err(|e| e.to_string())?;
             }
+            crate::gallery_index::remove(&path);
             Ok(serde_json::json!(null))
         }
         "rename_gallery_image" => {
@@ -2996,6 +3101,7 @@ async fn dispatch_command(
             let old_path = dir.join(&old);
             let new_path = dir.join(&new_name);
             std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+            crate::gallery_index::rename(&old_path, &new_path);
             Ok(serde_json::json!(new_name))
         }
         "import_image_directory" => {
@@ -3888,8 +3994,11 @@ async fn dispatch_command(
             let path = args["path"].as_str().unwrap_or("").to_string();
             let trimmed = path.trim().to_string();
             let resolved = if trimmed.is_empty() {
-                let mut cfg = state.config.write().await;
-                cfg.gallery_path = None;
+                let cfg = {
+                    let mut cfg = state.config.write().await;
+                    cfg.gallery_path = None;
+                    cfg.clone()
+                };
                 config::save_config(&cfg)?;
                 let dir = config::app_data_dir()
                     .ok_or("Cannot find app data directory")?
@@ -3900,8 +4009,11 @@ async fn dispatch_command(
                 let p = std::path::Path::new(&trimmed);
                 std::fs::create_dir_all(p)
                     .map_err(|e| format!("Cannot create gallery directory: {}", e))?;
-                let mut cfg = state.config.write().await;
-                cfg.gallery_path = Some(trimmed.clone());
+                let cfg = {
+                    let mut cfg = state.config.write().await;
+                    cfg.gallery_path = Some(trimmed.clone());
+                    cfg.clone()
+                };
                 config::save_config(&cfg)?;
                 trimmed
             };
@@ -3919,31 +4031,68 @@ async fn dispatch_command(
                 .send()
                 .await
                 .map_err(|e| e.to_string())?;
+            if !resp.status().is_success() {
+                return Err(format!("GitHub API returned {}", resp.status()));
+            }
             let releases: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-            Ok(releases)
+            // Map to the same { version, body, published_at } shape the desktop
+            // command (commands::api::fetch_release_notes) returns, so the
+            // browser-mode client sees a defined `version` instead of raw GitHub
+            // release objects (which carry `tag_name`, not `version`).
+            let notes: Vec<serde_json::Value> = releases
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|r| {
+                            let tag = r.get("tag_name")?.as_str()?;
+                            Some(serde_json::json!({
+                                "version": tag,
+                                "body": r.get("body").and_then(|b| b.as_str()).unwrap_or(""),
+                                "published_at": r
+                                    .get("published_at")
+                                    .and_then(|p| p.as_str())
+                                    .unwrap_or(""),
+                            }))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(serde_json::json!(notes))
         }
         "export_logs" => {
-            let destination = args["destination"]
-                .as_str()
-                .ok_or("Missing destination")?
-                .to_string();
-            // Fold any frontend logs from the payload into the shared ring
-            // buffer before exporting so this handler matches the desktop
-            // command's behaviour.
-            if let Some(lines) = args.get("frontendLogs").and_then(|v| v.as_array()) {
-                let strings: Vec<String> = lines
-                    .iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect();
-                crate::log_buffer::push_frontend_lines(strings);
-            }
-            // Simplified: just write config info to the destination
-            let cfg = state.config.read().await;
-            let info = format!("MooshieUI Log Export\nConfig: {:?}", *cfg);
-            std::fs::write(&destination, info).map_err(|e| e.to_string())?;
-            Ok(serde_json::json!(null))
+            // In server/browser mode there is no meaningful host filesystem path
+            // for a remote browser, so build the full diagnostic log (same
+            // content as the desktop command, including the llama-server log) and
+            // return it as a string for the client to download.
+            let frontend_logs = args
+                .get("frontendLogs")
+                .and_then(|v| v.as_array())
+                .map(|lines| {
+                    lines
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<String>>()
+                });
+            let content = crate::commands::api::build_diagnostic_log(&state, frontend_logs).await;
+            Ok(serde_json::json!({ "content": content }))
         }
 
+        "cancel_download" => {
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            state.request_download_cancel(&filename);
+            Ok(serde_json::Value::Null)
+        }
+        "resolve_download_filename" => {
+            let url = args["url"].as_str().ok_or("Missing url")?.to_string();
+            let name = state
+                .resolve_download_filename(&url)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(name))
+        }
         "download_model" => {
             let url = args["url"].as_str().ok_or("Missing url")?.to_string();
             let category = args["category"]
@@ -4052,10 +4201,19 @@ async fn dispatch_command(
                     });
                 };
 
+            state.clear_download_cancel(&filename);
             progress_event(&event_tx, &filename, 0, total, false);
             let mut resp = resp;
             while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
                 use std::io::Write;
+                // Abort cleanly if the user cancelled this download (#399).
+                if state.is_download_cancelled(&filename) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&dest);
+                    state.clear_download_cancel(&filename);
+                    progress_event(&event_tx, &filename, downloaded, total, true);
+                    return Err(format!("Download cancelled: {}", filename));
+                }
                 if let Err(e) = file.write_all(&chunk) {
                     drop(file);
                     let _ = std::fs::remove_file(&dest);
@@ -4117,6 +4275,14 @@ async fn dispatch_command(
                             .map_err(|e| format!("Invalid base64: {}", e))?
                     }
                     "interrogate_image_path" => {
+                        // Reading an arbitrary on-disk path is a desktop-only action.
+                        // Allowing it for remote LAN clients is an arbitrary file read.
+                        if !caller_is_local {
+                            return Err(
+                                "Reading arbitrary file paths is not available in browser mode."
+                                    .to_string(),
+                            );
+                        }
                         let path = args["path"].as_str().ok_or("Missing path")?.to_string();
                         std::fs::read(&path).map_err(|e| format!("Failed to read image: {}", e))?
                     }
@@ -4131,8 +4297,10 @@ async fn dispatch_command(
                         {
                             return Err("Invalid filename".to_string());
                         }
+                        // Resolve within the caller's own gallery directory so a LAN
+                        // user cannot read another user's (or the admin's) images.
                         let dir =
-                            crate::config::gallery_dir().ok_or("Cannot find gallery directory")?;
+                            user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
                         let path = dir.join(&filename);
                         std::fs::read(&path).map_err(|e| e.to_string())?
                     }
@@ -4145,6 +4313,97 @@ async fn dispatch_command(
         "interrogate_clipboard" => Err(
             "interrogate_clipboard not available in browser mode (no clipboard access)".to_string(),
         ),
+
+        // --- Prompt assistant ---
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "detect_llm_hardware" => {
+            let hw = tokio::task::spawn_blocking(crate::prompt_assistant::hardware::detect)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(hw).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "list_llm_catalog" => serde_json::to_value(crate::prompt_assistant::catalog::catalog())
+            .map_err(|e| e.to_string()),
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "llm_status" => {
+            let pa = &state.prompt_assistant;
+            Ok(serde_json::json!({
+                "installed_models": pa.installed_models(),
+                "active_model": pa.server.active_model(),
+                "server_running": pa.server.is_running(),
+            }))
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "unload_llm" => {
+            state.prompt_assistant.server.unload().await;
+            Ok(serde_json::Value::Null)
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "enhance_prompt" | "compose_prompt" => {
+            let input = if command == "enhance_prompt" {
+                args["prompt"].as_str().unwrap_or("").to_string()
+            } else {
+                args["description"].as_str().unwrap_or("").to_string()
+            };
+            let family = args["family"].as_str().unwrap_or("unknown").to_string();
+            let mode = if command == "enhance_prompt" {
+                crate::prompt_assistant::grounding::GenMode::Enhance
+            } else {
+                crate::prompt_assistant::grounding::GenMode::Compose
+            };
+            let length = args["opts"]["length"].as_str();
+            let include_artists = args["opts"]["include_artists"].as_bool().unwrap_or(false);
+            let result = run_prompt_assistant_headless(
+                &state,
+                &input,
+                &family,
+                mode,
+                length,
+                include_artists,
+            )
+            .await?;
+            Ok(serde_json::Value::String(result))
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "download_llm_model" => {
+            let id = args["id"].as_str().unwrap_or("").to_string();
+            let variant = args["variant"].as_str().unwrap_or("").to_string();
+            let state_for_progress = state.clone();
+            let progress = move |filename: &str, downloaded: u64, total: u64, done: bool| {
+                state_for_progress.broadcast(
+                    "llm:download_progress",
+                    serde_json::json!({
+                        "filename": filename,
+                        "downloaded": downloaded,
+                        "total": total,
+                        "done": done,
+                    }),
+                );
+            };
+            state
+                .prompt_assistant
+                .download_model(&state.http_client, &id, &variant, &progress)
+                .await
+                .map_err(|e| e.to_string())?;
+            // Persist selected model id + mark setup done.
+            {
+                let mut cfg = state.config.write().await;
+                cfg.prompt_assistant_model_id = Some(id.clone());
+                cfg.prompt_assistant_setup_done = true;
+                let _ = crate::config::save_config(&cfg);
+            }
+            Ok(serde_json::Value::Null)
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "delete_llm_model" => {
+            let id = args["id"].as_str().unwrap_or("").to_string();
+            state
+                .prompt_assistant
+                .delete_model(&id)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
 
         // --- File operations ---
         "save_image_file" => {
@@ -4184,8 +4443,15 @@ async fn dispatch_command(
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
         "open_directory" => {
+            // Opening a file explorer is only meaningful when the caller shares the
+            // server's desktop. For a remote LAN client this would pop a window on
+            // the operator's screen, so we no-op (the directory is still ensured to
+            // exist) rather than spawn a GUI the caller can't see.
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
             std::fs::create_dir_all(&path).ok();
+            if !caller_is_local {
+                return Ok(serde_json::json!(null));
+            }
             #[cfg(target_os = "windows")]
             {
                 let _ = tokio::process::Command::new("explorer.exe")
@@ -4202,8 +4468,31 @@ async fn dispatch_command(
             }
             Ok(serde_json::json!(null))
         }
+        "read_temp_image" => {
+            let filename = args["filename"]
+                .as_str()
+                .ok_or("Missing filename")?
+                .to_string();
+            let bytes = crate::temp_images::load(&filename)
+                .ok_or_else(|| format!("Temp image not found: {}", filename))?;
+            Ok(serde_json::json!(bytes))
+        }
+        "move_installation" => {
+            // Relocating the on-disk installation depends on the desktop app's
+            // data-dir resolution and a running file picker; it is a desktop-only
+            // maintenance action with no meaningful browser-mode equivalent.
+            Err("Moving the installation is only available in the desktop app.".to_string())
+        }
 
         // --- Clipboard ---
+        // The clipboard physically belongs to the machine running the server, not
+        // the remote LAN client. Restrict every clipboard command to local callers
+        // so a LAN user can neither write to nor read the operator's clipboard.
+        "copy_image_to_clipboard" | "copy_bytes_to_clipboard" | "read_clipboard_image"
+            if !caller_is_local =>
+        {
+            Err("Clipboard access is only available on the local machine.".to_string())
+        }
         "copy_image_to_clipboard" => {
             let file_path = args["filePath"]
                 .as_str()
@@ -4259,30 +4548,18 @@ async fn run_interrogation_headless(
     state: &Arc<AppState>,
     image_bytes: Vec<u8>,
 ) -> Result<crate::interrogator::InterrogationResult, String> {
-    // Ensure model is downloaded
-    {
-        let interrogator = state.interrogator.read().await;
-        if !interrogator.is_model_downloaded() {
-            drop(interrogator);
-            let interrogator = state.interrogator.read().await;
-            interrogator
-                .ensure_model_downloaded_headless(&state.http_client)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
+    // Resolve the model directory under a brief read lock, then run the
+    // (multi-second, network) downloads WITHOUT holding the guard across await.
+    let model_dir = { state.interrogator.read().await.model_dir() };
+    if !crate::interrogator::is_model_downloaded_at(&model_dir) {
+        crate::interrogator::ensure_model_downloaded_headless_at(&state.http_client, &model_dir)
+            .await
+            .map_err(|e| e.to_string())?;
     }
-
-    // Ensure ONNX Runtime shared library is downloaded
-    {
-        let interrogator = state.interrogator.read().await;
-        if !interrogator.is_ort_library_present() {
-            drop(interrogator);
-            let interrogator = state.interrogator.read().await;
-            interrogator
-                .ensure_ort_library_headless(&state.http_client)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
+    if !crate::interrogator::is_ort_library_present_at(&model_dir) {
+        crate::interrogator::ensure_ort_library_headless_at(&state.http_client, &model_dir)
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
     let (general_threshold, character_threshold) = {
@@ -4315,6 +4592,91 @@ async fn run_interrogation_headless(
     })
     .await
     .map_err(|e| format!("Inference task failed: {}", e))?
+}
+
+#[cfg(any(feature = "desktop", feature = "server"))]
+pub async fn run_prompt_assistant_headless(
+    state: &Arc<AppState>,
+    input: &str,
+    family: &str,
+    mode: crate::prompt_assistant::grounding::GenMode,
+    length: Option<&str>,
+    include_artists: bool,
+) -> Result<String, String> {
+    use crate::prompt_assistant::{grounding, hardware};
+    // No active-generation guard here: `prompt_queue` is shared across every user
+    // of a server/browser-mode instance, so blocking on it meant one person
+    // generating locked Enhance/Compose for everyone. Contention is instead handled
+    // by the free-VRAM check in `ensure_running`, which loads the LLM on CPU when a
+    // GPU is already busy with ComfyUI's model rather than evicting it.
+    let (model_id, idle_secs) = {
+        let cfg = state.config.read().await;
+        (
+            cfg.prompt_assistant_model_id.clone(),
+            cfg.prompt_assistant_idle_timeout_secs,
+        )
+    };
+    // Fall back to whatever model is already on disk when config.json carries no
+    // explicit selection. This is the only path that works on read-only-config
+    // deployments (e.g. a Kubernetes ConfigMap mounted at config.json), where the
+    // UI's model pick can never be persisted back, leaving `prompt_assistant_model_id`
+    // perpetually None despite a model sitting in the data dir.
+    let model_id = match model_id {
+        Some(id) => id,
+        None => state
+            .prompt_assistant
+            .installed_models()
+            .into_iter()
+            .next()
+            .ok_or_else(|| "prompt_assistant.no_model".to_string())?,
+    };
+    let hw = tokio::task::spawn_blocking(hardware::detect)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Reclaim VRAM from idle ComfyUI workers so the LLM can load on the GPU.
+    // Without this, a compose/enhance right after a generation falls back to CPU
+    // (ComfyUI's model is still resident), and a 7B model on CPU overruns
+    // Cloudflare's 100s proxy timeout with a 524 on the hosted deployment.
+    state.free_comfyui_vram_for_llm().await;
+    state.broadcast("llm:stage", serde_json::json!("loading_model"));
+    let noop = |_: &str, _: u64, _: u64, _: bool| {};
+    let port = state
+        .prompt_assistant
+        .ensure_running(
+            &state.http_client,
+            &model_id,
+            hw.total_vram_mb,
+            idle_secs,
+            &noop,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    state.broadcast("llm:stage", serde_json::json!("generating"));
+    // A purpose-built tag upsampler is always tag-only regardless of family.
+    let purpose = crate::prompt_assistant::catalog::entry(&model_id)
+        .map(|e| e.purpose)
+        .unwrap_or_else(|| "natural_language".to_string());
+    let tag_only = grounding::is_tag_only(&purpose, family);
+    let candidates = grounding::retrieve_candidates(input, 40);
+    let system = grounding::system_prompt(tag_only, mode, &candidates, include_artists);
+    // Mirror the desktop token budget so browser Enhance/Compose honors the
+    // user's length pick instead of always generating at the medium default.
+    let max_tokens = match length {
+        Some("short") => 96,
+        Some("detailed") => 384,
+        _ => 192,
+    };
+    let raw = state
+        .prompt_assistant
+        .server
+        .chat(&state.http_client, port, &system, input, max_tokens)
+        .await
+        .map_err(|e| e.to_string())?;
+    let cleaned = grounding::repair(&raw, tag_only);
+    // Enhance is additive: keep every user tag and don't let the model swap a
+    // pinned attribute. No-op for Compose. The desktop path runs this too;
+    // omitting it here made browser Enhance silently drop user tags.
+    Ok(grounding::reconcile_enhance(input, &cleaned, mode))
 }
 
 // ---------------------------------------------------------------------------
@@ -5100,6 +5462,7 @@ fn save_to_gallery_in_dir(
     };
 
     std::fs::write(&path, &final_bytes).map_err(|e| e.to_string())?;
+    crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
     Ok(gallery_filename)
 }
 
@@ -5122,6 +5485,53 @@ fn dir_usage_bytes(dir: &std::path::Path) -> u64 {
                 .sum()
         })
         .unwrap_or(0)
+}
+
+/// The username key used for localhost / single-admin sessions, where
+/// `resolve_username` returns `None`. Matches the convention documented in
+/// `user_prefs.rs`.
+const ADMIN_PREFS_KEY: &str = "_admin";
+
+/// GET /internal-api/_user/prefs — fetch the current user's saved preferences.
+/// Returns 204 when the user has no saved prefs yet.
+async fn user_prefs_get_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if resolve_role(&state, &headers, &remote) == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| ADMIN_PREFS_KEY.to_string());
+    match crate::user_prefs::load(&username).await {
+        Some(prefs) => (StatusCode::OK, Json(prefs)).into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
+}
+
+/// PUT /internal-api/_user/prefs — replace the current user's saved preferences.
+/// The `updated_at` timestamp is set server-side, ignoring any client value.
+async fn user_prefs_put_handler(
+    AxumState(state): AxumState<SharedState>,
+    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(mut prefs): Json<crate::user_prefs::UserPrefs>,
+) -> Response {
+    if resolve_role(&state, &headers, &remote) == UserRole::Anonymous {
+        return forbidden_response("Authentication required.");
+    }
+    let username =
+        resolve_username(&state, &headers, &remote).unwrap_or_else(|| ADMIN_PREFS_KEY.to_string());
+    prefs.updated_at = Some(chrono::Utc::now().to_rfc3339());
+    match crate::user_prefs::save(&username, &prefs).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
 }
 
 /// GET /internal-api/_storage/info — returns current user's storage usage,
@@ -5232,11 +5642,12 @@ async fn storage_set_limit_handler(
         }
     };
 
-    // Moderators cannot change storage limits for admin accounts
+    // Moderators may only manage regular user accounts, consistent with the
+    // delete / reset-password / set-role / modelhub handlers.
     if role == UserRole::Moderator {
         if let Some(target_role) = state.auth.get_account_role(username) {
-            if target_role == "admin" {
-                return forbidden_response("Moderators cannot modify admin storage limits.");
+            if target_role == "admin" || target_role == "moderator" {
+                return forbidden_response("Moderators can only manage regular user accounts.");
             }
         }
     }
@@ -5477,18 +5888,27 @@ async fn model_requests_add_handler(
         &category,
     );
 
-    // Notify all mods/admins about the new request
-    let _ = state.app.notifications.create_i18n(
-        "global",
-        "notifications.model_request.new_title",
-        Some("notifications.model_request.new_body"),
-        Some(serde_json::json!({
-            "username": username,
-            "model_name": model_name,
-            "model_type": model_type,
-        })),
-        "info",
-    );
+    // Notify mods/admins about the new request. A "global" notification would
+    // leak the request (and requester's username) to every user, so target each
+    // staff account individually. The localhost super-admin reads notifications
+    // under the literal "admin" key, so include it explicitly.
+    let mut recipients = state.auth.usernames_with_roles(&["admin", "moderator"]);
+    if !recipients.iter().any(|u| u.eq_ignore_ascii_case("admin")) {
+        recipients.push("admin".to_string());
+    }
+    for recipient in recipients {
+        let _ = state.app.notifications.create_i18n(
+            &recipient,
+            "notifications.model_request.new_title",
+            Some("notifications.model_request.new_body"),
+            Some(serde_json::json!({
+                "username": username,
+                "model_name": model_name,
+                "model_type": model_type,
+            })),
+            "info",
+        );
+    }
 
     (
         StatusCode::OK,

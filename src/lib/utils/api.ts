@@ -7,7 +7,11 @@ import type {
   GenerationParams,
   GpuStats,
   InterrogationResult,
+  LlmCatalogEntry,
+  LlmHardware,
+  LlmStatus,
   OutputImage,
+  PromptAssistantOpts,
   QueueInfo,
   SamplerInfo,
   SystemStats,
@@ -135,6 +139,21 @@ export async function downloadModel(
   expectedSha256?: string,
 ): Promise<void> {
   return ipcInvoke("download_model", { url, category, filename, installDir, expectedSha256 });
+}
+
+/** Cancel an in-progress model download by filename. The backend deletes the partial file. */
+export async function cancelDownload(filename: string): Promise<void> {
+  return ipcInvoke("cancel_download", { filename });
+}
+
+/**
+ * Ask the backend for the real filename a download URL resolves to, read from the
+ * server's Content-Disposition header (no file is downloaded). Returns null when
+ * the server reports no usable name. Used to autopopulate the Model Hub direct
+ * download filename, including for CivitAI links whose name is not in the URL.
+ */
+export async function resolveDownloadFilename(url: string): Promise<string | null> {
+  return ipcInvoke("resolve_download_filename", { url });
 }
 
 export interface ModelInstallDir {
@@ -739,6 +758,46 @@ export async function interrogateClipboard(): Promise<InterrogationResult> {
   return ipcInvoke("interrogate_clipboard");
 }
 
+export async function detectLlmHardware(): Promise<LlmHardware> {
+  return ipcInvoke("detect_llm_hardware");
+}
+
+export async function listLlmCatalog(): Promise<LlmCatalogEntry[]> {
+  return ipcInvoke("list_llm_catalog");
+}
+
+export async function llmStatus(): Promise<LlmStatus> {
+  return ipcInvoke("llm_status");
+}
+
+export async function downloadLlmModel(id: string, variant: string): Promise<void> {
+  return ipcInvoke("download_llm_model", { id, variant });
+}
+
+export async function deleteLlmModel(id: string): Promise<void> {
+  return ipcInvoke("delete_llm_model", { id });
+}
+
+export async function unloadLlm(): Promise<void> {
+  return ipcInvoke("unload_llm");
+}
+
+export async function enhancePrompt(
+  prompt: string,
+  family: string,
+  opts?: PromptAssistantOpts,
+): Promise<string> {
+  return ipcInvoke("enhance_prompt", { prompt, family, opts });
+}
+
+export async function composePrompt(
+  description: string,
+  family: string,
+  opts?: PromptAssistantOpts,
+): Promise<string> {
+  return ipcInvoke("compose_prompt", { description, family, opts });
+}
+
 export async function readClipboardImage(): Promise<number[]> {
   return ipcInvoke("read_clipboard_image");
 }
@@ -779,6 +838,16 @@ export async function exportLogs(destination: string): Promise<void> {
     destination,
     frontendLogs: getLogSnapshot(),
   });
+}
+
+// Browser/server mode: the backend has no meaningful local path to write to for
+// a remote browser, so it returns the diagnostic text and the caller triggers a
+// client-side download.
+export async function exportLogsContent(): Promise<string> {
+  const res = await ipcInvoke<{ content: string }>("export_logs", {
+    frontendLogs: getLogSnapshot(),
+  });
+  return res.content;
 }
 
 export async function getGpuStats(): Promise<GpuStats[]> {

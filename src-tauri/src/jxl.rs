@@ -117,8 +117,31 @@ fn iter_boxes(bytes: &[u8]) -> Vec<([u8; 4], std::ops::Range<usize>)> {
             // size=0 means box extends to end of file
             (pos + 8, bytes.len())
         } else if size == 1 {
-            // 64-bit size follows; rare for JXL metadata — treat as EOF.
-            break;
+            // size=1 means a 64-bit `largesize` follows the type field; the box
+            // (including its 16-byte header) spans `largesize` bytes from `pos`.
+            if pos + 16 > bytes.len() {
+                break;
+            }
+            let large = u64::from_be_bytes([
+                bytes[pos + 8],
+                bytes[pos + 9],
+                bytes[pos + 10],
+                bytes[pos + 11],
+                bytes[pos + 12],
+                bytes[pos + 13],
+                bytes[pos + 14],
+                bytes[pos + 15],
+            ]);
+            let Ok(large) = usize::try_from(large) else {
+                break;
+            };
+            let Some(box_end) = pos.checked_add(large) else {
+                break;
+            };
+            if large < 16 || box_end > bytes.len() {
+                break;
+            }
+            (pos + 16, box_end)
         } else {
             if pos + size > bytes.len() {
                 break;
@@ -353,6 +376,26 @@ mod tests {
         let decoded = decode_to_rgba8(&wrapped).expect("decode wrapped");
         assert_eq!(decoded.width, 2);
         assert_eq!(decoded.height, 2);
+    }
+
+    #[test]
+    fn iter_boxes_parses_64bit_extended_size() {
+        // A box with size==1 carries its real length in a trailing 64-bit
+        // `largesize` field; the payload then starts after the 16-byte header.
+        let payload = b"hello";
+        let total: u64 = 16 + payload.len() as u64;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&JXL_SIGNATURE_BOX);
+        bytes.extend_from_slice(&1u32.to_be_bytes()); // size = 1 (extended)
+        bytes.extend_from_slice(b"xml "); // type
+        bytes.extend_from_slice(&total.to_be_bytes()); // 64-bit largesize
+        bytes.extend_from_slice(payload);
+
+        let boxes = iter_boxes(&bytes);
+        assert_eq!(boxes.len(), 1, "should parse one extended-size box");
+        let (typ, range) = &boxes[0];
+        assert_eq!(typ, b"xml ");
+        assert_eq!(&bytes[range.clone()], payload);
     }
 
     #[test]

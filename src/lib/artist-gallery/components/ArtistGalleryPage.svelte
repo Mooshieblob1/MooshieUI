@@ -146,14 +146,18 @@
   async function openHit(hit: ArtistSearchHit, index = -1) {
     // Instant open: build entry immediately from cached search index data
     const imageUrl = store.manifest && hit.hasImage && hit.imageId
-      ? `${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${hit.imageId}.webp`
+      ? proxiedCdnUrl(`${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${hit.imageId}.${imgExt()}`)
       : "";
     store.lightboxEntry = { tag: hit.tag, slug: hit.slug, imageId: hit.imageId, imageUrl, objectKey: "", postCount: hit.postCount, belowThreshold: hit.belowThreshold, b: hit.b, aliases: [], hasImage: hit.hasImage };
     store.lightboxIndex = index;
-    // Background: fetch full shard entry to patch in aliases once loaded
+    // Background: fetch full shard entry to patch in aliases (and v2 variants) once loaded
     store.client.getArtist(hit.slug).then((full) => {
       if (full && store.lightboxEntry?.slug === hit.slug) {
-        store.lightboxEntry = { ...full, imageUrl: proxiedCdnUrl(full.imageUrl) };
+        store.lightboxEntry = {
+          ...full,
+          imageUrl: proxiedCdnUrl(full.imageUrl),
+          images: full.images?.map((img) => ({ ...img, imageUrl: proxiedCdnUrl(img.imageUrl) })),
+        };
       }
     }).catch(() => {});
   }
@@ -189,9 +193,77 @@
     pageInputValue = "";
   }
 
+  // ---------------------------------------------------------------------------
+  // Image variant toggle (index v2+; inert on single-variant v1 data)
+  // ---------------------------------------------------------------------------
+  let globalVariant = $derived(store.globalVariant);
+
+  /** Variant count for a hit; defaults to 1 on v1 data. */
+  function variantCountOf(hit: ArtistSearchHit): number {
+    return Math.max(1, hit.variantCount ?? hit.images?.length ?? 1);
+  }
+
+  /** True when ANY entry in the dataset exposes >= 2 variants. */
+  const hasVariants = $derived.by(() => allEntries.some((e) => variantCountOf(e) >= 2));
+  /** Largest variant count across the dataset (drives the toolbar toggle). */
+  const maxVariants = $derived.by(() =>
+    allEntries.reduce((m, e) => Math.max(m, variantCountOf(e)), 1),
+  );
+
+  function setGlobalVariant(value: number) {
+    store.setGlobalVariant(value);
+  }
+
+  function flipCard(hit: ArtistSearchHit, e: MouseEvent) {
+    e.stopPropagation();
+    const count = variantCountOf(hit);
+    if (count < 2) return;
+    const current = Math.min(store.resolveVariant(hit.slug), count);
+    const next = (current % count) + 1;
+    store.setVariant(hit.slug, next);
+  }
+
+  function imageIdForVariant(hit: ArtistSearchHit, variant: number): string {
+    // Prefer an explicit per-variant entry when the shard data is present.
+    const img = hit.images?.[variant - 1];
+    if (img?.imageId) return img.imageId;
+    // search.json hits carry no `images[]`, so derive the variant id by
+    // swapping the `-p<n>` suffix (all v2 imageIds end in `-p1`/`-p2`).
+    return hit.imageId.replace(/-p\d+$/, `-p${variant}`);
+  }
+
+  /** Image extension for the active dataset: AVIF in index v2+, WebP in v1. */
+  function imgExt(): string {
+    return (store.manifest?.version ?? 1) >= 2 ? "avif" : "webp";
+  }
+
   function thumbUrl(hit: ArtistSearchHit): string {
-    if (!store.manifest || !hit.hasImage || !hit.imageId) return "";
-    return `${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${hit.imageId}.webp`;
+    if (!store.manifest || !hit.hasImage) return "";
+    const count = variantCountOf(hit);
+    const variant = Math.min(store.resolveVariant(hit.slug), count);
+    const imageId = imageIdForVariant(hit, variant);
+    if (!imageId) return "";
+    return proxiedCdnUrl(`${store.manifest.imageBaseUrl}/${store.manifest.releasePrefix}/images/${imageId}.${imgExt()}`);
+  }
+
+  // Variant state for the open lightbox entry (kept in sync with its grid card).
+  const activeVariantCount = $derived.by(() => {
+    if (!active) return 1;
+    const hit = gridEntries.find((h) => h.slug === active.slug);
+    return Math.max(1, hit ? variantCountOf(hit) : active.images?.length ?? 1);
+  });
+  const activeVariant = $derived(
+    active ? Math.min(store.resolveVariant(active.slug), activeVariantCount) : 1,
+  );
+  const activeCanFlip = $derived(activeVariantCount >= 2);
+
+  function flipActiveVariant() {
+    if (!active) return;
+    const count = activeVariantCount;
+    if (count < 2) return;
+    const current = Math.min(store.resolveVariant(active.slug), count);
+    const next = (current % count) + 1;
+    store.setVariant(active.slug, next);
   }
 
   function displayTag(tag: string): string {
@@ -406,7 +478,7 @@
     for (let p = start; p <= end; p++) {
       for (const hit of sortedEntries.slice((p - 1) * pageSize, p * pageSize)) {
         if (hit.hasImage && hit.imageId) {
-          urls.push(`${imageBaseUrl}/${releasePrefix}/images/${hit.imageId}.webp`);
+          urls.push(proxiedCdnUrl(`${imageBaseUrl}/${releasePrefix}/images/${hit.imageId}.${imgExt()}`));
         }
       }
     }
@@ -468,25 +540,25 @@
           {/if}
         </p>
       </div>
-
-      <!-- Search -->
-      <div class="relative w-full max-w-sm">
-        <input
-          type="search"
-          placeholder={locale.t('artist_gallery.search_placeholder')}
-          value={queryInput}
-          oninput={(e) => onSearchInput(e.currentTarget.value)}
-          class="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
-        />
-        {#if store.searchLoading}
-          <span class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-neutral-500">…</span>
-        {/if}
-      </div>
     </div>
 
-    <!-- Sort + page size toolbar -->
+    <!-- Search + sort + page size toolbar -->
     {#if store.manifest}
       <div class="mt-3 flex flex-wrap items-center gap-2">
+        <!-- Search -->
+        <div class="relative min-w-48 flex-1 sm:max-w-xs">
+          <input
+            type="search"
+            placeholder={locale.t('artist_gallery.search_placeholder')}
+            value={queryInput}
+            oninput={(e) => onSearchInput(e.currentTarget.value)}
+            class="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-100 placeholder-neutral-500 focus:border-indigo-500 focus:outline-none"
+          />
+          {#if store.searchLoading}
+            <span class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-neutral-500">…</span>
+          {/if}
+        </div>
+
         <div class="flex items-center gap-0.5 rounded-lg border border-neutral-800 bg-neutral-900/50 p-1">
           <span class="px-1.5 text-xs text-neutral-500">{locale.t('artist_gallery.sort_label')}</span>
           <button
@@ -565,6 +637,22 @@
             class="w-20 accent-indigo-500"
           />
         </div>
+
+        {#if hasVariants}
+          <div class="flex items-center gap-0.5 rounded-lg border border-neutral-800 bg-neutral-900/50 p-1">
+            <span class="px-1.5 text-xs text-neutral-500">{locale.t('artist_gallery.variant_label')}</span>
+            {#each Array(maxVariants) as _, idx}
+              {@const n = idx + 1}
+              <button
+                type="button"
+                class="rounded px-2 py-0.5 text-xs transition-colors {globalVariant === n ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
+                onclick={() => setGlobalVariant(n)}
+              >
+                {locale.t('artist_gallery.variant_n', { n })}
+              </button>
+            {/each}
+          </div>
+        {/if}
 
         <button
           type="button"
@@ -730,6 +818,17 @@
               >
                 {locale.t('artist_gallery.copy_btn')}
               </button>
+              {#if variantCountOf(hit) >= 2}
+                <button
+                  type="button"
+                  class="absolute bottom-1 left-1 rounded border border-neutral-700 bg-neutral-900/90 px-1.5 py-0.5 text-[10px] text-neutral-200 opacity-0 transition-opacity group-hover:opacity-100 hover:border-indigo-500"
+                  onclick={(e) => flipCard(hit, e)}
+                  aria-label={locale.t('artist_gallery.flip_variant_aria')}
+                  title={locale.t('artist_gallery.flip_variant_aria')}
+                >
+                  ⇄ {Math.min(store.resolveVariant(hit.slug), variantCountOf(hit))}
+                </button>
+              {/if}
               {#if copiedSlug === hit.slug}
                 <div class="absolute inset-0 flex items-center justify-center bg-neutral-900/80">
                   <span class="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-white">{locale.t('artist_gallery.copied')}</span>
@@ -874,6 +973,9 @@
     ontogglezoom={() => store.lightboxZoomed = !store.lightboxZoomed}
     onprev={activeIndex > 0 ? () => navigateTo(activeIndex - 1) : undefined}
     onnext={activeIndex >= 0 && activeIndex < gridEntries.length - 1 ? () => navigateTo(activeIndex + 1) : undefined}
+    variant={activeVariant}
+    canFlip={activeCanFlip}
+    onflip={flipActiveVariant}
   />
 {/if}
 
@@ -889,7 +991,7 @@
     aria-label={locale.t('artist_gallery.gen_params.title')}
   >
     <button type="button" class="absolute inset-0 h-full w-full cursor-default" aria-label={locale.t('artist_gallery.lightbox.close_aria')} onclick={() => showGenParams = false}></button>
-    <div class="relative z-10 w-full max-w-lg rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
+    <div class="relative z-10 max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-neutral-700 bg-neutral-900 p-5 shadow-2xl">
       <div class="mb-4 flex items-center justify-between">
         <h2 class="text-sm font-semibold text-neutral-100">{locale.t('artist_gallery.gen_params.title')}</h2>
         <button type="button" class="text-neutral-500 hover:text-neutral-200 text-lg leading-none" onclick={() => showGenParams = false} aria-label={locale.t('artist_gallery.lightbox.close_aria')}>✕</button>
@@ -899,9 +1001,9 @@
           <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.model_stack')}</h3>
           <table class="w-full">
             <tbody>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.unet')}</td><td class="text-neutral-200">Anima SDXL Base</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.text_encoder')}</td><td class="text-neutral-200">CLIP-L + CLIP-G (SDXL dual)</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.vae')}</td><td class="text-neutral-200">sdxl_vae.safetensors</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.unet')}</td><td class="text-neutral-200">anima-base-v1.0.safetensors</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.text_encoder')}</td><td class="text-neutral-200">qwen_3_06b_base.safetensors (wan)</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.vae')}</td><td class="text-neutral-200">qwen_image_vae.safetensors</td></tr>
             </tbody>
           </table>
         </section>
@@ -911,21 +1013,35 @@
             <tbody>
               <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.sampler')}</td><td class="text-neutral-200">er_sde</td></tr>
               <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.scheduler')}</td><td class="text-neutral-200">sgm_uniform</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.steps')}</td><td class="text-neutral-200">30</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.steps')}</td><td class="text-neutral-200">25</td></tr>
               <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.cfg_scale')}</td><td class="text-neutral-200">4.0</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.seed')}</td><td class="text-neutral-200">42</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.denoise')}</td><td class="text-neutral-200">1.0</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.seed')}</td><td class="text-neutral-200">7243057331061028000</td></tr>
               <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.resolution')}</td><td class="text-neutral-200">896 × 1152</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.output')}</td><td class="text-neutral-200">WebP (lossy, q=85)</td></tr>
             </tbody>
           </table>
         </section>
         <section>
-          <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.positive')}</h3>
-          <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200">score_9, score_8_up, score_7_up, masterpiece, best quality, <span class="text-red-400">@artist_tag</span></p>
+          <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.output')}</h3>
+          <table class="w-full">
+            <tbody>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.output')}</td><td class="text-neutral-200">AVIF</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.delivered_size')}</td><td class="text-neutral-200">720 × 926</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.quality')}</td><td class="text-neutral-200">80 (4:2:0)</td></tr>
+            </tbody>
+          </table>
+        </section>
+        <section>
+          <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.positive_1')}</h3>
+          <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200"><span class="text-red-400">&#123;artist_tag&#125;</span>, year 2025, newest, masterpiece, best quality, score_9, score_8, highres, safe, 1girl, hatsune miku, straight-on, cowboy shot, school, serafuku, fence, long sleeves, outdoors, hamburger, eating, blue sky, plant</p>
+        </section>
+        <section>
+          <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.positive_2')}</h3>
+          <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200"><span class="text-red-400">&#123;artist_tag&#125;</span>, year 2025, newest, masterpiece, best quality, score_9, score_8, highres, safe, 1girl, solo, umbrella, standing, holding umbrella, mouse girl, mouse ears, mouse tail, raincoat, yellow raincoat, rubber boots, yellow footwear, street, rain, raining, cowboy shot, black hair, long hair, blunt bangs, blunt ends, blue eyes, straight-on</p>
         </section>
         <section>
           <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.negative')}</h3>
-          <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200">score_1, score_2, score_3, worst quality, low quality, blurry, watermark</p>
+          <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200">worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, sensitive, nsfw, explicit</p>
         </section>
       </div>
     </div>

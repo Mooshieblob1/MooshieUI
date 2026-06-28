@@ -16,7 +16,7 @@ Designed to drop, unchanged, into:
   import { ArtistGalleryPage } from "$lib/artist-gallery";
 
   const manifestUrl =
-    "https://cdn.mooshieblob.com/20260325_anima_all_artists/indices/manifest.json";
+    "https://cdn.mooshieblob.com/20260425_anima_all_artists/indices/manifest.json";
 
   function insertTagIntoPrompt(tag: string) {
     // Integrator wires this up; omit the prop if you don't want the button.

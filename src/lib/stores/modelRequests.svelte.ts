@@ -105,9 +105,9 @@ class ModelRequestsStore {
       if (!resp.ok) {
         throw new Error(data.error ?? locale.t("model_requests.error.approve"));
       }
-      // Update local state
-      const idx = this.requests.findIndex((r) => r.id === requestId);
-      if (idx !== -1) this.requests[idx] = data.request;
+      // Update local state (spread reassignment — in-place index mutation does
+      // not trigger Svelte 5 rune reactivity).
+      this.requests = this.requests.map((r) => (r.id === requestId ? data.request : r));
       this.showToast(locale.t("model_requests.approved"), "success");
       return data.request as ModelRequest;
     } catch (e) {
@@ -128,9 +128,9 @@ class ModelRequestsStore {
       if (!resp.ok) {
         throw new Error(data.error ?? locale.t("model_requests.error.deny"));
       }
-      // Update local state
-      const idx = this.requests.findIndex((r) => r.id === requestId);
-      if (idx !== -1) this.requests[idx] = data.request;
+      // Update local state (spread reassignment — in-place index mutation does
+      // not trigger Svelte 5 rune reactivity).
+      this.requests = this.requests.map((r) => (r.id === requestId ? data.request : r));
       this.showToast(locale.t("model_requests.denied"), "info");
       return data.request as ModelRequest;
     } catch (e) {

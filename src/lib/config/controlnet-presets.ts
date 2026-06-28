@@ -16,7 +16,6 @@ export interface ControlNetPreset {
   label: string;
   description: string;
   preprocessor: string | null;
-  preprocessorParams?: Record<string, number>;
   defaults?: ControlNetDefaults;
   requiresMode?: "inpainting";
   models: {
@@ -41,7 +40,6 @@ export const CONTROLNET_PRESETS: ControlNetPreset[] = [
     label: "Canny Edge",
     description: "Detects edges — best for preserving structure and composition",
     preprocessor: "CannyEdgePreprocessor",
-    preprocessorParams: { low_threshold: 100, high_threshold: 200 },
     models: {
       sdxl: {
         filename: "diffusers_xl_canny_full.safetensors",

@@ -105,3 +105,4 @@ git -c core.hooksPath=/dev/null push origin --delete chore/<slug>
 1. Pushing directly to `main` (branch protection)
 2. Omitting `core.hooksPath=/dev/null` on Windows
 3. Including release version bumps — use **release** skill
+4. Adding `Co-Authored-By` trailers to commits, PR bodies, or comments — never attribute AI assistance in any git or GitHub output

@@ -23,6 +23,7 @@
     clearAllRegionalChainGallerySuppress,
   } from "../../utils/regionalChainGallery.js";
   import { checkStyleTransferNodesReady } from "../../utils/styleTransferNodes.js";
+  import { classifyGenerationError } from "../../utils/generationErrors.js";
   import { parseSegmentDetailPrompt, yoloTargetFilename } from "../../utils/promptSegmentDetail.js";
 
   interface Props {
@@ -265,7 +266,7 @@
       }
 
       const skippedEmpty = generation.regionalPrompts.length - configuredRegions;
-      if (skippedEmpty > 0) {
+      if (skippedEmpty > 0 && configuredRegions > 0) {
         gallery.showToast(
           locale.t("generation.regional.empty_skipped_warning", { count: String(skippedEmpty) }),
           "warning",
@@ -348,7 +349,14 @@
       if (runToken === submitRunToken) {
         console.error("Generation failed:", e);
         const message = e instanceof Error ? e.message : String(e);
-        errorMsg = locale.t("generation.error_failed_message", { message });
+        // Classify submission failures (stale model cache, incompatible VAE,
+        // OOM, missing node, etc.) into actionable guidance. Fall back to the
+        // raw message only when nothing matched.
+        const classified = classifyGenerationError(message);
+        errorMsg =
+          classified.messageKey === "generation.toast.failed"
+            ? locale.t("generation.error_failed_message", { message })
+            : locale.t(classified.messageKey, classified.params);
       }
     } finally {
       if (sequential) finishSubmitRun(runToken);
@@ -482,6 +490,16 @@
       compare.applyToGeneration(cell);
 
       const params = generation.toParams();
+
+      // Anima models produce poor results below 1024 — clamp to 1024² area
+      // preserving aspect ratio. The single-image path does this on the store;
+      // the grid path builds params per cell, so mirror it here.
+      if (generation.isAnima && (params.width < 1024 || params.height < 1024)) {
+        const ratio = params.width / params.height;
+        const area = 1024 * 1024;
+        params.width = Math.round(Math.sqrt(area * ratio) / 8) * 8;
+        params.height = Math.round(Math.sqrt(area / ratio) / 8) * 8;
+      }
 
       // Use shared seed for random seeds so the grid is consistent
       if (params.seed < 0) {

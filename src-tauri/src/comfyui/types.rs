@@ -139,6 +139,9 @@ pub struct GenerationParams {
     /// low-denoise second pass at higher resolution.
     #[serde(default)]
     pub refine_only: bool,
+    /// Also save the base image as it was before the upscale chain ran.
+    #[serde(default)]
+    pub save_pre_upscale_image: bool,
     /// Enable Soft Guidance (CFG rescaling) for upscale pass to prevent hallucination
     #[serde(default)]
     pub upscale_soft_guidance: bool,
@@ -175,9 +178,6 @@ pub struct GenerationParams {
     /// True when metadata or filename indicates a v-pred SDXL variant.
     #[serde(default)]
     pub is_vpred_model: bool,
-    /// Whether the model uses rectified flow scheduling (detected from filename or architecture)
-    #[serde(default)]
-    pub uses_rectified_flow: bool,
     /// Enable Smart Guidance (positive-biased) — patches model for all generation passes
     #[serde(default)]
     pub smart_guidance: bool,
@@ -197,6 +197,11 @@ pub struct GenerationParams {
     pub facefix_guide_size: u32,
     #[serde(default = "default_facefix_max_faces")]
     pub facefix_max_faces: u32,
+    /// When set, condition the face detailer on a face-only subset of the prompt
+    /// (auto-extracted) instead of the full prompt, so scene/pose/background tags
+    /// don't bleed into the re-denoised face region.
+    #[serde(default)]
+    pub facefix_auto_prompt: bool,
     /// Output image bit depth — "8bit" (default) or "16bit"
     #[serde(default = "default_output_bit_depth")]
     pub output_bit_depth: String,

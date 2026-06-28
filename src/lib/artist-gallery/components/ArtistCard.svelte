@@ -26,7 +26,6 @@
     {#if entry.hasImage && entry.imageUrl}
       <img
         use:cachedSrc={entry.imageUrl}
-        src={entry.imageUrl}
         alt={entry.tag}
         loading="lazy"
         decoding="async"

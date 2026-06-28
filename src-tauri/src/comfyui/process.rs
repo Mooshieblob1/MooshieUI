@@ -208,6 +208,15 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         if main_exists {
             super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
                 .map_err(AppError::ProcessSpawnFailed)?;
+            // Non-fatal: logs a warning on failure rather than blocking startup.
+            super::nodes::ensure_mooshie_node_requirements(
+                &config.comfyui_path,
+                &config.venv_path,
+                config.network_proxy.as_deref(),
+                config.pip_index_url.as_deref(),
+            )
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
             super::nodes::ensure_required_controlnet_nodes(
                 &config.comfyui_path,
                 &config.venv_path,
@@ -637,6 +646,44 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     cmd.env("PYTHONUTF8", "1");
     cmd.env("PYTHONIOENCODING", "utf-8");
 
+    // Persist GPU kernel / compile caches across app restarts.
+    //
+    // On newer GPUs the first generation after each launch can spend many minutes
+    // compiling and autotuning kernels. This is most severe on AMD RDNA4
+    // (gfx120x) with bleeding-edge ROCm, where MIOpen has no prebuilt kernel db
+    // and does an exhaustive search, but it also affects the torch.compile /
+    // Triton path on CUDA. Those caches default to per-process or /tmp locations,
+    // so the compile cost is re-paid on every restart. Point them at a stable
+    // directory under the app data dir (the parent of the ComfyUI install) so the
+    // cost is paid once. Any value the user already set in the environment wins.
+    {
+        let cache_base = std::path::Path::new(&config.comfyui_path)
+            .parent()
+            .map(|p| p.join("kernel-cache"))
+            .unwrap_or_else(|| std::env::temp_dir().join("mooshieui-kernel-cache"));
+        // (env var, subdir). MIOpen vars are no-ops off ROCm; the inductor/Triton
+        // vars are harmless on platforms that don't use them.
+        let caches: [(&str, &str); 4] = [
+            ("TORCHINDUCTOR_CACHE_DIR", "torchinductor"),
+            ("TRITON_CACHE_DIR", "triton"),
+            ("MIOPEN_USER_DB_PATH", "miopen"),
+            ("MIOPEN_CUSTOM_CACHE_DIR", "miopen"),
+        ];
+        for (var, subdir) in caches {
+            if std::env::var_os(var).is_some() {
+                continue; // respect an explicit user override
+            }
+            let dir = cache_base.join(subdir);
+            match std::fs::create_dir_all(&dir) {
+                Ok(()) => {
+                    cmd.env(var, &dir);
+                }
+                Err(e) => log::warn!("Could not create kernel cache dir {:?}: {}", dir, e),
+            }
+        }
+        log::info!("Persistent kernel cache dir: {}", cache_base.display());
+    }
+
     // When running inside an AppImage, the bundled LD_LIBRARY_PATH and LD_PRELOAD
     // can interfere with Python/PyTorch. Clear them for the child process so it
     // uses the system's native libraries (CUDA, ROCm, etc.).
@@ -985,6 +1032,15 @@ pub async fn start_worker_process(
         if main_exists {
             super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
                 .map_err(AppError::ProcessSpawnFailed)?;
+            // Non-fatal: logs a warning on failure rather than blocking startup.
+            super::nodes::ensure_mooshie_node_requirements(
+                &config.comfyui_path,
+                &config.venv_path,
+                config.network_proxy.as_deref(),
+                config.pip_index_url.as_deref(),
+            )
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
             super::nodes::ensure_required_controlnet_nodes(
                 &config.comfyui_path,
                 &config.venv_path,
@@ -1152,6 +1208,35 @@ pub async fn start_worker_process(
 
     // Pin to specific GPU
     cmd.env("CUDA_VISIBLE_DEVICES", worker.gpu_index.to_string());
+
+    // Persist GPU kernel / compile caches across restarts (see the single-process
+    // spawn path for the rationale). Namespaced per GPU so concurrent workers
+    // don't contend on the same MIOpen db.
+    {
+        let cache_base = std::path::Path::new(&config.comfyui_path)
+            .parent()
+            .map(|p| p.join("kernel-cache"))
+            .unwrap_or_else(|| std::env::temp_dir().join("mooshieui-kernel-cache"))
+            .join(format!("gpu{}", worker.gpu_index));
+        let caches: [(&str, &str); 4] = [
+            ("TORCHINDUCTOR_CACHE_DIR", "torchinductor"),
+            ("TRITON_CACHE_DIR", "triton"),
+            ("MIOPEN_USER_DB_PATH", "miopen"),
+            ("MIOPEN_CUSTOM_CACHE_DIR", "miopen"),
+        ];
+        for (var, subdir) in caches {
+            if std::env::var_os(var).is_some() {
+                continue; // respect an explicit user override
+            }
+            let dir = cache_base.join(subdir);
+            match std::fs::create_dir_all(&dir) {
+                Ok(()) => {
+                    cmd.env(var, &dir);
+                }
+                Err(e) => log::warn!("Could not create kernel cache dir {:?}: {}", dir, e),
+            }
+        }
+    }
 
     // AppImage cleanup on Linux
     #[cfg(target_os = "linux")]
@@ -1366,6 +1451,45 @@ pub async fn wait_all_workers_ready(state: &AppState, timeout_secs: u64) {
             for i in 0..iterations {
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 if comfyui_health_ok(&http_client, &url).await {
+                    // Health endpoint responding is not enough: verify the
+                    // required MooshieUI custom nodes are actually loaded before
+                    // marking the worker Idle, mirroring wait_for_worker_ready.
+                    // Otherwise a node-less worker gets handed generation jobs
+                    // and fails them.
+                    if let Err(e) =
+                        super::nodes::verify_required_mooshie_nodes(&http_client, &base_url).await
+                    {
+                        let mut status = w.status.write().await;
+                        *status = WorkerStatus::Error;
+                        log::error!(
+                            "Worker {} (GPU {}): MooshieUI nodes not loaded at {}: {}",
+                            worker_id,
+                            gpu_index,
+                            base_url,
+                            e
+                        );
+                        return Err(worker_id);
+                    }
+                    if let Err(e) =
+                        super::nodes::verify_required_controlnet_nodes(&http_client, &base_url)
+                            .await
+                    {
+                        log::warn!(
+                            "Worker {}: ControlNet custom nodes not loaded (optional): {}",
+                            worker_id,
+                            e
+                        );
+                    }
+                    if let Err(e) =
+                        super::nodes::verify_required_style_transfer_nodes(&http_client, &base_url)
+                            .await
+                    {
+                        log::warn!(
+                            "Worker {}: style transfer custom nodes not loaded (optional): {}",
+                            worker_id,
+                            e
+                        );
+                    }
                     let mut status = w.status.write().await;
                     *status = WorkerStatus::Idle;
                     log::info!(

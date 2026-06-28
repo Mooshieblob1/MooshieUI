@@ -261,3 +261,4 @@ No manual About edit — version from `__APP_VERSION__`; release notes from GitH
 6. Creating a second `release/vX.Y.Z` while an open PR already exists for the same version
 7. Merging the release PR while another open PR has release-blocking bot **Fix** items still unresolved
 8. Ignoring late bot comments posted after CI goes green
+9. Adding `Co-Authored-By` trailers to commits, PR bodies, or comments — never attribute AI assistance in any git or GitHub output

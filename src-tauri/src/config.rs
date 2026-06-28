@@ -21,6 +21,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_llm_idle_timeout() -> u64 {
+    30
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeTone {
     pub main: String,
@@ -92,6 +96,13 @@ pub struct AppConfig {
     pub interrogator_general_threshold: f32,
     /// Interrogator: character tag confidence threshold (0.0–1.0)
     pub interrogator_character_threshold: f32,
+    /// Prompt assistant: selected/installed catalog model id (None = not chosen yet).
+    pub prompt_assistant_model_id: Option<String>,
+    /// Prompt assistant: idle seconds before the llama-server subprocess is unloaded.
+    #[serde(default = "default_llm_idle_timeout")]
+    pub prompt_assistant_idle_timeout_secs: u64,
+    /// Prompt assistant: true once the user has completed first-run setup.
+    pub prompt_assistant_setup_done: bool,
     /// Optional CivitAI API key for authenticated hash lookups and metadata fetching
     pub civitai_api_key: Option<String>,
     /// Custom gallery directory. When `None`, defaults to `{app_data_dir}/gallery`.
@@ -134,6 +145,20 @@ pub struct AppConfig {
     pub tls_cert_path: Option<String>,
     /// Optional TLS private key PEM path for the browser-mode web server.
     pub tls_key_path: Option<String>,
+    /// Prompt assistant: use an external OpenAI-compatible endpoint (LM Studio,
+    /// OpenAI, OpenRouter, ...) instead of the bundled local llama-server.
+    #[serde(default)]
+    pub llm_external_enabled: bool,
+    /// External LLM API root, e.g. `http://localhost:1234/v1` or `https://api.openai.com/v1`.
+    /// `/chat/completions` is appended.
+    #[serde(default)]
+    pub llm_external_base_url: String,
+    /// External LLM API key (sent as a Bearer token; leave empty for keyless local servers).
+    #[serde(default)]
+    pub llm_external_api_key: String,
+    /// External LLM model name (e.g. `gpt-4o-mini`, or the model id LM Studio exposes).
+    #[serde(default)]
+    pub llm_external_model: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -171,6 +196,9 @@ impl Default for AppConfig {
             extra_model_paths: None,
             interrogator_general_threshold: 0.30,
             interrogator_character_threshold: 0.85,
+            prompt_assistant_model_id: None,
+            prompt_assistant_idle_timeout_secs: 30,
+            prompt_assistant_setup_done: false,
             civitai_api_key: None,
             gallery_path: None,
             browser_mode: false,
@@ -189,6 +217,10 @@ impl Default for AppConfig {
             theme_profiles: vec![],
             tls_cert_path: None,
             tls_key_path: None,
+            llm_external_enabled: false,
+            llm_external_base_url: String::new(),
+            llm_external_api_key: String::new(),
+            llm_external_model: String::new(),
         }
     }
 }
@@ -417,6 +449,19 @@ pub fn save_config(config: &AppConfig) -> Result<(), String> {
     let dir = app_data_dir().ok_or("Failed to determine app data directory")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create data dir: {}", e))?;
     let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join("config.json"), json).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::write(dir.join("config.json"), json) {
+        // On hosted deployments the config is a read-only mount (e.g. a Kubernetes
+        // ConfigMap), so persistence cannot succeed. Downgrade those cases to a
+        // warning instead of surfacing a hard error for every settings change;
+        // the in-memory config still reflects the user's choice for this session.
+        if matches!(
+            e.kind(),
+            std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+        ) {
+            eprintln!("Skipping config save (read-only config location): {}", e);
+            return Ok(());
+        }
+        return Err(e.to_string());
+    }
     Ok(())
 }

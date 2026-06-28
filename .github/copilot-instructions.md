@@ -1,5 +1,9 @@
 # MooshieUI — Workspace Instructions
 
+## Non-Negotiable Behavioral Rules
+
+- **No co-authoring**: Never add `Co-Authored-By` trailers to any commit, PR body, issue comment, or PR review comment. Do not attribute AI assistance anywhere in git or GitHub output.
+
 ## Project Overview
 
 MooshieUI is a desktop frontend for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) built with **Svelte 5** + **Tauri v2** (Rust). It hides ComfyUI's node-graph complexity behind a clean UI for text-to-image, image-to-image, inpainting, and upscaling workflows.

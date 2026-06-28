@@ -223,10 +223,7 @@
         class="bg-amber-900/30 border border-amber-700/50 rounded-lg px-3 py-2 text-xs text-amber-300 space-y-1"
       >
         <p>{locale.t("generation.style_transfer.nodes_install")}</p>
-        <p>
-          Missing nodes are installed automatically during backend startup. Wait a bit, then
-          restart ComfyUI if they still do not appear.
-        </p>
+        <p>{locale.t("generation.style_transfer.nodes_install_detail")}</p>
       </div>
     {/if}
 

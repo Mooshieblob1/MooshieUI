@@ -144,7 +144,8 @@ These were flagged by reviewers, but they align with the product's actual operat
   - Stale review context. The function exists now.
 
 - Face Fix supply-chain complaint about unpinned ultralytics
-  - Already fixed. Current code pins `ultralytics==8.4.34`.
+  - Fixed in v1.4.28. `mooshie-nodes/requirements.txt` pins `ultralytics==8.4.75`
+    (the version verified against the bundled ComfyUI torch).
 
 - Preview/output prompt isolation concerns from older reviews
   - Mostly addressed in current `App.svelte` with prompt filtering.

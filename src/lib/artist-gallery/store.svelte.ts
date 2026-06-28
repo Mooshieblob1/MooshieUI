@@ -1,6 +1,5 @@
 import { createArtistGalleryClient } from "./client.js";
 import { cdnFetch, proxiedCdnUrl } from "../utils/cdnFetch.js";
-import { isBrowserMode } from "../utils/ipc.js";
 import type {
   ArtistEntry,
   ArtistGalleryClient,
@@ -60,11 +59,98 @@ export class ArtistGalleryStore {
   /** Last known scroll position of the gallery scroll container. */
   scrollTop = $state(0);
 
+  // --- Image variant toggle (index v2+; inert on single-variant v1 data) -----
+  /** Globally selected variant (1-based). Persisted across sessions. */
+  globalVariant = $state(1);
+  /**
+   * Per-card variant overrides. An entry is stored ONLY while it differs from
+   * `globalVariant` — a card flipped back to the global value drops its
+   * override so it re-syncs on the next global toggle.
+   */
+  variantOverrides = $state<Record<string, number>>({});
+
   /** Guard so rapid typing doesn't race older search results into state. */
   private searchSeq = 0;
 
+  private static readonly GLOBAL_VARIANT_KEY = "artist-gallery-global-variant";
+  private static readonly VARIANT_OVERRIDES_KEY = "artist-gallery-variant-overrides";
+
   constructor(manifestUrl: string) {
     this.client = createArtistGalleryClient({ manifestUrl, fetchImpl: cdnFetch });
+    this.loadVariants();
+  }
+
+  private loadVariants(): void {
+    try {
+      const g = localStorage.getItem(ArtistGalleryStore.GLOBAL_VARIANT_KEY);
+      if (g !== null) {
+        const n = parseInt(g, 10);
+        if (Number.isFinite(n) && n >= 1) this.globalVariant = n;
+      }
+      const o = localStorage.getItem(ArtistGalleryStore.VARIANT_OVERRIDES_KEY);
+      if (o) {
+        const parsed = JSON.parse(o);
+        if (parsed && typeof parsed === "object") {
+          const clean: Record<string, number> = {};
+          for (const [slug, v] of Object.entries(parsed)) {
+            if (typeof v === "number" && Number.isFinite(v) && v >= 1) clean[slug] = v;
+          }
+          this.variantOverrides = clean;
+        }
+      }
+    } catch {
+      /* localStorage unavailable; defaults are fine */
+    }
+  }
+
+  private persistVariants(): void {
+    try {
+      localStorage.setItem(ArtistGalleryStore.GLOBAL_VARIANT_KEY, String(this.globalVariant));
+      localStorage.setItem(
+        ArtistGalleryStore.VARIANT_OVERRIDES_KEY,
+        JSON.stringify(this.variantOverrides),
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Variant a card should display (1-based): its override if any, else global. */
+  resolveVariant(slug: string): number {
+    return this.variantOverrides[slug] ?? this.globalVariant;
+  }
+
+  /**
+   * Set a single card's variant. The override is stored ONLY while it differs
+   * from the global value; setting it equal to the global removes the override
+   * so the card re-syncs to the global on the next toggle.
+   */
+  setVariant(slug: string, value: number): void {
+    if (value === this.globalVariant) {
+      if (slug in this.variantOverrides) {
+        const next = { ...this.variantOverrides };
+        delete next[slug];
+        this.variantOverrides = next;
+      }
+    } else if (this.variantOverrides[slug] !== value) {
+      this.variantOverrides = { ...this.variantOverrides, [slug]: value };
+    }
+    this.persistVariants();
+  }
+
+  /**
+   * Set the global variant. Every override equal to the new global is absorbed
+   * (deleted) so those cards flip with the global; overrides that still differ
+   * are kept so those cards stay put. Symmetric in both directions.
+   */
+  setGlobalVariant(value: number): void {
+    this.globalVariant = value;
+    const next: Record<string, number> = {};
+    for (const [slug, v] of Object.entries(this.variantOverrides)) {
+      if (v !== value) next[slug] = v;
+    }
+    this.variantOverrides = next;
+    this.persistVariants();
   }
 
   async init(): Promise<void> {
@@ -73,19 +159,12 @@ export class ArtistGalleryStore {
     this.manifestError = null;
     try {
       const manifest = await this.client.loadManifest();
-      // In browser/server mode, rewrite the manifest's `imageBaseUrl` so that
-      // image URLs used by `<img src>` and `imageCache.fetch()` go through the
-      // server's `/internal-api/_cdn/...` proxy. Otherwise the CDN's missing
-      // CORS headers block every fetch from the gallery's origin (e.g.
-      // `mooshieui.gpu.garden`). In Tauri mode the CDN is hit directly because
-      // image element loads bypass CORS and JSON fetches are routed through
-      // the `cdn_proxy_fetch` command.
-      if (isBrowserMode && manifest.imageBaseUrl?.startsWith("https://cdn.mooshieblob.com")) {
-        manifest.imageBaseUrl = manifest.imageBaseUrl.replace(
-          "https://cdn.mooshieblob.com",
-          "/internal-api/_cdn",
-        );
-      }
+      // `imageBaseUrl` stays absolute (cdn.mooshieblob.com). The browser-mode
+      // proxy rewrite (`/internal-api/_cdn/...`) AND the LAN auth-token
+      // injection happen at the point of use via `proxiedCdnUrl()` / `cachedSrc`.
+      // Rewriting the base here would drop the token — a query param can't ride
+      // on a base URL that later has `/images/...` concatenated onto it — so
+      // every `<img src>` would be rejected with a 401 by the LAN auth gate.
       this.manifest = manifest;
     } catch (err) {
       this.manifestError = err instanceof Error ? err.message : String(err);

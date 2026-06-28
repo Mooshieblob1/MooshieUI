@@ -30,7 +30,7 @@
   }
 
   function recommendedCfgRange() {
-    if (isCfgPpSampler(generation.samplerName)) return { min: 1.0, max: 2.2, target: 1.4 };
+    if (isCfgPpSampler(generation.samplerName)) return { min: 1.5, max: 2.2, target: 1.8 };
     return { min: 4.0, max: 8.0, target: 6.0 };
   }
 
@@ -57,7 +57,7 @@
 
   function onSamplerChange() {
     if (isCfgPpSampler(generation.samplerName) && generation.cfg > 5) {
-      generation.cfg = 1.4;
+      generation.cfg = recommendedCfgRange().target;
     }
   }
 
@@ -244,32 +244,59 @@
     {/if}
   </div>
 
+  {#if generation.cfg <= 1.0}
+    <div class="flex items-start gap-2 rounded-lg border border-amber-600/60 bg-amber-950/30 px-3 py-2 mt-1">
+      <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" class="w-4 h-4 mt-0.5 shrink-0 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </svg>
+      <div>
+        <p class="text-xs font-semibold text-amber-200">{locale.t('generation.sampler.cfg1_warning_title')}</p>
+        <p class="text-[10px] text-amber-300/80 mt-0.5">{locale.t('generation.sampler.cfg1_warning_body')}</p>
+      </div>
+    </div>
+  {/if}
+
   <!-- Seed + Batch Size -->
   <div class="grid grid-cols-2 gap-2">
     <div>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
         <span>{locale.t('generation.sampler.seed')}<InfoTip text={locale.t('generation.sampler.seed_tip')} /></span>
-        <button
-          class="text-[10px] px-1.5 py-0.5 rounded {randomSeed
-            ? 'bg-indigo-600 text-white'
-            : 'bg-neutral-700 text-neutral-300'} transition-colors"
-          onclick={() => (generation.seed = randomSeed ? (progress.lastCompletedSeed ?? 0) : -1)}
-        >
-          {locale.t('generation.sampler.seed_random')}
-        </button>
-      </label>
-      {#if !randomSeed}
-        <input
-          type="number"
-          bind:value={generation.seed}
-          min="0"
-          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
-        />
-      {:else}
-        <div class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-500">
-          {locale.t('generation.sampler.random_display')}
+        <div class="flex items-center gap-1">
+          {#if progress.lastCompletedSeed != null}
+            <button
+              class="text-[10px] px-1.5 py-0.5 rounded bg-neutral-700 text-neutral-300 hover:bg-neutral-600 transition-colors"
+              onclick={() => (generation.seed = progress.lastCompletedSeed!)}
+              title={locale.t('generation.sampler.seed_use_last_tip')}
+            >
+              {locale.t('generation.sampler.seed_use_last')}
+            </button>
+          {/if}
+          <button
+            class="text-[10px] px-1.5 py-0.5 rounded {randomSeed
+              ? 'bg-indigo-600 text-white'
+              : 'bg-neutral-700 text-neutral-300'} transition-colors"
+            onclick={() => (generation.seed = randomSeed ? (progress.lastCompletedSeed ?? 0) : -1)}
+          >
+            {locale.t('generation.sampler.seed_random')}
+          </button>
         </div>
-      {/if}
+      </label>
+      <!-- Single editable box: shows "Random" as a placeholder when RNG is on, and
+           typing a value switches off RNG automatically — no need to toggle first (#394). -->
+      <input
+        type="number"
+        min="0"
+        value={randomSeed ? '' : generation.seed}
+        placeholder={locale.t('generation.sampler.random_display')}
+        oninput={(e) => {
+          const raw = e.currentTarget.value.trim();
+          const n = Number(raw);
+          generation.seed = raw === '' || Number.isNaN(n) ? -1 : Math.max(0, Math.floor(n));
+        }}
+        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+      />
     </div>
     <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">

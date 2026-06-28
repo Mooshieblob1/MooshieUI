@@ -130,6 +130,8 @@ type ToastOptions = {
   persistent?: boolean;
   actionLabel?: string;
   onAction?: () => void;
+  /** Auto-dismiss delay in ms (ignored when persistent). Defaults to 2000. */
+  durationMs?: number;
 };
 type GalleryToast = {
   message: string;
@@ -137,6 +139,7 @@ type GalleryToast = {
   persistent?: boolean;
   actionLabel?: string;
   onAction?: () => void;
+  durationMs?: number;
 };
 
 class GalleryStore {
@@ -476,7 +479,7 @@ class GalleryStore {
       this._toastTimer = setTimeout(() => {
         this.toast = null;
         this._toastTimer = null;
-      }, 2000);
+      }, toastOptions.durationMs ?? 2000);
     } else {
       this._toastTimer = null;
     }
@@ -665,7 +668,12 @@ class GalleryStore {
    */
   async hydrateMetadataInBackground(): Promise<void> {
     if (this._metadataHydrationPromise) return this._metadataHydrationPromise;
-    this._metadataHydrationPromise = this._runMetadataHydration();
+    // Reset on completion so images added after this run can be hydrated by a
+    // later call. Without the reset the memoized promise stays resolved forever
+    // and newly inserted images never get their metadata.
+    this._metadataHydrationPromise = this._runMetadataHydration().finally(() => {
+      this._metadataHydrationPromise = null;
+    });
     return this._metadataHydrationPromise;
   }
 
@@ -723,44 +731,54 @@ class GalleryStore {
     return URL.createObjectURL(blob);
   }
 
+  /**
+   * Resolve an image's pixels to PNG bytes from whichever source is available:
+   * a persisted gallery file, the in-memory session blob, a browser-mode temp
+   * file, an object URL, or the ComfyUI output endpoint. Lets just-generated
+   * (not-yet-persisted) session images be saved/copied/interrogated without a
+   * 404 round-trip to ComfyUI for a filename that only exists in the gallery DB.
+   */
+  async resolveImagePngBytes(image: OutputImage): Promise<number[]> {
+    let bytes: number[] | null = null;
+    const isJxlGallery = image.gallery_filename?.endsWith(".jxl") ?? false;
+    if (image.gallery_filename) {
+      // JXL files are transcoded to PNG — universally compatible with metadata support.
+      bytes = isJxlGallery
+        ? await loadGalleryImagePng(image.gallery_filename)
+        : await loadGalleryImage(image.gallery_filename);
+    } else if (image.sessionBlob && image.sessionBlob.type !== "image/jxl") {
+      bytes = await this._blobToPngBytes(image.sessionBlob);
+    } else if (isBrowserMode && (image.displayTempFilename || image.tempFilename)) {
+      // Browser-mode JXL needs the pre-built display copy. If the temp file
+      // has expired, fall back to the session blob/display URL already held by the client.
+      const fetchFilename = image.displayTempFilename ?? image.tempFilename!;
+      try {
+        bytes = await this._tempImageToPngBytes(fetchFilename, fetchFilename);
+      } catch (tempError) {
+        console.warn("Temp image fetch failed; falling back to session image:", tempError);
+        if (image.url) {
+          bytes = await this._fetchUrlToPngBytes(image.url);
+        } else if (image.sessionBlob) {
+          bytes = await this._blobToPngBytes(image.sessionBlob);
+        } else {
+          throw tempError;
+        }
+      }
+    } else if (image.url) {
+      bytes = await this._fetchUrlToPngBytes(image.url);
+    } else {
+      bytes = await getOutputImage(image.filename, image.subfolder);
+    }
+    if (!bytes) throw new Error(locale.t("gallery.error.image_bytes_unavailable"));
+    return this._ensurePngBytes(bytes);
+  }
+
   /** Save an image to a user-chosen location via native file dialog (or browser download). */
   async saveImageAs(image: OutputImage) {
     if (this.saving) return;
     this.saving = true;
     try {
-      let bytes: number[] | null = null;
-      const isJxlGallery = image.gallery_filename?.endsWith(".jxl") ?? false;
-      if (image.gallery_filename) {
-        // JXL files are transcoded to PNG — universally compatible with metadata support.
-        bytes = isJxlGallery
-          ? await loadGalleryImagePng(image.gallery_filename)
-          : await loadGalleryImage(image.gallery_filename);
-      } else if (image.sessionBlob && image.sessionBlob.type !== "image/jxl") {
-        bytes = await this._blobToPngBytes(image.sessionBlob);
-      } else if (isBrowserMode && (image.displayTempFilename || image.tempFilename)) {
-        // Browser-mode JXL needs the pre-built display copy. If the temp file
-        // has expired, fall back to the session blob/display URL already held by the client.
-        const fetchFilename = image.displayTempFilename ?? image.tempFilename!;
-        try {
-          bytes = await this._tempImageToPngBytes(fetchFilename, fetchFilename);
-        } catch (tempError) {
-          console.warn("Temp image fetch failed; falling back to session image:", tempError);
-          if (image.url) {
-            bytes = await this._fetchUrlToPngBytes(image.url);
-          } else if (image.sessionBlob) {
-            bytes = await this._blobToPngBytes(image.sessionBlob);
-          } else {
-            throw tempError;
-          }
-        }
-      } else if (image.url) {
-        bytes = await this._fetchUrlToPngBytes(image.url);
-      } else {
-        bytes = await getOutputImage(image.filename, image.subfolder);
-      }
-      if (!bytes) throw new Error(locale.t("gallery.error.image_bytes_unavailable"));
-
-      bytes = await this._ensurePngBytes(bytes);
+      let bytes = await this.resolveImagePngBytes(image);
       if (image.metadata) {
         try {
           bytes = await embedPngMetadataBytes(bytes, image.metadata, generation.metadataMode);
@@ -826,38 +844,7 @@ class GalleryStore {
   /** Save an image directly to a specific directory (manual save mode). Embeds metadata. */
   async saveImageToDir(image: OutputImage, dir: string) {
     try {
-      let bytes: number[] | null = null;
-      const isJxlGallery = image.gallery_filename?.endsWith(".jxl") ?? false;
-      if (image.gallery_filename) {
-        // JXL → PNG so the saved file can be opened anywhere and supports metadata.
-        bytes = isJxlGallery
-          ? await loadGalleryImagePng(image.gallery_filename)
-          : await loadGalleryImage(image.gallery_filename);
-      } else if (image.sessionBlob && image.sessionBlob.type !== "image/jxl") {
-        bytes = await this._blobToPngBytes(image.sessionBlob);
-      } else if (isBrowserMode && (image.displayTempFilename || image.tempFilename)) {
-        // Browser-mode JXL needs the pre-built display copy. If the temp file
-        // has expired, fall back to the session blob/display URL already held by the client.
-        const fetchFilename = image.displayTempFilename ?? image.tempFilename!;
-        try {
-          bytes = await this._tempImageToPngBytes(fetchFilename, fetchFilename);
-        } catch (tempError) {
-          console.warn("Temp image fetch failed; falling back to session image:", tempError);
-          if (image.url) {
-            bytes = await this._blobUrlToPngBytes(image.url);
-          } else if (image.sessionBlob) {
-            bytes = await this._blobToPngBytes(image.sessionBlob);
-          } else {
-            throw tempError;
-          }
-        }
-      } else if (image.url) {
-        bytes = await this._fetchUrlToPngBytes(image.url);
-      } else {
-        bytes = await getOutputImage(image.filename, image.subfolder);
-      }
-      if (!bytes) throw new Error(locale.t("gallery.error.image_bytes_unavailable"));
-      bytes = await this._ensurePngBytes(bytes);
+      let bytes = await this.resolveImagePngBytes(image);
       const filename = pngNormalizedFilename(image.filename || `image_${Date.now()}.png`);
       if (image.metadata) {
         bytes = await embedPngMetadataBytes(bytes, image.metadata, generation.metadataMode);
@@ -1161,6 +1148,48 @@ class GalleryStore {
       }
     } catch (e) {
       console.error("Failed to delete image:", e);
+    }
+  }
+
+  /**
+   * Delete every image generated during this session — removes each from disk
+   * (and the persistent gallery), revokes its blob URL, and clears the session
+   * list. Mirrors deleteImage() applied to all session images at once.
+   */
+  async deleteAllSessionImages() {
+    const targets = new Set(this.sessionImages);
+    if (targets.size === 0) return;
+
+    const nextAssignments = { ...this.boardAssignments };
+    let assignmentsChanged = false;
+    for (const image of targets) {
+      try {
+        if (image.gallery_filename) {
+          await deleteGalleryImage(image.gallery_filename);
+          if (nextAssignments[image.gallery_filename] !== undefined) {
+            delete nextAssignments[image.gallery_filename];
+            assignmentsChanged = true;
+          }
+        }
+        if (image.url) {
+          URL.revokeObjectURL(image.url);
+        }
+      } catch (e) {
+        console.error("Failed to delete session image:", e);
+      }
+    }
+
+    if (assignmentsChanged) {
+      this.boardAssignments = nextAssignments;
+      this.saveBoardAssignments();
+    }
+    this.images = this.images.filter((i) => !targets.has(i));
+    this.sessionImages = this.sessionImages.filter((i) => !targets.has(i));
+    if (this.selectedImage && targets.has(this.selectedImage)) {
+      this.closeLightbox();
+    }
+    if (this.lastSelectedImage && targets.has(this.lastSelectedImage)) {
+      this.lastSelectedImage = null;
     }
   }
 

@@ -123,6 +123,24 @@
   </div>
 
   {#if generation.upscaleEnabled}
+    <!-- Refine only (img2img): skip the base sampling pass, upscale the input image directly -->
+    {#if generation.mode === "img2img"}
+      <div class="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id="upscale-refine-only"
+          bind:checked={generation.refineOnly}
+          class="w-4 h-4 accent-indigo-500 rounded"
+        />
+        <label for="upscale-refine-only" class="text-xs text-neutral-400">
+          {locale.t('generation.upscale.refine_only_label')}<InfoTip text={locale.t('generation.upscale.refine_only_tip')} />
+        </label>
+      </div>
+      {#if generation.refineOnly}
+        <p class="text-[11px] text-neutral-500">{locale.t('generation.upscale.refine_only_hint')}</p>
+      {/if}
+    {/if}
+
     <!-- Method -->
     <div>
       <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.upscale.method')}<InfoTip text={locale.t('generation.upscale.method_tip')} /></label>

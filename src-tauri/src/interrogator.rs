@@ -72,105 +72,34 @@ impl InterrogatorState {
         }
     }
 
+    /// The directory holding the model/tags/ORT files. Callers clone this so
+    /// they can run downloads without holding the interrogator lock across I/O.
+    pub fn model_dir(&self) -> PathBuf {
+        self.model_dir.clone()
+    }
+
     fn model_path(&self) -> PathBuf {
-        self.model_dir.join(MODEL_FILENAME)
+        model_path_in(&self.model_dir)
     }
 
     fn tags_path(&self) -> PathBuf {
-        self.model_dir.join(TAGS_FILENAME)
+        tags_path_in(&self.model_dir)
     }
 
     pub fn is_model_downloaded(&self) -> bool {
-        self.model_path().exists() && self.tags_path().exists()
+        is_model_downloaded_at(&self.model_dir)
     }
 
     pub fn ort_library_path(&self) -> PathBuf {
-        self.model_dir.join(ORT_LIB_NAME)
+        ort_library_path_in(&self.model_dir)
     }
 
     pub fn is_ort_library_present(&self) -> bool {
-        self.ort_library_path().exists()
+        is_ort_library_present_at(&self.model_dir)
     }
 
     pub fn session_not_loaded(&self) -> bool {
         self.session.is_none()
-    }
-
-    /// Download model files from HuggingFace if not already present.
-    #[cfg(feature = "desktop")]
-    pub async fn ensure_model_downloaded(
-        &self,
-        app: &AppHandle,
-        client: &reqwest::Client,
-    ) -> Result<(), AppError> {
-        std::fs::create_dir_all(&self.model_dir)?;
-
-        if !self.model_path().exists() {
-            let url = format!("{}/{}", HF_BASE_URL, MODEL_FILENAME);
-            download_with_progress(app, client, &url, &self.model_path(), MODEL_FILENAME).await?;
-        }
-        if !self.tags_path().exists() {
-            let url = format!("{}/{}", HF_BASE_URL, TAGS_FILENAME);
-            download_with_progress(app, client, &url, &self.tags_path(), TAGS_FILENAME).await?;
-        }
-        Ok(())
-    }
-
-    /// Download the ONNX Runtime shared library if not already present.
-    #[cfg(feature = "desktop")]
-    pub async fn ensure_ort_library(
-        &self,
-        app: &AppHandle,
-        client: &reqwest::Client,
-    ) -> Result<(), AppError> {
-        if self.is_ort_library_present() {
-            return Ok(());
-        }
-
-        std::fs::create_dir_all(&self.model_dir)?;
-
-        let (url, archive_name) = ort_download_info();
-        let archive_path = self.model_dir.join(archive_name);
-
-        download_with_progress(app, client, &url, &archive_path, "ONNX Runtime").await?;
-        extract_ort_library(&archive_path, &self.ort_library_path())?;
-        std::fs::remove_file(&archive_path).ok();
-
-        Ok(())
-    }
-
-    /// Download model files without AppHandle (for browser mode).
-    pub async fn ensure_model_downloaded_headless(
-        &self,
-        client: &reqwest::Client,
-    ) -> Result<(), AppError> {
-        std::fs::create_dir_all(&self.model_dir)?;
-        if !self.model_path().exists() {
-            let url = format!("{}/{}", HF_BASE_URL, MODEL_FILENAME);
-            download_simple(client, &url, &self.model_path()).await?;
-        }
-        if !self.tags_path().exists() {
-            let url = format!("{}/{}", HF_BASE_URL, TAGS_FILENAME);
-            download_simple(client, &url, &self.tags_path()).await?;
-        }
-        Ok(())
-    }
-
-    /// Download ONNX Runtime without AppHandle (for browser mode).
-    pub async fn ensure_ort_library_headless(
-        &self,
-        client: &reqwest::Client,
-    ) -> Result<(), AppError> {
-        if self.is_ort_library_present() {
-            return Ok(());
-        }
-        std::fs::create_dir_all(&self.model_dir)?;
-        let (url, archive_name) = ort_download_info();
-        let archive_path = self.model_dir.join(archive_name);
-        download_simple(client, &url, &archive_path).await?;
-        extract_ort_library(&archive_path, &self.ort_library_path())?;
-        std::fs::remove_file(&archive_path).ok();
-        Ok(())
     }
 
     /// Load the ONNX session and tag list, caching for subsequent calls.
@@ -433,6 +362,108 @@ impl InterrogatorState {
             rating_tags,
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// Path-based download/status helpers.
+//
+// These operate on a plain `model_dir` path so callers can clone the directory
+// out from under the interrogator's RwLock and run the (multi-second, network)
+// downloads WITHOUT holding the guard across the await — per the project rule
+// that guards must be dropped before awaiting I/O.
+// ---------------------------------------------------------------------------
+
+fn model_path_in(model_dir: &std::path::Path) -> PathBuf {
+    model_dir.join(MODEL_FILENAME)
+}
+
+fn tags_path_in(model_dir: &std::path::Path) -> PathBuf {
+    model_dir.join(TAGS_FILENAME)
+}
+
+fn ort_library_path_in(model_dir: &std::path::Path) -> PathBuf {
+    model_dir.join(ORT_LIB_NAME)
+}
+
+pub fn is_model_downloaded_at(model_dir: &std::path::Path) -> bool {
+    model_path_in(model_dir).exists() && tags_path_in(model_dir).exists()
+}
+
+pub fn is_ort_library_present_at(model_dir: &std::path::Path) -> bool {
+    ort_library_path_in(model_dir).exists()
+}
+
+/// Download model files from HuggingFace if not already present.
+#[cfg(feature = "desktop")]
+pub async fn ensure_model_downloaded_at(
+    app: &AppHandle,
+    client: &reqwest::Client,
+    model_dir: &std::path::Path,
+) -> Result<(), AppError> {
+    std::fs::create_dir_all(model_dir)?;
+    if !model_path_in(model_dir).exists() {
+        let url = format!("{}/{}", HF_BASE_URL, MODEL_FILENAME);
+        download_with_progress(app, client, &url, &model_path_in(model_dir), MODEL_FILENAME)
+            .await?;
+    }
+    if !tags_path_in(model_dir).exists() {
+        let url = format!("{}/{}", HF_BASE_URL, TAGS_FILENAME);
+        download_with_progress(app, client, &url, &tags_path_in(model_dir), TAGS_FILENAME).await?;
+    }
+    Ok(())
+}
+
+/// Download the ONNX Runtime shared library if not already present.
+#[cfg(feature = "desktop")]
+pub async fn ensure_ort_library_at(
+    app: &AppHandle,
+    client: &reqwest::Client,
+    model_dir: &std::path::Path,
+) -> Result<(), AppError> {
+    if is_ort_library_present_at(model_dir) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(model_dir)?;
+    let (url, archive_name) = ort_download_info();
+    let archive_path = model_dir.join(archive_name);
+    download_with_progress(app, client, &url, &archive_path, "ONNX Runtime").await?;
+    extract_ort_library(&archive_path, &ort_library_path_in(model_dir))?;
+    std::fs::remove_file(&archive_path).ok();
+    Ok(())
+}
+
+/// Download model files without AppHandle (for browser mode).
+pub async fn ensure_model_downloaded_headless_at(
+    client: &reqwest::Client,
+    model_dir: &std::path::Path,
+) -> Result<(), AppError> {
+    std::fs::create_dir_all(model_dir)?;
+    if !model_path_in(model_dir).exists() {
+        let url = format!("{}/{}", HF_BASE_URL, MODEL_FILENAME);
+        download_simple(client, &url, &model_path_in(model_dir)).await?;
+    }
+    if !tags_path_in(model_dir).exists() {
+        let url = format!("{}/{}", HF_BASE_URL, TAGS_FILENAME);
+        download_simple(client, &url, &tags_path_in(model_dir)).await?;
+    }
+    Ok(())
+}
+
+/// Download ONNX Runtime without AppHandle (for browser mode).
+pub async fn ensure_ort_library_headless_at(
+    client: &reqwest::Client,
+    model_dir: &std::path::Path,
+) -> Result<(), AppError> {
+    if is_ort_library_present_at(model_dir) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(model_dir)?;
+    let (url, archive_name) = ort_download_info();
+    let archive_path = model_dir.join(archive_name);
+    download_simple(client, &url, &archive_path).await?;
+    extract_ort_library(&archive_path, &ort_library_path_in(model_dir))?;
+    std::fs::remove_file(&archive_path).ok();
+    Ok(())
 }
 
 /// Parse the selected_tags.csv file to extract tag names and categories.
