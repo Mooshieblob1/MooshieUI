@@ -265,6 +265,7 @@ const MODELHUB_COMMANDS: &[&str] = &[
     "civitai_list_architectures",
     "civitai_lookup_hash",
     "download_model",
+    "resolve_download_filename",
     "cancel_download",
     "get_model_install_dirs",
 ];
@@ -4083,6 +4084,14 @@ async fn dispatch_command(
                 .to_string();
             state.request_download_cancel(&filename);
             Ok(serde_json::Value::Null)
+        }
+        "resolve_download_filename" => {
+            let url = args["url"].as_str().ok_or("Missing url")?.to_string();
+            let name = state
+                .resolve_download_filename(&url)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(name))
         }
         "download_model" => {
             let url = args["url"].as_str().ok_or("Missing url")?.to_string();

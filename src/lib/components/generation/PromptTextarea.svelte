@@ -526,9 +526,13 @@
 
   // Dismiss the right-click suggestion menu on any prompt edit: its items close over
   // fixed offsets, so editing the prompt while it is open would splice at stale positions.
+  // Only `value` may trigger this — reading spellMenuVisible reactively would make opening
+  // the menu (which sets it true) re-run the effect and immediately close it again.
   $effect(() => {
     void value;
-    if (spellMenuVisible) spellMenuVisible = false;
+    untrack(() => {
+      if (spellMenuVisible) spellMenuVisible = false;
+    });
   });
 
   function handleClickableSegmentMouseDown(event: MouseEvent, segment: PromptClickableSegment) {
