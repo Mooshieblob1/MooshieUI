@@ -55,7 +55,7 @@ importers:
         specifier: ^6.2.4
         version: 6.2.4(svelte@5.56.4)(vite@6.4.2(jiti@2.7.0)(lightningcss@1.32.0))
       '@tailwindcss/vite':
-        specifier: ^4.3.1
+        specifier: ^4.3.2
         version: 4.3.2(vite@6.4.2(jiti@2.7.0)(lightningcss@1.32.0))
       '@tauri-apps/cli':
         specifier: ^2.11.4
