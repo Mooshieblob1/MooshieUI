@@ -115,6 +115,31 @@ export async function stopComfyui(): Promise<void> {
   return ipcInvoke("stop_comfyui");
 }
 
+export interface ComfyUiVersionInfo {
+  /** Version installed on disk, if detectable. */
+  installed: string | null;
+  /** The pinned ComfyUI tag this MooshieUI build targets (e.g. "v0.26.0"). */
+  target: string;
+  /** True when the installed version is older than the pinned target. */
+  update_available: boolean;
+}
+
+export async function getComfyuiVersion(): Promise<ComfyUiVersionInfo> {
+  return ipcInvoke("get_comfyui_version");
+}
+
+export interface ComfyUiUpdateResult {
+  updated: boolean;
+  /** The tag the install was moved to. */
+  target_ref: string;
+  /** "git-fetch" or "git-init" (zip install converted to a managed checkout). */
+  method: string;
+}
+
+export async function updateComfyui(): Promise<ComfyUiUpdateResult> {
+  return ipcInvoke("update_comfyui");
+}
+
 export async function killPortProcess(): Promise<number> {
   return ipcInvoke("kill_port_process");
 }

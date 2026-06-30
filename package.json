@@ -2,7 +2,7 @@
   "name": "comfyui-desktop",
   "private": true,
   "license": "MIT",
-  "version": "1.4.29",
+  "version": "1.4.30",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -28,11 +28,11 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
-    "@tailwindcss/vite": "^4.3.1",
-    "@tauri-apps/cli": "^2.11.2",
+    "@tailwindcss/vite": "^4.3.2",
+    "@tauri-apps/cli": "^2.11.4",
     "@tsconfig/svelte": "^5.0.8",
     "@types/dompurify": "^3.2.0",
-    "svelte": "^5.56.3",
+    "svelte": "^5.56.4",
     "svelte-check": "^4",
     "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",
