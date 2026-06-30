@@ -457,6 +457,8 @@ pub fn run() {
             setup::detect_model_directories,
             setup::move_installation,
             setup::reinstall_pytorch,
+            setup::get_comfyui_version,
+            setup::update_comfyui,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -1,0 +1,217 @@
+name: ComfyUI Compatibility Check
+
+# Detects newer ComfyUI releases, smoke-tests MooshieUI's bundled custom nodes
+# against them, and (on pass) opens a PR bumping the pinned COMFYUI_REF.
+#
+# Why: MooshieUI pins ComfyUI to a release tag (COMFYUI_REF in
+# src-tauri/src/setup.rs). Bumping it is usually safe for the app, but ComfyUI's
+# internal refactors can break the bundled custom nodes (which import deep
+# ComfyUI internals). This workflow is the checker for that: it reproduces the
+# app's ensure_mooshie_nodes deploy, starts ComfyUI in CPU mode, and verifies
+# every required node class registers in /object_info before proposing a bump.
+#
+# No secrets or API keys required. Every job runs on the free Actions
+# GITHUB_TOKEN; the pin-bump PR is opened deterministically (git + gh), so the
+# bot never calls an LLM and never consumes any Anthropic/Claude usage. A
+# maintainer reviews and merges the PR (optionally with their own Claude Code).
+
+on:
+  schedule:
+    # Mondays 06:00 UTC.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: "ComfyUI tag/ref to test (blank = latest GitHub release)"
+        required: false
+        default: ""
+      force:
+        description: "Run the smoke test even if no newer ComfyUI is detected"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: comfyui-compat
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect ComfyUI version
+    runs-on: ubuntu-latest
+    outputs:
+      current_ref: ${{ steps.v.outputs.current_ref }}
+      target_ref: ${{ steps.v.outputs.target_ref }}
+      should_test: ${{ steps.v.outputs.should_test }}
+      is_newer: ${{ steps.v.outputs.is_newer }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Resolve current pin and candidate ref
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TARGET: ${{ inputs.target_ref }}
+          INPUT_FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+
+          CURRENT=$(grep -oP 'COMFYUI_REF:\s*&str\s*=\s*"\K[^"]+' src-tauri/src/setup.rs)
+          if [ -z "$CURRENT" ]; then
+            echo "::error::Could not parse COMFYUI_REF from src-tauri/src/setup.rs"
+            exit 1
+          fi
+          echo "current_ref=$CURRENT" >> "$GITHUB_OUTPUT"
+
+          if [ -n "${INPUT_TARGET}" ]; then
+            TARGET="${INPUT_TARGET}"
+          else
+            TARGET=$(gh api repos/comfyanonymous/ComfyUI/releases/latest --jq .tag_name)
+          fi
+          echo "target_ref=$TARGET" >> "$GITHUB_OUTPUT"
+
+          # is_newer: TARGET strictly newer than CURRENT (semver, leading v stripped).
+          if [ "$TARGET" = "$CURRENT" ]; then
+            IS_NEWER=false
+          else
+            NEWEST=$(printf '%s\n%s\n' "${CURRENT#v}" "${TARGET#v}" | sort -V | tail -n1)
+            if [ "$NEWEST" = "${TARGET#v}" ]; then IS_NEWER=true; else IS_NEWER=false; fi
+          fi
+          echo "is_newer=$IS_NEWER" >> "$GITHUB_OUTPUT"
+
+          if [ "${INPUT_FORCE}" = "true" ] || [ "$IS_NEWER" = "true" ]; then
+            echo "should_test=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_test=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "Current pin : $CURRENT"
+          echo "Candidate   : $TARGET"
+          echo "Newer       : $IS_NEWER"
+
+  smoke-test:
+    name: Custom-node smoke test
+    needs: detect
+    if: needs.detect.outputs.should_test == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout MooshieUI
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Checkout ComfyUI @ candidate
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: comfyanonymous/ComfyUI
+          ref: ${{ needs.detect.outputs.target_ref }}
+          path: comfyui-target
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install ComfyUI + MooshieUI node deps (CPU)
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          # CPU-only torch first so the unpinned torch in ComfyUI's requirements
+          # is already satisfied and pip does not pull a CUDA build.
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r comfyui-target/requirements.txt
+          # ultralytics backs the face-detailer node; pin parsed from nodes.rs
+          # (single source of truth) via Python to avoid grep -P portability issues.
+          PIN=$(python -c 'import re; t=open("src-tauri/src/comfyui/nodes.rs",encoding="utf-8").read(); m=re.search(r"MOOSHIE_NODES_REQUIREMENTS:\s*&str\s*=\s*\"([^\"]*)\"", t); print((m.group(1).encode().decode("unicode_escape").strip()) if m else "ultralytics")')
+          if [ -z "$PIN" ]; then PIN="ultralytics"; fi
+          echo "Installing MooshieUI node dependency: $PIN"
+          pip install "$PIN"
+
+      - name: Run custom-node compatibility smoke test
+        run: |
+          python scripts/comfyui-compat/smoke_test.py \
+            --comfyui-dir comfyui-target \
+            --repo-root . \
+            --boot-timeout 360 \
+            --summary-json smoke-summary.json
+
+      - name: Upload smoke-test artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: comfyui-compat-${{ needs.detect.outputs.target_ref }}
+          path: |
+            comfyui-target/comfyui-smoke.log
+            smoke-summary.json
+          if-no-files-found: warn
+
+  propose:
+    name: Open pin-bump PR
+    needs: [detect, smoke-test]
+    # Only when the bundled nodes passed AND the candidate is strictly newer.
+    if: needs.smoke-test.result == 'success' && needs.detect.outputs.is_newer == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Open pin-bump PR (deterministic, no API key)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT: ${{ needs.detect.outputs.current_ref }}
+          TARGET: ${{ needs.detect.outputs.target_ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          BRANCH="bot/comfyui-bump-${TARGET}"
+
+          # Idempotency: if an open PR for this exact bump already exists, stop.
+          EXISTING=$(gh pr list --state open --head "$BRANCH" --json number --jq 'length')
+          if [ "$EXISTING" != "0" ]; then
+            echo "An open PR for $BRANCH already exists; nothing to do."
+            exit 0
+          fi
+
+          # Bump exactly the one pinned-version line. setup.rs declares it as
+          #   pub const COMFYUI_REF: &str = "vX.Y.Z";
+          sed -i -E "s|(COMFYUI_REF:[[:space:]]*&str[[:space:]]*=[[:space:]]*\")[^\"]+(\";)|\1${TARGET}\2|" src-tauri/src/setup.rs
+          if git diff --quiet -- src-tauri/src/setup.rs; then
+            echo "::error::COMFYUI_REF line was not changed (could not find the pin). Aborting."
+            exit 1
+          fi
+          # Confirm the new value is exactly the candidate tag.
+          NEWPIN=$(grep -oP 'COMFYUI_REF:\s*&str\s*=\s*"\K[^"]+' src-tauri/src/setup.rs)
+          if [ "$NEWPIN" != "$TARGET" ]; then
+            echo "::error::Post-edit pin is '$NEWPIN', expected '$TARGET'. Aborting."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add src-tauri/src/setup.rs
+          git commit -m "chore(comfyui): bump pinned ComfyUI to ${TARGET}"
+          git push --force-with-lease --set-upstream origin "$BRANCH"
+
+          # Build the PR body as plain ASCII (no em dashes, no AI attribution).
+          {
+            echo "Automated ComfyUI compatibility check."
+            echo
+            echo "The custom-node compatibility smoke test passed for ComfyUI ${TARGET} (current pin ${CURRENT}). Every bundled MooshieUI custom node registered against that ComfyUI release."
+            echo
+            echo "Scope: this check covers the bundled MooshieUI nodes only. External ControlNet and style-transfer packages are third-party git repos and are not covered by the smoke test."
+            echo
+            echo "The in-app updater preserves users' models, outputs, and custom nodes."
+            echo
+            echo "Smoke-test run: ${RUN_URL}"
+            echo
+            echo "Note: because this PR was opened by the Actions token, a maintainer may need to close and reopen it (or push an empty commit) to trigger the required status checks before it can be merged. Review and merge with your own judgment (for example, using Claude Code locally)."
+          } > pr-body.txt
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore(comfyui): bump pinned ComfyUI to ${TARGET}" \
+            --body-file pr-body.txt

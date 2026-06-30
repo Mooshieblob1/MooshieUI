@@ -1,4 +1,4 @@
-/** German translations. */
+﻿/** German translations. */
 const de: Record<string, string> = {
   // ── Navigation ──────────────────────────────────────────
   "nav.generate": "Generieren",
@@ -311,6 +311,17 @@ const de: Record<string, string> = {
   "settings.performance.attention_not_detected": "Not detected",
   "settings.performance.attention_install_target": "Attention backend packages install into the configured venv shown below.",
   "settings.performance.attention_external_env": "If you use an external or ComfyCLI-managed ComfyUI, install into the Python environment that actually runs that instance.",
+  "settings.performance.comfyui_version": "ComfyUI-Version",
+  "settings.performance.comfyui_installed": "Installiert",
+  "settings.performance.comfyui_target": "Getestet mit",
+  "settings.performance.comfyui_unknown": "Unbekannt",
+  "settings.performance.comfyui_update_available": "Eine neuere ComfyUI-Version wurde mit diesem MooshieUI-Build getestet.",
+  "settings.performance.comfyui_up_to_date": "ComfyUI ist auf dem aktuellen Stand für diesen MooshieUI-Build.",
+  "settings.performance.comfyui_update_button": "ComfyUI aktualisieren",
+  "settings.performance.comfyui_updating": "ComfyUI wird aktualisiert... Dies kann einige Minuten dauern.",
+  "settings.performance.comfyui_update_starting": "ComfyUI-Update wird gestartet...",
+  "settings.performance.comfyui_update_failed": "ComfyUI-Update fehlgeschlagen.",
+  "settings.performance.comfyui_update_note": "Aktualisiert ComfyUI auf die Version, mit der dieser MooshieUI-Build getestet wurde, und startet es neu. Ihre Modelle, Ausgaben und benutzerdefinierten Nodes bleiben erhalten.",
   "settings.performance.auto_quality_tags": "Qualitäts-Tags automatisch anwenden",
   "settings.performance.auto_quality_tags_desc": "Fügt automatisch empfohlene Qualitäts-Tags für unterstützte Modelle (Anima, Illustrious/NoobAI) hinzu.",
   "settings.performance.custom_quality_tags": "Qualitäts-Tags anpassen",
