@@ -2763,12 +2763,33 @@ fn is_sdxl_like_family(family: &str) -> bool {
 /// Anima / Wan2.1 fine-tunes (e.g. animayume) generally ship without ModelSpec
 /// or sidecar metadata — keep the legacy filename heuristics for them so they
 /// never depend on sidecar or hash lookups.
-fn filename_indicates_anima(filename: &str) -> bool {
-    let name = filename.trim().to_lowercase();
+fn text_has_marker_token(text: &str, marker: &str) -> bool {
+    text.match_indices(marker).any(|(idx, _)| {
+        let before_is_boundary = text[..idx]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_ascii_alphanumeric());
+        let after_idx = idx + marker.len();
+        let after_is_boundary = text[after_idx..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_ascii_alphanumeric());
+        before_is_boundary && after_is_boundary
+    })
+}
+
+fn text_indicates_anima(text: &str) -> bool {
+    let name = text.trim().to_lowercase();
     if name.contains("nanosaur") || name.contains("mugen") {
         return false;
     }
-    name.contains("anima") || name.contains("yume")
+    name.contains("animayume")
+        || text_has_marker_token(&name, "anima")
+        || text_has_marker_token(&name, "yume")
+}
+
+fn filename_indicates_anima(filename: &str) -> bool {
+    text_indicates_anima(filename)
 }
 
 fn model_family_from_base_model(base_model: &str) -> &'static str {
@@ -2818,7 +2839,7 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm.contains("wan video") || bm.contains("wan 2") || bm.contains("wan2") || bm == "wan" {
         return "anima";
     }
-    if bm.contains("anima") {
+    if text_indicates_anima(&bm) {
         return "anima";
     }
     if bm.contains("illustrious") || bm.contains("noobai") {
@@ -2971,9 +2992,9 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     {
         return Some("wan");
     }
-    // Fine-tunes such as animayume_v05.safetensors; Nanosaur/Mugen contain
-    // overlapping substrings and must not match (nanosaur returns earlier).
-    if (name.contains("anima") || name.contains("yume")) && !name.contains("mugen") {
+    // Fine-tunes such as animayume_v05.safetensors; use token matching so
+    // unrelated names like Animagine or AnimationMix do not become Anima.
+    if filename_indicates_anima(&name) {
         return Some("anima");
     }
     if name.contains("noobai") || name.contains("illustrious") {

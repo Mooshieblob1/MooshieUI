@@ -4,6 +4,7 @@ import { gallery } from "../stores/gallery.svelte.js";
 import { locale } from "../stores/locale.svelte.js";
 import { readPngMetadataClientSide } from "./pngMetadata.js";
 import { isBrowserMode } from "./ipc.js";
+import { parseSegmentDetailPrompt } from "./promptSegmentDetail.js";
 
 /** Section IDs that accept metadata drops */
 export type DroppableSectionId =
@@ -74,11 +75,36 @@ function stripSwarmUITags(prompt: string): string {
     .trim();
 }
 
+function appendCommaSeparatedPromptParts(text: string, parts: string[]): void {
+  for (const part of text.split(",")) {
+    const trimmed = part.trim();
+    if (trimmed) parts.push(trimmed);
+  }
+}
+
+function splitQualityTagCandidates(prompt: string): string[] {
+  const ranges = parseSegmentDetailPrompt(prompt).ranges;
+  if (ranges.length === 0) {
+    return prompt.split(",").map((t) => t.trim()).filter(Boolean);
+  }
+
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    appendCommaSeparatedPromptParts(prompt.slice(cursor, range.start), parts);
+    const segment = prompt.slice(range.start, range.end).trim();
+    if (segment) parts.push(segment);
+    cursor = range.end;
+  }
+  appendCommaSeparatedPromptParts(prompt.slice(cursor), parts);
+  return parts;
+}
+
 /** Remove auto-applied quality tags and SwarmUI syntax from a prompt string. */
 function stripQualityTags(prompt: string): string {
   const autoTags = buildAutoQualityTagSet();
   const cleaned = stripSwarmUITags(prompt);
-  const tags = cleaned.split(",").map((t) => t.trim()).filter(Boolean);
+  const tags = splitQualityTagCandidates(cleaned);
   const filtered = tags.filter((t) => !autoTags.has(t.toLowerCase()));
   return filtered.join(", ");
 }
