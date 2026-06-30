@@ -511,6 +511,11 @@ class GenerationStore {
     return this.modelFamily === "auraflow";
   }
 
+  /** In img2img/inpainting, the loaded source image owns width/height. */
+  get hasAuthoritativeEditSource(): boolean {
+    return (this._mode === "img2img" || this._mode === "inpainting") && !!this.inputImage;
+  }
+
   /** True when the selected model is PixArt. */
   get isPixArt(): boolean {
     return this.modelFamily === "pixart";
@@ -850,8 +855,10 @@ class GenerationStore {
     this.cfg = preset.cfg;
     this.samplerName = this.resolveAvailableOption(models.samplers, preset.samplerName, preset.samplerFallback ?? "euler");
     this.scheduler = this.resolveAvailableOption(models.schedulers, preset.scheduler, "normal");
-    this.width = preset.width;
-    this.height = preset.height;
+    if (!this.hasAuthoritativeEditSource) {
+      this.width = preset.width;
+      this.height = preset.height;
+    }
     this.facefixSteps = Math.ceil(preset.steps / 3);
     this.upscaleSteps = Math.ceil(preset.steps / 3);
     if (preset.upscaleDenoise !== undefined) {

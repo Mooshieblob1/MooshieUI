@@ -1309,6 +1309,21 @@ async fn sse_handler(
                 if !is_staff && is_staff_only_event(&evt.event) {
                     return None;
                 }
+                // User-targeted events (e.g. llm:result / llm:error) must reach
+                // only the requesting user, never every connected client.
+                // `_target_user` is null for the admin connection.
+                if let Some(target) = evt.payload.get("_target_user") {
+                    let delivers = match target {
+                        serde_json::Value::Null => sse_username.is_none(),
+                        serde_json::Value::String(u) => {
+                            Some(u.as_str()) == sse_username.as_deref()
+                        }
+                        _ => false,
+                    };
+                    if !delivers {
+                        return None;
+                    }
+                }
                 // Resolve alias: translate ComfyUI's real prompt_id to our placeholder
                 let raw_prompt_id = evt
                     .payload
@@ -1340,6 +1355,15 @@ async fn sse_handler(
                     } else {
                         evt.payload
                     };
+
+                // Strip the routing marker so it never reaches the client.
+                let payload = {
+                    let mut payload = payload;
+                    if let Some(obj) = payload.as_object_mut() {
+                        obj.remove("_target_user");
+                    }
+                    payload
+                };
 
                 let json = serde_json::json!({
                     "event": evt.event,
@@ -4352,18 +4376,65 @@ async fn dispatch_command(
             } else {
                 crate::prompt_assistant::grounding::GenMode::Compose
             };
-            let length = args["opts"]["length"].as_str();
+            let length = args["opts"]["length"].as_str().map(|s| s.to_string());
             let include_artists = args["opts"]["include_artists"].as_bool().unwrap_or(false);
-            let result = run_prompt_assistant_headless(
-                &state,
-                &input,
-                &family,
-                mode,
-                length,
-                include_artists,
-            )
-            .await?;
-            Ok(serde_json::Value::String(result))
+
+            match args["requestId"].as_str() {
+                // Browser mode delivers the result asynchronously over SSE.
+                // Loading the LLM and generating can outlast the reverse proxy's
+                // ~100s limit, which turns a blocking POST into a Cloudflare 524.
+                // The POST returns immediately and the result/error is broadcast
+                // back to the requesting user via `llm:result` / `llm:error`.
+                Some(request_id) => {
+                    let request_id = request_id.to_string();
+                    let owner = username.map(|s| s.to_string());
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        let (event, payload) = match run_prompt_assistant_headless(
+                            &state,
+                            &input,
+                            &family,
+                            mode,
+                            length.as_deref(),
+                            include_artists,
+                        )
+                        .await
+                        {
+                            Ok(text) => (
+                                "llm:result",
+                                serde_json::json!({
+                                    "request_id": request_id,
+                                    "result": text,
+                                    "_target_user": owner,
+                                }),
+                            ),
+                            Err(e) => (
+                                "llm:error",
+                                serde_json::json!({
+                                    "request_id": request_id,
+                                    "error": e,
+                                    "_target_user": owner,
+                                }),
+                            ),
+                        };
+                        state.broadcast(event, payload);
+                    });
+                    Ok(serde_json::json!({ "queued": true }))
+                }
+                // Synchronous fallback for callers that don't supply a request id.
+                None => {
+                    let result = run_prompt_assistant_headless(
+                        &state,
+                        &input,
+                        &family,
+                        mode,
+                        length.as_deref(),
+                        include_artists,
+                    )
+                    .await?;
+                    Ok(serde_json::Value::String(result))
+                }
+            }
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
         "download_llm_model" => {

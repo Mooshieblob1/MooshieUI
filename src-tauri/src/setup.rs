@@ -8,6 +8,21 @@ use crate::config;
 use crate::error::AppError;
 use crate::state::AppState;
 
+/// Pinned ComfyUI release tag that the app installs and updates to.
+///
+/// Fresh installs and the in-app "Update ComfyUI" action both target this exact
+/// tag, so every MooshieUI build runs against a known-good ComfyUI rather than
+/// whatever `master` happened to be at install time. The scheduled
+/// `comfyui-compat` workflow opens a bot PR bumping this constant once the
+/// custom-node smoke test passes against a newer ComfyUI release.
+pub const COMFYUI_REF: &str = "v0.26.0";
+
+/// Directory name GitHub's source archive expands to for [`COMFYUI_REF`].
+/// GitHub strips a leading `v` from the tag, e.g. `v0.26.0` -> `ComfyUI-0.26.0`.
+fn comfyui_zip_dirname() -> String {
+    format!("ComfyUI-{}", COMFYUI_REF.trim_start_matches('v'))
+}
+
 #[derive(Clone, serde::Serialize)]
 struct SetupProgress {
     step: String,
@@ -587,13 +602,16 @@ async fn step_download_comfyui(
         return Ok(());
     }
 
-    // Try git clone first (most systems have git)
+    // Try git clone first (most systems have git). Pin to the tested-good tag so
+    // installs are reproducible instead of tracking a moving `master`.
     let git_result = run_logged(
         app,
         "git",
         &[
             "clone",
             "--depth=1",
+            "--branch",
+            COMFYUI_REF,
             "https://github.com/comfyanonymous/ComfyUI.git",
             comfyui_dir.to_str().unwrap(),
         ],
@@ -605,11 +623,14 @@ async fn step_download_comfyui(
         return Ok(());
     }
 
-    // Fallback: download zip
+    // Fallback: download the pinned tag's source zip
     emit_log(app, "Git clone failed, falling back to zip download...");
-    let zip_url = "https://github.com/comfyanonymous/ComfyUI/archive/refs/heads/master.zip";
+    let zip_url = format!(
+        "https://github.com/comfyanonymous/ComfyUI/archive/refs/tags/{}.zip",
+        COMFYUI_REF
+    );
     let zip_path = base.join("_comfyui.zip");
-    download_file(app, client, zip_url, &zip_path, "ComfyUI").await?;
+    download_file(app, client, &zip_url, &zip_path, "ComfyUI").await?;
 
     #[cfg(not(target_os = "windows"))]
     {
@@ -647,7 +668,7 @@ async fn step_download_comfyui(
         std::fs::remove_dir_all(&comfyui_dir)
             .map_err(|e| format!("Failed to clear stale ComfyUI dir: {}", e))?;
     }
-    std::fs::rename(base.join("ComfyUI-master"), &comfyui_dir)
+    std::fs::rename(base.join(comfyui_zip_dirname()), &comfyui_dir)
         .map_err(|e| format!("Failed to rename ComfyUI dir: {}", e))?;
     std::fs::remove_file(&zip_path).ok();
     Ok(())
@@ -2064,4 +2085,235 @@ pub async fn run_setup(
     std::fs::write(base.join(".setup_complete"), "1").map_err(|e| e.to_string())?;
     emit(&app, "done", "Setup complete! Starting ComfyUI...", 100);
     Ok(())
+}
+
+// ─── In-app ComfyUI updater ──────────────────────────────────────────────────
+
+/// Read the installed ComfyUI version from its `comfyui_version.py` file
+/// (`__version__ = "0.26.0"`). Returns `None` if the file is missing or
+/// unparseable (e.g. a very old ComfyUI without the version module).
+fn read_installed_comfyui_version(comfyui_dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(comfyui_dir.join("comfyui_version.py")).ok()?;
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("__version__") {
+            if let Some(value) = rest.split('=').nth(1) {
+                let v = value.trim().trim_matches(|c| c == '"' || c == '\'');
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse a ComfyUI version string (`v0.26.0` / `0.26.0`) into numeric parts,
+/// tolerating trailing non-digits in any component.
+fn parse_comfyui_version(v: &str) -> Vec<u32> {
+    v.trim_start_matches('v')
+        .split('.')
+        .map(|part| {
+            part.chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse()
+                .unwrap_or(0)
+        })
+        .collect()
+}
+
+/// True when `installed` is strictly older than `target` (so an update is worth
+/// offering). A newer-or-equal install is not flagged, to avoid presenting a
+/// downgrade as an "update".
+fn comfyui_version_is_older(installed: &str, target: &str) -> bool {
+    let a = parse_comfyui_version(installed);
+    let b = parse_comfyui_version(target);
+    for i in 0..a.len().max(b.len()) {
+        let x = a.get(i).copied().unwrap_or(0);
+        let y = b.get(i).copied().unwrap_or(0);
+        if x != y {
+            return x < y;
+        }
+    }
+    false
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct ComfyUiVersionInfo {
+    /// Version currently installed on disk, if detectable.
+    pub installed: Option<String>,
+    /// The pinned tag this MooshieUI build targets ([`COMFYUI_REF`]).
+    pub target: String,
+    /// True when the installed version is older than the pinned target.
+    pub update_available: bool,
+}
+
+/// Report the installed ComfyUI version against the pinned target so the
+/// Settings UI can offer an update.
+#[tauri::command]
+pub async fn get_comfyui_version(app: AppHandle) -> Result<ComfyUiVersionInfo, AppError> {
+    let base = data_dir(&app)?;
+    let installed = read_installed_comfyui_version(&base.join("comfyui"));
+    let update_available = installed
+        .as_deref()
+        .map(|v| comfyui_version_is_older(v, COMFYUI_REF))
+        .unwrap_or(false);
+    Ok(ComfyUiVersionInfo {
+        installed,
+        target: COMFYUI_REF.to_string(),
+        update_available,
+    })
+}
+
+/// Move an existing ComfyUI working tree onto [`COMFYUI_REF`] using git.
+///
+/// `git reset --hard <tag>` is run WITHOUT `git clean`, so untracked user data
+/// (models, outputs, inputs, custom_nodes) is left untouched while ComfyUI's own
+/// tracked source files are moved to the pinned release. A zip-based install
+/// with no `.git` is converted to a managed git checkout in place; its existing
+/// files are untracked and survive the reset. Returns the method used, for
+/// reporting.
+async fn update_comfyui_checkout(app: &AppHandle, comfyui_dir: &Path) -> Result<String, String> {
+    let dir = comfyui_dir
+        .to_str()
+        .ok_or_else(|| "Invalid ComfyUI path".to_string())?;
+    let url = "https://github.com/comfyanonymous/ComfyUI.git";
+
+    let method = if comfyui_dir.join(".git").exists() {
+        "git-fetch"
+    } else {
+        // Zip-based install (no git history). Initialise a repo in place so we
+        // can fetch the pinned tag; existing files are untracked and survive the
+        // reset that follows.
+        emit_log(
+            app,
+            "ComfyUI install has no git history; initialising repository...",
+        );
+        run_logged(app, "git", &["-C", dir, "init"], &[])
+            .await
+            .map_err(|_| "Failed to initialise git in the ComfyUI directory".to_string())?;
+        run_logged(
+            app,
+            "git",
+            &["-C", dir, "remote", "add", "origin", url],
+            &[],
+        )
+        .await
+        .ok();
+        "git-init"
+    };
+
+    // Ensure origin points at the canonical ComfyUI repo (the user may have a
+    // fork remote). Non-fatal when it already matches.
+    run_logged(
+        app,
+        "git",
+        &["-C", dir, "remote", "set-url", "origin", url],
+        &[],
+    )
+    .await
+    .ok();
+
+    // Shallow-fetch just the pinned tag, then move the working tree onto it.
+    run_logged(
+        app,
+        "git",
+        &[
+            "-C",
+            dir,
+            "fetch",
+            "--depth=1",
+            "origin",
+            "tag",
+            COMFYUI_REF,
+        ],
+        &[],
+    )
+    .await
+    .map_err(|_| format!("Failed to fetch ComfyUI {}", COMFYUI_REF))?;
+
+    run_logged(
+        app,
+        "git",
+        &["-C", dir, "reset", "--hard", COMFYUI_REF],
+        &[],
+    )
+    .await
+    .map_err(|_| format!("Failed to check out ComfyUI {}", COMFYUI_REF))?;
+
+    Ok(method.to_string())
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct ComfyUiUpdateResult {
+    pub updated: bool,
+    /// The tag the install was moved to ([`COMFYUI_REF`]).
+    pub target_ref: String,
+    /// "git-fetch" for an existing git checkout, "git-init" when a zip install
+    /// was converted to a managed checkout.
+    pub method: String,
+}
+
+/// Update the installed ComfyUI to the pinned [`COMFYUI_REF`]: stop the server,
+/// move the working tree onto the tag, reinstall ComfyUI's Python deps, and
+/// redeploy the bundled MooshieUI custom nodes. ComfyUI is left stopped; the
+/// caller restarts it (via `start_comfyui`) so the full websocket wiring runs.
+#[tauri::command]
+pub async fn update_comfyui(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<ComfyUiUpdateResult, AppError> {
+    let base = data_dir(&app)?;
+    let comfyui_dir = base.join("comfyui");
+    if !comfyui_dir.join("main.py").exists() {
+        return Err("ComfyUI is not installed yet. Run setup first.".into());
+    }
+
+    // 1. Stop ComfyUI so the working tree is not locked (Windows) and the new
+    //    version is picked up on the next start.
+    emit(
+        &app,
+        "comfyui",
+        &format!("Stopping ComfyUI to update to {}...", COMFYUI_REF),
+        5,
+    );
+    crate::comfyui::process::stop_comfyui_process(&state)
+        .await
+        .ok();
+
+    // 2. Move the working tree onto the pinned tag.
+    emit(
+        &app,
+        "comfyui",
+        &format!("Updating ComfyUI to {}...", COMFYUI_REF),
+        20,
+    );
+    let method = update_comfyui_checkout(&app, &comfyui_dir).await?;
+
+    // 3. Reinstall ComfyUI's Python deps (a new release may add/upgrade them).
+    let net = {
+        let config = state.config.read().await;
+        SetupNetworkOpts::from_options(config.network_proxy.clone(), config.pip_index_url.clone())
+    };
+    emit(&app, "deps", "Updating ComfyUI dependencies...", 55);
+    step_install_deps(&app, &base, &net).await?;
+
+    // 4. Redeploy bundled MooshieUI custom nodes (content-hash gated internally).
+    emit(&app, "nodes", "Redeploying MooshieUI custom nodes...", 85);
+    let comfy_str = comfyui_dir.to_string_lossy().to_string();
+    crate::comfyui::nodes::ensure_mooshie_nodes(&comfy_str)?;
+    step_install_custom_nodes(&base)?;
+
+    emit(
+        &app,
+        "done",
+        &format!("ComfyUI updated to {}.", COMFYUI_REF),
+        100,
+    );
+    Ok(ComfyUiUpdateResult {
+        updated: true,
+        target_ref: COMFYUI_REF.to_string(),
+        method,
+    })
 }

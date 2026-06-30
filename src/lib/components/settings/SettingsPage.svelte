@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { AppConfig, QueueInfo } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats } from "../../utils/api.js";
-  import type { ReleaseNote, ImportResult, AttentionBackendStatus } from "../../utils/api.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, getComfyuiVersion, updateComfyui } from "../../utils/api.js";
+  import type { ReleaseNote, ImportResult, AttentionBackendStatus, ComfyUiVersionInfo } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
@@ -103,6 +103,11 @@
   let attentionStatusLoading = $state(false);
   let attentionStatusError = $state<string | null>(null);
   let attentionStatusVenvPath = $state<string | null>(null);
+  // ComfyUI version / in-app updater state (desktop only)
+  let comfyuiVersion = $state<ComfyUiVersionInfo | null>(null);
+  let comfyuiUpdating = $state(false);
+  let comfyuiUpdateError = $state<string | null>(null);
+  let comfyuiUpdateProgress = $state<string | null>(null);
   let workersDetecting = $state(false);
   let newThemeName = $state("");
   let themeImportError = $state<string | null>(null);
@@ -1168,6 +1173,44 @@
     }
   }
 
+  /** Load the installed ComfyUI version and whether the pinned target is newer. */
+  async function refreshComfyuiVersion() {
+    try {
+      comfyuiVersion = await getComfyuiVersion();
+    } catch (e: any) {
+      // Non-fatal: leave the card hidden if the version can't be read.
+      comfyuiVersion = null;
+    }
+  }
+
+  /**
+   * Update ComfyUI to the version this MooshieUI build was tested against, then
+   * restart it. The backend leaves ComfyUI stopped, so we bring it back via
+   * startComfyui() (reusing the full websocket wiring).
+   */
+  async function handleComfyuiUpdate() {
+    if (comfyuiUpdating) return;
+    comfyuiUpdating = true;
+    comfyuiUpdateError = null;
+    comfyuiUpdateProgress = locale.t("settings.performance.comfyui_update_starting");
+    const unlisten = await ipcListen("setup:progress", (event: any) => {
+      const data = event.payload as { message?: string };
+      if (data?.message) comfyuiUpdateProgress = data.message;
+    });
+    try {
+      await updateComfyui();
+      await startComfyui();
+      await refreshComfyuiVersion();
+    } catch (e: any) {
+      comfyuiUpdateError =
+        typeof e === "string" ? e : e.message || locale.t("settings.performance.comfyui_update_failed");
+    } finally {
+      comfyuiUpdating = false;
+      comfyuiUpdateProgress = null;
+      unlisten();
+    }
+  }
+
   async function initSettings() {
     loading = true;
     settingsLoadError = null;
@@ -1187,6 +1230,9 @@
     void initSettings().then(() => {
       void refreshAttentionStatus();
     });
+    // The in-app ComfyUI updater is desktop-only (hosted/browser ships ComfyUI
+    // in the image), so only probe the installed version off-browser.
+    if (!isBrowserMode) void refreshComfyuiVersion();
     loadInstallPath();
     getGalleryPath().then(p => { galleryPathDisplay = p; }).catch(() => {});
     void loadCacheCount();
@@ -2541,6 +2587,50 @@
               <p class="text-[10px] text-amber-400/80">{locale.t('setup.attention.compile_warning')}</p>
             </div>
           </div>
+
+          {#if !isBrowserMode && comfyuiVersion}
+          <div>
+            <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.performance.comfyui_version')}</label>
+            <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2">
+              <div class="space-y-1.5 text-[11px]">
+                <div class="flex items-start gap-2">
+                  <span class="w-32 shrink-0 text-neutral-500">{locale.t('settings.performance.comfyui_installed')}</span>
+                  <span class="min-w-0 break-all font-mono text-neutral-200">
+                    {comfyuiVersion.installed || locale.t('settings.performance.comfyui_unknown')}
+                  </span>
+                </div>
+                <div class="flex items-start gap-2">
+                  <span class="w-32 shrink-0 text-neutral-500">{locale.t('settings.performance.comfyui_target')}</span>
+                  <span class="min-w-0 break-all font-mono text-neutral-200">{comfyuiVersion.target}</span>
+                </div>
+              </div>
+
+              {#if comfyuiUpdating}
+                <p class="text-[10px] text-indigo-400 flex items-center gap-1">
+                  <span class="inline-block w-3 h-3 border border-indigo-400 border-t-transparent rounded-full animate-spin"></span>
+                  {comfyuiUpdateProgress || locale.t('settings.performance.comfyui_updating')}
+                </p>
+              {:else if comfyuiUpdateError}
+                <p class="text-[10px] text-red-400">{comfyuiUpdateError}</p>
+              {/if}
+
+              {#if comfyuiVersion.update_available}
+                <p class="text-[10px] text-amber-400/80">{locale.t('settings.performance.comfyui_update_available')}</p>
+                <button
+                  onclick={handleComfyuiUpdate}
+                  disabled={comfyuiUpdating}
+                  class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {locale.t('settings.performance.comfyui_update_button')}
+                </button>
+              {:else}
+                <p class="text-[10px] text-neutral-500">{locale.t('settings.performance.comfyui_up_to_date')}</p>
+              {/if}
+
+              <p class="text-[10px] text-neutral-500">{locale.t('settings.performance.comfyui_update_note')}</p>
+            </div>
+          </div>
+          {/if}
 
           <div class="flex items-start gap-3">
             <input

@@ -1,5 +1,16 @@
 # Changelog
 
+## What's New in v1.4.30
+
+### ComfyUI version management
+- **In-app ComfyUI updater**: MooshieUI now pins ComfyUI to a known-good release tag rather than whatever happened to be latest at install time. Settings shows your installed ComfyUI version alongside the version MooshieUI was tested against, and when a newer tested version is available you can update ComfyUI in place from there. Your models, outputs, and custom nodes are preserved.
+- **Automated compatibility checking**: a new CI workflow smoke-tests MooshieUI's bundled custom nodes against newer ComfyUI releases and opens a version-bump pull request only when every node still loads, so ComfyUI updates can be verified before they ship. It runs on free CI and needs no API keys.
+
+### Maintenance
+- Dependency updates across the Rust and frontend packages.
+
+---
+
 ## What's New in v1.4.29
 
 ### Prompt tag spell check

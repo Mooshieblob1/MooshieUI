@@ -22,7 +22,12 @@
   import LayerPanel from "../canvas/layers/LayerPanel.svelte";
   import { canvas } from "../../stores/canvas.svelte.js";
   import { uploadImage, uploadImageBytes, getOutputImage, readClipboardImageSafe } from "../../utils/api.js";
-  import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
+  import { uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
+  import {
+    normalizeGenerationInputBytes,
+    prepareOutputImageForEditMode,
+    type NormalizedInputImage,
+  } from "../../utils/editImagePreparation.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage, InterrogationResult } from "../../types/index.js";
@@ -34,6 +39,7 @@
   import { interrogateGalleryImage, interrogateImage } from "../../utils/api.js";
   import InterrogateSection from "./InterrogateSection.svelte";
   import { ipcListen, isTauri } from "../../utils/ipc.js";
+  import { progress } from "../../stores/progress.svelte.js";
   import {
     isDroppableSection,
     handleMetadataImport,
@@ -349,8 +355,6 @@
     }, 300);
   });
 
-  const MAX_INPUT_PIXELS = 1024 * 1024;
-
   function applyImageGeometry(width: number, height: number) {
     imageAspect = { w: width, h: height };
     generation.width = width;
@@ -361,73 +365,26 @@
     }
   }
 
-  async function normalizeImageBytes(
-    imageBytes: number[],
-    fallbackFilename: string
-  ): Promise<{ bytes: number[]; previewUrl: string; width: number; height: number; filename: string }> {
-    const sourceBlob = new Blob([new Uint8Array(imageBytes)], { type: "image/png" });
-    const sourceUrl = URL.createObjectURL(sourceBlob);
+  function applyNormalizedImagePreview(normalized: NormalizedInputImage) {
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    imagePreviewUrl = normalized.previewUrl;
+    applyImageGeometry(normalized.width, normalized.height);
+    canvas.setReferenceImage(imagePreviewUrl);
+  }
 
-    const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-      img.onerror = () => reject(new Error("Failed to read image dimensions"));
-      img.src = sourceUrl;
+  function syncInpaintBaseIfNeeded(normalized: NormalizedInputImage, uploadedInputName: string) {
+    if (generation.mode !== "inpainting") return;
+    canvas.setInpaintOriginalSource({
+      previewUrl: normalized.previewUrl,
+      width: normalized.width,
+      height: normalized.height,
+      uploadedInputName,
     });
+  }
 
-    const sourcePixels = dims.width * dims.height;
-    if (sourcePixels <= MAX_INPUT_PIXELS) {
-      return {
-        bytes: imageBytes,
-        previewUrl: sourceUrl,
-        width: dims.width,
-        height: dims.height,
-        filename: fallbackFilename,
-      };
-    }
-
-    const scale = Math.sqrt(MAX_INPUT_PIXELS / sourcePixels);
-    const targetWidth = Math.max(8, Math.round(dims.width * scale));
-    const targetHeight = Math.max(8, Math.round(dims.height * scale));
-
-    const resizedBlob = await new Promise<Blob>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const out = document.createElement("canvas");
-        out.width = targetWidth;
-        out.height = targetHeight;
-        const ctx = out.getContext("2d");
-        if (!ctx) {
-          reject(new Error("Failed to create resize context"));
-          return;
-        }
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-        out.toBlob((blob) => {
-          if (!blob) {
-            reject(new Error("Failed to encode resized image"));
-            return;
-          }
-          resolve(blob);
-        }, "image/png");
-      };
-      img.onerror = () => reject(new Error("Failed to decode source image"));
-      img.src = sourceUrl;
-    });
-
-    URL.revokeObjectURL(sourceUrl);
-    const resizedBuffer = await resizedBlob.arrayBuffer();
-    const resizedBytes = Array.from(new Uint8Array(resizedBuffer));
-    const resizedPreview = URL.createObjectURL(resizedBlob);
-
-    return {
-      bytes: resizedBytes,
-      previewUrl: resizedPreview,
-      width: targetWidth,
-      height: targetHeight,
-      filename: fallbackFilename,
-    };
+  function resetStagedInputForManualReplacement() {
+    canvas.clearStaging();
+    canvas.clearInpaintSession();
   }
 
   function getFilenameFromPath(path: string): string {
@@ -454,13 +411,12 @@
       try {
         const buf = await file.arrayBuffer();
         const bytes = Array.from(new Uint8Array(buf));
-        const normalized = await normalizeImageBytes(bytes, file.name);
-        if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-        imagePreviewUrl = normalized.previewUrl;
-        applyImageGeometry(normalized.width, normalized.height);
-        canvas.setReferenceImage(imagePreviewUrl);
+        const normalized = await normalizeGenerationInputBytes(bytes, file.name);
+        resetStagedInputForManualReplacement();
+        applyNormalizedImagePreview(normalized);
         const response = await uploadImageBytes(normalized.bytes, normalized.filename);
         generation.inputImage = response.name;
+        syncInpaintBaseIfNeeded(normalized, response.name);
       } catch (e) { console.error("Failed to upload image:", e); } finally { uploading = false; }
       return;
     }
@@ -473,15 +429,13 @@
 
       const { readFile } = await import("@tauri-apps/plugin-fs");
       const bytes = Array.from(await readFile(selectedPath));
-      const normalized = await normalizeImageBytes(bytes, getFilenameFromPath(selectedPath));
-
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-      imagePreviewUrl = normalized.previewUrl;
-      applyImageGeometry(normalized.width, normalized.height);
-      canvas.setReferenceImage(imagePreviewUrl);
+      const normalized = await normalizeGenerationInputBytes(bytes, getFilenameFromPath(selectedPath));
+      resetStagedInputForManualReplacement();
+      applyNormalizedImagePreview(normalized);
 
       const response = await uploadImageBytes(normalized.bytes, normalized.filename);
       generation.inputImage = response.name;
+      syncInpaintBaseIfNeeded(normalized, response.name);
     } catch (e) {
       console.error("Failed to upload image:", e);
     } finally {
@@ -536,18 +490,6 @@
     }
   }
 
-  /** Normalise image bytes, show the preview, upload to ComfyUI, and set them as the
-   *  img2img/inpaint input. Shared by drag-drop and paste. */
-  async function setInputImageFromBytes(bytes: number[], filename: string) {
-    const normalized = await normalizeImageBytes(bytes, filename);
-    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-    imagePreviewUrl = normalized.previewUrl;
-    applyImageGeometry(normalized.width, normalized.height);
-    canvas.setReferenceImage(imagePreviewUrl);
-    const response = await uploadImageBytes(normalized.bytes, normalized.filename);
-    generation.inputImage = response.name;
-  }
-
   async function handleImageDrop(e: DragEvent) {
     e.preventDefault();
     dragOver = false;
@@ -556,8 +498,15 @@
 
     uploading = true;
     try {
-      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-      await setInputImageFromBytes(bytes, file.name || "dropped_image.png");
+      const buffer = await file.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(buffer));
+      const normalized = await normalizeGenerationInputBytes(bytes, file.name || "dropped_image.png");
+      resetStagedInputForManualReplacement();
+      applyNormalizedImagePreview(normalized);
+
+      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      generation.inputImage = response.name;
+      syncInpaintBaseIfNeeded(normalized, response.name);
     } catch (e) {
       console.error("Failed to handle dropped image:", e);
       gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
@@ -595,12 +544,18 @@
    *  paste event's clipboardData (webkit2gtk populates this on Linux, where the native
    *  clipboard `read_image` is unreliable), falling back to the system clipboard read. */
   async function handleImagePaste(file?: File | null) {
-    uploading = true;
     try {
+      uploading = true;
       const bytes = file
         ? Array.from(new Uint8Array(await file.arrayBuffer()))
         : await readClipboardImageSafe();
-      await setInputImageFromBytes(bytes, file?.name || "pasted_image.png");
+      const normalized = await normalizeGenerationInputBytes(bytes, file?.name || "pasted_image.png");
+      resetStagedInputForManualReplacement();
+      applyNormalizedImagePreview(normalized);
+
+      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      generation.inputImage = response.name;
+      syncInpaintBaseIfNeeded(normalized, response.name);
     } catch (e) {
       console.error("Failed to paste image:", e);
     } finally {
@@ -629,6 +584,8 @@
   function clearImage() {
     generation.inputImage = null;
     imageAspect = null;
+    canvas.clearStaging();
+    canvas.clearInpaintSession();
     canvas.setReferenceImage(null);
     if (imagePreviewUrl) {
       URL.revokeObjectURL(imagePreviewUrl);
@@ -681,18 +638,23 @@
 
   async function inpaintImage(image: OutputImage) {
     try {
-      const source = await loadOutputImageForGenerationInput(image, "inpaint_input.png");
-      const normalized = await normalizeImageBytes(source.bytes, source.filename);
-      const response = await uploadImageBytes(normalized.bytes, normalized.filename);
+      const prepared = await prepareOutputImageForEditMode(image, "inpainting");
+      const normalized = prepared.normalized;
+      if (!normalized) throw new Error("Expected normalized inpaint source");
+      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename);
       generation.inputImage = response.name;
       canvas.clearMask();
+      canvas.clearStaging();
       generation.mode = "inpainting";
+      progress.setLastOutputForMode("inpainting", null);
       canvas.isCanvasMode = true;
-
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-      imagePreviewUrl = normalized.previewUrl;
-      applyImageGeometry(normalized.width, normalized.height);
-      canvas.setReferenceImage(imagePreviewUrl);
+      applyNormalizedImagePreview(normalized);
+      canvas.setInpaintOriginalSource({
+        previewUrl: normalized.previewUrl,
+        width: normalized.width,
+        height: normalized.height,
+        uploadedInputName: response.name,
+      });
 
       if (canvas.layers.length === 0) {
         canvas.initCanvas(generation.width, generation.height);
@@ -1325,13 +1287,12 @@
     try {
       const { readFile } = await import("@tauri-apps/plugin-fs");
       const bytes = Array.from(await readFile(path));
-      const normalized = await normalizeImageBytes(bytes, filename);
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-      imagePreviewUrl = normalized.previewUrl;
-      applyImageGeometry(normalized.width, normalized.height);
-      canvas.setReferenceImage(imagePreviewUrl);
+      const normalized = await normalizeGenerationInputBytes(bytes, filename);
+      resetStagedInputForManualReplacement();
+      applyNormalizedImagePreview(normalized);
       const response = await uploadImage(path);
       generation.inputImage = response.name;
+      syncInpaintBaseIfNeeded(normalized, response.name);
     } catch (e) {
       console.error("Failed to handle dropped image:", e);
       // Don't leave a preview visible when the upload never registered.
@@ -1559,12 +1520,12 @@
       </div>
       {#if imageSectionOpen}
         <div class="px-3 pb-2 pt-0.5 space-y-2">
-          {#if canvas.currentStagingImage}
+          {#if canvas.currentPreparedInputImage}
             <div class="rounded-md border border-amber-700/50 bg-amber-900/20 p-2 flex items-center justify-between gap-2">
               <span class="text-[11px] text-amber-300">{locale.t('generation.image.staged_active')}</span>
               <button
                 class="px-2 py-1 text-[11px] rounded border border-amber-600/60 text-amber-200 hover:border-amber-400 hover:text-amber-100 transition-colors"
-                onclick={() => canvas.dismissCurrentStaging()}
+                onclick={() => canvas.dismissPreparedInput()}
                 title={locale.t('generation.image.remove_staged')}
               >
                 {locale.t('generation.image.remove_staged')}
@@ -1572,7 +1533,7 @@
             </div>
           {/if}
 
-          <div class="{canvas.currentStagingImage ? 'opacity-50 pointer-events-none' : ''}">
+          <div class="{canvas.currentPreparedInputImage ? 'opacity-50 pointer-events-none' : ''}">
             <p class="text-xs text-neutral-400 mb-1">{locale.t('generation.image.input')}</p>
             {#if imagePreviewUrl}
               <!-- svelte-ignore a11y_no_static_element_interactions -->
