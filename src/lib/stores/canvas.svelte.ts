@@ -27,6 +27,11 @@ export interface BoundingBox {
   locked: boolean;
 }
 
+export interface CanvasStagingEntry {
+  url: string;
+  owned: boolean;
+}
+
 export interface CanvasViewport {
   zoom: number;
   panX: number;
@@ -83,10 +88,16 @@ class CanvasStore {
   showCheckerboard = $state(true);
   cursorPos = $state<{ x: number; y: number } | null>(null);
   referenceImageUrl = $state<string | null>(null);
+  originalInpaintInputImageName = $state<string | null>(null);
+  originalInpaintWidth = $state<number | null>(null);
+  originalInpaintHeight = $state<number | null>(null);
+  preparedInpaintPreviewUrl = $state<string | null>(null);
+  preparedInpaintOwned = $state(false);
+  inpaintSourceVersion = $state(0);
   persistedMaskPreviewUrl = $state<string | null>(null);
 
   // Staging
-  stagingImages = $state<string[]>([]);
+  stagingImages = $state<CanvasStagingEntry[]>([]);
   stagingIndex = $state(0);
   isStagingActive = $state(false);
 
@@ -186,14 +197,145 @@ class CanvasStore {
     };
   }
 
-  stageImage(url: string) {
+  private revokeOwnedUrls(urls: string[]) {
+    const seen = new Set<string>();
+    for (const url of urls) {
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  private clearPreparedInpaintOverride() {
+    if (this.preparedInpaintOwned && this.preparedInpaintPreviewUrl) {
+      URL.revokeObjectURL(this.preparedInpaintPreviewUrl);
+    }
+    this.preparedInpaintPreviewUrl = null;
+    this.preparedInpaintOwned = false;
+  }
+
+  setInpaintOriginalSource(source: {
+    previewUrl: string;
+    width: number;
+    height: number;
+    uploadedInputName: string | null;
+  } | null) {
+    this.clearPreparedInpaintOverride();
+    this.inpaintSourceVersion += 1;
+
+    if (!source) {
+      this.originalInpaintInputImageName = null;
+      this.originalInpaintWidth = null;
+      this.originalInpaintHeight = null;
+      this.referenceImageUrl = null;
+      return;
+    }
+
+    this.referenceImageUrl = source.previewUrl;
+    this.originalInpaintInputImageName = source.uploadedInputName;
+    this.originalInpaintWidth = source.width;
+    this.originalInpaintHeight = source.height;
+    generation.inputImage = source.uploadedInputName;
+    generation.width = source.width;
+    generation.height = source.height;
+    this.clearMask();
+    this.initCanvas(source.width, source.height);
+  }
+
+  setPreparedInpaintOverride(source: {
+    previewUrl: string;
+    width: number;
+    height: number;
+    uploadedInputName: string | null;
+    owned: boolean;
+  }) {
+    this.clearPreparedInpaintOverride();
+    this.preparedInpaintPreviewUrl = source.previewUrl;
+    this.preparedInpaintOwned = source.owned;
+    generation.inputImage = source.uploadedInputName;
+    generation.width = source.width;
+    generation.height = source.height;
+    this.clearMask();
+    this.initCanvas(source.width, source.height);
+  }
+
+  restoreOriginalInpaintSource() {
+    if (!this.originalInpaintInputImageName || this.originalInpaintWidth == null || this.originalInpaintHeight == null) {
+      return;
+    }
+    this.clearPreparedInpaintOverride();
+    generation.inputImage = this.originalInpaintInputImageName;
+    generation.width = this.originalInpaintWidth;
+    generation.height = this.originalInpaintHeight;
+    this.clearMask();
+    this.initCanvas(this.originalInpaintWidth, this.originalInpaintHeight);
+  }
+
+  clearInpaintSession() {
+    this.clearMask();
+    this.clearPreparedInpaintOverride();
+    this.inpaintSourceVersion += 1;
+    this.originalInpaintInputImageName = null;
+    this.originalInpaintWidth = null;
+    this.originalInpaintHeight = null;
+    this.referenceImageUrl = null;
+  }
+
+  get currentPreparedInputImage(): string | null {
+    if (generation.mode === "inpainting") {
+      return this.preparedInpaintPreviewUrl;
+    }
+    return this.currentStagingImage;
+  }
+
+  get hasResettableInpaintSource(): boolean {
+    return generation.mode === "inpainting" && !!this.referenceImageUrl && !!this.originalInpaintInputImageName;
+  }
+
+  get resettableInpaintPreviewImage(): string | null {
+    if (generation.mode === "inpainting") {
+      return this.preparedInpaintPreviewUrl ?? this.referenceImageUrl;
+    }
+    return this.currentStagingImage;
+  }
+
+  clearPreparedInputs() {
+    if (generation.mode === "inpainting" && this.hasResettableInpaintSource) {
+      this.restoreOriginalInpaintSource();
+      return;
+    }
+    this.clearStaging();
+  }
+
+  dismissPreparedInput() {
+    if (generation.mode === "inpainting" && this.currentPreparedInputImage) {
+      this.restoreOriginalInpaintSource();
+      return;
+    }
+    this.dismissCurrentStaging();
+  }
+
+  stageImage(url: string, options?: { owned?: boolean }) {
     if (!url) return;
-    this.stagingImages = [...this.stagingImages, url];
+    this.stagingImages = [
+      ...this.stagingImages,
+      {
+        url,
+        owned: options?.owned ?? false,
+      },
+    ];
     this.stagingIndex = this.stagingImages.length - 1;
     this.isStagingActive = this.stagingImages.length > 0;
   }
 
+  stageBlob(blob: Blob) {
+    this.stageImage(URL.createObjectURL(blob), { owned: true });
+  }
+
   clearStaging() {
+    for (const entry of this.stagingImages) {
+      if (entry.owned) URL.revokeObjectURL(entry.url);
+    }
     this.stagingImages = [];
     this.stagingIndex = 0;
     this.isStagingActive = false;
@@ -211,6 +353,8 @@ class CanvasStore {
 
   dismissCurrentStaging() {
     if (!this.stagingImages.length) return;
+    const current = this.stagingImages[this.stagingIndex];
+    if (current?.owned) URL.revokeObjectURL(current.url);
     this.stagingImages = this.stagingImages.filter((_, index) => index !== this.stagingIndex);
 
     if (!this.stagingImages.length) {
@@ -227,10 +371,13 @@ class CanvasStore {
 
   get currentStagingImage(): string | null {
     if (!this.stagingImages.length) return null;
-    return this.stagingImages[this.stagingIndex] ?? null;
+    return this.stagingImages[this.stagingIndex]?.url ?? null;
   }
 
   get effectiveReferenceImage(): string | null {
+    if (generation.mode === "inpainting" && this.preparedInpaintPreviewUrl) {
+      return this.preparedInpaintPreviewUrl;
+    }
     return this.currentStagingImage ?? this.referenceImageUrl;
   }
 
@@ -553,18 +700,10 @@ class CanvasStore {
     let hasRaster = false;
     let hasMask = false;
 
-    // In inpainting mode, keep the original/staged image as the baseline input.
+    // In inpainting mode, keep the currently selected input image as the baseline.
     // This makes denoise behave as expected: only the masked area is reworked.
     if (isInpainting) {
-      if (this.currentStagingImage) {
-        const response = await fetch(this.currentStagingImage);
-        const blob = await response.blob();
-        const arrayBuffer = await blob.arrayBuffer();
-        const bytes = Array.from(new Uint8Array(arrayBuffer));
-        const result = await uploadImageBytes(bytes, "staged_input.png");
-        generation.inputImage = result.name;
-        hasRaster = true;
-      } else if (generation.inputImage) {
+      if (generation.inputImage) {
         hasRaster = true;
       } else if (rasterCanvas) {
         // Last resort only: if no source image exists, fall back to painted raster.

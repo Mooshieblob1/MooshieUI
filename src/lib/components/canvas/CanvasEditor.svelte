@@ -9,6 +9,12 @@
   import CanvasStatusBar from "./CanvasStatusBar.svelte";
   import CanvasStagingStrip from "./staging/CanvasStagingStrip.svelte";
 
+  interface Props {
+    showInpaintPreviewOverlay?: boolean;
+  }
+
+  let { showInpaintPreviewOverlay = true }: Props = $props();
+
   let stageRef: CanvasStage | undefined = $state();
 
   onMount(() => {
@@ -49,15 +55,17 @@
   <div class="flex-1 min-h-0 relative">
     <CanvasStage bind:this={stageRef} />
 
-    {#if generation.mode === "inpainting" && progress.isGenerating}
-      <div class="absolute inset-0 z-20 bg-black/70 flex items-center justify-center p-4">
-        <div class="w-full max-w-xl rounded-xl border border-neutral-700 bg-neutral-950/95 shadow-2xl overflow-hidden">
-          <div class="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
+    {#if showInpaintPreviewOverlay && generation.mode === "inpainting" && progress.isGenerating}
+      <div class="absolute inset-0 z-20 pointer-events-none">
+        <div class="absolute inset-0 bg-black/15"></div>
+
+        <div class="absolute right-4 top-4 w-full max-w-md rounded-xl border border-neutral-700/80 bg-neutral-950/88 shadow-2xl backdrop-blur-sm overflow-hidden">
+          <div class="px-4 py-3 border-b border-neutral-800 flex items-center justify-between gap-3">
             <div class="text-sm font-medium text-neutral-100">{locale.t('canvas.inpainting_preview')}</div>
-            <div class="text-xs text-neutral-400">{progress.phaseLabel || locale.t("progress.generating")}</div>
+            <div class="text-xs text-neutral-400 text-right">{progress.phaseLabel || locale.t("progress.generating")}</div>
           </div>
 
-          <div class="p-4">
+          <div class="p-3">
             <div class="aspect-video rounded-lg border border-neutral-800 bg-neutral-900 flex items-center justify-center overflow-hidden">
               {#if progress.displayImage}
                 <img

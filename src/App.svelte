@@ -15,6 +15,7 @@
   import { models } from "./lib/stores/models.svelte.js";
   import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput } from "./lib/utils/galleryActions.js";
+  import { prepareOutputImageForEditMode } from "./lib/utils/editImagePreparation.js";
   import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
   import { generation } from "./lib/stores/generation.svelte.js";
   import { autocomplete } from "./lib/stores/autocomplete.svelte.js";
@@ -73,7 +74,6 @@
       : `sim-${accessibility.visionSimulatorMode}`
   );
 
-  const MAX_INPUT_PIXELS = 1024 * 1024;
   let lastProgressEventAt = 0;
 
   /** Images received via WebSocket during generation, keyed by prompt_id. */
@@ -315,75 +315,6 @@
     });
   });
 
-  async function normalizeImageBytes(
-    imageBytes: number[],
-    fallbackFilename: string,
-  ): Promise<{ bytes: number[]; previewUrl: string; width: number; height: number; filename: string }> {
-    const sourceBlob = new Blob([new Uint8Array(imageBytes)], { type: "image/png" });
-    const sourceUrl = URL.createObjectURL(sourceBlob);
-
-    const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-      img.onerror = () => reject(new Error("Failed to read image dimensions"));
-      img.src = sourceUrl;
-    });
-
-    const sourcePixels = dims.width * dims.height;
-    if (sourcePixels <= MAX_INPUT_PIXELS) {
-      return {
-        bytes: imageBytes,
-        previewUrl: sourceUrl,
-        width: dims.width,
-        height: dims.height,
-        filename: fallbackFilename,
-      };
-    }
-
-    const scale = Math.sqrt(MAX_INPUT_PIXELS / sourcePixels);
-    const targetWidth = Math.max(8, Math.round(dims.width * scale));
-    const targetHeight = Math.max(8, Math.round(dims.height * scale));
-
-    const resizedBlob = await new Promise<Blob>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const out = document.createElement("canvas");
-        out.width = targetWidth;
-        out.height = targetHeight;
-        const ctx = out.getContext("2d");
-        if (!ctx) {
-          reject(new Error("Failed to create resize context"));
-          return;
-        }
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-        out.toBlob((blob) => {
-          if (!blob) {
-            reject(new Error("Failed to encode resized image"));
-            return;
-          }
-          resolve(blob);
-        }, "image/png");
-      };
-      img.onerror = () => reject(new Error("Failed to decode source image"));
-      img.src = sourceUrl;
-    });
-
-    URL.revokeObjectURL(sourceUrl);
-    const resizedBuffer = await resizedBlob.arrayBuffer();
-    const resizedBytes = Array.from(new Uint8Array(resizedBuffer));
-    const resizedPreview = URL.createObjectURL(resizedBlob);
-
-    return {
-      bytes: resizedBytes,
-      previewUrl: resizedPreview,
-      width: targetWidth,
-      height: targetHeight,
-      filename: fallbackFilename,
-    };
-  }
-
   async function upscaleImage(image: OutputImage) {
     try {
       generation.inputImage = await uploadOutputImageForGenerationInput(image, "refine_input.png");
@@ -406,34 +337,29 @@
     mode: "img2img" | "inpainting",
   ) {
     try {
-      const source = await loadOutputImageForGenerationInput(
-        image,
-        mode === "inpainting" ? "inpaint_input.png" : "img2img_input.png",
-      );
-
-      const normalized =
-        mode === "inpainting"
-          ? await normalizeImageBytes(source.bytes, source.filename)
-          : null;
-
-      const uploadBytes = normalized ? normalized.bytes : source.bytes;
-      const uploadFilename = normalized ? normalized.filename : source.filename;
-
-      const response = await uploadImageBytes(uploadBytes, uploadFilename);
+      const prepared = await prepareOutputImageForEditMode(image, mode);
+      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename);
       generation.inputImage = response.name;
       canvas.clearMask();
       generation.mode = mode;
       generation.upscaleEnabled = false;
       generation.refineOnly = false;
 
-      if (mode === "inpainting" && normalized) {
+      if (mode === "inpainting" && prepared.normalized) {
+        const normalized = prepared.normalized;
         generation.width = normalized.width;
         generation.height = normalized.height;
+        progress.setLastOutputForMode("inpainting", null);
 
         canvas.setInpaintDrawMode("mask");
         canvas.isCanvasMode = true;
-        canvas.stageImage(normalized.previewUrl);
-        canvas.setReferenceImage(normalized.previewUrl);
+        canvas.clearStaging();
+        canvas.setInpaintOriginalSource({
+          previewUrl: normalized.previewUrl,
+          width: normalized.width,
+          height: normalized.height,
+          uploadedInputName: response.name,
+        });
 
         if (
           canvas.layers.length === 0 ||
@@ -1397,6 +1323,33 @@
    * Finalize images received via WebSocket during generation.
    * MooshieSaveImage sends PNG bytes directly over WS — no disk round-trip.
    */
+  async function prepareLatestInpaintResult(image: OutputImage, sourceVersion: number) {
+    try {
+      const prepared = await prepareOutputImageForEditMode(image, "inpainting");
+      const normalized = prepared.normalized;
+      if (!normalized) return;
+
+      const response = await uploadImageBytes(prepared.uploadBytes, prepared.uploadFilename);
+      if (
+        generation.mode !== "inpainting" ||
+        !canvas.isCanvasMode ||
+        canvas.inpaintSourceVersion !== sourceVersion
+      ) {
+        URL.revokeObjectURL(normalized.previewUrl);
+        return;
+      }
+      canvas.setPreparedInpaintOverride({
+        previewUrl: normalized.previewUrl,
+        width: normalized.width,
+        height: normalized.height,
+        uploadedInputName: response.name,
+        owned: true,
+      });
+    } catch (e) {
+      console.error("Failed to prepare latest inpaint result:", e);
+    }
+  }
+
   function finalizeOutputImages(
     promptId: string,
     mode: "txt2img" | "img2img" | "inpainting",
@@ -1428,6 +1381,10 @@
 
     gallery.addImages(newImages);
     progress.setLastOutputForMode(mode, newImages[0]?.url ?? null);
+    if (mode === "inpainting" && generation.mode === "inpainting" && canvas.isCanvasMode && newImages[0]) {
+      const sourceVersion = canvas.inpaintSourceVersion;
+      void prepareLatestInpaintResult(newImages[0], sourceVersion);
+    }
 
     const metadata = params ? buildPngMetadata(params) : undefined;
     for (const image of newImages) {
