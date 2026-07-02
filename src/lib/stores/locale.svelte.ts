@@ -26,13 +26,14 @@ import de from "../locales/de.js";
 import pt from "../locales/pt.js";
 import ru from "../locales/ru.js";
 import it from "../locales/it.js";
+import pl from "../locales/pl.js";
 
 const STORE_KEY = "locale-settings";
 
-export type Locale = "en" | "es" | "ja" | "fr" | "ko" | "zh" | "zh-tw" | "de" | "pt" | "ru" | "it";
+export type Locale = "en" | "es" | "ja" | "fr" | "ko" | "zh" | "zh-tw" | "de" | "pt" | "ru" | "it" | "pl";
 
 const translations: Record<Locale, Record<string, string>> = {
-  en, es, ja, fr, ko, zh, "zh-tw": zhTw, de, pt, ru, it,
+  en, es, ja, fr, ko, zh, "zh-tw": zhTw, de, pt, ru, it, pl,
 };
 
 export const LOCALE_OPTIONS: { value: Locale; label: string }[] = [
@@ -47,6 +48,7 @@ export const LOCALE_OPTIONS: { value: Locale; label: string }[] = [
   { value: "pt", label: "Português" },
   { value: "ru", label: "Русский" },
   { value: "it", label: "Italiano" },
+  { value: "pl", label: "Polski" },
 ];
 
 class LocaleStore {

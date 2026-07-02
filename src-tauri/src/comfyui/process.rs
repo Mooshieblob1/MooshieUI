@@ -787,12 +787,23 @@ pub async fn wait_for_ready(state: &AppState, timeout_secs: u64) -> Result<(), A
                             if log.contains("Torch not compiled with CUDA enabled")
                                 || log.contains("CUDA not available")
                             {
-                                "PyTorch was installed without GPU support. \
-                                 The CPU-only version of PyTorch was installed instead of the GPU-accelerated version. \
-                                 Go to Settings → Advanced → Reinstall PyTorch to fix this, \
-                                 or re-run setup and make sure the correct GPU type is selected. \
-                                 Note: AMD GPU acceleration (ROCm) is only available on Linux."
-                                    .to_string()
+                                // The "ROCm is Linux-only" hint only makes sense off Linux.
+                                // On Linux, point AMD users at the right remedy instead.
+                                #[cfg(target_os = "linux")]
+                                let note =
+                                    "Note: if you have an AMD GPU, make sure it is ROCm-supported \
+                                     and select AMD (ROCm) when reinstalling PyTorch.";
+                                #[cfg(not(target_os = "linux"))]
+                                let note =
+                                    "Note: AMD GPU acceleration (ROCm) is only available on Linux.";
+                                format!(
+                                    "PyTorch was installed without GPU support. \
+                                     The CPU-only version of PyTorch was installed instead of the GPU-accelerated version. \
+                                     Go to Settings → Advanced → Reinstall PyTorch to fix this, \
+                                     or re-run setup and make sure the correct GPU type is selected. \
+                                     {}",
+                                    note
+                                )
                             } else {
                                 format!(
                                     "ComfyUI process exited with {} — last log output:\n{}",

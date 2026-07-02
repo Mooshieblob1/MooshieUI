@@ -797,6 +797,18 @@ async fn detect_gpu_type() -> String {
             log::info!("GPU detection: AMD GPU found via /opt/rocm");
             return "amd".to_string();
         }
+        // Linux: detect discrete AMD GPUs via sysfs even when ROCm tooling isn't
+        // installed. Arch-based distros (e.g. Garuda) ship amdgpu + Mesa but not ROCm,
+        // so rocm-smi / /opt/rocm are absent and the GPU would otherwise be misdetected
+        // as CPU. detect_amd_gpu_arch() reads /sys/class/drm and is multi-GPU aware: it
+        // identifies a discrete RDNA 2/3/4 (or newer) card by GC version / device ID,
+        // gated on dedicated VRAM size, and ignores integrated Radeon graphics, so this
+        // won't false-positive on a Ryzen APU's iGPU.
+        #[cfg(target_os = "linux")]
+        if let Some(arch) = detect_amd_gpu_arch().await {
+            log::info!("GPU detection: AMD GPU found via sysfs (arch {})", arch);
+            return "amd".to_string();
+        }
         // Linux: check for Intel Arc discrete GPU via sysfs
         #[cfg(target_os = "linux")]
         {
@@ -862,10 +874,26 @@ async fn uv_pip(
         .map_err(|_| format!("pip install failed for: {}", args.join(" ")))
 }
 
+/// Map an amdgpu Graphics Core (GC) IP major version (read from
+/// `/sys/.../device/ip_discovery/die/0/GC/0/major`) to a representative gfx
+/// architecture string. Covers the discrete AMD GPU families MooshieUI installs
+/// ROCm PyTorch for — RDNA 4/3/2 and GCN5/CDNA. Returns None for unknown majors.
+#[cfg(target_os = "linux")]
+fn gfx_arch_from_gc_major(major: &str) -> Option<&'static str> {
+    match major.trim() {
+        "12" => Some("gfx1200"), // RDNA 4  (RX 9000 series)
+        "11" => Some("gfx1100"), // RDNA 3  (RX 7000 series)
+        "10" => Some("gfx1030"), // RDNA 2  (RX 6000 series)
+        "9" => Some("gfx900"),   // GCN 5 / Vega, CDNA
+        _ => None,
+    }
+}
+
 /// Detect the AMD GPU architecture string (e.g. "gfx1100", "gfx1201") by reading
 /// sysfs on Linux. When multiple AMD GPUs are present (e.g. integrated + discrete),
 /// prefers the highest / most capable architecture. Returns None if detection fails
-/// or no AMD GPU is found.
+/// or no AMD GPU is found. Integrated Ryzen APU iGPUs are excluded via a dedicated
+/// VRAM gate so they aren't misclassified as ROCm-capable discrete cards.
 #[cfg(target_os = "linux")]
 async fn detect_amd_gpu_arch() -> Option<String> {
     let mut candidates: Vec<String> = Vec::new();
@@ -902,12 +930,29 @@ async fn detect_amd_gpu_arch() -> Option<String> {
                     continue;
                 }
 
-                // Try ip_discovery first — it gives the GC major version directly
+                // Skip integrated APU iGPUs. A Ryzen APU's integrated Radeon
+                // shares vendor 0x1002 and reports a GC major (10/11) just like a
+                // discrete RDNA card, but it has almost no dedicated VRAM and is
+                // not ROCm-supported. Only cards with substantial dedicated VRAM
+                // are treated as discrete ROCm candidates: discrete GPUs ship with
+                // GBs of VRAM (>= 4 GB even on entry models) while APU carveouts
+                // default to a few hundred MB.
+                let vram_mb =
+                    std::fs::read_to_string(entry.path().join("device/mem_info_vram_total"))
+                        .ok()
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                        .map(|bytes| bytes / (1024 * 1024))
+                        .unwrap_or(0);
+                if vram_mb < 3072 {
+                    continue;
+                }
+
+                // Try ip_discovery first — it gives the GC major version directly,
+                // which maps cleanly to a gfx architecture across RDNA generations.
                 let ip_path = entry.path().join("device/ip_discovery/die/0/GC/0/major");
                 if let Ok(major) = std::fs::read_to_string(&ip_path) {
-                    let major = major.trim();
-                    if major == "12" {
-                        let arch = "gfx1200".to_string(); // RDNA 4 family
+                    if let Some(arch) = gfx_arch_from_gc_major(&major) {
+                        let arch = arch.to_string();
                         if !candidates.contains(&arch) {
                             candidates.push(arch);
                         }
@@ -915,7 +960,8 @@ async fn detect_amd_gpu_arch() -> Option<String> {
                     }
                 }
 
-                // Try to read the device ID to infer architecture
+                // Fallback: infer architecture from the device ID when
+                // ip_discovery is unavailable (older kernels).
                 let device_path = entry.path().join("device/device");
                 if let Ok(device_id) = std::fs::read_to_string(&device_path) {
                     let device_id = device_id.trim().to_lowercase();

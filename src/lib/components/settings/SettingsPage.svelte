@@ -47,6 +47,16 @@
     location.reload();
   }
 
+  // Reopen the first-run setup wizard. check_setup auto-recovers the completion
+  // marker (main.py present), so we can't clear backend state to force it;
+  // instead a one-shot flag survives the reload and App.svelte shows the wizard.
+  // Reloading also avoids re-running initApp() in the live session.
+  let showRerunSetupConfirm = $state(false);
+  function rerunSetup() {
+    localStorage.setItem("mooshieui_force_setup", "1");
+    location.reload();
+  }
+
   let settingsScrollEl = $state<HTMLDivElement | null>(null);
   let showScrollToTop = $state(false);
 
@@ -2932,6 +2942,32 @@
               <div class="rounded border border-red-800/50 bg-red-900/20 px-2 py-1.5 text-[11px] text-red-300">{moveError}</div>
             {/if}
           </div>
+
+          <!-- Rerun Setup Wizard (desktop host only; setup installs locally) -->
+          {#if isTauri}
+          <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2">
+            <p class="text-xs text-neutral-400">{locale.t('settings.paths.rerun_setup')}</p>
+            <p class="text-[10px] text-neutral-500">{locale.t('settings.paths.rerun_setup_desc')}</p>
+            {#if showRerunSetupConfirm}
+              <p class="text-[11px] text-amber-300">{locale.t('settings.paths.rerun_setup_confirm')}</p>
+              <div class="flex gap-2">
+                <button
+                  class="flex-1 px-3 py-2 text-xs rounded bg-neutral-700 hover:bg-neutral-600 text-neutral-300 transition-colors"
+                  onclick={() => (showRerunSetupConfirm = false)}
+                >{locale.t('common.cancel')}</button>
+                <button
+                  class="flex-1 px-3 py-2 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white transition-colors"
+                  onclick={rerunSetup}
+                >{locale.t('settings.paths.rerun_setup')}</button>
+              </div>
+            {:else}
+              <button
+                class="w-full px-3 py-2 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white transition-colors"
+                onclick={() => (showRerunSetupConfirm = true)}
+              >{locale.t('settings.paths.rerun_setup')}</button>
+            {/if}
+          </div>
+          {/if}
 
           <div>
             <label class="block text-xs text-neutral-400 mb-1">{locale.t('settings.paths.comfyui_install')}</label>

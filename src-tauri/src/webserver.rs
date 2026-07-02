@@ -1315,9 +1315,7 @@ async fn sse_handler(
                 if let Some(target) = evt.payload.get("_target_user") {
                     let delivers = match target {
                         serde_json::Value::Null => sse_username.is_none(),
-                        serde_json::Value::String(u) => {
-                            Some(u.as_str()) == sse_username.as_deref()
-                        }
+                        serde_json::Value::String(u) => Some(u.as_str()) == sse_username.as_deref(),
                         _ => false,
                     };
                     if !delivers {

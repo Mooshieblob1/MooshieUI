@@ -3228,14 +3228,20 @@ fn recommended_clip_from_available(
     }
 
     if family == "ideogram4" {
-        let preferred = find_first_text_encoder_matching(encoders, &["qwen3vl-8b", "qwen3vl_8b", "qwen3-vl-8b", "qwen3_vl_8b"])
-            .or_else(|| encoders.first().cloned())?;
+        let preferred = find_first_text_encoder_matching(
+            encoders,
+            &["qwen3vl-8b", "qwen3vl_8b", "qwen3-vl-8b", "qwen3_vl_8b"],
+        )
+        .or_else(|| encoders.first().cloned())?;
         return Some((preferred, "ideogram4"));
     }
 
     if family == "krea2" {
-        let preferred = find_first_text_encoder_matching(encoders, &["qwen3vl-4b", "qwen3vl_4b", "qwen3-vl-4b", "qwen3_vl_4b"])
-            .or_else(|| encoders.first().cloned())?;
+        let preferred = find_first_text_encoder_matching(
+            encoders,
+            &["qwen3vl-4b", "qwen3vl_4b", "qwen3-vl-4b", "qwen3_vl_4b"],
+        )
+        .or_else(|| encoders.first().cloned())?;
         return Some((preferred, "krea2"));
     }
 

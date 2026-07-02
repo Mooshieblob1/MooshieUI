@@ -695,6 +695,7 @@
 
   // Context menu state
   let contextMenuImage = $state<OutputImage | null>(null);
+  let contextMenuUrl = $state<string | null>(null);
   let contextMenuX = $state(0);
   let contextMenuY = $state(0);
   let showContextMenu = $state(false);
@@ -774,9 +775,40 @@
     }
   }
 
+  function openLightboxContextMenu(e: MouseEvent) {
+    // The lightbox shows either a persisted OutputImage (full menu) or a raw
+    // preview URL (save/copy/inpaint only). Restore right-click-to-save that the
+    // global native-menu suppressor (#392) took away, in both desktop and browser.
+    if (gallery.selectedImage) {
+      contextMenuImage = gallery.selectedImage;
+      contextMenuUrl = null;
+    } else if (gallery.lightboxUrl) {
+      contextMenuUrl = gallery.lightboxUrl;
+      contextMenuImage = null;
+    } else {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    contextMenuX = e.clientX;
+    contextMenuY = e.clientY;
+    showContextMenu = true;
+  }
+
   const contextMenuItems = $derived.by((): ContextMenuItem[] => {
     const image = contextMenuImage;
-    if (!image) return [];
+    if (!image) {
+      const url = contextMenuUrl;
+      if (!url) return [];
+      return [
+        { label: locale.t("gallery.get_tags"), action: () => void interrogateFromPreviewUrl(url) },
+        { label: "", action: () => {}, separator: true },
+        { label: locale.t("gallery.inpaint"), action: () => void inpaintLightboxPreview() },
+        { label: "", action: () => {}, separator: true },
+        { label: locale.t("gallery.save_as"), action: () => void gallery.saveBlobAs(url, `preview_${Date.now()}.png`) },
+        { label: locale.t("gallery.copy"), action: () => void gallery.copyBlobToClipboard(url) },
+      ];
+    }
     const items: ContextMenuItem[] = [
       { label: locale.t("gallery.get_tags"), action: () => interrogateFromGallery(image) },
     ];
@@ -1773,6 +1805,16 @@
     // Check auth for browser mode LAN access (before any ipcInvoke calls)
     const authOk = await checkAuth();
     if (!authOk) return;
+
+    // "Rerun setup" from Settings sets a one-shot flag and reloads. check_setup
+    // would otherwise auto-recover the completion marker and skip the wizard, so
+    // honor the flag here and force it. Running in a fresh session also avoids
+    // re-registering initApp()'s listeners; initApp runs after the wizard finishes.
+    if (localStorage.getItem("mooshieui_force_setup") === "1") {
+      localStorage.removeItem("mooshieui_force_setup");
+      setupComplete = false;
+      return;
+    }
 
     // Check if first-run setup is needed
     try {
@@ -3112,6 +3154,7 @@
           onmouseup={stopLightboxPan}
           onmouseleave={stopLightboxPan}
           onauxclick={(e) => e.preventDefault()}
+          oncontextmenu={openLightboxContextMenu}
           ondblclick={resetLightboxZoom}
         />
       {:else if gallery.lightboxLoading}

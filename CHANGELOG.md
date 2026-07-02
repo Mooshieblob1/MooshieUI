@@ -1,5 +1,22 @@
 # Changelog
 
+## What's New in v1.4.31
+
+### Languages
+- **Polish (Polski)**: MooshieUI is now fully translated into Polish, selectable in Settings and auto-detected from your system language. This brings the app to twelve languages.
+
+### Setup and hardware
+- **Rerun Setup Wizard**: Settings now has a button to re-run the first-launch setup wizard, so you can repair or reconfigure your ComfyUI install without reinstalling the app.
+- **Better AMD GPU handling**: AMD GPU architecture detection is improved, and PyTorch/ROCm errors now show a platform-aware hint that points Linux users toward the correct fix instead of a generic message.
+
+### Generation
+- **Right-click menu on the output preview**: the context menu on the generation preview (save, copy, send to image-to-image, send to inpaint, upscale) is restored after it went missing in a recent update.
+
+### Maintenance
+- Formatting and code cleanup across the Rust backend.
+
+---
+
 ## What's New in v1.4.30
 
 ### ComfyUI version management

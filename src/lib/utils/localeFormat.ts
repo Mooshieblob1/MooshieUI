@@ -11,6 +11,7 @@ const INTL_LOCALE: Record<string, string> = {
   pt: "pt-BR",
   ru: "ru-RU",
   it: "it-IT",
+  pl: "pl-PL",
 };
 
 export function intlLocale(appLocale: string): string {

@@ -13,12 +13,20 @@
     DEFAULT_REFINE_UPSCALER_SCALE,
     recommendedUpscaleModels,
   } from "../../utils/upscalers.js";
+  import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
   import type { GenerationParams } from "../../types/index.js";
 
   let currentTipIndex = $state(0);
   let progressPercent = $state(0);
   let autoPlayInterval: ReturnType<typeof setInterval> | null = null;
   let suppressOpenUntil = 0;
+
+  // Right-click context menu for the output preview. Restores right-click-to-save
+  // that the global native-menu suppressor (#392) removed, in desktop and browser.
+  let ctxMenuItems = $state<ContextMenuItem[]>([]);
+  let ctxMenuX = $state(0);
+  let ctxMenuY = $state(0);
+  let ctxMenuVisible = $state(false);
 
   const TIP_DISPLAY_TIME = 6500; // 6.5 seconds per tip
   const TIP_UPDATE_INTERVAL = 50; // Update progress bar every 50ms
@@ -320,6 +328,28 @@
     if (!hasFilePayload(e)) return;
     suppressOpenUntil = Date.now() + 500;
   }
+
+  function openPreviewContextMenu(e: MouseEvent) {
+    if (!progress.displayImage) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const items: ContextMenuItem[] = [
+      { label: locale.t("gallery.save_as"), action: () => void handleSave() },
+      { label: locale.t("gallery.copy"), action: () => void handleCopy() },
+      { label: "", action: () => {}, separator: true },
+      { label: locale.t("gallery.send_to_img2img"), action: () => void sendToImg2img() },
+      { label: locale.t("gallery.send_to_inpaint"), action: () => void sendToInpaint() },
+    ];
+    if (!progress.wasUpscaled) {
+      items.push({ label: locale.t("gallery.upscale"), action: () => void upscaleImage() });
+    }
+
+    ctxMenuItems = items;
+    ctxMenuX = e.clientX;
+    ctxMenuY = e.clientY;
+    ctxMenuVisible = true;
+  }
 </script>
 
 <div class="relative w-full aspect-square bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 flex items-center justify-center overflow-hidden group">
@@ -327,6 +357,7 @@
     <button
       class="w-full h-full cursor-pointer"
       onclick={openPreviewLightbox}
+      oncontextmenu={openPreviewContextMenu}
       ondragenter={suppressPreviewOpenOnFileDrop}
       ondragover={suppressPreviewOpenOnFileDrop}
       ondrop={suppressPreviewOpenOnFileDrop}
@@ -460,3 +491,11 @@
     </div>
   {/if}
 </div>
+
+<ContextMenu
+  items={ctxMenuItems}
+  x={ctxMenuX}
+  y={ctxMenuY}
+  visible={ctxMenuVisible}
+  onclose={() => (ctxMenuVisible = false)}
+/>
