@@ -22,6 +22,7 @@ export interface UserPrefsData {
   gallery_boards?: unknown;
   autocomplete?: unknown;
   accessibility?: unknown;
+  notes?: unknown;
   locale?: string;
   updated_at?: string;
 }

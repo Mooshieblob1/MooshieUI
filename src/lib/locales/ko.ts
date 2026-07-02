@@ -1275,6 +1275,8 @@ const ko: Record<string, string> = {
   "bottom_panel.tab.artists": "아티스트",
   "bottom_panel.tab.styles": "아티스트 스타일",
   "bottom_panel.tab.schedule": "스케줄",
+  "bottom_panel.tab.notes": "메모",
+  "bottom_panel.notes_placeholder": "여기에 메모를 작성하세요. 프롬프트 아이디어, 시도할 설정, 리마인더 등. 자동으로 저장됩니다.",
   "bottom_panel.no_favourite_artists": "갤러리에서 아티스트를 즐겨찾기에 추가하면 여기에 표시됩니다",
   "bottom_panel.no_artist_results": "검색에 일치하는 즐겨찾기 아티스트가 없습니다",
   "bottom_panel.artist_search_placeholder": "즐겨찾기 아티스트 검색...",

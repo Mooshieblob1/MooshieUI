@@ -20,6 +20,7 @@
   import ScheduleBuilder from "./ScheduleBuilder.svelte";
   import { styles as stylesStore } from "../../stores/styles.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
+  import { notes } from "../../stores/notes.svelte.js";
   import type { OutputImage } from "../../types/index.js";
   import { detectArtistsInPrompt } from "../../artist-gallery/detection.js";
 
@@ -32,7 +33,7 @@
 
   let { onupscale, oninpaint, onrefine, oncontextmenu }: Props = $props();
 
-  type TabId = "loras" | "checkpoints" | "images" | "prompts" | "compare" | "artists" | "styles" | "schedule";
+  type TabId = "loras" | "checkpoints" | "images" | "prompts" | "compare" | "artists" | "styles" | "schedule" | "notes";
 
   const TAB_KEY = "mooshieui.bottomPanel.activeTab.v1";
 
@@ -53,7 +54,7 @@
     try { localStorage.setItem(TAB_KEY, activeTab); } catch {}
   });
 
-  const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts", "artists", "styles", "schedule", "compare"];
+  const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts", "artists", "styles", "schedule", "compare", "notes"];
   const visibleTabs = $derived(
     showCheckpointsTab ? allTabs : allTabs.filter((t) => t !== "checkpoints")
   );
@@ -66,6 +67,7 @@
     artists: "bottom_panel.tab.artists",
     styles: "bottom_panel.tab.styles",
     schedule: "bottom_panel.tab.schedule",
+    notes: "bottom_panel.tab.notes",
   };
 
   // Prompt history
@@ -387,6 +389,8 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15 9 22 9.5 16.5 14.5 18.5 22 12 18 5.5 22 7.5 14.5 2 9.5 9 9 12 2"/></svg>
         {:else if tab === "schedule"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        {:else if tab === "notes"}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
         {/if}
         {locale.t(tabLabelKeys[tab])}
         {#if tab === "loras" && activeLoraCount > 0}
@@ -567,6 +571,17 @@
       {/if}
     {:else if activeTab === "compare"}
       <CompareGrid />
+    {:else if activeTab === "notes"}
+      <div class="flex flex-col h-full p-2">
+        <textarea
+          value={notes.text}
+          oninput={(e) => notes.setText((e.currentTarget as HTMLTextAreaElement).value)}
+          onblur={() => notes.flush()}
+          placeholder={locale.t('bottom_panel.notes_placeholder')}
+          spellcheck="false"
+          class="flex-1 min-h-0 w-full resize-none bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-xs leading-relaxed text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
+        ></textarea>
+      </div>
     {:else if activeTab === "styles"}
       <StyleManager />
     {:else if activeTab === "schedule"}

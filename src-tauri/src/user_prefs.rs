@@ -39,6 +39,8 @@ pub struct UserPrefs {
     pub autocomplete: Option<serde_json::Value>,
     /// Accessibility settings (vision simulator, info tips).
     pub accessibility: Option<serde_json::Value>,
+    /// Freeform user notes (bottom panel Notes tab).
+    pub notes: Option<serde_json::Value>,
     /// UI locale string (e.g. `"en"`, `"ja"`).
     pub locale: Option<serde_json::Value>,
     /// ISO 8601 timestamp of the last update (set by the server, not the client).

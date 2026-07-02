@@ -1109,6 +1109,8 @@ const en: Record<string, string> = {
   "bottom_panel.tab.artists": "Artists",
   "bottom_panel.tab.styles": "Artist Styles",
   "bottom_panel.tab.schedule": "Scheduling",
+  "bottom_panel.tab.notes": "Notes",
+  "bottom_panel.notes_placeholder": "Write notes here — prompt ideas, parameter tweaks, things to try. Saved automatically.",
   "bottom_panel.no_favourite_artists": "Favourite an artist from the Artist Gallery or prompt and they'll appear here",
   "bottom_panel.no_artist_results": "No favourited artists match your search",
   "bottom_panel.artist_search_placeholder": "Search favourited artists...",

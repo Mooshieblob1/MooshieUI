@@ -1109,6 +1109,8 @@ const pl: Record<string, string> = {
   "bottom_panel.tab.artists": "Artyści",
   "bottom_panel.tab.styles": "Style artystyczne",
   "bottom_panel.tab.schedule": "Harmonogramowanie",
+  "bottom_panel.tab.notes": "Notatki",
+  "bottom_panel.notes_placeholder": "Zapisuj tutaj notatki — pomysły na prompty, ustawienia do wypróbowania, przypomnienia. Zapisywane automatycznie.",
   "bottom_panel.no_favourite_artists": "Dodaj artystę do ulubionych z galerii artystów lub promptu, a pojawi się tutaj",
   "bottom_panel.no_artist_results": "Żaden ulubiony artysta nie pasuje do wyszukiwania",
   "bottom_panel.artist_search_placeholder": "Szukaj ulubionych artystów...",

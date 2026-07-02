@@ -1331,6 +1331,8 @@ const es: Record<string, string> = {
   "bottom_panel.tab.artists": "Artistas",
   "bottom_panel.tab.styles": "Estilos de artista",
   "bottom_panel.tab.schedule": "Programación",
+  "bottom_panel.tab.notes": "Notas",
+  "bottom_panel.notes_placeholder": "Escribe notas aquí: ideas de prompts, ajustes de parámetros, cosas por probar. Se guardan automáticamente.",
   "bottom_panel.no_favourite_artists": "Marca un artista como favorito en la galería para verlo aquí",
   "bottom_panel.no_artist_results": "Ningún artista favorito coincide con la búsqueda",
   "bottom_panel.artist_search_placeholder": "Buscar artistas favoritos...",

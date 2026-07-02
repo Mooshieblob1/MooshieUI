@@ -24,6 +24,7 @@ import { gallery } from "./gallery.svelte.js";
 import { accessibility } from "./accessibility.svelte.js";
 import { locale } from "./locale.svelte.js";
 import { autocomplete } from "./autocomplete.svelte.js";
+import { notes } from "./notes.svelte.js";
 
 class PrefsSyncStore {
   private _syncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -46,6 +47,7 @@ class PrefsSyncStore {
       gallery_boards: gallery.collectPrefs(),
       autocomplete: autocomplete.collectPrefs(),
       accessibility: accessibility.collectPrefs(),
+      notes: notes.collectPrefs(),
       locale: locale.current,
     };
   }
@@ -78,6 +80,9 @@ class PrefsSyncStore {
     }
     if (prefs.accessibility) {
       accessibility.applyServerPrefs(prefs.accessibility);
+    }
+    if (prefs.notes) {
+      notes.applyServerPrefs(prefs.notes);
     }
     if (typeof prefs.locale === "string") {
       locale.applyServerPrefs(prefs.locale);

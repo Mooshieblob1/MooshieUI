@@ -1275,6 +1275,8 @@ const it: Record<string, string> = {
   "bottom_panel.tab.artists": "Artisti",
   "bottom_panel.tab.styles": "Stili artista",
   "bottom_panel.tab.schedule": "Pianificazione",
+  "bottom_panel.tab.notes": "Note",
+  "bottom_panel.notes_placeholder": "Scrivi qui le tue note: idee per i prompt, parametri da provare, promemoria. Salvate automaticamente.",
   "bottom_panel.no_favourite_artists": "Aggiungi un artista ai preferiti dalla galleria per vederlo qui",
   "bottom_panel.no_artist_results": "Nessun artista preferito corrisponde alla ricerca",
   "bottom_panel.artist_search_placeholder": "Cerca artisti preferiti...",

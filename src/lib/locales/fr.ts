@@ -1300,6 +1300,8 @@ const fr: Record<string, string> = {
   "bottom_panel.tab.artists": "Artistes",
   "bottom_panel.tab.styles": "Styles d'artiste",
   "bottom_panel.tab.schedule": "Planification",
+  "bottom_panel.tab.notes": "Notes",
+  "bottom_panel.notes_placeholder": "Écrivez vos notes ici : idées de prompts, réglages à tester, rappels. Enregistrées automatiquement.",
   "bottom_panel.no_favourite_artists": "Mets un artiste en favori depuis la galerie pour le voir ici",
   "bottom_panel.no_artist_results": "Aucun artiste favori ne correspond à la recherche",
   "bottom_panel.artist_search_placeholder": "Rechercher des artistes favoris...",

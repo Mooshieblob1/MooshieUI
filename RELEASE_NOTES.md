@@ -1,3 +1,13 @@
+## What's New in v1.4.32
+
+### Notes
+- **Notes tab in the bottom panel**: a new Notes tab gives you a freeform scratchpad for prompt ideas, parameter tweaks, and things to try. Notes save automatically as you type, persist between sessions, and in browser/LAN mode they sync to your user profile so they follow you across devices.
+
+### Prompt assistant
+- **External API URLs work without the /v1 suffix**: pointing the prompt assistant at an OpenAI-compatible server no longer fails with "External LLM returned 404" when the base URL omits the version path (for example a bare Ollama URL like http://localhost:11434). The app now retries at /v1/chat/completions automatically, accepts a fully pasted .../chat/completions endpoint, and when a 404 still occurs the error message explains what to check.
+
+---
+
 ## What's New in v1.4.31
 
 ### Languages

@@ -1275,6 +1275,8 @@ const ru: Record<string, string> = {
   "bottom_panel.tab.artists": "Художники",
   "bottom_panel.tab.styles": "Стили художников",
   "bottom_panel.tab.schedule": "Расписание",
+  "bottom_panel.tab.notes": "Заметки",
+  "bottom_panel.notes_placeholder": "Записывайте здесь заметки: идеи промптов, настройки для проверки, напоминания. Сохраняются автоматически.",
   "bottom_panel.no_favourite_artists": "Добавьте художника в избранное в галерее, чтобы он появился здесь",
   "bottom_panel.no_artist_results": "Нет избранных художников, соответствующих поиску",
   "bottom_panel.artist_search_placeholder": "Поиск избранных художников...",

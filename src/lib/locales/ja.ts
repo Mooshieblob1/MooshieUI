@@ -1300,6 +1300,8 @@ const ja: Record<string, string> = {
   "bottom_panel.tab.artists": "アーティスト",
   "bottom_panel.tab.styles": "アーティストスタイル",
   "bottom_panel.tab.schedule": "スケジューリング",
+  "bottom_panel.tab.notes": "メモ",
+  "bottom_panel.notes_placeholder": "ここにメモを書けます。プロンプトのアイデア、試したい設定、リマインダーなど。自動的に保存されます。",
   "bottom_panel.no_favourite_artists": "ギャラリーでアーティストをお気に入りに追加するとここに表示されます",
   "bottom_panel.no_artist_results": "検索に一致するお気に入りアーティストはいません",
   "bottom_panel.artist_search_placeholder": "お気に入りアーティストを検索...",

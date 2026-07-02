@@ -1316,6 +1316,8 @@ const zh: Record<string, string> = {
   "bottom_panel.tab.artists": "艺术家",
   "bottom_panel.tab.styles": "画师风格",
   "bottom_panel.tab.schedule": "调度",
+  "bottom_panel.tab.notes": "笔记",
+  "bottom_panel.notes_placeholder": "在这里记笔记：提示词灵感、想尝试的设置、备忘事项。自动保存。",
   "bottom_panel.no_favourite_artists": "在画廊中收藏艺术家，即可在此处查看",
   "bottom_panel.no_artist_results": "没有符合搜索条件的收藏艺术家",
   "bottom_panel.artist_search_placeholder": "搜索收藏的艺术家...",

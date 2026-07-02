@@ -387,10 +387,52 @@ impl Drop for InflightGuard<'_> {
     }
 }
 
+/// Build the candidate chat-completions URLs for a user-configured base URL.
+///
+/// The primary candidate is `{base}/chat/completions` (or the base itself when
+/// the user pasted the full endpoint URL). Bases without a trailing version
+/// segment (e.g. a bare Ollama `http://host:11434`) serve the OpenAI-compatible
+/// API under `/v1`, so `{base}/v1/chat/completions` is offered as a 404 fallback.
+fn external_chat_urls(base_url: &str) -> Vec<String> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.ends_with("/chat/completions") {
+        return vec![base.to_string()];
+    }
+    let mut urls = vec![format!("{base}/chat/completions")];
+    let last_segment = base.rsplit('/').next().unwrap_or("");
+    let versioned = last_segment.len() >= 2
+        && last_segment.starts_with('v')
+        && last_segment[1..].chars().all(|c| c.is_ascii_digit());
+    if !versioned {
+        urls.push(format!("{base}/v1/chat/completions"));
+    }
+    urls
+}
+
+async fn send_external_chat(
+    client: &reqwest::Client,
+    url: &str,
+    api_key: &str,
+    body: &serde_json::Value,
+) -> Result<reqwest::Response, AppError> {
+    let mut req = client
+        .post(url)
+        .json(body)
+        .timeout(Duration::from_secs(120));
+    if !api_key.is_empty() {
+        req = req.bearer_auth(api_key);
+    }
+    req.send()
+        .await
+        .map_err(|e| AppError::LlmError(format!("External LLM request failed: {e}")))
+}
+
 /// Send a chat completion to an external OpenAI-compatible endpoint (LM Studio,
-/// OpenAI, OpenRouter, ...) instead of the bundled local llama-server. `base_url`
-/// is the API root (e.g. `http://localhost:1234/v1` or `https://api.openai.com/v1`);
-/// `/chat/completions` is appended. Bearer auth is added when `api_key` is non-empty.
+/// OpenAI, OpenRouter, Ollama, ...) instead of the bundled local llama-server.
+/// `base_url` is the API root (e.g. `http://localhost:1234/v1` or
+/// `https://api.openai.com/v1`); `/chat/completions` is appended. Base URLs
+/// entered without the `/v1` segment are retried at `/v1/chat/completions` on
+/// 404. Bearer auth is added when `api_key` is non-empty.
 pub async fn chat_external(
     client: &reqwest::Client,
     base_url: &str,
@@ -400,7 +442,6 @@ pub async fn chat_external(
     user: &str,
     max_tokens: u32,
 ) -> Result<String, AppError> {
-    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let body = json!({
         "model": model,
         "messages": [
@@ -411,17 +452,16 @@ pub async fn chat_external(
         "max_tokens": max_tokens,
         "stream": false
     });
-    let mut req = client
-        .post(&url)
-        .json(&body)
-        .timeout(Duration::from_secs(120));
-    if !api_key.is_empty() {
-        req = req.bearer_auth(api_key);
+    let urls = external_chat_urls(base_url);
+    let mut resp = send_external_chat(client, &urls[0], api_key, &body).await?;
+    if resp.status().as_u16() == 404 && urls.len() > 1 {
+        log::info!(
+            "[prompt-assistant] {} returned 404, retrying at {}",
+            urls[0],
+            urls[1]
+        );
+        resp = send_external_chat(client, &urls[1], api_key, &body).await?;
     }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| AppError::LlmError(format!("External LLM request failed: {e}")))?;
     if !resp.status().is_success() {
         let status = resp.status();
         let detail: String = resp
@@ -431,8 +471,13 @@ pub async fn chat_external(
             .chars()
             .take(300)
             .collect();
+        let hint = if status.as_u16() == 404 {
+            " (check that the base URL is an OpenAI-compatible API root, e.g. http://localhost:11434/v1)"
+        } else {
+            ""
+        };
         return Err(AppError::LlmError(format!(
-            "External LLM returned {status}: {detail}"
+            "External LLM returned {status}: {detail}{hint}"
         )));
     }
     let v: serde_json::Value = resp
