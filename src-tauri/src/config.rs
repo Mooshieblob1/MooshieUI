@@ -159,6 +159,10 @@ pub struct AppConfig {
     /// External LLM model name (e.g. `gpt-4o-mini`, or the model id LM Studio exposes).
     #[serde(default)]
     pub llm_external_model: String,
+    /// Optional report proxy endpoint (Cloudflare Tunnel URL). When set, in-app
+    /// error reports POST here instead of opening a prefilled GitHub issue.
+    #[serde(default)]
+    pub report_endpoint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -221,6 +225,7 @@ impl Default for AppConfig {
             llm_external_base_url: String::new(),
             llm_external_api_key: String::new(),
             llm_external_model: String::new(),
+            report_endpoint: None,
         }
     }
 }

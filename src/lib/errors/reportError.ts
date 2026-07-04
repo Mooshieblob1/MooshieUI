@@ -113,12 +113,23 @@ async function activeSink(): Promise<{ sink: ReportSink; usesLogs: boolean }> {
   return { sink: new PrefilledIssueSink(), usesLogs: false };
 }
 
-/** Report a resolved error via the active sink. */
+/** Report a resolved error via the active sink, falling back to a prefilled issue. */
 export async function reportError(
   error: FriendlyError,
   userNote?: string,
 ): Promise<{ issueUrl?: string }> {
   const { sink, usesLogs } = await activeSink();
   const payload = await buildReportPayload(error, userNote, usesLogs);
-  return sink.submit(payload);
+  try {
+    return await sink.submit(payload);
+  } catch (err) {
+    if (sink instanceof ProxySink) {
+      // Proxy unreachable or failed; fall back to a prefilled GitHub issue so the
+      // report is never lost. The prefilled sink does not use logsTail.
+      const fallback = new PrefilledIssueSink();
+      const fallbackPayload = await buildReportPayload(error, userNote, false);
+      return fallback.submit(fallbackPayload);
+    }
+    throw err;
+  }
 }
