@@ -1,5 +1,15 @@
 # Changelog
 
+## What's New in v1.4.37
+
+### Hires Fix and upscaling
+- **Optional target scale cap**: Hires Fix and model-based upscale now have an opt-in toggle to cap the output scale (e.g. 1.5x, 2x) instead of always upscaling to the upscale model's native factor. Leaves existing behavior unchanged unless you turn it on, so large models like RealESRGAN_x4plus no longer force a full 4x pass when you only want a smaller bump.
+
+### Model Manager
+- **Folder-grouped LoRAs and models**: the Model Manager can now group LoRAs and checkpoints by the folders they're stored in instead of a single flat, sorted list. Create folders, move models into them, and toggle between list and tree view, so large collections mirror your actual folder structure instead of just being alphabetized.
+
+---
+
 ## What's New in v1.4.36
 
 ### Error reporting
