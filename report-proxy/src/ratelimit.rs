@@ -9,7 +9,10 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     pub fn new(limit: u32) -> Self {
-        Self { limit, windows: Mutex::new(HashMap::new()) }
+        Self {
+            limit,
+            windows: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Returns true if the request is allowed, false if the key is over its limit.

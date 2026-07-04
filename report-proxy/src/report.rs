@@ -63,7 +63,7 @@ pub async fn report_handler(
     match state.github.find_open_by_sig(&sig).await {
         Ok(Some(existing)) => {
             let note = format!(
-                "Seen again from another user. App version {}, OS {}, arch {}.",
+                "Seen again from another user. App version `{}`, OS `{}`, arch `{}`.",
                 payload.app_version, payload.os, payload.arch
             );
             let _ = state.github.comment_on(existing.number, &note).await;

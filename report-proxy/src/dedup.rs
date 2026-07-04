@@ -60,8 +60,14 @@ mod tests {
 
     #[test]
     fn signature_is_stable_across_varying_numbers() {
-        let a = signature("out_of_memory", "CUDA OOM: tried to allocate 2048 MB at 0x7ff");
-        let b = signature("out_of_memory", "CUDA OOM: tried to allocate 512 MB at 0x1ab");
+        let a = signature(
+            "out_of_memory",
+            "CUDA OOM: tried to allocate 2048 MB at 0x7ff",
+        );
+        let b = signature(
+            "out_of_memory",
+            "CUDA OOM: tried to allocate 512 MB at 0x1ab",
+        );
         assert_eq!(a, b, "digit/hex differences must not change the signature");
     }
 

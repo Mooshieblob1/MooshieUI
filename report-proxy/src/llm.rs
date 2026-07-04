@@ -28,8 +28,9 @@ likely problem and the most probable cause. Do not restate the logs verbatim.\n\
     }
     ctx.push_str(&format!("Raw error: {raw_message}\n"));
     if let Some(logs) = logs_tail {
-        let tail: String = if logs.chars().count() > MAX_LOG_CHARS {
-            logs.chars().skip(logs.chars().count() - MAX_LOG_CHARS).collect()
+        let char_count = logs.chars().count();
+        let tail: String = if char_count > MAX_LOG_CHARS {
+            logs.chars().skip(char_count - MAX_LOG_CHARS).collect()
         } else {
             logs.to_string()
         };

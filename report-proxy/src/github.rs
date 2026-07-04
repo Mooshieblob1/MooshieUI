@@ -8,7 +8,11 @@ fn truncate_chars(s: &str, max: usize) -> String {
 }
 
 pub fn issue_title(error_code: &str, raw_message: &str) -> String {
-    format!("[in-app] {}: {}", error_code, truncate_chars(raw_message, 80))
+    format!(
+        "[in-app] {}: {}",
+        error_code,
+        truncate_chars(raw_message, 80)
+    )
 }
 
 pub fn issue_body(payload: &ReportPayload, sig: &str, summary: Option<&str>) -> String {
@@ -37,9 +41,9 @@ pub fn issue_body(payload: &ReportPayload, sig: &str, summary: Option<&str>) -> 
     lines.push("```".to_string());
     lines.push(String::new());
     lines.push("### Environment".to_string());
-    lines.push(format!("- App version: {}", payload.app_version));
-    lines.push(format!("- OS: {}", payload.os));
-    lines.push(format!("- Arch: {}", payload.arch));
+    lines.push(format!("- App version: `{}`", payload.app_version));
+    lines.push(format!("- OS: `{}`", payload.os));
+    lines.push(format!("- Arch: `{}`", payload.arch));
     lines.push(format!("- Mode: {}", payload.mode));
     lines.push(format!("- Error code: {}", payload.error_code));
     lines.push(format!("- When: {}", payload.timestamp));
@@ -70,7 +74,11 @@ pub struct GithubClient {
 
 impl GithubClient {
     pub fn new(client: reqwest::Client, token: String, repo: String) -> Self {
-        Self { client, token, repo }
+        Self {
+            client,
+            token,
+            repo,
+        }
     }
 
     fn ua() -> &'static str {
@@ -99,6 +107,7 @@ impl GithubClient {
             .json()
             .await
             .map_err(|e| format!("github list decode failed: {e}"))?;
+        let page_len = issues.len();
         for issue in issues {
             let body = issue.get("body").and_then(|b| b.as_str()).unwrap_or("");
             if crate::dedup::body_has_marker(body, sig) {
@@ -108,8 +117,20 @@ impl GithubClient {
                     .and_then(|u| u.as_str())
                     .unwrap_or("")
                     .to_string();
+                if html_url.is_empty() {
+                    // Defensive: GitHub should never return an empty html_url, but
+                    // if it does, treat this as no usable match so a fresh issue is
+                    // created rather than returning {"issueUrl":""}.
+                    continue;
+                }
                 return Ok(Some(ExistingIssue { number, html_url }));
             }
+        }
+        if page_len == 100 {
+            tracing::warn!(
+                "dedup only scanned the first 100 open in-app-report issues; \
+                 a duplicate may be created if the matching issue is beyond page 1"
+            );
         }
         Ok(None)
     }
@@ -205,7 +226,7 @@ mod tests {
         assert!(body.contains("A summary."));
         assert!(body.contains("was generating a batch"));
         assert!(body.contains("CUDA out of memory"));
-        assert!(body.contains("- App version: 1.4.35"));
+        assert!(body.contains("- App version: `1.4.35`"));
         assert!(body.contains("<!-- mooshie-sig: abc123def456aaaa -->"));
     }
 
