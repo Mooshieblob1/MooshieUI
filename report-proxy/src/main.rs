@@ -2,6 +2,7 @@ mod types;
 mod dedup;
 mod catalog;
 mod github;
+mod llm;
 
 use axum::{routing::get, Router};
 use types::Config;
