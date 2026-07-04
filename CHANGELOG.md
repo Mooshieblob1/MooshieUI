@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v1.4.36
+
+### Error reporting
+- **One-click bug reports that file a real issue**: when something goes wrong, the in-app "report this" action now sends the report to a hosted service that opens a GitHub issue for you and hands back the link, no GitHub account or sign-in required. Reports arrive already labeled and enriched with your app version, OS, and error details, and identical repeats are folded into the existing issue instead of piling up duplicates. If the service is ever unreachable, the app falls back to the previous behavior of opening a prefilled issue in your browser, so a report is never lost. No error text or credentials are sent anywhere unless you choose to submit a report.
+
+---
+
 ## What's New in v1.4.35
 
 ### Diagnostics
