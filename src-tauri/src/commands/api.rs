@@ -4985,10 +4985,308 @@ pub async fn export_logs(
     Ok(())
 }
 
-/// Build the full diagnostic log text (config, GPU, Python/ComfyUI versions,
-/// ComfyUI + llama-server logs, Rust/frontend ring buffers). Shared by the
-/// desktop `export_logs` command (which writes it to a file) and the
-/// browser/server-mode handler (which returns it for a client-side download).
+/// Shallow-recursive walk collecting managed model files (`.safetensors`,
+/// `.gguf`, ...) under `base`, recording each file's path relative to `base` and
+/// its size in bytes. Deduped by absolute path so a file surfaced through more
+/// than one category subdir is counted once. Depth-capped to avoid pathological
+/// trees or symlink loops (Docker symlinks `models` to `/data/models`).
+#[cfg(any(feature = "desktop", feature = "server"))]
+fn collect_managed_models(
+    base: &std::path::Path,
+    dir: &std::path::Path,
+    depth: usize,
+    out: &mut Vec<(String, u64)>,
+    seen: &mut BTreeSet<String>,
+) {
+    if depth > 6 {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_managed_models(base, &path, depth + 1, out, seen);
+        } else if is_managed_model_file(&path) {
+            let key = path.to_string_lossy().to_lowercase();
+            if !seen.insert(key) {
+                continue;
+            }
+            let rel = path.strip_prefix(base).unwrap_or(&path);
+            let name = rel.to_string_lossy().replace('\\', "/");
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            out.push((name, size));
+        }
+    }
+}
+
+/// Append an inventory of installed models per category to the diagnostic log,
+/// so a bug report shows which checkpoints/LoRAs/etc. the user was running.
+/// Records file names and sizes only (never contents) and caps the list per
+/// category to keep the log bounded for large libraries.
+#[cfg(any(feature = "desktop", feature = "server"))]
+fn append_models_section(output: &mut String, comfyui_path: &str, extra_model_paths: Option<&str>) {
+    use std::fmt::Write;
+
+    const CATEGORIES: &[&str] = &[
+        "checkpoints",
+        "loras",
+        "vae",
+        "upscale_models",
+        "embeddings",
+        "controlnet",
+        "clip",
+        "unet",
+        "diffusion_models",
+        "text_encoders",
+        "ultralytics",
+    ];
+    const MAX_FILES_PER_CATEGORY: usize = 200;
+
+    let _ = writeln!(output, "=== Installed Models ===");
+    let mut any = false;
+
+    for category in CATEGORIES {
+        let dirs = match model_install_dirs_for_config(comfyui_path, extra_model_paths, category) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        let mut files: Vec<(String, u64)> = Vec::new();
+        let mut seen = BTreeSet::new();
+        for dir in &dirs {
+            let base = std::path::Path::new(&dir.path);
+            collect_managed_models(base, base, 0, &mut files, &mut seen);
+        }
+
+        if files.is_empty() {
+            continue;
+        }
+        any = true;
+
+        files.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        let total = files.len();
+        let total_mb: u64 = files.iter().map(|(_, s)| *s).sum::<u64>() / 1024 / 1024;
+        let _ = writeln!(
+            output,
+            "{} ({} file{}, {} MB):",
+            category,
+            total,
+            if total == 1 { "" } else { "s" },
+            total_mb
+        );
+        for (name, size) in files.iter().take(MAX_FILES_PER_CATEGORY) {
+            let _ = writeln!(output, "  {} ({} MB)", name, size / 1024 / 1024);
+        }
+        if total > MAX_FILES_PER_CATEGORY {
+            let _ = writeln!(output, "  ... and {} more", total - MAX_FILES_PER_CATEGORY);
+        }
+    }
+
+    if !any {
+        let _ = writeln!(output, "(no models found)");
+    }
+    let _ = writeln!(output);
+}
+
+/// Append mounted-disk capacity (total/available) to the diagnostic log so a
+/// "failed to save / out of space" report shows the actual free space on the
+/// volumes holding ComfyUI, models, and the gallery. Non-invasive: mount points
+/// and free space only, no file listings.
+#[cfg(any(feature = "desktop", feature = "server"))]
+fn append_disks_section(output: &mut String) {
+    use std::fmt::Write;
+    use sysinfo::Disks;
+
+    let _ = writeln!(output, "=== Disks ===");
+    let disks = Disks::new_with_refreshed_list();
+    if disks.is_empty() {
+        let _ = writeln!(output, "(no disks reported)");
+    } else {
+        let gb = |bytes: u64| bytes as f64 / 1024.0 / 1024.0 / 1024.0;
+        for disk in &disks {
+            let _ = writeln!(
+                output,
+                "{} [{}]: {:.1} GB free of {:.1} GB",
+                disk.mount_point().display(),
+                disk.file_system().to_string_lossy(),
+                gb(disk.available_space()),
+                gb(disk.total_space()),
+            );
+        }
+    }
+    let _ = writeln!(output);
+}
+
+/// Resolve a git checkout's short commit hash by reading `.git` directly (no
+/// subprocess), so custom-node versions can be reported without spawning one
+/// `git` per node. Returns `None` for non-git folders or unreadable refs.
+#[cfg(any(feature = "desktop", feature = "server"))]
+fn read_git_short_rev(repo: &std::path::Path) -> Option<String> {
+    let git_dir = repo.join(".git");
+    if !git_dir.is_dir() {
+        return None;
+    }
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    let short = |sha: &str| sha.trim().chars().take(9).collect::<String>();
+    match head.strip_prefix("ref: ") {
+        Some(ref_path) => {
+            if let Ok(sha) = std::fs::read_to_string(git_dir.join(ref_path)) {
+                return Some(short(&sha));
+            }
+            // Packed-refs fallback for repos that have gc'd loose refs.
+            let packed = std::fs::read_to_string(git_dir.join("packed-refs")).ok()?;
+            packed.lines().find_map(|line| {
+                line.split_once(' ')
+                    .filter(|(_, name)| name.trim() == ref_path)
+                    .map(|(sha, _)| short(sha))
+            })
+        }
+        // Detached HEAD stores the sha directly.
+        None => Some(short(head)),
+    }
+}
+
+/// Append the installed ComfyUI custom nodes (the single biggest source of
+/// ComfyUI breakage) — folder name, git short-rev when available, and disabled
+/// state. Names only, no contents; capped for large installs.
+#[cfg(any(feature = "desktop", feature = "server"))]
+fn append_custom_nodes_section(output: &mut String, comfyui_path: &str) {
+    use std::fmt::Write;
+
+    let _ = writeln!(output, "=== Custom Nodes ===");
+    if comfyui_path.is_empty() {
+        let _ = writeln!(output, "(ComfyUI path not configured)");
+        let _ = writeln!(output);
+        return;
+    }
+
+    let dir = std::path::Path::new(comfyui_path).join("custom_nodes");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) => {
+            let _ = writeln!(output, "(could not read {}: {})", dir.display(), e);
+            let _ = writeln!(output);
+            return;
+        }
+    };
+
+    let mut nodes: Vec<(String, Option<String>)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        // Skip Python bytecode cache; keep .disabled so we can flag it.
+        if name == "__pycache__" {
+            continue;
+        }
+        nodes.push((name, read_git_short_rev(&path)));
+    }
+
+    if nodes.is_empty() {
+        let _ = writeln!(output, "(none installed)");
+    } else {
+        nodes.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        let total = nodes.len();
+        let _ = writeln!(output, "{} installed:", total);
+        const MAX_NODES: usize = 300;
+        for (name, rev) in nodes.iter().take(MAX_NODES) {
+            let disabled = name.ends_with(".disabled");
+            let _ = writeln!(
+                output,
+                "  {}{}{}",
+                name,
+                rev.as_deref()
+                    .map(|r| format!(" @ {}", r))
+                    .unwrap_or_default(),
+                if disabled { " (disabled)" } else { "" }
+            );
+        }
+        if total > MAX_NODES {
+            let _ = writeln!(output, "  ... and {} more", total - MAX_NODES);
+        }
+    }
+    let _ = writeln!(output);
+}
+
+/// Append an allowlisted set of GPU/ML-relevant environment variables. Only
+/// variables known to affect ComfyUI/PyTorch behaviour are read, so no secrets
+/// or unrelated environment leak into the log.
+#[cfg(any(feature = "desktop", feature = "server"))]
+fn append_env_section(output: &mut String) {
+    use std::fmt::Write;
+
+    // Allowlist: device selection, allocator tuning, ROCm overrides, HF cache,
+    // proxies (host only), and ComfyUI arg passthrough. No API keys or tokens.
+    const VARS: &[&str] = &[
+        "CUDA_VISIBLE_DEVICES",
+        "HIP_VISIBLE_DEVICES",
+        "ROCR_VISIBLE_DEVICES",
+        "HSA_OVERRIDE_GFX_VERSION",
+        "PYTORCH_CUDA_ALLOC_CONF",
+        "PYTORCH_HIP_ALLOC_CONF",
+        "PYTORCH_ENABLE_MPS_FALLBACK",
+        "HF_HOME",
+        "HF_HUB_OFFLINE",
+        "HF_HUB_ENABLE_HF_TRANSFER",
+        "COMMANDLINE_ARGS",
+        "MOOSHIEUI_LLAMA_BIN_DIR",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+    ];
+
+    let mut found = false;
+    let mut section = String::new();
+    for var in VARS {
+        if let Ok(val) = std::env::var(var) {
+            if val.is_empty() {
+                continue;
+            }
+            found = true;
+            // Proxy vars can embed credentials (user:pass@host); redact them.
+            let shown = if var.ends_with("PROXY") {
+                redact_proxy_credentials(&val)
+            } else {
+                val
+            };
+            let _ = writeln!(section, "{}={}", var, shown);
+        }
+    }
+
+    let _ = writeln!(output, "=== Environment (relevant) ===");
+    if found {
+        let _ = write!(output, "{}", section);
+    } else {
+        let _ = writeln!(output, "(none of the tracked variables are set)");
+    }
+    let _ = writeln!(output);
+}
+
+/// Redact any `user:pass@` credentials from a proxy URL so the log never carries
+/// proxy secrets while still showing the host being used.
+#[cfg(any(feature = "desktop", feature = "server"))]
+fn redact_proxy_credentials(url: &str) -> String {
+    match (url.find("://"), url.find('@')) {
+        (Some(scheme_end), Some(at)) if at > scheme_end + 3 => {
+            format!("{}://***@{}", &url[..scheme_end], &url[at + 1..])
+        }
+        _ => url.to_string(),
+    }
+}
+
+/// Build the full diagnostic log text (versions, system, disks, config, models,
+/// GPU, custom nodes, Python/ComfyUI, prompt-assistant, runtime, and the
+/// ComfyUI/llama-server/Rust/frontend logs). Shared by the desktop `export_logs`
+/// command (which writes it to a file) and the browser/server-mode handler
+/// (which returns it for a client-side download).
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<String>>) -> String {
     use std::fmt::Write;
@@ -5008,13 +5306,81 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
         .unwrap_or_default()
         .as_secs();
     let _ = writeln!(output, "Exported: {} (unix timestamp)", now);
+    let _ = writeln!(output, "MooshieUI: {}", env!("CARGO_PKG_VERSION"));
     let _ = writeln!(
         output,
-        "OS: {} {}",
-        std::env::consts::OS,
-        std::env::consts::ARCH
+        "Build: {} / {}",
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        },
+        if cfg!(feature = "server") {
+            "server"
+        } else {
+            "desktop"
+        }
     );
     let _ = writeln!(output);
+
+    // System specs (OS, CPU, memory) — collected via `sysinfo` so bug reports
+    // carry the hardware/OS context needed to reproduce driver- or VRAM-related
+    // issues without a back-and-forth.
+    {
+        use sysinfo::System;
+
+        let _ = writeln!(output, "=== System ===");
+        let _ = writeln!(
+            output,
+            "OS: {} {} (kernel {})",
+            System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
+            System::os_version().unwrap_or_else(|| "unknown".into()),
+            System::kernel_version().unwrap_or_else(|| "unknown".into()),
+        );
+        if let Some(long) = System::long_os_version() {
+            let _ = writeln!(output, "OS (full): {}", long);
+        }
+        let _ = writeln!(output, "Arch: {}", std::env::consts::ARCH);
+        if let Some(host) = System::host_name() {
+            let _ = writeln!(output, "Host: {}", host);
+        }
+
+        let mut sys = System::new();
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
+
+        if let Some(cpu) = sys.cpus().first() {
+            let brand = cpu.brand().trim();
+            let _ = writeln!(
+                output,
+                "CPU: {} ({} logical cores{})",
+                if brand.is_empty() { "unknown" } else { brand },
+                sys.cpus().len(),
+                match System::physical_core_count() {
+                    Some(n) => format!(", {} physical", n),
+                    None => String::new(),
+                }
+            );
+        }
+
+        let mb = |bytes: u64| bytes / 1024 / 1024;
+        let _ = writeln!(
+            output,
+            "Memory: {} MB total, {} MB available",
+            mb(sys.total_memory()),
+            mb(sys.available_memory())
+        );
+        if sys.total_swap() > 0 {
+            let _ = writeln!(output, "Swap: {} MB total", mb(sys.total_swap()));
+        }
+        let _ = writeln!(output);
+    }
+
+    // Disk capacity (out-of-space is a common save/generation failure)
+    append_disks_section(&mut output);
+
+    // Presence flag for secret-bearing fields — never log the value itself.
+    let cfgd = |s: &str| if s.is_empty() { "no" } else { "yes" };
 
     // App config (sanitized — no secrets, just relevant settings)
     {
@@ -5033,28 +5399,227 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
         let _ = writeln!(output, "Server URL: {}", config.server_url);
         let _ = writeln!(output, "Server port: {}", config.server_port);
         let _ = writeln!(output, "VRAM mode: {}", config.vram_mode);
+        let _ = writeln!(output, "Attention backend: {}", config.attention_backend);
         let _ = writeln!(output, "Keep alive: {}", config.keep_alive);
         let _ = writeln!(output, "Auto start: {}", config.auto_start);
         let _ = writeln!(output, "Extra args: {:?}", config.extra_args);
         let _ = writeln!(output, "ComfyUI path: {}", config.comfyui_path);
+        let cv = crate::comfyui_version::comfyui_version_info(std::path::Path::new(
+            &config.comfyui_path,
+        ));
+        let _ = writeln!(
+            output,
+            "ComfyUI version: {} (target {}{})",
+            cv.installed.as_deref().unwrap_or("unknown"),
+            cv.target,
+            if cv.update_available {
+                ", update available"
+            } else {
+                ""
+            }
+        );
         let _ = writeln!(output, "Venv path: {}", config.venv_path);
         let _ = writeln!(
             output,
             "Extra model paths: {}",
             config.extra_model_paths.as_deref().unwrap_or("(none)")
         );
+        let _ = writeln!(
+            output,
+            "Gallery path: {}",
+            config.gallery_path.as_deref().unwrap_or("(default)")
+        );
+        let _ = writeln!(
+            output,
+            "App data dir: {}",
+            crate::config::app_data_dir()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "(unknown)".into())
+        );
+
+        // Multi-GPU workers
+        if config.gpu_workers.is_empty() {
+            let _ = writeln!(output, "GPU workers: single-worker (default)");
+        } else {
+            let _ = writeln!(output, "GPU workers: {}", config.gpu_workers.len());
+            for w in &config.gpu_workers {
+                let _ = writeln!(
+                    output,
+                    "  GPU {} -> port {} (vram {})",
+                    w.gpu_index,
+                    w.port
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "auto".into()),
+                    w.vram_mode.as_deref().unwrap_or("default"),
+                );
+            }
+        }
+
+        // Default generation parameters
+        let _ = writeln!(
+            output,
+            "Defaults: checkpoint={}, sampler={}, scheduler={}, steps={}, cfg={}, {}x{}",
+            config.default_checkpoint.as_deref().unwrap_or("(none)"),
+            config.default_sampler,
+            config.default_scheduler,
+            config.default_steps,
+            config.default_cfg,
+            config.default_width,
+            config.default_height,
+        );
+        let _ = writeln!(
+            output,
+            "Interrogator thresholds: general={}, character={}",
+            config.interrogator_general_threshold, config.interrogator_character_threshold
+        );
+
+        // UI
+        let _ = writeln!(
+            output,
+            "UI: theme={}, palette={}, font_scale={}, custom_profile={}",
+            config.theme,
+            config.theme_palette,
+            config.font_scale,
+            config.theme_profile_id.as_deref().unwrap_or("(none)")
+        );
+
+        // Networking / browser mode
+        let _ = writeln!(
+            output,
+            "Browser mode: enabled={}, ui_port={}, lan={}, tls_cert={}, tls_key={}",
+            config.browser_mode,
+            config.ui_server_port,
+            config.lan_enabled,
+            cfgd(config.tls_cert_path.as_deref().unwrap_or("")),
+            cfgd(config.tls_key_path.as_deref().unwrap_or("")),
+        );
+        let _ = writeln!(
+            output,
+            "Network proxy: {}, pip index: {}",
+            cfgd(config.network_proxy.as_deref().unwrap_or("")),
+            cfgd(config.pip_index_url.as_deref().unwrap_or("")),
+        );
+
+        // Integrations (presence only for anything secret-bearing)
+        let _ = writeln!(
+            output,
+            "CivitAI API key: {}",
+            cfgd(config.civitai_api_key.as_deref().unwrap_or(""))
+        );
+        let _ = writeln!(
+            output,
+            "Webhook: url={}, events={:?}, include_sensitive={}, allow_private={}",
+            cfgd(config.webhook_url.as_deref().unwrap_or("")),
+            config.webhook_events,
+            config.webhook_include_sensitive,
+            config.webhook_allow_private_targets,
+        );
+        let _ = writeln!(
+            output,
+            "Output filename template: {}",
+            config
+                .output_filename_template
+                .as_deref()
+                .unwrap_or("(default)")
+        );
+
         let _ = writeln!(output, "Setup complete: {}", config.setup_complete);
+
+        // Prompt assistant (LLM) — local llama-server vs external endpoint.
+        if config.llm_external_enabled {
+            let _ = writeln!(
+                output,
+                "Prompt assistant: external endpoint, base_url={}, model={}, api_key={}",
+                if config.llm_external_base_url.is_empty() {
+                    "(unset)"
+                } else {
+                    &config.llm_external_base_url
+                },
+                if config.llm_external_model.is_empty() {
+                    "(unset)"
+                } else {
+                    &config.llm_external_model
+                },
+                cfgd(&config.llm_external_api_key),
+            );
+        } else {
+            let _ =
+                writeln!(
+                output,
+                "Prompt assistant: local llama-server, model={}, idle_timeout={}s, setup_done={}",
+                config.prompt_assistant_model_id.as_deref().unwrap_or("(none)"),
+                config.prompt_assistant_idle_timeout_secs,
+                config.prompt_assistant_setup_done,
+            );
+        }
+        let _ = writeln!(output);
+
+        // Installed models inventory (names + sizes) — held under the same lock
+        // so it reflects the exact ComfyUI + extra-model paths reported above.
+        append_models_section(
+            &mut output,
+            &config.comfyui_path,
+            config.extra_model_paths.as_deref(),
+        );
+
+        // Custom nodes (top cause of ComfyUI breakage) — names + git rev.
+        append_custom_nodes_section(&mut output, &config.comfyui_path);
+    }
+
+    // Relevant environment variables (GPU/ML tuning; allowlisted, no secrets)
+    append_env_section(&mut output);
+
+    // Runtime status — is the managed ComfyUI child alive, is the web server up,
+    // is the prompt-assistant llama-server loaded right now?
+    {
+        let _ = writeln!(output, "=== Runtime Status ===");
+        let comfyui_pid = {
+            let guard = state.comfyui_process.lock().await;
+            guard.as_ref().and_then(|c| c.id())
+        };
+        match comfyui_pid {
+            Some(pid) => {
+                let _ = writeln!(output, "Managed ComfyUI process: running (pid {})", pid);
+            }
+            None => {
+                let _ = writeln!(
+                    output,
+                    "Managed ComfyUI process: not running (remote or stopped)"
+                );
+            }
+        }
+        let _ = writeln!(
+            output,
+            "Web server running: {}",
+            state
+                .web_server_running
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+        let _ = writeln!(
+            output,
+            "Prompt assistant loaded: {} (active model: {})",
+            state.prompt_assistant.server.is_running(),
+            state
+                .prompt_assistant
+                .server
+                .active_model()
+                .unwrap_or_else(|| "(none)".into())
+        );
         let _ = writeln!(output);
     }
 
-    // GPU info (NVIDIA)
+    // GPU info (NVIDIA) — static specs plus current utilization/VRAM/temperature
+    // so out-of-memory and thermal-throttle reports carry live state.
     let _ = writeln!(output, "=== GPU Info ===");
     let nvidia_smi_out = {
         let mut cmd = std::process::Command::new("nvidia-smi");
         cmd.args([
-            "--query-gpu=name,driver_version,memory.total,compute_cap",
+            "--query-gpu=name,driver_version,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,compute_cap",
             "--format=csv,noheader",
         ]);
+        // Force English / POSIX locale so diagnostics read the same regardless
+        // of the user's system language.
+        cmd.env("LC_ALL", "C").env("LANG", "C");
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
@@ -5091,6 +5656,7 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
 
                 let mut py_ver_cmd = std::process::Command::new(&python_path);
                 py_ver_cmd.args(["--version"]);
+                py_ver_cmd.env("LC_ALL", "C").env("LANG", "C");
                 #[cfg(target_os = "windows")]
                 {
                     use std::os::windows::process::CommandExt;
@@ -5105,6 +5671,7 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
                 // Get torch version
                 let mut torch_cmd = std::process::Command::new(&python_path);
                 torch_cmd.args(["-c", "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}') if torch.cuda.is_available() else None"]);
+                torch_cmd.env("LC_ALL", "C").env("LANG", "C");
                 #[cfg(target_os = "windows")]
                 {
                     use std::os::windows::process::CommandExt;

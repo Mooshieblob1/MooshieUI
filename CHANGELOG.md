@@ -1,5 +1,15 @@
 # Changelog
 
+## What's New in v1.4.35
+
+### Diagnostics
+- **Richer diagnostic logs**: exporting logs now captures far more context for bug reports, including system specs (OS, CPU, memory), free disk space per volume, a full inventory of installed models (names and sizes by category), installed ComfyUI custom nodes with their git revision and disabled state, live GPU utilization, VRAM, and temperature, and current runtime status (whether ComfyUI, the web server, and the prompt assistant are running). Secret-bearing settings are reported as present or absent only, proxy credentials are redacted, and only an allowlist of GPU/ML environment variables is included, so no keys or tokens leak into the log. Subprocess output is captured in English regardless of system language for consistent reports.
+
+### Hosted deployments
+- **No dead-end update prompts in browser mode**: hosted and browser-mode deployments no longer show a "ComfyUI is outdated" notification. Those builds ship ComfyUI baked into the Docker image and update by pulling a newer image, so the notification had no action to offer. The installed version still appears on the sidebar badge.
+
+---
+
 ## What's New in v1.4.34
 
 ### Fixes

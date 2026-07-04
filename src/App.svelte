@@ -74,7 +74,11 @@
     try {
       const info = await getComfyuiVersion();
       comfyuiVersionInfo = info;
-      if (info.update_available) {
+      // The in-app updater is desktop-only. Hosted/browser deployments ship
+      // ComfyUI baked into the Docker image and update by pulling a newer
+      // image, so an "outdated" notification there would be a dead end with no
+      // update button. Still keep the fetched version for the sidebar badge.
+      if (info.update_available && !isBrowserMode) {
         const alreadyNotified = notifications.notifications.some(
           (n) => n.local && n.i18n && n.title === COMFYUI_OUTDATED_NOTIF_TITLE && !n.read,
         );
