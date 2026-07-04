@@ -3,7 +3,11 @@
   import { reportError } from "../../errors/reportError.js";
   import type { FriendlyError } from "../../errors/types.js";
 
-  let { error, onclose }: { error: FriendlyError; onclose: () => void } = $props();
+  let {
+    error,
+    onclose,
+    generic = false,
+  }: { error: FriendlyError; onclose: () => void; generic?: boolean } = $props();
 
   let userNote = $state("");
   let submitting = $state(false);
@@ -30,8 +34,8 @@
   tabindex="-1"
 >
   <div class="w-full max-w-md space-y-4 rounded-xl border border-neutral-700 bg-neutral-900 p-6 shadow-2xl">
-    <h3 class="text-base font-semibold text-neutral-100">{locale.t("errors.report.title")}</h3>
-    <p class="text-sm text-neutral-400">{locale.t("errors.report.intro")}</p>
+    <h3 class="text-base font-semibold text-neutral-100">{locale.t(generic ? "errors.report.title_generic" : "errors.report.title")}</h3>
+    <p class="text-sm text-neutral-400">{locale.t(generic ? "errors.report.intro_generic" : "errors.report.intro")}</p>
 
     <div>
       <label class="mb-1 block text-xs text-neutral-400">{locale.t("errors.report.note_label")}</label>

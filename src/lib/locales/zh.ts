@@ -2449,6 +2449,9 @@ const zh: Record<string, string> = {
 
   "errors.report.intro": "这将打开一个预填写的 GitHub 问题。诊断日志已复制到剪贴板，您可以将其粘贴到问题中。",
 
+  "nav.report_bug": "报告问题",
+  "errors.report.title_generic": "报告问题",
+  "errors.report.intro_generic": "告诉我们出了什么问题或您想反馈的内容。将包含您的应用版本、操作系统和近期日志。",
   "errors.report.note_label": "其他补充信息（可选）",
 
   "errors.report.note_placeholder": "发生此问题时您在做什么？",

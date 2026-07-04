@@ -2474,6 +2474,9 @@ const fr: Record<string, string> = {
 
   "errors.report.intro": "Ceci ouvre un problème GitHub pré-rempli. Votre journal de diagnostics est copié dans votre presse-papiers afin que vous puissiez le coller dans le problème.",
 
+  "nav.report_bug": "Signaler un problème",
+  "errors.report.title_generic": "Signaler un problème",
+  "errors.report.intro_generic": "Dites-nous ce qui ne va pas ou ce que vous souhaitez signaler. Votre version de l'application, votre système d'exploitation et les journaux récents sont inclus.",
   "errors.report.note_label": "Toute autre information utile (facultatif)",
 
   "errors.report.note_placeholder": "Que faisiez-vous quand c'est arrivé ?",

@@ -2450,6 +2450,9 @@ const de: Record<string, string> = {
 
   "errors.report.intro": "Dies öffnet ein vorausgefülltes GitHub-Issue. Dein Diagnoseprotokoll wird in die Zwischenablage kopiert, damit du es in das Issue einfügen kannst.",
 
+  "nav.report_bug": "Problem melden",
+  "errors.report.title_generic": "Problem melden",
+  "errors.report.intro_generic": "Sag uns, was schiefgelaufen ist oder was du melden möchtest. Deine App-Version, dein Betriebssystem und die letzten Protokolle sind enthalten.",
   "errors.report.note_label": "Weitere hilfreiche Informationen (optional)",
 
   "errors.report.note_placeholder": "Was hast du gerade getan, als dies passierte?",

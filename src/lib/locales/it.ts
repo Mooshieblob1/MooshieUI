@@ -2448,6 +2448,9 @@ const it: Record<string, string> = {
 
   "errors.report.intro": "Questo apre una segnalazione GitHub precompilata. Il log diagnostico viene copiato negli appunti per essere incollato nella segnalazione.",
 
+  "nav.report_bug": "Segnala un problema",
+  "errors.report.title_generic": "Segnala un problema",
+  "errors.report.intro_generic": "Dicci cosa non ha funzionato o cosa vuoi segnalare. Sono inclusi la versione dell'app, il sistema operativo e i log recenti.",
   "errors.report.note_label": "Qualsiasi altra informazione utile (facoltativo)",
 
   "errors.report.note_placeholder": "Cosa stavi facendo quando è successo?",

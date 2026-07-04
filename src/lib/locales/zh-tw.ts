@@ -2448,6 +2448,9 @@ const zhTw: Record<string, string> = {
 
   "errors.report.intro": "這將開啟一個預填的 GitHub 問題回報。您的診斷日誌已複製到剪貼板，請貼上至問題內容中。",
 
+  "nav.report_bug": "回報問題",
+  "errors.report.title_generic": "回報問題",
+  "errors.report.intro_generic": "告訴我們出了什麼問題或您想回報的內容。將包含您的應用程式版本、作業系統和近期記錄。",
   "errors.report.note_label": "其他有助說明的資訊（選填）",
 
   "errors.report.note_placeholder": "發生問題時您正在進行什麼操作？",

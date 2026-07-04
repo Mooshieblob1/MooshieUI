@@ -2448,6 +2448,9 @@ const ko: Record<string, string> = {
 
   "errors.report.intro": "미리 채워진 GitHub 이슈를 엽니다. 진단 로그가 클립보드에 복사되어 이슈 본문에 붙여넣을 수 있습니다.",
 
+  "nav.report_bug": "문제 신고",
+  "errors.report.title_generic": "문제 신고",
+  "errors.report.intro_generic": "무엇이 잘못되었는지 또는 신고하려는 내용을 알려주세요. 앱 버전, 운영체제, 최근 로그가 포함됩니다.",
   "errors.report.note_label": "추가 도움이 되는 정보 (선택 사항)",
 
   "errors.report.note_placeholder": "이 문제가 발생했을 때 무엇을 하고 있었나요?",

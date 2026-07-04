@@ -2473,6 +2473,9 @@ const ja: Record<string, string> = {
 
   "errors.report.intro": "事前入力された GitHub Issue を開きます。診断ログがクリップボードにコピーされるので、Issue にペーストしてください。",
 
+  "nav.report_bug": "問題を報告",
+  "errors.report.title_generic": "問題を報告",
+  "errors.report.intro_generic": "問題の内容や報告したいことをお知らせください。アプリのバージョン、OS、最近のログが含まれます。",
   "errors.report.note_label": "その他の補足情報（任意）",
 
   "errors.report.note_placeholder": "このエラーが発生したとき、何をしていましたか？",

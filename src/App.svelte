@@ -46,7 +46,9 @@
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
   import GlobalErrorModal from "./lib/components/errors/GlobalErrorModal.svelte";
+  import ReportErrorModal from "./lib/components/errors/ReportErrorModal.svelte";
   import ErrorGallery from "./lib/components/errors/ErrorGallery.svelte";
+  import type { FriendlyError } from "./lib/errors/types.js";
   import {
     interrogateGalleryImage,
     interrogateImage,
@@ -708,6 +710,19 @@
   });
   let lightboxMetadata = $state<Record<string, string> | null>(null);
   let loadingLightboxMetadata = $state(false);
+
+  // Proactive "report a problem" flow: the sidebar bug button opens the same
+  // proxy-backed report modal as an error, using a synthetic user-initiated error.
+  let showBugReport = $state(false);
+  const userInitiatedReport: FriendlyError = {
+    code: "user_report",
+    title: "",
+    what: "",
+    why: "",
+    fixes: [],
+    reportable: true,
+    raw: "User-initiated report (no error)",
+  };
   let metadataPanelWidth = $state(340);
   let metadataResizing = $state(false);
   let metadataPanelCollapsed = $state(false);
@@ -2831,6 +2846,33 @@
       title={connection.connected ? locale.t('nav.connected') : startupStatus || locale.t('nav.disconnected')}
     ></div>
 
+    <!-- Report a problem -->
+    <button
+      class="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition-colors mx-auto mb-1"
+      onclick={() => (showBugReport = true)}
+      title={locale.t('nav.report_bug')}
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        class="w-4.5 h-4.5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        ><path d="m8 2 1.88 1.88" /><path d="M14.12 3.88 16 2" /><path
+          d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"
+        /><path
+          d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"
+        /><path d="M12 20v-9" /><path d="M6.53 9C4.6 8.8 3 7.1 3 5" /><path
+          d="M6 13H2"
+        /><path d="M3 21c0-2.1 1.7-3.9 3.8-4" /><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4" /><path
+          d="M22 13h-4"
+        /><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4" /></svg
+      >
+    </button>
+
     {#if comfyuiVersionInfo?.installed}
       <span
         class="flex items-center justify-center gap-1 text-[10px] text-center mb-1 select-none cursor-default {comfyuiVersionInfo.update_available
@@ -3288,6 +3330,10 @@
 
 <!-- Global human-readable error surface -->
 <GlobalErrorModal />
+
+{#if showBugReport}
+  <ReportErrorModal error={userInitiatedReport} generic onclose={() => (showBugReport = false)} />
+{/if}
 
 <!-- Dev-only error gallery (#error-gallery), never shipped in production -->
 {#if showErrorGallery}

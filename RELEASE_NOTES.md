@@ -1,3 +1,10 @@
+## What's New in v1.4.39
+
+### New features
+- **Report a problem any time**: a new bug icon in the left sidebar (just below the connection indicator) lets you send a report whenever you want, not only when an error pops up. It opens the same one-click report flow, so your note, app version, OS, and recent logs are bundled and filed for you.
+
+---
+
 ## What's New in v1.4.38
 
 ### Bug fixes

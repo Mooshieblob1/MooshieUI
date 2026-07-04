@@ -2486,6 +2486,9 @@ const pl: Record<string, string> = {
 
   "errors.report.intro": "Otwiera wstępnie wypełnione zgłoszenie GitHub. Dziennik diagnostyczny jest kopiowany do schowka, aby można go było wkleić do zgłoszenia.",
 
+  "nav.report_bug": "Zgłoś problem",
+  "errors.report.title_generic": "Zgłoś problem",
+  "errors.report.intro_generic": "Powiedz nam, co poszło nie tak lub co chcesz zgłosić. Dołączane są wersja aplikacji, system operacyjny i ostatnie logi.",
   "errors.report.note_label": "Cokolwiek innego, co pomaga (opcjonalnie)",
 
   "errors.report.note_placeholder": "Co robiłeś, gdy to się wydarzyło?",

@@ -2477,6 +2477,9 @@ const es: Record<string, string> = {
 
   "errors.report.intro": "Esto abre un issue de GitHub prellenado. Tu registro de diagnósticos se copia en el portapapeles para que puedas pegarlo en el issue.",
 
+  "nav.report_bug": "Informar de un problema",
+  "errors.report.title_generic": "Informar de un problema",
+  "errors.report.intro_generic": "Cuéntanos qué salió mal o qué quieres informar. Se incluyen la versión de la aplicación, el sistema operativo y los registros recientes.",
   "errors.report.note_label": "Algo más que ayude (opcional)",
 
   "errors.report.note_placeholder": "¿Qué estabas haciendo cuando ocurrió esto?",

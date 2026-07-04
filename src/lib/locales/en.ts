@@ -7,6 +7,7 @@ const en: Record<string, string> = {
   "nav.settings": "Settings",
   "nav.connected": "Connected",
   "nav.disconnected": "Disconnected",
+  "nav.report_bug": "Report a problem",
 
   // ── Common ──────────────────────────────────────────────
   "common.loading": "Loading...",
@@ -2389,6 +2390,8 @@ const en: Record<string, string> = {
   "errors.card.report": "Report this error",
   "errors.report.title": "Report this error",
   "errors.report.intro": "This opens a prefilled GitHub issue. Your diagnostics log is copied to your clipboard so you can paste it into the issue.",
+  "errors.report.title_generic": "Report a problem",
+  "errors.report.intro_generic": "Tell us what went wrong or what you'd like to report. Your app version, OS, and recent logs are included.",
   "errors.report.note_label": "Anything else that helps (optional)",
   "errors.report.note_placeholder": "What were you doing when this happened?",
   "errors.report.submit": "Open issue",
