@@ -24,6 +24,7 @@ likely problem and the most probable cause. Do not restate the logs verbatim.\n\
     if let Some(e) = entry {
         ctx.push_str(&format!("Known meaning: {} - {}\n", e.title, e.what));
         ctx.push_str(&format!("Typical cause: {}\n", e.why));
+        ctx.push_str(&format!("Known fixes: {}\n", e.fixes));
     }
     ctx.push_str(&format!("Raw error: {raw_message}\n"));
     if let Some(logs) = logs_tail {

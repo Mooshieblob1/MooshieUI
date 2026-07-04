@@ -48,3 +48,16 @@ impl Config {
         }
     }
 }
+
+use std::sync::Arc;
+
+use crate::github::GithubClient;
+use crate::ratelimit::RateLimiter;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub cfg: Arc<Config>,
+    pub http: reqwest::Client,
+    pub github: GithubClient,
+    pub limiter: Arc<RateLimiter>,
+}

@@ -99,10 +99,9 @@ impl GithubClient {
             .json()
             .await
             .map_err(|e| format!("github list decode failed: {e}"))?;
-        let needle = marker(sig);
         for issue in issues {
             let body = issue.get("body").and_then(|b| b.as_str()).unwrap_or("");
-            if body.contains(&needle) {
+            if crate::dedup::body_has_marker(body, sig) {
                 let number = issue.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
                 let html_url = issue
                     .get("html_url")
