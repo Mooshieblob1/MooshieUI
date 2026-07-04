@@ -33,6 +33,19 @@
     return Math.min(y, window.innerHeight - h - 8);
   });
 
+  // Portal the menu to <body> so `position: fixed` resolves against the viewport.
+  // Rendered inline, a transformed/`will-change-transform` ancestor (the generation
+  // panels) becomes the containing block, which shifts the menu right of the cursor
+  // and lets the panel's `overflow-hidden` clip it (#421 follow-up).
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      },
+    };
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -65,6 +78,7 @@
 {#if visible}
   <div
     bind:this={menuEl}
+    use:portal
     class="fixed z-[100] min-w-[180px] bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl py-1 select-none"
     style="left: {clampedX}px; top: {clampedY}px;"
     role="menu"

@@ -1,3 +1,10 @@
+## What's New in v1.4.38
+
+### Bug fixes
+- **Right-click menus now open at the cursor and above panels**: the custom right-click menu introduced in the last update could appear far to the right of where you clicked and get clipped behind generation panels. It now opens exactly where you click and floats above everything, including the fullscreen image viewer.
+
+---
+
 ## What's New in v1.4.37
 
 ### Hires Fix and upscaling
