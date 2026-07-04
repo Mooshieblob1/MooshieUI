@@ -43,7 +43,27 @@ pub fn append_upscale_chain(
             }),
         );
         *next_id += 1;
-        (upscale_id, 0)
+
+        // Optional target-scale cap: resize back down toward a lower multiplier
+        // instead of always refining at the model's full native scale.
+        if params.upscale_model_downscale_ratio < 0.999 {
+            let downscale_id = next_id.to_string();
+            workflow.insert(
+                downscale_id.clone(),
+                json!({
+                    "class_type": "ImageScaleBy",
+                    "inputs": {
+                        "image": [upscale_id, 0],
+                        "upscale_method": "lanczos",
+                        "scale_by": params.upscale_model_downscale_ratio
+                    }
+                }),
+            );
+            *next_id += 1;
+            (downscale_id, 0)
+        } else {
+            (upscale_id, 0)
+        }
     } else {
         let scale_id = next_id.to_string();
         workflow.insert(

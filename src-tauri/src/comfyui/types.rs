@@ -126,6 +126,11 @@ pub struct GenerationParams {
     pub upscale_method: String,
     pub upscale_model: Option<String>,
     pub upscale_scale: f64,
+    /// Post-model-upscale downscale ratio (<= 1.0) applied when the frontend's
+    /// target-scale cap is enabled, so the refine pass never runs above the
+    /// requested scale even though the upscale model's native factor is higher.
+    #[serde(default = "default_upscale_model_downscale_ratio")]
+    pub upscale_model_downscale_ratio: f64,
     pub upscale_denoise: f64,
     pub upscale_steps: u32,
     pub upscale_tile_size: u32,
@@ -336,6 +341,10 @@ fn default_flux_guidance() -> f32 {
 
 fn default_soft_guidance_multiplier() -> f64 {
     0.4
+}
+
+fn default_upscale_model_downscale_ratio() -> f64 {
+    1.0
 }
 
 fn default_facefix_steps() -> u32 {

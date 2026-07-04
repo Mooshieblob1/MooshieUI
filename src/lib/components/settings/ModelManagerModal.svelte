@@ -1,15 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
+    createModelFolder,
     deleteModelFile,
     getModelInstallDirs,
     listModelFiles,
+    listModelFolders,
     moveModelFile,
     type ManagedModelFile,
+    type ManagedModelFolder,
     type ModelInstallDir,
   } from "../../utils/api.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { models } from "../../stores/models.svelte.js";
+  import { buildFolderTrees, countFilesRecursive, type FolderTreeNode } from "../../utils/modelFolderTree.js";
+  import { modelFolderPath } from "../../utils/modelGallerySort.js";
 
   interface Props {
     onclose: () => void;
@@ -37,8 +42,14 @@
 
   let activeCategory = $state("checkpoints");
   let files = $state<ManagedModelFile[]>([]);
+  let folders = $state<ManagedModelFolder[]>([]);
   let installDirs = $state<ModelInstallDir[]>([]);
   let search = $state("");
+  let viewMode = $state<"list" | "tree">("list");
+  let collapsed = $state<Set<string>>(new Set());
+  let newFolderNode = $state<string | null>(null);
+  let newFolderName = $state("");
+  let folderBusy = $state(false);
   let loading = $state(false);
   let loadError = $state<string | null>(null);
   let actionError = $state<string | null>(null);
@@ -58,6 +69,8 @@
 
   const totalSize = $derived(files.reduce((sum, file) => sum + file.size_bytes, 0));
 
+  const folderTrees = $derived.by(() => buildFolderTrees(installDirs, files, folders));
+
   onMount(() => {
     void loadCategory();
   });
@@ -75,8 +88,38 @@
     return categories.find((item) => item.id === category)?.label() ?? category;
   }
 
-  function availableMoveDirs(file: ManagedModelFile): ModelInstallDir[] {
-    return installDirs.filter((dir) => dir.path !== file.directory);
+  interface MoveOption {
+    directory: string;
+    path: string;
+    label: string;
+  }
+
+  interface MoveOptionGroup {
+    dirLabel: string;
+    options: MoveOption[];
+  }
+
+  function moveGroupsFor(file: ManagedModelFile): MoveOptionGroup[] {
+    const currentDir = file.directory;
+    const currentFolder = modelFolderPath(file.filename);
+    return installDirs
+      .map((dir) => {
+        const options: MoveOption[] = [];
+        if (!(dir.path === currentDir && currentFolder === "")) {
+          options.push({ directory: dir.path, path: "", label: locale.t("common.none") });
+        }
+        for (const folder of folders) {
+          if (folder.directory !== dir.path) continue;
+          if (dir.path === currentDir && folder.path === currentFolder) continue;
+          options.push({ directory: folder.directory, path: folder.path, label: folder.path });
+        }
+        return { dirLabel: dir.label, options };
+      })
+      .filter((group) => group.options.length > 0);
+  }
+
+  function nodeKey(node: FolderTreeNode): string {
+    return `${node.directory}|||${node.path}`;
   }
 
   async function loadCategory() {
@@ -88,17 +131,20 @@
     moveTarget = null;
     try {
       const category = activeCategory;
-      const [nextDirs, nextFiles] = await Promise.all([
+      const [nextDirs, nextFiles, nextFolders] = await Promise.all([
         getModelInstallDirs(category),
         listModelFiles(category),
+        listModelFolders(category),
       ]);
       if (category !== activeCategory) return;
       installDirs = nextDirs;
       files = nextFiles;
+      folders = nextFolders;
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
       files = [];
       installDirs = [];
+      folders = [];
     } finally {
       loading = false;
     }
@@ -108,7 +154,48 @@
     if (category === activeCategory) return;
     activeCategory = category;
     search = "";
+    collapsed = new Set();
+    newFolderNode = null;
     void loadCategory();
+  }
+
+  function beginNewFolder(node: FolderTreeNode) {
+    actionError = null;
+    notice = null;
+    newFolderNode = nodeKey(node);
+    newFolderName = "";
+  }
+
+  function cancelNewFolder() {
+    newFolderNode = null;
+    newFolderName = "";
+  }
+
+  async function confirmNewFolder(node: FolderTreeNode) {
+    const name = newFolderName.trim();
+    if (!name) return;
+    folderBusy = true;
+    actionError = null;
+    try {
+      const folderPath = node.path ? `${node.path}/${name}` : name;
+      await createModelFolder(activeCategory, node.directory, folderPath);
+      newFolderNode = null;
+      newFolderName = "";
+      notice = locale.t("settings.models.folder_created", { name });
+      await loadCategory();
+    } catch (e) {
+      actionError = e instanceof Error ? e.message : String(e);
+    } finally {
+      folderBusy = false;
+    }
+  }
+
+  function toggleCollapse(node: FolderTreeNode) {
+    const key = nodeKey(node);
+    const next = new Set(collapsed);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    collapsed = next;
   }
 
   function beginDelete(file: ManagedModelFile) {
@@ -119,13 +206,14 @@
   }
 
   function beginMove(file: ManagedModelFile) {
-    const destinations = availableMoveDirs(file);
-    if (destinations.length === 0) return;
+    const groups = moveGroupsFor(file);
+    const firstOption = groups[0]?.options[0];
+    if (!firstOption) return;
     actionError = null;
     notice = null;
     deleteTarget = null;
     moveTarget = file;
-    moveDestination = destinations[0].path;
+    moveDestination = `${firstOption.directory}|||${firstOption.path}`;
   }
 
   async function refreshModels() {
@@ -151,11 +239,17 @@
 
   async function confirmMove() {
     if (!moveTarget || !moveDestination) return;
+    const separatorIndex = moveDestination.indexOf("|||");
+    if (separatorIndex < 0) return;
+    const destDirectory = moveDestination.slice(0, separatorIndex);
+    const destPath = moveDestination.slice(separatorIndex + 3);
     busy = true;
     actionError = null;
     const movedName = moveTarget.filename;
     try {
-      await moveModelFile(moveTarget.category, moveTarget.filename, moveTarget.directory, moveDestination);
+      const basename = moveTarget.filename.split("/").pop() ?? moveTarget.filename;
+      const targetFilename = destPath ? `${destPath}/${basename}` : basename;
+      await moveModelFile(moveTarget.category, moveTarget.filename, moveTarget.directory, destDirectory, targetFilename);
       moveTarget = null;
       moveDestination = "";
       await Promise.all([loadCategory(), refreshModels()]);
@@ -268,6 +362,22 @@
             class="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2.5 text-sm text-neutral-100 placeholder-neutral-500 transition-colors focus:border-indigo-500 focus:outline-none"
             placeholder={locale.t("settings.models.search")}
           />
+          <div class="flex shrink-0 overflow-hidden rounded-lg border border-neutral-700">
+            <button
+              type="button"
+              onclick={() => (viewMode = "list")}
+              class="px-3 py-2.5 text-sm transition-colors {viewMode === 'list' ? 'bg-indigo-600 text-white' : 'bg-neutral-800 text-neutral-300 hover:text-neutral-100'}"
+            >
+              {locale.t("settings.models.view_list")}
+            </button>
+            <button
+              type="button"
+              onclick={() => (viewMode = "tree")}
+              class="px-3 py-2.5 text-sm transition-colors {viewMode === 'tree' ? 'bg-indigo-600 text-white' : 'bg-neutral-800 text-neutral-300 hover:text-neutral-100'}"
+            >
+              {locale.t("settings.models.view_tree")}
+            </button>
+          </div>
           <button
             type="button"
             onclick={() => loadCategory()}
@@ -287,12 +397,120 @@
         <div class="mx-4 mt-3 rounded-xl border border-green-800 bg-green-950 px-3 py-2 text-sm text-green-300">{notice}</div>
       {/if}
 
+      {#snippet folderNode(node: FolderTreeNode, depth: number)}
+        {@const key = nodeKey(node)}
+        {@const isCollapsed = collapsed.has(key)}
+        {@const fileCount = countFilesRecursive(node)}
+        {@const hasContent = node.children.length > 0 || node.files.length > 0}
+        <div class="select-none">
+          <div
+            class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 hover:bg-neutral-800"
+            style="padding-left: {depth * 16 + 8}px"
+          >
+            {#if hasContent}
+              <button
+                type="button"
+                onclick={() => toggleCollapse(node)}
+                class="shrink-0 rounded p-0.5 text-neutral-500 transition-transform hover:text-neutral-200 {isCollapsed ? '' : 'rotate-90'}"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+            {:else}
+              <span class="w-4 shrink-0"></span>
+            {/if}
+            <span class="truncate text-sm text-neutral-200">{node.name}</span>
+            <span class="shrink-0 text-[10px] tabular-nums text-neutral-500">({fileCount})</span>
+            <button
+              type="button"
+              onclick={() => beginNewFolder(node)}
+              class="ml-auto shrink-0 rounded p-1 text-neutral-500 transition-colors hover:text-indigo-300"
+              title={locale.t("settings.models.new_folder")}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </div>
+          {#if newFolderNode === key}
+            <div class="flex items-center gap-2 py-1" style="padding-left: {(depth + 1) * 16 + 8}px">
+              <input
+                bind:value={newFolderName}
+                placeholder={locale.t("settings.models.folder_name_placeholder")}
+                class="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-xs text-neutral-100 focus:border-indigo-500 focus:outline-none"
+                onkeydown={(e) => {
+                  if (e.key === "Enter") confirmNewFolder(node);
+                  if (e.key === "Escape") cancelNewFolder();
+                }}
+              />
+              <button
+                type="button"
+                onclick={() => confirmNewFolder(node)}
+                disabled={folderBusy || !newFolderName.trim()}
+                class="shrink-0 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {locale.t("common.create")}
+              </button>
+              <button
+                type="button"
+                onclick={cancelNewFolder}
+                disabled={folderBusy}
+                class="shrink-0 rounded-lg border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-300 transition-colors hover:border-neutral-500 hover:text-neutral-100 disabled:opacity-50"
+              >
+                {locale.t("common.cancel")}
+              </button>
+            </div>
+          {/if}
+          {#if !isCollapsed}
+            {#each node.children as child (nodeKey(child))}
+              {@render folderNode(child, depth + 1)}
+            {/each}
+            {#each node.files as file (file.filename)}
+              {@const moveGroups = moveGroupsFor(file)}
+              <div
+                class="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-neutral-800"
+                style="padding-left: {(depth + 1) * 16 + 28}px"
+              >
+                <span class="min-w-0 flex-1 truncate text-sm text-neutral-300" title={file.filename}>{file.filename.split("/").pop()}</span>
+                <span class="shrink-0 text-[10px] tabular-nums text-neutral-500">{locale.formatBytes(file.size_bytes)}</span>
+                <button
+                  type="button"
+                  onclick={() => beginMove(file)}
+                  disabled={moveGroups.length === 0 || busy}
+                  class="shrink-0 rounded-lg border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-40"
+                  title={moveGroups.length === 0 ? locale.t("settings.models.no_move_target") : locale.t("settings.models.move")}
+                >
+                  {locale.t("settings.models.move")}
+                </button>
+                <button
+                  type="button"
+                  onclick={() => beginDelete(file)}
+                  disabled={busy}
+                  class="shrink-0 rounded-lg border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:border-red-500 hover:text-red-300 disabled:opacity-40"
+                >
+                  {locale.t("common.delete")}
+                </button>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      {/snippet}
+
       <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3 {mobileFriendly && !moveTarget && !deleteTarget ? 'pb-[max(env(safe-area-inset-bottom),0.75rem)]' : ''}">
         {#if loading}
           <div class="flex h-full items-center justify-center text-sm text-neutral-500">
             <div class="mr-2 h-4 w-4 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></div>
             {locale.t("common.loading")}
           </div>
+        {:else if viewMode === "tree" && !search.trim()}
+          {#if folderTrees.every((root) => root.children.length === 0 && root.files.length === 0)}
+            <div class="flex h-full items-center justify-center text-sm text-neutral-500">
+              {locale.t("settings.models.empty")}
+            </div>
+          {:else}
+            <div class="space-y-0.5">
+              {#each folderTrees as root (nodeKey(root))}
+                {@render folderNode(root, 0)}
+              {/each}
+            </div>
+          {/if}
         {:else if filteredFiles.length === 0}
           <div class="flex h-full items-center justify-center text-sm text-neutral-500">
             {locale.t("settings.models.empty")}
@@ -300,7 +518,7 @@
         {:else if mobileFriendly}
           <div class="space-y-2">
             {#each filteredFiles as file (`${file.directory}:${file.filename}`)}
-              {@const moveDirs = availableMoveDirs(file)}
+              {@const moveGroups = moveGroupsFor(file)}
               <div class="rounded-xl border border-neutral-700 bg-neutral-900 p-3">
                 <p class="break-all text-sm font-medium text-neutral-100">{file.filename}</p>
                 <p class="mt-1 text-xs text-neutral-500">{file.directory_label}</p>
@@ -314,9 +532,9 @@
                   <button
                     type="button"
                     onclick={() => beginMove(file)}
-                    disabled={moveDirs.length === 0 || busy}
+                    disabled={moveGroups.length === 0 || busy}
                     class="min-h-10 flex-1 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-300 transition-colors active:bg-neutral-700 disabled:opacity-40"
-                    title={moveDirs.length === 0 ? locale.t("settings.models.no_move_target") : locale.t("settings.models.move")}
+                    title={moveGroups.length === 0 ? locale.t("settings.models.no_move_target") : locale.t("settings.models.move")}
                   >
                     {locale.t("settings.models.move")}
                   </button>
@@ -336,7 +554,7 @@
           <div class="overflow-x-auto rounded-xl border border-neutral-700 bg-neutral-900">
             <div class="min-w-190">
             {#each filteredFiles as file (`${file.directory}:${file.filename}`)}
-              {@const moveDirs = availableMoveDirs(file)}
+              {@const moveGroups = moveGroupsFor(file)}
               <div class="grid grid-cols-[minmax(0,1fr)_150px_110px_120px_142px] items-center gap-3 border-b border-neutral-800 px-3 py-2.5 transition-colors last:border-b-0 hover:bg-neutral-800">
                 <div class="min-w-0">
                   <p class="truncate text-sm text-neutral-100" title={file.filename}>{file.filename}</p>
@@ -349,9 +567,9 @@
                   <button
                     type="button"
                     onclick={() => beginMove(file)}
-                    disabled={moveDirs.length === 0 || busy}
+                    disabled={moveGroups.length === 0 || busy}
                     class="rounded-lg border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 transition-colors hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-40"
-                    title={moveDirs.length === 0 ? locale.t("settings.models.no_move_target") : locale.t("settings.models.move")}
+                    title={moveGroups.length === 0 ? locale.t("settings.models.no_move_target") : locale.t("settings.models.move")}
                   >
                     {locale.t("settings.models.move")}
                   </button>
@@ -372,7 +590,7 @@
       </div>
 
       {#if moveTarget}
-        {@const moveDirs = availableMoveDirs(moveTarget)}
+        {@const moveGroups = moveGroupsFor(moveTarget)}
         <div class="shrink-0 border-t border-neutral-700 bg-neutral-900 px-4 py-3 {mobileFriendly ? 'pb-[max(env(safe-area-inset-bottom),0.75rem)]' : 'rounded-b-2xl'}">
           <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <div class="min-w-0 flex-1">
@@ -383,8 +601,12 @@
               bind:value={moveDestination}
               class="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2.5 text-sm text-neutral-100 focus:border-indigo-500 focus:outline-none sm:w-72"
             >
-              {#each moveDirs as dir}
-                <option value={dir.path}>{dir.label}</option>
+              {#each moveGroups as group}
+                <optgroup label={group.dirLabel}>
+                  {#each group.options as opt}
+                    <option value={`${opt.directory}|||${opt.path}`}>{opt.label}</option>
+                  {/each}
+                </optgroup>
               {/each}
             </select>
             <div class="flex gap-2 sm:contents">
@@ -399,7 +621,7 @@
             <button
               type="button"
               onclick={confirmMove}
-              disabled={busy || moveDirs.length === 0 || !moveDestination}
+              disabled={busy || moveGroups.length === 0 || !moveDestination}
               class="min-h-10 flex-1 rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 sm:flex-none"
             >
               {busy ? locale.t("common.saving") : locale.t("settings.models.move")}

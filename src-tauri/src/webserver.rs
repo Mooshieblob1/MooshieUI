@@ -257,6 +257,7 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "upload_image",
     "delete_model_file",
     "move_model_file",
+    "create_model_folder",
 ];
 
 /// Model Hub commands that require explicit per-user access for regular users.
@@ -3405,6 +3406,60 @@ async fn dispatch_command(
             .map_err(|e| e.to_string())?;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
+        "list_model_folders" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let config = state.config.read().await;
+            let comfyui_path = config.comfyui_path.clone();
+            let extra_model_paths = config.extra_model_paths.clone();
+            drop(config);
+
+            let result = tokio::task::spawn_blocking(move || {
+                crate::commands::api::list_model_folders_for_config(
+                    &comfyui_path,
+                    extra_model_paths.as_deref(),
+                    &category,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "create_model_folder" => {
+            let category = args["category"]
+                .as_str()
+                .ok_or("Missing category")?
+                .to_string();
+            let directory = args["directory"]
+                .as_str()
+                .ok_or("Missing directory")?
+                .to_string();
+            let folder_path = args["folderPath"]
+                .as_str()
+                .ok_or("Missing folderPath")?
+                .to_string();
+            let config = state.config.read().await;
+            let comfyui_path = config.comfyui_path.clone();
+            let extra_model_paths = config.extra_model_paths.clone();
+            drop(config);
+
+            tokio::task::spawn_blocking(move || {
+                crate::commands::api::create_model_folder_for_config(
+                    &comfyui_path,
+                    extra_model_paths.as_deref(),
+                    &category,
+                    &directory,
+                    &folder_path,
+                )
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!(null))
+        }
         "delete_model_file" => {
             let category = args["category"]
                 .as_str()
@@ -3454,6 +3509,10 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing targetDirectory")?
                 .to_string();
+            let target_filename = args["targetFilename"]
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| filename.clone());
             let config = state.config.read().await;
             let comfyui_path = config.comfyui_path.clone();
             let extra_model_paths = config.extra_model_paths.clone();
@@ -3467,6 +3526,7 @@ async fn dispatch_command(
                     &filename,
                     &source_directory,
                     &target_directory,
+                    &target_filename,
                 )
             })
             .await

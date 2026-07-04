@@ -235,6 +235,14 @@ pub struct ManagedModelFile {
     pub modified_ms: u64,
 }
 
+#[derive(serde::Serialize)]
+pub struct ManagedModelFolder {
+    pub category: String,
+    pub path: String,
+    pub directory: String,
+    pub directory_label: String,
+}
+
 const MANAGED_MODEL_EXTENSIONS: &[&str] = &[
     "safetensors",
     "ckpt",
@@ -503,6 +511,80 @@ pub(crate) fn list_model_files_for_config(
     Ok(files)
 }
 
+fn collect_model_folders_from_dir(
+    category: &str,
+    dir: &ModelInstallDir,
+    root: &std::path::Path,
+    current: &std::path::Path,
+    folders: &mut Vec<ManagedModelFolder>,
+) -> Result<(), AppError> {
+    for entry in std::fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            let relative = relative_model_filename(root, &path);
+            if is_safe_relative_model_path(&relative) {
+                folders.push(ManagedModelFolder {
+                    category: category.to_string(),
+                    path: relative,
+                    directory: dir.path.clone(),
+                    directory_label: dir.label.clone(),
+                });
+            }
+            collect_model_folders_from_dir(category, dir, root, &path, folders)?;
+        }
+    }
+    Ok(())
+}
+
+/// Lists every subfolder (at any depth) under each known install directory for
+/// a category, including empty ones — used to populate the folder tree and
+/// move-destination picker in the Model Manager UI.
+pub(crate) fn list_model_folders_for_config(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+) -> Result<Vec<ManagedModelFolder>, AppError> {
+    let dirs = model_install_dirs_for_config(comfyui_path, extra_model_paths, category)?;
+    let mut folders = Vec::new();
+    for dir in &dirs {
+        let root = std::path::Path::new(&dir.path);
+        if root.is_dir() {
+            collect_model_folders_from_dir(category, dir, root, root, &mut folders)?;
+        }
+    }
+    folders.sort_by(|a, b| {
+        a.directory_label
+            .cmp(&b.directory_label)
+            .then_with(|| a.path.to_lowercase().cmp(&b.path.to_lowercase()))
+    });
+    Ok(folders)
+}
+
+/// Creates a (possibly nested) subfolder under a known install directory so
+/// users can organize model files before moving anything into it.
+pub(crate) fn create_model_folder_for_config(
+    comfyui_path: &str,
+    extra_model_paths: Option<&str>,
+    category: &str,
+    directory: &str,
+    folder_path: &str,
+) -> Result<(), AppError> {
+    let dir = find_known_model_dir(comfyui_path, extra_model_paths, category, directory)?;
+    if !is_safe_relative_model_path(folder_path) {
+        return Err(AppError::Other("Invalid folder name".into()));
+    }
+    let target = std::path::Path::new(&dir.path).join(folder_path);
+    if target.is_file() {
+        return Err(AppError::Other(
+            "A file already exists with that name".into(),
+        ));
+    }
+    std::fs::create_dir_all(target)?;
+    Ok(())
+}
+
 fn find_known_model_dir(
     comfyui_path: &str,
     extra_model_paths: Option<&str>,
@@ -548,13 +630,14 @@ pub(crate) fn move_model_file_for_config(
     filename: &str,
     source_directory: &str,
     target_directory: &str,
+    target_filename: &str,
 ) -> Result<(), AppError> {
     let source_dir =
         find_known_model_dir(comfyui_path, extra_model_paths, category, source_directory)?;
     let target_dir =
         find_known_model_dir(comfyui_path, extra_model_paths, category, target_directory)?;
     let source = model_file_path_in_dir(&source_dir.path, filename)?;
-    let target = model_file_path_in_dir(&target_dir.path, filename)?;
+    let target = model_file_path_in_dir(&target_dir.path, target_filename)?;
 
     if source == target {
         return Err(AppError::Other(
@@ -628,6 +711,50 @@ pub async fn list_model_files(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
+pub async fn list_model_folders(
+    state: State<'_, Arc<AppState>>,
+    category: String,
+) -> Result<Vec<ManagedModelFolder>, AppError> {
+    let config = state.config.read().await;
+    let comfyui_path = config.comfyui_path.clone();
+    let extra_model_paths = config.extra_model_paths.clone();
+    drop(config);
+
+    tokio::task::spawn_blocking(move || {
+        list_model_folders_for_config(&comfyui_path, extra_model_paths.as_deref(), &category)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Model folder list task failed: {}", e)))?
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn create_model_folder(
+    state: State<'_, Arc<AppState>>,
+    category: String,
+    directory: String,
+    folder_path: String,
+) -> Result<(), AppError> {
+    let config = state.config.read().await;
+    let comfyui_path = config.comfyui_path.clone();
+    let extra_model_paths = config.extra_model_paths.clone();
+    drop(config);
+
+    tokio::task::spawn_blocking(move || {
+        create_model_folder_for_config(
+            &comfyui_path,
+            extra_model_paths.as_deref(),
+            &category,
+            &directory,
+            &folder_path,
+        )
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Model folder create task failed: {}", e)))?
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
 pub async fn delete_model_file(
     state: State<'_, Arc<AppState>>,
     category: String,
@@ -660,12 +787,14 @@ pub async fn move_model_file(
     filename: String,
     source_directory: String,
     target_directory: String,
+    target_filename: Option<String>,
 ) -> Result<(), AppError> {
     let config = state.config.read().await;
     let comfyui_path = config.comfyui_path.clone();
     let extra_model_paths = config.extra_model_paths.clone();
     drop(config);
 
+    let target_filename = target_filename.unwrap_or_else(|| filename.clone());
     tokio::task::spawn_blocking(move || {
         move_model_file_for_config(
             &comfyui_path,
@@ -674,6 +803,7 @@ pub async fn move_model_file(
             &filename,
             &source_directory,
             &target_directory,
+            &target_filename,
         )
     })
     .await

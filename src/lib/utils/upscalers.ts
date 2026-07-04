@@ -15,6 +15,15 @@ const HF_BASE = "https://huggingface.co/AshtakaOOf/safetensored-upscalers/resolv
 export const DEFAULT_REFINE_UPSCALER = "OmniSR_X2_DIV2K.safetensors";
 export const DEFAULT_REFINE_UPSCALER_SCALE = 2;
 
+/** Extract scale factor from upscaler model names (e.g., "OmniSR_X4_DIV2K" → 4, "2x_Modern..." → 2) */
+export function extractScaleFromModel(filename: string): number | null {
+  const match =
+    filename.match(/_X(\d+)[_.]/i) ||
+    filename.match(/[_-](\d+)x[_.]/i) ||
+    filename.match(/^(\d+)x[_A-Z]/i);
+  return match ? parseInt(match[1], 10) : null;
+}
+
 export const recommendedUpscaleModels: RecommendedUpscaleModel[] = [
   // SPAN — fast, sharp, excellent general-purpose upscaler
   {

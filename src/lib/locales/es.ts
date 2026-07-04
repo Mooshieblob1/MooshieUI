@@ -362,6 +362,11 @@ const es: Record<string, string> = {
   "settings.models.delete_title": "Eliminar {name}",
   "settings.models.deleted": "Se eliminó {name}",
   "settings.models.moved": "Se movió {name}",
+  "settings.models.view_list": "Lista",
+  "settings.models.view_tree": "Árbol",
+  "settings.models.new_folder": "Nueva carpeta",
+  "settings.models.folder_name_placeholder": "Nombre de la carpeta",
+  "settings.models.folder_created": "Se creó {name}",
   "settings.paths.move_dialog_title": "Elegir nueva ubicación de instalación",
   "settings.paths.browse_model_dir_title": "Elegir directorio de modelos",
 
@@ -759,6 +764,10 @@ const es: Record<string, string> = {
   "generation.upscale.refine_only_label": "Solo refinar (omitir pase img2img)",
   "generation.upscale.refine_only_tip": "Envía la imagen de entrada directamente al upscaler sin regenerarla primero. Úsalo para ampliar o refinar una imagen existente tal cual — como conectarla directamente a un nodo de upscaler en ComfyUI.",
   "generation.upscale.refine_only_hint": "Se omite el pase de muestreo img2img — solo se ejecuta el pase de ampliación/refinado sobre la imagen de entrada.",
+  "generation.upscale.target_scale_label": "Limitar escala objetivo",
+  "generation.upscale.target_scale_tip": "Opcional: refinar solo hasta un multiplicador menor en lugar de usar siempre la escala nativa completa del modelo de ampliación (por ejemplo, detenerse en 2x con un modelo de 4x). Desactivado por defecto.",
+  "generation.upscale.target_scale": "Escala Objetivo",
+  "generation.upscale.target_scale_value_tip": "La escala efectiva a la que apunta el paso de refinado. No puede superar la escala nativa del modelo seleccionado.",
   "generation.sampler.smart_guidance_label": "Guía Inteligente",
   "generation.sampler.smart_guidance_tip": "Guía adaptativa con sesgo positivo: el modelo sigue tu prompt más fielmente en lugar de solo evitar lo negativo. Se aplica a todos los pasos de generación. Sin ajustes necesarios.",
 

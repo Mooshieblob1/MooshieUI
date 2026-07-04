@@ -389,6 +389,11 @@ const de: Record<string, string> = {
   "settings.models.delete_title": "{name} löschen",
   "settings.models.deleted": "{name} gelöscht",
   "settings.models.moved": "{name} verschoben",
+  "settings.models.view_list": "Liste",
+  "settings.models.view_tree": "Baum",
+  "settings.models.new_folder": "Neuer Ordner",
+  "settings.models.folder_name_placeholder": "Ordnername",
+  "settings.models.folder_created": "{name} erstellt",
 
   "settings.gallery.title": "Galerie",
   "settings.gallery.import_label": "Bilder aus Verzeichnis importieren",
@@ -728,6 +733,10 @@ const de: Record<string, string> = {
   "generation.upscale.refine_only_label": "Nur verfeinern (img2img-Durchlauf überspringen)",
   "generation.upscale.refine_only_tip": "Das Eingabebild direkt in den Upscaler einspeisen, ohne es vorher neu zu generieren. Damit lässt sich ein vorhandenes Bild unverändert hochskalieren oder verfeinern — wie das direkte Verbinden mit einem Upscaler-Node in ComfyUI.",
   "generation.upscale.refine_only_hint": "Der img2img-Sampling-Durchlauf wird übersprungen — nur der Upscale-/Verfeinerungs-Durchlauf läuft auf dem Eingabebild.",
+  "generation.upscale.target_scale_label": "Zielskalierung begrenzen",
+  "generation.upscale.target_scale_tip": "Optional: nur bis zu einem niedrigeren Multiplikator verfeinern, anstatt immer die volle native Skalierung des Upscale-Modells zu verwenden (z. B. bei 2x stoppen mit einem 4x-Modell). Standardmäßig deaktiviert.",
+  "generation.upscale.target_scale": "Zielskalierung",
+  "generation.upscale.target_scale_value_tip": "Die effektive Skalierung, die der Verfeinerungsdurchlauf anstrebt. Kann die native Skalierung des ausgewählten Modells nicht überschreiten.",
   "generation.sampler.smart_guidance_label": "Intelligente Führung",
   "generation.sampler.smart_guidance_tip": "Positiv gewichtete adaptive Führung – das Modell folgt deinem Prompt stärker, statt nur das Negative zu vermeiden. Gilt für alle Generierungsschritte. Keine Einstellung nötig.",
 

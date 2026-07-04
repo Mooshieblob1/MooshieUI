@@ -99,6 +99,9 @@ export interface GenerationParams {
   upscale_method: string;
   upscale_model: string | null;
   upscale_scale: number;
+  /** Post-model-upscale downscale ratio (<= 1.0) applied when the target-scale cap is
+   *  enabled, so the diffusion refine pass never runs at more than the requested scale. */
+  upscale_model_downscale_ratio: number;
   upscale_denoise: number;
   upscale_steps: number;
   upscale_tile_size: number;

@@ -8,7 +8,10 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
-  import { recommendedUpscaleModels as recommendedModels } from "../../utils/upscalers.js";
+  import {
+    recommendedUpscaleModels as recommendedModels,
+    extractScaleFromModel,
+  } from "../../utils/upscalers.js";
 
   let downloading = $state<string | null>(null);
   let downloadError = $state<string | null>(null);
@@ -17,17 +20,13 @@
   let dlBytes = $state(0);
   let dlTotal = $state(0);
 
-
-  /** Extract scale factor from upscaler model names (e.g., "OmniSR_X4_DIV2K" → 4, "2x_Modern..." → 2) */
-  function extractScaleFromModel(filename: string): number | null {
-    const match =
-      filename.match(/_X(\d+)[_.]/i) ||
-      filename.match(/[_-](\d+)x[_.]/i) ||
-      filename.match(/^(\d+)x[_A-Z]/i);
-    return match ? parseInt(match[1], 10) : null;
-  }
-
   const dlPercent = $derived(dlTotal > 0 ? Math.round((dlBytes / dlTotal) * 100) : 0);
+
+  // Native scale of the selected model upscaler (e.g. 4 for RealESRGAN_x4plus).
+  // Falls back to 4 for unrecognized filenames so the target-scale cap still works.
+  const modelNativeScale = $derived(
+    generation.upscaleModel ? (extractScaleFromModel(generation.upscaleModel) ?? 4) : 4
+  );
 
   onMount(async () => {
     await ipcListen("download:progress", (event: any) => {
@@ -93,11 +92,15 @@
     }
 
     generation.upscaleModel = filename;
-    
+
     // Auto-update scale based on model name (e.g., "OmniSR_X4_DIV2K" → 4x)
     const detectedScale = extractScaleFromModel(filename);
     if (detectedScale !== null) {
       generation.upscaleScale = detectedScale;
+      // Target-scale cap can never exceed what this model natively produces.
+      if (generation.upscaleTargetScale > detectedScale) {
+        generation.upscaleTargetScale = detectedScale;
+      }
     }
   }
 </script>
@@ -215,6 +218,37 @@
           <p class="text-xs text-red-400 mt-1">{downloadError}</p>
         {/if}
       </div>
+
+      <!-- Target scale cap (optional): resize the model's output down toward a -->
+      <!-- lower multiplier instead of always refining at the model's full native scale. -->
+      <div class="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id="upscale-target-scale-enabled"
+          bind:checked={generation.upscaleTargetScaleEnabled}
+          class="w-4 h-4 accent-indigo-500 rounded"
+        />
+        <label for="upscale-target-scale-enabled" class="text-xs text-neutral-400">
+          {locale.t('generation.upscale.target_scale_label')}<InfoTip text={locale.t('generation.upscale.target_scale_tip')} />
+        </label>
+      </div>
+      {#if generation.upscaleTargetScaleEnabled}
+        <div use:scrollCapture>
+          <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+            <span>{locale.t('generation.upscale.target_scale')}<InfoTip text={locale.t('generation.upscale.target_scale_value_tip')} /></span>
+            <EditableValue value={generation.upscaleTargetScale} min={1} max={modelNativeScale} step={0.5} decimals={1} suffix="x" onchange={(v) => generation.upscaleTargetScale = Math.min(v, modelNativeScale)} />
+          </label>
+          <input
+            type="range"
+            value={Math.min(generation.upscaleTargetScale, modelNativeScale)}
+            oninput={(e) => generation.upscaleTargetScale = parseFloat((e.target as HTMLInputElement).value)}
+            min="1"
+            max={modelNativeScale}
+            step="0.5"
+            class="w-full accent-indigo-500"
+          />
+        </div>
+      {/if}
     {/if}
 
     <div class="grid grid-cols-2 gap-3">

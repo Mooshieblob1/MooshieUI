@@ -206,6 +206,27 @@ export async function listModelFiles(category: string): Promise<ManagedModelFile
   return ipcInvoke("list_model_files", { category });
 }
 
+export interface ManagedModelFolder {
+  category: string;
+  path: string;
+  directory: string;
+  directory_label: string;
+}
+
+/** Lists every subfolder (any depth, including empty ones) under a category's install dirs. */
+export async function listModelFolders(category: string): Promise<ManagedModelFolder[]> {
+  return ipcInvoke("list_model_folders", { category });
+}
+
+/** Creates a (possibly nested, e.g. "characters/anime") subfolder under a known install directory. */
+export async function createModelFolder(
+  category: string,
+  directory: string,
+  folderPath: string,
+): Promise<void> {
+  return ipcInvoke("create_model_folder", { category, directory, folderPath });
+}
+
 export async function deleteModelFile(
   category: string,
   filename: string,
@@ -219,8 +240,15 @@ export async function moveModelFile(
   filename: string,
   sourceDirectory: string,
   targetDirectory: string,
+  targetFilename?: string,
 ): Promise<void> {
-  return ipcInvoke("move_model_file", { category, filename, sourceDirectory, targetDirectory });
+  return ipcInvoke("move_model_file", {
+    category,
+    filename,
+    sourceDirectory,
+    targetDirectory,
+    targetFilename: targetFilename ?? filename,
+  });
 }
 
 export async function openDirectory(path: string): Promise<void> {

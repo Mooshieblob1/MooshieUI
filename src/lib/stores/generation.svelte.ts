@@ -7,6 +7,7 @@ import {
   parseScheduledPrompt,
 } from "../utils/promptSchedule.js";
 import { parseSegmentDetailPrompt } from "../utils/promptSegmentDetail.js";
+import { extractScaleFromModel } from "../utils/upscalers.js";
 import {
   MODEL_FAMILIES,
   TURBO_MODEL_VARIANTS,
@@ -287,6 +288,11 @@ class GenerationStore {
   upscaleMethod = $state<"algorithmic" | "model">("algorithmic");
   upscaleModel = $state<string | null>(null);
   upscaleScale = $state(2.0);
+  /** Optional cap on the effective upscale multiplier when using a model upscaler
+   *  (e.g. refine only to 2x after a 4x model), so users aren't nudged into always
+   *  taking the full native scale of whatever model they picked. */
+  upscaleTargetScaleEnabled = $state(false);
+  upscaleTargetScale = $state(2.0);
   upscaleDenoise = $state(0.4);
   upscaleSteps = $state(15);
   upscaleTileSize = $state(1024);
@@ -442,6 +448,19 @@ class GenerationStore {
     this.controlnetEnabled = state.controlnetEnabled;
     this.facefixEnabled = state.facefixEnabled;
     this.smartGuidance = state.smartGuidance;
+  }
+
+  /** Ratio applied after model-based upscaling to cap the effective scale below the
+   *  model's native factor (e.g. 0.5 to bring a 4x model's output down to 2x).
+   *  1.0 (no-op) when the cap is off, no model is selected, or its scale can't be
+   *  detected from the filename. */
+  get upscaleModelDownscaleRatio(): number {
+    if (!this.upscaleTargetScaleEnabled || this.upscaleMethod !== "model" || !this.upscaleModel) {
+      return 1.0;
+    }
+    const nativeScale = extractScaleFromModel(this.upscaleModel);
+    if (!nativeScale || nativeScale <= 0) return 1.0;
+    return Math.min(this.upscaleTargetScale / nativeScale, 1.0);
   }
 
   /** True when the selected model is an Anima variant (split diffusion model). */
@@ -1191,6 +1210,9 @@ class GenerationStore {
         if (saved.upscaleMethod) this.upscaleMethod = saved.upscaleMethod;
         if (saved.upscaleModel !== undefined) this.upscaleModel = saved.upscaleModel;
         if (saved.upscaleScale !== undefined) this.upscaleScale = saved.upscaleScale;
+        if (saved.upscaleTargetScaleEnabled !== undefined)
+          this.upscaleTargetScaleEnabled = saved.upscaleTargetScaleEnabled;
+        if (saved.upscaleTargetScale !== undefined) this.upscaleTargetScale = saved.upscaleTargetScale;
         if (saved.upscaleDenoise !== undefined) this.upscaleDenoise = saved.upscaleDenoise;
         if (saved.upscaleSteps !== undefined) this.upscaleSteps = saved.upscaleSteps;
         if (saved.upscaleTileSize !== undefined) this.upscaleTileSize = saved.upscaleTileSize;
@@ -1335,6 +1357,8 @@ class GenerationStore {
         upscaleMethod: this.upscaleMethod,
         upscaleModel: this.upscaleModel,
         upscaleScale: this.upscaleScale,
+        upscaleTargetScaleEnabled: this.upscaleTargetScaleEnabled,
+        upscaleTargetScale: this.upscaleTargetScale,
         upscaleDenoise: this.upscaleDenoise,
         upscaleSteps: this.upscaleSteps,
         upscaleTileSize: this.upscaleTileSize,
@@ -1432,6 +1456,8 @@ class GenerationStore {
       upscaleMethod: this.upscaleMethod,
       upscaleModel: this.upscaleModel,
       upscaleScale: this.upscaleScale,
+      upscaleTargetScaleEnabled: this.upscaleTargetScaleEnabled,
+      upscaleTargetScale: this.upscaleTargetScale,
       upscaleDenoise: this.upscaleDenoise,
       upscaleSteps: this.upscaleSteps,
       upscaleTileSize: this.upscaleTileSize,
@@ -1792,6 +1818,7 @@ class GenerationStore {
       upscale_method: this.upscaleMethod,
       upscale_model: this.upscaleModel,
       upscale_scale: this.upscaleScale,
+      upscale_model_downscale_ratio: this.upscaleModelDownscaleRatio,
       upscale_denoise: this.upscaleDenoise,
       upscale_steps: this.upscaleSteps,
       upscale_tile_size: this.upscaleTileSize,

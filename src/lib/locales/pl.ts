@@ -390,6 +390,11 @@ const pl: Record<string, string> = {
   "settings.models.delete_title": "Usuń {name}",
   "settings.models.deleted": "Usunięto {name}",
   "settings.models.moved": "Przeniesiono {name}",
+  "settings.models.view_list": "Lista",
+  "settings.models.view_tree": "Drzewo",
+  "settings.models.new_folder": "Nowy folder",
+  "settings.models.folder_name_placeholder": "Nazwa folderu",
+  "settings.models.folder_created": "Utworzono {name}",
 
   // Gallery section
   "settings.gallery.title": "Galeria",
@@ -880,6 +885,10 @@ const pl: Record<string, string> = {
   "generation.upscale.refine_only_label": "Tylko dopracowanie (pomiń przejście img2img)",
   "generation.upscale.refine_only_tip": "Przekazuje obraz wejściowy bezpośrednio do upscalera bez wcześniejszego jego ponownego generowania. Użyj, aby powiększyć lub dopracować istniejący obraz w obecnej formie — jak wrzucenie go wprost do węzła upscalera w ComfyUI.",
   "generation.upscale.refine_only_hint": "Przejście próbkowania img2img jest pomijane — na obrazie wejściowym uruchamiane jest tylko przejście powiększania/dopracowywania.",
+  "generation.upscale.target_scale_label": "Ogranicz skalę docelową",
+  "generation.upscale.target_scale_tip": "Opcjonalnie: dopracuj tylko do niższego mnożnika zamiast zawsze używać pełnej natywnej skali modelu powiększania (np. zatrzymaj się na 2x przy modelu 4x). Domyślnie wyłączone.",
+  "generation.upscale.target_scale": "Skala Docelowa",
+  "generation.upscale.target_scale_value_tip": "Efektywna skala, do której dąży przejście dopracowywania. Nie może przekroczyć natywnej skali wybranego modelu.",
   "generation.sampler.smart_guidance_label": "Inteligentne prowadzenie",
   "generation.sampler.smart_guidance_tip": "Adaptacyjne prowadzenie z pozytywnym odchyleniem — sprawia, że model ściślej podąża za Twoim promptem zamiast unikać negatywu. Dotyczy wszystkich kroków generowania. Nie wymaga strojenia.",
   "generation.sampler.flux_guidance_label": "Prowadzenie Flux",

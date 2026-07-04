@@ -390,6 +390,11 @@ const en: Record<string, string> = {
   "settings.models.delete_title": "Delete {name}",
   "settings.models.deleted": "Deleted {name}",
   "settings.models.moved": "Moved {name}",
+  "settings.models.view_list": "List",
+  "settings.models.view_tree": "Tree",
+  "settings.models.new_folder": "New Folder",
+  "settings.models.folder_name_placeholder": "Folder name",
+  "settings.models.folder_created": "Created {name}",
 
   // Gallery section
   "settings.gallery.title": "Gallery",
@@ -880,6 +885,10 @@ const en: Record<string, string> = {
   "generation.upscale.refine_only_label": "Refine only (skip img2img pass)",
   "generation.upscale.refine_only_tip": "Feed the input image directly into the upscaler without re-generating it first. Use this to upscale or refine an existing image as-is — like dropping it straight into an upscaler node in ComfyUI.",
   "generation.upscale.refine_only_hint": "The img2img sampling pass is skipped — only the upscale/refine pass runs on the input image.",
+  "generation.upscale.target_scale_label": "Cap target scale",
+  "generation.upscale.target_scale_tip": "Optional: refine only up to a lower multiplier instead of always using the upscaler model's full native scale (e.g. stop at 2x with a 4x model). Off by default.",
+  "generation.upscale.target_scale": "Target Scale",
+  "generation.upscale.target_scale_value_tip": "The effective scale the refine pass targets. Can't exceed the selected model's native scale.",
   "generation.sampler.smart_guidance_label": "Smart Guidance",
   "generation.sampler.smart_guidance_tip": "Positive-biased adaptive guidance — makes the model follow your prompt more closely instead of just avoiding the negative. Applies to all generation steps. No tuning needed.",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
