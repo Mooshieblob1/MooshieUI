@@ -4061,7 +4061,7 @@ async fn dispatch_command(
             let config = state.config.read().await;
             let comfyui_dir = std::path::Path::new(&config.comfyui_path).to_path_buf();
             drop(config);
-            let info = crate::setup::comfyui_version_info(&comfyui_dir);
+            let info = crate::comfyui_version::comfyui_version_info(&comfyui_dir);
             Ok(serde_json::to_value(info).map_err(|e| e.to_string())?)
         }
         "fetch_release_notes" => {

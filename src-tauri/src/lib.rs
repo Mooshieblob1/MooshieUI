@@ -1,5 +1,7 @@
 pub mod auth;
 pub mod comfyui;
+#[cfg(any(feature = "desktop", feature = "server"))]
+pub mod comfyui_version;
 pub mod commands;
 pub mod config;
 pub mod error;

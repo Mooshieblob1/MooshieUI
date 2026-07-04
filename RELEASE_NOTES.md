@@ -1,3 +1,10 @@
+## What's New in v1.4.34
+
+### Fixes
+- **Browser/server build**: fixed a regression that broke the server binary and Docker image builds. The ComfyUI version check shipped in v1.4.33 referenced a desktop-only module, so the hosted browser-mode build failed to compile. The shared version logic now lives in its own module compiled into both the desktop and server builds. Desktop installs were unaffected; this restores the browser and hosted deployments.
+
+---
+
 ## What's New in v1.4.33
 
 ### Models and downloads
