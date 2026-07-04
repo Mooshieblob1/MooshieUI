@@ -1,0 +1,26 @@
+services:
+  report-proxy:
+    build: .
+    container_name: report-proxy
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      RUST_LOG: info
+      LLM_BASE_URL: http://snowywood-llm:8080
+      GITHUB_REPO: Mooshieblob1/MooshieUI
+    networks:
+      - blob_default
+    # No host port published; only cloudflared reaches it.
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: report-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    network_mode: "service:report-proxy"
+    depends_on:
+      - report-proxy
+
+networks:
+  blob_default:
+    external: true

@@ -159,6 +159,17 @@ pub struct AppConfig {
     /// External LLM model name (e.g. `gpt-4o-mini`, or the model id LM Studio exposes).
     #[serde(default)]
     pub llm_external_model: String,
+    /// Report proxy endpoint (Cloudflare Tunnel URL). When set, in-app error
+    /// reports POST here instead of opening a prefilled GitHub issue. Defaults to
+    /// the hosted proxy; set to null/empty to fall back to prefilled issues.
+    #[serde(default = "default_report_endpoint")]
+    pub report_endpoint: Option<String>,
+}
+
+/// Default report proxy endpoint. In-app error reports post here unless the
+/// config explicitly overrides it (null/empty falls back to prefilled issues).
+fn default_report_endpoint() -> Option<String> {
+    Some("https://report.mooshieblob.com/report".to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -221,6 +232,7 @@ impl Default for AppConfig {
             llm_external_base_url: String::new(),
             llm_external_api_key: String::new(),
             llm_external_model: String::new(),
+            report_endpoint: default_report_endpoint(),
         }
     }
 }
