@@ -21,6 +21,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { modelRequests } from "../../stores/modelRequests.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { showError } from "../../stores/errorModal.svelte.js";
 
   const CIVITAI_API_KEY_KEY = "mooshieui.civitai.apiKey.v1";
   const CIVITAI_COLUMNS_KEY = "mooshieui.civitai.columns.v1";
@@ -402,6 +403,25 @@
     return `${safeFilename.replace(/\.+$/, "")}${originalExtension}`;
   }
 
+  /** Rewrite a HuggingFace file-page URL (…/blob/…) to its direct-download form
+   *  (…/resolve/…). A page URL like huggingface.co/owner/repo has no /blob/ segment
+   *  and is returned unchanged, so the page-URL guard in installFromDirectUrl can
+   *  still report it. Non-HuggingFace and already-direct URLs pass through untouched. */
+  function normalizeHuggingFaceUrl(value: string): string {
+    try {
+      const parsed = new URL(value.trim());
+      const isHuggingFace =
+        parsed.hostname === "huggingface.co" || parsed.hostname.endsWith(".huggingface.co");
+      if (isHuggingFace && parsed.pathname.includes("/blob/")) {
+        parsed.pathname = parsed.pathname.replace("/blob/", "/resolve/");
+        return parsed.toString();
+      }
+    } catch {
+      // Not a full URL yet — leave it alone.
+    }
+    return value;
+  }
+
   function applyDirectUrlFilename(value: string) {
     const inferred = inferDirectFilenameFromUrl(value);
     if (!inferred) return;
@@ -450,7 +470,11 @@
   }
 
   function handleDirectUrlInput(event: Event) {
-    const value = (event.currentTarget as HTMLInputElement).value;
+    const raw = (event.currentTarget as HTMLInputElement).value;
+    // Auto-rewrite a HuggingFace file page (/blob/) to its direct-download URL
+    // (/resolve/) so the field shows the URL that actually downloads.
+    const value = normalizeHuggingFaceUrl(raw);
+    if (value !== raw) directUrl = value;
     directStatus = null;
     applyDirectUrlFilename(value);
     // Debounce a server lookup that fills in names the URL itself does not carry
@@ -839,11 +863,13 @@
 
   async function installFromDirectUrl() {
     directStatus = null;
-    const trimmedUrl = directUrl.trim();
+    const trimmedUrl = normalizeHuggingFaceUrl(directUrl.trim());
     if (!trimmedUrl) {
       directStatus = locale.t("modelhub.direct.url_required");
       return;
     }
+    // Reflect any /blob/ → /resolve/ rewrite back into the field.
+    if (trimmedUrl !== directUrl) directUrl = trimmedUrl;
 
     const civitaiPage = parseCivitaiModelUrl(trimmedUrl);
     if (civitaiPage) {
@@ -901,7 +927,8 @@
       await models.refresh();
       directStatus = locale.t("modelhub.direct.installed");
     } catch (e) {
-      directStatus = e instanceof Error ? e.message : String(e);
+      showError(e);
+      directStatus = null;
     } finally {
       directInstalling = false;
     }

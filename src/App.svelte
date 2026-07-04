@@ -45,6 +45,8 @@
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
+  import GlobalErrorModal from "./lib/components/errors/GlobalErrorModal.svelte";
+  import ErrorGallery from "./lib/components/errors/ErrorGallery.svelte";
   import {
     interrogateGalleryImage,
     interrogateImage,
@@ -728,6 +730,10 @@
   let contextMenuX = $state(0);
   let contextMenuY = $state(0);
   let showContextMenu = $state(false);
+  // Dev-only error gallery, opened with #error-gallery. Guarded so it never ships in production.
+  let showErrorGallery = $state(
+    import.meta.env.DEV && globalThis.location?.hash === "#error-gallery",
+  );
 
   // Interrogation state (for lightbox + context menu)
   let showInterrogateModal = $state(false);
@@ -3279,6 +3285,14 @@
 <!-- Interrogate modal (from gallery/lightbox) -->
 
 <CharacterInsertModal onapplied={finishCharacterInsert} />
+
+<!-- Global human-readable error surface -->
+<GlobalErrorModal />
+
+<!-- Dev-only error gallery (#error-gallery), never shipped in production -->
+{#if showErrorGallery}
+  <ErrorGallery />
+{/if}
 
 <!-- Artist tag conflict dialog -->
 {#if artistInsertPending}
