@@ -407,6 +407,7 @@ pub fn run() {
             commands::api::cdn_proxy_fetch,
             commands::api::animadex_proxy_fetch,
             commands::api::civitai_search_models,
+            commands::api::civitai_get_model,
             commands::api::civitai_list_architectures,
             commands::api::read_modelspec,
             commands::api::get_lora_civitai_info,

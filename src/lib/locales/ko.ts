@@ -577,6 +577,11 @@ const ko: Record<string, string> = {
   "generation.model.hide_model_info": "모델 정보 숨기기",
   "generation.model.downloading_diffusion": "확산 모델 다운로드 중...",
   "generation.model.downloading_text_encoder": "텍스트 인코더 다운로드 중...",
+  "generation.model.text_encoder": "텍스트 인코더",
+  "generation.model.text_encoder_tip": "분할 모델에 사용할 텍스트 인코더입니다. text_encoders/ 와 clip/ 폴더의 파일을 표시합니다.",
+  "generation.model.text_encoder_none": "선택 안 함",
+  "generation.model.krea2_encoder_warning": "Krea 2에는 Qwen3-VL-4B 텍스트 인코더(예: qwen3vl_4b_fp8_scaled.safetensors)가 필요합니다. 다른 인코더는 conditioning 크기 오류로 실패합니다. 위에서 선택하거나 모델을 다시 선택하여 자동으로 다운로드하세요.",
+  "generation.model.nvfp4_warning": "NVFP4 모델은 NVIDIA Blackwell GPU(RTX 50 시리즈)에서만 네이티브로 작동합니다. 사용 중인 GPU는 이전 세대이므로 이 모델의 FP8 버전을 다운로드하여 사용하세요.",
   "generation.model.downloading_vae": "VAE 다운로드 중...",
   "generation.model.downloading_checkpoint": "체크포인트 다운로드 중...",
   "generation.model.auto_download": "자동 다운로드",
@@ -1093,6 +1098,7 @@ const ko: Record<string, string> = {
   "modelhub.civitai.cannot_install": "유형 {type}의 자동 설치는 불가합니다. 링크 열기를 사용하여 수동으로 다운로드하세요.",
   "modelhub.civitai.key_required_download": "이 모델을 다운로드하려면 CivitAI API 키가 필요합니다. 위에 키를 추가한 다음 다시 시도하세요.",
   "modelhub.direct.description": "합법적인 직접 모델 URL(Hugging Face, 미러, 개인 호스트)을 붙여넣고 선택한 모델 카테고리에 설치합니다.",
+  "modelhub.direct.civitai_no_files": "이 CivitAI 모델 버전에서 다운로드 가능한 파일을 찾을 수 없습니다.",
   "modelhub.direct.url_required": "직접 URL이 필요합니다.",
   "modelhub.direct.filename_required": "파일명이 필요합니다.",
   "modelhub.direct.hf_page_url_error": "이것은 HuggingFace 모델 페이지 URL처럼 보입니다. 직접 파일 URL이 아닙니다.\n/resolve/main/ URL을 사용하세요. 예:\nhttps://huggingface.co/author/model/resolve/main/model.safetensors",
@@ -1897,6 +1903,8 @@ const ko: Record<string, string> = {
   "settings.models.delete_title": "{name} 삭제",
   "settings.models.deleted": "{name} 삭제됨",
   "settings.models.moved": "{name} 이동됨",
+  "notifications.read_more": "더 보기",
+  "notifications.open_settings": "설정 열기",
   "notifications.title": "알림",
 
   "notifications.mark_all_read": "모두 읽음으로 표시",
@@ -1928,6 +1936,8 @@ const ko: Record<string, string> = {
   "notifications.model_request.denied_body_reason": "{model_name} 요청이 {handler}에 의해 거부되었습니다. 사유: {reason}",
   "notifications.legacy_password_migration.title": "비밀번호 보안 업그레이드",
   "notifications.legacy_password_migration.body": "더 강력한 비밀번호 암호화 형식(Argon2id)으로 전환합니다. {deadline} 전에 설정에서 미리 업그레이드할 수 있습니다. 이후에는 로그인 시 자동으로 업그레이드됩니다 — 비밀번호는 그대로 유지할 수 있습니다.",
+  "notifications.comfyui_outdated.title": "ComfyUI 업데이트 사용 가능",
+  "notifications.comfyui_outdated.body": "설치된 ComfyUI 버전({installed})이 이 빌드가 대상으로 하는 버전({target})보다 오래되었습니다. 설정에서 업데이트할 때까지 일부 기능(예: Krea 2)이 실패할 수 있습니다.",
 
   "generation.toast.failed": "생성 실패",
 

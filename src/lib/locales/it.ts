@@ -577,6 +577,11 @@ const it: Record<string, string> = {
   "generation.model.hide_model_info": "Nascondi info modello",
   "generation.model.downloading_diffusion": "Download modello di diffusione...",
   "generation.model.downloading_text_encoder": "Download text encoder...",
+  "generation.model.text_encoder": "Encoder di testo",
+  "generation.model.text_encoder_tip": "L'encoder di testo usato con i modelli divisi. Elenca i file delle cartelle text_encoders/ e clip/.",
+  "generation.model.text_encoder_none": "Nessuna selezione",
+  "generation.model.krea2_encoder_warning": "Krea 2 richiede l'encoder di testo Qwen3-VL-4B (es. qwen3vl_4b_fp8_scaled.safetensors). Altri encoder falliranno con un errore di dimensione del conditioning. Selezionalo sopra o riseleziona il modello per scaricarlo automaticamente.",
+  "generation.model.nvfp4_warning": "I modelli NVFP4 funzionano nativamente solo su GPU NVIDIA Blackwell (serie RTX 50). La tua GPU è più vecchia, quindi scarica e usa la versione FP8 di questo modello.",
   "generation.model.downloading_vae": "Download VAE...",
   "generation.model.downloading_checkpoint": "Download checkpoint...",
   "generation.model.auto_download": "Download automatico",
@@ -1093,6 +1098,7 @@ const it: Record<string, string> = {
   "modelhub.civitai.cannot_install": "Impossibile installare automaticamente il tipo: {type}. Usa Apri link per il download manuale.",
   "modelhub.civitai.key_required_download": "Questo modello richiede una chiave API CivitAI per il download. Aggiungi la tua chiave sopra, poi riprova.",
   "modelhub.direct.description": "Incolla qualsiasi URL di modello diretto legittimo (Hugging Face, mirror, host privato) e installa nella categoria di modello selezionata.",
+  "modelhub.direct.civitai_no_files": "Nessun file scaricabile trovato per questa versione del modello CivitAI.",
   "modelhub.direct.url_required": "URL diretto è richiesto.",
   "modelhub.direct.filename_required": "Il nome del file è richiesto.",
   "modelhub.direct.hf_page_url_error": "Sembra un URL di pagina HuggingFace, non un URL diretto al file.\nUsa un URL /resolve/main/, es.:\nhttps://huggingface.co/author/model/resolve/main/model.safetensors",
@@ -1897,6 +1903,8 @@ const it: Record<string, string> = {
   "settings.models.delete_title": "Elimina {name}",
   "settings.models.deleted": "{name} eliminato",
   "settings.models.moved": "{name} spostato",
+  "notifications.read_more": "Leggi di più",
+  "notifications.open_settings": "Apri Impostazioni",
   "notifications.title": "Notifiche",
 
   "notifications.mark_all_read": "Segna tutto come letto",
@@ -1928,6 +1936,8 @@ const it: Record<string, string> = {
   "notifications.model_request.denied_body_reason": "La richiesta per {model_name} è stata rifiutata da {handler}. Motivo: {reason}",
   "notifications.legacy_password_migration.title": "Aggiornamento sicurezza password",
   "notifications.legacy_password_migration.body": "Stiamo passando a un formato di crittografia password più forte (Argon2id). Prima del {deadline} puoi aggiornare nelle Impostazioni. Dopo, l'accesso aggiornerà automaticamente la password — puoi mantenere la stessa.",
+  "notifications.comfyui_outdated.title": "Aggiornamento ComfyUI disponibile",
+  "notifications.comfyui_outdated.body": "La tua versione installata di ComfyUI ({installed}) è precedente alla versione richiesta da questa build ({target}). Alcune funzionalità (come Krea 2) potrebbero non funzionare finché non aggiorni nelle Impostazioni.",
 
   "generation.toast.failed": "Generazione non riuscita",
 

@@ -140,12 +140,6 @@
     onmousedown={onDragStart}
     ontouchstart={onDragStart}
   >
-    <!-- Drag icon handle -->
-    <div class="absolute pointer-events-none h-1 w-6 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all">
-      <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-      <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-      <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-    </div>
   </div>
 
   <!-- Header bar -->

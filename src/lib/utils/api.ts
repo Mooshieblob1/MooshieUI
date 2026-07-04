@@ -363,6 +363,13 @@ export async function searchCivitaiModels(params: {
   return ipcInvoke("civitai_search_models", { params });
 }
 
+export async function getCivitaiModel(
+  modelId: number,
+  apiKey?: string
+): Promise<CivitaiModel> {
+  return ipcInvoke("civitai_get_model", { modelId, apiKey });
+}
+
 export async function listCivitaiArchitectures(
   apiKey?: string
 ): Promise<string[]> {

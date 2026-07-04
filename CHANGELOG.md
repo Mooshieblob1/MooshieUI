@@ -1,5 +1,25 @@
 # Changelog
 
+## What's New in v1.4.33
+
+### Models and downloads
+- **Krea 2 and Ideogram 4 text encoders**: the required Qwen3-VL text encoder now downloads automatically, and encoder matching is stricter so the correct file is always selected instead of an unrelated one. On GPUs without native FP8 support you get a clear warning about the performance fallback instead of a silent slowdown.
+- **Manual text encoder picker**: split-model checkpoints are auto-detected, and you can now choose the text encoder by hand when the automatic pick is wrong.
+- **CivitAI model pages**: paste a CivitAI model page URL directly to import, pick a specific version, and downloads no longer fail with "API error (200): text/html".
+
+### ComfyUI version management
+- **Always-on version check**: MooshieUI now verifies your installed ComfyUI matches the version this build targets at every launch, not only when you open Settings. If it is out of date (including very old installs that predate the version file), you get a notification with a one-click path to update, so newer features like Krea 2 do not fail silently on an outdated build.
+- **ComfyUI version in the sidebar**: the installed ComfyUI version is now shown above the MooshieUI version with a "C" badge, turning amber when an update is available.
+
+### Notifications
+- **Read more**: long notifications can be expanded into a full view, and the password security upgrade notice now includes an "Open Settings" button.
+
+### Interface
+- **Full-width bottom panel**: the generation bottom panel now spans the full window width for more working room.
+- **Cleaner resize handles**: panel resize grips were refreshed for a tidier look.
+
+---
+
 ## What's New in v1.4.32
 
 ### Notes

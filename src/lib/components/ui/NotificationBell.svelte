@@ -1,11 +1,36 @@
 <script lang="ts">
   import { notifications } from "../../stores/notifications.svelte.js";
+  import type { Notification } from "../../stores/notifications.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import {
     formatNotificationTime,
     notificationBody,
     notificationTitle,
   } from "../../utils/notificationI18n.js";
+
+  interface Props {
+    onOpenSettings?: () => void;
+  }
+  let { onOpenSettings }: Props = $props();
+
+  // Full-view modal for a clicked notification (long bodies get clamped in the list).
+  let openedNotification = $state<Notification | null>(null);
+
+  // Bodies longer than this are likely clamped by line-clamp-2, so show a read-more hint.
+  const READ_MORE_THRESHOLD = 120;
+
+  function openNotification(notif: Notification) {
+    openedNotification = notif;
+    void notifications.markRead(notif.id);
+  }
+
+  function isPasswordMigration(notif: Notification): boolean {
+    return notif.i18n === true && notif.title === "notifications.legacy_password_migration.title";
+  }
+
+  function isComfyuiOutdated(notif: Notification): boolean {
+    return notif.i18n === true && notif.title === "notifications.comfyui_outdated.title";
+  }
 
   function kindIcon(kind: string): string {
     switch (kind) {
@@ -94,19 +119,23 @@
           </div>
         {:else}
           {#each notifications.notifications as notif (notif.id)}
+            {@const body = notificationBody(notif)}
             <div
               class="flex w-full items-start gap-2 px-4 py-3 text-left transition-colors hover:bg-neutral-800/50 {notif.read ? 'opacity-60' : ''}"
             >
               <button
                 type="button"
                 class="flex min-w-0 flex-1 items-start gap-2 text-left focus:outline-none"
-                onclick={() => notifications.markRead(notif.id)}
+                onclick={() => openNotification(notif)}
               >
                 <span class="text-xs mt-0.5 {kindColor(notif.kind)}">{kindIcon(notif.kind)}</span>
                 <div class="min-w-0 flex-1">
                   <p class="text-xs font-medium text-neutral-200 truncate">{notificationTitle(notif)}</p>
-                  {#if notificationBody(notif)}
-                    <p class="text-[11px] text-neutral-400 mt-0.5 line-clamp-2">{notificationBody(notif)}</p>
+                  {#if body}
+                    <p class="text-[11px] text-neutral-400 mt-0.5 line-clamp-2">{body}</p>
+                    {#if body.length > READ_MORE_THRESHOLD}
+                      <p class="text-[10px] text-indigo-400 mt-0.5">{locale.t("notifications.read_more")}</p>
+                    {/if}
                   {/if}
                   <p class="text-[10px] text-neutral-600 mt-1">{formatNotificationTime(notif.created_at)}</p>
                 </div>
@@ -126,6 +155,54 @@
             </div>
           {/each}
         {/if}
+      </div>
+    </div>
+  {/if}
+
+  {#if openedNotification}
+    {@const notif = openedNotification}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="fixed inset-0 z-60 flex items-center justify-center bg-black/70"
+      onmousedown={(e) => { if (e.target === e.currentTarget) openedNotification = null; }}
+      onkeydown={(e) => { if (e.key === "Escape") openedNotification = null; }}
+    >
+      <div class="relative w-full max-w-md max-h-[80vh] overflow-y-auto rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl m-4 p-5 space-y-3">
+        <button
+          class="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-full bg-black/50 text-neutral-300 hover:text-white hover:bg-black/70 transition-colors text-sm"
+          onclick={() => (openedNotification = null)}
+          aria-label={locale.t("common.close")}
+        >
+          ✕
+        </button>
+        <div class="flex items-start gap-2 pr-8">
+          <span class="text-sm mt-0.5 {kindColor(notif.kind)}">{kindIcon(notif.kind)}</span>
+          <h3 class="text-sm font-semibold text-neutral-100 wrap-break-word">{notificationTitle(notif)}</h3>
+        </div>
+        {#if notificationBody(notif)}
+          <p class="text-xs leading-relaxed text-neutral-300 whitespace-pre-wrap wrap-break-word">{notificationBody(notif)}</p>
+        {/if}
+        <p class="text-[10px] text-neutral-600">{formatNotificationTime(notif.created_at)}</p>
+        <div class="flex items-center justify-end gap-2 pt-1">
+          {#if (isPasswordMigration(notif) || isComfyuiOutdated(notif)) && onOpenSettings}
+            <button
+              class="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+              onclick={() => {
+                openedNotification = null;
+                notifications.panelOpen = false;
+                onOpenSettings?.();
+              }}
+            >
+              {locale.t("notifications.open_settings")}
+            </button>
+          {/if}
+          <button
+            class="px-3 py-1.5 text-xs rounded-lg border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 transition-colors"
+            onclick={() => (openedNotification = null)}
+          >
+            {locale.t("common.close")}
+          </button>
+        </div>
       </div>
     </div>
   {/if}

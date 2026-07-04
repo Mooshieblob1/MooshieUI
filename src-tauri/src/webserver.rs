@@ -262,6 +262,7 @@ const MODERATOR_COMMANDS: &[&str] = &[
 /// Model Hub commands that require explicit per-user access for regular users.
 const MODELHUB_COMMANDS: &[&str] = &[
     "civitai_search_models",
+    "civitai_get_model",
     "civitai_list_architectures",
     "civitai_lookup_hash",
     "download_model",
@@ -3651,6 +3652,19 @@ async fn dispatch_command(
             let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
             Ok(data)
         }
+        "civitai_get_model" => {
+            let model_id = args
+                .get("modelId")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| "Missing or invalid modelId".to_string())?;
+            let api_key = args
+                .get("apiKey")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            crate::commands::api::civitai_get_model_internal(&state, model_id, api_key)
+                .await
+                .map_err(|e| e.to_string())
+        }
         "civitai_list_architectures" => {
             let api_key = args
                 .get("apiKey")
@@ -4043,6 +4057,13 @@ async fn dispatch_command(
         }
 
         // --- Misc ---
+        "get_comfyui_version" => {
+            let config = state.config.read().await;
+            let comfyui_dir = std::path::Path::new(&config.comfyui_path).to_path_buf();
+            drop(config);
+            let info = crate::setup::comfyui_version_info(&comfyui_dir);
+            Ok(serde_json::to_value(info).map_err(|e| e.to_string())?)
+        }
         "fetch_release_notes" => {
             let resp = state
                 .http_client

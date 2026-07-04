@@ -591,6 +591,11 @@ const ja: Record<string, string> = {
   "generation.model.hide_model_info": "モデル情報を非表示",
   "generation.model.downloading_diffusion": "拡散モデルをダウンロード中...",
   "generation.model.downloading_text_encoder": "テキストエンコーダーをダウンロード中...",
+  "generation.model.text_encoder": "テキストエンコーダー",
+  "generation.model.text_encoder_tip": "分割モデルで使用するテキストエンコーダー。text_encoders/ と clip/ フォルダーのファイルを表示します。",
+  "generation.model.text_encoder_none": "未選択",
+  "generation.model.krea2_encoder_warning": "Krea 2 には Qwen3-VL-4B テキストエンコーダー（例: qwen3vl_4b_fp8_scaled.safetensors）が必要です。他のエンコーダーは conditioning サイズエラーで失敗します。上で選択するか、モデルを選び直して自動ダウンロードしてください。",
+  "generation.model.nvfp4_warning": "NVFP4 モデルは NVIDIA Blackwell GPU（RTX 50 シリーズ）でのみネイティブ動作します。お使いの GPU は古いため、代わりにこのモデルの FP8 版をダウンロードして使用してください。",
   "generation.model.downloading_vae": "VAEをダウンロード中...",
   "generation.model.downloading_checkpoint": "チェックポイントをダウンロード中...",
   "generation.model.auto_download": "自動ダウンロード",
@@ -1118,6 +1123,7 @@ const ja: Record<string, string> = {
   "modelhub.civitai.cannot_install": "タイプ {type} の自動インストールはできません。リンクを開いて手動でダウンロードしてください。",
   "modelhub.civitai.key_required_download": "このモデルのダウンロードにはCivitAI APIキーが必要です。上にキーを追加してから再試行してください。",
   "modelhub.direct.description": "合法的な直接モデルURL（Hugging Face、ミラー、プライベートホスト）を貼り付けて、選択したモデルカテゴリにインストールします。",
+  "modelhub.direct.civitai_no_files": "この CivitAI モデルバージョンにはダウンロード可能なファイルがありません。",
   "modelhub.direct.url_required": "直接URLが必要です。",
   "modelhub.direct.filename_required": "ファイル名が必要です。",
   "modelhub.direct.hf_page_url_error": "HuggingFaceのモデルページURLのようです。直接ファイルURLではありません。\n/resolve/main/ URLを使用してください。例:\nhttps://huggingface.co/author/model/resolve/main/model.safetensors",
@@ -1922,6 +1928,8 @@ const ja: Record<string, string> = {
   "settings.models.delete_title": "{name} を削除",
   "settings.models.deleted": "{name} を削除しました",
   "settings.models.moved": "{name} を移動しました",
+  "notifications.read_more": "続きを読む",
+  "notifications.open_settings": "設定を開く",
   "notifications.title": "通知",
 
   "notifications.mark_all_read": "すべて既読",
@@ -1953,6 +1961,8 @@ const ja: Record<string, string> = {
   "notifications.model_request.denied_body_reason": "{model_name} のリクエストが {handler} により却下されました。理由: {reason}",
   "notifications.legacy_password_migration.title": "パスワードセキュリティのアップグレード",
   "notifications.legacy_password_migration.body": "より強力なパスワード暗号化形式（Argon2id）へ移行します。{deadline} までは設定で早期アップグレードできます。その後はサインイン時に自動で更新されます — パスワードは同じで構いません。",
+  "notifications.comfyui_outdated.title": "ComfyUIのアップデートがあります",
+  "notifications.comfyui_outdated.body": "インストール済みのComfyUI（{installed}）は、このビルドが対象とするバージョン（{target}）より古いです。Krea 2などの一部機能は、設定でアップデートするまで失敗する可能性があります。",
 
   "generation.toast.failed": "生成に失敗しました",
 

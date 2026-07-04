@@ -3,6 +3,7 @@
   import { ipcListen } from "../../utils/ipc.js";
   import {
     downloadModel,
+    getCivitaiModel,
     getConfig,
     getModelInstallDirs,
     listCivitaiArchitectures,
@@ -426,6 +427,9 @@
       return; // Not a full URL yet — keep the URL-inferred guess.
     }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+    // CivitAI model page URLs get resolved through the API at install time;
+    // asking the server for a filename here would just name the HTML page.
+    if (parseCivitaiModelUrl(trimmed)) return;
 
     const token = ++directFilenameResolveToken;
     try {
@@ -683,6 +687,12 @@
   }
 
   async function runSearch() {
+    // A pasted CivitAI model URL jumps straight to that model's card.
+    const direct = parseCivitaiModelUrl(query);
+    if (direct) {
+      await openModelFromUrl(direct.modelId, direct.versionId);
+      return;
+    }
     hasMore = true;
     page = 1;
     await fetchModels(1, false);
@@ -788,11 +798,56 @@
     });
   }
 
+  /** A CivitAI model page URL serves HTML, not model bytes. Resolve it through
+   *  the CivitAI API to the version's actual file and download that instead. */
+  async function installFromCivitaiPageUrl(modelId: number, versionId: number | null) {
+    directInstalling = true;
+    try {
+      const model = await getCivitaiModel(modelId, apiKey.trim() || undefined);
+      const version =
+        (versionId != null ? model.modelVersions.find((v) => v.id === versionId) : undefined) ??
+        model.modelVersions[0];
+      const file = version?.files.find((f) => f.type === "Model") ?? version?.files[0];
+      if (!version || !file) {
+        directStatus = locale.t("modelhub.direct.civitai_no_files");
+        return;
+      }
+      const category = mapCivitaiTypeToCategory(model.type) ?? directCategory;
+      directCategory = category;
+      directFilename = file.name;
+      lastInferredDirectFilename = file.name;
+
+      const installDir = await pickInstallDir(category);
+      if (!installDir) return; // user cancelled
+
+      await downloadModel(withToken(file.downloadUrl), category, file.name, installDir);
+      await models.refresh();
+      directStatus = locale.t("modelhub.direct.installed");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const status = extractApiStatus(message);
+      if (status === 401 || status === 403) {
+        keyRecommended = true;
+        directStatus = locale.t("modelhub.civitai.key_required_download");
+      } else {
+        directStatus = message;
+      }
+    } finally {
+      directInstalling = false;
+    }
+  }
+
   async function installFromDirectUrl() {
     directStatus = null;
     const trimmedUrl = directUrl.trim();
     if (!trimmedUrl) {
       directStatus = locale.t("modelhub.direct.url_required");
+      return;
+    }
+
+    const civitaiPage = parseCivitaiModelUrl(trimmedUrl);
+    if (civitaiPage) {
+      await installFromCivitaiPageUrl(civitaiPage.modelId, civitaiPage.versionId);
       return;
     }
 
@@ -863,6 +918,70 @@
 
   function topVersion(model: CivitaiModel) {
     return model.modelVersions[0];
+  }
+
+  // Per-model version choice for the detail modal (keyed by model id).
+  let selectedVersionIds = $state<Record<number, number>>({});
+
+  function selectedVersion(model: CivitaiModel) {
+    const chosen = selectedVersionIds[model.id];
+    if (chosen != null) {
+      const match = model.modelVersions.find((v) => v.id === chosen);
+      if (match) return match;
+    }
+    return topVersion(model);
+  }
+
+  /** Parse a CivitAI model page URL such as
+   *  https://civitai.com/models/2726029/some-slug?modelVersionId=3064058
+   *  into ids. Returns null for anything else, including /api/download/ URLs
+   *  (those are already direct file links). */
+  function parseCivitaiModelUrl(
+    value: string,
+  ): { modelId: number; versionId: number | null } | null {
+    let parsed: URL;
+    try {
+      parsed = new URL(value.trim());
+    } catch {
+      return null;
+    }
+    if (parsed.hostname !== "civitai.com" && !parsed.hostname.endsWith(".civitai.com")) {
+      return null;
+    }
+    const match = parsed.pathname.match(/^\/models\/(\d+)/);
+    if (!match) return null;
+    const versionParam = parsed.searchParams.get("modelVersionId");
+    const versionId = versionParam && /^\d+$/.test(versionParam) ? Number(versionParam) : null;
+    return { modelId: Number(match[1]), versionId };
+  }
+
+  /** Load a single model by id (from a pasted CivitAI URL) and open its detail modal. */
+  async function openModelFromUrl(modelId: number, versionId: number | null) {
+    loading = true;
+    error = null;
+    try {
+      const model = await getCivitaiModel(modelId, apiKey.trim() || undefined);
+      items = [model];
+      totalPages = 1;
+      totalItems = 1;
+      hasMore = false;
+      nextCursor = null;
+      if (versionId != null && model.modelVersions.some((v) => v.id === versionId)) {
+        selectedVersionIds = { ...selectedVersionIds, [model.id]: versionId };
+      }
+      selectedModel = model;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const status = extractApiStatus(message);
+      if (status === 401 || status === 403) {
+        keyRecommended = true;
+        error = locale.t("modelhub.civitai.key_required_download");
+      } else {
+        error = message;
+      }
+    } finally {
+      loading = false;
+    }
   }
 
   function normalizeImageUrl(url: string): string {
@@ -1239,7 +1358,7 @@
         <!-- Detail modal -->
         {#if selectedModel}
           {@const model = selectedModel}
-          {@const version = topVersion(model)}
+          {@const version = selectedVersion(model)}
           {@const imageUrl = previewImage(model)}
           {@const expanded = isCardExpanded(model.id)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1306,7 +1425,27 @@
                 {#if version}
                   {@const hasExtraRows = version.files.length > 1}
                   <div class="space-y-2">
-                    <p class="text-xs text-neutral-400">{locale.t("modelhub.civitai.version")} <span class="text-neutral-200">{version.name}</span></p>
+                    {#if model.modelVersions.length > 1}
+                      <label class="block text-xs text-neutral-400">
+                        {locale.t("modelhub.civitai.version")}
+                        <select
+                          value={version.id}
+                          onchange={(e) => {
+                            selectedVersionIds = {
+                              ...selectedVersionIds,
+                              [model.id]: Number(e.currentTarget.value),
+                            };
+                          }}
+                          class="mt-1 w-full bg-neutral-800 border border-neutral-700 rounded px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+                        >
+                          {#each model.modelVersions as v (v.id)}
+                            <option value={v.id}>{v.name}{v.baseModel ? ` (${v.baseModel})` : ""}</option>
+                          {/each}
+                        </select>
+                      </label>
+                    {:else}
+                      <p class="text-xs text-neutral-400">{locale.t("modelhub.civitai.version")} <span class="text-neutral-200">{version.name}</span></p>
+                    {/if}
                     {#if version.baseModel}
                       <p class="text-xs text-neutral-400">{locale.t("modelhub.civitai.base_model_label")} <span class="text-neutral-200">{version.baseModel}</span></p>
                     {/if}

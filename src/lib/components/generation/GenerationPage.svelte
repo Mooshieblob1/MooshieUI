@@ -2016,11 +2016,13 @@
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="flex h-full select-none {draggingSection ? 'cursor-grabbing' : ''}"
+    class="flex flex-col h-full select-none {draggingSection ? 'cursor-grabbing' : ''}"
     onmousemove={onPointerMove}
     onmouseup={onPointerUp}
     onmouseleave={onPointerUp}
   >
+    <!-- Main row: side panels + preview. The bottom panel spans the full width below this row. -->
+    <div class="flex flex-1 min-h-0">
     {#if mobileFriendly}
       <div class="fixed top-2 left-1/2 -translate-x-1/2 z-50 w-[min(96vw,34rem)] px-2">
         <div class="w-full flex gap-1 bg-neutral-900 rounded-lg p-1 border border-neutral-700 shadow">
@@ -2153,12 +2155,6 @@
           ondblclick={resetLeftWidth}
           title={locale.t('generation.drag_to_resize')}
         ></div>
-        <!-- Drag icon handle -->
-        <div class="absolute pointer-events-none top-[30%] w-1 h-8 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex flex-col items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all z-10">
-          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-        </div>
         <button
           onclick={toggleLeftPanel}
           class="absolute top-1/2 -translate-y-1/2 left-0 z-20 w-6 h-12 flex items-center justify-center rounded-r border border-l-0 transition-colors {leftCollapsed
@@ -2184,42 +2180,6 @@
           <ProgressBar />
           <PreviewImage />
         </div>
-
-        <!-- Bottom panel (LoRAs / Images / Prompts) -->
-        {#if !mobileFriendly}
-          <div class="relative shrink-0 flex items-center group">
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
-              class="h-1 flex-1 cursor-row-resize hover:bg-indigo-500/40 transition-colors {dragging === 'bottom' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
-              onmousedown={(e) => onDividerDown("bottom", e)}
-              ondblclick={resetBottomHeight}
-              title={locale.t('generation.drag_to_resize')}
-            ></div>
-            <!-- Drag icon handle -->
-            <div class="absolute pointer-events-none left-[30%] h-1 w-8 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all z-10">
-              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-            </div>
-            <button
-              onclick={toggleBottomPanel}
-              class="absolute left-1/2 -translate-x-1/2 bottom-0 z-20 h-6 w-12 flex items-center justify-center rounded-t border border-b-0 transition-colors {bottomCollapsed
-                ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
-                : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
-              title={bottomCollapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {bottomCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-          </div>
-        {/if}
-        {#if !bottomCollapsed && !mobileFriendly}
-          <div
-            class="overflow-hidden shrink-0 min-w-0 border-t border-neutral-800/50"
-            style="height: {bottomHeight}px"
-          >
-            <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} onrefine={refineImage} oncontextmenu={handleSessionContextMenu} />
-          </div>
-        {/if}
       </div>
     {/if}
 
@@ -2233,12 +2193,6 @@
           ondblclick={resetRightWidth}
           title={locale.t('generation.drag_to_resize')}
         ></div>
-        <!-- Drag icon handle -->
-        <div class="absolute pointer-events-none top-[30%] w-1 h-8 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex flex-col items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all z-10">
-          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-          <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-        </div>
         <button
           onclick={toggleRightPanel}
           class="absolute top-1/2 -translate-y-1/2 right-0 z-20 w-6 h-12 flex items-center justify-center rounded-l border border-r-0 transition-colors {rightCollapsed
@@ -2349,6 +2303,37 @@
         {/if}
         </div>
       </div>
+    {/if}
+    </div>
+
+    <!-- Bottom panel (LoRAs / Images / Prompts) — full width, below the side panels -->
+    {#if !mobileFriendly && !canvas.isCanvasMode}
+      <div class="relative shrink-0 flex items-center group">
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="h-1 flex-1 cursor-row-resize hover:bg-indigo-500/40 transition-colors {dragging === 'bottom' ? 'bg-indigo-500/60' : 'bg-neutral-800'}"
+          onmousedown={(e) => onDividerDown("bottom", e)}
+          ondblclick={resetBottomHeight}
+          title={locale.t('generation.drag_to_resize')}
+        ></div>
+        <button
+          onclick={toggleBottomPanel}
+          class="absolute left-1/2 -translate-x-1/2 bottom-0 z-20 h-6 w-12 flex items-center justify-center rounded-t border border-b-0 transition-colors {bottomCollapsed
+            ? 'bg-indigo-600 border-indigo-500/70 text-white hover:bg-indigo-500'
+            : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}"
+          title={bottomCollapsed ? locale.t('generation.panel.expand_bottom') : locale.t('generation.panel.collapse_bottom')}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 transition-transform {bottomCollapsed ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if !bottomCollapsed}
+        <div
+          class="overflow-hidden shrink-0 min-w-0 border-t border-neutral-800/50"
+          style="height: {bottomHeight}px"
+        >
+          <BottomPanel onupscale={upscaleImage} oninpaint={inpaintImage} onrefine={refineImage} oncontextmenu={handleSessionContextMenu} />
+        </div>
+      {/if}
     {/if}
   </div>
 

@@ -2195,21 +2195,31 @@ pub struct ComfyUiVersionInfo {
     pub update_available: bool,
 }
 
+/// Compute the installed-vs-target version report for a ComfyUI checkout.
+/// Shared by the desktop command and the browser-mode webserver dispatch.
+pub fn comfyui_version_info(comfyui_dir: &Path) -> ComfyUiVersionInfo {
+    let installed = read_installed_comfyui_version(comfyui_dir);
+    let update_available = match installed.as_deref() {
+        Some(v) => comfyui_version_is_older(v, COMFYUI_REF),
+        // An install with main.py but no comfyui_version.py predates the
+        // version module entirely, so it is always older than the pinned
+        // target. No main.py means ComfyUI isn't installed at all — that is
+        // the setup wizard's job, not the updater's.
+        None => comfyui_dir.join("main.py").exists(),
+    };
+    ComfyUiVersionInfo {
+        installed,
+        target: COMFYUI_REF.to_string(),
+        update_available,
+    }
+}
+
 /// Report the installed ComfyUI version against the pinned target so the
 /// Settings UI can offer an update.
 #[tauri::command]
 pub async fn get_comfyui_version(app: AppHandle) -> Result<ComfyUiVersionInfo, AppError> {
     let base = data_dir(&app)?;
-    let installed = read_installed_comfyui_version(&base.join("comfyui"));
-    let update_available = installed
-        .as_deref()
-        .map(|v| comfyui_version_is_older(v, COMFYUI_REF))
-        .unwrap_or(false);
-    Ok(ComfyUiVersionInfo {
-        installed,
-        target: COMFYUI_REF.to_string(),
-        update_available,
-    })
+    Ok(comfyui_version_info(&base.join("comfyui")))
 }
 
 /// Move an existing ComfyUI working tree onto [`COMFYUI_REF`] using git.

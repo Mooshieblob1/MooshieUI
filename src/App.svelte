@@ -13,7 +13,7 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
+  import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage, getComfyuiVersion, type ComfyUiVersionInfo } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput } from "./lib/utils/galleryActions.js";
   import { prepareOutputImageForEditMode } from "./lib/utils/editImagePreparation.js";
   import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
@@ -67,7 +67,32 @@
 
   declare const __APP_VERSION__: string;
   const appVersion = __APP_VERSION__ ?? "dev";
-  
+  let comfyuiVersionInfo = $state<ComfyUiVersionInfo | null>(null);
+  const COMFYUI_OUTDATED_NOTIF_TITLE = "notifications.comfyui_outdated.title";
+
+  async function checkComfyuiVersion() {
+    try {
+      const info = await getComfyuiVersion();
+      comfyuiVersionInfo = info;
+      if (info.update_available) {
+        const alreadyNotified = notifications.notifications.some(
+          (n) => n.local && n.i18n && n.title === COMFYUI_OUTDATED_NOTIF_TITLE && !n.read,
+        );
+        if (!alreadyNotified) {
+          notifications.addLocalNotification({
+            i18n: true,
+            title: COMFYUI_OUTDATED_NOTIF_TITLE,
+            body: "notifications.comfyui_outdated.body",
+            params: { installed: info.installed ?? locale.t("settings.performance.comfyui_unknown"), target: info.target },
+            kind: "warning",
+          });
+        }
+      }
+    } catch {
+      // Non-critical — Settings panel will surface it when opened
+    }
+  }
+
   const visionSimClass = $derived(
     accessibility.visionSimulatorMode === "none"
       ? ""
@@ -2446,6 +2471,11 @@
 
     // Skip warming the large artist index during startup so prompt input stays responsive.
     // Artist-specific affordances can wait until a gallery flow actually needs the index.
+
+    // Verify the installed ComfyUI is on the pinned version even for users who
+    // never open Settings — features like Krea 2 fail validation on older
+    // ComfyUI builds, so surface a notification instead of a silent failure.
+    void checkComfyuiVersion();
   }
 
   $effect(() => {
@@ -2779,7 +2809,7 @@
       >
     </button>
 
-    <NotificationBell />
+    <NotificationBell onOpenSettings={() => (currentPage = "settings")} />
 
     <!-- Connection status dot -->
     <div
@@ -2791,6 +2821,22 @@
       title={connection.connected ? locale.t('nav.connected') : startupStatus || locale.t('nav.disconnected')}
     ></div>
 
+    {#if comfyuiVersionInfo?.installed}
+      <span
+        class="flex items-center justify-center gap-1 text-[10px] text-center mb-1 select-none cursor-default {comfyuiVersionInfo.update_available
+          ? 'text-amber-500'
+          : 'text-neutral-500'}"
+        title={comfyuiVersionInfo.update_available
+          ? locale.t('settings.performance.comfyui_update_note')
+          : locale.t('settings.performance.comfyui_up_to_date')}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" class="w-2.5 h-2.5 shrink-0" aria-hidden="true">
+          <circle cx="8" cy="8" r="7.5" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-width="1" />
+          <text x="8" y="11.2" text-anchor="middle" font-size="9" font-weight="700" fill="currentColor">C</text>
+        </svg>
+        v{comfyuiVersionInfo.installed}
+      </span>
+    {/if}
     <span
       class="mooshie-branding text-[10px] text-neutral-500 text-center mb-2 select-none cursor-default"
       role="button"
@@ -2967,12 +3013,6 @@
             class="relative w-1.5 cursor-col-resize hover:bg-indigo-500/40 active:bg-indigo-500/60 transition-colors shrink-0 flex items-center justify-center group"
             onmousedown={startMetadataResize}
           >
-            <!-- Drag icon handle -->
-            <div class="absolute pointer-events-none w-1 h-8 rounded-full bg-neutral-700 group-hover:bg-indigo-400 border border-neutral-600/30 flex flex-col items-center justify-center gap-0.5 opacity-60 group-hover:opacity-100 transition-all">
-              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-              <span class="w-0.5 h-0.5 rounded-full bg-neutral-400 group-hover:bg-white transition-colors"></span>
-            </div>
           </div>
         {:else}
           <!-- Collapsed: just a narrow strip with expand button -->

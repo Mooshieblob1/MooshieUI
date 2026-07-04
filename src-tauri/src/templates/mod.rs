@@ -121,6 +121,33 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
         }
     }
 
+    // Krea 2 hard-requires the Qwen3-VL 4B text encoder (12x2560=30720-dim
+    // conditioning). With any other encoder, ComfyUI fails deep inside sampling
+    // with a cryptic feature-count error, so fail fast here instead.
+    if params.model_architecture == "krea2" && params.use_split_model {
+        if params.clip_type.as_deref() != Some("krea2") {
+            return Err(
+                "Krea 2 requires the CLIP loader type \"krea2\" (ComfyUI 0.26.0 or newer). Re-select the Krea 2 model so the text encoder settings refresh, or update ComfyUI.".into(),
+            );
+        }
+        let clip_model = params.clip_model.as_deref().map(str::trim).unwrap_or("");
+        if clip_model.is_empty() {
+            return Err(
+                "Krea 2 requires the Qwen3-VL 4B text encoder, but none is selected. Open the model panel to download it (qwen3vl_4b_fp8_scaled.safetensors), or pick it under Text Encoder.".into(),
+            );
+        }
+        let clip_lower = clip_model.to_lowercase();
+        if !crate::commands::api::KREA2_TEXT_ENCODER_MARKERS
+            .iter()
+            .any(|marker| clip_lower.contains(marker))
+        {
+            return Err(format!(
+                "Krea 2 requires the Qwen3-VL 4B text encoder, but \"{}\" is selected — other encoders produce a conditioning-size error in ComfyUI. Download qwen3vl_4b_fp8_scaled.safetensors from the model panel, or if this file really is a Qwen3-VL 4B encoder, rename it to include \"qwen3vl_4b\".",
+                clip_model
+            ));
+        }
+    }
+
     Ok(())
 }
 

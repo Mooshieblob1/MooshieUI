@@ -577,6 +577,11 @@ const zhTw: Record<string, string> = {
   "generation.model.hide_model_info": "隱藏模型資訊",
   "generation.model.downloading_diffusion": "正在下載擴散模型...",
   "generation.model.downloading_text_encoder": "正在下載文字編碼器...",
+  "generation.model.text_encoder": "文字編碼器",
+  "generation.model.text_encoder_tip": "分離模型使用的文字編碼器。列出 text_encoders/ 和 clip/ 資料夾中的檔案。",
+  "generation.model.text_encoder_none": "未選擇",
+  "generation.model.krea2_encoder_warning": "Krea 2 需要 Qwen3-VL-4B 文字編碼器（如 qwen3vl_4b_fp8_scaled.safetensors）。其他編碼器會因 conditioning 尺寸錯誤而失敗。請在上方選擇，或重新選擇模型以自動下載。",
+  "generation.model.nvfp4_warning": "NVFP4 模型僅能在 NVIDIA Blackwell GPU（RTX 50 系列）上原生執行。您的 GPU 較舊，請改為下載並使用該模型的 FP8 版本。",
   "generation.model.downloading_vae": "正在下載 VAE...",
   "generation.model.downloading_checkpoint": "正在下載檢查點...",
   "generation.model.auto_download": "自動下載",
@@ -1093,6 +1098,7 @@ const zhTw: Record<string, string> = {
   "modelhub.civitai.cannot_install": "無法自動安裝類型 {type}。請使用開啟連結手動下載。",
   "modelhub.civitai.key_required_download": "下載此模型需要 CivitAI API 金鑰。請在上方新增金鑰後重試。",
   "modelhub.direct.description": "貼上合法的直接模型 URL（Hugging Face、鏡像、私人主機）並安裝到選定的模型類別。",
+  "modelhub.direct.civitai_no_files": "找不到此 CivitAI 模型版本的可下載檔案。",
   "modelhub.direct.url_required": "需要直接 URL。",
   "modelhub.direct.filename_required": "需要檔名。",
   "modelhub.direct.hf_page_url_error": "這似乎是HuggingFace模型頁面URL，而非直接檔案URL。\n請使用/resolve/main/ URL，例如:\nhttps://huggingface.co/author/model/resolve/main/model.safetensors",
@@ -1897,6 +1903,8 @@ const zhTw: Record<string, string> = {
   "settings.models.delete_title": "刪除 {name}",
   "settings.models.deleted": "已刪除 {name}",
   "settings.models.moved": "已移動 {name}",
+  "notifications.read_more": "閱讀全文",
+  "notifications.open_settings": "開啟設定",
   "notifications.title": "通知",
 
   "notifications.mark_all_read": "全部標為已讀",
@@ -1928,6 +1936,8 @@ const zhTw: Record<string, string> = {
   "notifications.model_request.denied_body_reason": "您對 {model_name} 的請求已被 {handler} 拒絕。原因：{reason}",
   "notifications.legacy_password_migration.title": "密碼安全升級",
   "notifications.legacy_password_migration.body": "我們正在遷移到更強的密碼加密格式（Argon2id）。在 {deadline} 前可在設定中提前升級。之後登入將自動升級密碼 — 密碼可以不變。",
+  "notifications.comfyui_outdated.title": "ComfyUI 更新可用",
+  "notifications.comfyui_outdated.body": "您安裝的 ComfyUI（{installed}）版本舊於此版本所需的目標版本（{target}）。部分功能（如 Krea 2）在您於設定中更新前可能無法運作。",
 
   "generation.toast.failed": "生成失敗",
 

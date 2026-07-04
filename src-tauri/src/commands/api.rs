@@ -2994,7 +2994,11 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     if name.contains("ideogram4") {
         return Some("ideogram4");
     }
-    if name.contains("krea2") {
+    if name.contains("krea2")
+        || name.contains("krea-2")
+        || name.contains("krea_2")
+        || name.contains("krea 2")
+    {
         return Some("krea2");
     }
     if name == "wan"
@@ -3160,11 +3164,25 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
     find_first_vae_matching(vaes, &["sdxl"]).or_else(|| vaes.first().cloned())
 }
 
+/// Text-encoder filename markers accepted for Krea 2 (Qwen3-VL 4B, 30720-dim
+/// conditioning). Shared with the generate-time guard in templates/mod.rs.
+pub const KREA2_TEXT_ENCODER_MARKERS: [&str; 5] = [
+    "qwen3vl-4b",
+    "qwen3vl_4b",
+    "qwen3-vl-4b",
+    "qwen3_vl_4b",
+    "qwen3vl4b",
+];
+
+/// Returns (recommended encoder filename if a compatible one exists, CLIP type).
+/// A `None` filename with `Some` type means: the family's CLIP type is known but
+/// no installed encoder is compatible — callers must NOT silently substitute an
+/// arbitrary encoder (a mismatched encoder fails deep inside ComfyUI sampling).
 fn recommended_clip_from_available(
     category: &str,
     family: &str,
     encoders: &[String],
-) -> Option<(String, &'static str)> {
+) -> Option<(Option<String>, &'static str)> {
     if category != "diffusion_models" || encoders.is_empty() {
         return None;
     }
@@ -3173,13 +3191,13 @@ fn recommended_clip_from_available(
         // Matches the curated Anima recommended-model entries (CLIPLoader type "wan").
         let preferred =
             find_first_text_encoder_matching(encoders, &["qwen_3_06b_base", "qwen_3_06b"])
-                .or_else(|| encoders.first().cloned())?;
+                .or_else(|| encoders.first().cloned());
         return Some((preferred, "wan"));
     }
 
     if matches!(family, "qwen" | "wan") {
         let preferred = find_first_text_encoder_matching(encoders, &["qwen2.5-vl", "qwen_2.5_vl"])
-            .or_else(|| encoders.first().cloned())?;
+            .or_else(|| encoders.first().cloned());
         return Some((preferred, "qwen_image"));
     }
 
@@ -3194,27 +3212,27 @@ fn recommended_clip_from_available(
                     None
                 }
             })
-            .or_else(|| encoders.first().cloned())?;
+            .or_else(|| encoders.first().cloned());
         return Some((preferred, "flux2"));
     }
 
     if matches!(family, "flux2klein9b" | "flux2klein9bbase") {
         let preferred = find_first_text_encoder_matching(encoders, &["qwen3_8b", "qwen_3_8b"])
-            .or_else(|| encoders.first().cloned())?;
+            .or_else(|| encoders.first().cloned());
         return Some((preferred, "flux2"));
     }
 
     if matches!(family, "flux2klein4b" | "flux2klein4bbase") {
         let preferred =
             find_first_text_encoder_matching(encoders, &["zimage", "qwen3-4b", "qwen34b"])
-                .or_else(|| encoders.first().cloned())?;
+                .or_else(|| encoders.first().cloned());
         return Some((preferred, "flux2"));
     }
 
     if matches!(family, "zib" | "zit") {
         let preferred =
             find_first_text_encoder_matching(encoders, &["zimage", "qwen3-4b", "qwen34b"])
-                .or_else(|| encoders.first().cloned())?;
+                .or_else(|| encoders.first().cloned());
         return Some((preferred, "lumina2"));
     }
 
@@ -3223,29 +3241,34 @@ fn recommended_clip_from_available(
         "flux" | "flux1d" | "flux1s" | "flux1krea" | "chroma"
     ) {
         let preferred = find_first_text_encoder_matching(encoders, &["flan_t5_xxl", "t5_xxl"])
-            .or_else(|| encoders.first().cloned())?;
+            .or_else(|| encoders.first().cloned());
         return Some((preferred, "chroma"));
     }
 
     if family == "ideogram4" {
+        // Strict: Ideogram 4 only works with a Qwen3-VL 8B encoder. Never fall
+        // back to an unrelated encoder — that fails deep inside sampling.
         let preferred = find_first_text_encoder_matching(
             encoders,
-            &["qwen3vl-8b", "qwen3vl_8b", "qwen3-vl-8b", "qwen3_vl_8b"],
-        )
-        .or_else(|| encoders.first().cloned())?;
+            &[
+                "qwen3vl-8b",
+                "qwen3vl_8b",
+                "qwen3-vl-8b",
+                "qwen3_vl_8b",
+                "qwen3vl8b",
+            ],
+        );
         return Some((preferred, "ideogram4"));
     }
 
     if family == "krea2" {
-        let preferred = find_first_text_encoder_matching(
-            encoders,
-            &["qwen3vl-4b", "qwen3vl_4b", "qwen3-vl-4b", "qwen3_vl_4b"],
-        )
-        .or_else(|| encoders.first().cloned())?;
+        // Strict: Krea 2 expects 12x2560=30720-dim conditioning from Qwen3-VL 4B.
+        // Recommending any other encoder produces a confusing ComfyUI error.
+        let preferred = find_first_text_encoder_matching(encoders, &KREA2_TEXT_ENCODER_MARKERS);
         return Some((preferred, "krea2"));
     }
 
-    Some((encoders.first()?.clone(), "wan"))
+    Some((Some(encoders.first()?.clone()), "wan"))
 }
 
 fn read_json_sidecar(path: &std::path::Path) -> Result<Option<Value>, AppError> {
@@ -3548,6 +3571,54 @@ pub async fn civitai_search_models(
 
     let data: Value = serde_json::from_str(&body)?;
     Ok(data)
+}
+
+/// Fetch a single CivitAI model (all versions and files) by numeric ID.
+/// Shared by the Tauri command and the LAN web server route.
+pub async fn civitai_get_model_internal(
+    state: &Arc<AppState>,
+    model_id: u64,
+    api_key: Option<String>,
+) -> Result<Value, AppError> {
+    let url = format!("https://civitai.com/api/v1/models/{}", model_id);
+
+    let mut req = state
+        .http_client
+        .get(&url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "MooshieUI/0.3.9");
+
+    if let Some(key) = api_key.filter(|v| !v.trim().is_empty()) {
+        req = req.bearer_auth(key);
+    }
+
+    let resp = req.send().await?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+
+    if !status.is_success() {
+        return Err(AppError::ApiError {
+            status: status.as_u16(),
+            message: if body.is_empty() {
+                status.to_string()
+            } else {
+                body
+            },
+        });
+    }
+
+    let data: Value = serde_json::from_str(&body)?;
+    Ok(data)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn civitai_get_model(
+    state: State<'_, Arc<AppState>>,
+    model_id: u64,
+    api_key: Option<String>,
+) -> Result<Value, AppError> {
+    civitai_get_model_internal(&state, model_id, api_key).await
 }
 
 #[cfg(feature = "desktop")]
@@ -3860,7 +3931,12 @@ pub(crate) async fn read_modelspec_internal(
             if let Some((recommended_clip_model, recommended_clip_type)) =
                 recommended_clip_from_available(category, &family, &encoders)
             {
-                result.insert("recommended_clip_model".to_string(), recommended_clip_model);
+                // The model key is omitted (not defaulted) when no installed
+                // encoder is compatible, so the frontend can offer a download
+                // instead of silently loading a mismatched encoder.
+                if let Some(recommended_clip_model) = recommended_clip_model {
+                    result.insert("recommended_clip_model".to_string(), recommended_clip_model);
+                }
                 result.insert(
                     "recommended_clip_type".to_string(),
                     recommended_clip_type.to_string(),

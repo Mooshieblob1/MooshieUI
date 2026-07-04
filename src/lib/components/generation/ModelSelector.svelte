@@ -436,6 +436,11 @@
       });
       generation.ensureRecommendedSplitClip(models.textEncoders);
       generation.ensureRecommendedSplitVae(models.vaes);
+      if (family === "krea2") {
+        // Fire-and-forget: may kick off a multi-GB download; progress shows
+        // in the shared download rows under the model button.
+        void ensureKrea2Encoder();
+      }
       generation.applyModelSpecificPreset();
       if (family === "unknown") {
         loadedModelMetadataKey = "";
@@ -459,6 +464,109 @@
         modelRecommendedClipModel: null,
         modelRecommendedClipType: null,
       });
+    }
+  }
+
+  // Krea 2 only works with the Qwen3-VL 4B text encoder (12x2560 = 30720-dim
+  // conditioning); any other encoder fails deep inside ComfyUI sampling with a
+  // cryptic feature-count error. Marker list mirrors KREA2_TEXT_ENCODER_MARKERS
+  // in src-tauri/src/commands/api.rs.
+  const KREA2_ENCODER_MARKERS = ["qwen3vl-4b", "qwen3vl_4b", "qwen3-vl-4b", "qwen3_vl_4b", "qwen3vl4b"];
+  const KREA2_ENCODER_FILE: ModelFile = {
+    filename: "qwen3vl_4b_fp8_scaled.safetensors",
+    url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+    category: "text_encoders",
+  };
+  const KREA2_VAE_FILE: ModelFile = {
+    filename: "qwen_image_vae.safetensors",
+    url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/vae/qwen_image_vae.safetensors",
+    category: "vae",
+  };
+  let krea2EnsureRunning = false;
+
+  function isKrea2Encoder(filename: string | null | undefined): boolean {
+    if (!filename) return false;
+    const lower = filename.toLowerCase();
+    return KREA2_ENCODER_MARKERS.some((marker) => lower.includes(marker));
+  }
+
+  /**
+   * Runs after model metadata is applied for a Krea 2 model. Ensures a
+   * Qwen3-VL 4B encoder is selected — preferring one already on disk and
+   * auto-downloading the FP8 build from Comfy-Org/Krea-2 otherwise (plus the
+   * qwen_image VAE when no qwen VAE is installed).
+   */
+  async function ensureKrea2Encoder() {
+    if (krea2EnsureRunning || !generation.useSplitModel) return;
+    if (isKrea2Encoder(generation.clipModel)) {
+      if (generation.clipType !== "krea2") {
+        generation.clipType = "krea2";
+        generation.saveSettings();
+      }
+      return;
+    }
+
+    const existing = models.textEncoders.find((f) => isKrea2Encoder(f));
+    if (existing) {
+      generation.clipModel = existing;
+      generation.clipType = "krea2";
+      generation.saveSettings();
+      return;
+    }
+
+    // Nothing suitable installed — auto-download. Skip if another batch
+    // download already owns the progress UI; the generate-time guard still
+    // catches the misconfiguration with an actionable message.
+    if (downloading !== null) return;
+
+    krea2EnsureRunning = true;
+    const files: { file: ModelFile; label: string }[] = [
+      { file: KREA2_ENCODER_FILE, label: locale.t('generation.model.downloading_text_encoder') },
+    ];
+    if (!models.vaes.some((v) => v.toLowerCase().includes("qwen"))) {
+      files.push({ file: KREA2_VAE_FILE, label: locale.t('generation.model.downloading_vae') });
+    }
+    downloading = "Krea 2";
+    downloadError = "";
+    const seeded: Record<string, DlEntry> = {};
+    const order: string[] = [];
+    for (const { file, label } of files) {
+      seeded[file.filename] = { filename: file.filename, label, downloaded: 0, total: 0, done: false };
+      order.push(file.filename);
+    }
+    dlEntries = seeded;
+    dlOrder = order;
+    try {
+      await Promise.all(
+        files.map(async ({ file }) => {
+          await downloadModel(file.url, file.category, file.filename);
+          await cacheHashAfterDownload(file);
+        }),
+      );
+      await models.refresh();
+      generation.clipModel = KREA2_ENCODER_FILE.filename;
+      generation.clipType = "krea2";
+      if (
+        files.some(({ file }) => file === KREA2_VAE_FILE) &&
+        !generation.vae.toLowerCase().includes("qwen")
+      ) {
+        generation.vae = KREA2_VAE_FILE.filename;
+      }
+      generation.saveSettings();
+      downloading = null;
+      dlEntries = {};
+      dlOrder = [];
+    } catch (e) {
+      console.error("Failed to download Krea 2 text encoder:", e);
+      downloadError = `Download failed: ${e}`;
+      setTimeout(() => {
+        downloading = null;
+        downloadError = "";
+        dlEntries = {};
+        dlOrder = [];
+      }, 4000);
+    } finally {
+      krea2EnsureRunning = false;
     }
   }
 
@@ -491,6 +599,23 @@
    * (so AMD/Intel/CPU users don't see entries they can't run).
    */
   let computeCapability = $state<number | null>(null);
+
+  // NVFP4 weights only run natively on Blackwell (compute capability 10.0+).
+  // Warn owners of older NVIDIA GPUs that they need the FP8 build instead.
+  const showNvfp4Warning = $derived(
+    generation.useSplitModel &&
+      (generation.diffusionModel ?? "").toLowerCase().includes("nvfp4") &&
+      computeCapability !== null &&
+      computeCapability < 10.0
+  );
+
+  // Shown under the text-encoder picker when a Krea 2 model is paired with an
+  // encoder that will fail at generation time (wrong conditioning size).
+  const showKrea2EncoderWarning = $derived(
+    generation.useSplitModel &&
+      generation.modelFamily === "krea2" &&
+      !isKrea2Encoder(generation.clipModel)
+  );
 
   // Per-file download progress. Keyed by filename so parallel downloads of
   // different components (diffusion model / text encoder / VAE) each have
@@ -1179,6 +1304,11 @@
         {/each}
       </div>
     {/if}
+    {#if showNvfp4Warning}
+      <div class="mt-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-[11px] text-amber-300">
+        {locale.t('generation.model.nvfp4_warning')}
+      </div>
+    {/if}
     {#if showCheckpointDropdown}
       <div
         class="absolute z-50 mt-1 w-full bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl max-h-60 overflow-hidden"
@@ -1345,6 +1475,29 @@
       {/each}
     </select>
   </div>
+
+  <!-- Text encoder (split models only). Lists files from both the
+       text_encoders/ and clip/ folders (models.textEncoders merges them). -->
+  {#if generation.useSplitModel}
+    <div>
+      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.model.text_encoder')}<InfoTip text={locale.t('generation.model.text_encoder_tip')} /></label>
+      <select
+        bind:value={generation.clipModel}
+        onchange={() => generation.saveSettings()}
+        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+      >
+        <option value={null}>{locale.t('generation.model.text_encoder_none')}</option>
+        {#each models.textEncoders as encoder}
+          <option value={encoder}>{encoder}</option>
+        {/each}
+      </select>
+      {#if showKrea2EncoderWarning}
+        <div class="mt-2 rounded-lg border border-amber-600/30 bg-amber-600/10 px-3 py-2 text-[11px] text-amber-300">
+          {locale.t('generation.model.krea2_encoder_warning')}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <!-- LoRAs -->
   <div>

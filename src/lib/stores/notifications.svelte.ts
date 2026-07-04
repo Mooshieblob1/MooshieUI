@@ -22,6 +22,9 @@ type NotificationInput = {
   body?: string;
   kind?: string;
   target?: string;
+  /** When true, title/body are locale keys; params supplies interpolation. */
+  i18n?: boolean;
+  params?: Record<string, unknown>;
 };
 
 function loadLocalNotifications(): Notification[] {
@@ -129,6 +132,8 @@ class NotificationStore {
       read: false,
       created_at: new Date().toISOString(),
       local: true,
+      i18n: input.i18n,
+      params: input.params,
     };
     this.localNotifications = [notification, ...this.localNotifications].slice(0, MAX_LOCAL_NOTIFICATIONS);
     saveLocalNotifications(this.localNotifications);

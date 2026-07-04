@@ -577,6 +577,11 @@ const ru: Record<string, string> = {
   "generation.model.hide_model_info": "Скрыть информацию о модели",
   "generation.model.downloading_diffusion": "Скачивание модели диффузии...",
   "generation.model.downloading_text_encoder": "Скачивание текстового энкодера...",
+  "generation.model.text_encoder": "Текстовый энкодер",
+  "generation.model.text_encoder_tip": "Текстовый энкодер для раздельных моделей. Показывает файлы из папок text_encoders/ и clip/.",
+  "generation.model.text_encoder_none": "Не выбрано",
+  "generation.model.krea2_encoder_warning": "Krea 2 требует текстовый энкодер Qwen3-VL-4B (например, qwen3vl_4b_fp8_scaled.safetensors). Другие энкодеры завершатся ошибкой размера conditioning. Выберите его выше или выберите модель заново для автоматической загрузки.",
+  "generation.model.nvfp4_warning": "Модели NVFP4 нативно работают только на GPU NVIDIA Blackwell (серия RTX 50). Ваш GPU старше, поэтому скачайте и используйте версию FP8 этой модели.",
   "generation.model.downloading_vae": "Скачивание VAE...",
   "generation.model.downloading_checkpoint": "Скачивание чекпоинта...",
   "generation.model.auto_download": "Автоскачивание",
@@ -1093,6 +1098,7 @@ const ru: Record<string, string> = {
   "modelhub.civitai.cannot_install": "Невозможно автоустановить тип: {type}. Используйте Открыть ссылку для ручного скачивания.",
   "modelhub.civitai.key_required_download": "Для скачивания этой модели требуется API-ключ CivitAI. Добавьте ключ выше и попробуйте снова.",
   "modelhub.direct.description": "Вставьте любой легитимный прямой URL модели (Hugging Face, зеркало, частный хост) и установите в выбранную категорию моделей.",
+  "modelhub.direct.civitai_no_files": "Для этой версии модели CivitAI не найдено файлов для скачивания.",
   "modelhub.direct.url_required": "Необходим прямой URL.",
   "modelhub.direct.filename_required": "Требуется имя файла.",
   "modelhub.direct.hf_page_url_error": "Похоже, это URL страницы HuggingFace, а не прямой URL файла.\nИспользуйте URL вида /resolve/main/, например:\nhttps://huggingface.co/author/model/resolve/main/model.safetensors",
@@ -1897,6 +1903,8 @@ const ru: Record<string, string> = {
   "settings.models.delete_title": "Удалить {name}",
   "settings.models.deleted": "{name} удалён",
   "settings.models.moved": "{name} перемещён",
+  "notifications.read_more": "Читать далее",
+  "notifications.open_settings": "Открыть настройки",
   "notifications.title": "Уведомления",
 
   "notifications.mark_all_read": "Отметить все прочитанными",
@@ -1928,6 +1936,8 @@ const ru: Record<string, string> = {
   "notifications.model_request.denied_body_reason": "Ваш запрос на {model_name} отклонён пользователем {handler}. Причина: {reason}",
   "notifications.legacy_password_migration.title": "Обновление защиты пароля",
   "notifications.legacy_password_migration.body": "Мы переходим на более сильный формат шифрования паролей (Argon2id). До {deadline} можно обновить в Настройках. После этого вход автоматически обновит пароль — он может остаться прежним.",
+  "notifications.comfyui_outdated.title": "Доступно обновление ComfyUI",
+  "notifications.comfyui_outdated.body": "Установленная версия ComfyUI ({installed}) старше версии, на которую рассчитана эта сборка ({target}). Некоторые функции (например, Krea 2) могут не работать, пока вы не обновитесь в Настройках.",
 
   "generation.toast.failed": "Генерация не удалась",
 
