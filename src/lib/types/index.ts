@@ -239,6 +239,8 @@ export interface AppConfig {
   civitai_api_key: string | null;
   /** Present in browser mode for non-admin users when a server-side key is configured. */
   civitai_api_key_configured?: boolean;
+  /** When set, in-app error reports POST here (Sub-project B proxy) instead of opening a prefilled GitHub issue. */
+  report_endpoint?: string | null;
   gallery_path: string | null;
   browser_mode: boolean;
   ui_server_port: number;
