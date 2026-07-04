@@ -1,5 +1,6 @@
 mod types;
 mod dedup;
+mod catalog;
 
 use axum::{routing::get, Router};
 use types::Config;
