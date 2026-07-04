@@ -2270,5 +2270,209 @@ const ja: Record<string, string> = {
   "generation.style_manager.mode_wildcard": "ワイルドカード",
   "generation.style_manager.mode_wildcard_ordered": "順番指定",
 
+  "errors.generic.title": "エラーが発生しました",
+
+  "errors.generic.what": "アプリが想定外のエラーに遭遇しました。",
+
+  "errors.generic.why": "予期しない状態、一時的な不具合、またはバグが原因で発生することがあります。",
+
+  "errors.generic.fixes": "もう一度操作を試してください。 || アプリを再起動してください（ComfyUI が起動中の場合は一緒に）。 || 繰り返し発生する場合は、下の「エラーを報告」ボタンで報告してください。",
+
+  "errors.connection_failed.title": "サーバーに接続できません",
+
+  "errors.connection_failed.what": "アプリがバックエンドへの接続を開けませんでした。",
+
+  "errors.connection_failed.why": "サーバーまたは ComfyUI が停止中、起動中、またはファイアウォールによってブロックされている可能性があります。",
+
+  "errors.connection_failed.fixes": "数秒待ってから再試行してください。 || 設定で ComfyUI が起動していることを確認してください。 || ファイアウォールまたは VPN が localhost をブロックしていないか確認してください。",
+
+  "errors.comfyui_not_running.title": "ComfyUI が起動していません",
+
+  "errors.comfyui_not_running.what": "アプリには ComfyUI の起動が必要ですが、見つかりませんでした。",
+
+  "errors.comfyui_not_running.why": "ComfyUI が起動していない、クラッシュした、またはまだ起動中です。",
+
+  "errors.comfyui_not_running.fixes": "設定から ComfyUI を起動してください。 || 起動が完了するまで待ってから再試行してください。 || ComfyUI のクラッシュについてログを確認してください。",
+
+  "errors.websocket_dropped.title": "接続が切断されました",
+
+  "errors.websocket_dropped.what": "ComfyUI へのリアルタイム接続が予期せず切断されました。",
+
+  "errors.websocket_dropped.why": "ComfyUI が再起動したか、ネットワーク接続が中断された可能性があります。",
+
+  "errors.websocket_dropped.fixes": "操作を再試行して再接続してください。 || ComfyUI がまだ起動していることを確認してください。 || 問題が続く場合は ComfyUI を再起動してください。",
+
+  "errors.api_error_5xx.title": "サーバーがエラーを返しました",
+
+  "errors.api_error_5xx.what": "バックエンドがサーバーサイドエラー（5xx）を返しました。",
+
+  "errors.api_error_5xx.why": "ComfyUI またはバックエンドがリクエスト処理中に内部エラーが発生しました。",
+
+  "errors.api_error_5xx.fixes": "しばらく待ってから再試行してください。 || ログで根本的なエラーを確認してください。 || 失敗が続く場合は ComfyUI を再起動してください。",
+
+  "errors.download_404.title": "ファイルが見つかりません（404）",
+
+  "errors.download_404.what": "ダウンロード URL が Not Found を返しました。",
+
+  "errors.download_404.why": "リンクが間違っているか、ファイルが移動・削除されたか、アプリが持っていないログインが必要です。",
+
+  "errors.download_404.fixes": "URL がブラウザで開けることを確認してください。 || Hugging Face の場合は /blob/ ページではなく /resolve/ リンクを使用してください。 || ゲートファイルの場合は、設定でアクセストークンを追加してください。",
+
+  "errors.download_network.title": "ダウンロードに失敗しました",
+
+  "errors.download_network.what": "ファイルをダウンロードできませんでした。",
+
+  "errors.download_network.why": "接続が切断された、タイムアウトした、またはホストに到達できませんでした。",
+
+  "errors.download_network.fixes": "インターネット接続を確認して再試行してください。 || ホストが混雑している場合は後でやり直してください。 || VPN またはファイアウォールがダウンロードをブロックしていないか確認してください。",
+
+  "errors.disk_full.title": "ディスク容量が不足しています",
+
+  "errors.disk_full.what": "ファイルの書き込みを完了するための空き容量が不足していました。",
+
+  "errors.disk_full.why": "モデルまたは出力フォルダを保存しているドライブが満杯です。",
+
+  "errors.disk_full.fixes": "ディスク容量を解放して再試行してください。 || 設定でモデルまたはギャラリーフォルダを大きなドライブに変更してください。 || Model Hub で未使用のモデルを削除してください。",
+
+  "errors.checksum_mismatch.title": "ダウンロードファイルが破損しています",
+
+  "errors.checksum_mismatch.what": "ダウンロードしたファイルが期待されるチェックサムと一致しませんでした。",
+
+  "errors.checksum_mismatch.why": "ダウンロードが中断されたか、転送中に改ざんされた可能性があります。",
+
+  "errors.checksum_mismatch.fixes": "不完全なファイルを削除して再度ダウンロードしてください。 || より安定した接続で再試行してください。 || 失敗が続く場合は URL を報告してください。",
+
+  "errors.civitai_auth.title": "CivitAI へのログインが必要です",
+
+  "errors.civitai_auth.what": "CivitAI がダウンロードを未認証として拒否しました。",
+
+  "errors.civitai_auth.why": "ファイルには CivitAI アカウントまたは API キーが必要ですが、欠落または無効です。",
+
+  "errors.civitai_auth.fixes": "設定で CivitAI API キーを追加または更新してください。 || キーがこのファイルへのアクセス権を持っていることを確認してください。 || civitai.com にサインインしてファイルがまだ利用可能か確認してください。",
+
+  "errors.hf_page_url.title": "これはファイルではなく Hugging Face のページです",
+
+  "errors.hf_page_url.what": "URL はダウンロード可能なファイルではなくモデルページを指しています。",
+
+  "errors.hf_page_url.why": "Hugging Face の /blob/ リンクはウェブページを開きます。ダウンロードには /resolve/ リンクが必要です。",
+
+  "errors.hf_page_url.fixes": "/resolve/main/... 形式の URL を使用してください。 || Model Hub フィールドの /blob/ リンクはアプリが自動修正します。 || ファイルのページから直接ダウンロードリンクをコピーしてください。",
+
+  "errors.model_not_found.title": "モデルが見つかりません",
+
+  "errors.model_not_found.what": "要求されたモデルまたはチェックポイントが見つかりませんでした。",
+
+  "errors.model_not_found.why": "インストールされていないか、移動・名前変更されたか、フォルダがインデックスされていません。",
+
+  "errors.model_not_found.fixes": "Model Hub からモデルをインストールしてください。 || 設定でモデルリストを更新してください。 || ファイルが正しいモデルフォルダにあることを確認してください。",
+
+  "errors.comfyui_launch_failed.title": "ComfyUI の起動に失敗しました",
+
+  "errors.comfyui_launch_failed.what": "アプリが ComfyUI を起動しようとしましたが、プロセスが開始されませんでした。",
+
+  "errors.comfyui_launch_failed.why": "インストールが不完全、依存関係が欠落、またはポートが使用中の可能性があります。",
+
+  "errors.comfyui_launch_failed.fixes": "設定からセットアップを再実行してください。 || ログで起動エラーを確認してください。 || 他の ComfyUI がすでにポートを使用していないことを確認してください。",
+
+  "errors.python_env_broken.title": "Python 環境の問題",
+
+  "errors.python_env_broken.what": "バンドルされた Python 環境を使用できませんでした。",
+
+  "errors.python_env_broken.why": "環境が欠落、不完全、またはパッケージのインポートに失敗しました。",
+
+  "errors.python_env_broken.fixes": "セットアップを再実行して環境を再構築してください。 || ログでインポートの失敗を確認してください。 || セットアップが繰り返し失敗する場合は報告してください。",
+
+  "errors.attention_backend_install.title": "Attention バックエンドのインストールに失敗しました",
+
+  "errors.attention_backend_install.what": "アクセラレーションバックエンドのインストールが完了しませんでした。",
+
+  "errors.attention_backend_install.why": "バックエンドがお使いの GPU をサポートしていないか、ダウンロードまたはビルドに失敗した可能性があります。",
+
+  "errors.attention_backend_install.fixes": "設定で別の attention バックエンドを試してください。 || GPU がサポートされていることを確認してください。 || ログを確認してインストールを再試行してください。",
+
+  "errors.out_of_memory.title": "メモリ不足",
+
+  "errors.out_of_memory.what": "生成中に GPU またはシステムのメモリが不足しました。",
+
+  "errors.out_of_memory.why": "解像度、バッチサイズ、またはモデルが利用可能なメモリに対して大きすぎます。",
+
+  "errors.out_of_memory.fixes": "解像度またはバッチサイズを下げて再試行してください。 || GPU を多用する他のアプリを閉じてください。 || より小さいまたは量子化されたモデルを使用してください。",
+
+  "errors.unsupported_gpu.title": "GPU がサポートされていません",
+
+  "errors.unsupported_gpu.what": "アプリはこの操作にお使いの GPU を使用できませんでした。",
+
+  "errors.unsupported_gpu.why": "互換性のある GPU またはドライバーが検出されないか、この機能には CUDA が必要です。",
+
+  "errors.unsupported_gpu.fixes": "GPU ドライバーを更新してください。 || GPU が要件を満たしていることを確認してください。 || 動作するはずだと思う場合は GPU モデルを報告してください。",
+
+  "errors.missing_node.title": "必要な ComfyUI ノードがありません",
+
+  "errors.missing_node.what": "ワークフローにインストールされていないカスタムノードが必要です。",
+
+  "errors.missing_node.why": "ワークフローが参照しているカスタムノードパックが存在しません。",
+
+  "errors.missing_node.fixes": "セットアップを再実行してバンドルされたノードを再インストールしてください。 || ログでノード名を確認してください。 || ノードがアプリに同梱されるべきものであれば報告してください。",
+
+  "errors.invalid_workflow.title": "ワークフローが無効です",
+
+  "errors.invalid_workflow.what": "生成ワークフローを構築できないか、不正な形式です。",
+
+  "errors.invalid_workflow.why": "設定の組み合わせが ComfyUI で受け付けられないワークフローを生成しました。",
+
+  "errors.invalid_workflow.fixes": "影響を受ける設定をリセットして再試行してください。 || デフォルトプリセットを試してセットアップが機能することを確認してください。 || 使用した設定とともに報告してください。",
+
+  "errors.generation_interrupted.title": "生成が停止しました",
+
+  "errors.generation_interrupted.what": "生成が完了しませんでした。",
+
+  "errors.generation_interrupted.why": "キャンセルされたか、ComfyUI が途中で停止しました。",
+
+  "errors.generation_interrupted.fixes": "生成を再開してください。 || ComfyUI がまだ起動していることを確認してください。 || キャンセルしていない場合はログを確認してください。",
+
+  "errors.io_permission.title": "ファイルへのアクセスが拒否されました",
+
+  "errors.io_permission.what": "アプリが必要なファイルを読み書きできませんでした。",
+
+  "errors.io_permission.why": "フォルダが保護されているか、読み取り専用か、または別のプロセスが所有しています。",
+
+  "errors.io_permission.fixes": "ユーザーアカウントが書き込めるフォルダを選択してください。 || ファイルをロックしているアプリを閉じてください。 || 書き込み保護されていない場所から実行してください。",
+
+  "errors.serialization.title": "データを読み取れませんでした",
+
+  "errors.serialization.what": "アプリが解析できないデータを受信しました。",
+
+  "errors.serialization.why": "レスポンスが不正な形式か、ファイルが破損しています。",
+
+  "errors.serialization.fixes": "操作を再試行してください。 || アプリを再起動してください。 || 繰り返し発生する場合は報告してください。",
+
+  "errors.card.details": "技術的な詳細",
+
+  "errors.card.copy_diagnostics": "診断情報をコピー",
+
+  "errors.card.copied": "コピーしました",
+
+  "errors.card.what_label": "何が起きたか",
+
+  "errors.card.why_label": "原因",
+
+  "errors.card.fix_label": "修正方法",
+
+  "errors.card.report": "このエラーを報告",
+
+  "errors.report.title": "このエラーを報告",
+
+  "errors.report.intro": "事前入力された GitHub Issue を開きます。診断ログがクリップボードにコピーされるので、Issue にペーストしてください。",
+
+  "errors.report.note_label": "その他の補足情報（任意）",
+
+  "errors.report.note_placeholder": "このエラーが発生したとき、何をしていましたか？",
+
+  "errors.report.submit": "Issue を開く",
+
+  "errors.report.opening": "開いています...",
+
+  "errors.report.copied_hint": "診断情報がクリップボードにコピーされました。Issue の本文に貼り付けてください。",
+
 };
 export default ja;

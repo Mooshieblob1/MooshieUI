@@ -2246,5 +2246,209 @@ const zh: Record<string, string> = {
   "generation.style_manager.mode_wildcard": "通配符",
   "generation.style_manager.mode_wildcard_ordered": "顺序",
 
+  "errors.generic.title": "出错了",
+
+  "errors.generic.what": "应用遇到了一个没有具体指导说明的错误。",
+
+  "errors.generic.why": "这可能由意外状态、短暂故障或程序缺陷引起。",
+
+  "errors.generic.fixes": "请重试此操作。 || 重启应用，如果 ComfyUI 正在运行也一并重启。 || 如果问题持续，请点击下方“报告此错误”按钮。",
+
+  "errors.connection_failed.title": "无法连接服务器",
+
+  "errors.connection_failed.what": "应用无法与后端建立连接。",
+
+  "errors.connection_failed.why": "服务器或 ComfyUI 可能已停止、仍在启动中或被防火墙阻止。",
+
+  "errors.connection_failed.fixes": "等待几秒后重试。 || 在设置中确认 ComfyUI 正在运行。 || 确认没有防火墙或 VPN 阻止 localhost。",
+
+  "errors.comfyui_not_running.title": "ComfyUI 未运行",
+
+  "errors.comfyui_not_running.what": "应用需要 ComfyUI 运行，但未能找到它。",
+
+  "errors.comfyui_not_running.why": "ComfyUI 尚未启动、已崩溃或仍在启动中。",
+
+  "errors.comfyui_not_running.fixes": "从设置中启动 ComfyUI。 || 等待启动完成后重试。 || 查看日志以排查 ComfyUI 崩溃原因。",
+
+  "errors.websocket_dropped.title": "实时连接已断开",
+
+  "errors.websocket_dropped.what": "与 ComfyUI 的实时连接意外断开。",
+
+  "errors.websocket_dropped.why": "ComfyUI 可能已重启，或网络连接被中断。",
+
+  "errors.websocket_dropped.fixes": "重试操作以重新连接。 || 确认 ComfyUI 仍在运行。 || 如果问题持续，重启 ComfyUI。",
+
+  "errors.api_error_5xx.title": "服务器返回错误",
+
+  "errors.api_error_5xx.what": "后端返回了服务器端错误（5xx）。",
+
+  "errors.api_error_5xx.why": "ComfyUI 或后端在处理请求时发生内部错误。",
+
+  "errors.api_error_5xx.fixes": "稍后重试。 || 查看日志以了解根本原因。 || 如果持续失败，重启 ComfyUI。",
+
+  "errors.download_404.title": "文件未找到（404）",
+
+  "errors.download_404.what": "下载链接返回了“未找到”。",
+
+  "errors.download_404.why": "链接有误、文件已移动或删除，或需要应用未提供的登录信息。",
+
+  "errors.download_404.fixes": "在浏览器中验证链接是否可访问。 || 对于 Hugging Face，使用 /resolve/ 链接而非 /blob/ 页面。 || 对于受限文件，请在设置中添加访问令牌。",
+
+  "errors.download_network.title": "下载失败",
+
+  "errors.download_network.what": "文件无法下载。",
+
+  "errors.download_network.why": "连接中断、超时或无法访问主机。",
+
+  "errors.download_network.fixes": "检查网络连接后重试。 || 如果主机繁忙，稍后再试。 || 确认没有 VPN 或防火墙阻止下载。",
+
+  "errors.disk_full.title": "磁盘空间不足",
+
+  "errors.disk_full.what": "可用空间不足，文件写入未能完成。",
+
+  "errors.disk_full.why": "存放模型或输出文件夹的磁盘已满。",
+
+  "errors.disk_full.fixes": "释放磁盘空间后重试。 || 在设置中将模型或图库文件夹指向更大的磁盘。 || 从 Model Hub 删除未使用的模型。",
+
+  "errors.checksum_mismatch.title": "下载文件已损坏",
+
+  "errors.checksum_mismatch.what": "下载的文件与预期校验值不匹配。",
+
+  "errors.checksum_mismatch.why": "下载过程中被中断或被篡改。",
+
+  "errors.checksum_mismatch.fixes": "删除不完整的文件并重新下载。 || 在更稳定的网络连接下重试。 || 如果持续失败，请报告该链接。",
+
+  "errors.civitai_auth.title": "需要登录 CivitAI",
+
+  "errors.civitai_auth.what": "CivitAI 拒绝了未授权的下载请求。",
+
+  "errors.civitai_auth.why": "该文件需要 CivitAI 账号或 API 密钥，但密钥缺失或无效。",
+
+  "errors.civitai_auth.fixes": "在设置中添加或更新 CivitAI API 密钥。 || 确认密钥有权访问该文件。 || 登录 civitai.com 确认文件仍然可用。",
+
+  "errors.hf_page_url.title": "这是 Hugging Face 页面，不是文件链接",
+
+  "errors.hf_page_url.what": "该链接指向的是模型页面，而非可下载的文件。",
+
+  "errors.hf_page_url.why": "Hugging Face 的 /blob/ 链接打开的是网页，下载需要使用 /resolve/ 链接。",
+
+  "errors.hf_page_url.fixes": "使用 /resolve/main/... 格式的链接。 || 应用会自动修正 Model Hub 字段中的 /blob/ 链接。 || 从文件页面复制直接下载链接。",
+
+  "errors.model_not_found.title": "未找到模型",
+
+  "errors.model_not_found.what": "找不到所请求的模型或检查点。",
+
+  "errors.model_not_found.why": "模型未安装、已移动或重命名，或文件夹未被索引。",
+
+  "errors.model_not_found.fixes": "从 Model Hub 安装模型。 || 在设置中刷新模型列表。 || 确认文件位于正确的模型文件夹中。",
+
+  "errors.comfyui_launch_failed.title": "ComfyUI 启动失败",
+
+  "errors.comfyui_launch_failed.what": "应用尝试启动 ComfyUI，但进程未能启动。",
+
+  "errors.comfyui_launch_failed.why": "安装可能不完整、缺少依赖项或端口被占用。",
+
+  "errors.comfyui_launch_failed.fixes": "从设置中重新运行安装程序。 || 查看日志以了解启动错误。 || 确认没有其他 ComfyUI 实例占用该端口。",
+
+  "errors.python_env_broken.title": "Python 环境异常",
+
+  "errors.python_env_broken.what": "内置 Python 环境无法使用。",
+
+  "errors.python_env_broken.why": "环境缺失、不完整或某个包无法导入。",
+
+  "errors.python_env_broken.fixes": "重新运行安装程序以重建环境。 || 查看日志以找出导入失败的包。 || 如果安装持续失败，请报告此问题。",
+
+  "errors.attention_backend_install.title": "注意力后端安装失败",
+
+  "errors.attention_backend_install.what": "加速后端安装未完成。",
+
+  "errors.attention_backend_install.why": "该后端可能不支持您的 GPU，或下载/编译失败。",
+
+  "errors.attention_backend_install.fixes": "在设置中尝试其他注意力后端。 || 确认您的 GPU 受支持。 || 查看日志并重试安装。",
+
+  "errors.out_of_memory.title": "内存不足",
+
+  "errors.out_of_memory.what": "生成过程中 GPU 或系统内存耗尽。",
+
+  "errors.out_of_memory.why": "分辨率、批次大小或模型超出可用内存。",
+
+  "errors.out_of_memory.fixes": "降低分辨率或批次大小后重试。 || 关闭其他占用 GPU 的应用。 || 使用更小或量化程度更高的模型。",
+
+  "errors.unsupported_gpu.title": "GPU 不受支持",
+
+  "errors.unsupported_gpu.what": "应用无法使用您的 GPU 执行此操作。",
+
+  "errors.unsupported_gpu.why": "未检测到兼容的 GPU 或驱动，或该功能需要 CUDA。",
+
+  "errors.unsupported_gpu.fixes": "更新 GPU 驱动程序。 || 确认您的 GPU 满足要求。 || 如果您认为应该支持该 GPU，请报告您的 GPU 型号。",
+
+  "errors.missing_node.title": "缺少必要的 ComfyUI 节点",
+
+  "errors.missing_node.what": "工作流需要一个未安装的自定义节点。",
+
+  "errors.missing_node.why": "工作流引用的自定义节点包不存在。",
+
+  "errors.missing_node.fixes": "重新运行安装程序以重新安装内置节点。 || 查看日志以获取节点名称。 || 如果该节点应随应用一起提供，请报告此问题。",
+
+  "errors.invalid_workflow.title": "工作流无效",
+
+  "errors.invalid_workflow.what": "生成工作流无法构建或格式有误。",
+
+  "errors.invalid_workflow.why": "某个设置组合生成了 ComfyUI 无法接受的工作流。",
+
+  "errors.invalid_workflow.fixes": "重置相关设置后重试。 || 尝试默认预设以确认配置是否正常。 || 连同您使用的设置一起报告此问题。",
+
+  "errors.generation_interrupted.title": "生成已停止",
+
+  "errors.generation_interrupted.what": "生成未完成。",
+
+  "errors.generation_interrupted.why": "生成被取消，或 ComfyUI 中途停止。",
+
+  "errors.generation_interrupted.fixes": "重新开始生成。 || 确认 ComfyUI 仍在运行。 || 如果不是您取消的，请查看日志。",
+
+  "errors.io_permission.title": "文件访问被拒绝",
+
+  "errors.io_permission.what": "应用无法读取或写入所需文件。",
+
+  "errors.io_permission.why": "文件夹受保护、为只读状态或被其他进程占用。",
+
+  "errors.io_permission.fixes": "选择您的用户账户有写权限的文件夹。 || 关闭占用该文件的应用。 || 在非写保护的位置运行。",
+
+  "errors.serialization.title": "无法读取数据",
+
+  "errors.serialization.what": "应用收到了无法解析的数据。",
+
+  "errors.serialization.why": "响应格式有误或文件已损坏。",
+
+  "errors.serialization.fixes": "重试此操作。 || 重启应用。 || 如果问题持续，请报告此问题。",
+
+  "errors.card.details": "技术详情",
+
+  "errors.card.copy_diagnostics": "复制诊断信息",
+
+  "errors.card.copied": "已复制",
+
+  "errors.card.what_label": "发生了什么",
+
+  "errors.card.why_label": "原因",
+
+  "errors.card.fix_label": "如何修复",
+
+  "errors.card.report": "报告此错误",
+
+  "errors.report.title": "报告此错误",
+
+  "errors.report.intro": "这将打开一个预填写的 GitHub 问题。诊断日志已复制到剪贴板，您可以将其粘贴到问题中。",
+
+  "errors.report.note_label": "其他补充信息（可选）",
+
+  "errors.report.note_placeholder": "发生此问题时您在做什么？",
+
+  "errors.report.submit": "提交问题",
+
+  "errors.report.opening": "正在打开...",
+
+  "errors.report.copied_hint": "诊断信息已复制到剪贴板。请将其粘贴到问题正文中。",
+
 };
 export default zh;

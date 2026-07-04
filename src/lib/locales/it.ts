@@ -2245,5 +2245,209 @@ const it: Record<string, string> = {
   "generation.style_manager.mode_wildcard": "Wildcard",
   "generation.style_manager.mode_wildcard_ordered": "Ordinata",
 
+  "errors.generic.title": "Qualcosa è andato storto",
+
+  "errors.generic.what": "L'app ha incontrato un errore per cui non dispone di indicazioni specifiche.",
+
+  "errors.generic.why": "Può accadere a causa di uno stato imprevisto, un problema temporaneo o un bug.",
+
+  "errors.generic.fixes": "Riprova l'azione. || Riavvia l'app e ComfyUI se è in esecuzione. || Se il problema persiste, segnalalo con il pulsante Segnala questo errore qui sotto.",
+
+  "errors.connection_failed.title": "Impossibile raggiungere il server",
+
+  "errors.connection_failed.what": "L'app non è riuscita ad aprire una connessione al backend.",
+
+  "errors.connection_failed.why": "Il server o ComfyUI potrebbe essere fermo, ancora in avvio o bloccato da un firewall.",
+
+  "errors.connection_failed.fixes": "Attendi qualche secondo e riprova. || Verifica che ComfyUI sia in esecuzione nelle Impostazioni. || Conferma che nessun firewall o VPN stia bloccando localhost.",
+
+  "errors.comfyui_not_running.title": "ComfyUI non è in esecuzione",
+
+  "errors.comfyui_not_running.what": "L'app richiede ComfyUI in esecuzione ma non è riuscita a trovarlo.",
+
+  "errors.comfyui_not_running.why": "ComfyUI non è stato avviato, è andato in crash o è ancora in fase di avvio.",
+
+  "errors.comfyui_not_running.fixes": "Avvia ComfyUI dalle Impostazioni. || Attendi il completamento dell'avvio, poi riprova. || Controlla i log per un eventuale crash di ComfyUI.",
+
+  "errors.websocket_dropped.title": "Connessione in tempo reale interrotta",
+
+  "errors.websocket_dropped.what": "La connessione in tempo reale con ComfyUI si è chiusa inaspettatamente.",
+
+  "errors.websocket_dropped.why": "ComfyUI potrebbe essersi riavviato o la connessione di rete è stata interrotta.",
+
+  "errors.websocket_dropped.fixes": "Riprova l'azione per riconnetterti. || Verifica che ComfyUI sia ancora in esecuzione. || Riavvia ComfyUI se il problema persiste.",
+
+  "errors.api_error_5xx.title": "Il server ha restituito un errore",
+
+  "errors.api_error_5xx.what": "Il backend ha risposto con un errore lato server (5xx).",
+
+  "errors.api_error_5xx.why": "ComfyUI o il backend ha riscontrato un errore interno durante l'elaborazione della richiesta.",
+
+  "errors.api_error_5xx.fixes": "Riprova tra un momento. || Controlla i log per l'errore sottostante. || Riavvia ComfyUI se continua a fallire.",
+
+  "errors.download_404.title": "File non trovato (404)",
+
+  "errors.download_404.what": "L'URL di download ha restituito Non trovato.",
+
+  "errors.download_404.why": "Il link è errato, il file è stato spostato o rimosso, oppure richiede un accesso che l'app non possiede.",
+
+  "errors.download_404.fixes": "Verifica che l'URL si apra in un browser. || Per Hugging Face, usa un link /resolve/ e non una pagina /blob/. || Per i file ad accesso limitato, aggiungi il token di accesso nelle Impostazioni.",
+
+  "errors.download_network.title": "Download non riuscito",
+
+  "errors.download_network.what": "Impossibile scaricare il file.",
+
+  "errors.download_network.why": "La connessione è caduta, è scaduta o l'host non era raggiungibile.",
+
+  "errors.download_network.fixes": "Controlla la connessione internet e riprova. || Riprova più tardi se l'host è occupato. || Verifica che nessun VPN o firewall stia bloccando il download.",
+
+  "errors.disk_full.title": "Spazio su disco insufficiente",
+
+  "errors.disk_full.what": "Spazio libero insufficiente per completare la scrittura del file.",
+
+  "errors.disk_full.why": "Il disco che contiene i modelli o la cartella di output è pieno.",
+
+  "errors.disk_full.fixes": "Libera spazio su disco e riprova. || Punta la cartella modelli o galleria su un disco più grande nelle Impostazioni. || Elimina i modelli inutilizzati da Model Hub.",
+
+  "errors.checksum_mismatch.title": "Il file scaricato è corrotto",
+
+  "errors.checksum_mismatch.what": "Il file scaricato non corrisponde al checksum atteso.",
+
+  "errors.checksum_mismatch.why": "Il download è stato interrotto o alterato durante il trasferimento.",
+
+  "errors.checksum_mismatch.fixes": "Elimina il file parziale e scarica di nuovo. || Riprova con una connessione più stabile. || Se continua a fallire, segnala l'URL.",
+
+  "errors.civitai_auth.title": "Accesso a CivitAI richiesto",
+
+  "errors.civitai_auth.what": "CivitAI ha rifiutato il download come non autorizzato.",
+
+  "errors.civitai_auth.why": "Il file richiede un account CivitAI o una chiave API assente o non valida.",
+
+  "errors.civitai_auth.fixes": "Aggiungi o aggiorna la tua chiave API CivitAI nelle Impostazioni. || Verifica che la chiave abbia accesso a questo file. || Accedi su civitai.com per verificare che il file sia ancora disponibile.",
+
+  "errors.hf_page_url.title": "Questo è un link a una pagina Hugging Face, non a un file",
+
+  "errors.hf_page_url.what": "L'URL punta a una pagina del modello invece che a un file scaricabile.",
+
+  "errors.hf_page_url.why": "I link /blob/ di Hugging Face aprono una pagina web; per i download serve un link /resolve/.",
+
+  "errors.hf_page_url.fixes": "Usa il formato /resolve/main/... dell'URL. || L'app corregge automaticamente i link /blob/ nel campo Model Hub. || Copia il link di download diretto dalla pagina del file.",
+
+  "errors.model_not_found.title": "Modello non trovato",
+
+  "errors.model_not_found.what": "Il modello o il checkpoint richiesto non è stato trovato.",
+
+  "errors.model_not_found.why": "Non è installato, è stato spostato o rinominato, oppure la cartella non è indicizzata.",
+
+  "errors.model_not_found.fixes": "Installa il modello da Model Hub. || Aggiorna l'elenco dei modelli nelle Impostazioni. || Verifica che il file si trovi nella cartella modelli corretta.",
+
+  "errors.comfyui_launch_failed.title": "ComfyUI non è riuscito ad avviarsi",
+
+  "errors.comfyui_launch_failed.what": "L'app ha tentato di avviare ComfyUI ma il processo non si è avviato.",
+
+  "errors.comfyui_launch_failed.why": "L'installazione potrebbe essere incompleta, manca una dipendenza o una porta è già in uso.",
+
+  "errors.comfyui_launch_failed.fixes": "Riesegui la configurazione dalle Impostazioni. || Controlla i log per l'errore di avvio. || Assicurati che nessun altro ComfyUI stia già utilizzando la porta.",
+
+  "errors.python_env_broken.title": "Problema con l'ambiente Python",
+
+  "errors.python_env_broken.what": "Impossibile utilizzare l'ambiente Python incluso.",
+
+  "errors.python_env_broken.why": "L'ambiente è assente, incompleto o l'importazione di un pacchetto è fallita.",
+
+  "errors.python_env_broken.fixes": "Riesegui la configurazione per ricostruire l'ambiente. || Controlla i log per l'importazione fallita. || Segnalalo se la configurazione continua a fallire.",
+
+  "errors.attention_backend_install.title": "Installazione del backend di attenzione non riuscita",
+
+  "errors.attention_backend_install.what": "L'installazione del backend di accelerazione non è stata completata.",
+
+  "errors.attention_backend_install.why": "Il backend potrebbe non supportare il tuo GPU, oppure il download o la compilazione è fallita.",
+
+  "errors.attention_backend_install.fixes": "Prova un backend di attenzione diverso nelle Impostazioni. || Verifica che il tuo GPU sia supportato. || Controlla i log e riprova l'installazione.",
+
+  "errors.out_of_memory.title": "Memoria esaurita",
+
+  "errors.out_of_memory.what": "Il GPU o il sistema ha esaurito la memoria durante la generazione.",
+
+  "errors.out_of_memory.why": "La risoluzione, la dimensione del batch o il modello è troppo grande per la memoria disponibile.",
+
+  "errors.out_of_memory.fixes": "Riduci la risoluzione o la dimensione del batch e riprova. || Chiudi altre app che utilizzano il GPU in modo intensivo. || Usa un modello più piccolo o più quantizzato.",
+
+  "errors.unsupported_gpu.title": "GPU non supportato",
+
+  "errors.unsupported_gpu.what": "L'app non è riuscita a utilizzare il tuo GPU per questa operazione.",
+
+  "errors.unsupported_gpu.why": "Nessun GPU o driver compatibile è stato rilevato, oppure la funzione richiede CUDA.",
+
+  "errors.unsupported_gpu.fixes": "Aggiorna i driver del GPU. || Verifica che il tuo GPU soddisfi i requisiti. || Segnala il modello del tuo GPU se ritieni che dovrebbe funzionare.",
+
+  "errors.missing_node.title": "Un nodo ComfyUI richiesto è assente",
+
+  "errors.missing_node.what": "Il workflow richiede un nodo personalizzato non installato.",
+
+  "errors.missing_node.why": "Un pacchetto di nodi personalizzati referenziato dal workflow non è presente.",
+
+  "errors.missing_node.fixes": "Riesegui la configurazione per reinstallare i nodi inclusi. || Controlla i log per il nome del nodo. || Segnalalo se il nodo dovrebbe essere incluso nell'app.",
+
+  "errors.invalid_workflow.title": "Il workflow non era valido",
+
+  "errors.invalid_workflow.what": "Impossibile costruire il workflow di generazione, o era malformato.",
+
+  "errors.invalid_workflow.why": "Una combinazione di impostazioni ha prodotto un workflow che ComfyUI non ha potuto accettare.",
+
+  "errors.invalid_workflow.fixes": "Reimposta le impostazioni interessate e riprova. || Prova un preset predefinito per verificare che la configurazione funzioni. || Segnalalo con le impostazioni utilizzate.",
+
+  "errors.generation_interrupted.title": "La generazione è stata interrotta",
+
+  "errors.generation_interrupted.what": "La generazione non è stata completata.",
+
+  "errors.generation_interrupted.why": "È stata annullata o ComfyUI si è fermato a metà.",
+
+  "errors.generation_interrupted.fixes": "Avvia di nuovo la generazione. || Verifica che ComfyUI sia ancora in esecuzione. || Controlla i log se non l'hai annullata tu.",
+
+  "errors.io_permission.title": "Accesso al file negato",
+
+  "errors.io_permission.what": "L'app non è riuscita a leggere o scrivere un file necessario.",
+
+  "errors.io_permission.why": "La cartella è protetta, di sola lettura o è gestita da un altro processo.",
+
+  "errors.io_permission.fixes": "Scegli una cartella in cui il tuo account utente possa scrivere. || Chiudi qualsiasi app che blocca il file. || Esegui da una posizione non protetta da scrittura.",
+
+  "errors.serialization.title": "Impossibile leggere i dati",
+
+  "errors.serialization.what": "L'app ha ricevuto dati che non è riuscita ad analizzare.",
+
+  "errors.serialization.why": "Una risposta era malformata o un file era corrotto.",
+
+  "errors.serialization.fixes": "Riprova l'azione. || Riavvia l'app. || Segnalalo se il problema persiste.",
+
+  "errors.card.details": "Dettagli tecnici",
+
+  "errors.card.copy_diagnostics": "Copia diagnostica",
+
+  "errors.card.copied": "Copiato",
+
+  "errors.card.what_label": "Cosa è successo",
+
+  "errors.card.why_label": "Perché",
+
+  "errors.card.fix_label": "Come risolvere",
+
+  "errors.card.report": "Segnala questo errore",
+
+  "errors.report.title": "Segnala questo errore",
+
+  "errors.report.intro": "Questo apre una segnalazione GitHub precompilata. Il log diagnostico viene copiato negli appunti per essere incollato nella segnalazione.",
+
+  "errors.report.note_label": "Qualsiasi altra informazione utile (facoltativo)",
+
+  "errors.report.note_placeholder": "Cosa stavi facendo quando è successo?",
+
+  "errors.report.submit": "Apri segnalazione",
+
+  "errors.report.opening": "Apertura in corso...",
+
+  "errors.report.copied_hint": "Diagnostica copiata negli appunti. Incollala nel corpo della segnalazione.",
+
 };
 export default it;

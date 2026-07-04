@@ -2283,5 +2283,209 @@ const pl: Record<string, string> = {
   "generation.style_manager.mode_append": "Dołącz na końcu",
   "generation.style_manager.mode_wildcard": "Wildcard",
   "generation.style_manager.mode_wildcard_ordered": "Ordered",
+  "errors.generic.title": "Coś poszło nie tak",
+
+  "errors.generic.what": "Aplikacja napotkała błąd, dla którego nie ma szczegółowych wskazówek.",
+
+  "errors.generic.why": "Może to być spowodowane nieoczekiwanym stanem, chwilową usterką lub błędem.",
+
+  "errors.generic.fixes": "Spróbuj ponownie. || Uruchom ponownie aplikację i ComfyUI, jeśli jest uruchomiony. || Jeśli problem się powtarza, zgłoś go przyciskiem Zgłoś ten błąd poniżej.",
+
+  "errors.connection_failed.title": "Nie można połączyć się z serwerem",
+
+  "errors.connection_failed.what": "Aplikacja nie mogła nawiązać połączenia z backendem.",
+
+  "errors.connection_failed.why": "Serwer lub ComfyUI może być zatrzymany, jeszcze się uruchamiać lub być blokowany przez zaporę.",
+
+  "errors.connection_failed.fixes": "Poczekaj kilka sekund i spróbuj ponownie. || Sprawdź, czy ComfyUI działa w Ustawieniach. || Upewnij się, że żadna zapora ani VPN nie blokuje localhost.",
+
+  "errors.comfyui_not_running.title": "ComfyUI nie jest uruchomiony",
+
+  "errors.comfyui_not_running.what": "Aplikacja wymaga uruchomionego ComfyUI, ale nie mogła go znaleźć.",
+
+  "errors.comfyui_not_running.why": "ComfyUI nie został uruchomiony, uległ awarii lub wciąż się uruchamia.",
+
+  "errors.comfyui_not_running.fixes": "Uruchom ComfyUI z Ustawień. || Poczekaj na zakończenie uruchamiania, a następnie spróbuj ponownie. || Sprawdź dzienniki w poszukiwaniu awarii ComfyUI.",
+
+  "errors.websocket_dropped.title": "Utracono połączenie na żywo",
+
+  "errors.websocket_dropped.what": "Połączenie w czasie rzeczywistym z ComfyUI zostało nieoczekiwanie zamknięte.",
+
+  "errors.websocket_dropped.why": "ComfyUI mógł zostać zrestartowany lub połączenie sieciowe zostało przerwane.",
+
+  "errors.websocket_dropped.fixes": "Spróbuj ponownie, aby przywrócić połączenie. || Upewnij się, że ComfyUI nadal działa. || Uruchom ponownie ComfyUI, jeśli problem się utrzymuje.",
+
+  "errors.api_error_5xx.title": "Serwer zwrócił błąd",
+
+  "errors.api_error_5xx.what": "Backend odpowiedział błędem po stronie serwera (5xx).",
+
+  "errors.api_error_5xx.why": "ComfyUI lub backend napotkał błąd wewnętrzny podczas obsługi żądania.",
+
+  "errors.api_error_5xx.fixes": "Spróbuj ponownie za chwilę. || Sprawdź dzienniki w poszukiwaniu przyczyny błędu. || Uruchom ponownie ComfyUI, jeśli problem się powtarza.",
+
+  "errors.download_404.title": "Nie znaleziono pliku (404)",
+
+  "errors.download_404.what": "Adres URL pobierania zwrócił błąd Nie znaleziono.",
+
+  "errors.download_404.why": "Link jest nieprawidłowy, plik został przeniesiony lub usunięty, albo wymaga logowania, którego aplikacja nie posiada.",
+
+  "errors.download_404.fixes": "Sprawdź, czy adres URL otwiera się w przeglądarce. || Dla Hugging Face użyj linku /resolve/, a nie strony /blob/. || Dla plików z ograniczonym dostępem dodaj token dostępu w Ustawieniach.",
+
+  "errors.download_network.title": "Pobieranie nie powiodło się",
+
+  "errors.download_network.what": "Nie udało się pobrać pliku.",
+
+  "errors.download_network.why": "Połączenie zostało przerwane, upłynął limit czasu lub host był nieosiągalny.",
+
+  "errors.download_network.fixes": "Sprawdź połączenie internetowe i spróbuj ponownie. || Spróbuj później, jeśli host jest zajęty. || Upewnij się, że żaden VPN ani zapora nie blokuje pobierania.",
+
+  "errors.disk_full.title": "Brak miejsca na dysku",
+
+  "errors.disk_full.what": "Nie było wystarczająco wolnego miejsca, aby dokończyć zapis pliku.",
+
+  "errors.disk_full.why": "Dysk z folderem modeli lub folderem wyjściowym jest pełny.",
+
+  "errors.disk_full.fixes": "Zwolnij miejsce na dysku i spróbuj ponownie. || Ustaw folder modeli lub galerii na większy dysk w Ustawieniach. || Usuń nieużywane modele z Model Hub.",
+
+  "errors.checksum_mismatch.title": "Pobrany plik jest uszkodzony",
+
+  "errors.checksum_mismatch.what": "Pobrany plik nie pasuje do oczekiwanej sumy kontrolnej.",
+
+  "errors.checksum_mismatch.why": "Pobieranie zostało przerwane lub zmienione podczas transmisji.",
+
+  "errors.checksum_mismatch.fixes": "Usuń częściowy plik i pobierz ponownie. || Spróbuj na bardziej stabilnym połączeniu. || Jeśli problem się powtarza, zgłoś adres URL.",
+
+  "errors.civitai_auth.title": "Wymagane logowanie do CivitAI",
+
+  "errors.civitai_auth.what": "CivitAI odrzucił pobieranie jako nieautoryzowane.",
+
+  "errors.civitai_auth.why": "Plik wymaga konta CivitAI lub klucza API, który jest brakujący lub nieprawidłowy.",
+
+  "errors.civitai_auth.fixes": "Dodaj lub zaktualizuj klucz API CivitAI w Ustawieniach. || Upewnij się, że klucz ma dostęp do tego pliku. || Zaloguj się na civitai.com, aby sprawdzić, czy plik jest nadal dostępny.",
+
+  "errors.hf_page_url.title": "To jest strona Hugging Face, a nie plik",
+
+  "errors.hf_page_url.what": "Adres URL wskazuje na stronę modelu, a nie na plik do pobrania.",
+
+  "errors.hf_page_url.why": "Linki /blob/ Hugging Face otwierają stronę internetową; pobieranie wymaga linku /resolve/.",
+
+  "errors.hf_page_url.fixes": "Użyj adresu URL w formacie /resolve/main/... || Aplikacja automatycznie koryguje linki /blob/ w polu Model Hub. || Skopiuj bezpośredni link pobierania ze strony pliku.",
+
+  "errors.model_not_found.title": "Nie znaleziono modelu",
+
+  "errors.model_not_found.what": "Nie można znaleźć żądanego modelu lub punktu kontrolnego.",
+
+  "errors.model_not_found.why": "Nie jest zainstalowany, został przeniesiony lub przemianowany, albo folder nie jest zaindeksowany.",
+
+  "errors.model_not_found.fixes": "Zainstaluj model z Model Hub. || Odśwież listę modeli w Ustawieniach. || Upewnij się, że plik jest we właściwym folderze modeli.",
+
+  "errors.comfyui_launch_failed.title": "Uruchomienie ComfyUI nie powiodło się",
+
+  "errors.comfyui_launch_failed.what": "Aplikacja próbowała uruchomić ComfyUI, ale proces nie wystartował.",
+
+  "errors.comfyui_launch_failed.why": "Instalacja może być niekompletna, brakuje zależności lub port jest zajęty.",
+
+  "errors.comfyui_launch_failed.fixes": "Uruchom ponownie konfigurację z Ustawień. || Sprawdź dzienniki w poszukiwaniu błędu uruchomienia. || Upewnij się, że żaden inny ComfyUI nie używa już tego portu.",
+
+  "errors.python_env_broken.title": "Problem ze środowiskiem Python",
+
+  "errors.python_env_broken.what": "Nie można było użyć dołączonego środowiska Python.",
+
+  "errors.python_env_broken.why": "Środowisko jest brakujące, niekompletne lub import pakietu się nie powiódł.",
+
+  "errors.python_env_broken.fixes": "Uruchom ponownie konfigurację, aby odbudować środowisko. || Sprawdź dzienniki w poszukiwaniu nieudanego importu. || Zgłoś problem, jeśli konfiguracja wciąż się nie powodzi.",
+
+  "errors.attention_backend_install.title": "Instalacja backendu uwagi nie powiodła się",
+
+  "errors.attention_backend_install.what": "Instalacja backendu przyspieszenia nie została ukończona.",
+
+  "errors.attention_backend_install.why": "Backend może nie obsługiwać Twojego GPU lub pobieranie bądź kompilacja się nie powiodły.",
+
+  "errors.attention_backend_install.fixes": "Wypróbuj inny backend uwagi w Ustawieniach. || Upewnij się, że Twój GPU jest obsługiwany. || Sprawdź dzienniki i spróbuj ponownie zainstalować.",
+
+  "errors.out_of_memory.title": "Brak pamięci",
+
+  "errors.out_of_memory.what": "GPU lub system wyczerpał pamięć podczas generowania.",
+
+  "errors.out_of_memory.why": "Rozdzielczość, rozmiar partii lub model są zbyt duże dla dostępnej pamięci.",
+
+  "errors.out_of_memory.fixes": "Zmniejsz rozdzielczość lub rozmiar partii i spróbuj ponownie. || Zamknij inne aplikacje intensywnie korzystające z GPU. || Użyj mniejszego lub bardziej skwantowanego modelu.",
+
+  "errors.unsupported_gpu.title": "GPU nie jest obsługiwany",
+
+  "errors.unsupported_gpu.what": "Aplikacja nie mogła użyć Twojego GPU do tej operacji.",
+
+  "errors.unsupported_gpu.why": "Nie wykryto zgodnego GPU lub sterownika, albo funkcja wymaga CUDA.",
+
+  "errors.unsupported_gpu.fixes": "Zaktualizuj sterowniki GPU. || Upewnij się, że Twój GPU spełnia wymagania. || Zgłoś model GPU, jeśli uważasz, że powinien działać.",
+
+  "errors.missing_node.title": "Brakuje wymaganego węzła ComfyUI",
+
+  "errors.missing_node.what": "Przepływ pracy wymaga niestandardowego węzła, który nie jest zainstalowany.",
+
+  "errors.missing_node.why": "Paczka niestandardowych węzłów, do której odwołuje się przepływ pracy, nie jest obecna.",
+
+  "errors.missing_node.fixes": "Uruchom ponownie konfigurację, aby ponownie zainstalować dołączone węzły. || Sprawdź dzienniki w poszukiwaniu nazwy węzła. || Zgłoś problem, jeśli węzeł powinien być dołączony do aplikacji.",
+
+  "errors.invalid_workflow.title": "Przepływ pracy był nieprawidłowy",
+
+  "errors.invalid_workflow.what": "Nie można było zbudować przepływu generowania lub był on zniekształcony.",
+
+  "errors.invalid_workflow.why": "Kombinacja ustawień wygenerowała przepływ pracy, którego ComfyUI nie mógł zaakceptować.",
+
+  "errors.invalid_workflow.fixes": "Zresetuj zmienione ustawienia i spróbuj ponownie. || Wypróbuj domyślne ustawienie wstępne, aby potwierdzić, że konfiguracja działa. || Zgłoś problem wraz z użytymi ustawieniami.",
+
+  "errors.generation_interrupted.title": "Generowanie zostało zatrzymane",
+
+  "errors.generation_interrupted.what": "Generowanie nie zostało ukończone.",
+
+  "errors.generation_interrupted.why": "Zostało anulowane lub ComfyUI zatrzymał się w trakcie.",
+
+  "errors.generation_interrupted.fixes": "Rozpocznij generowanie ponownie. || Upewnij się, że ComfyUI nadal działa. || Sprawdź dzienniki, jeśli tego nie anulowałeś.",
+
+  "errors.io_permission.title": "Odmowa dostępu do pliku",
+
+  "errors.io_permission.what": "Aplikacja nie mogła odczytać ani zapisać potrzebnego pliku.",
+
+  "errors.io_permission.why": "Folder jest chroniony, tylko do odczytu lub należy do innego procesu.",
+
+  "errors.io_permission.fixes": "Wybierz folder, do którego Twoje konto użytkownika ma prawo zapisu. || Zamknij każdą aplikację blokującą plik. || Uruchom z lokalizacji, która nie jest chroniona przed zapisem.",
+
+  "errors.serialization.title": "Nie można odczytać danych",
+
+  "errors.serialization.what": "Aplikacja otrzymała dane, których nie mogła przeanalizować.",
+
+  "errors.serialization.why": "Odpowiedź była zniekształcona lub plik był uszkodzony.",
+
+  "errors.serialization.fixes": "Spróbuj ponownie. || Uruchom ponownie aplikację. || Zgłoś problem, jeśli się powtarza.",
+
+  "errors.card.details": "Szczegóły techniczne",
+
+  "errors.card.copy_diagnostics": "Kopiuj diagnostykę",
+
+  "errors.card.copied": "Skopiowano",
+
+  "errors.card.what_label": "Co się stało",
+
+  "errors.card.why_label": "Dlaczego",
+
+  "errors.card.fix_label": "Jak to naprawić",
+
+  "errors.card.report": "Zgłoś ten błąd",
+
+  "errors.report.title": "Zgłoś ten błąd",
+
+  "errors.report.intro": "Otwiera wstępnie wypełnione zgłoszenie GitHub. Dziennik diagnostyczny jest kopiowany do schowka, aby można go było wkleić do zgłoszenia.",
+
+  "errors.report.note_label": "Cokolwiek innego, co pomaga (opcjonalnie)",
+
+  "errors.report.note_placeholder": "Co robiłeś, gdy to się wydarzyło?",
+
+  "errors.report.submit": "Otwórz zgłoszenie",
+
+  "errors.report.opening": "Otwieranie...",
+
+  "errors.report.copied_hint": "Diagnostyka skopiowana do schowka. Wklej ją do treści zgłoszenia.",
+
 };
 export default pl;

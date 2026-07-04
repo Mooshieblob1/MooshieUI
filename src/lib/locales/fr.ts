@@ -2271,5 +2271,209 @@ const fr: Record<string, string> = {
   "generation.style_manager.mode_wildcard": "Joker",
   "generation.style_manager.mode_wildcard_ordered": "Ordonné",
 
+  "errors.generic.title": "Une erreur s'est produite",
+
+  "errors.generic.what": "L'application a rencontré une erreur pour laquelle elle n'a pas de solution spécifique.",
+
+  "errors.generic.why": "Cela peut provenir d'un état inattendu, d'un problème passager ou d'un bug.",
+
+  "errors.generic.fixes": "Réessayez l'action. || Redémarrez l'application, et ComfyUI s'il est en cours d'exécution. || Si cela persiste, signalez-le avec le bouton Signaler cette erreur ci-dessous.",
+
+  "errors.connection_failed.title": "Impossible de contacter le serveur",
+
+  "errors.connection_failed.what": "L'application n'a pas pu établir de connexion avec le backend.",
+
+  "errors.connection_failed.why": "Le serveur ou ComfyUI est peut-être arrêté, en cours de démarrage, ou bloqué par un pare-feu.",
+
+  "errors.connection_failed.fixes": "Attendez quelques secondes et réessayez. || Vérifiez que ComfyUI est en cours d'exécution dans les Paramètres. || Confirmez qu'aucun pare-feu ou VPN ne bloque localhost.",
+
+  "errors.comfyui_not_running.title": "ComfyUI n'est pas en cours d'exécution",
+
+  "errors.comfyui_not_running.what": "L'application nécessite ComfyUI en cours d'exécution, mais ne le trouve pas.",
+
+  "errors.comfyui_not_running.why": "ComfyUI n'a pas été démarré, a planté, ou est encore en cours de lancement.",
+
+  "errors.comfyui_not_running.fixes": "Démarrez ComfyUI depuis les Paramètres. || Attendez la fin du démarrage, puis réessayez. || Consultez les journaux pour un crash de ComfyUI.",
+
+  "errors.websocket_dropped.title": "Connexion en direct interrompue",
+
+  "errors.websocket_dropped.what": "La connexion en temps réel avec ComfyUI s'est fermée de manière inattendue.",
+
+  "errors.websocket_dropped.why": "ComfyUI a peut-être redémarré, ou la connexion réseau a été interrompue.",
+
+  "errors.websocket_dropped.fixes": "Réessayez l'action pour vous reconnecter. || Confirmez que ComfyUI est toujours en cours d'exécution. || Redémarrez ComfyUI si le problème persiste.",
+
+  "errors.api_error_5xx.title": "Le serveur a renvoyé une erreur",
+
+  "errors.api_error_5xx.what": "Le backend a répondu avec une erreur côté serveur (5xx).",
+
+  "errors.api_error_5xx.why": "ComfyUI ou le backend a rencontré une erreur interne lors du traitement de la requête.",
+
+  "errors.api_error_5xx.fixes": "Réessayez dans un moment. || Consultez les journaux pour l'erreur sous-jacente. || Redémarrez ComfyUI si cela continue d'échouer.",
+
+  "errors.download_404.title": "Fichier introuvable (404)",
+
+  "errors.download_404.what": "L'URL de téléchargement a renvoyé une erreur Non trouvé.",
+
+  "errors.download_404.why": "Le lien est incorrect, le fichier a été déplacé ou supprimé, ou il nécessite une connexion que l'application ne possède pas.",
+
+  "errors.download_404.fixes": "Vérifiez que l'URL s'ouvre dans un navigateur. || Pour Hugging Face, utilisez un lien /resolve/, pas une page /blob/. || Pour les fichiers restreints, ajoutez votre jeton d'accès dans les Paramètres.",
+
+  "errors.download_network.title": "Échec du téléchargement",
+
+  "errors.download_network.what": "Le fichier n'a pas pu être téléchargé.",
+
+  "errors.download_network.why": "La connexion a été interrompue, a expiré, ou l'hôte était inaccessible.",
+
+  "errors.download_network.fixes": "Vérifiez votre connexion internet et réessayez. || Réessayez plus tard si l'hôte est occupé. || Confirmez qu'aucun VPN ou pare-feu ne bloque le téléchargement.",
+
+  "errors.disk_full.title": "Espace disque insuffisant",
+
+  "errors.disk_full.what": "Il n'y avait pas assez d'espace libre pour terminer l'écriture du fichier.",
+
+  "errors.disk_full.why": "Le disque contenant vos modèles ou votre dossier de sortie est plein.",
+
+  "errors.disk_full.fixes": "Libérez de l'espace disque et réessayez. || Dans les Paramètres, pointez le dossier des modèles ou de la galerie vers un disque plus grand. || Supprimez les modèles inutilisés depuis Model Hub.",
+
+  "errors.checksum_mismatch.title": "Le fichier téléchargé est corrompu",
+
+  "errors.checksum_mismatch.what": "Le fichier téléchargé ne correspond pas à sa somme de contrôle attendue.",
+
+  "errors.checksum_mismatch.why": "Le téléchargement a été interrompu ou modifié en transit.",
+
+  "errors.checksum_mismatch.fixes": "Supprimez le fichier partiel et téléchargez à nouveau. || Réessayez sur une connexion plus stable. || Si cela continue d'échouer, signalez l'URL.",
+
+  "errors.civitai_auth.title": "Connexion CivitAI requise",
+
+  "errors.civitai_auth.what": "CivitAI a rejeté le téléchargement comme non autorisé.",
+
+  "errors.civitai_auth.why": "Le fichier nécessite un compte CivitAI ou une clé API manquante ou invalide.",
+
+  "errors.civitai_auth.fixes": "Ajoutez ou mettez à jour votre clé API CivitAI dans les Paramètres. || Confirmez que la clé a accès à ce fichier. || Connectez-vous sur civitai.com pour vérifier que le fichier est toujours disponible.",
+
+  "errors.hf_page_url.title": "Il s'agit d'une page Hugging Face, pas d'un fichier",
+
+  "errors.hf_page_url.what": "L'URL pointe vers une page de modèle plutôt que vers un fichier téléchargeable.",
+
+  "errors.hf_page_url.why": "Les liens /blob/ de Hugging Face ouvrent une page web ; les téléchargements nécessitent un lien /resolve/.",
+
+  "errors.hf_page_url.fixes": "Utilisez la forme /resolve/main/... de l'URL. || L'application corrige automatiquement les liens /blob/ dans le champ Model Hub. || Copiez le lien de téléchargement direct depuis la page du fichier.",
+
+  "errors.model_not_found.title": "Modèle introuvable",
+
+  "errors.model_not_found.what": "Le modèle ou point de contrôle demandé est introuvable.",
+
+  "errors.model_not_found.why": "Il n'est pas installé, a été déplacé ou renommé, ou le dossier n'est pas indexé.",
+
+  "errors.model_not_found.fixes": "Installez le modèle depuis Model Hub. || Actualisez la liste des modèles dans les Paramètres. || Confirmez que le fichier se trouve dans le bon dossier de modèles.",
+
+  "errors.comfyui_launch_failed.title": "ComfyUI n'a pas réussi à démarrer",
+
+  "errors.comfyui_launch_failed.what": "L'application a tenté de lancer ComfyUI, mais le processus n'a pas démarré.",
+
+  "errors.comfyui_launch_failed.why": "L'installation est peut-être incomplète, une dépendance est manquante, ou un port est déjà utilisé.",
+
+  "errors.comfyui_launch_failed.fixes": "Relancez la configuration depuis les Paramètres. || Consultez les journaux pour l'erreur de lancement. || Assurez-vous qu'aucun autre ComfyUI n'utilise déjà le port.",
+
+  "errors.python_env_broken.title": "Problème d'environnement Python",
+
+  "errors.python_env_broken.what": "L'environnement Python intégré n'a pas pu être utilisé.",
+
+  "errors.python_env_broken.why": "L'environnement est manquant, incomplet, ou un paquet n'a pas pu être importé.",
+
+  "errors.python_env_broken.fixes": "Relancez la configuration pour reconstruire l'environnement. || Consultez les journaux pour l'import défaillant. || Signalez-le si la configuration continue d'échouer.",
+
+  "errors.attention_backend_install.title": "Échec de l'installation du backend d'attention",
+
+  "errors.attention_backend_install.what": "L'installation du backend d'accélération n'a pas abouti.",
+
+  "errors.attention_backend_install.why": "Le backend ne prend peut-être pas en charge votre GPU, ou le téléchargement ou la compilation a échoué.",
+
+  "errors.attention_backend_install.fixes": "Essayez un autre backend d'attention dans les Paramètres. || Confirmez que votre GPU est pris en charge. || Consultez les journaux et relancez l'installation.",
+
+  "errors.out_of_memory.title": "Mémoire insuffisante",
+
+  "errors.out_of_memory.what": "Le GPU ou le système a manqué de mémoire pendant la génération.",
+
+  "errors.out_of_memory.why": "La résolution, la taille du lot ou le modèle est trop grand pour la mémoire disponible.",
+
+  "errors.out_of_memory.fixes": "Réduisez la résolution ou la taille du lot et réessayez. || Fermez d'autres applications utilisant intensivement le GPU. || Utilisez un modèle plus petit ou plus quantifié.",
+
+  "errors.unsupported_gpu.title": "GPU non pris en charge",
+
+  "errors.unsupported_gpu.what": "L'application n'a pas pu utiliser votre GPU pour cette opération.",
+
+  "errors.unsupported_gpu.why": "Aucun GPU ou pilote compatible n'a été détecté, ou la fonctionnalité nécessite CUDA.",
+
+  "errors.unsupported_gpu.fixes": "Mettez à jour les pilotes de votre GPU. || Confirmez que votre GPU répond aux exigences. || Signalez le modèle de votre GPU si vous pensez qu'il devrait fonctionner.",
+
+  "errors.missing_node.title": "Un nœud ComfyUI requis est manquant",
+
+  "errors.missing_node.what": "Le workflow nécessite un nœud personnalisé qui n'est pas installé.",
+
+  "errors.missing_node.why": "Un pack de nœuds personnalisés référencé par le workflow est absent.",
+
+  "errors.missing_node.fixes": "Relancez la configuration pour réinstaller les nœuds intégrés. || Consultez les journaux pour le nom du nœud. || Signalez-le si le nœud devrait être inclus avec l'application.",
+
+  "errors.invalid_workflow.title": "Le workflow est invalide",
+
+  "errors.invalid_workflow.what": "Le workflow de génération n'a pas pu être construit ou est mal formé.",
+
+  "errors.invalid_workflow.why": "Une combinaison de paramètres a produit un workflow que ComfyUI ne peut pas accepter.",
+
+  "errors.invalid_workflow.fixes": "Réinitialisez les paramètres affectés et réessayez. || Essayez un préréglage par défaut pour confirmer que la configuration fonctionne. || Signalez-le avec les paramètres que vous avez utilisés.",
+
+  "errors.generation_interrupted.title": "La génération a été interrompue",
+
+  "errors.generation_interrupted.what": "La génération ne s'est pas terminée.",
+
+  "errors.generation_interrupted.why": "Elle a été annulée, ou ComfyUI s'est arrêté en cours de route.",
+
+  "errors.generation_interrupted.fixes": "Relancez la génération. || Confirmez que ComfyUI est toujours en cours d'exécution. || Consultez les journaux si vous ne l'avez pas annulée.",
+
+  "errors.io_permission.title": "Accès au fichier refusé",
+
+  "errors.io_permission.what": "L'application n'a pas pu lire ou écrire un fichier nécessaire.",
+
+  "errors.io_permission.why": "Le dossier est protégé, en lecture seule, ou appartient à un autre processus.",
+
+  "errors.io_permission.fixes": "Choisissez un dossier sur lequel votre compte utilisateur a les droits d'écriture. || Fermez toute application verrouillant le fichier. || Exécutez depuis un emplacement qui n'est pas protégé en écriture.",
+
+  "errors.serialization.title": "Impossible de lire les données",
+
+  "errors.serialization.what": "L'application a reçu des données qu'elle n'a pas pu analyser.",
+
+  "errors.serialization.why": "Une réponse était mal formée ou un fichier était corrompu.",
+
+  "errors.serialization.fixes": "Réessayez l'action. || Redémarrez l'application. || Signalez-le si cela persiste.",
+
+  "errors.card.details": "Détails techniques",
+
+  "errors.card.copy_diagnostics": "Copier les diagnostics",
+
+  "errors.card.copied": "Copié",
+
+  "errors.card.what_label": "Ce qui s'est passé",
+
+  "errors.card.why_label": "Pourquoi",
+
+  "errors.card.fix_label": "Comment y remédier",
+
+  "errors.card.report": "Signaler cette erreur",
+
+  "errors.report.title": "Signaler cette erreur",
+
+  "errors.report.intro": "Ceci ouvre un problème GitHub pré-rempli. Votre journal de diagnostics est copié dans votre presse-papiers afin que vous puissiez le coller dans le problème.",
+
+  "errors.report.note_label": "Toute autre information utile (facultatif)",
+
+  "errors.report.note_placeholder": "Que faisiez-vous quand c'est arrivé ?",
+
+  "errors.report.submit": "Ouvrir le problème",
+
+  "errors.report.opening": "Ouverture...",
+
+  "errors.report.copied_hint": "Diagnostics copiés dans le presse-papiers. Collez-les dans le corps du problème.",
+
 };
 export default fr;

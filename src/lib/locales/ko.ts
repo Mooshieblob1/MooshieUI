@@ -2245,5 +2245,209 @@ const ko: Record<string, string> = {
   "generation.style_manager.mode_wildcard": "와일드카드",
   "generation.style_manager.mode_wildcard_ordered": "순서대로",
 
+  "errors.generic.title": "오류가 발생했습니다",
+
+  "errors.generic.what": "앱이 구체적인 처리 방법을 알 수 없는 오류를 만났습니다.",
+
+  "errors.generic.why": "예상치 못한 상태, 일시적인 오류, 또는 버그로 인해 발생할 수 있습니다.",
+
+  "errors.generic.fixes": "작업을 다시 시도하세요. || 앱을 재시작하고, ComfyUI가 실행 중이라면 함께 재시작하세요. || 계속 발생하면 아래의 '이 오류 보고' 버튼으로 보고해 주세요.",
+
+  "errors.connection_failed.title": "서버에 연결할 수 없습니다",
+
+  "errors.connection_failed.what": "앱이 백엔드에 연결할 수 없었습니다.",
+
+  "errors.connection_failed.why": "서버 또는 ComfyUI가 중지되었거나, 아직 시작 중이거나, 방화벽에 의해 차단되었을 수 있습니다.",
+
+  "errors.connection_failed.fixes": "몇 초 기다린 후 다시 시도하세요. || 설정에서 ComfyUI가 실행 중인지 확인하세요. || 방화벽이나 VPN이 localhost를 차단하지 않는지 확인하세요.",
+
+  "errors.comfyui_not_running.title": "ComfyUI가 실행되지 않습니다",
+
+  "errors.comfyui_not_running.what": "앱이 ComfyUI의 실행을 필요로 하지만 찾을 수 없었습니다.",
+
+  "errors.comfyui_not_running.why": "ComfyUI가 시작되지 않았거나, 충돌했거나, 아직 실행 중입니다.",
+
+  "errors.comfyui_not_running.fixes": "설정에서 ComfyUI를 시작하세요. || 시작이 완료될 때까지 기다린 후 다시 시도하세요. || 로그에서 ComfyUI 충돌을 확인하세요.",
+
+  "errors.websocket_dropped.title": "실시간 연결이 끊겼습니다",
+
+  "errors.websocket_dropped.what": "ComfyUI와의 실시간 연결이 예기치 않게 종료되었습니다.",
+
+  "errors.websocket_dropped.why": "ComfyUI가 재시작되었거나 네트워크 연결이 중단되었을 수 있습니다.",
+
+  "errors.websocket_dropped.fixes": "작업을 다시 시도하여 재연결하세요. || ComfyUI가 계속 실행 중인지 확인하세요. || 문제가 지속되면 ComfyUI를 재시작하세요.",
+
+  "errors.api_error_5xx.title": "서버에서 오류가 반환되었습니다",
+
+  "errors.api_error_5xx.what": "백엔드가 서버 측 오류(5xx)로 응답했습니다.",
+
+  "errors.api_error_5xx.why": "요청을 처리하는 중 ComfyUI 또는 백엔드에 내부 오류가 발생했습니다.",
+
+  "errors.api_error_5xx.fixes": "잠시 후 다시 시도하세요. || 로그에서 근본 원인 오류를 확인하세요. || 계속 실패하면 ComfyUI를 재시작하세요.",
+
+  "errors.download_404.title": "파일을 찾을 수 없습니다 (404)",
+
+  "errors.download_404.what": "다운로드 URL이 찾을 수 없음을 반환했습니다.",
+
+  "errors.download_404.why": "링크가 잘못되었거나, 파일이 이동 또는 삭제되었거나, 앱에 없는 로그인이 필요합니다.",
+
+  "errors.download_404.fixes": "URL이 브라우저에서 열리는지 다시 확인하세요. || Hugging Face의 경우 /blob/ 페이지가 아닌 /resolve/ 링크를 사용하세요. || 접근 제한 파일의 경우 설정에서 액세스 토큰을 추가하세요.",
+
+  "errors.download_network.title": "다운로드 실패",
+
+  "errors.download_network.what": "파일을 다운로드할 수 없었습니다.",
+
+  "errors.download_network.why": "연결이 끊겼거나, 시간 초과되었거나, 호스트에 도달할 수 없었습니다.",
+
+  "errors.download_network.fixes": "인터넷 연결을 확인하고 다시 시도하세요. || 호스트가 혼잡하면 나중에 다시 시도하세요. || VPN이나 방화벽이 다운로드를 차단하지 않는지 확인하세요.",
+
+  "errors.disk_full.title": "디스크 공간이 부족합니다",
+
+  "errors.disk_full.what": "파일 쓰기를 완료하기에 충분한 여유 공간이 없었습니다.",
+
+  "errors.disk_full.why": "모델 또는 출력 폴더가 있는 드라이브가 가득 찼습니다.",
+
+  "errors.disk_full.fixes": "디스크 공간을 확보하고 다시 시도하세요. || 설정에서 모델 또는 갤러리 폴더를 더 큰 드라이브로 지정하세요. || Model Hub에서 사용하지 않는 모델을 삭제하세요.",
+
+  "errors.checksum_mismatch.title": "다운로드된 파일이 손상되었습니다",
+
+  "errors.checksum_mismatch.what": "다운로드된 파일이 예상된 체크섬과 일치하지 않습니다.",
+
+  "errors.checksum_mismatch.why": "다운로드가 중단되었거나 전송 중에 변조되었습니다.",
+
+  "errors.checksum_mismatch.fixes": "불완전한 파일을 삭제하고 다시 다운로드하세요. || 더 안정적인 연결로 다시 시도하세요. || 계속 실패하면 URL을 보고하세요.",
+
+  "errors.civitai_auth.title": "CivitAI 로그인이 필요합니다",
+
+  "errors.civitai_auth.what": "CivitAI가 인증되지 않은 다운로드를 거부했습니다.",
+
+  "errors.civitai_auth.why": "파일에 CivitAI 계정 또는 API 키가 필요하지만 없거나 유효하지 않습니다.",
+
+  "errors.civitai_auth.fixes": "설정에서 CivitAI API 키를 추가하거나 업데이트하세요. || 해당 파일에 대한 키 접근 권한을 확인하세요. || civitai.com에 로그인하여 파일이 아직 사용 가능한지 확인하세요.",
+
+  "errors.hf_page_url.title": "이것은 파일이 아닌 Hugging Face 페이지입니다",
+
+  "errors.hf_page_url.what": "URL이 다운로드 가능한 파일이 아닌 모델 페이지를 가리킵니다.",
+
+  "errors.hf_page_url.why": "Hugging Face의 /blob/ 링크는 웹 페이지를 열고, 다운로드에는 /resolve/ 링크가 필요합니다.",
+
+  "errors.hf_page_url.fixes": "/resolve/main/... 형식의 URL을 사용하세요. || 앱이 Model Hub 필드의 /blob/ 링크를 자동으로 수정합니다. || 파일 페이지에서 직접 다운로드 링크를 복사하세요.",
+
+  "errors.model_not_found.title": "모델을 찾을 수 없습니다",
+
+  "errors.model_not_found.what": "요청된 모델 또는 체크포인트를 찾을 수 없었습니다.",
+
+  "errors.model_not_found.why": "설치되지 않았거나, 이동 또는 이름이 변경되었거나, 폴더가 인덱싱되지 않았습니다.",
+
+  "errors.model_not_found.fixes": "Model Hub에서 모델을 설치하세요. || 설정에서 모델 목록을 새로 고침하세요. || 파일이 올바른 모델 폴더에 있는지 확인하세요.",
+
+  "errors.comfyui_launch_failed.title": "ComfyUI 시작에 실패했습니다",
+
+  "errors.comfyui_launch_failed.what": "앱이 ComfyUI를 실행하려 했지만 프로세스가 시작되지 않았습니다.",
+
+  "errors.comfyui_launch_failed.why": "설치가 불완전하거나, 의존성이 누락되었거나, 포트가 사용 중일 수 있습니다.",
+
+  "errors.comfyui_launch_failed.fixes": "설정에서 설정 마법사를 다시 실행하세요. || 로그에서 실행 오류를 확인하세요. || 다른 ComfyUI가 이미 해당 포트를 사용하고 있지 않은지 확인하세요.",
+
+  "errors.python_env_broken.title": "Python 환경 문제",
+
+  "errors.python_env_broken.what": "번들된 Python 환경을 사용할 수 없었습니다.",
+
+  "errors.python_env_broken.why": "환경이 없거나 불완전하거나, 패키지 가져오기에 실패했습니다.",
+
+  "errors.python_env_broken.fixes": "환경을 재구성하려면 설정 마법사를 다시 실행하세요. || 로그에서 실패한 가져오기를 확인하세요. || 설정이 계속 실패하면 보고하세요.",
+
+  "errors.attention_backend_install.title": "어텐션 백엔드 설치 실패",
+
+  "errors.attention_backend_install.what": "가속 백엔드 설치가 완료되지 않았습니다.",
+
+  "errors.attention_backend_install.why": "백엔드가 GPU를 지원하지 않거나, 다운로드 또는 빌드에 실패했을 수 있습니다.",
+
+  "errors.attention_backend_install.fixes": "설정에서 다른 어텐션 백엔드를 시도하세요. || GPU가 지원되는지 확인하세요. || 로그를 확인하고 설치를 다시 시도하세요.",
+
+  "errors.out_of_memory.title": "메모리가 부족합니다",
+
+  "errors.out_of_memory.what": "생성 중 GPU 또는 시스템 메모리가 부족해졌습니다.",
+
+  "errors.out_of_memory.why": "해상도, 배치 크기, 또는 모델이 사용 가능한 메모리에 비해 너무 큽니다.",
+
+  "errors.out_of_memory.fixes": "해상도 또는 배치 크기를 낮추고 다시 시도하세요. || GPU를 많이 사용하는 다른 앱을 종료하세요. || 더 작거나 양자화된 모델을 사용하세요.",
+
+  "errors.unsupported_gpu.title": "GPU가 지원되지 않습니다",
+
+  "errors.unsupported_gpu.what": "앱이 이 작업에 GPU를 사용할 수 없었습니다.",
+
+  "errors.unsupported_gpu.why": "호환 가능한 GPU 또는 드라이버가 감지되지 않았거나, 해당 기능에 CUDA가 필요합니다.",
+
+  "errors.unsupported_gpu.fixes": "GPU 드라이버를 업데이트하세요. || GPU가 요구 사항을 충족하는지 확인하세요. || 작동해야 한다고 생각되면 GPU 모델을 보고하세요.",
+
+  "errors.missing_node.title": "필수 ComfyUI 노드가 없습니다",
+
+  "errors.missing_node.what": "워크플로우에 설치되지 않은 커스텀 노드가 필요합니다.",
+
+  "errors.missing_node.why": "워크플로우에서 참조하는 커스텀 노드 패키지가 없습니다.",
+
+  "errors.missing_node.fixes": "설정 마법사를 다시 실행하여 번들 노드를 재설치하세요. || 로그에서 노드 이름을 확인하세요. || 해당 노드가 앱과 함께 제공되어야 한다면 보고하세요.",
+
+  "errors.invalid_workflow.title": "워크플로우가 유효하지 않습니다",
+
+  "errors.invalid_workflow.what": "생성 워크플로우를 구성할 수 없거나 잘못된 형식입니다.",
+
+  "errors.invalid_workflow.why": "설정 조합이 ComfyUI가 수락할 수 없는 워크플로우를 생성했습니다.",
+
+  "errors.invalid_workflow.fixes": "영향받은 설정을 초기화하고 다시 시도하세요. || 기본 프리셋으로 설정이 작동하는지 확인하세요. || 사용한 설정과 함께 보고하세요.",
+
+  "errors.generation_interrupted.title": "생성이 중단되었습니다",
+
+  "errors.generation_interrupted.what": "생성이 완료되지 않았습니다.",
+
+  "errors.generation_interrupted.why": "취소되었거나 ComfyUI가 도중에 중단되었습니다.",
+
+  "errors.generation_interrupted.fixes": "생성을 다시 시작하세요. || ComfyUI가 계속 실행 중인지 확인하세요. || 직접 취소하지 않았다면 로그를 확인하세요.",
+
+  "errors.io_permission.title": "파일 접근이 거부되었습니다",
+
+  "errors.io_permission.what": "앱이 필요한 파일을 읽거나 쓸 수 없었습니다.",
+
+  "errors.io_permission.why": "폴더가 보호되어 있거나, 읽기 전용이거나, 다른 프로세스가 소유하고 있습니다.",
+
+  "errors.io_permission.fixes": "사용자 계정이 쓸 수 있는 폴더를 선택하세요. || 파일을 잠그고 있는 앱을 종료하세요. || 쓰기 보호가 없는 위치에서 실행하세요.",
+
+  "errors.serialization.title": "데이터를 읽을 수 없습니다",
+
+  "errors.serialization.what": "앱이 파싱할 수 없는 데이터를 수신했습니다.",
+
+  "errors.serialization.why": "응답이 잘못된 형식이거나 파일이 손상되었습니다.",
+
+  "errors.serialization.fixes": "작업을 다시 시도하세요. || 앱을 재시작하세요. || 계속 발생하면 보고하세요.",
+
+  "errors.card.details": "기술적 세부 정보",
+
+  "errors.card.copy_diagnostics": "진단 정보 복사",
+
+  "errors.card.copied": "복사됨",
+
+  "errors.card.what_label": "무슨 일이 발생했나요",
+
+  "errors.card.why_label": "이유",
+
+  "errors.card.fix_label": "해결 방법",
+
+  "errors.card.report": "이 오류 보고",
+
+  "errors.report.title": "이 오류 보고",
+
+  "errors.report.intro": "미리 채워진 GitHub 이슈를 엽니다. 진단 로그가 클립보드에 복사되어 이슈 본문에 붙여넣을 수 있습니다.",
+
+  "errors.report.note_label": "추가 도움이 되는 정보 (선택 사항)",
+
+  "errors.report.note_placeholder": "이 문제가 발생했을 때 무엇을 하고 있었나요?",
+
+  "errors.report.submit": "이슈 열기",
+
+  "errors.report.opening": "열리는 중...",
+
+  "errors.report.copied_hint": "진단 정보가 클립보드에 복사되었습니다. 이슈 본문에 붙여넣으세요.",
+
 };
 export default ko;
