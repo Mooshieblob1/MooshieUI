@@ -256,10 +256,22 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Build server binary
+      # NUC path pins cargo home/target into the persistent cache dir. Split from the
+      # hosted path because an empty CARGO_TARGET_DIR (the old ternary fallback) makes
+      # cargo abort with "the target directory is set to an empty string".
+      - name: Build server binary (NUC)
+        if: env.USE_NUC_RUNNER == 'true'
         env:
-          CARGO_HOME: ${{ env.USE_NUC_RUNNER == 'true' && '/home/blob/.cargo' || '' }}
-          CARGO_TARGET_DIR: ${{ env.USE_NUC_RUNNER == 'true' && '/home/blob/ci-cache/mooshieui/target' || '' }}
+          CARGO_HOME: /home/blob/.cargo
+          CARGO_TARGET_DIR: /home/blob/ci-cache/mooshieui/target
+        run: |
+          cd src-tauri
+          cargo build --release --no-default-features --features server --bin mooshieui-server
+
+      # Hosted runners use cargo defaults (CARGO_HOME=~/.cargo, target=src-tauri/target)
+      # so the rust-cache action and the upload path below line up.
+      - name: Build server binary
+        if: env.USE_NUC_RUNNER != 'true'
         run: |
           cd src-tauri
           cargo build --release --no-default-features --features server --bin mooshieui-server
