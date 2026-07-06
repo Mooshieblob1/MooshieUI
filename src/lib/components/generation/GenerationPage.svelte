@@ -760,20 +760,26 @@
     try {
       const raw = localStorage.getItem(PANEL_LAYOUT_KEY);
       if (raw) {
-        const s = JSON.parse(raw) as { left?: number; right?: number; bottom?: number };
+        const s = JSON.parse(raw) as {
+          left?: number; right?: number; bottom?: number;
+          leftCollapsed?: boolean; rightCollapsed?: boolean; bottomCollapsed?: boolean;
+        };
         return {
           left: typeof s.left === "number" ? Math.min(LEFT_MAX, Math.max(LEFT_MIN, s.left)) : LEFT_DEFAULT,
           right: typeof s.right === "number" ? Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, s.right)) : RIGHT_DEFAULT,
           bottom: typeof s.bottom === "number" ? Math.min(BOTTOM_MAX, Math.max(BOTTOM_MIN, s.bottom)) : BOTTOM_DEFAULT,
+          leftCollapsed: s.leftCollapsed === true,
+          rightCollapsed: s.rightCollapsed === true,
+          bottomCollapsed: s.bottomCollapsed === true,
         };
       }
     } catch {}
-    return { left: LEFT_DEFAULT, right: RIGHT_DEFAULT, bottom: BOTTOM_DEFAULT };
+    return { left: LEFT_DEFAULT, right: RIGHT_DEFAULT, bottom: BOTTOM_DEFAULT, leftCollapsed: false, rightCollapsed: false, bottomCollapsed: false };
   }
 
   function savePanelLayout() {
     try {
-      localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify({ left: leftWidth, right: rightWidth, bottom: bottomHeight }));
+      localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify({ left: leftWidth, right: rightWidth, bottom: bottomHeight, leftCollapsed, rightCollapsed, bottomCollapsed }));
     } catch {}
   }
 
@@ -792,15 +798,16 @@
   let rightWidth = $state(_savedLayout.right);
   let bottomHeight = $state(_savedLayout.bottom);
 
-  // Panel collapse state
-  let leftCollapsed = $state(false);
-  let rightCollapsed = $state(false);
-  let bottomCollapsed = $state(false);
+  // Panel collapse state (restored from persisted layout)
+  let leftCollapsed = $state(_savedLayout.leftCollapsed);
+  let rightCollapsed = $state(_savedLayout.rightCollapsed);
+  let bottomCollapsed = $state(_savedLayout.bottomCollapsed);
 
-  // Store pre-collapse widths/heights so we can restore them
-  let leftWidthBeforeCollapse = LEFT_DEFAULT;
-  let rightWidthBeforeCollapse = RIGHT_DEFAULT;
-  let bottomHeightBeforeCollapse = BOTTOM_DEFAULT;
+  // Store pre-collapse widths/heights so we can restore them. Seed from the saved
+  // sizes so expanding a panel that was restored as collapsed brings back its real size.
+  let leftWidthBeforeCollapse = _savedLayout.left;
+  let rightWidthBeforeCollapse = _savedLayout.right;
+  let bottomHeightBeforeCollapse = _savedLayout.bottom;
 
   function toggleLeftPanel() {
     if (mobileFriendly) {
@@ -815,6 +822,7 @@
       leftWidthBeforeCollapse = leftWidth;
       leftCollapsed = true;
     }
+    savePanelLayout();
   }
 
   function toggleRightPanel() {
@@ -830,6 +838,7 @@
       rightWidthBeforeCollapse = rightWidth;
       rightCollapsed = true;
     }
+    savePanelLayout();
   }
 
   function toggleBottomPanel() {
@@ -845,6 +854,7 @@
       bottomHeightBeforeCollapse = bottomHeight;
       bottomCollapsed = true;
     }
+    savePanelLayout();
   }
 
   let dragging = $state<"left" | "right" | "bottom" | null>(null);

@@ -1,3 +1,11 @@
+## What's New in v1.4.41
+
+### Improvements
+- **Token counter moved into the prompt box**: the CLIP token estimate now sits unobtrusively in the top-right corner inside each prompt field, shown as a compact `count/limit` (it still turns amber when a prompt spills past the 75-token chunk boundary).
+- **Panel collapse state is remembered**: collapsing the left, right, or bottom panel now persists across restarts, so your layout stays the way you left it. Expanding a restored-collapsed panel brings back its previous size.
+
+---
+
 ## What's New in v1.4.40
 
 ### New features
