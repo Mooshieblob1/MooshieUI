@@ -5,8 +5,6 @@ description: MooshieUI project map, naming, docs index. Use when explaining the 
 
 # Ask / Reference (MooshieUI)
 
-Mirrors `.roo/rules-ask/AGENTS.md`.
-
 ## Identity
 
 - Product: **MooshieUI**; npm package `comfyui-desktop`; Tauri id `com.mooshieui.desktop`.
@@ -30,7 +28,7 @@ Mirrors `.roo/rules-ask/AGENTS.md`.
 | Overview | `GEMINI.md`, `.github/copilot-instructions.md` |
 | Full conventions | `.github/instructions/mooshieui.instructions.md` |
 | Layer rules | `.github/instructions/` (svelte-*, tauri-backend) |
-| Cursor workflows | `.agents/skills/` (mirrored in `.cursor/skills/`) |
+| Workflows / skills | `.agents/skills/` (mirrored in `.claude/skills/`) |
 | Release / push | `push`, `release` skills |
 | Pre-commit | `pre-commit-check` skill |
 | Bot PR triage | `docs/BOT_REVIEW_TRIAGE.md` |

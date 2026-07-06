@@ -8,7 +8,7 @@ This file provides guidance to agents when working with code in this repository.
 
 ## Error Logs
 
-- **`error-logs/` directory**: Drop large error logs, stack traces, or debug output here. Files in this directory are excluded from automatic context ingestion (via `.rooignore`), so they won't consume live context tokens. Reference the filename when you need me to read a log on demand. This directory is git-ignored.
+- **`error-logs/` directory**: Drop large error logs, stack traces, or debug output here. Files in this directory are excluded from automatic context ingestion, so they won't consume live context tokens. Reference the filename when you need me to read a log on demand. This directory is git-ignored.
 
 ## Build & Run
 
@@ -46,6 +46,6 @@ cargo clippy                 # Rust lint (run in src-tauri/)
 - **Agent config (canonical):** [`.agents/README.md`](.agents/README.md)
   - **Skills:** `push`, `release`, `cleanup`, `pre-commit-check`, `add-tauri-command`, `add-generation-param`, `add-comfyui-node`, `workflow-template-builder` — [`.agents/skills/`](.agents/skills/)
   - **Rules:** always-on + file-scoped — [`.agents/rules/`](.agents/rules/)
-  - **Cursor mirror:** [`.cursor/skills/`](.cursor/skills/), [`.cursor/rules/`](.cursor/rules/) (synced from `.agents/`)
-- **Existing AI rules**: [`GEMINI.md`](GEMINI.md), [`.github/copilot-instructions.md`](.github/copilot-instructions.md), [`.github/instructions/`](.github/instructions/) (including [`mooshieui.instructions.md`](.github/instructions/mooshieui.instructions.md)), [`.github/agents/`](.github/agents/), [`.roo/commands/`](.roo/commands/)
+  - **Claude Code mirror:** [`.claude/skills/`](.claude/skills/), [`.claude/commands/`](.claude/commands/) (synced from `.agents/`)
+- **Existing AI rules**: [`GEMINI.md`](GEMINI.md), [`.github/copilot-instructions.md`](.github/copilot-instructions.md), [`.github/instructions/`](.github/instructions/) (including [`mooshieui.instructions.md`](.github/instructions/mooshieui.instructions.md)), [`.github/agents/`](.github/agents/)
 - **Project docs**: [`docs/README.md`](docs/README.md) — bot triage, feature research, superpowers plans/specs

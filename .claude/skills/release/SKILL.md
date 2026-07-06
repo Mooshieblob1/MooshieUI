@@ -232,6 +232,27 @@ git -c core.hooksPath=/dev/null push origin --delete release/vX.Y.Z
 
 Confirm no duplicate `release/v*` branches remain for this version. Prune stale local branches.
 
+### 16. Wiki pass [user-facing changes only]
+
+The wiki is a **separate git repo** (`https://github.com/Mooshieblob1/MooshieUI.wiki.git`, default branch `master`, pages are top-level `*.md`, nav is `_Sidebar.md`). It documents user-facing behavior only — skip this step if the release is purely internal (CI, refactors, deps) with no new/changed/removed user-facing feature or setting.
+
+For every user-facing item in this release's `## What's New in vX.Y.Z` block:
+
+1. Clone the wiki **outside** the main repo (a temp/scratch dir), never nest it inside the working tree:
+   ```powershell
+   git clone https://github.com/Mooshieblob1/MooshieUI.wiki.git <scratch>/MooshieUI.wiki
+   ```
+2. Find the page(s) the feature belongs on (`Upscaling-and-Face-Fix`, `Models-and-the-Model-Hub`, `Prompt-Assistant`, `Settings-and-Accessibility`, `Prompting-Guide`, `Generation-Basics`, `FAQ`, ...). A brand-new area may need a new page plus a `_Sidebar.md` entry.
+3. **Verify exact UI labels against current code before writing** — features get renamed between changelog and ship. Grep `src/lib/locales/en.ts` for the label string and confirm the component. Do not copy changelog prose verbatim; match the wiki's concise, present-tense voice.
+4. Fix anything the release makes stale (counts, removed toggles, renamed settings).
+5. Commit and push to the wiki `master` (no `Co-Authored-By`, no em dashes):
+   ```powershell
+   git -c core.hooksPath=/dev/null commit -am "Document vX.Y.Z: <short summary>"
+   git -c core.hooksPath=/dev/null push origin master
+   ```
+
+Report a short list of wiki pages touched (or "no user-facing changes — wiki pass skipped").
+
 ## About UI
 
 No manual About edit — version from `__APP_VERSION__`; release notes from GitHub Releases API at runtime.
@@ -250,6 +271,7 @@ No manual About edit — version from `__APP_VERSION__`; release notes from GitH
 - [ ] Tag vX.Y.Z pushed
 - [ ] Release workflow running
 - [ ] Remote release/vX.Y.Z branch deleted
+- [ ] Wiki pass done for user-facing changes (or explicitly skipped as internal-only)
 ```
 
 ## Mistakes to avoid
@@ -263,3 +285,4 @@ No manual About edit — version from `__APP_VERSION__`; release notes from GitH
 7. Merging the release PR while another open PR has release-blocking bot **Fix** items still unresolved
 8. Ignoring late bot comments posted after CI goes green
 9. Adding `Co-Authored-By` trailers to commits, PR bodies, or comments — never attribute AI assistance in any git or GitHub output
+10. Shipping user-facing features without a wiki pass, or documenting a changelog label that no longer matches the shipped UI string (verify against `en.ts`)

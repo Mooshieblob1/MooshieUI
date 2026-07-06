@@ -5,8 +5,6 @@ description: MooshieUI architecture — dual-mode, AppState, workflows, storage.
 
 # Architect (MooshieUI)
 
-Mirrors `.roo/rules-architect/AGENTS.md`.
-
 ## Dual-mode
 
 - **Desktop:** Tauri + ComfyUI child process.

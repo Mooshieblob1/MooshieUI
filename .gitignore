@@ -25,9 +25,6 @@ venv/
 *.swo
 *~
 
-# Cursor IDE (local only)
-.cursor/
-
 # Claude Code local settings
 .claude/settings.local.json
 

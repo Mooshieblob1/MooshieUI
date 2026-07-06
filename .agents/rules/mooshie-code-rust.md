@@ -6,7 +6,7 @@ globs: src-tauri/**/*
 
 # Code — Rust (MooshieUI)
 
-Mirrors `.roo/rules-code/AGENTS.md` (Rust) + `.github/instructions/tauri-backend.instructions.md`.
+Deeper Rust/Tauri conventions: `.github/instructions/tauri-backend.instructions.md`.
 
 ## Commands & State
 

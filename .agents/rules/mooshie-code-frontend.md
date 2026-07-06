@@ -6,8 +6,6 @@ globs: src/**/*.svelte,src/**/*.svelte.ts,src/**/*.ts
 
 # Code — Frontend (MooshieUI)
 
-Mirrors `.roo/rules-code/AGENTS.md` (frontend sections).
-
 ## IPC
 
 - `ipcInvoke()` / `ipcListen()` only — wrappers in `src/lib/utils/api.ts`.

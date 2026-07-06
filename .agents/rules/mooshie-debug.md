@@ -5,8 +5,6 @@ description: MooshieUI debugging — log buffers, browser /internal-api, silent 
 
 # Debug (MooshieUI)
 
-Mirrors `.roo/rules-debug/AGENTS.md`.
-
 ## Logs
 
 - Rust `log_buffer.rs` (2000) + frontend `log-buffer.ts` (1000). Use **`exportLogs()`** — console alone misses Rust output.

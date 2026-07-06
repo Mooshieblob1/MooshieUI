@@ -60,7 +60,7 @@ There is no automated test suite (no Vitest/Jest, no Rust `#[test]`). Run the ch
 - **Svelte 5:** No `<style>` blocks; use `onclick` not `on:click`; state stores use `.svelte.ts` and runes, not `svelte/store`.
 - **New Tauri commands:** Return `Result<T, AppError>` and add a matching `ipcInvoke` wrapper in `src/lib/utils/api.ts`.
 
-More rule tables live in [`.agents/skills/pre-commit-check/reference.md`](.agents/skills/pre-commit-check/reference.md) (mirrored at [`.cursor/skills/pre-commit-check/reference.md`](.cursor/skills/pre-commit-check/reference.md); used by maintainers and coding agents).
+More rule tables live in [`.agents/skills/pre-commit-check/reference.md`](.agents/skills/pre-commit-check/reference.md) (used by maintainers and coding agents).
 
 ---
 
@@ -111,7 +111,7 @@ Version bumps, `CHANGELOG.md`, `RELEASE_NOTES.md`, git tags, and GitHub Releases
 
 Releases follow a separate workflow: bump `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` together; update changelog files; open `release/vX.Y.Z`; merge; then tag `vX.Y.Z` on `main` to trigger Build & Release CI.
 
-Maintainers use the release skill/prompt (`.agents/skills/release`, mirrored in `.cursor/skills/release`, plus `.github/prompts/release.prompt.md`). Contributors should **not** include version-only bumps in `chore/*` PRs unless asked.
+Maintainers use the release skill/prompt (`.agents/skills/release`, plus `.github/prompts/release.prompt.md`). Contributors should **not** include version-only bumps in `chore/*` PRs unless asked.
 
 ---
 

@@ -12,7 +12,7 @@ Built with **Svelte 5** + **Rust**, it hides ComfyUI's node-graph complexity beh
   <img src="src/lib/assets/logo.png" alt="Logo" width="200">
 </p>
 
-![MooshieUI Screenshot](screenshot.avif)
+![MooshieUI Screenshot](docs/screenshot.avif)
 
 ---
 

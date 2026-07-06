@@ -5,7 +5,7 @@ description: MooshieUI core build, dual-mode IPC, release/git gotchas — always
 
 # MooshieUI Core
 
-Mirrors essentials from root `AGENTS.md`. Deeper mode rules: sibling `.mdc` / `.md` files (source of truth also in `.roo/rules-*/`).
+Mirrors essentials from root `AGENTS.md`. Deeper mode rules: sibling `.md` files in `.agents/rules/`.
 
 ## Build & run
 
@@ -35,7 +35,7 @@ Never add `Co-Authored-By` trailers to any commit, PR body, or comment. Do not a
 
 - Pre-commit hook is bash → hangs in PowerShell: `git -c core.hooksPath=/dev/null ...`
 - Version must match in `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`
-- Workflows: `.cursor/skills/push`, `.cursor/skills/release` / `.agents/skills/push`, `.agents/skills/release`
+- Workflows: `.agents/skills/push`, `.agents/skills/release`
 
 ## Diagnostics
 

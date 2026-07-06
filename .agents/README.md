@@ -1,6 +1,6 @@
 # MooshieUI Agent Config (`.agents/`)
 
-**Canonical source** for project skills and rules. Cursor, Roo, and Copilot configs are synced from here.
+**Canonical source** for project skills and rules. Claude Code and Copilot configs are synced from here.
 
 ## Skills
 
@@ -35,16 +35,11 @@ Invoke by name or slash-style request (`/push`, `/release`, etc.):
 |--------|--------|-------|
 | [`.claude/skills/`](../.claude/skills/) | `SKILL.md` | Direct copy (Claude Code project skills) |
 | [`.claude/commands/`](../.claude/commands/) | `.md` | Thin slash-command wrappers — surface `/push` etc. in the Claude Code `/` menu; each invokes its skill via the Skill tool |
-| [`.cursor/skills/`](../.cursor/skills/) | `SKILL.md` | Direct copy |
-| [`.cursor/rules/`](../.cursor/rules/) | `.mdc` | Cursor frontmatter (`alwaysApply`, `globs`) |
-| [`.roo/commands/`](../.roo/commands/) | `.md` | Roo slash commands + `argument-hint` (skill + reference inlined) |
 | [`.github/agents/`](../.github/agents/) | `.agent.md` | Copilot agents (skill + reference inlined) |
 | [`.github/prompts/`](../.github/prompts/) | `.prompt.md` | Copilot prompts (`agent: agent` frontmatter, canonical skill body) |
-| [`.grok/skills/`](../.grok/skills/) + [`.grok/rules/`](../.grok/rules/) | `SKILL.md` / `.md` | Direct copy |
 
-Roo mode rules remain in [`.roo/rules-*/`](../.roo/) (architect, code, debug, ask). When editing conventions, update `.agents/rules/` first, then re-sync `.cursor/rules/`.
+When editing conventions, update `.agents/rules/` first, then re-sync the targets above.
 
 ## Also see
 
 - [AGENTS.md](../AGENTS.md) — repo entry for all agents
-- [`.cursor/README.md`](../.cursor/README.md) — Cursor-specific index
