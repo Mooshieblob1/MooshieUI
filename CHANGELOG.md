@@ -1,5 +1,16 @@
 # Changelog
 
+## What's New in v1.4.40
+
+### New features
+- **Folder tree for LoRAs in the bottom panel**: the LoRA menu's sort dropdown gains a "Tree" mode that groups your LoRAs into collapsible on-disk folders, mirroring the Model Manager's tree view. Handy when your LoRAs are organised into subfolders.
+- **Live prompt token counter**: each prompt box now shows an estimated CLIP token count against the 75-token chunk boundary, turning amber once you cross it, so you can see when a prompt spills into a new encoder chunk.
+
+### Fixes and maintenance
+- **Error reports now include the whole log**: in-app problem reports previously sent only a trimmed tail of the diagnostics log, so the most useful lines were often missing. Reports now carry the complete log, attached in full to the filed issue.
+
+---
+
 ## What's New in v1.4.39
 
 ### New features
