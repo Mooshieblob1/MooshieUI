@@ -21,6 +21,7 @@
     type SpellcheckPiece,
   } from "../../utils/promptSpellcheck.js";
   import { SYNTAX_ANGLE_LOOKBEHIND } from "../../utils/promptSyntaxEscape.js";
+  import { CLIP_CHUNK_SIZE, estimatePromptTokens, promptTokenLimit } from "../../utils/promptTokens.js";
   import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
 
   interface Props {
@@ -85,6 +86,12 @@
   let selectionStart = $state(0);
   let selectionEnd = $state(0);
   const hasSelection = $derived(selectionStart !== selectionEnd);
+
+  // Estimated CLIP tokens for the current prompt, gauged against the 75-token
+  // chunk boundary the text encoder splits on.
+  const tokenCount = $derived(estimatePromptTokens(value));
+  const tokenLimit = $derived(promptTokenLimit(tokenCount));
+  const tokenOverflow = $derived(tokenCount > CLIP_CHUNK_SIZE);
 
   const categoryOptions = $derived([
     { value: null, label: locale.t("generation.prompt.category_all") },
@@ -785,6 +792,12 @@
     {#if !hasSelection}
       <span class="min-w-0 truncate text-[10px] text-neutral-600" title={locale.t('generation.prompt.weight_select_hint')}>{locale.t('generation.prompt.weight_select_hint')}</span>
     {/if}
+    <span
+      class="ml-auto shrink-0 tabular-nums text-[10px] {tokenOverflow ? 'text-amber-400' : 'text-neutral-500'}"
+      title={locale.t('generation.prompt.tokens_tip')}
+    >
+      {tokenCount}/{tokenLimit} {locale.t('generation.prompt.tokens')}
+    </span>
   </div>
   <div class="relative">
     {#if showBackdrop}

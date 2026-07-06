@@ -486,6 +486,8 @@ const zh: Record<string, string> = {
   "generation.prompt.weight_select_hint": "在提示词中选中文本即可调整权重",
   "generation.prompt.wrap_stronger": "Wrap selection with {} weighting",
   "generation.prompt.wrap_weaker": "Wrap selection with [] weighting",
+  "generation.prompt.tokens": "tokens",
+  "generation.prompt.tokens_tip": "Estimated CLIP tokens. The text encoder splits the prompt into 75-token chunks, so crossing a boundary can shift the result.",
 
   "generation.style.none": "无",
   "generation.style.anime": "动漫",

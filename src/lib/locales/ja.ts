@@ -496,6 +496,8 @@ const ja: Record<string, string> = {
   "generation.prompt.weight_select_hint": "プロンプト内のテキストを選択すると重みを調整できます",
   "generation.prompt.wrap_stronger": "Wrap selection with {} weighting",
   "generation.prompt.wrap_weaker": "Wrap selection with [] weighting",
+  "generation.prompt.tokens": "tokens",
+  "generation.prompt.tokens_tip": "Estimated CLIP tokens. The text encoder splits the prompt into 75-token chunks, so crossing a boundary can shift the result.",
 
   // スタイルプリセット
   "generation.style.none": "なし",

@@ -527,6 +527,8 @@ const en: Record<string, string> = {
   "generation.prompt.weight_select_hint": "Select text in the prompt to adjust its weight",
   "generation.prompt.wrap_stronger": "Wrap selection with {} weighting",
   "generation.prompt.wrap_weaker": "Wrap selection with [] weighting",
+  "generation.prompt.tokens": "tokens",
+  "generation.prompt.tokens_tip": "Estimated CLIP tokens. The text encoder splits the prompt into 75-token chunks, so crossing a boundary can shift the result.",
 
   // Prompt presets
   "generation.presets.edit_title": "Edit Prompt Preset",
