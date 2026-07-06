@@ -1,7 +1,9 @@
 use crate::dedup::marker;
 use crate::types::ReportPayload;
 
-const MAX_LOG_IN_ISSUE: usize = 60_000; // keep issue bodies well under GitHub's limit
+/// Inline log kept in the issue body (a quick-glance tail). The full log is
+/// attached separately as collapsible comments when it exceeds this.
+pub const MAX_LOG_IN_ISSUE: usize = 60_000; // keep issue bodies well under GitHub's limit
 
 fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
@@ -135,13 +137,13 @@ impl GithubClient {
         Ok(None)
     }
 
-    /// Create an issue; returns its html_url.
+    /// Create an issue; returns its number and html_url.
     pub async fn create_issue(
         &self,
         title: &str,
         body: &str,
         labels: &[&str],
-    ) -> Result<String, String> {
+    ) -> Result<(u64, String), String> {
         let url = format!("https://api.github.com/repos/{}/issues", self.repo);
         let payload = serde_json::json!({ "title": title, "body": body, "labels": labels });
         let resp = self
@@ -161,11 +163,13 @@ impl GithubClient {
             .json()
             .await
             .map_err(|e| format!("github create decode failed: {e}"))?;
-        created
+        let number = created.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
+        let html_url = created
             .get("html_url")
             .and_then(|u| u.as_str())
             .map(|s| s.to_string())
-            .ok_or_else(|| "github create response missing html_url".to_string())
+            .ok_or_else(|| "github create response missing html_url".to_string())?;
+        Ok((number, html_url))
     }
 
     /// Add a comment to an existing issue.

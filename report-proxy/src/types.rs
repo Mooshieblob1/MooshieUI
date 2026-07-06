@@ -43,7 +43,8 @@ impl Config {
             llm_model: var("LLM_MODEL", "local"),
             llm_timeout_secs: var("LLM_TIMEOUT_SECS", "20").parse().unwrap_or(20),
             rate_limit_per_min: var("RATE_LIMIT_PER_MIN", "10").parse().unwrap_or(10),
-            max_body_bytes: var("MAX_BODY_BYTES", "524288").parse().unwrap_or(524288),
+            // 4 MB: whole diagnostic logs (a few thousand lines) are sent in full.
+            max_body_bytes: var("MAX_BODY_BYTES", "4194304").parse().unwrap_or(4194304),
             bind_addr: var("BIND_ADDR", "0.0.0.0:8091"),
         }
     }

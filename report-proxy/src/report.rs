@@ -22,6 +22,46 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// Max characters per log comment; GitHub caps comment bodies near 65,536.
+const MAX_LOG_COMMENT_CHARS: usize = 60_000;
+
+/// Split a string into chunks of at most `max` characters (char-safe).
+fn chunk_chars(s: &str, max: usize) -> Vec<String> {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return vec![s.to_string()];
+    }
+    chars.chunks(max).map(|c| c.iter().collect()).collect()
+}
+
+/// Attach the full diagnostics log to an issue as collapsible comment(s).
+///
+/// The issue body already shows a tail inline, so this only runs when the log is
+/// larger than that. It is best-effort: attaching the log must never fail the
+/// report, so errors are logged and swallowed. A 4-backtick fence keeps stray
+/// triple-backticks inside the log from breaking out of the code block.
+async fn attach_full_log(github: &github::GithubClient, number: u64, log: &str) {
+    let log = log.trim();
+    if number == 0 || log.chars().count() <= github::MAX_LOG_IN_ISSUE {
+        return;
+    }
+    let chunks = chunk_chars(log, MAX_LOG_COMMENT_CHARS);
+    let total = chunks.len();
+    for (i, chunk) in chunks.into_iter().enumerate() {
+        let header = if total > 1 {
+            format!("Full diagnostics log (part {}/{})", i + 1, total)
+        } else {
+            "Full diagnostics log".to_string()
+        };
+        let body =
+            format!("<details><summary>{header}</summary>\n\n````log\n{chunk}\n````\n\n</details>");
+        if let Err(e) = github.comment_on(number, &body).await {
+            tracing::warn!("failed to attach log comment {}/{total}: {e}", i + 1);
+            break;
+        }
+    }
+}
+
 pub async fn report_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -67,6 +107,9 @@ pub async fn report_handler(
                 payload.app_version, payload.os, payload.arch
             );
             let _ = state.github.comment_on(existing.number, &note).await;
+            if let Some(log) = payload.logs_tail.as_deref() {
+                attach_full_log(&state.github, existing.number, log).await;
+            }
             return (
                 StatusCode::OK,
                 Json(json!({ "issueUrl": existing.html_url })),
@@ -97,7 +140,12 @@ pub async fn report_handler(
         .create_issue(&title, &issue_body, &["bug", "in-app-report"])
         .await
     {
-        Ok(url) => (StatusCode::OK, Json(json!({ "issueUrl": url }))),
+        Ok((number, url)) => {
+            if let Some(log) = payload.logs_tail.as_deref() {
+                attach_full_log(&state.github, number, log).await;
+            }
+            (StatusCode::OK, Json(json!({ "issueUrl": url })))
+        }
         Err(e) => {
             tracing::error!("issue creation failed: {e}");
             (
@@ -105,5 +153,24 @@ pub async fn report_handler(
                 Json(json!({ "error": "failed to create issue" })),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_log_is_a_single_chunk() {
+        assert_eq!(chunk_chars("hello", 60_000), vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn long_log_splits_into_bounded_chunks() {
+        let log = "x".repeat(130_000);
+        let chunks = chunk_chars(&log, 60_000);
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks.iter().all(|c| c.chars().count() <= 60_000));
+        assert_eq!(chunks.concat().chars().count(), 130_000);
     }
 }

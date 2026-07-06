@@ -4,7 +4,6 @@ import { openExternalUrl } from "../utils/openExternal.js";
 import { exportLogsContent, getConfig } from "../utils/api.js";
 
 export const GITHUB_REPO = "Mooshieblob1/MooshieUI";
-const MAX_LOG_TAIL = 200_000; // ~200 KB cap for the proxy payload
 
 /** Assemble a structured report from a resolved error. */
 export async function buildReportPayload(
@@ -16,8 +15,9 @@ export async function buildReportPayload(
   let logsTail: string | undefined;
   if (includeLogs) {
     try {
-      const logs = await exportLogsContent();
-      logsTail = logs.length > MAX_LOG_TAIL ? logs.slice(-MAX_LOG_TAIL) : logs;
+      // Send the whole log — the proxy attaches the full text (chunked into
+      // issue comments past GitHub's body limit) so nothing useful is lost.
+      logsTail = await exportLogsContent();
     } catch {
       logsTail = undefined;
     }
