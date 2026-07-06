@@ -2064,7 +2064,8 @@ const es: Record<string, string> = {
   "model_gallery.sort_family": "Family",
   "model_gallery.sort_folder": "Folder",
   "model_gallery.sort_name": "Name",
-  "model_gallery.sort_tip": "Sort models by name, on-disk folder, or detected model family",
+  "model_gallery.sort_tree": "Tree",
+  "model_gallery.sort_tip": "Sort models by name, on-disk folder, folder tree, or detected model family",
   "settings.app_mode.switched_to_browser": "Browser mode opened in your default browser. Use that tab — the desktop window will minimize shortly.",
 
   // ── i18n audit additions ────────────────────────────────

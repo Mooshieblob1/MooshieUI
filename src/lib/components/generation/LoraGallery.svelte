@@ -16,8 +16,11 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import {
+    buildFilenameTree,
+    countTreeFiles,
     inferLoraFamily,
     sortModelFilenames,
+    type FilenameTreeNode,
     type ModelGallerySort,
   } from "../../utils/modelGallerySort.js";
   import ModelPreviewActions from "./ModelPreviewActions.svelte";
@@ -83,6 +86,7 @@
       (localStorage.getItem(SORT_KEY) as ModelGallerySort | null)) ||
       "name",
   );
+  let collapsedFolders = $state<Set<string>>(new Set());
   let selectedPresetId = $state<string>("");
   let newPresetName = $state("");
   let applyMode = $state<LoraPresetApplyMode>("replace");
@@ -136,6 +140,19 @@
       ...sortModelFilenames(disabled, sortMode, null, displayName, familyOf),
     ];
   });
+
+  // Folder tree for the "tree" sort mode, built from the already-filtered and
+  // enabled-first list so grouping and ordering stay consistent with the grid.
+  const loraTree = $derived(
+    sortMode === "tree" ? buildFilenameTree(filteredLoras()) : null,
+  );
+
+  function toggleFolder(path: string) {
+    const next = new Set(collapsedFolders);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    collapsedFolders = next;
+  }
 
   function isLoraEnabled(filename: string): boolean {
     return generation.loras.some((l) => l.name === filename && l.enabled);
@@ -572,6 +589,7 @@
       >
         <option value="name">{locale.t('model_gallery.sort_name')}</option>
         <option value="folder">{locale.t('model_gallery.sort_folder')}</option>
+        <option value="tree">{locale.t('model_gallery.sort_tree')}</option>
         <option value="family">{locale.t('model_gallery.sort_family')}</option>
       </select>
       <input
@@ -637,9 +655,7 @@
       <p>{locale.t('lora.no_results', { query: searchQuery })}</p>
     </div>
   {:else}
-    <div class="flex-1 min-h-0 overflow-y-auto px-2 py-1.5">
-      <div class="grid gap-2.5" style="grid-template-columns: repeat(auto-fill, minmax({cardSize}px, 1fr));">
-      {#each filteredLoras() as loraName (loraName)}
+    {#snippet loraCard(loraName: string)}
         {@const info = getInfo(loraName)}
         {@const isLoading = loading[loraName]}
         {@const error = errors[loraName]}
@@ -833,8 +849,60 @@
             {/if}
           </div>
         </div>
-      {/each}
+    {/snippet}
+
+    {#snippet folderGroup(node: FilenameTreeNode, depth: number)}
+      {@const isCollapsed = collapsedFolders.has(node.path)}
+      <div class="min-w-0">
+        <button
+          type="button"
+          onclick={() => toggleFolder(node.path)}
+          class="flex w-full items-center gap-1 rounded px-1 py-1 text-left text-[11px] text-neutral-300 hover:bg-neutral-800/60"
+          title={node.path}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 shrink-0 text-neutral-500 transition-transform {isCollapsed ? '' : 'rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 shrink-0 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+          <span class="truncate font-medium">{node.name}</span>
+          <span class="shrink-0 text-[10px] tabular-nums text-neutral-500">({countTreeFiles(node)})</span>
+        </button>
+        {#if !isCollapsed}
+          <div class="ml-1.5 border-l border-neutral-800 pl-1.5">
+            {#each node.folders as child (child.path)}
+              {@render folderGroup(child, depth + 1)}
+            {/each}
+            {#if node.files.length > 0}
+              <div class="grid gap-2.5 py-1" style="grid-template-columns: repeat(auto-fill, minmax({cardSize}px, 1fr));">
+                {#each node.files as loraName (loraName)}
+                  {@render loraCard(loraName)}
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
       </div>
+    {/snippet}
+
+    <div class="flex-1 min-h-0 overflow-y-auto px-2 py-1.5">
+      {#if sortMode === "tree" && loraTree}
+        <div class="space-y-0.5">
+          {#each loraTree.folders as folder (folder.path)}
+            {@render folderGroup(folder, 0)}
+          {/each}
+          {#if loraTree.files.length > 0}
+            <div class="grid gap-2.5 py-1" style="grid-template-columns: repeat(auto-fill, minmax({cardSize}px, 1fr));">
+              {#each loraTree.files as loraName (loraName)}
+                {@render loraCard(loraName)}
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {:else}
+        <div class="grid gap-2.5" style="grid-template-columns: repeat(auto-fill, minmax({cardSize}px, 1fr));">
+          {#each filteredLoras() as loraName (loraName)}
+            {@render loraCard(loraName)}
+          {/each}
+        </div>
+      {/if}
     </div>
   {/if}
 </div>

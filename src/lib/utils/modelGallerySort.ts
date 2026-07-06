@@ -2,7 +2,7 @@ import type { CheckpointCivitaiInfo, LoraCivitaiInfo } from "./api.js";
 import { MODEL_FAMILIES } from "./modelFamily.js";
 import type { ModelFamily } from "./modelFamily.js";
 
-export type ModelGallerySort = "name" | "folder" | "family";
+export type ModelGallerySort = "name" | "folder" | "family" | "tree";
 
 export const FAMILY_ORDER: ModelFamily[] = [
   ...MODEL_FAMILIES,
@@ -59,6 +59,53 @@ export function sortModelFilenames(
       if (ra !== rb) return ra - rb;
       return displayName(a).localeCompare(displayName(b));
     }
+    // "tree" reuses the plain name ordering here; the folder hierarchy is built
+    // separately by buildFilenameTree() from this already-sorted list.
     return displayName(a).localeCompare(displayName(b));
   });
+}
+
+/** A folder node in a filename-derived tree. Root has an empty name/path. */
+export interface FilenameTreeNode {
+  name: string;
+  path: string;
+  folders: FilenameTreeNode[];
+  files: string[];
+}
+
+/**
+ * Groups flat model filenames (e.g. "anime/style.safetensors") into a folder
+ * tree for the bottom-panel tree view. Files keep their incoming order within a
+ * folder (so an enabled-first caller stays enabled-first); folders sort by name.
+ */
+export function buildFilenameTree(filenames: string[]): FilenameTreeNode {
+  const root: FilenameTreeNode = { name: "", path: "", folders: [], files: [] };
+  for (const filename of filenames) {
+    const segments = filename.replace(/\\/g, "/").split("/").filter(Boolean);
+    const folderSegments = segments.slice(0, -1);
+    let node = root;
+    let currentPath = "";
+    for (const segment of folderSegments) {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+      let child = node.folders.find((c) => c.name === segment);
+      if (!child) {
+        child = { name: segment, path: currentPath, folders: [], files: [] };
+        node.folders.push(child);
+      }
+      node = child;
+    }
+    node.files.push(filename);
+  }
+  sortTreeFolders(root);
+  return root;
+}
+
+function sortTreeFolders(node: FilenameTreeNode): void {
+  node.folders.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  for (const child of node.folders) sortTreeFolders(child);
+}
+
+/** Total file count for a node, including all descendants. */
+export function countTreeFiles(node: FilenameTreeNode): number {
+  return node.files.length + node.folders.reduce((sum, child) => sum + countTreeFiles(child), 0);
 }
