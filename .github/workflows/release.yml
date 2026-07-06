@@ -351,5 +351,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: ${{ env.USE_NUC_RUNNER == 'true' && 'type=local,src=/home/blob/ci-cache/docker/mooshieui' || 'type=gha' }}
-          cache-to: ${{ env.USE_NUC_RUNNER == 'true' && 'type=local,dest=/home/blob/ci-cache/docker/mooshieui,mode=max' || 'type=gha,mode=min,ignore-error=true' }}
+          # Hosted runners cache to a dedicated :buildcache tag in the same GHCR
+          # package (pushed with the existing GITHUB_TOKEN, no PAT needed). This
+          # sidesteps the 10 GB GitHub Actions cache cap that was evicting the
+          # multi-GB CUDA/torch layer and turning ~5 min builds into ~20 min ones.
+          # mode=max caches every stage; a cache miss/outage falls back to a full
+          # build (ignore-error), never a failure.
+          cache-from: ${{ env.USE_NUC_RUNNER == 'true' && 'type=local,src=/home/blob/ci-cache/docker/mooshieui' || format('type=registry,ref={0}:buildcache', steps.docker-vars.outputs.image) }}
+          cache-to: ${{ env.USE_NUC_RUNNER == 'true' && 'type=local,dest=/home/blob/ci-cache/docker/mooshieui,mode=max' || format('type=registry,ref={0}:buildcache,mode=max,ignore-error=true', steps.docker-vars.outputs.image) }}
