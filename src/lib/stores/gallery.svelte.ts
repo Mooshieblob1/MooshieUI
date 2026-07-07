@@ -451,6 +451,46 @@ class GalleryStore {
     return image.gallery_filename ?? null;
   }
 
+  /**
+   * Insert an already-persisted gallery file (e.g. one saved from the Photopea
+   * editor) at the top of the gallery. The backend's "image_saved" broadcast is
+   * not consumed by the frontend, so newly written files must be surfaced here.
+   */
+  async addPersistedImage(galleryFilename: string) {
+    // Mirror loadFromDisk's modern-format parse: {promptId}__{mode}__{origFilename}.
+    let promptId = "";
+    let origFilename = galleryFilename;
+    let generationMode: "txt2img" | "img2img" | "inpainting" | undefined;
+    let isUpscaled = false;
+    const modernParts = galleryFilename.split("__");
+    if (modernParts.length >= 3) {
+      promptId = modernParts[0] ?? "";
+      const mode = modernParts[1] ?? "";
+      if (mode === "txt2img" || mode === "img2img" || mode === "inpainting") {
+        generationMode = mode;
+      }
+      origFilename = modernParts.slice(2).join("__");
+      const lowered = origFilename.toLowerCase();
+      isUpscaled = lowered.includes("upscale") || lowered.includes("upscaled");
+    }
+
+    const entry: OutputImage = {
+      filename: origFilename,
+      subfolder: "",
+      type: "output",
+      prompt_id: promptId,
+      generation_mode: generationMode,
+      is_upscaled: isUpscaled,
+      thumbnailUrl: await thumbnailUrl(galleryFilename),
+      fullImageUrl: await fullImageUrl(galleryFilename),
+      gallery_filename: galleryFilename,
+      generated_at_ms: Date.now(),
+    };
+    this.images = [entry, ...this.images];
+    // Pull in the embedded metadata (artist detection etc.) in the background.
+    void this.hydrateMetadataInBackground();
+  }
+
   closeLightbox() {
     if (this.lightboxUrl?.startsWith("blob:")) {
       // Don't revoke a blob URL that is still referenced by a session image

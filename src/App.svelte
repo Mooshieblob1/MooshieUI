@@ -45,6 +45,7 @@
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
+  import PhotopeaEditor from "./lib/components/PhotopeaEditor.svelte";
   import GlobalErrorModal from "./lib/components/errors/GlobalErrorModal.svelte";
   import ReportErrorModal from "./lib/components/errors/ReportErrorModal.svelte";
   import ErrorGallery from "./lib/components/errors/ErrorGallery.svelte";
@@ -648,6 +649,19 @@
   let externalComfyOpen = $state(false);
   let externalComfyPayload = $state<ComfyServerErrorPayload>({ error: "" });
   let comfyServerUrl = $state("http://127.0.0.1:8188");
+
+  let photopeaOpen = $state(false);
+  let photopeaImage = $state<OutputImage | null>(null);
+
+  async function editInPhotopea(image: OutputImage) {
+    const filename = await gallery.resolveGalleryFilename(image);
+    if (!filename) {
+      gallery.showToast(locale.t("gallery.persisted_only_thumb"), "warning");
+      return;
+    }
+    photopeaImage = image.gallery_filename ? image : { ...image, gallery_filename: filename };
+    photopeaOpen = true;
+  }
 
   function showComfyStartupIssue(raw: unknown, fallbackMessage = "") {
     const parsed = parseComfyServerError(raw, fallbackMessage);
@@ -2932,6 +2946,18 @@
         startupStatusKind = "starting";
       }}
     />
+    <PhotopeaEditor
+      open={photopeaOpen}
+      image={photopeaImage}
+      onclose={() => {
+        photopeaOpen = false;
+        photopeaImage = null;
+      }}
+      onsaved={(filename) => {
+        void gallery.addPersistedImage(filename);
+        gallery.showToast(locale.t("photopea.saved"), "success");
+      }}
+    />
     {#if startupStatus && !connection.connected}
       <div class="mb-1 flex shrink-0 items-center gap-2 rounded-[var(--app-panel-radius)] border border-amber-800/60 bg-amber-950/85 px-4 py-2.5 text-sm text-amber-100 shadow-lg shadow-black/20 backdrop-blur-sm">
         {#if startupStatusKind === "manual" || startupStatusKind === "error"}
@@ -3159,6 +3185,13 @@
           onclick={() => gallery.selectedImage && applyMetadataToGeneration(gallery.selectedImage, "remix")}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.13-3.36L23 10M1 14l5.37 4.36A9 9 0 0020.49 15"/></svg>
+        </button>
+        <button
+          title={locale.t("gallery.edit_photopea")}
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => gallery.selectedImage && editInPhotopea(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
         </button>
 
         <!-- Separator -->
