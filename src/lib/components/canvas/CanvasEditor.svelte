@@ -96,6 +96,21 @@
         </div>
       </div>
     {/if}
+
+    {#if canvas.canApplyInpaintResult && !progress.isGenerating}
+      <div class="absolute inset-x-0 bottom-4 z-20 flex justify-center px-4 pointer-events-none">
+        <div class="pointer-events-auto flex items-center gap-3 rounded-full border border-neutral-700/80 bg-neutral-950/90 py-1.5 pl-4 pr-1.5 shadow-2xl backdrop-blur-sm">
+          <span class="text-xs text-neutral-300">{locale.t('canvas.inpaint_result_ready')}</span>
+          <button
+            onclick={() => canvas.applyInpaintResult()}
+            class="text-xs font-medium px-4 py-1.5 rounded-full border border-emerald-500 bg-emerald-600/25 text-emerald-100 hover:border-emerald-400 hover:bg-emerald-600/40"
+            title={locale.t('canvas.apply_inpaint_title')}
+          >
+            {locale.t('canvas.accept')}
+          </button>
+        </div>
+      </div>
+    {/if}
   </div>
   <CanvasStagingStrip />
   <CanvasStatusBar />

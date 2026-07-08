@@ -1445,7 +1445,9 @@
         URL.revokeObjectURL(normalized.previewUrl);
         return;
       }
-      canvas.setPreparedInpaintOverride({
+      // Display-only: preview the result without advancing the base, so the next
+      // "Generate" re-rolls the original base + mask. "Apply" promotes it later.
+      canvas.setPendingInpaintResult({
         previewUrl: normalized.previewUrl,
         width: normalized.width,
         height: normalized.height,

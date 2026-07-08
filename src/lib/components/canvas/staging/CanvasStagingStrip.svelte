@@ -69,13 +69,33 @@
         class="w-10 h-10 rounded border border-neutral-700 object-cover"
       />
       <span class="text-[11px] text-neutral-400">{locale.t('generation.image.staged_active')}</span>
-      <button
-        onclick={() => canvas.clearPreparedInputs()}
-        class="ml-auto text-[11px] px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:border-red-500 hover:text-red-300"
-        title={locale.t('canvas.clear_all_title')}
-      >
-        {locale.t('canvas.clear_all')}
-      </button>
+      <div class="ml-auto flex items-center gap-1">
+        {#if canvas.canApplyInpaintResult}
+          <button
+            onclick={() => canvas.applyInpaintResult()}
+            class="text-[11px] px-2 py-1 rounded border border-emerald-600 bg-emerald-600/20 text-emerald-200 hover:border-emerald-400 hover:bg-emerald-600/30 hover:text-emerald-100"
+            title={locale.t('canvas.apply_inpaint_title')}
+          >
+            {locale.t('canvas.accept')}
+          </button>
+        {/if}
+        {#if canvas.canUndoInpaintBase}
+          <button
+            onclick={() => canvas.undoInpaintBase()}
+            class="text-[11px] px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300"
+            title={locale.t('canvas.undo_inpaint')}
+          >
+            {locale.t('canvas.undo_inpaint')}
+          </button>
+        {/if}
+        <button
+          onclick={() => canvas.clearPreparedInputs()}
+          class="text-[11px] px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:border-red-500 hover:text-red-300"
+          title={locale.t('canvas.clear_all_title')}
+        >
+          {locale.t('canvas.clear_all')}
+        </button>
+      </div>
     {:else}
       <span class="text-[11px] text-neutral-500">{locale.t('canvas.no_staged')}</span>
     {/if}

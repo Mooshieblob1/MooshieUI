@@ -2,7 +2,7 @@ import { uploadImageBytes } from "../utils/api.js";
 import { generation } from "./generation.svelte.js";
 import { locale } from "./locale.svelte.js";
 
-export type ToolType = "brush" | "eraser" | "rectFill" | "eyedropper" | "move" | "view" | "transform";
+export type ToolType = "brush" | "eraser" | "rectFill" | "lasso" | "eyedropper" | "move" | "view" | "transform";
 
 export interface CanvasLayer {
   id: string;
@@ -29,6 +29,15 @@ export interface BoundingBox {
 
 export interface CanvasStagingEntry {
   url: string;
+  owned: boolean;
+}
+
+export interface InpaintBaseSnapshot {
+  previewUrl: string | null;
+  uploadedInputName: string | null;
+  width: number;
+  height: number;
+  maskSnapshotUrl: string | null;
   owned: boolean;
 }
 
@@ -64,6 +73,9 @@ class CanvasStore {
   layers = $state<CanvasLayer[]>([]);
   activeLayerId = $state<string | null>(null);
 
+  // Per-layer pixel thumbnails (data URLs), keyed by layer id
+  layerThumbnails = $state<Record<string, string>>({});
+
   // Canvas document dimensions
   canvasWidth = $state(1024);
   canvasHeight = $state(1024);
@@ -95,6 +107,25 @@ class CanvasStore {
   preparedInpaintOwned = $state(false);
   inpaintSourceVersion = $state(0);
   persistedMaskPreviewUrl = $state<string | null>(null);
+  // Base-image undo history for iterative inpainting. Each entry is a base that
+  // was inpainted plus the mask that was applied to it, so the user can step
+  // back and so the same mask can be re-hydrated onto the incoming result.
+  inpaintBaseHistory = $state<InpaintBaseSnapshot[]>([]);
+  // A tinted mask snapshot waiting to be re-hydrated onto the freshly-rebuilt
+  // mask layer after a base swap (consumed by CanvasStage).
+  pendingMaskRestoreUrl = $state<string | null>(null);
+  // The latest inpaint result, held for DISPLAY ONLY. Pressing "Generate" always
+  // re-rolls the current base + mask (never this result); it is only shown as the
+  // canvas background so the user can preview it. "Apply" promotes it to the base.
+  pendingResultPreviewUrl = $state<string | null>(null);
+  pendingResultOwned = $state(false);
+  pendingResultInputName = $state<string | null>(null);
+  pendingResultWidth = $state<number | null>(null);
+  pendingResultHeight = $state<number | null>(null);
+  // While a finished inpaint result is being previewed, the editable mask strokes
+  // are hidden so the clean result is visible. This flips true once the user starts
+  // painting more mask, bringing the mask back so they can see what they're editing.
+  maskEditedSinceResult = $state(false);
 
   // Staging
   stagingImages = $state<CanvasStagingEntry[]>([]);
@@ -214,6 +245,19 @@ class CanvasStore {
     this.preparedInpaintOwned = false;
   }
 
+  // Discard the display-only pending inpaint result, revoking its owned URL.
+  private clearPendingInpaintResult() {
+    if (this.pendingResultOwned && this.pendingResultPreviewUrl) {
+      URL.revokeObjectURL(this.pendingResultPreviewUrl);
+    }
+    this.pendingResultPreviewUrl = null;
+    this.pendingResultOwned = false;
+    this.pendingResultInputName = null;
+    this.pendingResultWidth = null;
+    this.pendingResultHeight = null;
+    this.maskEditedSinceResult = false;
+  }
+
   setInpaintOriginalSource(source: {
     previewUrl: string;
     width: number;
@@ -221,6 +265,8 @@ class CanvasStore {
     uploadedInputName: string | null;
   } | null) {
     this.clearPreparedInpaintOverride();
+    this.clearPendingInpaintResult();
+    this.clearInpaintBaseHistory();
     this.inpaintSourceVersion += 1;
 
     if (!source) {
@@ -249,14 +295,132 @@ class CanvasStore {
     uploadedInputName: string | null;
     owned: boolean;
   }) {
-    this.clearPreparedInpaintOverride();
+    // Swapping to an explicit new base discards any display-only pending result.
+    this.clearPendingInpaintResult();
+    // Snapshot the outgoing base and the mask applied to it so the user can undo
+    // back to it, and so the same mask can be re-hydrated onto the incoming
+    // result (letting "Generate" re-roll the same region without repainting).
+    const outgoingMask = this.snapshotInpaintMask();
+    this.inpaintBaseHistory = [
+      ...this.inpaintBaseHistory,
+      {
+        previewUrl: this.preparedInpaintPreviewUrl ?? this.referenceImageUrl,
+        uploadedInputName: generation.inputImage,
+        width: generation.width,
+        height: generation.height,
+        maskSnapshotUrl: outgoingMask,
+        // Only a prepared preview is an owned object URL; the session-original
+        // referenceImageUrl is owned elsewhere and must not be revoked here.
+        owned: this.preparedInpaintPreviewUrl ? this.preparedInpaintOwned : false,
+      },
+    ];
+
+    // Swap in the new base. Do NOT revoke the outgoing prepared URL: the history
+    // entry above now owns it.
     this.preparedInpaintPreviewUrl = source.previewUrl;
     this.preparedInpaintOwned = source.owned;
     generation.inputImage = source.uploadedInputName;
     generation.width = source.width;
     generation.height = source.height;
-    this.clearMask();
+
+    // Rebuild layers for the new base, then re-hydrate the mask onto the fresh
+    // mask layer. Clear the persisted (non-editable) overlay so the mask isn't
+    // drawn twice.
+    this.persistedMaskPreviewUrl = null;
     this.initCanvas(source.width, source.height);
+    this.pendingMaskRestoreUrl = outgoingMask;
+  }
+
+  // Called on inpaint completion. Holds the result for DISPLAY ONLY: it becomes
+  // the canvas background so the user can preview it, but the generation base
+  // (generation.inputImage) and the editable mask are left untouched, so the next
+  // "Generate" re-rolls the ORIGINAL base + mask instead of iterating on the
+  // result. Promoting the result to the base is an explicit "Apply" action.
+  setPendingInpaintResult(source: {
+    previewUrl: string;
+    width: number;
+    height: number;
+    uploadedInputName: string | null;
+    owned: boolean;
+  }) {
+    // A superseded re-roll: revoke the previous pending preview before replacing.
+    this.clearPendingInpaintResult();
+    this.pendingResultPreviewUrl = source.previewUrl;
+    this.pendingResultOwned = source.owned;
+    this.pendingResultInputName = source.uploadedInputName;
+    this.pendingResultWidth = source.width;
+    this.pendingResultHeight = source.height;
+  }
+
+  // Promote the pending inpaint result to be the new base: checkpoint the current
+  // base + its mask for undo, adopt the result as the base, then start a fresh
+  // mask on top. Ownership of the pending preview URL transfers to the prepared
+  // override (so it is NOT revoked here).
+  applyInpaintResult() {
+    if (!this.pendingResultPreviewUrl || this.pendingResultWidth == null || this.pendingResultHeight == null) {
+      return;
+    }
+
+    const outgoingMask = this.snapshotInpaintMask();
+    this.inpaintBaseHistory = [
+      ...this.inpaintBaseHistory,
+      {
+        previewUrl: this.preparedInpaintPreviewUrl ?? this.referenceImageUrl,
+        uploadedInputName: generation.inputImage,
+        width: generation.width,
+        height: generation.height,
+        maskSnapshotUrl: outgoingMask,
+        // Only a prepared preview is an owned object URL; the session-original
+        // referenceImageUrl is owned elsewhere and must not be revoked here.
+        owned: this.preparedInpaintPreviewUrl ? this.preparedInpaintOwned : false,
+      },
+    ];
+
+    // Transfer the pending result into the prepared override. Do NOT revoke the
+    // pending URL: the prepared override now owns it. Do NOT revoke the outgoing
+    // prepared URL either: the history entry above now owns it.
+    this.preparedInpaintPreviewUrl = this.pendingResultPreviewUrl;
+    this.preparedInpaintOwned = this.pendingResultOwned;
+    generation.inputImage = this.pendingResultInputName;
+    generation.width = this.pendingResultWidth;
+    generation.height = this.pendingResultHeight;
+
+    // Clear pending WITHOUT revoking (ownership was transferred above).
+    this.pendingResultPreviewUrl = null;
+    this.pendingResultOwned = false;
+    this.pendingResultInputName = null;
+    this.pendingResultWidth = null;
+    this.pendingResultHeight = null;
+
+    // Fresh mask on the new base.
+    this.persistedMaskPreviewUrl = null;
+    this.clearMask();
+    this.initCanvas(generation.width, generation.height);
+  }
+
+  get canApplyInpaintResult(): boolean {
+    return generation.mode === "inpainting" && this.pendingResultPreviewUrl !== null;
+  }
+
+  // Called by the canvas when the user paints/edits the mask. While a pending
+  // inpaint result is on screen the mask is hidden; this brings it back so the
+  // user can see the region they're adding to.
+  markMaskEdited() {
+    if (this.pendingResultPreviewUrl && !this.maskEditedSinceResult) {
+      this.maskEditedSinceResult = true;
+    }
+  }
+
+  // Whether the editable inpaint mask strokes should be hidden on the canvas. True
+  // only while a finished result is being previewed and the user is not painting
+  // more mask. The caller additionally keeps the mask visible during a re-roll
+  // (via progress.isGenerating), which the store deliberately does not know about.
+  get shouldHideInpaintMask(): boolean {
+    return (
+      generation.mode === "inpainting" &&
+      this.pendingResultPreviewUrl !== null &&
+      !this.maskEditedSinceResult
+    );
   }
 
   restoreOriginalInpaintSource() {
@@ -264,6 +428,8 @@ class CanvasStore {
       return;
     }
     this.clearPreparedInpaintOverride();
+    this.clearPendingInpaintResult();
+    this.clearInpaintBaseHistory();
     generation.inputImage = this.originalInpaintInputImageName;
     generation.width = this.originalInpaintWidth;
     generation.height = this.originalInpaintHeight;
@@ -274,11 +440,58 @@ class CanvasStore {
   clearInpaintSession() {
     this.clearMask();
     this.clearPreparedInpaintOverride();
+    this.clearPendingInpaintResult();
+    this.clearInpaintBaseHistory();
     this.inpaintSourceVersion += 1;
     this.originalInpaintInputImageName = null;
     this.originalInpaintWidth = null;
     this.originalInpaintHeight = null;
     this.referenceImageUrl = null;
+  }
+
+  private clearInpaintBaseHistory() {
+    for (const entry of this.inpaintBaseHistory) {
+      if (entry.owned && entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+    }
+    this.inpaintBaseHistory = [];
+  }
+
+  // Step the inpaint base back to the previous image, re-applying the mask that
+  // was on it. The current (discarded) prepared preview is revoked.
+  undoInpaintBase() {
+    if (!this.inpaintBaseHistory.length) return;
+
+    // Stepping back discards any un-applied result being previewed.
+    this.clearPendingInpaintResult();
+
+    const entry = this.inpaintBaseHistory[this.inpaintBaseHistory.length - 1];
+    this.inpaintBaseHistory = this.inpaintBaseHistory.slice(0, -1);
+
+    // Discard the base we're leaving (the current prepared override, if any).
+    if (this.preparedInpaintOwned && this.preparedInpaintPreviewUrl) {
+      URL.revokeObjectURL(this.preparedInpaintPreviewUrl);
+    }
+
+    if (entry.previewUrl && entry.previewUrl === this.referenceImageUrl) {
+      // Stepping back to the session original: no prepared override.
+      this.preparedInpaintPreviewUrl = null;
+      this.preparedInpaintOwned = false;
+    } else {
+      this.preparedInpaintPreviewUrl = entry.previewUrl;
+      this.preparedInpaintOwned = entry.owned;
+    }
+
+    generation.inputImage = entry.uploadedInputName;
+    generation.width = entry.width;
+    generation.height = entry.height;
+
+    this.persistedMaskPreviewUrl = null;
+    this.initCanvas(entry.width, entry.height);
+    this.pendingMaskRestoreUrl = entry.maskSnapshotUrl;
+  }
+
+  get canUndoInpaintBase(): boolean {
+    return generation.mode === "inpainting" && this.inpaintBaseHistory.length > 0;
   }
 
   get currentPreparedInputImage(): string | null {
@@ -375,8 +588,11 @@ class CanvasStore {
   }
 
   get effectiveReferenceImage(): string | null {
-    if (generation.mode === "inpainting" && this.preparedInpaintPreviewUrl) {
-      return this.preparedInpaintPreviewUrl;
+    if (generation.mode === "inpainting") {
+      // A just-generated result is previewed as the background; below it the base
+      // override (or session original) shows through until the user applies/undoes.
+      if (this.pendingResultPreviewUrl) return this.pendingResultPreviewUrl;
+      if (this.preparedInpaintPreviewUrl) return this.preparedInpaintPreviewUrl;
     }
     return this.currentStagingImage ?? this.referenceImageUrl;
   }
@@ -400,6 +616,71 @@ class CanvasStore {
       layer?.destroyChildren?.();
       layer?.batchDraw?.();
     }
+  }
+
+  // Composite the editable inpaint mask layer(s) into a tinted, transparent-bg
+  // data URL so the mask survives a base swap (layers are rebuilt on swap).
+  // Returns null when there is no mask layer or the mask is empty.
+  snapshotInpaintMask(): string | null {
+    const stage = this._stageRef;
+    if (!stage) return null;
+
+    const maskMetas = this.layers.filter((l) => l.type === "mask");
+    if (!maskMetas.length) return null;
+
+    const stageLayers = stage.getLayers?.() ?? [];
+    const offscreen = document.createElement("canvas");
+    offscreen.width = this.canvasWidth;
+    offscreen.height = this.canvasHeight;
+    const ctx = offscreen.getContext("2d");
+    if (!ctx) return null;
+
+    let drew = false;
+    for (const meta of maskMetas) {
+      const layer = stageLayers.find((l: any) => l.id?.() === meta.id);
+      if (!layer) continue;
+
+      // The viewport is applied as a layer transform; reset it so the snapshot
+      // captures canvas-space pixels, then restore it.
+      const origScale = layer.scaleX();
+      const origX = layer.x();
+      const origY = layer.y();
+      layer.scaleX(1);
+      layer.scaleY(1);
+      layer.x(0);
+      layer.y(0);
+      try {
+        const layerCanvas = layer.toCanvas({
+          pixelRatio: 1,
+          width: this.canvasWidth,
+          height: this.canvasHeight,
+        });
+        ctx.drawImage(layerCanvas, 0, 0);
+        drew = true;
+      } catch (error) {
+        console.error("Failed to snapshot inpaint mask:", error);
+      } finally {
+        layer.scaleX(origScale);
+        layer.scaleY(origScale);
+        layer.x(origX);
+        layer.y(origY);
+      }
+    }
+
+    if (!drew) return null;
+
+    // Skip blank masks so undo never restores an empty mask.
+    const data = ctx.getImageData(0, 0, offscreen.width, offscreen.height).data;
+    let hasPixels = false;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] > 0) {
+        hasPixels = true;
+        break;
+      }
+    }
+    if (!hasPixels) return null;
+
+    return offscreen.toDataURL("image/png");
   }
 
   setInpaintDrawMode(mode: "mask" | "regular") {
@@ -493,10 +774,33 @@ class CanvasStore {
   }
 
   removeLayer(id: string) {
+    const removed = this.layers.find((l) => l.id === id);
     this.layers = this.layers.filter((l) => l.id !== id);
+    this.clearLayerThumbnail(id);
     if (this.activeLayerId === id) {
-      this.activeLayerId = this.layers.length > 0 ? this.layers[this.layers.length - 1].id : null;
+      if (this.layers.length === 0) {
+        this.activeLayerId = null;
+      } else if (removed) {
+        // Select the surviving layer whose order is nearest to the removed one.
+        const nearest = this.layers.reduce((best, l) =>
+          Math.abs(l.order - removed.order) < Math.abs(best.order - removed.order) ? l : best
+        );
+        this.activeLayerId = nearest.id;
+      } else {
+        this.activeLayerId = this.layers[this.layers.length - 1].id;
+      }
     }
+  }
+
+  setLayerThumbnail(id: string, dataUrl: string) {
+    this.layerThumbnails = { ...this.layerThumbnails, [id]: dataUrl };
+  }
+
+  clearLayerThumbnail(id: string) {
+    if (!(id in this.layerThumbnails)) return;
+    const next = { ...this.layerThumbnails };
+    delete next[id];
+    this.layerThumbnails = next;
   }
 
   duplicateLayer(id: string): string | null {
@@ -612,6 +916,7 @@ class CanvasStore {
     this.canvasHeight = height;
     this.layers = [];
     this.activeLayerId = null;
+    this.layerThumbnails = {};
 
     this.addLayer("raster", locale.t("canvas.layer.background"));
     this.addLayer("mask", locale.t("canvas.layer.inpaint_mask"));

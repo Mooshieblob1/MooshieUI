@@ -14,11 +14,18 @@ class CanvasHistoryStore {
   private _konvaLayers: Map<string, Konva.Layer> | null = null;
   private _canvasWidth = 0;
   private _canvasHeight = 0;
+  private _onRestored: ((layerIds: string[]) => void) | null = null;
 
   setRefs(konvaLayers: Map<string, Konva.Layer>, canvasWidth: number, canvasHeight: number) {
     this._konvaLayers = konvaLayers;
     this._canvasWidth = canvasWidth;
     this._canvasHeight = canvasHeight;
+  }
+
+  // Called after undo/redo finishes restoring layers (async image load), so the
+  // consumer can regenerate anything derived from layer pixels (e.g. thumbnails).
+  setOnRestored(cb: ((layerIds: string[]) => void) | null) {
+    this._onRestored = cb;
   }
 
   get canUndo(): boolean {
@@ -176,6 +183,8 @@ class CanvasHistoryStore {
       kLayer.add(kImage);
       kLayer.batchDraw();
     }
+
+    this._onRestored?.(entries.map((e) => e.layerId));
   }
 
   private _loadImage(src: string): Promise<HTMLImageElement> {

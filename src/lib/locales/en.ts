@@ -1404,6 +1404,10 @@ const en: Record<string, string> = {
   "canvas.dismiss_title": "Dismiss current staged image",
   "canvas.clear_all": "Clear All",
   "canvas.clear_all_title": "Clear all staged images",
+  "canvas.undo_inpaint": "Undo inpaint",
+  "canvas.apply_inpaint": "Apply",
+  "canvas.apply_inpaint_title": "Apply this result as the new base image",
+  "canvas.inpaint_result_ready": "Result ready",
   "canvas.no_staged": "No staged images yet.",
   "canvas.accept": "Accept",
   "canvas.discard": "Discard",
@@ -1426,6 +1430,10 @@ const en: Record<string, string> = {
   "canvas.color_fg": "Foreground color",
   "canvas.color_swap": "Swap colors (X)",
   "canvas.color_reset": "Reset colors (D)",
+  "canvas.lasso": "Lasso",
+  "canvas.mask_layers": "Inpaint Masks",
+  "canvas.raster_layers": "Layers",
+  "canvas.no_layers": "No layers yet",
 
   // ── Settings extras ─────────────────────────────────────
   "settings.appearance.show_info_tips_label": "Show Info Tips",

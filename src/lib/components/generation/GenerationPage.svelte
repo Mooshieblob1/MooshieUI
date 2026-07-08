@@ -1134,10 +1134,17 @@
     bottomHeight = BOTTOM_DEFAULT;
   }
 
+  let prevInpaintMode: boolean | null = $state(null);
   $effect(() => {
-    if (generation.mode !== "inpainting" && canvas.isCanvasMode) {
+    const isInpainting = generation.mode === "inpainting";
+    // Auto-open the canvas on entering inpainting; auto-close on leaving.
+    // Only act on the transition so a manual toggle within inpainting isn't overridden.
+    if (isInpainting && prevInpaintMode !== true) {
+      canvas.isCanvasMode = true;
+    } else if (!isInpainting && canvas.isCanvasMode) {
       canvas.isCanvasMode = false;
     }
+    prevInpaintMode = isInpainting;
   });
 
   function hasFilePayload(dt: DataTransfer | null): boolean {

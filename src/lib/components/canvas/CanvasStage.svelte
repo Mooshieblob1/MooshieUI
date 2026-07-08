@@ -4,7 +4,13 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { canvas, type ToolType } from "../../stores/canvas.svelte.js";
   import { canvasHistory } from "../../stores/canvasHistory.svelte.js";
+  import { progress } from "../../stores/progress.svelte.js";
   import ColorTooltip from "../ui/ColorTooltip.svelte";
+
+  // Hide the editable inpaint mask while a finished result is being previewed, so
+  // the clean output is visible. Keep it shown before any result, during a re-roll
+  // (progress.isGenerating), and once the user paints more mask (markMaskEdited).
+  const hideInpaintMask = $derived(canvas.shouldHideInpaintMask && !progress.isGenerating);
 
   let containerEl: HTMLDivElement | undefined = $state();
   let stage: Konva.Stage | null = null;
@@ -51,6 +57,18 @@
   let moveNodeStarts: Array<{ node: Konva.Node; x: number; y: number }> = [];
   let viewportRaf: number | null = null;
 
+  // Lasso tool state (points kept in canvas space; preview drawn on the UI layer in screen space)
+  let isLasso = false;
+  let lassoPoints: number[] = [];
+  let lassoPreviewLine: Konva.Line | null = null;
+
+  // Alt-held quick eyedropper
+  let isAltEyedropper = false;
+
+  // Per-layer thumbnail regeneration (RAF-deduped per layer id)
+  let thumbRafs = new Map<string, number>();
+  let thumbInitialized = new Set<string>();
+
   // Container size
   let containerW = 0;
   let containerH = 0;
@@ -72,6 +90,12 @@
       cancelAnimationFrame(viewportRaf);
       viewportRaf = null;
     }
+    for (const raf of thumbRafs.values()) {
+      cancelAnimationFrame(raf);
+    }
+    thumbRafs.clear();
+    // Drop the restore callback so a stale closure can't fire after unmount.
+    canvasHistory.setOnRestored(null);
     if (stage) {
       stage.destroy();
       stage = null;
@@ -164,6 +188,9 @@
 
     // Set history refs
     canvasHistory.setRefs(konvaLayers, canvas.canvasWidth, canvas.canvasHeight);
+    canvasHistory.setOnRestored((layerIds) => {
+      for (const id of layerIds) scheduleThumbRefresh(id);
+    });
 
     // Apply initial viewport
     applyViewport();
@@ -433,11 +460,13 @@
     const sorted = [...canvas.layers].sort((a, b) => a.order - b.order);
 
     for (const layer of sorted) {
+      const effectiveVisible =
+        layer.visible && !(layer.type === "mask" && hideInpaintMask);
       if (!konvaLayers.has(layer.id)) {
         const kLayer = new Konva.Layer({
           id: layer.id,
           opacity: layer.opacity,
-          visible: layer.visible,
+          visible: effectiveVisible,
         });
 
         // Clip to canvas bounds
@@ -454,7 +483,7 @@
       } else {
         const kLayer = konvaLayers.get(layer.id)!;
         kLayer.opacity(layer.opacity);
-        kLayer.visible(layer.visible);
+        kLayer.visible(effectiveVisible);
       }
     }
 
@@ -549,6 +578,100 @@
     }
   }
 
+  // Regenerate the small pixel preview shown for a layer in the layer panel.
+  function refreshLayerThumbnail(id: string) {
+    const kLayer = konvaLayers.get(id);
+    if (!kLayer) return;
+
+    const w = canvas.canvasWidth;
+    const h = canvas.canvasHeight;
+    const maxDim = Math.max(w, h);
+    if (maxDim <= 0) return;
+
+    // The viewport is applied as a layer transform; reset it so the thumbnail
+    // captures canvas-space pixels at a fixed scale, then restore it.
+    const origScale = kLayer.scaleX();
+    const origX = kLayer.x();
+    const origY = kLayer.y();
+    kLayer.scaleX(1);
+    kLayer.scaleY(1);
+    kLayer.x(0);
+    kLayer.y(0);
+
+    let url: string | null = null;
+    try {
+      url = kLayer.toDataURL({
+        pixelRatio: 64 / maxDim,
+        width: w,
+        height: h,
+        x: 0,
+        y: 0,
+      });
+    } catch (error) {
+      console.error("Failed to generate layer thumbnail:", error);
+    } finally {
+      kLayer.scaleX(origScale);
+      kLayer.scaleY(origScale);
+      kLayer.x(origX);
+      kLayer.y(origY);
+    }
+
+    if (url) canvas.setLayerThumbnail(id, url);
+  }
+
+  // Coalesce thumbnail regeneration to one per frame per layer so painting
+  // never regenerates a thumbnail mid-stroke.
+  function scheduleThumbRefresh(id: string) {
+    if (thumbRafs.has(id)) return;
+    const raf = requestAnimationFrame(() => {
+      thumbRafs.delete(id);
+      refreshLayerThumbnail(id);
+    });
+    thumbRafs.set(id, raf);
+  }
+
+  function loadImageEl(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  // Re-hydrate a preserved inpaint mask (tinted, transparent-bg data URL) onto
+  // the freshly-rebuilt mask layer after a base swap or an inpaint-base undo.
+  async function restoreMaskFromSnapshot(url: string) {
+    if (!stage) return;
+    const maskMeta = canvas.layers.find((l) => l.type === "mask");
+    if (!maskMeta) return;
+    const kLayer = konvaLayers.get(maskMeta.id);
+    if (!kLayer) return;
+
+    let img: HTMLImageElement;
+    try {
+      img = await loadImageEl(url);
+    } catch {
+      return;
+    }
+
+    // The layer may have been rebuilt again while the image loaded; bail if so.
+    if (!stage || konvaLayers.get(maskMeta.id) !== kLayer) return;
+
+    kLayer.destroyChildren();
+    const kImage = new Konva.Image({
+      image: img,
+      x: 0,
+      y: 0,
+      width: canvas.canvasWidth,
+      height: canvas.canvasHeight,
+      listening: false,
+    });
+    kLayer.add(kImage);
+    kLayer.batchDraw();
+    scheduleThumbRefresh(maskMeta.id);
+  }
+
   // Drawing handlers
   function handlePointerDown(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
     const evt = e.evt as MouseEvent;
@@ -580,6 +703,9 @@
       const target = getDrawingTargetLayer();
       if (!target) return;
       const { layer, kLayer } = target;
+
+      // Painting more mask over a previewed result brings the mask back on screen.
+      if (layer.type === "mask") canvas.markMaskEdited();
 
       // Snapshot for undo before drawing
       canvasHistory.snapshot(layer.id);
@@ -624,6 +750,8 @@
       if (!target) return;
       const { layer } = target;
 
+      if (layer.type === "mask") canvas.markMaskEdited();
+
       // Snapshot for undo before rect fill
       canvasHistory.snapshot(layer.id);
 
@@ -652,6 +780,40 @@
 
     if (tool === "eyedropper") {
       sampleColor(pos);
+    }
+
+    if (tool === "lasso") {
+      const target = getDrawingTargetLayer();
+      if (!target) return;
+      const { layer } = target;
+
+      if (layer.type === "mask") canvas.markMaskEdited();
+
+      // Snapshot for undo before committing the lasso fill.
+      canvasHistory.snapshot(layer.id);
+
+      isLasso = true;
+      lassoPoints = [pos.x, pos.y];
+
+      const inpaintMaskMode = isInpaintMaskMode();
+      const color = inpaintMaskMode
+        ? canvas.maskOverlayColor
+        : layer.type === "mask"
+          ? canvas.maskOverlayColor
+          : canvas.foregroundColor;
+
+      // Preview lives on the unscaled UI layer, so points are in screen space.
+      const { zoom, panX, panY } = canvas.viewport;
+      lassoPreviewLine = new Konva.Line({
+        points: [pos.x * zoom + panX, pos.y * zoom + panY],
+        stroke: color,
+        strokeWidth: 1.5,
+        dash: [4, 4],
+        closed: false,
+        listening: false,
+      });
+      uiLayer?.add(lassoPreviewLine);
+      uiLayer?.batchDraw();
     }
 
     if (tool === "move") {
@@ -765,6 +927,18 @@
       getActiveKonvaLayer()?.batchDraw();
     }
 
+    // Lasso preview (append screen-space point to the dashed outline)
+    if (isLasso && lassoPreviewLine) {
+      const pos = getCanvasPos(e);
+      if (!pos) return;
+
+      lassoPoints = [...lassoPoints, pos.x, pos.y];
+      const { zoom, panX, panY } = canvas.viewport;
+      const prev = lassoPreviewLine.points();
+      lassoPreviewLine.points([...prev, pos.x * zoom + panX, pos.y * zoom + panY]);
+      uiLayer?.batchDraw();
+    }
+
     if (tooltipRaf === null) {
       tooltipRaf = requestAnimationFrame(() => updateTooltip(e));
     }
@@ -784,10 +958,13 @@
     let shouldAutoCommitMask = false;
 
     if (isDrawing) {
+      // Capture the layer the stroke lives on before clearing currentLine.
+      const strokeLayerId = currentLine?.getLayer()?.id();
       isDrawing = false;
       currentLine = null;
       activeStrokeTool = null;
       shouldAutoCommitMask = true;
+      if (strokeLayerId) scheduleThumbRefresh(strokeLayerId);
     }
     
     if (isDrawingRect && rectStartPos) {
@@ -822,6 +999,7 @@
             kLayer.add(rect);
             kLayer.batchDraw();
             shouldAutoCommitMask = true;
+            scheduleThumbRefresh(layer.id);
           }
         }
       }
@@ -833,6 +1011,39 @@
         uiLayer?.batchDraw();
       }
       rectStartPos = null;
+    }
+
+    if (isLasso) {
+      isLasso = false;
+      const target = getDrawingTargetLayer();
+      if (target && lassoPoints.length >= 6) {
+        const { layer, kLayer } = target;
+        const inpaintMaskMode = isInpaintMaskMode();
+        const color = inpaintMaskMode
+          ? canvas.maskOverlayColor
+          : layer.type === "mask"
+            ? canvas.maskOverlayColor
+            : canvas.foregroundColor;
+        const shape = new Konva.Line({
+          points: [...lassoPoints],
+          closed: true,
+          fill: color,
+          opacity: inpaintMaskMode
+            ? Math.min(canvas.brushSettings.opacity, 0.45)
+            : canvas.brushSettings.opacity,
+          listening: false,
+        });
+        kLayer.add(shape);
+        kLayer.batchDraw();
+        shouldAutoCommitMask = true;
+        scheduleThumbRefresh(layer.id);
+      }
+      lassoPoints = [];
+      if (lassoPreviewLine) {
+        lassoPreviewLine.destroy();
+        lassoPreviewLine = null;
+        uiLayer?.batchDraw();
+      }
     }
 
     if (isMovingLayer) {
@@ -878,6 +1089,16 @@
       if (rectPreview) {
         rectPreview.destroy();
         rectPreview = null;
+        uiLayer?.batchDraw();
+      }
+    }
+
+    if (isLasso) {
+      isLasso = false;
+      lassoPoints = [];
+      if (lassoPreviewLine) {
+        lassoPreviewLine.destroy();
+        lassoPreviewLine = null;
         uiLayer?.batchDraw();
       }
     }
@@ -929,6 +1150,18 @@
 
   // Space bar pan support
   function handleKeyDown(e: KeyboardEvent) {
+    // Escape cancels an in-progress lasso even if the pointer left the stage.
+    if (e.code === "Escape" && isLasso) {
+      isLasso = false;
+      lassoPoints = [];
+      if (lassoPreviewLine) {
+        lassoPreviewLine.destroy();
+        lassoPreviewLine = null;
+        uiLayer?.batchDraw();
+      }
+      return;
+    }
+
     if (!canvas.isPointerOverStage) return;
 
     if (e.code === "Space" && !isSpacePanning && !e.repeat) {
@@ -936,11 +1169,23 @@
       canvas.setTool("view");
       e.preventDefault();
     }
+
+    // Hold Alt for a quick eyedropper; release restores the previous tool.
+    if (e.altKey && !isAltEyedropper && !e.repeat && canvas.activeTool !== "eyedropper") {
+      isAltEyedropper = true;
+      canvas.setTool("eyedropper");
+      e.preventDefault();
+    }
   }
 
   function handleKeyUp(e: KeyboardEvent) {
     if (e.code === "Space" && isSpacePanning) {
       isSpacePanning = false;
+      canvas.restorePreviousTool();
+    }
+
+    if (isAltEyedropper && !e.altKey) {
+      isAltEyedropper = false;
       canvas.restorePreviousTool();
     }
   }
@@ -951,6 +1196,33 @@
     void canvas.layers;
     syncKonvaLayers();
     applyViewport();
+
+    // Re-hydrate a preserved inpaint mask onto the freshly-rebuilt mask layer
+    // (set by the store on a base swap or an inpaint-base undo).
+    const restoreUrl = canvas.pendingMaskRestoreUrl;
+    if (restoreUrl) {
+      canvas.pendingMaskRestoreUrl = null;
+      void restoreMaskFromSnapshot(restoreUrl);
+    }
+
+    // Generate an initial thumbnail for any layer we haven't captured yet.
+    for (const layer of canvas.layers) {
+      if (!thumbInitialized.has(layer.id)) {
+        thumbInitialized.add(layer.id);
+        scheduleThumbRefresh(layer.id);
+      }
+    }
+    // Forget removed layers so a re-added id regenerates and drop pending RAFs.
+    for (const id of [...thumbInitialized]) {
+      if (!canvas.layers.find((l) => l.id === id)) {
+        thumbInitialized.delete(id);
+        const raf = thumbRafs.get(id);
+        if (raf !== undefined) {
+          cancelAnimationFrame(raf);
+          thumbRafs.delete(id);
+        }
+      }
+    }
   });
 
   let historyDims = { w: 0, h: 0 };
@@ -990,6 +1262,23 @@
   $effect(() => {
     void canvas.effectiveReferenceImage;
     updateReferenceImage(canvas.effectiveReferenceImage);
+  });
+
+  $effect(() => {
+    // Toggle mask-layer visibility when the pending-result hide state changes.
+    // Only the Konva node's visibility is touched, never the layer model's
+    // `visible`, so the panel toggle and mask export (which reads the model) are
+    // unaffected.
+    const hide = hideInpaintMask;
+    void canvas.layers;
+    if (!stage) return;
+    for (const layer of canvas.layers) {
+      if (layer.type !== "mask") continue;
+      const kLayer = konvaLayers.get(layer.id);
+      if (!kLayer) continue;
+      kLayer.visible(layer.visible && !hide);
+    }
+    stage.batchDraw();
   });
 
   $effect(() => {
@@ -1066,10 +1355,15 @@
       const origScale = kLayer.scaleX();
       const origX = kLayer.x();
       const origY = kLayer.y();
+      // The mask node may be visually hidden while a result is previewed; Konva
+      // renders nothing for an invisible node, so force it visible for the capture
+      // and restore afterwards (no on-screen redraw happens in between).
+      const origVisible = kLayer.visible();
       kLayer.scaleX(1);
       kLayer.scaleY(1);
       kLayer.x(0);
       kLayer.y(0);
+      kLayer.visible(true);
 
       const layerCanvas = kLayer.toCanvas({
         pixelRatio: 1,
@@ -1083,6 +1377,7 @@
       kLayer.scaleY(origScale);
       kLayer.x(origX);
       kLayer.y(origY);
+      kLayer.visible(origVisible);
     }
 
     return offscreen;
@@ -1093,7 +1388,7 @@
     const tool = canvas.activeTool;
     if (isPanning || tool === "view") return "cursor-grab";
     if (tool === "move") return "cursor-move";
-    if (tool === "eyedropper") return "cursor-crosshair";
+    if (tool === "eyedropper" || tool === "lasso") return "cursor-crosshair";
     if (tool === "brush" || tool === "eraser") return "cursor-none";
     return "cursor-default";
   }

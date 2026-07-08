@@ -26,6 +26,12 @@
       icon: `<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>`,
     },
     {
+      id: "lasso",
+      labelKey: "canvas.lasso",
+      hotkey: "Q",
+      icon: `<path d="M3 14.5A6.5 6.5 0 0 1 2 11c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8a12.6 12.6 0 0 1-4.7-.9"/><path d="M7 21.5a5 5 0 0 1-2-4"/><circle cx="5" cy="16" r="2"/>`,
+    },
+    {
       id: "eyedropper",
       labelKey: "canvas.eyedropper",
       hotkey: "I",
@@ -85,6 +91,7 @@
       case "b": canvas.setTool("brush"); break;
       case "e": canvas.setTool("eraser"); break;
       case "u": canvas.setTool("rectFill"); break;
+      case "q": canvas.setTool("lasso"); break;
       case "i": canvas.setTool("eyedropper"); break;
       case "v": canvas.setTool("move"); break;
       case "h": canvas.setTool("view"); break;

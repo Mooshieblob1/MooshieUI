@@ -1403,6 +1403,10 @@ const pl: Record<string, string> = {
   "canvas.dismiss_title": "Odrzuć bieżący obraz w stagingu",
   "canvas.clear_all": "Wyczyść wszystko",
   "canvas.clear_all_title": "Wyczyść wszystkie obrazy w stagingu",
+  "canvas.undo_inpaint": "Cofnij inpainting",
+  "canvas.apply_inpaint": "Zastosuj",
+  "canvas.apply_inpaint_title": "Zastosuj ten wynik jako nowy obraz bazowy",
+  "canvas.inpaint_result_ready": "Wynik gotowy",
   "canvas.no_staged": "Brak obrazów w stagingu.",
   "canvas.accept": "Akceptuj",
   "canvas.discard": "Odrzuć",
@@ -1425,6 +1429,10 @@ const pl: Record<string, string> = {
   "canvas.color_fg": "Kolor pierwszego planu",
   "canvas.color_swap": "Zamień kolory (X)",
   "canvas.color_reset": "Resetuj kolory (D)",
+  "canvas.lasso": "Lasso",
+  "canvas.mask_layers": "Maski inpaint",
+  "canvas.raster_layers": "Warstwy",
+  "canvas.no_layers": "Brak warstw",
 
   // ── Settings extras ─────────────────────────────────────
   "settings.appearance.show_info_tips_label": "Pokaż podpowiedzi informacyjne",
