@@ -17,13 +17,8 @@ pub fn issue_title(error_code: &str, raw_message: &str) -> String {
     )
 }
 
-pub fn issue_body(payload: &ReportPayload, sig: &str, summary: Option<&str>) -> String {
+pub fn issue_body(payload: &ReportPayload, sig: &str) -> String {
     let mut lines: Vec<String> = Vec::new();
-    if let Some(s) = summary {
-        lines.push("### Summary".to_string());
-        lines.push(s.to_string());
-        lines.push(String::new());
-    }
     lines.push("### What happened".to_string());
     lines.push(
         payload
@@ -224,19 +219,20 @@ mod tests {
     }
 
     #[test]
-    fn body_contains_env_note_and_marker() {
-        let body = issue_body(&sample(), "abc123def456aaaa", Some("A summary."));
-        assert!(body.contains("### Summary"));
-        assert!(body.contains("A summary."));
+    fn body_contains_env_note_logs_and_marker() {
+        let body = issue_body(&sample(), "abc123def456aaaa");
+        assert!(body.contains("### What happened"));
         assert!(body.contains("was generating a batch"));
         assert!(body.contains("CUDA out of memory"));
         assert!(body.contains("- App version: `1.4.35`"));
+        assert!(body.contains("### Diagnostics"));
+        assert!(body.contains("line1\nline2"));
         assert!(body.contains("<!-- mooshie-sig: abc123def456aaaa -->"));
     }
 
     #[test]
-    fn body_without_summary_omits_summary_header() {
-        let body = issue_body(&sample(), "sig0000000000000", None);
+    fn body_has_no_summary_section() {
+        let body = issue_body(&sample(), "sig0000000000000");
         assert!(!body.contains("### Summary"));
         assert!(body.contains("<!-- mooshie-sig: sig0000000000000 -->"));
     }

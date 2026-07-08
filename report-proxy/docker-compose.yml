@@ -6,7 +6,6 @@ services:
     env_file: .env
     environment:
       RUST_LOG: info
-      LLM_BASE_URL: http://snowywood-llm:8080
       GITHUB_REPO: Mooshieblob1/MooshieUI
     networks:
       - blob_default

@@ -9,9 +9,8 @@ token values to the terminal or logs.
 
 A small Rust + axum service (`report-proxy`) plus a `cloudflared` sidecar, run via Docker
 Compose. It receives error reports from the MooshieUI app and files GitHub issues on
-Mooshieblob1/MooshieUI. It reaches the existing `snowywood-llm` container (on the
-`blob_default` Docker network) for optional best-effort summaries. No host port is
-published; only the Cloudflare Tunnel reaches it. CPU-only is fine.
+Mooshieblob1/MooshieUI, attaching the logs, system info, and the user's message. No host
+port is published; only the Cloudflare Tunnel reaches it. CPU-only is fine.
 
 ## What the human provides (not you)
 
@@ -30,12 +29,9 @@ If you do not have these, ask the human for them before continuing.
 
     docker version && docker compose version
     docker network ls | grep blob_default
-    docker ps --format '{{.Names}}' | grep snowywood-llm
 
 - `docker compose` must be the v2 plugin form (not `docker-compose`).
 - `blob_default` network must exist. If it is missing, stop and report to the human.
-- `snowywood-llm` should be running. If it is not, the proxy will still deploy and work
-  (summaries are best-effort and never block issue creation), but note it in your report.
 
 ## Step 1: Get the code onto the NUC
 
@@ -64,7 +60,7 @@ Do NOT echo the token values or commit `.env`.
 
 Confirm `docker-compose.yml` has:
 - service `report-proxy` joining the external `blob_default` network, with NO `ports:`
-  mapping (only cloudflared reaches it), and env `LLM_BASE_URL: http://snowywood-llm:8080`.
+  mapping (only cloudflared reaches it).
 - service `cloudflared` using `network_mode: "service:report-proxy"` and
   `command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}`.
 - `networks: blob_default: external: true`.
@@ -132,9 +128,4 @@ After code changes:
     cp -r /home/blob/tmp-mooshie/report-proxy/. /home/blob/report-proxy/
     cd /home/blob/report-proxy && docker compose up -d --build
 
-Regenerate the embedded error catalog only if the app's error copy in
-`src/lib/locales/en.ts` changed:
-
-    node /home/blob/tmp-mooshie/report-proxy/scripts/extract-catalog.mjs
-
-then rebuild with `docker compose up -d --build`. See `RUNBOOK.md` for full detail.
+See `RUNBOOK.md` for full detail.

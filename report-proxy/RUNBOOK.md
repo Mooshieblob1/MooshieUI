@@ -34,16 +34,8 @@ The file /home/blob/report-proxy/.env (perms 600) holds:
     cd /home/blob/report-proxy
     docker compose up -d --build
 
-The report-proxy container joins the existing blob_default network to reach
-snowywood-llm at http://snowywood-llm:8080. cloudflared shares its network namespace
-and forwards report.mooshieblob.com to localhost:8091.
-
-## Update the error-copy catalog
-When error copy in src/lib/locales/en.ts changes, regenerate the embedded catalog:
-
-    node report-proxy/scripts/extract-catalog.mjs
-
-Then rebuild: `docker compose up -d --build`.
+cloudflared shares the proxy's network namespace and forwards
+report.mooshieblob.com to localhost:8091.
 
 ## Smoke test
     curl -s -X POST https://report.mooshieblob.com/report \

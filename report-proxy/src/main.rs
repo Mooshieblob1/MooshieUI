@@ -1,7 +1,5 @@
-mod catalog;
 mod dedup;
 mod github;
-mod llm;
 mod ratelimit;
 mod report;
 mod types;
@@ -30,20 +28,14 @@ async fn main() {
     let bind_addr = config.bind_addr.clone();
     let max_body = config.max_body_bytes;
 
-    let http = reqwest::Client::new();
     let github = GithubClient::new(
-        http.clone(),
+        reqwest::Client::new(),
         config.github_token.clone(),
         config.github_repo.clone(),
     );
     let limiter = Arc::new(RateLimiter::new(config.rate_limit_per_min));
 
-    let state = AppState {
-        cfg: Arc::new(config),
-        http,
-        github,
-        limiter,
-    };
+    let state = AppState { github, limiter };
 
     // Permissive-but-header-gated CORS: browser mode posts cross-origin, and the
     // custom X-Mooshie-App header forces a preflight. Abuse control is the header

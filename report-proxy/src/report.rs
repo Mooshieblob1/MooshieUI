@@ -4,7 +4,7 @@ use axum::Json;
 use serde_json::json;
 
 use crate::types::{AppState, ReportPayload};
-use crate::{catalog, dedup, github, llm};
+use crate::{dedup, github};
 
 fn client_ip(headers: &HeaderMap) -> String {
     headers
@@ -122,19 +122,9 @@ pub async fn report_handler(
         }
     }
 
-    // 5. Best-effort LLM summary (never blocks issue creation).
-    let entry = catalog::lookup(&payload.error_code);
-    let prompt = llm::build_prompt(
-        entry,
-        &payload.error_code,
-        &payload.raw_message,
-        payload.logs_tail.as_deref(),
-    );
-    let summary = llm::summarize(&state.http, &state.cfg, &prompt).await;
-
-    // 6. Create the issue.
+    // 5. Create the issue: logs + system info + the user's message, verbatim.
     let title = github::issue_title(&payload.error_code, &payload.raw_message);
-    let issue_body = github::issue_body(&payload, &sig, summary.as_deref());
+    let issue_body = github::issue_body(&payload, &sig);
     match state
         .github
         .create_issue(&title, &issue_body, &["bug", "in-app-report"])
