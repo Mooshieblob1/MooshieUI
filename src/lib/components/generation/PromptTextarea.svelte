@@ -792,6 +792,10 @@
     {#if !hasSelection}
       <span class="min-w-0 truncate text-[10px] text-neutral-600" title={locale.t('generation.prompt.weight_select_hint')}>{locale.t('generation.prompt.weight_select_hint')}</span>
     {/if}
+    <span
+      class="ml-auto shrink-0 rounded bg-neutral-900/70 px-1 tabular-nums text-[10px] {tokenOverflow ? 'text-amber-400' : 'text-neutral-500'}"
+      title={locale.t('generation.prompt.tokens_tip')}
+    >{tokenCount}/{tokenLimit}</span>
   </div>
   <div class="relative">
     {#if showBackdrop}
@@ -868,12 +872,6 @@
         {/each}
       </div>
     {/if}
-
-    <span
-      class="pointer-events-none absolute top-1.5 z-[4] rounded bg-neutral-900/70 px-1 tabular-nums text-[10px] {tokenOverflow ? 'text-amber-400' : 'text-neutral-500'}"
-      style="right: {scrollbarWidth + 6}px;"
-      title={locale.t('generation.prompt.tokens_tip')}
-    >{tokenCount}/{tokenLimit}</span>
   </div>
 
   {#if showSuggestions}
