@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/Mooshieblob1/MooshieUI/blob/main/CONTRIBUTING.md
+    about: Setup, the checks your PR must pass, and the core guidelines.
+  - name: Project scope
+    url: https://github.com/Mooshieblob1/MooshieUI/blob/main/SCOPE.md
+    about: What MooshieUI is and is not, before you propose a feature.
