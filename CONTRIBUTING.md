@@ -27,10 +27,11 @@ This runs, in order:
 2. `npm run check:i18n` (i18n parity, must pass),
 3. `npm run check:types` (svelte-check, informational).
 
-Note on `check:types`: the project currently has a known baseline of pre-existing
-svelte-check errors and warnings, so this pass is not clean today. It is a
-heads-up, not a hard gate locally. What matters: do not add new type errors or
-a11y warnings in the files you change. CI enforces exactly that (see below).
+Note on `check:types`: the project has a known baseline of pre-existing
+svelte-check errors and warnings, so this pass still prints errors today. It does
+not fail `npm run check` (it is a heads-up, not a hard gate locally). What
+matters: do not add new type errors or a11y warnings in the files you change. CI
+enforces exactly that (see below).
 
 ## The three core guidelines
 
