@@ -92,6 +92,56 @@ function translateNaiWeightSyntax(prompt: string): string {
   return prompt;
 }
 
+/**
+ * Translate InvokeAI/compel weight + emphasis syntax to ComfyUI (tag:weight).
+ * - (group)0.8      -> (group:0.8)      explicit weight, number OUTSIDE the paren
+ * - (group)+ / ++   -> (group:1.10) / (group:1.21)   group emphasis, 1.1^n
+ * - (group)- / --   -> (group:0.90) / (group:0.81)   group de-emphasis, 0.9^n
+ * - word+ / word--  -> (word:1.10) / (word:0.81)     bareword emphasis
+ * Guard: bareword rewrite only fires when the base (token minus the trailing
+ * +/- run) contains an ASCII letter, so emoticon tags like +_+ and bare ++ / 1+
+ * are left untouched. Blend/swap operators are intentionally not handled.
+ */
+function translateInvokeAiWeightSyntax(prompt: string): string {
+  const emphasisWeight = (marks: string): string => {
+    const base = marks[0] === "+" ? 1.1 : 0.9;
+    return Math.pow(base, marks.length).toFixed(2);
+  };
+
+  // 1. Group trailing explicit weight: (group)0.8 -> (group:0.8)
+  prompt = prompt.replace(
+    /\(([^()]+)\)(\d+\.?\d*)/g,
+    (_m, inner, weight) => `(${inner}:${weight})`,
+  );
+
+  // 2. Group emphasis: (group)+++ / (group)--- -> (group:W). Innermost-first.
+  let prev: string;
+  do {
+    prev = prompt;
+    prompt = prompt.replace(
+      /\(([^()]+)\)(\++|-+)/g,
+      (_m, inner, marks) => `(${inner}:${emphasisWeight(marks)})`,
+    );
+  } while (prompt !== prev);
+
+  // 3. Bareword emphasis: tokenize on delimiters, rewrite word+ / word- when the
+  // base has a letter. Delimiters: whitespace , ( ) { }
+  prompt = prompt.replace(/[^\s,(){}]+/g, (token) => {
+    const m = token.match(/^(.*?)(\++|-+)$/);
+    if (!m) return token;
+    const base = m[1];
+    if (!/[a-zA-Z]/.test(base)) return token;
+    return `(${base}:${emphasisWeight(m[2])})`;
+  });
+
+  return prompt;
+}
+
+/** Apply InvokeAI translation, then NAI translation, to a prompt string. */
+function translatePromptWeightSyntax(prompt: string): string {
+  return translateNaiWeightSyntax(translateInvokeAiWeightSyntax(prompt));
+}
+
 type StylePresetId = "none" | "anime" | "cinematic" | "photoreal" | "digital_art" | "line_art";
 
 const GENERATION_MODES = ["txt2img", "img2img", "inpainting"] as const;
@@ -1731,9 +1781,9 @@ class GenerationStore {
     const parsedPositive = parseScheduledPrompt(positivePrompt);
     const parsedNegative = parseScheduledPrompt(negativePrompt);
 
-    const translatedPositiveBase = translateNaiWeightSyntax(parsedPositive.baseText);
+    const translatedPositiveBase = translatePromptWeightSyntax(parsedPositive.baseText);
     const translatedPositiveSegments = parsedPositive.segments.map((s) => ({
-      text: translateNaiWeightSyntax(s.text),
+      text: translatePromptWeightSyntax(s.text),
       start: s.start,
       end: s.end,
     }));
@@ -1778,16 +1828,16 @@ class GenerationStore {
     const params: GenerationParams = {
       mode: this.mode,
       positive_prompt: translatedPositiveBase,
-      negative_prompt: translateNaiWeightSyntax(parsedNegative.baseText),
+      negative_prompt: translatePromptWeightSyntax(parsedNegative.baseText),
       positive_segments: translatedPositiveSegments,
       negative_segments: parsedNegative.segments.map((s) => ({
-        text: translateNaiWeightSyntax(s.text),
+        text: translatePromptWeightSyntax(s.text),
         start: s.start,
         end: s.end,
       })),
       detail_segments: parsedSegmentDetails.segments.map((s) => ({
         target: s.target,
-        prompt: translateNaiWeightSyntax(s.prompt),
+        prompt: translatePromptWeightSyntax(s.prompt),
         creativity: s.creativity,
         threshold: s.threshold,
       })),
