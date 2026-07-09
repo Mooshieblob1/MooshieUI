@@ -2,7 +2,11 @@ import fs from "fs";
 import path from "path";
 
 const dir = "src/lib/locales";
-const files = fs.readdirSync(dir).filter((f) => f.endsWith(".ts"));
+// Sort once so every section below reports in a deterministic, platform-independent
+// order (readdirSync order is not guaranteed).
+const files = fs.readdirSync(dir)
+  .filter((f) => f.endsWith(".ts"))
+  .sort();
 
 function parseKeys(file) {
   const content = fs.readFileSync(path.join(dir, file), "utf8");
@@ -29,10 +33,15 @@ function sameSet(a, b) {
 const all = Object.fromEntries(files.map((f) => [f, parseKeys(f)]));
 const en = all["en.ts"];
 
+if (!en) {
+  console.error(`ERROR: ${dir}/en.ts not found. It is the source of truth for i18n parity.`);
+  process.exit(1);
+}
+
 let failed = false;
 
 console.log("Key counts:");
-for (const f of files.sort()) console.log(`  ${f}: ${all[f].size}`);
+for (const f of files) console.log(`  ${f}: ${all[f].size}`);
 
 console.log("\nParity vs en.ts:");
 for (const f of files) {
