@@ -13,8 +13,23 @@ function parseKeys(file) {
   return keys;
 }
 
+// Placeholder names inside a value, e.g. "Hello {name}" -> Set{ "name" }.
+function placeholders(value) {
+  const set = new Set();
+  for (const m of value.matchAll(/\{([^}]+)\}/g)) set.add(m[1]);
+  return set;
+}
+
+function sameSet(a, b) {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
 const all = Object.fromEntries(files.map((f) => [f, parseKeys(f)]));
 const en = all["en.ts"];
+
+let failed = false;
 
 console.log("Key counts:");
 for (const f of files.sort()) console.log(`  ${f}: ${all[f].size}`);
@@ -24,14 +39,33 @@ for (const f of files) {
   if (f === "en.ts") continue;
   const missing = [...en.keys()].filter((k) => !all[f].has(k));
   const extra = [...all[f].keys()].filter((k) => !en.has(k));
-  if (missing.length || extra.length) {
-    console.log(`  ${f}: missing=${missing.length} extra=${extra.length}`);
-    if (missing.length) console.log("    missing sample:", missing.slice(0, 8).join(", "));
-    if (extra.length) console.log("    extra sample:", extra.slice(0, 8).join(", "));
+
+  // Placeholder mismatches for keys present in both files.
+  const placeholderMismatches = [];
+  for (const [k, enVal] of en) {
+    if (!all[f].has(k)) continue;
+    const enPh = placeholders(enVal);
+    const locPh = placeholders(all[f].get(k));
+    if (!sameSet(enPh, locPh)) {
+      placeholderMismatches.push(
+        `${k} (en: {${[...enPh].join(", ")}} vs ${f.replace(".ts", "")}: {${[...locPh].join(", ")}})`,
+      );
+    }
+  }
+
+  if (missing.length || extra.length || placeholderMismatches.length) {
+    failed = true;
+    console.log(
+      `  ${f}: missing=${missing.length} extra=${extra.length} placeholder_mismatch=${placeholderMismatches.length}`,
+    );
+    if (missing.length) console.log("    missing:", missing.slice(0, 12).join(", "));
+    if (extra.length) console.log("    extra:", extra.slice(0, 12).join(", "));
+    if (placeholderMismatches.length)
+      console.log("    placeholders:", placeholderMismatches.slice(0, 12).join("; "));
   }
 }
 
-// Find keys in non-en files that still match English exactly (likely untranslated)
+// Informational only: keys whose translation is byte-identical to English.
 const untranslated = {};
 for (const f of files) {
   if (f === "en.ts") continue;
@@ -43,9 +77,15 @@ for (const f of files) {
   if (same.length) untranslated[f] = same;
 }
 
-console.log("\nUntranslated (identical to en.ts):");
+console.log("\nUntranslated (identical to en.ts, informational):");
 for (const [f, keys] of Object.entries(untranslated).sort()) {
   console.log(`  ${f}: ${keys.length}`);
-  for (const k of keys.slice(0, 30)) console.log(`    ${k}: ${en.get(k)}`);
-  if (keys.length > 30) console.log(`    ... +${keys.length - 30} more`);
 }
+
+if (failed) {
+  console.error(
+    "\ni18n parity FAILED. Every key and {placeholder} in en.ts must exist in all locale files. See CONTRIBUTING.md (i18n).",
+  );
+  process.exit(1);
+}
+console.log("\ni18n parity OK.");
