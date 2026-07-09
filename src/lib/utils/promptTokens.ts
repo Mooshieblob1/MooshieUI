@@ -30,7 +30,7 @@ function stripPromptSyntax(text: string): string {
       .replace(/<fromto\[[\d.]+\]:/gi, " ")
       // NEW: InvokeAI trailing explicit weight after a group close: )0.8
       // Must precede the paren strip below, which would otherwise eat the ")".
-      .replace(/\)\s*\d+(?:\.\d+)?/g, " ")
+      .replace(/\)\d+(?:\.\d+)?(?=[\s,(){}\[\]]|$)/g, " ")
       // NEW: InvokeAI +/- emphasis runs attached to a word or ) boundary.
       // Must precede the paren strip below; paren strip replaces ")" with a space,
       // which breaks the lookbehind that anchors on ")" (e.g. "(cat ears)++").

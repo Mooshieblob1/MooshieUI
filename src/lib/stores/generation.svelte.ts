@@ -110,7 +110,7 @@ function translateInvokeAiWeightSyntax(prompt: string): string {
 
   // 1. Group trailing explicit weight: (group)0.8 -> (group:0.8)
   prompt = prompt.replace(
-    /\(([^()]+)\)(\d+\.?\d*)/g,
+    /\(([^()]+)\)(\d+\.?\d*)(?=[\s,(){}\[\]]|$)/g,
     (_m, inner, weight) => `(${inner}:${weight})`,
   );
 
