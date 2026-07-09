@@ -1,3 +1,16 @@
+## What's New in v1.5.0
+
+### New features
+- **Additive prompt boxes**: a new + button below the positive and negative prompt adds extra named prompt blocks. At send time the blocks join together in order into one clean prompt (like chaining ComfyUI concatenate nodes), so you can split a prompt into labelled sections without hurting the result. Each block can be named and saved straight into your prompt presets, and a combined token count shows the estimate across every block.
+- **BREAK and line breaks are stripped from the sent prompt**: `BREAK`, `<break>`, and stray line breaks are now removed from the prompt actually sent to the model, for every model, while your prompt box keeps exactly what you typed. This stops LLM based text encoders (Qwen, Anima, and similar) from reading that leftover formatting as literal text and softening the result.
+- **InvokeAI weight and emphasis syntax**: prompts written InvokeAI style, `(tag)1.2` weights and `(tag)++` / `(tag)--` emphasis, are now understood and translated at send time, so you can paste InvokeAI prompts without rewriting them. The token counter also reads them correctly instead of counting the control characters.
+- **Weight buttons work across every syntax**: the weight nudge buttons now edit whatever weight syntax you actually typed, in place, whether that is A1111 `(tag:1.1)`, NovelAI `1.1::tag::`, or InvokeAI `(tag)1.1`, instead of only A1111.
+
+### Fixes
+- **Large upscaled images no longer go missing**: high resolution results (for example a face detail pass plus a tiled 4x upscale) can produce very large image frames that previously exceeded the WebSocket size limit, reset the connection, and left the preview stuck with no final image. The limit is now lifted well past any realistic output, so these images come through.
+
+---
+
 ## What's New in v1.4.41
 
 ### Improvements
