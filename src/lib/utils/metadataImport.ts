@@ -113,10 +113,12 @@ function applyPrompts(meta: Record<string, string>): boolean {
   let applied = false;
   if (meta.positive_prompt !== undefined) {
     generation.positivePrompt = stripQualityTags(meta.positive_prompt);
+    generation.extraPositiveBoxes = [];
     applied = true;
   }
   if (meta.negative_prompt !== undefined) {
     generation.negativePrompt = stripQualityTags(meta.negative_prompt);
+    generation.extraNegativeBoxes = [];
     applied = true;
   }
   return applied;

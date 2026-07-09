@@ -71,6 +71,16 @@ export interface RegionalPromptSelection {
   points?: RegionalPromptPoint[];
 }
 
+/** An extra, user-named prompt box appended below the main positive/negative box. */
+export interface ExtraPromptBox {
+  /** uuid — Svelte {#each} key and textarea height storageKey. */
+  id: string;
+  /** User-editable display name (may be empty). */
+  name: string;
+  /** Raw prompt text; sanitized and concatenated only at send time. */
+  content: string;
+}
+
 export interface GenerationParams {
   mode: "txt2img" | "img2img" | "inpainting";
   positive_prompt: string;

@@ -7,8 +7,11 @@
   import { styles } from "../../stores/styles.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
+  import ExtraPromptBoxList from "./ExtraPromptBoxList.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { parseScheduledPrompt, hasRegionalTags, hasSchedulingTags } from "../../utils/promptSchedule.js";
+  import { joinPromptBoxes } from "../../utils/promptSanitize.js";
+  import { estimatePromptTokens } from "../../utils/promptTokens.js";
   import SegmentRefinementPanel from "./SegmentRefinementPanel.svelte";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import PromptAssistantSetupModal from "./PromptAssistantSetupModal.svelte";
@@ -32,6 +35,20 @@
   );
   const hasNegativeSchedule = $derived(hasSchedulingTags(generation.negativePrompt));
   const hasAnySchedule = $derived(hasPositiveSchedule || hasNegativeSchedule);
+
+  // Combined token estimate across the main positive box and any extra boxes,
+  // shown as a badge only when extra positive boxes exist. Uses the same
+  // chronological concatenation that toParams sends.
+  const combinedPositiveTokens = $derived(
+    generation.extraPositiveBoxes.length > 0
+      ? estimatePromptTokens(
+          joinPromptBoxes([
+            generation.positivePrompt,
+            ...generation.extraPositiveBoxes.map((b) => b.content),
+          ]),
+        )
+      : 0,
+  );
   const positiveSegments = $derived(hasPositiveSchedule ? parseScheduledPrompt(generation.positivePrompt).segments : []);
   const negativeSegments = $derived(hasNegativeSchedule ? parseScheduledPrompt(generation.negativePrompt).segments : []);
   let schedulePanelOpen = $state(true);
@@ -161,6 +178,12 @@
         <label class="text-xs text-neutral-400">{locale.t('generation.prompts.positive')}<InfoTip text={locale.t('generation.prompts.positive_tip')} /></label>
       </div>
       <div class="flex items-center justify-end gap-1.5 flex-wrap min-w-0">
+      {#if combinedPositiveTokens > 0}
+        <span
+          class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-neutral-800 text-neutral-300 border border-neutral-700 tabular-nums"
+          title={locale.t('generation.prompts.extra_box_combined_tip')}
+        >{locale.t('generation.prompts.extra_box_combined_tokens', { count: String(combinedPositiveTokens) })}</span>
+      {/if}
       {#if qualityTagsSupported}
         <span class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30">{locale.t('generation.prompts.quality_applied')}</span>
       {/if}
@@ -285,6 +308,7 @@
         {locale.t("generation.regional.unsupported")}
       </p>
     {/if}
+    <ExtraPromptBoxList side="positive" />
   </div>
 
   <div class="transition-opacity {generation.disablesNegativePrompt ? 'opacity-40 pointer-events-none' : ''}">
@@ -301,6 +325,7 @@
       minHeight="min-h-18"
       storageKey="mooshieui.promptHeight.negative"
     />
+    <ExtraPromptBoxList side="negative" />
   </div>
 
   {#if hasAnySchedule}
