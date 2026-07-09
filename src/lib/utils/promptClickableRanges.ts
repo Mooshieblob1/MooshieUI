@@ -92,6 +92,34 @@ function isWeightedExpression(raw: string, start: number, end: number): boolean 
   return left.length > 0;
 }
 
+// True if the group content between raw[start] '(' and raw[end] ')' contains an
+// unescaped paren, i.e. it is not a flat innermost group. InvokeAI trailing and
+// emphasis translation only applies to flat groups ([^()]+), so we mirror that.
+function groupInnerHasParen(raw: string, start: number, end: number): boolean {
+  for (let k = start + 1; k < end; k++) {
+    if (isBackslashEscaped(raw, k)) continue;
+    if (raw[k] === "(" || raw[k] === ")") return true;
+  }
+  return false;
+}
+
+// Length of an InvokeAI trailing weight/emphasis run immediately after a group
+// close at index `j`, or 0 if none. Emphasis marks (+/-) match directly;
+// a numeric weight must be followed by a delimiter or end-of-string so a
+// number-starting tag like "(beautiful)1girl" is not read as a weight.
+function trailingWeightLen(raw: string, j: number): number {
+  const rest = raw.slice(j);
+  const marks = rest.match(/^(?:\++|-+)/);
+  if (marks) return marks[0].length;
+  const num = rest.match(/^\d+\.?\d*(?=[\s,(){}[\]]|$)/);
+  if (num) return num[0].length;
+  return 0;
+}
+
+// NAI numeric weight: N::text::, where text has no colon. Mirrors the
+// translateNaiWeightSyntax regex.
+const NAI_NUMERIC_RE = /(\d+\.?\d*)::[^:]+::/g;
+
 function getWeightedRanges(raw: string, inertRanges: readonly PromptTextRange[]): Range[] {
   const stack: OpenToken[] = [];
   const candidates: Range[] = [];
@@ -123,12 +151,37 @@ function getWeightedRanges(raw: string, inertRanges: readonly PromptTextRange[])
 
       const start = top.index;
       const end = i + 1;
+
+      // InvokeAI trailing weight / emphasis on a flat paren group: (tag)0.5,
+      // (tag)--. The range spans the group plus its trailing run.
+      if (
+        open === "(" &&
+        isWrappedWeight(start, end) &&
+        !groupInnerHasParen(raw, start, end - 1)
+      ) {
+        const trailing = trailingWeightLen(raw, end);
+        if (trailing > 0) {
+          candidates.push({ start, end: end + trailing });
+          continue;
+        }
+      }
+
       const isWeighted =
         open === "(" ? isWeightedExpression(raw, start, end) : isWrappedWeight(start, end);
       if (isWeighted) {
         candidates.push({ start, end });
       }
     }
+  }
+
+  // NAI numeric weight: N::text::. These carry no brackets, so scan separately.
+  NAI_NUMERIC_RE.lastIndex = 0;
+  let naiMatch: RegExpExecArray | null;
+  while ((naiMatch = NAI_NUMERIC_RE.exec(raw)) !== null) {
+    const start = naiMatch.index;
+    if (isInsidePromptInertRange(start, inertRanges)) continue;
+    if (isBackslashEscaped(raw, start)) continue;
+    candidates.push({ start, end: start + naiMatch[0].length });
   }
 
   candidates.sort((a, b) => (a.start - b.start) || (b.end - a.end));

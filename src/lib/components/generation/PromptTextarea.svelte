@@ -15,6 +15,7 @@
     getPromptClickableSegments,
     type PromptClickableSegment,
   } from "../../utils/promptClickableRanges.js";
+  import { adjustWeightText, isNonNumericWeightSelection } from "../../utils/promptWeightAdjust.js";
   import {
     getUnknownTagRanges,
     buildSpellcheckPieces,
@@ -86,6 +87,12 @@
   let selectionStart = $state(0);
   let selectionEnd = $state(0);
   const hasSelection = $derived(selectionStart !== selectionEnd);
+  // The +0.05/-0.05 buttons can numerically adjust A1111/NAI/InvokeAI numeric
+  // forms and plain text, but not recognized-but-non-numeric forms (InvokeAI
+  // emphasis marks, NAI brace wrap) — grey them out for those.
+  const canAdjustWeight = $derived(
+    hasSelection && !isNonNumericWeightSelection(value.substring(selectionStart, selectionEnd)),
+  );
 
   // Estimated CLIP tokens for the current prompt, gauged against the 75-token
   // chunk boundary the text encoder splits on.
@@ -337,7 +344,7 @@
   }
 
   function adjustSelectedWeight(delta: number) {
-    if (!textareaEl || selectionStart === selectionEnd) return;
+    if (!textareaEl || !canAdjustWeight) return;
     undoStack = [...undoStack, value];
     redoStack = [];
     adjustWeight(delta, selectionStart, selectionEnd);
@@ -382,7 +389,7 @@
     if ((e.ctrlKey || e.metaKey) && (e.key === "ArrowUp" || e.key === "ArrowDown") && textareaEl) {
       const start = textareaEl.selectionStart;
       const end = textareaEl.selectionEnd;
-      if (start !== end) {
+      if (start !== end && !isNonNumericWeightSelection(value.substring(start, end))) {
         e.preventDefault();
         // Push current value to undo stack before modifying
         undoStack = [...undoStack, value];
@@ -437,30 +444,14 @@
 
   function adjustWeight(delta: number, start: number, end: number) {
     if (!textareaEl) return;
-    let selected = value.substring(start, end);
+    const selected = value.substring(start, end);
 
-    // Check if selection is already a weighted tag: (tag:weight)
-    const weightMatch = selected.match(/^\((.+):(\d+\.?\d*)\)$/);
-
-    let newText: string;
-    let newWeight: number;
-
-    if (weightMatch) {
-      const tagName = weightMatch[1];
-      const currentWeight = parseFloat(weightMatch[2]);
-      newWeight = Math.round((currentWeight + delta) * 100) / 100;
-      newWeight = Math.max(0, Math.min(2, newWeight));
-      if (Math.abs(newWeight - 1.0) < 0.001) {
-        // Weight is 1.0, just use the raw tag
-        newText = tagName;
-      } else {
-        newText = `(${tagName}:${newWeight.toFixed(2)})`;
-      }
-    } else {
-      // Wrap in weight syntax
-      newWeight = Math.round((1.0 + delta) * 100) / 100;
-      newText = `(${selected}:${newWeight.toFixed(2)})`;
-    }
+    // Edit the number in place for A1111 (tag:w), NAI N::tag::, and InvokeAI
+    // (tag)N; wrap plain text. Returns null for recognized-but-non-numeric
+    // forms (emphasis marks, brace wrap) — the buttons grey out for those, but
+    // guard here too in case Ctrl+Up/Down reaches it.
+    const newText = adjustWeightText(selected, delta);
+    if (newText === null) return;
 
     value = value.substring(0, start) + newText + value.substring(end);
 
@@ -751,9 +742,9 @@
   <div class="mb-2 flex items-center gap-1.5">
     <button
       type="button"
-      disabled={!hasSelection}
+      disabled={!canAdjustWeight}
       class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-      title={hasSelection ? locale.t('generation.prompt.weight_up') : locale.t('generation.prompt.weight_select_hint')}
+      title={canAdjustWeight ? locale.t('generation.prompt.weight_up') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => adjustSelectedWeight(0.05)}
     >
@@ -761,9 +752,9 @@
     </button>
     <button
       type="button"
-      disabled={!hasSelection}
+      disabled={!canAdjustWeight}
       class="shrink-0 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300 enabled:hover:border-indigo-500 enabled:hover:text-indigo-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-      title={hasSelection ? locale.t('generation.prompt.weight_down') : locale.t('generation.prompt.weight_select_hint')}
+      title={canAdjustWeight ? locale.t('generation.prompt.weight_down') : locale.t('generation.prompt.weight_select_hint')}
       onmousedown={(e) => e.preventDefault()}
       onclick={() => adjustSelectedWeight(-0.05)}
     >
