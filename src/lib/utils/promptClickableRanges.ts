@@ -2,8 +2,8 @@ import {
   getPromptInertRanges,
   isInsidePromptInertRange,
   type PromptTextRange,
-} from "./promptInertRanges.ts";
-import { hasUnescapedSyntaxAngles, isBackslashEscaped } from "./promptSyntaxEscape.ts";
+} from "./promptInertRanges.js";
+import { hasUnescapedSyntaxAngles, isBackslashEscaped } from "./promptSyntaxEscape.js";
 
 export type PromptClickableSegmentKind = "text" | "tag" | "weighted";
 
