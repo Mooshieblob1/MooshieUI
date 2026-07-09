@@ -28,6 +28,13 @@ function stripPromptSyntax(text: string): string {
       .replace(/<\/?(?:from|to|range)(?::[\d.]+(?::[\d.]+)?)?>/gi, " ")
       // SwarmUI scheduling prefix: <fromto[0.5]:before, after>.
       .replace(/<fromto\[[\d.]+\]:/gi, " ")
+      // NEW: InvokeAI trailing explicit weight after a group close: )0.8
+      // Must precede the paren strip below, which would otherwise eat the ")".
+      .replace(/\)\s*\d+(?:\.\d+)?/g, " ")
+      // NEW: InvokeAI +/- emphasis runs attached to a word or ) boundary.
+      // Must precede the paren strip below; paren strip replaces ")" with a space,
+      // which breaks the lookbehind that anchors on ")" (e.g. "(cat ears)++").
+      .replace(/(?<=\w|\))(\++|-+)(?=\s|,|$|\)|\}|\])/g, " ")
       // Emphasis grouping characters — the inner tag text is what gets encoded.
       .replace(/[(){}\[\]]/g, " ")
       // Explicit weights like ":1.2" (including step-schedule ":0.5").
