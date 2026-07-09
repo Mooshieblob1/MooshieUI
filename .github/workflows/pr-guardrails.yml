@@ -65,4 +65,4 @@ jobs:
         run: |
           npx svelte-check --output machine > sc.txt 2>&1 || true
           node scripts/svelte-check-diff.mjs --machine sc.txt --changed changed.txt --summary a11y.md || true
-          cat a11y.md >> "$GITHUB_STEP_SUMMARY"
+          cat a11y.md >> "$GITHUB_STEP_SUMMARY" || true
