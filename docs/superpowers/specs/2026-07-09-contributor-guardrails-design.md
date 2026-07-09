@@ -43,6 +43,14 @@ human contributor opening a pull request hits almost no automated quality gate:
   (build, `svelte-check` types, i18n parity). a11y runs **advisory-first** (a
   non-blocking PR comment) until the codebase is baseline-clean, then can flip to
   blocking. Scope is enforced by PR template + human review, not CI.
+- **`svelte-check` is diff-scoped.** The current tree has **39 pre-existing
+  `svelte-check` errors and 90 warnings** (build stays green because vite does not
+  type-check; `svelte-check` does). A global type-block would make every PR red for
+  debt the contributor did not cause. So the type gate blocks a PR only on
+  `svelte-check` **errors in files the PR changed**, tolerating the baseline in
+  untouched files. This matches the repo's diff-aware pre-commit philosophy. Known
+  limitation: an error a change *induces* in an untouched file (e.g. removing an
+  export) is not caught by diff-scoping; documented, acceptable for v1.
 - **Scope model: Charter + PR attestation.** A `SCOPE.md` charter is the source of
   truth (goals + non-goals). The PR template requires a linked issue and a short
   "how this fits the charter" note. The maintainer judges against `SCOPE.md`. No CI
@@ -103,31 +111,46 @@ branch `master`, top-level `*.md`, nav in `_Sidebar.md`.
 New npm scripts in `package.json`:
 
 - `check:i18n` -> `node scripts/check-i18n-parity.mjs` (upgraded gate, see Layer 5)
-- `check:a11y` -> `svelte-check` (surfaces a11y warnings + type errors)
-- `check` -> runs frontend build + `svelte-check` + `check:i18n` (the same set CI
-  blocks on, minus the advisory-only a11y comment)
+- `check:types` -> `svelte-check --output machine` piped to `svelte-check-diff.mjs`
+  (surfaces all type errors + a11y warnings informationally). Runs full-tree, not
+  diff-scoped, so the 39 baseline items show; contributors are told to ensure they did
+  not add errors in the files they touched. Exits zero locally (informational).
+- `check` -> `npm run build` + `check:i18n` (both hard-fail) then `check:types`
+  (informational). The hard part mirrors CI's blocking build + i18n; the diff-scoped
+  type enforcement is CI-only (it needs the PR base), so local `check:types` is a
+  best-effort heads-up, documented as such in `CONTRIBUTING.md`.
 
 Documented in `CONTRIBUTING.md` as the pre-flight. Giving contributors the same signal
 locally as CI is the highest-leverage "makes it easier + drives adherence" lever: they
-self-correct before opening a PR.
+self-correct before opening a PR. The one honest asymmetry (local `check:types` shows
+everything; CI blocks only new errors in changed files) is stated in the docs so a
+green local run is not mistaken for a guaranteed-green CI.
 
 ### Layer 3: CI gate ("enforce on PR")
 
-New workflow `.github/workflows/pr-guardrails.yml`, triggered on `pull_request`:
+New workflow `.github/workflows/pr-guardrails.yml`, triggered on `pull_request`.
+The `svelte-check` invocation is **diff-scoped** (see Decisions): its machine-format
+output is parsed once and split into a blocking set (errors in changed files) and an
+advisory set (a11y warnings in changed files). Concretely:
 
-- **Blocking job** (`guardrails`): `npm ci` -> `npm run build` -> `svelte-check`
-  -> `node scripts/check-i18n-parity.mjs` (non-zero fails). Any failure blocks merge.
-  Note: `svelte-check` exits non-zero on **errors** (type errors) but zero on
-  **warnings** by default. a11y issues surface as warnings, so a plain `svelte-check`
-  in the blocking job naturally gates types without gating a11y — no extra flags
-  needed. (Flipping a11y to blocking later means adding `--fail-on-warnings`, or a
-  targeted a11y check, in a separate change.)
-- **Advisory job** (`a11y-advisory`): run `svelte-check`, extract a11y warnings,
-  diff-scope them to `.svelte` files changed in the PR, and post them as a single
-  **non-blocking** PR comment (update-in-place on re-runs). Documented switch to flip
-  this into the blocking job once the codebase is a11y-baseline-clean.
+- **Blocking job** (`guardrails`): `npm ci` -> `npm run build` (fail on error) ->
+  `node scripts/check-i18n-parity.mjs` (non-zero fails) -> run
+  `svelte-check --output machine`, then a small parser (`scripts/svelte-check-diff.mjs`)
+  that keeps only `ERROR` lines whose file is in the PR's changed-file set and **exits
+  non-zero if any remain**. The 39 baseline errors in untouched files are ignored.
+  Changed-file set comes from `git diff --name-only origin/<base>...HEAD`.
+- **Advisory job** (`a11y-advisory`): reuse the same `svelte-check --output machine`
+  output, keep `WARNING` lines matching the a11y rule ids (`a11y_*`) whose file is a
+  changed `.svelte` file, and post them as a single **non-blocking** PR comment
+  (update-in-place on re-runs). If none, post/refresh a "no a11y issues" comment or
+  skip. Documented switch to flip a11y into the blocking job once the codebase is
+  a11y-baseline-clean.
 - **Scope**: no CI enforcement (per decision) — PR template + human review against
   `SCOPE.md`.
+
+Both jobs need the same `svelte-check --output machine` result; run it once and share
+via a step output / artifact, or accept two runs for simplicity (svelte-check is fast
+enough). The plan picks one and states it.
 
 Register the blocking `guardrails` job as a required status check (extend
 `scripts/setup-branch-protection.sh`; the maintainer runs it). GlassWorm remains a
@@ -174,6 +197,7 @@ assistant memory so they stay in context across sessions:
 | Unit | Purpose | Depends on |
 |------|---------|-----------|
 | `scripts/check-i18n-parity.mjs` | i18n parity + placeholder gate | `src/lib/locales/*.ts` |
+| `scripts/svelte-check-diff.mjs` | filter svelte-check machine output to a changed-file set; split errors (block) / a11y warnings (advise); exit non-zero on blocking errors | svelte-check machine output, git changed-file list |
 | `package.json` scripts | local pre-flight mirroring CI | build, svelte-check, i18n script |
 | `pr-guardrails.yml` | enforce blocking checks + advisory a11y | npm scripts, PR diff |
 | `CONTRIBUTING.md` | teach the rules + fix table | links to SCOPE.md, scripts |
@@ -188,7 +212,12 @@ No frontend/Rust test framework exists; validation is consistent with the repo n
 - i18n gate: exercise `node scripts/check-i18n-parity.mjs` against the current tree
   (must pass) and against a deliberately broken locale (must fail non-zero) to confirm
   the gate works. Revert the deliberate break.
-- `npm run check` runs clean on a clean tree.
+- `svelte-check-diff.mjs`: feed it a captured `svelte-check --output machine` sample
+  plus a changed-file list; assert it blocks when a changed file has an ERROR, passes
+  when the only ERRORs are in untouched (baseline) files, and lists a11y warnings only
+  for changed `.svelte` files. Uses a small fixture, run with `node`.
+- `npm run check` runs clean on a clean tree (build + i18n hard-pass; `check:types`
+  prints the baseline informationally and exits zero).
 - The CI workflow is validated by opening the implementation PR itself (it runs on that
   PR); confirm the blocking job passes and the advisory a11y comment appears.
 - Wiki changes: verify rendered pages and `_Sidebar.md` nav after push.
