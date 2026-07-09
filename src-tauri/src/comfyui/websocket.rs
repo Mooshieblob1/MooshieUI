@@ -4,10 +4,29 @@ use std::sync::Arc;
 use std::time::Instant;
 #[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter};
-use tokio_tungstenite::connect_async;
+use tokio_tungstenite::connect_async_with_config;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use crate::error::AppError;
 use crate::state::AppState;
+
+/// WebSocket config for ComfyUI connections.
+///
+/// `MooshieSaveImage` streams each finished image back as a single unfragmented
+/// binary frame of raw RGBA pixels. A 4x-upscaled 16-bit result (e.g. face
+/// detail + tiled upscale) is `w * h * 4ch * 2bytes`, which for large canvases
+/// exceeds tungstenite's default 16 MiB `max_frame_size`. When that happens the
+/// frame is rejected with a capacity error, the socket resets, and the output
+/// image is lost — the UI is left stuck on the last preview frame. These frames
+/// come from our own localhost/LAN ComfyUI, so we lift both limits to a generous
+/// 1 GiB (covers up to ~8K 16-bit RGBA with headroom) while still bounding
+/// allocation against a runaway length header.
+fn comfyui_ws_config() -> WebSocketConfig {
+    const LIMIT: usize = 1 << 30; // 1 GiB
+    WebSocketConfig::default()
+        .max_message_size(Some(LIMIT))
+        .max_frame_size(Some(LIMIT))
+}
 
 /// Result of processing a MOOSHIE_OUTPUT_IMAGE (event_type 100) binary frame.
 struct ProcessedOutputImage {
@@ -302,7 +321,7 @@ pub async fn connect_websocket(
                 }
             }
 
-            let result = connect_async(&ws_url).await;
+            let result = connect_async_with_config(&ws_url, Some(comfyui_ws_config()), false).await;
             let (ws_stream, _) = match result {
                 Ok(s) => {
                     backoff_ms = 0;
@@ -741,7 +760,7 @@ pub async fn connect_websocket_headless(
                 }
             }
 
-            let result = connect_async(&ws_url).await;
+            let result = connect_async_with_config(&ws_url, Some(comfyui_ws_config()), false).await;
             let (ws_stream, _) = match result {
                 Ok(s) => {
                     backoff_ms = 0;
@@ -1008,7 +1027,7 @@ async fn connect_websocket_for_worker_inner(
                 }
             }
 
-            let result = connect_async(&ws_url).await;
+            let result = connect_async_with_config(&ws_url, Some(comfyui_ws_config()), false).await;
             let (ws_stream, _) = match result {
                 Ok(s) => {
                     backoff_ms = 0;
