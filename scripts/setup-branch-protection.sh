@@ -3,8 +3,9 @@
 #
 # Prerequisites:
 #   - gh CLI installed and authenticated: gh auth login
-#   - The glassworm-scan workflow must have completed at least one successful run
-#     so GitHub has registered "GlassWorm Infection Audit" as a known check name.
+#   - Both the glassworm-scan AND pr-guardrails workflows must have each completed at
+#     least one successful run so GitHub has registered both "GlassWorm Infection Audit"
+#     and "Guardrails (build, i18n, types)" as known check names.
 #     If branch protection is applied before the first run, all PRs will be permanently
 #     blocked with "Required status check has never run."
 #
@@ -36,7 +37,7 @@ gh api \
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["GlassWorm Infection Audit"]
+    "contexts": ["GlassWorm Infection Audit", "Guardrails (build, i18n, types)"]
   },
   "enforce_admins": true,
   "required_pull_request_reviews": {
@@ -69,6 +70,7 @@ gh api "repos/${REPO}/branches/${BRANCH}/protection" --jq '{
 echo ""
 echo "Done. All future PRs to main must:"
 echo "  - Pass the 'GlassWorm Infection Audit' CI check"
+echo "  - Pass the 'Guardrails (build, i18n, types)' CI check"
 echo "  - Be up to date with main before merging"
 echo "  - Have at least 1 approving review"
 echo "  - Have CODEOWNERS approval for security-sensitive files"
