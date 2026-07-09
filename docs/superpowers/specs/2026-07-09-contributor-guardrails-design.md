@@ -141,16 +141,29 @@ advisory set (a11y warnings in changed files). Concretely:
   Changed-file set comes from `git diff --name-only origin/<base>...HEAD`.
 - **Advisory job** (`a11y-advisory`): reuse the same `svelte-check --output machine`
   output, keep `WARNING` lines matching the a11y rule ids (`a11y_*`) whose file is a
-  changed `.svelte` file, and post them as a single **non-blocking** PR comment
-  (update-in-place on re-runs). If none, post/refresh a "no a11y issues" comment or
-  skip. Documented switch to flip a11y into the blocking job once the codebase is
-  a11y-baseline-clean.
+  changed `.svelte` file, and write them to the **GitHub job Step Summary**
+  (`$GITHUB_STEP_SUMMARY`), always exiting zero (non-blocking). The Step Summary shows
+  on the PR's Checks tab. Documented switch to flip a11y into the blocking job once the
+  codebase is a11y-baseline-clean.
 - **Scope**: no CI enforcement (per decision) — PR template + human review against
   `SCOPE.md`.
 
-Both jobs need the same `svelte-check --output machine` result; run it once and share
-via a step output / artifact, or accept two runs for simplicity (svelte-check is fast
-enough). The plan picks one and states it.
+**Fork-PR constraint (why Step Summary, not a comment).** External contributors open
+PRs from forks. Under the `pull_request` trigger a fork's `GITHUB_TOKEN` is read-only,
+so `gh pr comment` silently fails; `pull_request_target` would grant write but runs the
+base workflow against untrusted code (security footgun). The Step Summary needs no
+token and works for forks. A real PR comment (nicer UX) is a **documented later
+upgrade** via the two-workflow `workflow_run` pattern; out of scope for v1.
+
+**Action pinning.** Pin `actions/checkout`, `actions/setup-node` by commit SHA (repo
+convention). The plan resolves real SHAs at implementation time with `gh api` (it does
+not hardcode possibly-wrong constants). No third-party actions are used — the Node
+setup plus `gh` (preinstalled on the runner) cover everything; the a11y output is a
+Step Summary, so no comment-posting action is needed.
+
+Both jobs need the same `svelte-check --output machine` result. For simplicity each job
+runs it independently (svelte-check finishes in well under a minute here); no artifact
+sharing.
 
 Register the blocking `guardrails` job as a required status check (extend
 `scripts/setup-branch-protection.sh`; the maintainer runs it). GlassWorm remains a
