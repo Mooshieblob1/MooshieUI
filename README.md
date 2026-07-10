@@ -23,6 +23,10 @@ Built with **Svelte 5** + **Rust**, it hides ComfyUI's node-graph complexity beh
   <em>MooshieUI is free and open source. If it saves you time or sparks joy, a sponsorship keeps the updates coming. No pressure, just gratitude. 🙏</em>
 </p>
 
+<p align="center">
+  <sub>Sponsorships mostly go toward covering running costs: domain hosting, the SaaS tools used to build MooshieUI, and GitHub Pro+ for CI/CD. Anything left over is fuel for more features.</sub>
+</p>
+
 ![MooshieUI Screenshot](docs/screenshot.avif)
 
 ---
