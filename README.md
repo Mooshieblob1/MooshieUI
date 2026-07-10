@@ -20,11 +20,7 @@ Built with **Svelte 5** + **Rust**, it hides ComfyUI's node-graph complexity beh
 </p>
 
 <p align="center">
-  <em>MooshieUI is free and open source. If it saves you time or sparks joy, a sponsorship keeps the updates coming. No pressure, just gratitude. 🙏</em>
-</p>
-
-<p align="center">
-  <sub>Sponsorships mostly go toward covering running costs: domain hosting, the SaaS tools used to build MooshieUI, and GitHub Pro+ for CI/CD. Anything left over is fuel for more features.</sub>
+  <em>MooshieUI is free and open source. If it saves you time or sparks joy, a sponsorship keeps the updates coming. No pressure, just gratitude. 🙏 (<a href="#-support--where-the-money-goes">where does the money go?</a>)</em>
 </p>
 
 ![MooshieUI Screenshot](docs/screenshot.avif)
@@ -135,6 +131,20 @@ Automated **GlassWorm resistance checks** run on every push and pull request to 
 ```bash
 bash scripts/setup-hooks.sh
 ```
+
+---
+
+## 💛 Support & Where the Money Goes
+
+First off, to be clear: **this is not meant to be income.** MooshieUI is a passion project. I build it in my spare time around a regular day job, I don't expect to earn anything from it, and right now the running costs come straight out of my own pocket.
+
+If you [sponsor the project](https://github.com/sponsors/Mooshieblob1), here is exactly where it goes:
+
+- **Domain & hosting** - keeping the project site and download links online.
+- **SaaS & dev tooling** - the paid services and tools used to actually build and ship MooshieUI.
+- **GitHub Pro+** - CI/CD minutes for the build, release, and security-scan pipelines.
+
+The goal is simply to stop the project from costing me money to keep alive. Anything beyond covering costs just goes right back into building more features, faster. Sponsoring is completely optional and the app will always be free and open source either way. Thank you for even considering it. 🙏
 
 ---
 
