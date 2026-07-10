@@ -7,9 +7,20 @@ MooshieUI is a beginner-friendly interface for [ComfyUI](https://github.com/comf
 Built with **Svelte 5** + **Rust**, it hides ComfyUI's node-graph complexity behind a clean, guided workflow so you can generate without hand-editing graphs.
 
 ![License](https://img.shields.io/github/license/Mooshieblob1/MooshieUI?v=2)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Mooshieblob1)
 
 <p align="center">
   <img src="src/lib/assets/logo.png" alt="Logo" width="200">
+</p>
+
+<p align="center">
+  <a href="https://github.com/sponsors/Mooshieblob1">
+    <img src="https://img.shields.io/badge/%E2%9D%A4%20Love%20the%20app%3F-Sponsor%20continued%20updates-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor MooshieUI on GitHub Sponsors">
+  </a>
+</p>
+
+<p align="center">
+  <em>MooshieUI is free and open source. If it saves you time or sparks joy, a sponsorship keeps the updates coming. No pressure, just gratitude. 🙏 (<a href="#-support--where-the-money-goes">where does the money go?</a>)</em>
 </p>
 
 ![MooshieUI Screenshot](docs/screenshot.avif)
@@ -123,6 +134,20 @@ bash scripts/setup-hooks.sh
 
 ---
 
+## 💛 Support & Where the Money Goes
+
+First off, to be clear: **this is not meant to be income.** MooshieUI is a passion project. I build it in my spare time around a regular day job, I don't expect to earn anything from it, and right now the running costs come straight out of my own pocket.
+
+If you [sponsor the project](https://github.com/sponsors/Mooshieblob1), here is exactly where it goes:
+
+- **Domain & hosting** - keeping the project site and download links online.
+- **SaaS & dev tooling** - the paid services and tools used to actually build and ship MooshieUI.
+- **GitHub Pro+** - CI/CD minutes for the build, release, and security-scan pipelines.
+
+The goal is simply to stop the project from costing me money to keep alive. Anything beyond covering costs just goes right back into building more features, faster. Sponsoring is completely optional and the app will always be free and open source either way. Thank you for even considering it. 🙏
+
+---
+
 ## 🤝 Contributing
 
 Pull requests are welcome. `main` is protected: open a PR from a `chore/<topic>` branch after local validation and GlassWorm pre-commit checks. See **[push-instructions.md](push-instructions.md)** for the full workflow (branch naming, build gates, IPC/gallery conventions, and CI).
@@ -143,4 +168,66 @@ Licensed under the [GNU Affero General Public License v3.0](LICENSE).
 
 ## 🙏 Acknowledgments
 
-Built on [ComfyUI](https://github.com/comfyanonymous/ComfyUI), [Tauri](https://tauri.app/), [Svelte](https://svelte.dev/), and [Tailwind CSS](https://tailwindcss.com/). Uses [CivitAI](https://civitai.com/) and [HuggingFace](https://huggingface.co/) for model data, [Danbooru](https://danbooru.donmai.us/) tags, [OmniSR](https://huggingface.co/Acly/Omni-SR) upscalers, [YOLOv8](https://docs.ultralytics.com/) face detection, and [Konva](https://konvajs.org/) for the canvas editor. Tiled diffusion implements MultiDiffusion (Bar-Tal et al., ICML 2023) and SpotDiffusion (Ding et al., 2024).
+MooshieUI stands on the shoulders of a huge amount of open-source work. Sincere thanks to every project, researcher, model creator, and service below.
+
+### Core foundations
+
+- **[ComfyUI](https://github.com/comfyanonymous/ComfyUI)** (comfyanonymous) - the diffusion backend that powers all generation. MooshieUI would not exist without it.
+- **[Tauri](https://tauri.app/)** - the Rust desktop app framework, plus its store, shell, dialog, fs, clipboard, updater, and process plugins.
+- **[Svelte](https://svelte.dev/)**, **[Tailwind CSS](https://tailwindcss.com/)**, **[Vite](https://vite.dev/)**, and **[TypeScript](https://www.typescriptlang.org/)** - the frontend stack.
+- **[PyTorch](https://pytorch.org/)** - the ML framework behind ComfyUI inference.
+- **[uv](https://github.com/astral-sh/uv)** (Astral) - manages Python and the ComfyUI environment during setup.
+
+### Inference runtimes
+
+- **[llama.cpp](https://github.com/ggml-org/llama.cpp)** (ggml-org) - local LLM inference for the Prompt Assistant.
+- **[ONNX Runtime](https://onnxruntime.ai/)** (Microsoft) via the **[ort](https://github.com/pykeio/ort)** Rust crate - runs the image interrogator.
+- **[Ultralytics](https://github.com/ultralytics/ultralytics)** - YOLOv8/YOLO11 detection powering Face Fix and segment refinement.
+
+### Bundled third-party ComfyUI nodes
+
+Auto-installed into ComfyUI alongside MooshieUI's own nodes:
+
+- **[comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux)** (Fannovel16) - ControlNet preprocessors (Canny, Depth, OpenPose, LineArt, and more).
+- **[ComfyUI-Anima-LLLite](https://github.com/kohya-ss/ComfyUI-Anima-LLLite)** (kohya-ss) - LLLite ControlNet support for Anima.
+- **[ComfyUi-Untwisting-RoPE](https://github.com/BigStationW/ComfyUi-Untwisting-RoPE)** and **[ComfyUi-Scale-Image-to-Total-Pixels-Advanced](https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced)** (BigStationW) - training-free style transfer (the Anima style-transfer workflow is ported from Untwisting-RoPE's examples) and advanced image scaling.
+
+### Research implemented by MooshieUI's own nodes
+
+- **MultiDiffusion** - [Bar-Tal et al., ICML 2023 (arXiv:2302.08113)](https://arxiv.org/abs/2302.08113) - overlapping-tile fusion for tiled diffusion upscaling.
+- **SpotDiffusion** - [Frolov et al., 2024 (arXiv:2407.15507)](https://arxiv.org/abs/2407.15507) - seam-free shifted-window tiling.
+- **CFG Rescale** - ["Common Diffusion Noise Schedules and Sample Steps are Flawed" (Lin et al., arXiv:2305.08891)](https://arxiv.org/abs/2305.08891) - the basis of MooshieSoftGuidance, plus community "Mahiro"-style positive-biased guidance behind MooshieSmartGuidance.
+- **OmniSR** - ["Omni Aggregation Networks for Lightweight Image Super-Resolution" (CVPR 2023, arXiv:2304.10244)](https://arxiv.org/abs/2304.10244) - lightweight super-resolution.
+
+### Models & model creators
+
+- **[WD EVA02 Large Tagger v3](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3)** (SmilingWolf) - image interrogation/tagging.
+- **[CLIPSeg](https://huggingface.co/CIDAS/clipseg-rd64-refined)** (CIDAS) - text-prompted region detection for `<segment:...>` refinement.
+- **Face detection models** - [Anzhc's YOLOs](https://huggingface.co/Anzhc/Anzhcs_YOLOs) (default face segmentation) and [ADetailer models](https://huggingface.co/Bingsu/adetailer) (Bingsu) for Face Fix.
+- **Upscalers** - OmniSR, SPAN, and DAT (IllustrationJaNai) model weights hosted by [Acly](https://huggingface.co/Acly/Omni-SR) and [AshtakaOOf](https://huggingface.co/AshtakaOOf/safetensored-upscalers).
+- **Prompt Assistant LLMs** - [Qwen](https://huggingface.co/Qwen) (Alibaba) instruct models and [DanTagGen](https://huggingface.co/KBlueLeaf/DanTagGen-delta) (KBlueLeaf), with GGUF quantizations by [bartowski](https://huggingface.co/bartowski).
+- **Supported architectures & recommended models** - [Anima](https://huggingface.co/circlestone-labs/Anima) (Circlestone Labs), [Mugen](https://huggingface.co/CabalResearch/Mugen) (CabalResearch), Nanosaur (whose VAE builds on [Meta's DINOv3](https://github.com/facebookresearch/dinov3) and whose text encoder uses [Google's Gemma 3](https://huggingface.co/google/gemma-3-270m)), [SDXL and its VAE](https://huggingface.co/stabilityai) (Stability AI), and [Juice](https://huggingface.co/Enferlain/juice) (Enferlain).
+
+### Ecosystem compatibility & inspiration
+
+- **[SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI)** - MooshieUI reads and writes SwarmUI-compatible metadata, supports its `<segment>`/`<fromto>` prompt syntax, and borrows its backend-handler and in-memory image delivery patterns.
+- **[AUTOMATIC1111 Stable Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui)** - legacy metadata parsing and the `(tag:1.1)` weight syntax.
+- **[InvokeAI](https://github.com/invoke-ai/InvokeAI)** and **[NovelAI](https://novelai.net/)** - additional prompt weight syntaxes MooshieUI understands and converts.
+- **[stealth-pnginfo](https://github.com/ashen-sensored/sd_webui_stealth_pnginfo)** (ashen-sensored) - the alpha-channel metadata embedding technique.
+- **[ComfyUI Impact Pack](https://github.com/ltdrdata/ComfyUI-Impact-Pack)** (ltdrdata) - the face-detailer concept that MooshieUI's lightweight FaceDetailer node reimplements.
+
+### Data & services
+
+- **[CivitAI](https://civitai.com/)** - model search, hash lookup, and metadata.
+- **[Hugging Face](https://huggingface.co/)** - hosting for nearly every model MooshieUI downloads.
+- **[Danbooru](https://danbooru.donmai.us/)** and **[Gelbooru](https://gelbooru.com/)** - the tag taxonomies behind autocomplete (~140k tags; Gelbooru-derived Anima list curated by [BetaDoggo](https://huggingface.co/BetaDoggo)).
+- **[Animadex](https://animadex.net/)** - the character and LoRA database integration.
+- **[Photopea](https://www.photopea.com/)** - the embedded full image editor.
+- **GitHub** and **Cloudflare** - code hosting, CI/CD, releases, and the CDN behind the artist gallery.
+
+### Libraries
+
+- **Frontend**: [Konva](https://konvajs.org/) + [svelte-konva](https://github.com/konvajs/svelte-konva) (canvas editor), [marked](https://github.com/markedjs/marked) (markdown), [DOMPurify](https://github.com/cure53/DOMPurify) (sanitization), [SortableJS](https://github.com/SortableJS/Sortable) (drag & drop), and [ntc-ts](https://github.com/Danetag/ntc-ts) (a TypeScript port of [Chirag Mehta's "Name that Color"](https://chir.ag/projects/ntc/)).
+- **Rust**: [Tokio](https://tokio.rs/), [axum](https://github.com/tokio-rs/axum), [reqwest](https://github.com/seanmonstar/reqwest), [tokio-tungstenite](https://github.com/snapview/tokio-tungstenite), [rusqlite](https://github.com/rusqlite/rusqlite) + [SQLite](https://sqlite.org/), [jxl-oxide](https://github.com/tirr-c/jxl-oxide) and jxl-encoder ([JPEG XL](https://github.com/libjxl/libjxl) gallery storage), and [RustCrypto's Argon2](https://github.com/RustCrypto/password-hashes) (password hashing).
+
+If your work is used in MooshieUI and you feel it isn't credited properly here, please [open an issue](https://github.com/Mooshieblob1/MooshieUI/issues), it will be fixed promptly.
