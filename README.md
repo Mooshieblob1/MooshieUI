@@ -7,9 +7,20 @@ MooshieUI is a beginner-friendly interface for [ComfyUI](https://github.com/comf
 Built with **Svelte 5** + **Rust**, it hides ComfyUI's node-graph complexity behind a clean, guided workflow so you can generate without hand-editing graphs.
 
 ![License](https://img.shields.io/github/license/Mooshieblob1/MooshieUI?v=2)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Mooshieblob1)
 
 <p align="center">
   <img src="src/lib/assets/logo.png" alt="Logo" width="200">
+</p>
+
+<p align="center">
+  <a href="https://github.com/sponsors/Mooshieblob1">
+    <img src="https://img.shields.io/badge/%E2%9D%A4%20Love%20the%20app%3F-Sponsor%20continued%20updates-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Sponsor MooshieUI on GitHub Sponsors">
+  </a>
+</p>
+
+<p align="center">
+  <em>MooshieUI is free and open source. If it saves you time or sparks joy, a sponsorship keeps the updates coming. No pressure, just gratitude. 🙏</em>
 </p>
 
 ![MooshieUI Screenshot](docs/screenshot.avif)
