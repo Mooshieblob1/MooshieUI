@@ -1,5 +1,14 @@
 # Changelog
 
+## What's New in v1.5.1
+
+### Fixes
+- **Prompt editing works again with weight syntax**: v1.5.0's expanded weight and emphasis parsing made the editor draw red "unknown tag" underlines across valid weighted tags (`(tag)0.5`, `(tag)++`, `1.5::artist::`, and similar), and those underlined tags swallowed left clicks so the caret only landed at the end of the prompt. Weighted tags are now parsed correctly, so only genuinely unknown tags are underlined, and clicking a tag places the caret where you click (a second click inside a selected tag drops the caret on the exact character).
+- **Artist tags autocomplete on Illustrious and other danbooru models**: on non-Anima checkpoints the autocomplete list carried almost no artists, so artist names rarely completed and often showed up underlined as unknown. A bundled danbooru artist supplement is now merged in when that corpus is active, so artist tags suggest properly.
+- **"Enable custom quality tag" toggle stays put**: the Settings toggle that reveals the custom quality tag editor reset to off every time you left and returned to the Settings tab. It now persists across tab switches and restarts.
+
+---
+
 ## What's New in v1.5.0
 
 ### New features
