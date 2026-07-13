@@ -535,6 +535,24 @@
 
   function handleClickableSegmentMouseDown(event: MouseEvent, segment: PromptClickableSegment) {
     if (!textareaEl || !segment.clickable) return;
+    // Right-click is handled via oncontextmenu; don't clobber the selection here.
+    if (event.button !== 0) return;
+
+    // Second click on an already-selected segment: place the caret at the exact
+    // clicked character instead of re-selecting the whole segment. The first click
+    // keeps the whole-segment select (the weight-button workflow).
+    if (textareaEl.selectionStart === segment.start && textareaEl.selectionEnd === segment.end) {
+      const caret = getCaretFromPoint(event.clientX, event.clientY);
+      if (caret >= 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        textareaEl.focus();
+        textareaEl.setSelectionRange(caret, caret);
+        syncSelectionRange();
+        return;
+      }
+      // Caret unresolved: fall through to whole-segment select (still usable).
+    }
 
     event.preventDefault();
     event.stopPropagation();
@@ -549,6 +567,76 @@
     textareaEl.focus();
     textareaEl.setSelectionRange(segment.start, segment.end);
     syncSelectionRange();
+  }
+
+  /**
+   * Map a viewport point to an absolute character offset in the prompt, using the
+   * clickable/spellcheck overlay text nodes as the mirror layout. Each overlay
+   * covers [0, value.length) contiguously with one span per segment/piece, so the
+   * absolute offset is the summed length of preceding sibling spans plus the local
+   * caret offset — independent of which overlay the hit test lands on. Returns -1
+   * when the caret can't be resolved (caller falls back to native behavior).
+   */
+  function getCaretFromPoint(clientX: number, clientY: number): number {
+    let node: Node | null = null;
+    let localOffset = 0;
+    const doc = document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      caretPositionFromPoint?: (
+        x: number,
+        y: number,
+      ) => { offsetNode: Node; offset: number } | null;
+    };
+    if (typeof doc.caretRangeFromPoint === "function") {
+      const range = doc.caretRangeFromPoint(clientX, clientY);
+      if (range) {
+        node = range.startContainer;
+        localOffset = range.startOffset;
+      }
+    } else if (typeof doc.caretPositionFromPoint === "function") {
+      const pos = doc.caretPositionFromPoint(clientX, clientY);
+      if (pos) {
+        node = pos.offsetNode;
+        localOffset = pos.offset;
+      }
+    }
+    if (!node || node.nodeType !== Node.TEXT_NODE) return -1;
+    const span = node.parentElement;
+    const container = span?.parentElement ?? null;
+    if (!container || (container !== clickOverlayEl && container !== spellcheckOverlayEl)) {
+      return -1;
+    }
+    let offset = 0;
+    for (const child of Array.from(container.children)) {
+      if (child === span) return offset + localOffset;
+      offset += (child.textContent ?? "").length;
+    }
+    return -1;
+  }
+
+  /**
+   * Right-click on a clickable tag span: if it maps to an unknown-tag spellcheck
+   * piece, open the suggestion menu; otherwise let the native context menu show.
+   */
+  function handleClickableSegmentContextMenu(event: MouseEvent, segment: PromptClickableSegment) {
+    const piece = spellcheckPieces.find(
+      (p) => p.unknown && p.name !== null && p.start === segment.start && p.end === segment.end,
+    );
+    if (piece) openSpellMenu(event, piece);
+  }
+
+  /**
+   * Right-click anywhere in the textarea: covers underlined segments even when the
+   * clickable overlay is disabled. WebView2/Chromium moves the caret to the click
+   * point before `contextmenu` fires, so hit-test the caret against unknown pieces.
+   */
+  function handleTextareaContextMenu(event: MouseEvent) {
+    if (!textareaEl || !autocomplete.spellcheckEnabled) return;
+    const caret = textareaEl.selectionStart;
+    const piece = spellcheckPieces.find(
+      (p) => p.unknown && p.name !== null && caret >= p.start && caret <= p.end,
+    );
+    if (piece) openSpellMenu(event, piece);
   }
 
   function replaceRange(start: number, end: number, replacement: string) {
@@ -812,6 +900,7 @@
         onkeyup={syncSelectionRange}
       onblur={handleBlur}
       onscroll={syncScroll}
+      oncontextmenu={handleTextareaContextMenu}
     ></textarea>
 
     {#if showClickableOverlay}
@@ -834,6 +923,7 @@
                   : 'hover:bg-indigo-500/18 hover:shadow-[inset_0_0_0_1px_rgba(129,140,248,0.5)]'}"
               style="color: transparent;"
               onmousedown={(event) => handleClickableSegmentMouseDown(event, segment)}
+              oncontextmenu={(event) => handleClickableSegmentContextMenu(event, segment)}
             >{value.slice(segment.start, segment.end)}</span>
           {:else}
             <span style="color: transparent;">{value.slice(segment.start, segment.end)}</span>
@@ -851,11 +941,9 @@
       >
         {#each spellcheckPieces as piece (piece.start + ':' + piece.end)}
           {#if piece.unknown}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <span
-              class="pointer-events-auto cursor-context-menu underline decoration-wavy decoration-red-500 underline-offset-2"
+              class="underline decoration-wavy decoration-red-500 underline-offset-2"
               style="color: transparent; text-decoration-skip-ink: none;"
-              oncontextmenu={(event) => openSpellMenu(event, piece)}
             >{value.slice(piece.start, piece.end)}</span>
           {:else}
             <span style="color: transparent;">{value.slice(piece.start, piece.end)}</span>

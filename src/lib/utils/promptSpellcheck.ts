@@ -60,14 +60,60 @@ export function damerauLevenshtein(a: string, b: string, max: number): number {
   return prev[bl] <= max ? prev[bl] : max + 1;
 }
 
-/** Extract the bare tag name from a clickable segment's raw text. */
+/**
+ * Extract the bare tag name from a clickable segment's raw text. Handles every
+ * weighted shape the clickable-range parser produces (A1111 `(name:1.2)`, plain
+ * `{name}`/`[name]`, InvokeAI trailing `(name)0.5` / `(name)++`, NAI `1.2::name::`).
+ * Multi-tag or nested groups return "" so `isKnownTag("")` treats them as known
+ * and they are never false-flagged with a red underline.
+ */
 function extractName(raw: string, start: number, end: number, weighted: boolean): string {
   const text = raw.slice(start, end);
   if (!weighted) return text;
-  // Strip one wrapper layer: (name:1.2) -> name, {name} -> name, [name] -> name.
+
+  // NAI numeric weight: N::name:: — starts with a digit, ends with "::".
+  if (/^\d/.test(text) && text.endsWith("::")) {
+    const sep = text.indexOf("::");
+    return sep === -1 ? "" : text.slice(sep + 2, -2).trim();
+  }
+
+  const open = text[0];
+
+  // InvokeAI trailing weight/emphasis on a flat group: (name)0.5, (name)++, (name)--.
+  // Opens with "(" but does not end with ")".
+  if (open === "(" && text[text.length - 1] !== ")") {
+    let depth = 0;
+    let closeIdx = -1;
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === "(") depth += 1;
+      else if (text[i] === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          closeIdx = i;
+          break;
+        }
+      }
+    }
+    if (closeIdx < 1) return "";
+    const inner = text.slice(1, closeIdx);
+    return /[,()[\]{}]/.test(inner) ? "" : inner.trim();
+  }
+
+  // Remaining forms wrap the name in a matching bracket pair.
+  const closeFor: Record<string, string> = { "(": ")", "{": "}", "[": "]" };
+  const close = closeFor[open];
+  if (!close || text[text.length - 1] !== close) return "";
+
   const inner = text.slice(1, -1);
-  const m = inner.match(/^(.*):\d*\.?\d+$/);
-  return m ? m[1] : inner;
+  if (open === "(") {
+    // A1111/NAI (name:1.2) — greedy capture up to the trailing :number.
+    const m = inner.match(/^(.*):\d*\.?\d+$/);
+    const name = m ? m[1] : inner;
+    return /[,()[\]{}]/.test(name) ? "" : name.trim();
+  }
+
+  // {name} or [name].
+  return /[,()[\]{}]/.test(inner) ? "" : inner.trim();
 }
 
 /**

@@ -59,6 +59,10 @@ class AutocompleteStore {
   private _isAnima = false;
   private _animaTags: TagEntry[] | null = null;
   private _animaTagsPromise: Promise<TagEntry[]> | null = null;
+  // Supplemental danbooru artist tags (lazy chunk), merged into the builtin corpus
+  // on non-Anima models where danbooru-tags.json carries only ~269 artists.
+  private _artistSupplementTags: TagEntry[] | null = null;
+  private _artistSupplementPromise: Promise<TagEntry[]> | null = null;
   // Ignore slower builtin swaps if the model/source changed before a lazy import resolved.
   private _builtinSwapToken = 0;
 
@@ -188,6 +192,26 @@ class AutocompleteStore {
     return this._animaTagsPromise;
   }
 
+  private async loadArtistSupplement(): Promise<TagEntry[]> {
+    if (this._artistSupplementTags) {
+      return this._artistSupplementTags;
+    }
+
+    if (!this._artistSupplementPromise) {
+      this._artistSupplementPromise = import("../assets/danbooru-artists.json")
+        .then((module) => {
+          this._artistSupplementTags = module.default as TagEntry[];
+          return this._artistSupplementTags;
+        })
+        .catch((error) => {
+          this._artistSupplementPromise = null;
+          throw error;
+        });
+    }
+
+    return this._artistSupplementPromise;
+  }
+
   private async syncBuiltinTags() {
     if (this.sourceMode !== "builtin") return;
 
@@ -195,10 +219,23 @@ class AutocompleteStore {
     const isAnima = this._isAnima;
 
     if (!isAnima) {
-      if (swapToken !== this._builtinSwapToken || this.sourceMode !== "builtin" || this._isAnima !== isAnima) {
-        return;
+      try {
+        const supplement = await this.loadArtistSupplement();
+        if (swapToken !== this._builtinSwapToken || this.sourceMode !== "builtin" || this._isAnima !== isAnima) {
+          return;
+        }
+        const mainNames = new Set(danbooruTags.map((t) => t.n));
+        const extra = supplement.filter((t) => !mainNames.has(t.n));
+        this.setTags(extra.length > 0 ? [...danbooruTags, ...extra] : danbooruTags);
+      } catch (e) {
+        if (swapToken !== this._builtinSwapToken || this.sourceMode !== "builtin" || this._isAnima !== isAnima) {
+          return;
+        }
+        // Supplement unavailable (missing asset, or fetch failure in browser mode):
+        // fall back to the base danbooru corpus so autocomplete still works.
+        console.error("Failed to load danbooru artist supplement:", e);
+        this.setTags(danbooruTags);
       }
-      this.setTags(danbooruTags);
       return;
     }
 
