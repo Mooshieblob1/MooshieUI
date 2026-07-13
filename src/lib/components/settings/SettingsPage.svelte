@@ -104,7 +104,6 @@
   let tagFileLoading = $state(false);
   let showQualityTagsWarning = $state(false);
   let showAdvancedModeWarning = $state(false);
-  let showCustomQualityTags = $state(false);
 
   // Attention backend state
   let attentionInstalling = $state(false);
@@ -2727,7 +2726,11 @@
             <input
               type="checkbox"
               id="custom-quality-tags"
-              bind:checked={showCustomQualityTags}
+              checked={generation.customQualityTagsEnabled}
+              onchange={(e) => {
+                generation.customQualityTagsEnabled = (e.target as HTMLInputElement).checked;
+                generation.saveSettings();
+              }}
               class="w-4 h-4 mt-0.5 accent-indigo-500 rounded"
             />
             <div>
@@ -2736,7 +2739,7 @@
             </div>
           </div>
 
-          {#if showCustomQualityTags}
+          {#if generation.customQualityTagsEnabled}
           <QualityTagsEditor />
           {/if}
           {/if}

@@ -407,6 +407,8 @@ class GenerationStore {
   outputFormat = $state<"png" | "jxl">("png");
   metadataMode = $state<"text_chunk" | "stealth" | "both">("both");
   autoQualityTags = $state(true);
+  /** UI-reveal toggle for the custom quality tags editor (values apply based on autoQualityTags). */
+  customQualityTagsEnabled = $state(false);
   customAnimaPositiveQuality = $state(DEFAULT_ANIMA_POSITIVE_QUALITY);
   customAnimaNegativeQuality = $state(DEFAULT_ANIMA_NEGATIVE_QUALITY);
   customIllustriousPositiveQuality = $state(DEFAULT_ILLUSTRIOUS_POSITIVE_QUALITY);
@@ -1397,6 +1399,7 @@ class GenerationStore {
         if (saved.outputFormat === "png" || saved.outputFormat === "jxl") this.outputFormat = saved.outputFormat;
         if (saved.metadataMode) this.metadataMode = saved.metadataMode;
         if (saved.autoQualityTags !== undefined) this.autoQualityTags = saved.autoQualityTags;
+        if (saved.customQualityTagsEnabled !== undefined) this.customQualityTagsEnabled = saved.customQualityTagsEnabled;
         if (saved.customAnimaPositiveQuality !== undefined) this.customAnimaPositiveQuality = saved.customAnimaPositiveQuality;
         if (saved.customAnimaNegativeQuality !== undefined) this.customAnimaNegativeQuality = saved.customAnimaNegativeQuality;
         if (saved.customIllustriousPositiveQuality !== undefined) this.customIllustriousPositiveQuality = saved.customIllustriousPositiveQuality;
@@ -1535,6 +1538,7 @@ class GenerationStore {
         outputFormat: this.outputFormat,
         metadataMode: this.metadataMode,
         autoQualityTags: this.autoQualityTags,
+        customQualityTagsEnabled: this.customQualityTagsEnabled,
         customAnimaPositiveQuality: this.customAnimaPositiveQuality,
         customAnimaNegativeQuality: this.customAnimaNegativeQuality,
         customIllustriousPositiveQuality: this.customIllustriousPositiveQuality,
@@ -1635,6 +1639,7 @@ class GenerationStore {
       outputFormat: this.outputFormat,
       metadataMode: this.metadataMode,
       autoQualityTags: this.autoQualityTags,
+      customQualityTagsEnabled: this.customQualityTagsEnabled,
       customAnimaPositiveQuality: this.customAnimaPositiveQuality,
       customAnimaNegativeQuality: this.customAnimaNegativeQuality,
       customIllustriousPositiveQuality: this.customIllustriousPositiveQuality,
