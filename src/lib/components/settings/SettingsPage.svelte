@@ -29,6 +29,8 @@
   import { marked } from "marked";
   import DOMPurify from "dompurify";
   import { clearArtistImageCache, getArtistImageCacheCount } from "../../artist-gallery/imageCache.js";
+  import { appVersion as getAppVersion } from "../../utils/platformInfo.js";
+  import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 
   interface Props {
     userRole?: string;
@@ -87,8 +89,7 @@
   // Configure marked for safe rendering (no raw HTML passthrough)
   marked.setOptions({ breaks: true, gfm: true });
 
-  declare const __APP_VERSION__: string;
-  const appVersion = __APP_VERSION__ ?? "dev";
+  const appVersion = getAppVersion();
 
   let config = $state<AppConfig | null>(null);
   let showPromptAssistantSetup = $state(false);
@@ -1041,7 +1042,7 @@
     if (!updateObj) return;
     updateState = "downloading";
     try {
-      await updateObj.downloadAndInstall((event) => {
+      await updateObj.downloadAndInstall((event: DownloadEvent) => {
         if (event.event === "Started") {
           updateTotal = event.data.contentLength ?? 0;
           updateDownloaded = 0;
@@ -1566,8 +1567,8 @@
       const usedIds = new Set(existingProfiles.map((profile) => profile.id));
       const imported = parsed.themes.map((theme, index) => {
         const source = (typeof theme === "object" && theme) ? (theme as Partial<ThemeProfile>) : {};
-        const dark = source.dark ?? {};
-        const light = source.light ?? {};
+        const dark: Partial<ThemeTone> = source.dark ?? {};
+        const light: Partial<ThemeTone> = source.light ?? {};
         return {
           id: makeUniqueThemeProfileId(
             typeof source.id === "string" && source.id.trim() ? source.id : `theme_${Date.now()}_${index}`,
@@ -2120,7 +2121,7 @@
             </div>
             <button
               class="w-10 h-5 rounded-full transition-colors cursor-pointer {config.auto_start !== false ? 'bg-indigo-600' : 'bg-neutral-700'}"
-              onclick={() => { config.auto_start = config.auto_start === false; autoSave(); }}
+              onclick={() => { config!.auto_start = config!.auto_start === false; autoSave(); }}
               role="switch"
               aria-checked={config.auto_start !== false}
             >
