@@ -74,7 +74,6 @@
     type ComfyServerErrorPayload,
   } from "./lib/utils/comfyStartup.js";
 
-  declare const __APP_VERSION__: string;
   const appVersion = __APP_VERSION__ ?? "dev";
   let comfyuiVersionInfo = $state<ComfyUiVersionInfo | null>(null);
   const COMFYUI_OUTDATED_NOTIF_TITLE = "notifications.comfyui_outdated.title";
@@ -927,7 +926,7 @@
     interrogateError = null;
     interrogateImageUrl = url.startsWith("data:") ? url : null;
 
-    const unlistenDownload = await ipcListen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+    const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
       (event) => {
         if (event.payload.done) {
@@ -938,7 +937,7 @@
       },
     );
 
-    const unlistenStage = await ipcListen<string>("interrogator:stage", (event) => {
+    const unlistenStage = await ipcListen("interrogator:stage", (event) => {
       interrogateStage = event.payload;
     });
 
@@ -1049,7 +1048,7 @@
     interrogateError = null;
     interrogateImageUrl = image.thumbnailUrl || image.url || null;
 
-    const unlistenDownload = await ipcListen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+    const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
       (event) => {
         if (event.payload.done) {
@@ -1060,7 +1059,7 @@
       }
     );
 
-    const unlistenStage = await ipcListen<string>("interrogator:stage", (event) => {
+    const unlistenStage = await ipcListen("interrogator:stage", (event) => {
       interrogateStage = event.payload;
     });
 
@@ -1109,13 +1108,13 @@
     if (interrogateImageUrl?.startsWith("blob:")) URL.revokeObjectURL(interrogateImageUrl);
     interrogateImageUrl = previewUrl;
 
-    const unlistenDownload = await ipcListen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+    const unlistenDownload = await ipcListen(
       "interrogator:download_progress",
       (event) => {
         interrogateDownloadProgress = event.payload.done ? null : event.payload;
       },
     );
-    const unlistenStage = await ipcListen<string>("interrogator:stage", (event) => {
+    const unlistenStage = await ipcListen("interrogator:stage", (event) => {
       interrogateStage = event.payload;
     });
 
