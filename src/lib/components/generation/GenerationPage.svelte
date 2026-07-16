@@ -37,7 +37,6 @@
   import type { ContextMenuItem } from "../ui/ContextMenu.svelte";
   import InterrogateModal from "./InterrogateModal.svelte";
   import { interrogateGalleryImage, interrogateImage } from "../../utils/api.js";
-  import InterrogateSection from "./InterrogateSection.svelte";
   import { ipcListen, isTauri } from "../../utils/ipc.js";
   import { progress } from "../../stores/progress.svelte.js";
   import {
@@ -62,7 +61,6 @@
   type SectionId =
     | "dimensions"
     | "prompts"
-    | "interrogate"
     | "imageInputs"
     | "inpaintLayers"
     | "generationSettings"
@@ -100,7 +98,6 @@
   let sectionSides = $state<Record<SectionId, SectionSide>>({
     dimensions: "left",
     prompts: "left",
-    interrogate: "left",
     imageInputs: "left",
     inpaintLayers: "right",
     generationSettings: "right",
@@ -128,7 +125,6 @@
   const SECTION_ORDER: SectionId[] = [
     "dimensions",
     "prompts",
-    "interrogate",
     "imageInputs",
     "inpaintLayers",
     "generationSettings",
@@ -323,7 +319,6 @@
   const savedCollapse = typeof window !== "undefined" ? loadCollapseState() : {};
 
   let dimensionsSectionOpen = $state(savedCollapse.dimensions !== false);
-  let interrogateSectionOpen = $state(savedCollapse.interrogate !== false);
   let imageSectionOpen = $state(savedCollapse.imageInputs !== false);
   let layersSectionOpen = $state(savedCollapse.inpaintLayers !== false);
   let controlsSectionOpen = $state(savedCollapse.generationSettings !== false);
@@ -338,7 +333,6 @@
   $effect(() => {
     const state: Record<string, boolean> = {
       dimensions: dimensionsSectionOpen,
-      interrogate: interrogateSectionOpen,
       imageInputs: imageSectionOpen,
       inpaintLayers: layersSectionOpen,
       generationSettings: controlsSectionOpen,
@@ -1498,30 +1492,6 @@
     </div>
   {/snippet}
 
-  {#snippet interrogateSection()}
-    <div bind:this={sectionRefs['interrogate']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'interrogate' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
-      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
-        {@render dragHandle("interrogate")}
-        <button
-          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
-          onclick={() => (interrogateSectionOpen = !interrogateSectionOpen)}
-          title={interrogateSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.interrogate.title') }) : locale.t('common.expand', { section: locale.t('generation.interrogate.title') })}
-        >
-          <span class="flex items-center gap-1.5 font-medium">
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-            {locale.t('generation.interrogate.title')}
-          </span>
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {interrogateSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-      </div>
-      {#if interrogateSectionOpen}
-        <div class="px-3 pb-2 pt-0.5">
-          <InterrogateSection />
-        </div>
-      {/if}
-    </div>
-  {/snippet}
-
   {#snippet imageInputsSection()}
     <div bind:this={sectionRefs['imageInputs']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'imageInputs' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
       <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
@@ -2008,8 +1978,6 @@
       {@render dimensionsSection()}
     {:else if section === "prompts"}
       {@render promptsSection()}
-    {:else if section === "interrogate"}
-      {@render interrogateSection()}
     {:else if section === "imageInputs"}
       {@render imageInputsSection()}
     {:else if section === "inpaintLayers"}
@@ -2192,10 +2160,12 @@
       <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
         <!-- Preview area -->
         <div
-          class="relative flex-1 min-h-0 p-6 {mobileFriendly ? 'pt-20' : ''} flex flex-col gap-4 overflow-y-auto"
+          class="relative flex-1 min-h-0 p-6 {mobileFriendly ? 'pt-20' : ''} flex flex-col overflow-y-auto"
         >
-          <ProgressBar />
-          <PreviewImage />
+          <div class="m-auto w-full flex flex-col gap-4">
+            <ProgressBar />
+            <PreviewImage />
+          </div>
         </div>
       </div>
     {/if}

@@ -193,6 +193,55 @@ pub async fn mark_legacy_worker_idle(state: &AppState) {
     }
 }
 
+/// The venv site-packages directories to scan for an installed attention backend.
+/// Windows has a single `Lib/site-packages`; Unix nests under `lib/pythonX.Y/`.
+fn venv_site_packages(venv_path: &str) -> Vec<std::path::PathBuf> {
+    let base = std::path::Path::new(venv_path);
+    #[cfg(target_os = "windows")]
+    {
+        vec![base.join("Lib").join("site-packages")]
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut dirs = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(base.join("lib")) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with("python") {
+                    dirs.push(entry.path().join("site-packages"));
+                }
+            }
+        }
+        dirs
+    }
+}
+
+/// Cheap filesystem check that the package backing `attention_backend` is actually
+/// present in the venv. Used to skip the ComfyUI launch flag when config points at a
+/// backend whose package is missing (failed/rolled-back install, manual uninstall),
+/// so ComfyUI falls back to default SDPA instead of crashing at startup. Also repairs
+/// configs corrupted by an earlier install-failure that persisted a broken backend.
+fn attention_package_present(venv_path: &str, backend: &str) -> bool {
+    // Import-dir name to look for under site-packages.
+    let needle = match backend {
+        "sage_v1" | "sage_v2" => "sageattention",
+        "flash_v1" | "flash_v2" => "flash_attn",
+        _ => return true, // "default"/unknown: nothing to check
+    };
+    for site in venv_site_packages(venv_path) {
+        if let Ok(entries) = std::fs::read_dir(&site) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                // Matches the package dir ("sageattention", "flash_attn") or its
+                // dist-info ("flash_attn-2.5.8.dist-info").
+                if name == needle || name.starts_with(&format!("{}-", needle)) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Spawn the ComfyUI process (or detect an already-running one).
 /// Returns immediately — does NOT wait for the server to become ready.
 pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppError> {
@@ -463,13 +512,31 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         _ => {}
     }
 
-    // Attention backend flag (mutually exclusive in ComfyUI)
+    // Attention backend flag (mutually exclusive in ComfyUI). Self-heal: only pass
+    // the flag if the backing package is actually installed, else fall back to
+    // default SDPA so a stale/broken config can't crash ComfyUI at startup.
     match config.attention_backend.as_str() {
-        "sage_v1" | "sage_v2" => {
-            cmd.arg("--use-sage-attention");
+        backend @ ("sage_v1" | "sage_v2") => {
+            if attention_package_present(&config.venv_path, backend) {
+                cmd.arg("--use-sage-attention");
+            } else {
+                log::warn!(
+                    "attention_backend='{}' but sageattention is not installed in the venv; \
+                     launching ComfyUI without --use-sage-attention (default SDPA).",
+                    backend
+                );
+            }
         }
-        "flash_v1" | "flash_v2" => {
-            cmd.arg("--use-flash-attention");
+        backend @ ("flash_v1" | "flash_v2") => {
+            if attention_package_present(&config.venv_path, backend) {
+                cmd.arg("--use-flash-attention");
+            } else {
+                log::warn!(
+                    "attention_backend='{}' but flash-attn is not installed in the venv; \
+                     launching ComfyUI without --use-flash-attention (default SDPA).",
+                    backend
+                );
+            }
         }
         // "default" → PyTorch SDPA, no flag needed
         _ => {}

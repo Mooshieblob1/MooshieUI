@@ -6114,6 +6114,98 @@ pub struct AttentionBackendStatus {
     pub current: String,
     pub venv_packages: Vec<String>,
     pub compute_capability: Option<f32>,
+    /// OS family ("windows" | "linux" | "macos").
+    pub os: String,
+    /// Whether the CUDA toolkit (`nvcc`) is on PATH — required to build the
+    /// source-only backends (sage_v2 / flash_v1 / flash_v2) on Windows.
+    pub nvcc_available: bool,
+    /// Per-backend support, so the UI can disable options the machine can't use.
+    pub support: Vec<BackendSupport>,
+}
+
+/// Whether a given attention backend can be installed on this machine, and why not.
+#[derive(Debug, Serialize)]
+pub struct BackendSupport {
+    pub backend: String,
+    pub supported: bool,
+    /// Machine-readable reason code when unsupported:
+    /// `"no_nvidia_gpu" | "compute_capability" | "nvcc_missing"`.
+    pub reason: Option<String>,
+    pub min_cc: Option<f32>,
+}
+
+/// Resolve the venv's Python interpreter path (platform-specific layout).
+fn venv_python_bin(venv_path: &str) -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        std::path::Path::new(venv_path)
+            .join("Scripts")
+            .join("python.exe")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::path::Path::new(venv_path).join("bin").join("python")
+    }
+}
+
+/// Probe whether the CUDA compiler (`nvcc`) is available on PATH.
+fn nvcc_available() -> bool {
+    let mut cmd = std::process::Command::new("nvcc");
+    cmd.arg("--version");
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd.output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// Compute per-backend support from detected capabilities. Hard-block rules:
+/// no NVIDIA GPU → all non-default blocked; compute cap below the backend's
+/// minimum → blocked; on Windows, source-built backends need `nvcc` → blocked
+/// when missing. Everything else is attempt-install-and-verify.
+fn compute_backend_support(
+    compute_capability: Option<f32>,
+    nvcc: bool,
+    is_windows: bool,
+) -> Vec<BackendSupport> {
+    // (backend, min compute capability, source-build requiring nvcc on Windows)
+    const MATRIX: [(&str, f32, bool); 4] = [
+        ("sage_v1", 8.0, false), // wheel; triton at runtime (triton-windows on Windows)
+        ("sage_v2", 8.0, true),  // CUDA source build
+        ("flash_v1", 7.5, true), // source build
+        ("flash_v2", 8.0, true), // source build on Windows; Linux sdist may fetch a wheel
+    ];
+    MATRIX
+        .iter()
+        .map(|(backend, min_cc, source_build)| {
+            let needs_nvcc = *source_build && is_windows;
+            let (supported, reason) = match compute_capability {
+                None => (false, Some("no_nvidia_gpu".to_string())),
+                Some(cc) if cc < *min_cc => (false, Some("compute_capability".to_string())),
+                Some(_) if needs_nvcc && !nvcc => (false, Some("nvcc_missing".to_string())),
+                Some(_) => (true, None),
+            };
+            BackendSupport {
+                backend: backend.to_string(),
+                supported,
+                reason,
+                min_cc: Some(*min_cc),
+            }
+        })
+        .collect()
+}
+
+/// Keep only the last ~20 lines of a stderr blob, so surfaced install errors are
+/// informative without dumping an entire build log into the UI.
+fn stderr_tail(s: &str) -> String {
+    let lines: Vec<&str> = s.lines().collect();
+    let tail = if lines.len() > 20 {
+        &lines[lines.len() - 20..]
+    } else {
+        &lines[..]
+    };
+    tail.join("\n").trim().to_string()
 }
 
 /// Check which attention backend packages are installed in the venv and detect GPU compute capability.
@@ -6122,28 +6214,25 @@ pub struct AttentionBackendStatus {
 pub async fn check_attention_backend(
     state: State<'_, Arc<AppState>>,
 ) -> Result<AttentionBackendStatus, AppError> {
+    check_attention_backend_core(&state).await
+}
+
+/// Core of `check_attention_backend`, shared by the desktop Tauri command and the
+/// browser-mode dispatch arm. Lists the attention packages present in the venv and
+/// computes per-backend support from GPU compute capability, OS, and `nvcc`.
+pub async fn check_attention_backend_core(
+    state: &Arc<AppState>,
+) -> Result<AttentionBackendStatus, AppError> {
     let (venv_path, current) = {
         let config = state.config.read().await;
         (config.venv_path.clone(), config.attention_backend.clone())
     };
 
     let uv = resolve_uv_bin(&venv_path);
+    let venv_python = venv_python_bin(&venv_path);
 
-    // List installed packages in the venv
+    // List installed attention packages in the venv
     let mut venv_packages = Vec::new();
-    let venv_python = {
-        #[cfg(target_os = "windows")]
-        {
-            std::path::Path::new(&venv_path)
-                .join("Scripts")
-                .join("python.exe")
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            std::path::Path::new(&venv_path).join("bin").join("python")
-        }
-    };
-
     if uv.exists() {
         let output = tokio::process::Command::new(&uv)
             .args(["pip", "list", "--python", &venv_python.to_string_lossy()])
@@ -6154,7 +6243,7 @@ pub async fn check_attention_backend(
         if let Some(o) = output {
             if o.status.success() {
                 let stdout = String::from_utf8_lossy(&o.stdout);
-                let known = ["sageattention", "flash-attn", "triton"];
+                let known = ["sageattention", "flash-attn", "triton", "triton-windows"];
                 for line in stdout.lines() {
                     let pkg = line.split_whitespace().next().unwrap_or("").to_lowercase();
                     if known.iter().any(|k| pkg == *k) {
@@ -6165,13 +6254,17 @@ pub async fn check_attention_backend(
         }
     }
 
-    // Detect GPU compute capability
     let compute_capability = detect_compute_capability();
+    let nvcc = nvcc_available();
+    let support = compute_backend_support(compute_capability, nvcc, cfg!(target_os = "windows"));
 
     Ok(AttentionBackendStatus {
         current,
         venv_packages,
         compute_capability,
+        os: std::env::consts::OS.to_string(),
+        nvcc_available: nvcc,
+        support,
     })
 }
 
@@ -6233,9 +6326,13 @@ pub async fn install_attention_backend_core(
         )));
     }
 
-    let venv_path = {
+    let (venv_path, network_proxy, pip_index_url) = {
         let config = state.config.read().await;
-        config.venv_path.clone()
+        (
+            config.venv_path.clone(),
+            config.network_proxy.clone(),
+            config.pip_index_url.clone(),
+        )
     };
 
     let uv = resolve_uv_bin(&venv_path);
@@ -6243,85 +6340,121 @@ pub async fn install_attention_backend_core(
         return Err(AppError::Other("uv not found. Run setup first.".into()));
     }
 
-    let venv_python = {
-        #[cfg(target_os = "windows")]
-        {
-            std::path::Path::new(&venv_path)
-                .join("Scripts")
-                .join("python.exe")
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            std::path::Path::new(&venv_path).join("bin").join("python")
-        }
-    };
+    let venv_python = venv_python_bin(&venv_path);
     let python_str = venv_python.to_string_lossy().to_string();
+    let is_windows = cfg!(target_os = "windows");
 
-    // Step 1: Uninstall any existing attention packages (ignore errors)
+    // Preflight: reject hard-blocked backends before touching any packages, so a
+    // doomed source build never even starts.
+    if backend != "default" {
+        let support =
+            compute_backend_support(detect_compute_capability(), nvcc_available(), is_windows);
+        if let Some(s) = support.iter().find(|s| s.backend == backend) {
+            if !s.supported {
+                let reason = match s.reason.as_deref() {
+                    Some("no_nvidia_gpu") => "no NVIDIA GPU was detected".to_string(),
+                    Some("compute_capability") => format!(
+                        "the GPU's compute capability is below the required {} for this backend",
+                        s.min_cc
+                            .map(|c| format!("{:.1}", c))
+                            .unwrap_or_else(|| "minimum".into())
+                    ),
+                    Some("nvcc_missing") => "the CUDA toolkit (nvcc) is required to build this backend from source but was not found on PATH".to_string(),
+                    _ => "it is not supported on this system".to_string(),
+                };
+                return Err(AppError::Other(format!(
+                    "Cannot install the {} attention backend: {}.",
+                    backend, reason
+                )));
+            }
+        }
+    }
+
+    // Package names (no version specifier) backing each backend, for uninstall/rollback.
+    let base_names: Vec<&str> = match backend.as_str() {
+        "sage_v1" | "sage_v2" => {
+            if is_windows {
+                vec!["sageattention", "triton-windows"]
+            } else {
+                vec!["sageattention"]
+            }
+        }
+        "flash_v1" | "flash_v2" => vec!["flash-attn"],
+        _ => vec![],
+    };
+
+    // Step 1: Uninstall any existing attention packages (ignore errors). Includes
+    // triton-windows on Windows since we install it alongside SageAttention there.
     emit("Removing old attention packages...");
+    let mut uninstall_old: Vec<&str> = vec![
+        "pip",
+        "uninstall",
+        "--python",
+        &python_str,
+        "sageattention",
+        "flash-attn",
+    ];
+    if is_windows {
+        uninstall_old.push("triton-windows");
+    }
     let _ = tokio::process::Command::new(&uv)
-        .args([
-            "pip",
-            "uninstall",
-            "--python",
-            &python_str,
-            "sageattention",
-            "flash-attn",
-        ])
+        .args(&uninstall_old)
         .output()
         .await;
 
     // Step 2: Install the requested backend
     if backend != "default" {
-        let install_args: Vec<&str> = match backend.as_str() {
+        // Packages plus extra pip flags for the requested backend.
+        let (packages, extra_flags): (Vec<&str>, Vec<&str>) = match backend.as_str() {
             "sage_v1" => {
-                emit("Installing SageAttention v1 (pure Triton)...");
-                vec![
-                    "pip",
-                    "install",
-                    "--python",
-                    &python_str,
-                    "sageattention==1.0.6",
-                ]
+                emit("Installing SageAttention v1...");
+                if is_windows {
+                    (vec!["sageattention==1.0.6", "triton-windows"], vec![])
+                } else {
+                    (vec!["sageattention==1.0.6"], vec![])
+                }
             }
             "sage_v2" => {
                 emit("Installing SageAttention v2 (CUDA kernels — may take a few minutes)...");
-                vec![
-                    "pip",
-                    "install",
-                    "--python",
-                    &python_str,
-                    "sageattention>=2.0.0,<3.0.0",
-                    "--no-build-isolation",
-                ]
+                if is_windows {
+                    (
+                        vec!["sageattention>=2.0.0,<3.0.0", "triton-windows"],
+                        vec!["--no-build-isolation"],
+                    )
+                } else {
+                    (
+                        vec!["sageattention>=2.0.0,<3.0.0"],
+                        vec!["--no-build-isolation"],
+                    )
+                }
             }
             "flash_v1" => {
                 emit("Installing FlashAttention v1...");
-                vec![
-                    "pip",
-                    "install",
-                    "--python",
-                    &python_str,
-                    "flash-attn<2.0",
-                    "--no-build-isolation",
-                ]
+                (vec!["flash-attn<2.0"], vec!["--no-build-isolation"])
             }
             "flash_v2" => {
                 emit("Installing FlashAttention v2 (may compile from source — this can take 10+ minutes)...");
-                vec![
-                    "pip",
-                    "install",
-                    "--python",
-                    &python_str,
-                    "flash-attn",
-                    "--no-build-isolation",
-                ]
+                (vec!["flash-attn"], vec!["--no-build-isolation"])
             }
             _ => unreachable!(),
         };
 
-        let output = tokio::process::Command::new(&uv)
-            .args(&install_args)
+        let mut cmd = tokio::process::Command::new(&uv);
+        cmd.arg("pip")
+            .arg("install")
+            .arg("--python")
+            .arg(&python_str)
+            .args(&packages)
+            .args(&extra_flags);
+        // Mirror/proxy parity with setup.rs::uv_pip (fixes silent mirror bypass).
+        crate::comfyui::nodes::apply_pip_install_options(
+            &mut cmd,
+            true,
+            network_proxy.as_deref(),
+            pip_index_url.as_deref(),
+        );
+
+        let output = cmd
             .output()
             .await
             .map_err(|e| AppError::Other(format!("Failed to run uv: {}", e)))?;
@@ -6330,12 +6463,44 @@ pub async fn install_attention_backend_core(
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(AppError::Other(format!(
                 "Failed to install {} attention backend: {}",
-                backend, stderr
+                backend,
+                stderr_tail(&stderr)
+            )));
+        }
+
+        // Import verification: a pip "success" that can't actually import (missing
+        // triton, CUDA mismatch) is not acceptance. On failure, roll back what we
+        // just installed and leave config on the previous backend.
+        emit("Verifying installation...");
+        let import_name = if backend.starts_with("sage") {
+            "sageattention"
+        } else {
+            "flash_attn"
+        };
+        let verify = tokio::process::Command::new(&venv_python)
+            .args(["-c", &format!("import {}", import_name)])
+            .output()
+            .await
+            .map_err(|e| AppError::Other(format!("Failed to run python: {}", e)))?;
+
+        if !verify.status.success() {
+            let stderr = String::from_utf8_lossy(&verify.stderr);
+            emit("Verification failed — rolling back...");
+            let mut rollback: Vec<&str> = vec!["pip", "uninstall", "--python", &python_str];
+            rollback.extend(base_names.iter().copied());
+            let _ = tokio::process::Command::new(&uv)
+                .args(&rollback)
+                .output()
+                .await;
+            return Err(AppError::Other(format!(
+                "Installed {} but could not import it: {}. Rolled back; keeping the previous backend.",
+                backend,
+                stderr_tail(&stderr)
             )));
         }
     }
 
-    // Step 3: Update config
+    // Step 3: Update config (only after a verified install)
     {
         let mut config = state.config.write().await;
         config.attention_backend = backend.clone();

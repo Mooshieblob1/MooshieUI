@@ -1229,28 +1229,58 @@ fn step_install_custom_nodes(base: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Install an optional attention backend package into the venv.
+/// Verify that a freshly-installed attention backend can actually be imported.
+/// A pip "success" that can't `import` (missing triton, CUDA mismatch) must be
+/// treated as a failure so the caller can fall back to the default backend.
+async fn verify_attention_import(base: &Path, import_name: &str) -> Result<(), String> {
+    let python = venv_python(base);
+    let mut cmd = tokio::process::Command::new(python);
+    cmd.arg("-c").arg(format!("import {}", import_name));
+    hide_window(&mut cmd);
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("failed to run python: {}", e))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!(
+            "could not import {} after install: {}",
+            import_name,
+            stderr.trim()
+        ))
+    }
+}
+
+/// Install an optional attention backend package into the venv, then verify it
+/// imports. On Windows the SageAttention backends also install `triton-windows`
+/// (Windows torch doesn't bundle triton and official triton has no Windows wheels).
 async fn step_install_attention_backend(
     app: &AppHandle,
     base: &Path,
     backend: &str,
     net: &SetupNetworkOpts,
 ) -> Result<(), String> {
+    let is_windows = cfg!(target_os = "windows");
     match backend {
         "sage_v1" => {
-            emit_log(app, "Installing SageAttention v1 (pure Triton)...");
-            uv_pip(app, base, &["sageattention==1.0.6"], net, true).await
+            emit_log(app, "Installing SageAttention v1...");
+            let mut pkgs = vec!["sageattention==1.0.6"];
+            if is_windows {
+                pkgs.push("triton-windows");
+            }
+            uv_pip(app, base, &pkgs, net, true).await?;
+            verify_attention_import(base, "sageattention").await
         }
         "sage_v2" => {
             emit_log(app, "Installing SageAttention v2 (CUDA kernels)...");
-            uv_pip(
-                app,
-                base,
-                &["sageattention>=2.0.0,<3.0.0", "--no-build-isolation"],
-                net,
-                true,
-            )
-            .await
+            let mut pkgs = vec!["sageattention>=2.0.0,<3.0.0", "--no-build-isolation"];
+            if is_windows {
+                pkgs.push("triton-windows");
+            }
+            uv_pip(app, base, &pkgs, net, true).await?;
+            verify_attention_import(base, "sageattention").await
         }
         "flash_v1" => {
             emit_log(app, "Installing FlashAttention v1...");
@@ -1261,7 +1291,8 @@ async fn step_install_attention_backend(
                 net,
                 true,
             )
-            .await
+            .await?;
+            verify_attention_import(base, "flash_attn").await
         }
         "flash_v2" => {
             emit_log(app, "Installing FlashAttention v2...");
@@ -1272,7 +1303,8 @@ async fn step_install_attention_backend(
                 net,
                 true,
             )
-            .await
+            .await?;
+            verify_attention_import(base, "flash_attn").await
         }
         _ => Ok(()),
     }
@@ -2070,7 +2102,7 @@ pub async fn run_setup(
     step_install_custom_nodes(&base)?;
 
     // 7b. Optional attention backend (NVIDIA only)
-    let attention = attention_backend
+    let mut attention = attention_backend
         .as_deref()
         .unwrap_or("default")
         .to_string();
@@ -2082,7 +2114,8 @@ pub async fn run_setup(
             88,
         );
         if let Err(e) = step_install_attention_backend(&app, &base, &attention, &net).await {
-            // Non-fatal: log warning and fall back to default
+            // Non-fatal, but reset to "default" so we never persist a backend whose
+            // package isn't actually installed (which would crash ComfyUI at launch).
             log::warn!(
                 "Attention backend install failed, falling back to default: {}",
                 e
@@ -2091,6 +2124,7 @@ pub async fn run_setup(
                 &app,
                 &format!("⚠ Attention backend install failed: {}. Using default.", e),
             );
+            attention = "default".to_string();
         }
     }
 

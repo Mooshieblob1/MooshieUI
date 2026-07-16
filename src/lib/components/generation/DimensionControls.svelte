@@ -9,6 +9,17 @@
   }
   let { suggestedAspect = null }: Props = $props();
 
+  const AR_COLLAPSE_KEY = "mooshieui.generation.aspectRatioCollapsed.v1";
+  let arOpen = $state(localStorage.getItem(AR_COLLAPSE_KEY) !== "true");
+  let arSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const collapsed = String(!arOpen);
+    if (arSaveTimer) clearTimeout(arSaveTimer);
+    arSaveTimer = setTimeout(() => {
+      try { localStorage.setItem(AR_COLLAPSE_KEY, collapsed); } catch {}
+    }, 300);
+  });
+
   let aspectW = $state(1);
   let aspectH = $state(1);
   let sideLength = $state(1024);
@@ -225,7 +236,23 @@
 <div class="space-y-3">
   <!-- Aspect Ratio -->
   <div>
-    <p class="text-xs text-neutral-400 mb-1.5">{locale.t('generation.dimensions.aspect_ratio')}<InfoTip text={locale.t('generation.dimensions.aspect_ratio_tip')} /></p>
+    <div class="flex items-center mb-1.5">
+      <button
+        class="flex items-center text-xs text-neutral-400 hover:text-neutral-200 focus:outline-none"
+        onclick={() => (arOpen = !arOpen)}
+        title={arOpen ? locale.t('common.collapse', { section: locale.t('generation.dimensions.aspect_ratio') }) : locale.t('common.expand', { section: locale.t('generation.dimensions.aspect_ratio') })}
+      >{locale.t('generation.dimensions.aspect_ratio')}</button>
+      <InfoTip text={locale.t('generation.dimensions.aspect_ratio_tip')} />
+      <button
+        class="ml-auto text-neutral-400 hover:text-neutral-200 focus:outline-none"
+        onclick={() => (arOpen = !arOpen)}
+        title={arOpen ? locale.t('common.collapse', { section: locale.t('generation.dimensions.aspect_ratio') }) : locale.t('common.expand', { section: locale.t('generation.dimensions.aspect_ratio') })}
+        aria-label={arOpen ? locale.t('common.collapse', { section: locale.t('generation.dimensions.aspect_ratio') }) : locale.t('common.expand', { section: locale.t('generation.dimensions.aspect_ratio') })}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {arOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    </div>
+    {#if arOpen}
     <div class="flex items-center gap-1 flex-wrap mb-2">
       {#each presets as preset (preset.label)}
         {@const preview = aspectPreviewSize(preset.w, preset.h)}
@@ -284,6 +311,7 @@
       </button>
     </div>
     <p class="text-[10px] text-neutral-500 mt-1">{locale.t('generation.dimensions.ratio_hint')}</p>
+    {/if}
   </div>
 
   <!-- Side Length -->

@@ -1987,50 +1987,10 @@ async fn dispatch_command(
             Ok(serde_json::json!(null))
         }
         "check_attention_backend" => {
-            let (venv_path, current) = {
-                let config = state.config.read().await;
-                (config.venv_path.clone(), config.attention_backend.clone())
-            };
-
-            let uv = crate::commands::api::resolve_uv_bin_pub(&venv_path);
-            let mut venv_packages = Vec::new();
-            let venv_python = {
-                #[cfg(target_os = "windows")]
-                {
-                    std::path::Path::new(&venv_path)
-                        .join("Scripts")
-                        .join("python.exe")
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    std::path::Path::new(&venv_path).join("bin").join("python")
-                }
-            };
-
-            if uv.exists() {
-                if let Ok(output) = tokio::process::Command::new(&uv)
-                    .args(["pip", "list", "--python", &venv_python.to_string_lossy()])
-                    .output()
-                    .await
-                {
-                    if output.status.success() {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let known = ["sageattention", "flash-attn", "triton"];
-                        for line in stdout.lines() {
-                            let pkg = line.split_whitespace().next().unwrap_or("").to_lowercase();
-                            if known.iter().any(|k| pkg == *k) {
-                                venv_packages.push(pkg);
-                            }
-                        }
-                    }
-                }
-            }
-
-            Ok(serde_json::json!({
-                "current": current,
-                "venv_packages": venv_packages,
-                "compute_capability": crate::commands::api::detect_compute_capability_pub(),
-            }))
+            let status = crate::commands::api::check_attention_backend_core(&state)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(&status).map_err(|e| e.to_string())
         }
         "install_attention_backend" => {
             let backend = args["backend"]

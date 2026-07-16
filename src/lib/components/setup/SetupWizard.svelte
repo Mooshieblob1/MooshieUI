@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import logo from "../../assets/logo.png";
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
+  import { checkAttentionBackend, type BackendSupport } from "../../utils/api.js";
 
   let {
     onSetupComplete,
@@ -19,6 +20,10 @@
   let detectedGpu = $state("cpu");
   let attentionBackend = $state("default");
   let showAdvanced = $state(false);
+  // Attention capability gating (fetched once when an NVIDIA GPU is present).
+  let attentionSupport = $state<BackendSupport[]>([]);
+  let attentionCC = $state<number | null>(null);
+  let attentionSupportFetched = $state(false);
   let showConnection = $state(false);
   let networkProxy = $state("");
   let pipIndexUrl = $state("");
@@ -81,6 +86,57 @@
   $effect(() => {
     if (!progressMessage) progressMessage = locale.t("setup.progress_preparing");
   });
+
+  // Fetch attention capability info once an NVIDIA GPU is selected, so we can
+  // disable radio cards the machine can't actually build/run.
+  $effect(() => {
+    if (gpu === "nvidia" && !attentionSupportFetched) {
+      attentionSupportFetched = true;
+      checkAttentionBackend()
+        .then((status) => {
+          attentionSupport = status.support;
+          attentionCC = status.compute_capability;
+          // If the pre-selected backend turns out to be unsupported, fall back.
+          if (attentionBackend !== "default" && supportFor(attentionBackend)?.supported === false) {
+            attentionBackend = "default";
+          }
+        })
+        .catch(() => {
+          // Leave everything enabled; the install preflight is the backstop.
+          attentionSupport = [];
+        });
+    }
+  });
+
+  /** Capability record for a backend value from the fetched status. */
+  function supportFor(value: string): BackendSupport | null {
+    return attentionSupport.find((s) => s.backend === value) ?? null;
+  }
+
+  /** Whether a backend radio card should be disabled. */
+  function attentionBlocked(value: string): boolean {
+    if (value === "default") return false;
+    return supportFor(value)?.supported === false;
+  }
+
+  /** Localized reason string for an unsupported backend. */
+  function attentionReason(s: BackendSupport | null): string {
+    if (!s) return "";
+    switch (s.reason) {
+      case "no_nvidia_gpu":
+        return locale.t("settings.performance.attention_requires_nvidia");
+      case "compute_capability":
+        return locale.t("settings.performance.attention_requires_cc", {
+          min: s.min_cc != null ? s.min_cc.toFixed(1) : "?",
+          detected: attentionCC != null ? attentionCC.toFixed(1) : locale.t("settings.performance.attention_not_detected"),
+        });
+      case "nvcc_missing":
+        return locale.t("settings.performance.attention_requires_nvcc");
+      default:
+        return "";
+    }
+  }
+
   let currentStep = $state("");
   let completedSteps = $state<Set<string>>(new Set());
 
@@ -506,12 +562,16 @@
                 { value: "flash_v1", label: locale.t('setup.attention.flash_v1'), desc: locale.t('setup.attention.flash_v1_desc') },
                 { value: "flash_v2", label: locale.t('setup.attention.flash_v2'), desc: locale.t('setup.attention.flash_v2_desc') },
               ] as opt}
+                {@const blocked = attentionBlocked(opt.value)}
                 <button
                   type="button"
-                  onclick={() => attentionBackend = opt.value}
-                  class="w-full flex items-start gap-2.5 rounded-lg p-2.5 text-left transition-colors cursor-pointer {attentionBackend === opt.value
-                    ? 'bg-indigo-600/15 border border-indigo-500/50'
-                    : 'bg-neutral-800/50 border border-neutral-700/50 hover:border-neutral-600'}"
+                  disabled={blocked}
+                  onclick={() => { if (!blocked) attentionBackend = opt.value; }}
+                  class="w-full flex items-start gap-2.5 rounded-lg p-2.5 text-left transition-colors {blocked
+                    ? 'bg-neutral-800/30 border border-neutral-700/30 opacity-50 cursor-not-allowed'
+                    : attentionBackend === opt.value
+                      ? 'bg-indigo-600/15 border border-indigo-500/50 cursor-pointer'
+                      : 'bg-neutral-800/50 border border-neutral-700/50 hover:border-neutral-600 cursor-pointer'}"
                 >
                   <div class="mt-0.5 w-3.5 h-3.5 rounded-full border shrink-0 flex items-center justify-center {attentionBackend === opt.value ? 'border-indigo-500 bg-indigo-600' : 'border-neutral-600'}">
                     {#if attentionBackend === opt.value}
@@ -521,6 +581,9 @@
                   <div class="flex-1 min-w-0">
                     <p class="text-xs font-medium {attentionBackend === opt.value ? 'text-indigo-300' : 'text-neutral-200'}">{opt.label}</p>
                     <p class="text-[10px] text-neutral-500">{opt.desc}</p>
+                    {#if blocked}
+                      <p class="text-[10px] text-amber-400/80 mt-0.5">{attentionReason(supportFor(opt.value))}</p>
+                    {/if}
                   </div>
                 </button>
               {/each}

@@ -705,10 +705,21 @@ export async function checkPythonImport(module: string): Promise<boolean> {
   return ipcInvoke("check_python_import", { module });
 }
 
+export interface BackendSupport {
+  backend: string;
+  supported: boolean;
+  /** Reason code when unsupported: "no_nvidia_gpu" | "compute_capability" | "nvcc_missing". */
+  reason: string | null;
+  min_cc: number | null;
+}
+
 export interface AttentionBackendStatus {
   current: string;
   venv_packages: string[];
   compute_capability: number | null;
+  os: string;
+  nvcc_available: boolean;
+  support: BackendSupport[];
 }
 
 export async function checkAttentionBackend(): Promise<AttentionBackendStatus> {

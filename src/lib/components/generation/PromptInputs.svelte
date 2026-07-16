@@ -24,6 +24,17 @@
 
   let { showHistory = true, onOpenRegionalPrompt }: Props = $props();
 
+  // NovelAI-style combined prompt view: one box with a Positive/Negative
+  // switcher. Persisted (UI layout pref → localStorage, not generation
+  // settings); the active tab itself is session-only.
+  const COMBINED_KEY = "mooshieui.prompts.combined.v1";
+  let combinedMode = $state(localStorage.getItem(COMBINED_KEY) === "true");
+  let activeTab = $state<"positive" | "negative">("positive");
+  $effect(() => {
+    const val = String(combinedMode);
+    try { localStorage.setItem(COMBINED_KEY, val); } catch {}
+  });
+
   const hasPositiveSchedule = $derived(hasSchedulingTags(generation.positivePrompt));
   const regionalPromptingSupported = $derived(generation.supportsRegionalPrompting);
   const hasRegionalPrompting = $derived(
@@ -175,7 +186,27 @@
   <div>
     <div class="flex items-center justify-between gap-2 mb-1">
       <div class="flex items-center gap-1.5 shrink-0">
-        <label class="text-xs text-neutral-400">{locale.t('generation.prompts.positive')}<InfoTip text={locale.t('generation.prompts.positive_tip')} /></label>
+        {#if combinedMode}
+          <div class="flex gap-1 bg-neutral-900 rounded-lg p-1">
+            <button
+              type="button"
+              class="px-2.5 py-0.5 text-xs rounded-md transition-colors {activeTab === 'positive' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
+              onclick={() => (activeTab = 'positive')}
+            >{locale.t('generation.prompts.tab_positive')}</button>
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 px-2.5 py-0.5 text-xs rounded-md transition-colors {activeTab === 'negative' ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-neutral-200'}"
+              onclick={() => (activeTab = 'negative')}
+            >
+              {locale.t('generation.prompts.tab_negative')}
+              {#if generation.disablesNegativePrompt}
+                <span class="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" aria-hidden="true" title={locale.t('generation.prompts.negative_disabled_for_model')}></span>
+              {/if}
+            </button>
+          </div>
+        {:else}
+          <label class="text-xs text-neutral-400">{locale.t('generation.prompts.positive')}<InfoTip text={locale.t('generation.prompts.positive_tip')} /></label>
+        {/if}
       </div>
       <div class="flex items-center justify-end gap-1.5 flex-wrap min-w-0">
       {#if combinedPositiveTokens > 0}
@@ -238,8 +269,20 @@
           <span class="font-mono max-w-28 truncate">@{displayName}</span>
         </button>
       {/each}
+      <button
+        type="button"
+        onclick={() => (combinedMode = !combinedMode)}
+        class="shrink-0 text-neutral-400 hover:text-neutral-200 transition-colors p-0.5"
+        title={combinedMode ? locale.t('generation.prompts.combined_mode_split') : locale.t('generation.prompts.combined_mode_toggle')}
+        aria-label={combinedMode ? locale.t('generation.prompts.combined_mode_split') : locale.t('generation.prompts.combined_mode_toggle')}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+      </button>
       </div>
     </div>
+    {#if combinedMode && activeTab === "negative"}
+      {@render negativeFields()}
+    {:else}
     <div class="mb-1 flex items-center justify-between">
       <div class="flex items-center gap-1.5">
         <button
@@ -309,8 +352,10 @@
       </p>
     {/if}
     <ExtraPromptBoxList side="positive" />
+    {/if}
   </div>
 
+  {#snippet negativeFields()}
   <div class="transition-opacity {generation.disablesNegativePrompt ? 'opacity-40 pointer-events-none' : ''}">
     <label class="block text-xs text-neutral-400 mb-1">
       {locale.t('generation.prompts.negative')}<InfoTip text={locale.t('generation.prompts.negative_tip')} />
@@ -327,6 +372,11 @@
     />
     <ExtraPromptBoxList side="negative" />
   </div>
+  {/snippet}
+
+  {#if !combinedMode}
+    {@render negativeFields()}
+  {/if}
 
   {#if hasAnySchedule}
     <div class="rounded-lg border border-neutral-800 bg-neutral-900/50 p-2.5 space-y-2">

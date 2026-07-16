@@ -53,9 +53,13 @@
   import {
     interrogateGalleryImage,
     interrogateImage,
+    interrogateImagePath,
+    interrogateClipboard,
+    readClipboardImageSafe,
     saveModelSidecarThumbnail,
     installCustomNode,
   } from "./lib/utils/api.js";
+  import InterrogateQuickModal from "./lib/components/generation/InterrogateQuickModal.svelte";
   import {
     fetchModelPreviewImageBytes,
     uploadModelPreviewImage,
@@ -1088,6 +1092,185 @@
     }
   }
 
+  // --- Quick interrogate (sidebar button + compact modal) ---
+  let showInterrogateQuickModal = $state(false);
+  let interrogateSidebarBtn = $state<HTMLButtonElement | undefined>();
+
+  /** Shared runner for the quick-interrogate flows: opens the results modal,
+   *  wires the progress/stage listeners, then runs the supplied IPC call. */
+  async function runQuickInterrogation(previewUrl: string | null, run: () => Promise<InterrogationResult>) {
+    showInterrogateQuickModal = false;
+    showInterrogateModal = true;
+    interrogateLoading = true;
+    interrogateResult = null;
+    interrogateStage = null;
+    interrogateDownloadProgress = null;
+    interrogateError = null;
+    if (interrogateImageUrl?.startsWith("blob:")) URL.revokeObjectURL(interrogateImageUrl);
+    interrogateImageUrl = previewUrl;
+
+    const unlistenDownload = await ipcListen<{ downloaded: number; total: number; filename: string; done: boolean }>(
+      "interrogator:download_progress",
+      (event) => {
+        interrogateDownloadProgress = event.payload.done ? null : event.payload;
+      },
+    );
+    const unlistenStage = await ipcListen<string>("interrogator:stage", (event) => {
+      interrogateStage = event.payload;
+    });
+
+    try {
+      interrogateResult = await run();
+    } catch (e) {
+      console.error("Interrogation failed:", e);
+      interrogateError = e instanceof Error ? e.message : String(e);
+    } finally {
+      interrogateLoading = false;
+      interrogateStage = null;
+      unlistenDownload();
+      unlistenStage();
+    }
+  }
+
+  /** Interrogate an in-memory image file (browser file input / drag-drop). */
+  async function interrogateFileQuick(file: File) {
+    const previewUrl = URL.createObjectURL(file);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    await runQuickInterrogation(previewUrl, () => interrogateImage(btoa(binary)));
+  }
+
+  /** Interrogate an image by filesystem path (Tauri dialog / native drop). */
+  async function interrogatePathQuick(path: string) {
+    let previewUrl: string | null = null;
+    if (isTauri) {
+      try {
+        const { readFile } = await import("@tauri-apps/plugin-fs");
+        const bytes = await readFile(path);
+        previewUrl = URL.createObjectURL(new Blob([bytes]));
+      } catch {
+        previewUrl = null;
+      }
+    }
+    await runQuickInterrogation(previewUrl, () => interrogateImagePath(path));
+  }
+
+  /** Interrogate whatever image is on the clipboard. */
+  async function interrogatePasteQuick() {
+    if (isBrowserMode) {
+      try {
+        const bytes = await readClipboardImageSafe();
+        if (!bytes || bytes.length === 0) {
+          showInterrogateQuickModal = false;
+          showInterrogateModal = true;
+          interrogateLoading = false;
+          interrogateResult = null;
+          interrogateError = locale.t("common.no_clipboard_image");
+          return;
+        }
+        const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+        const previewUrl = URL.createObjectURL(blob);
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve((reader.result as string).split(",")[1]);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+        await runQuickInterrogation(previewUrl, () => interrogateImage(base64));
+      } catch (e) {
+        showInterrogateQuickModal = false;
+        showInterrogateModal = true;
+        interrogateLoading = false;
+        interrogateResult = null;
+        interrogateError = e instanceof Error ? e.message : String(e);
+      }
+      return;
+    }
+    await runQuickInterrogation(null, () => interrogateClipboard());
+  }
+
+  /** Tauri-only: pick an image via the native dialog, then interrogate it. */
+  async function browseInterrogateQuick() {
+    if (!isTauri) return;
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }],
+    });
+    if (!selected) return;
+    await interrogatePathQuick(selected as string);
+  }
+
+  // Drag-hover-to-open: hovering a dragged image over the sidebar button for
+  // ~1.5s pops the quick modal. Timer is shared by the HTML5 (browser) and
+  // native Tauri drag paths below.
+  const INTERROGATE_HOVER_MS = 1500;
+  let interrogateHoverTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function startInterrogateHoverTimer() {
+    if (interrogateHoverTimer || showInterrogateQuickModal) return;
+    interrogateHoverTimer = setTimeout(() => {
+      interrogateHoverTimer = null;
+      showInterrogateQuickModal = true;
+    }, INTERROGATE_HOVER_MS);
+  }
+
+  function cancelInterrogateHoverTimer() {
+    if (interrogateHoverTimer) {
+      clearTimeout(interrogateHoverTimer);
+      interrogateHoverTimer = null;
+    }
+  }
+
+  let unlistenInterrogateDragDrop: (() => void) | null = null;
+
+  /** App-level native drag-drop wiring for the interrogate sidebar button/modal.
+   *  Coexists with GenerationPage's own listener (multiple listeners are allowed;
+   *  each hit-tests its own elements). */
+  async function setupInterrogateTauriDragDrop() {
+    if (!isTauri) return;
+    const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const webview = getCurrentWebview();
+    const scaleFactor = await getCurrentWindow().scaleFactor();
+
+    const isOverButton = (cssX: number, cssY: number): boolean => {
+      const rect = interrogateSidebarBtn?.getBoundingClientRect();
+      if (!rect) return false;
+      return cssX >= rect.left && cssX <= rect.right && cssY >= rect.top && cssY <= rect.bottom;
+    };
+    const isOverModal = (cssX: number, cssY: number): boolean => {
+      const el = document.elementFromPoint(cssX, cssY);
+      return !!(el as HTMLElement | null)?.closest?.("[data-interrogate-quick-modal]");
+    };
+
+    unlistenInterrogateDragDrop = await webview.onDragDropEvent(async (event) => {
+      const payload = event.payload;
+      if (payload.type === "enter" || payload.type === "over") {
+        const cssX = payload.position.x / scaleFactor;
+        const cssY = payload.position.y / scaleFactor;
+        if (isOverButton(cssX, cssY)) {
+          startInterrogateHoverTimer();
+        } else {
+          cancelInterrogateHoverTimer();
+        }
+      } else if (payload.type === "leave") {
+        cancelInterrogateHoverTimer();
+      } else if (payload.type === "drop") {
+        const cssX = payload.position.x / scaleFactor;
+        const cssY = payload.position.y / scaleFactor;
+        cancelInterrogateHoverTimer();
+        // Only claim the drop when it lands on the button or the open quick modal;
+        // otherwise leave it to GenerationPage's drop handler.
+        if (!isOverButton(cssX, cssY) && !(showInterrogateQuickModal && isOverModal(cssX, cssY))) return;
+        const imgPath = payload.paths.find((p) => /\.(png|jpe?g|webp)$/i.test(p));
+        if (!imgPath) return;
+        await interrogatePathQuick(imgPath);
+      }
+    });
+  }
+
   function getImageTimestamp(image: OutputImage): number {
     return image.generated_at_ms ?? 0;
   }
@@ -1841,6 +2024,9 @@
     // Start heartbeat in browser mode to keep backend alive
     startHeartbeat();
 
+    // Native drag-drop wiring for the interrogate sidebar button (Tauri only).
+    setupInterrogateTauriDragDrop();
+
     // Suppress the native WebView context menu (the "Share", "Save As" (html),
     // "Print" and "Send link to..." entries that point at tauri.localhost and make
     // no sense in-app) everywhere except editable text, where the native
@@ -2582,6 +2768,8 @@
     if (modelPreviewActionHandler) {
       window.removeEventListener("mooshie:model-preview-action", modelPreviewActionHandler);
     }
+    cancelInterrogateHoverTimer();
+    if (unlistenInterrogateDragDrop) unlistenInterrogateDragDrop();
     clearGenerationDoneToastTimers();
   });
 </script>
@@ -2837,6 +3025,31 @@
     </button>
 
     <div class="flex-1"></div>
+
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <button
+      bind:this={interrogateSidebarBtn}
+      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {showInterrogateQuickModal
+        ? 'bg-indigo-600 text-white'
+        : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
+      onclick={() => (showInterrogateQuickModal = true)}
+      ondragenter={(e) => { e.preventDefault(); startInterrogateHoverTimer(); }}
+      ondragover={(e) => { e.preventDefault(); }}
+      ondragleave={cancelInterrogateHoverTimer}
+      title={locale.t('generation.interrogate.title')}
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        class="w-4.5 h-4.5 pointer-events-none"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        ><path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" /><path d="M21 17v2a2 2 0 0 1-2 2h-2" /><path d="M7 21H5a2 2 0 0 1-2-2v-2" /><circle cx="12" cy="12" r="3" /><path d="m16 16-1.5-1.5" /></svg
+      >
+    </button>
 
     <button
       class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===
@@ -3431,6 +3644,16 @@
   </div>
 {/if}
 
+<!-- Compact interrogate modal (from the sidebar button / drag-hover) -->
+{#if showInterrogateQuickModal}
+  <InterrogateQuickModal
+    onclose={() => (showInterrogateQuickModal = false)}
+    onpaste={interrogatePasteQuick}
+    onbrowse={browseInterrogateQuick}
+    onfile={interrogateFileQuick}
+  />
+{/if}
+
 <!-- Interrogate modal (from gallery/lightbox) -->
 {#if showInterrogateModal}
   <InterrogateModal
@@ -3440,7 +3663,13 @@
     downloadProgress={interrogateDownloadProgress}
     imagePreviewUrl={interrogateImageUrl}
     error={interrogateError}
-    onclose={() => { showInterrogateModal = false; interrogateResult = null; interrogateImageUrl = null; interrogateError = null; }}
+    onclose={() => {
+      showInterrogateModal = false;
+      interrogateResult = null;
+      if (interrogateImageUrl?.startsWith("blob:")) URL.revokeObjectURL(interrogateImageUrl);
+      interrogateImageUrl = null;
+      interrogateError = null;
+    }}
   />
 {/if}
 

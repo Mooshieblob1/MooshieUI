@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { AppConfig, QueueInfo } from "../../types/index.js";
   import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, getComfyuiVersion, updateComfyui } from "../../utils/api.js";
-  import type { ReleaseNote, ImportResult, AttentionBackendStatus, ComfyUiVersionInfo } from "../../utils/api.js";
+  import type { ReleaseNote, ImportResult, AttentionBackendStatus, BackendSupport, ComfyUiVersionInfo } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
@@ -1319,6 +1319,44 @@
     }
   }
 
+  /** Look up the capability record for a backend value from the current status. */
+  function backendSupport(value: string): BackendSupport | null {
+    return attentionStatus?.support.find((s) => s.backend === value) ?? null;
+  }
+
+  /** Whether a backend option should be disabled (unsupported on this machine). */
+  function backendBlocked(value: string): boolean {
+    if (value === "default") return false;
+    // Until status loads, don't pre-disable — the install preflight is the backstop.
+    if (!attentionStatus) return false;
+    return backendSupport(value)?.supported === false;
+  }
+
+  /** Human-readable display label for a backend value (reuses existing option keys). */
+  function backendLabel(value: string): string {
+    return locale.t(`settings.performance.attention_${value}`);
+  }
+
+  /** Map a BackendSupport reason code to a localized reason string. */
+  function backendReason(s: BackendSupport): string {
+    switch (s.reason) {
+      case "no_nvidia_gpu":
+        return locale.t("settings.performance.attention_requires_nvidia");
+      case "compute_capability":
+        return locale.t("settings.performance.attention_requires_cc", {
+          min: s.min_cc != null ? s.min_cc.toFixed(1) : "?",
+          detected:
+            attentionStatus?.compute_capability != null
+              ? attentionStatus.compute_capability.toFixed(1)
+              : locale.t("settings.performance.attention_not_detected"),
+        });
+      case "nvcc_missing":
+        return locale.t("settings.performance.attention_requires_nvcc");
+      default:
+        return "";
+    }
+  }
+
   /** Manual save for text inputs — triggered by Save button. */
   async function save() {
     if (!config) return;
@@ -2534,10 +2572,10 @@
               class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
             >
               <option value="default">{locale.t('settings.performance.attention_default')}</option>
-              <option value="sage_v1">{locale.t('settings.performance.attention_sage_v1')}</option>
-              <option value="sage_v2">{locale.t('settings.performance.attention_sage_v2')}</option>
-              <option value="flash_v1">{locale.t('settings.performance.attention_flash_v1')}</option>
-              <option value="flash_v2">{locale.t('settings.performance.attention_flash_v2')}</option>
+              <option value="sage_v1" disabled={backendBlocked('sage_v1')}>{locale.t('settings.performance.attention_sage_v1')}</option>
+              <option value="sage_v2" disabled={backendBlocked('sage_v2')}>{locale.t('settings.performance.attention_sage_v2')}</option>
+              <option value="flash_v1" disabled={backendBlocked('flash_v1')}>{locale.t('settings.performance.attention_flash_v1')}</option>
+              <option value="flash_v2" disabled={backendBlocked('flash_v2')}>{locale.t('settings.performance.attention_flash_v2')}</option>
             </select>
             {#if attentionInstalling}
               <p class="text-[10px] text-indigo-400 mt-0.5 flex items-center gap-1">
@@ -2548,6 +2586,14 @@
               <p class="text-[10px] text-red-400 mt-0.5">{attentionError}</p>
             {:else}
               <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.performance.attention_note')}</p>
+            {/if}
+
+            {#if attentionStatus && attentionStatus.compute_capability == null}
+              <p class="text-[10px] text-amber-400/80 mt-1">{locale.t('settings.performance.attention_requires_nvidia')}</p>
+            {:else if attentionStatus}
+              {#each attentionStatus.support.filter((s) => !s.supported) as s (s.backend)}
+                <p class="text-[10px] text-amber-400/80 mt-1">{backendLabel(s.backend)}: {backendReason(s)}</p>
+              {/each}
             {/if}
 
             <div class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2 mt-2">

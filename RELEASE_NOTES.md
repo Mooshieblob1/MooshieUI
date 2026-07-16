@@ -1,3 +1,18 @@
+## What's New in v1.6.0
+
+### New features
+- **Combined prompt box**: an optional single prompt box with a Positive/Negative switcher, in the style of NovelAI. A small toggle in the prompt header flips between the classic split view (positive and negative stacked) and the combined view where one box shows whichever side you have selected. Your quality, style, preset, and artist chips stay visible on both tabs, and each prompt keeps its own text, height, and undo history. Your choice persists across restarts.
+- **Compact interrogate button**: image interrogation moves out of the crowded panel list into a small button in the left sidebar. It opens a compact popup with Paste and Browse, and you can also drag an image onto the button to open it. This frees up vertical space in the generation panels. (The interrogate entry point is desktop only for now.)
+
+### Improvements
+- **Collapsible aspect ratio controls**: the Aspect Ratio block inside the Dimensions panel now collapses to a single header row with a chevron, so you can tuck away the preset chips and width/height inputs when working at a fixed size. Side Length and the result readout stay visible, and the open/closed state is remembered.
+- **Preview stays centered**: the preview image now centers both vertically and horizontally in the middle pane, which reads much better when the window is narrow (for example snapped to half of a 16:9 monitor). Tall previews still scroll normally from the top.
+
+### Fixes
+- **SageAttention and FlashAttention install and activate correctly**: the attention backend options are now gated to hardware that can actually run them. Options you cannot use are disabled with a plain reason (no NVIDIA GPU, compute capability too low, or the CUDA toolkit missing for source builds), installs verify the package actually imports before the setting is saved, and a failed install rolls back cleanly instead of leaving a broken config that could stop ComfyUI from starting. On Windows the SageAttention path also installs the matching triton-windows package. If a backend goes missing later, ComfyUI now starts without the flag instead of crashing.
+
+---
+
 ## What's New in v1.5.1
 
 ### Fixes
