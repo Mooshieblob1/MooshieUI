@@ -2160,11 +2160,18 @@
       <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
         <!-- Preview area -->
         <div
-          class="relative flex-1 min-h-0 p-6 {mobileFriendly ? 'pt-20' : ''} flex flex-col overflow-y-auto"
+          class="relative flex-1 min-h-0 p-6 {mobileFriendly ? 'pt-20' : ''} flex flex-col gap-4 overflow-hidden"
         >
-          <div class="m-auto w-full flex flex-col gap-4">
-            <ProgressBar />
-            <PreviewImage />
+          <ProgressBar />
+          <!-- The preview is a square (aspect-square), so it must be sized to the
+               SMALLER of the frame's width/height or it overflows. `max-w`/`max-h`
+               can't do this: clamping one axis of an aspect-ratio box doesn't feed
+               back into the other. `container-type: size` exposes the frame height
+               as `cqh`, so min(100%, 100cqh) picks the fitting side. -->
+          <div class="flex-1 min-h-0 flex items-center justify-center [container-type:size]">
+            <div class="w-[min(100%,100cqh)]">
+              <PreviewImage />
+            </div>
           </div>
         </div>
       </div>

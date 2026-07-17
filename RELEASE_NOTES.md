@@ -1,3 +1,10 @@
+## What's New in v1.7.1
+
+### Fixes
+- **Preview image fits the pane again**: the centered preview introduced in v1.6.0 was sized to the pane width, so whenever the pane was wider than it was tall (the usual shape once the bottom panel is open) the square preview grew taller than the space available and you had to scroll to see all of it. The preview now scales to whichever side fits, so it stays square, fully centered on both axes, and never needs scrolling.
+
+---
+
 ## What's New in v1.7.0
 
 ### New features
