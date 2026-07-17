@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use super::process::tokio_command_no_window;
+
 #[derive(Clone, Copy)]
 struct RequiredCustomNodePackage {
     name: &'static str,
@@ -24,6 +26,15 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
         verify_nodes: &["ImageScaleToTotalPixelsX"],
     },
 ];
+
+// GGUF-quantized diffusion models / text encoders cannot be loaded by core
+// ComfyUI loaders; the workflow builder emits UnetLoaderGGUF / CLIPLoaderGGUF
+// for .gguf files, which this package provides.
+const GGUF_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
+    name: "ComfyUI-GGUF",
+    git_url: "https://github.com/city96/ComfyUI-GGUF.git",
+    verify_nodes: &["UnetLoaderGGUF", "CLIPLoaderGGUF"],
+}];
 
 const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[
     RequiredCustomNodePackage {
@@ -55,6 +66,9 @@ pub const MISSING_CONTROLNET_NODES_MARKER: &str = "Required ControlNet custom no
 /// Substring present in [`verify_required_style_transfer_nodes`] error output.
 pub const MISSING_STYLE_TRANSFER_NODES_MARKER: &str =
     "Required style transfer custom nodes failed to load";
+
+/// Substring present in [`verify_required_gguf_nodes`] error output.
+pub const MISSING_GGUF_NODES_MARKER: &str = "Required GGUF custom nodes failed to load";
 
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveImage",
@@ -347,6 +361,82 @@ pub async fn ensure_required_style_transfer_nodes(
     Ok(())
 }
 
+/// Ensure the ComfyUI-GGUF loader nodes are present so .gguf diffusion models
+/// and text encoders can be used. Failures are logged as warnings and do not
+/// block core startup.
+pub async fn ensure_required_gguf_nodes(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+) -> Result<(), String> {
+    let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
+    std::fs::create_dir_all(&custom_nodes).map_err(|e| {
+        format!(
+            "Failed to create ComfyUI custom_nodes directory at '{}': {}",
+            custom_nodes.display(),
+            e
+        )
+    })?;
+
+    let mut failures = Vec::new();
+    for package in GGUF_PACKAGES {
+        if let Err(e) = ensure_custom_node_package(
+            &custom_nodes,
+            venv_path,
+            network_proxy,
+            pip_index_url,
+            *package,
+        )
+        .await
+        {
+            log::warn!(
+                "GGUF custom node '{}' setup failed (optional): {}",
+                package.name,
+                e
+            );
+            failures.push(format!("{}: {}", package.name, e));
+        }
+    }
+
+    if failures.is_empty() {
+        log::info!("Ensured required GGUF custom node packages");
+    } else {
+        log::warn!(
+            "Some GGUF custom node packages could not be installed ({}). \
+             GGUF (.gguf) models are unavailable until these install.",
+            failures.join("; ")
+        );
+    }
+    Ok(())
+}
+
+/// Verify GGUF loader node classes (UnetLoaderGGUF / CLIPLoaderGGUF).
+pub async fn verify_required_gguf_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+) -> Result<(), String> {
+    let mut missing = Vec::new();
+
+    for attempt in 0..5 {
+        missing = missing_required_gguf_nodes(http_client, base_url).await?;
+        if missing.is_empty() {
+            log::info!("Verified required GGUF custom node classes");
+            return Ok(());
+        }
+
+        if attempt < 4 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    Err(format!(
+        "{}: {}. Check the ComfyUI log for custom-node import errors.",
+        MISSING_GGUF_NODES_MARKER,
+        missing.join(", ")
+    ))
+}
+
 /// Verify that ComfyUI actually loaded every custom node class required by the
 /// built-in ControlNet presets. Directory presence alone is not enough because
 /// custom-node import failures leave the class missing from /object_info.
@@ -558,7 +648,7 @@ async fn clone_custom_node(
     target_dir: &Path,
     network_proxy: Option<&str>,
 ) -> Result<(), String> {
-    let mut cmd = tokio::process::Command::new("git");
+    let mut cmd = tokio_command_no_window("git");
     cmd.args(["clone", "--depth=1", git_url]).arg(target_dir);
     apply_network_proxy(&mut cmd, network_proxy);
     let output = cmd
@@ -609,14 +699,14 @@ async fn install_requirements_if_needed(
     let uv_path = find_uv_bin(venv_path).await;
     let use_uv = uv_path.is_some();
     let mut command = if let Some(uv_path) = uv_path {
-        let mut command = tokio::process::Command::new(uv_path);
+        let mut command = tokio_command_no_window(uv_path);
         command
             .args(["pip", "install", "-r"])
             .arg(requirements)
             .env("VIRTUAL_ENV", venv_path);
         command
     } else {
-        let mut command = tokio::process::Command::new(resolve_pip_bin(venv_path));
+        let mut command = tokio_command_no_window(resolve_pip_bin(venv_path));
         command.args(["install", "-r"]).arg(requirements);
         command
     };
@@ -662,7 +752,7 @@ async fn find_uv_bin(venv_path: &str) -> Option<PathBuf> {
     }
 
     let global_uv = PathBuf::from("uv");
-    let status = tokio::process::Command::new(&global_uv)
+    let status = tokio_command_no_window(&global_uv)
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -730,6 +820,13 @@ async fn missing_required_style_transfer_nodes(
     base_url: &str,
 ) -> Result<Vec<String>, String> {
     missing_packages_nodes(http_client, base_url, STYLE_TRANSFER_PACKAGES).await
+}
+
+async fn missing_required_gguf_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+) -> Result<Vec<String>, String> {
+    missing_packages_nodes(http_client, base_url, GGUF_PACKAGES).await
 }
 
 async fn missing_packages_nodes(

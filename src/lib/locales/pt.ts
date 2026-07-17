@@ -847,6 +847,7 @@ const pt: Record<string, string> = {
   "modelhub.filter.upscaler": "Upscaler",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "Textual Inversion",
+  "modelhub.filter.text_encoder": "Codificador de texto",
   "modelhub.search_placeholder": "Nome do modelo, criador, estilo...",
 
   "modelhub.sort.highest_rated": "Mais Bem Avaliados",

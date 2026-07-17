@@ -905,6 +905,7 @@ const es: Record<string, string> = {
   "modelhub.filter.upscaler": "Escalador",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "Inversión textual",
+  "modelhub.filter.text_encoder": "Codificador de texto",
   "modelhub.search_placeholder": "Nombre del modelo, creador, estilo...",
 
   "modelhub.sort.highest_rated": "Mejor valorados",

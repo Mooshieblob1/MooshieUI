@@ -847,6 +847,7 @@ const zh: Record<string, string> = {
   "modelhub.filter.upscaler": "放大器",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "文本反转",
+  "modelhub.filter.text_encoder": "文本编码器",
   "modelhub.search_placeholder": "模型名称、创作者、风格...",
 
   "modelhub.sort.highest_rated": "最高评分",

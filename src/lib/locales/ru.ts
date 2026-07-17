@@ -847,6 +847,7 @@ const ru: Record<string, string> = {
   "modelhub.filter.upscaler": "Апскейлер",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "Textual Inversion",
+  "modelhub.filter.text_encoder": "Текстовый энкодер",
   "modelhub.search_placeholder": "Имя модели, автор, стиль...",
 
   "modelhub.sort.highest_rated": "С наивысшим рейтингом",

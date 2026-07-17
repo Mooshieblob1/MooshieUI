@@ -1032,6 +1032,7 @@ const en: Record<string, string> = {
   "modelhub.filter.upscaler": "Upscaler",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "Textual Inversion",
+  "modelhub.filter.text_encoder": "Text Encoder",
 
   "modelhub.search_placeholder": "Model name, creator, style...",
 

@@ -213,10 +213,18 @@ pub fn load_model_nodes(
     } else if params.use_split_model {
         // UNETLoader for diffusion model. Pass both unet_name and model_name for compatibility
         // across standard ComfyUI and custom nodes (e.g. ComfyUI-Flow-Control).
+        // GGUF quantized models cannot be loaded by core UNETLoader — route them
+        // through the ComfyUI-GGUF custom node instead (installed at ComfyUI setup).
         let unet_name = params.diffusion_model.as_deref().unwrap_or("");
         let unet_id = next_id.to_string();
-        workflow.insert(
-            unet_id.clone(),
+        let unet_node = if unet_name.to_ascii_lowercase().ends_with(".gguf") {
+            json!({
+                "class_type": "UnetLoaderGGUF",
+                "inputs": {
+                    "unet_name": unet_name
+                }
+            })
+        } else {
             json!({
                 "class_type": "UNETLoader",
                 "inputs": {
@@ -224,20 +232,27 @@ pub fn load_model_nodes(
                     "model_name": unet_name,
                     "weight_dtype": "default"
                 }
-            }),
-        );
+            })
+        };
+        workflow.insert(unet_id.clone(), unet_node);
         model_source = (unet_id, 0);
         next_id += 1;
 
-        // CLIPLoader for text encoder
+        // CLIPLoader for text encoder (GGUF-quantized encoders need CLIPLoaderGGUF)
         let clip_id = next_id.to_string();
         let clip_type = params.clip_type.as_deref().unwrap_or("wan");
+        let clip_name = params.clip_model.as_deref().unwrap_or("");
+        let clip_class = if clip_name.to_ascii_lowercase().ends_with(".gguf") {
+            "CLIPLoaderGGUF"
+        } else {
+            "CLIPLoader"
+        };
         workflow.insert(
             clip_id.clone(),
             json!({
-                "class_type": "CLIPLoader",
+                "class_type": clip_class,
                 "inputs": {
-                    "clip_name": params.clip_model.as_deref().unwrap_or(""),
+                    "clip_name": clip_name,
                     "type": clip_type
                 }
             }),

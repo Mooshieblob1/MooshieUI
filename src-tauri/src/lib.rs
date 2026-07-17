@@ -453,6 +453,7 @@ pub fn run() {
             commands::api::read_clipboard_image,
             commands::api::get_gpu_stats,
             commands::api::check_attention_backend,
+            commands::api::get_compute_capability,
             commands::api::install_attention_backend,
             setup::check_setup,
             setup::detect_gpu,

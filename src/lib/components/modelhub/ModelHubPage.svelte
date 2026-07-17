@@ -90,6 +90,7 @@
     { value: "vae", label: locale.t("modelhub.filter.vae") },
     { value: "controlnet", label: locale.t("modelhub.filter.controlnet") },
     { value: "embeddings", label: locale.t("modelhub.filter.textual_inversion") },
+    { value: "text_encoders", label: locale.t("modelhub.filter.text_encoder") },
   ]);
 
   const hfQuickLinks = [
@@ -110,6 +111,12 @@
       url: "https://huggingface.co/Acly/Omni-SR/resolve/main/OmniSR_X4_DIV2K.safetensors",
       filename: "OmniSR_X4_DIV2K.safetensors",
       category: "upscale_models",
+    },
+    {
+      label: "Qwen3-VL 4B FP8 (Krea 2)",
+      url: "https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors",
+      filename: "qwen3vl_4b_fp8_scaled.safetensors",
+      category: "text_encoders",
     },
   ] as const;
 

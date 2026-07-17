@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 #[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter, State};
 
+use crate::comfyui::process::tokio_command_no_window;
 use crate::comfyui::types::*;
 use crate::error::AppError;
 use crate::state::AppState;
@@ -2232,7 +2233,7 @@ pub async fn install_custom_node(
     // git clone — stream stderr for progress (git writes progress to stderr)
     emit_progress("clone", &format!("Cloning {}...", node_name), false);
 
-    let mut git_cmd = tokio::process::Command::new("git");
+    let mut git_cmd = tokio_command_no_window("git");
     git_cmd
         .args([
             "clone",
@@ -2290,7 +2291,7 @@ pub async fn install_custom_node(
         let uv_path = resolve_uv_bin(&venv_path);
 
         let mut pip_child = if uv_path.exists() {
-            let mut cmd = tokio::process::Command::new(&uv_path);
+            let mut cmd = tokio_command_no_window(&uv_path);
             cmd.args(["pip", "install", "-r", &req_file.to_string_lossy()])
                 .env("VIRTUAL_ENV", &venv_path)
                 .stdout(std::process::Stdio::piped())
@@ -2310,7 +2311,7 @@ pub async fn install_custom_node(
             #[cfg(not(target_os = "windows"))]
             let pip_path = venv_base.join("bin").join("pip");
 
-            let mut cmd = tokio::process::Command::new(&pip_path);
+            let mut cmd = tokio_command_no_window(&pip_path);
             cmd.args(["install", "-r", &req_file.to_string_lossy()])
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
@@ -2398,7 +2399,7 @@ pub async fn install_pip_package(
     let uv_path = resolve_uv_bin(&venv_path);
 
     let output = if uv_path.exists() {
-        let mut cmd = tokio::process::Command::new(&uv_path);
+        let mut cmd = tokio_command_no_window(&uv_path);
         cmd.args(["pip", "install", &package])
             .env("VIRTUAL_ENV", &venv_path);
         crate::comfyui::nodes::apply_pip_install_options(
@@ -2418,7 +2419,7 @@ pub async fn install_pip_package(
         #[cfg(not(target_os = "windows"))]
         let pip_path = venv_base.join("bin").join("pip");
 
-        let mut cmd = tokio::process::Command::new(&pip_path);
+        let mut cmd = tokio_command_no_window(&pip_path);
         cmd.args(["install", &package]);
         crate::comfyui::nodes::apply_pip_install_options(
             &mut cmd,
@@ -2461,7 +2462,7 @@ pub async fn check_python_import(
     };
 
     let python_path = resolve_venv_python_bin(&venv_path);
-    let output = tokio::process::Command::new(&python_path)
+    let output = tokio_command_no_window(&python_path)
         .args(["-c", &format!("import {}", module)])
         .output()
         .await
@@ -3928,7 +3929,13 @@ pub(crate) async fn read_modelspec_internal(
     )
     .ok_or_else(|| AppError::Other(format!("File not found: {}", filename)))?;
 
-    if !filename.ends_with(".safetensors") {
+    // GGUF files have no safetensors header, but filename heuristics, sidecar
+    // metadata, and hash lookups still apply. Without them a GGUF diffusion
+    // model (e.g. Krea-2-Turbo-Q5_K_S.gguf) stays family "unknown" and the
+    // split-model text-encoder type is never resolved.
+    let is_safetensors = filename.ends_with(".safetensors");
+    let is_gguf = filename.to_ascii_lowercase().ends_with(".gguf");
+    if !is_safetensors && !is_gguf {
         return Ok(None);
     }
 
@@ -3993,12 +4000,13 @@ pub(crate) async fn read_modelspec_internal(
         }
     }
 
-    if result
-        .get("is_sdxl_like")
-        .is_some_and(|value| value == "true")
-        || result
-            .get("base_model")
-            .is_some_and(|base_model| is_sdxl_like_family(model_family_from_base_model(base_model)))
+    if is_safetensors
+        && (result
+            .get("is_sdxl_like")
+            .is_some_and(|value| value == "true")
+            || result.get("base_model").is_some_and(|base_model| {
+                is_sdxl_like_family(model_family_from_base_model(base_model))
+            }))
     {
         if let Some(runtime_meta) = read_safetensors_runtime_metadata(&path)? {
             result.extend(runtime_meta);
@@ -4025,8 +4033,13 @@ pub(crate) async fn read_modelspec_internal(
     // trigger phrase, ...) for the model info panel. Header-only read — no
     // hashing. Runtime keys resolved above take precedence. This also populates
     // an inferred `architecture` (from tensor-key patterns) when the file has no
-    // declared modelspec.architecture.
-    if let Ok(Some(display_meta)) = read_safetensors_modelspec(&path) {
+    // declared modelspec.architecture. Safetensors only — GGUF has no such header.
+    let display_meta = if is_safetensors {
+        read_safetensors_modelspec(&path).ok().flatten()
+    } else {
+        None
+    };
+    if let Some(display_meta) = display_meta {
         for (key, value) in display_meta {
             result.entry(key).or_insert(value);
         }
@@ -6217,6 +6230,15 @@ pub async fn check_attention_backend(
     check_attention_backend_core(&state).await
 }
 
+/// Lightweight probe for just the GPU compute capability (single `nvidia-smi` shell-out).
+/// The gen page calls this on mount and after every generation, so it must stay cheap —
+/// unlike `check_attention_backend`, it does not shell out to `uv`/`nvcc`.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn get_compute_capability() -> Result<Option<f32>, AppError> {
+    Ok(detect_compute_capability())
+}
+
 /// Core of `check_attention_backend`, shared by the desktop Tauri command and the
 /// browser-mode dispatch arm. Lists the attention packages present in the venv and
 /// computes per-backend support from GPU compute capability, OS, and `nvcc`.
@@ -6234,11 +6256,9 @@ pub async fn check_attention_backend_core(
     // List installed attention packages in the venv
     let mut venv_packages = Vec::new();
     if uv.exists() {
-        let output = tokio::process::Command::new(&uv)
-            .args(["pip", "list", "--python", &venv_python.to_string_lossy()])
-            .output()
-            .await
-            .ok();
+        let mut cmd = tokio_command_no_window(&uv);
+        cmd.args(["pip", "list", "--python", &venv_python.to_string_lossy()]);
+        let output = cmd.output().await.ok();
 
         if let Some(o) = output {
             if o.status.success() {
@@ -6397,7 +6417,7 @@ pub async fn install_attention_backend_core(
     if is_windows {
         uninstall_old.push("triton-windows");
     }
-    let _ = tokio::process::Command::new(&uv)
+    let _ = tokio_command_no_window(&uv)
         .args(&uninstall_old)
         .output()
         .await;
@@ -6439,7 +6459,7 @@ pub async fn install_attention_backend_core(
             _ => unreachable!(),
         };
 
-        let mut cmd = tokio::process::Command::new(&uv);
+        let mut cmd = tokio_command_no_window(&uv);
         cmd.arg("pip")
             .arg("install")
             .arg("--python")
@@ -6477,7 +6497,7 @@ pub async fn install_attention_backend_core(
         } else {
             "flash_attn"
         };
-        let verify = tokio::process::Command::new(&venv_python)
+        let verify = tokio_command_no_window(&venv_python)
             .args(["-c", &format!("import {}", import_name)])
             .output()
             .await
@@ -6488,10 +6508,7 @@ pub async fn install_attention_backend_core(
             emit("Verification failed — rolling back...");
             let mut rollback: Vec<&str> = vec!["pip", "uninstall", "--python", &python_str];
             rollback.extend(base_names.iter().copied());
-            let _ = tokio::process::Command::new(&uv)
-                .args(&rollback)
-                .output()
-                .await;
+            let _ = tokio_command_no_window(&uv).args(&rollback).output().await;
             return Err(AppError::Other(format!(
                 "Installed {} but could not import it: {}. Rolled back; keeping the previous backend.",
                 backend,

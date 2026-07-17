@@ -1,5 +1,20 @@
 # Changelog
 
+## What's New in v1.7.0
+
+### New features
+- **GGUF quantized models**: `.gguf` diffusion models and text encoders now load and generate. Picking a `.gguf` file routes it through the GGUF loaders instead of the standard ones, and the required ComfyUI-GGUF nodes install automatically the first time ComfyUI is set up. This lets you run large models (Krea 2 and similar) on cards that cannot fit the full-precision weights. If the nodes cannot be installed, ComfyUI still starts normally and only GGUF models are unavailable.
+- **Text encoders in the Model Hub**: a Text Encoder filter joins the category list, so encoders are browsable and downloadable like any other model type, with a quick link for the Qwen3-VL 4B FP8 encoder used by Krea 2.
+
+### Improvements
+- **Model info panel reads GGUF files**: selecting a GGUF model previously left the info panel blank and the family stuck on "unknown", which meant split-model setups never got a text encoder type filled in. Family, turbo, and recommended encoder details now resolve from the filename, sidecar metadata, and hash lookups.
+
+### Fixes
+- **No more console window flashes on Windows**: installing custom nodes or pip packages, cloning repositories, and probing the GPU no longer pop up brief black console windows over the app.
+- **Faster generation page**: reading the GPU compute capability now uses a small dedicated probe. The generation page checks this on load and after each generation, and it previously ran the full attention backend scan (including toolchain lookups) every time.
+
+---
+
 ## What's New in v1.6.0
 
 ### New features

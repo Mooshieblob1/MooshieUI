@@ -727,8 +727,7 @@ export async function checkAttentionBackend(): Promise<AttentionBackendStatus> {
 }
 
 export async function getComputeCapability(): Promise<number | null> {
-  const status = await checkAttentionBackend();
-  return status.compute_capability;
+  return ipcInvoke("get_compute_capability");
 }
 
 export async function installAttentionBackend(backend: string): Promise<void> {

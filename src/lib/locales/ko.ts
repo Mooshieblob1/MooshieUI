@@ -847,6 +847,7 @@ const ko: Record<string, string> = {
   "modelhub.filter.upscaler": "업스케일러",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "텍스트 인버전",
+  "modelhub.filter.text_encoder": "텍스트 인코더",
   "modelhub.search_placeholder": "모델명, 제작자, 스타일...",
 
   "modelhub.sort.highest_rated": "최고 평점",

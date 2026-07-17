@@ -47,6 +47,22 @@ pub(crate) fn std_command_no_window(program: &str) -> std::process::Command {
     cmd
 }
 
+/// `tokio::process::Command` that does not flash a console window on Windows.
+pub(crate) fn tokio_command_no_window(
+    program: impl AsRef<std::ffi::OsStr>,
+) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        // `tokio::process::Command` exposes `creation_flags` inherently, so the
+        // `CommandExt` import is unused on Windows — kept to mirror the std twin.
+        #[allow(unused_imports)]
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 /// Detect whether the system has a Blackwell (compute capability 12.x) NVIDIA GPU.
 /// Returns `true` if any installed GPU has compute capability >= 12.0.
 fn has_blackwell_gpu() -> bool {
@@ -282,6 +298,14 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             )
             .await
             .map_err(AppError::ProcessSpawnFailed)?;
+            super::nodes::ensure_required_gguf_nodes(
+                &config.comfyui_path,
+                &config.venv_path,
+                config.network_proxy.as_deref(),
+                config.pip_index_url.as_deref(),
+            )
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
         }
     }
 
@@ -340,6 +364,8 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             &config.server_url,
         )
         .await;
+        let gguf_ok =
+            super::nodes::verify_required_gguf_nodes(&state.http_client, &config.server_url).await;
 
         if mooshie_ok.is_ok() {
             if let Err(e) = controlnet_ok {
@@ -352,6 +378,13 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             if let Err(e) = style_transfer_ok {
                 log::warn!(
                     "ComfyUI at {} is running but optional style transfer nodes are missing: {}",
+                    config.server_url,
+                    e
+                );
+            }
+            if let Err(e) = gguf_ok {
+                log::warn!(
+                    "ComfyUI at {} is running but optional GGUF nodes are missing: {}",
                     config.server_url,
                     e
                 );
@@ -837,6 +870,11 @@ pub async fn wait_for_ready(state: &AppState, timeout_secs: u64) -> Result<(), A
                     e
                 );
             }
+            if let Err(e) =
+                super::nodes::verify_required_gguf_nodes(&state.http_client, &base_url).await
+            {
+                log::warn!("GGUF custom nodes not loaded at startup (optional): {}", e);
+            }
             mark_legacy_worker_idle(state).await;
             return Ok(());
         }
@@ -1135,6 +1173,14 @@ pub async fn start_worker_process(
             )
             .await
             .map_err(AppError::ProcessSpawnFailed)?;
+            super::nodes::ensure_required_gguf_nodes(
+                &config.comfyui_path,
+                &config.venv_path,
+                config.network_proxy.as_deref(),
+                config.pip_index_url.as_deref(),
+            )
+            .await
+            .map_err(AppError::ProcessSpawnFailed)?;
         }
     }
 
@@ -1155,6 +1201,8 @@ pub async fn start_worker_process(
             &worker.base_url,
         )
         .await;
+        let gguf_ok =
+            super::nodes::verify_required_gguf_nodes(&state.http_client, &worker.base_url).await;
 
         if mooshie_ok.is_ok() {
             if let Err(e) = controlnet_ok {
@@ -1169,6 +1217,15 @@ pub async fn start_worker_process(
             if let Err(e) = style_transfer_ok {
                 log::warn!(
                     "Worker {} (GPU {}): optional style transfer nodes missing at {}: {}",
+                    worker.id,
+                    worker.gpu_index,
+                    worker.base_url,
+                    e
+                );
+            }
+            if let Err(e) = gguf_ok {
+                log::warn!(
+                    "Worker {} (GPU {}): optional GGUF nodes missing at {}: {}",
                     worker.id,
                     worker.gpu_index,
                     worker.base_url,
@@ -1406,6 +1463,15 @@ pub async fn wait_for_worker_ready(
                     e
                 );
             }
+            if let Err(e) =
+                super::nodes::verify_required_gguf_nodes(&state.http_client, &worker.base_url).await
+            {
+                log::warn!(
+                    "Worker {}: GGUF custom nodes not loaded (optional): {}",
+                    worker.id,
+                    e
+                );
+            }
             let mut status = worker.status.write().await;
             *status = WorkerStatus::Idle;
             log::info!(
@@ -1564,6 +1630,15 @@ pub async fn wait_all_workers_ready(state: &AppState, timeout_secs: u64) {
                     {
                         log::warn!(
                             "Worker {}: style transfer custom nodes not loaded (optional): {}",
+                            worker_id,
+                            e
+                        );
+                    }
+                    if let Err(e) =
+                        super::nodes::verify_required_gguf_nodes(&http_client, &base_url).await
+                    {
+                        log::warn!(
+                            "Worker {}: GGUF custom nodes not loaded (optional): {}",
                             worker_id,
                             e
                         );

@@ -869,6 +869,7 @@ const ja: Record<string, string> = {
   "modelhub.filter.upscaler": "アップスケーラー",
   "modelhub.filter.vae": "VAE",
   "modelhub.filter.textual_inversion": "テクスチャルインバージョン",
+  "modelhub.filter.text_encoder": "テキストエンコーダー",
   "modelhub.search_placeholder": "モデル名、作成者、スタイル...",
 
   "modelhub.sort.highest_rated": "最高評価",

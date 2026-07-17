@@ -1019,10 +1019,12 @@ async fn amd_pytorch_index_url() -> &'static str {
 /// Pick the correct PyTorch CUDA wheel index for NVIDIA GPUs.
 /// Blackwell (compute ≥ 12.0) needs cu130+; older GPUs use cu128.
 async fn nvidia_pytorch_index_url() -> &'static str {
-    let output = tokio::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"])
-        .output()
-        .await;
+    let output = {
+        let mut cmd = tokio::process::Command::new("nvidia-smi");
+        cmd.args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"]);
+        hide_window(&mut cmd);
+        cmd.output().await
+    };
 
     if let Ok(o) = output {
         if o.status.success() {

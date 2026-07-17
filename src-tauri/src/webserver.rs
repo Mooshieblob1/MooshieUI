@@ -1992,6 +1992,10 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             serde_json::to_value(&status).map_err(|e| e.to_string())
         }
+        "get_compute_capability" => {
+            let cc = crate::commands::api::detect_compute_capability_pub();
+            serde_json::to_value(cc).map_err(|e| e.to_string())
+        }
         "install_attention_backend" => {
             let backend = args["backend"]
                 .as_str()
@@ -3177,7 +3181,7 @@ async fn dispatch_command(
 
             emit("clone", &format!("Cloning {}...", node_name), false);
 
-            let mut git_cmd = tokio::process::Command::new("git");
+            let mut git_cmd = crate::comfyui::process::tokio_command_no_window("git");
             git_cmd
                 .args([
                     "clone",
@@ -3203,7 +3207,7 @@ async fn dispatch_command(
                 emit("pip", "Installing Python dependencies...", false);
                 let uv_path = crate::commands::api::resolve_uv_bin_pub(&venv_path);
                 let pip_status = if uv_path.exists() {
-                    let mut cmd = tokio::process::Command::new(&uv_path);
+                    let mut cmd = crate::comfyui::process::tokio_command_no_window(&uv_path);
                     cmd.args(["pip", "install", "-r", &req_file.to_string_lossy()])
                         .env("VIRTUAL_ENV", &venv_path);
                     crate::comfyui::nodes::apply_pip_install_options(
@@ -3221,7 +3225,7 @@ async fn dispatch_command(
                     let pip_path = venv_base.join("Scripts").join("pip.exe");
                     #[cfg(not(target_os = "windows"))]
                     let pip_path = venv_base.join("bin").join("pip");
-                    let mut cmd = tokio::process::Command::new(&pip_path);
+                    let mut cmd = crate::comfyui::process::tokio_command_no_window(&pip_path);
                     cmd.args(["install", "-r", &req_file.to_string_lossy()]);
                     crate::comfyui::nodes::apply_pip_install_options(
                         &mut cmd,
@@ -3266,7 +3270,7 @@ async fn dispatch_command(
             let uv_path = crate::commands::api::resolve_uv_bin_pub(&venv_path);
 
             let output = if uv_path.exists() {
-                let mut cmd = tokio::process::Command::new(&uv_path);
+                let mut cmd = crate::comfyui::process::tokio_command_no_window(&uv_path);
                 cmd.args(["pip", "install", &package])
                     .env("VIRTUAL_ENV", &venv_path);
                 crate::comfyui::nodes::apply_pip_install_options(
@@ -3284,7 +3288,7 @@ async fn dispatch_command(
                 let pip_path = venv_base.join("Scripts").join("pip.exe");
                 #[cfg(not(target_os = "windows"))]
                 let pip_path = venv_base.join("bin").join("pip");
-                let mut cmd = tokio::process::Command::new(&pip_path);
+                let mut cmd = crate::comfyui::process::tokio_command_no_window(&pip_path);
                 cmd.args(["install", &package]);
                 crate::comfyui::nodes::apply_pip_install_options(
                     &mut cmd,
@@ -3318,7 +3322,7 @@ async fn dispatch_command(
             drop(config);
 
             let python_path = crate::commands::api::resolve_venv_python_bin(&venv_path);
-            let output = tokio::process::Command::new(&python_path)
+            let output = crate::comfyui::process::tokio_command_no_window(&python_path)
                 .args(["-c", &format!("import {}", module)])
                 .output()
                 .await

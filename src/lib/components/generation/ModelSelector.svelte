@@ -367,8 +367,15 @@
     }
   }
 
+  // GGUF models carry no safetensors header, but the backend still resolves
+  // family/turbo/recommended-encoder info from the filename and sidecars —
+  // without this, GGUF split models (e.g. Krea 2 quants) never get a clip type.
+  function supportsModelSpec(filename: string): boolean {
+    return filename.endsWith(".safetensors") || filename.toLowerCase().endsWith(".gguf");
+  }
+
   async function loadModelSpec(category: string, filename: string) {
-    if (!filename || !filename.endsWith(".safetensors")) {
+    if (!filename || !supportsModelSpec(filename)) {
       loadedModelMetadataKey = "";
       isModelMetadataLoading = false;
       modelSpec = null;
