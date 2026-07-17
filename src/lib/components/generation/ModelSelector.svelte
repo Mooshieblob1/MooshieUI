@@ -9,7 +9,7 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { MODEL_FAMILIES, TURBO_MODEL_VARIANTS } from "../../utils/modelFamily.js";
-  import type { ModelFamily } from "../../utils/modelFamily.js";
+  import type { ModelFamily, TurboModelVariant } from "../../utils/modelFamily.js";
 
   interface ModelFile {
     filename: string;
@@ -374,6 +374,12 @@
     return filename.endsWith(".safetensors") || filename.toLowerCase().endsWith(".gguf");
   }
 
+  function toTurboModelVariant(value: string | undefined): TurboModelVariant {
+    return TURBO_MODEL_VARIANTS.includes(value as TurboModelVariant)
+      ? (value as TurboModelVariant)
+      : "none";
+  }
+
   async function loadModelSpec(category: string, filename: string) {
     if (!filename || !supportsModelSpec(filename)) {
       loadedModelMetadataKey = "";
@@ -434,9 +440,7 @@
         modelspecHeaderVPred: spec?.header_v_pred === "true",
         modelFamily: family,
         modelIsSdxlLike: spec?.is_sdxl_like === "true",
-        modelTurboVariant: TURBO_MODEL_VARIANTS.includes(spec?.turbo_model_variant as any)
-          ? spec!.turbo_model_variant
-          : "none",
+        modelTurboVariant: toTurboModelVariant(spec?.turbo_model_variant),
         modelRecommendedVae: spec?.recommended_vae ?? null,
         modelRecommendedClipModel: spec?.recommended_clip_model ?? null,
         modelRecommendedClipType: spec?.recommended_clip_type ?? null,
