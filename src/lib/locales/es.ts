@@ -55,6 +55,7 @@ const es: Record<string, string> = {
   "app.status.starting": "Iniciando...",
   "app.status.starting_comfyui": "Iniciando ComfyUI...",
   "app.status.connecting": "Conectando...",
+  "app.startup.initializing": "Inicializando...",
   "app.status.failed_to_start": "Error al iniciar: {message}",
   "app.status.unknown_error": "error desconocido",
   "app.status.auto_start_disabled": "ComfyUI no iniciado (inicio automático desactivado)",

@@ -10,6 +10,7 @@
   import ModelHubPage from "./lib/components/modelhub/ModelHubPage.svelte";
   import { ArtistGalleryPage } from "./lib/artist-gallery/index.js";
   import { connection } from "./lib/stores/connection.svelte.js";
+  import { startup } from "./lib/stores/startup.svelte.js";
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
@@ -284,6 +285,26 @@
     autocomplete.notifyModelChanged(
       generation.isAnima || generation.isWan || generation.isQwen,
     );
+  });
+
+  // Model family/spec detection lives here rather than in ModelSelector, which
+  // is unmounted while the Model panel is collapsed. Quality-tag injection keys
+  // off generation.modelFamily, so detection has to run panel state aside.
+  $effect(() => {
+    const checkpoint = generation.checkpoint;
+    const diffusionModel = generation.diffusionModel;
+    const useSplitModel = generation.useSplitModel;
+    // Read eagerly: clearing a manual override must re-trigger detection, and
+    // the async body below runs after the tracking window has closed.
+    void generation.modelFamilyOverrides;
+
+    if (useSplitModel && diffusionModel) {
+      void generation.fetchAndApplyModelMetadata("diffusion_models", diffusionModel);
+    } else if (checkpoint) {
+      void generation.fetchAndApplyModelMetadata("checkpoints", checkpoint);
+    } else {
+      generation.clearModelMetadata();
+    }
   });
 
   // Document-level keyboard handler for lightbox (fallback for browser focus issues)
@@ -667,6 +688,8 @@
   }
 
   function showComfyStartupIssue(raw: unknown, fallbackMessage = "") {
+    // Startup failed — release the lock so the error banner and settings are usable.
+    startup.locked = false;
     const parsed = parseComfyServerError(raw, fallbackMessage);
     externalComfyPayload = parsed;
     externalComfyOpen = true;
@@ -2117,6 +2140,14 @@
   let autoStartEnabled = $state(true); // will be read from config
 
   async function initApp() {
+    // Block interaction until ComfyUI is reachable. Settings load asynchronously,
+    // and a save triggered mid-load would persist in-memory defaults over the
+    // restored values; model-family detection is in flight over the same window.
+    startup.locked = true;
+    // Never let the lock stick if no unlock path is reached (unreachable server,
+    // dropped event); the banner still reports the real startup state.
+    setTimeout(() => { startup.locked = false; }, 120_000);
+
     // Apply UI preferences (theme, font scale) immediately
     try {
       const cfg = await getConfig();
@@ -2147,6 +2178,7 @@
         console.log("Connection event:", event.payload);
         connection.connected = event.payload.connected;
         if (event.payload.connected) {
+          startup.locked = false;
           startupStatus = "";
           startupStatusKind = "idle";
           models.refresh().then(() => {
@@ -2156,6 +2188,9 @@
       }),
       ipcListen("comfyui:server_ready", async () => {
         console.log("Server ready event received");
+        // Unlock here too: with zero installed checkpoints connection.connected
+        // is never set, so the connection handler above would never fire.
+        startup.locked = false;
         startupStatus = "";
         startupStatusKind = "idle";
         // Load models now that server is up
@@ -2688,9 +2723,11 @@
               connection.connected = true;
               generation.applyDefaultsIfNeeded(models.checkpoints, models.vaes);
             }
+            startup.locked = false;
             startupStatus = "";
             startupStatusKind = "idle";
           } catch (e) {
+            startup.locked = false;
             console.error("Model refresh failed (already running):", e);
           }
         }
@@ -2699,6 +2736,9 @@
         showComfyStartupIssue(e, String(e));
       }
     } else {
+      // Manual mode: nothing is starting, so the user needs the UI (and the
+      // banner's start button) immediately.
+      startup.locked = false;
       startupStatus = locale.t("app.status.auto_start_disabled");
       startupStatusKind = "manual";
     }
@@ -3216,7 +3256,17 @@
         {/if}
       </div>
     {/if}
-    <div class="flex-1 overflow-hidden md:min-h-0 md:rounded-xl md:bg-neutral-950">
+    <div class="relative flex-1 overflow-hidden md:min-h-0 md:rounded-xl md:bg-neutral-950">
+    {#if startup.locked}
+      <div
+        class="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-neutral-950/70 backdrop-blur-[2px]"
+        role="status"
+        aria-label={locale.t("app.startup.initializing")}
+      >
+        <div class="h-6 w-6 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent"></div>
+        <span class="text-sm text-neutral-300">{locale.t("app.startup.initializing")}</span>
+      </div>
+    {/if}
     {#if currentPage === "generate"}
       <GenerationPage />
     {:else if currentPage === "gallery"}

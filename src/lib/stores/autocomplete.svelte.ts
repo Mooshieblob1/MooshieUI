@@ -383,7 +383,6 @@ class AutocompleteStore {
 
   async loadSettings() {
     try {
-      this._storeReady = true;
       const saved = await ipcStore.get<Record<string, any>>(STORE_KEY);
       if (saved) {
         if (saved.enabled === false) this.enabled = false;
@@ -416,6 +415,10 @@ class AutocompleteStore {
       }
     } catch (e) {
       console.error("Failed to load autocomplete settings:", e);
+    } finally {
+      // See generation.loadSettings(): only ready once the persisted values
+      // (and builtin tags) are in memory, so early saves can't clobber them.
+      this._storeReady = true;
     }
   }
 

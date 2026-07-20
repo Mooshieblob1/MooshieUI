@@ -81,6 +81,7 @@ const pl: Record<string, string> = {
   "app.status.starting": "Uruchamianie...",
   "app.status.starting_comfyui": "Uruchamianie ComfyUI...",
   "app.status.connecting": "Łączenie...",
+  "app.startup.initializing": "Inicjalizacja...",
   "app.status.failed_to_start": "Uruchomienie nie powiodło się: {message}",
   "app.status.unknown_error": "nieznany błąd",
   "app.status.auto_start_disabled": "ComfyUI nie uruchomiono (automatyczne uruchamianie wyłączone)",

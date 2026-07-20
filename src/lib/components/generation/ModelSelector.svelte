@@ -3,13 +3,13 @@
   import { models } from "../../stores/models.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { downloadModel, findModelByHash, hashModelFile, readModelSpec, getComputeCapability, type ModelSpec } from "../../utils/api.js";
+  import { downloadModel, findModelByHash, hashModelFile, getComputeCapability } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
   import { onMount, onDestroy, tick } from "svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
-  import { MODEL_FAMILIES, TURBO_MODEL_VARIANTS } from "../../utils/modelFamily.js";
-  import type { ModelFamily, TurboModelVariant } from "../../utils/modelFamily.js";
+  import { MODEL_FAMILIES, familyIsSdxlLike } from "../../utils/modelFamily.js";
+  import type { ModelFamily } from "../../utils/modelFamily.js";
 
   interface ModelFile {
     filename: string;
@@ -260,34 +260,12 @@
     },
   ];
 
-  let loadedModelMetadataKey = $state("");
-  let latestModelMetadataRequestId = 0;
-  let isModelMetadataLoading = $state(false);
   let showArchitecturePicker = $state(false);
-
-  let modelSpec = $state<ModelSpec | null>(null);
-  let modelSpecUnavailable = $state(false);
   let showModelInfo = $state(false);
 
-  /** Display-only ModelSpec fields shown in the model info panel. */
-  const MODEL_SPEC_DISPLAY_FIELDS = [
-    "title",
-    "author",
-    "description",
-    "architecture",
-    "hash",
-    "resolution",
-    "prediction_type",
-    "trigger_phrase",
-    "usage_hint",
-    "tags",
-    "license",
-  ] as const;
-
-  function specHasDisplayFields(spec: ModelSpec | null): boolean {
-    if (!spec) return false;
-    return MODEL_SPEC_DISPLAY_FIELDS.some((field) => !!spec[field]);
-  }
+  // Read-only views of the store state that App.svelte's detection effect fills in.
+  const modelSpec = $derived(generation.modelSpec);
+  const modelSpecUnavailable = $derived(generation.modelSpecUnavailable);
 
   /** Strip HTML tags and convert to readable plain text. */
   function stripHtml(html: string): string {
@@ -306,44 +284,28 @@
       .trim();
   }
 
-  function familyIsSdxlLike(family: ModelFamily): boolean {
-    return ["sdxl", "illustrious", "pony", "mugen"].includes(family);
-  }
-
-  function currentModelMetadataKey(): string {
-    if (generation.useSplitModel && generation.diffusionModel) {
-      return `diffusion_models::${generation.diffusionModel}`;
-    }
-    if (generation.checkpoint) {
-      return `checkpoints::${generation.checkpoint}`;
-    }
-    return "";
-  }
-
   function currentFamilyOverride(): ModelFamily | null {
-    const modelKey = currentModelMetadataKey();
+    const modelKey = generation.currentModelMetadataKey();
     return modelKey ? generation.modelFamilyOverrides[modelKey] ?? null : null;
   }
 
   function architectureBadgeLabel(): string {
-    if (!currentModelMetadataKey()) return "";
+    if (!generation.currentModelMetadataKey()) return "";
     const manualOverride = currentFamilyOverride();
     if (manualOverride) return manualOverride;
-    if (isModelMetadataLoading) return locale.t("generation.model.architecture_detecting");
+    if (generation.isModelMetadataLoading) return locale.t("generation.model.architecture_detecting");
     return generation.modelFamily === "unknown" ? "undefined" : generation.modelFamily;
   }
 
   function applyCurrentModelFamilyOverride(family: ModelFamily | null): void {
-    const modelKey = currentModelMetadataKey();
+    const modelKey = generation.currentModelMetadataKey();
     if (!modelKey) return;
 
-    latestModelMetadataRequestId += 1;
-    isModelMetadataLoading = false;
     showArchitecturePicker = false;
     generation.setModelFamilyOverride(modelKey, family);
 
     if (family) {
-      loadedModelMetadataKey = modelKey;
+      generation.prepareManualOverride(modelKey);
       generation.applyModelMetadata({
         modelspecPredictionType: null,
         modelspecPredictKey: null,
@@ -359,123 +321,9 @@
       return;
     }
 
-    loadedModelMetadataKey = "";
-    if (generation.useSplitModel && generation.diffusionModel) {
-      loadModelSpec("diffusion_models", generation.diffusionModel);
-    } else if (generation.checkpoint) {
-      loadModelSpec("checkpoints", generation.checkpoint);
-    }
-  }
-
-  // GGUF models carry no safetensors header, but the backend still resolves
-  // family/turbo/recommended-encoder info from the filename and sidecars —
-  // without this, GGUF split models (e.g. Krea 2 quants) never get a clip type.
-  function supportsModelSpec(filename: string): boolean {
-    return filename.endsWith(".safetensors") || filename.toLowerCase().endsWith(".gguf");
-  }
-
-  function toTurboModelVariant(value: string | undefined): TurboModelVariant {
-    return TURBO_MODEL_VARIANTS.includes(value as TurboModelVariant)
-      ? (value as TurboModelVariant)
-      : "none";
-  }
-
-  async function loadModelSpec(category: string, filename: string) {
-    if (!filename || !supportsModelSpec(filename)) {
-      loadedModelMetadataKey = "";
-      isModelMetadataLoading = false;
-      modelSpec = null;
-      modelSpecUnavailable = false;
-      generation.applyModelMetadata({
-        modelspecPredictionType: null,
-        modelspecPredictKey: null,
-        modelspecHeaderVPred: false,
-        modelFamily: "unknown",
-        modelIsSdxlLike: false,
-        modelTurboVariant: "none",
-        modelRecommendedVae: null,
-        modelRecommendedClipModel: null,
-        modelRecommendedClipType: null,
-      });
-      return;
-    }
-    const metadataKey = `${category}::${filename}`;
-    const manualOverride = generation.modelFamilyOverrides[metadataKey] ?? null;
-    if (manualOverride) {
-      loadedModelMetadataKey = metadataKey;
-      isModelMetadataLoading = false;
-      modelSpec = null;
-      modelSpecUnavailable = false;
-      generation.applyModelMetadata({
-        modelspecPredictionType: null,
-        modelspecPredictKey: null,
-        modelspecHeaderVPred: false,
-        modelFamily: manualOverride,
-        modelIsSdxlLike: familyIsSdxlLike(manualOverride),
-        modelTurboVariant: "none",
-        modelRecommendedVae: null,
-        modelRecommendedClipModel: null,
-        modelRecommendedClipType: null,
-      });
-      generation.applyModelSpecificPreset();
-      return;
-    }
-    if (metadataKey === loadedModelMetadataKey && generation.modelFamily !== "unknown") return;
-    const requestId = ++latestModelMetadataRequestId;
-    isModelMetadataLoading = true;
-    try {
-      const spec = await readModelSpec(category, filename);
-      if (requestId !== latestModelMetadataRequestId) return;
-      if (currentModelMetadataKey() !== metadataKey) return;
-
-      modelSpec = specHasDisplayFields(spec) ? spec : null;
-      modelSpecUnavailable = !modelSpec;
-
-      const family = (spec?.family as ModelFamily | undefined) ?? "unknown";
-      loadedModelMetadataKey = metadataKey;
-      isModelMetadataLoading = false;
-      generation.applyModelMetadata({
-        modelspecPredictionType: spec?.prediction_type ?? null,
-        modelspecPredictKey: spec?.predict_key ?? null,
-        modelspecHeaderVPred: spec?.header_v_pred === "true",
-        modelFamily: family,
-        modelIsSdxlLike: spec?.is_sdxl_like === "true",
-        modelTurboVariant: toTurboModelVariant(spec?.turbo_model_variant),
-        modelRecommendedVae: spec?.recommended_vae ?? null,
-        modelRecommendedClipModel: spec?.recommended_clip_model ?? null,
-        modelRecommendedClipType: spec?.recommended_clip_type ?? null,
-      });
-      generation.ensureRecommendedSplitClip(models.textEncoders);
-      generation.ensureRecommendedSplitVae(models.vaes);
-      if (family === "krea2") {
-        // Fire-and-forget: may kick off a multi-GB download; progress shows
-        // in the shared download rows under the model button.
-        void ensureKrea2Encoder();
-      }
-      generation.applyModelSpecificPreset();
-      if (family === "unknown") {
-        loadedModelMetadataKey = "";
-      }
-    } catch {
-      if (requestId !== latestModelMetadataRequestId) return;
-      if (currentModelMetadataKey() !== metadataKey) return;
-
-      loadedModelMetadataKey = "";
-      isModelMetadataLoading = false;
-      modelSpec = null;
-      modelSpecUnavailable = true;
-      generation.applyModelMetadata({
-        modelspecPredictionType: null,
-        modelspecPredictKey: null,
-        modelspecHeaderVPred: false,
-        modelFamily: "unknown",
-        modelIsSdxlLike: false,
-        modelTurboVariant: "none",
-        modelRecommendedVae: null,
-        modelRecommendedClipModel: null,
-        modelRecommendedClipType: null,
-      });
-    }
+    // Clearing the override changes generation.modelFamilyOverrides, which the
+    // App-level detection effect tracks — it re-runs the backend fetch for us.
+    generation.invalidateModelMetadataCache();
   }
 
   // Krea 2 only works with the Qwen3-VL 4B text encoder (12x2560 = 30720-dim
@@ -581,13 +429,12 @@
     }
   }
 
+  // Family detection itself lives in an App.svelte $effect (it has to run while
+  // this panel is collapsed). The encoder download stays here because it drives
+  // this component's progress rows, so it only runs while the panel is open.
   $effect(() => {
-    if (generation.useSplitModel && generation.diffusionModel) {
-      loadModelSpec("diffusion_models", generation.diffusionModel);
-    } else if (generation.checkpoint) {
-      loadModelSpec("checkpoints", generation.checkpoint);
-    } else {
-      isModelMetadataLoading = false;
+    if (generation.modelFamily === "krea2" && generation.useSplitModel) {
+      void ensureKrea2Encoder();
     }
   });
 
@@ -1075,7 +922,7 @@
     generation.useSplitModel = true;
     generation.diffusionModel = filename;
     generation.checkpoint = filename;
-    await loadModelSpec("diffusion_models", filename);
+    await generation.fetchAndApplyModelMetadata("diffusion_models", filename);
     generation.applyModelSpecificPreset();
   }
 
@@ -1228,11 +1075,11 @@
   <div class="relative">
     <div class="mb-1 flex items-center justify-between gap-2">
       <label class="block text-xs text-neutral-400">{locale.t('generation.model.checkpoint')}<InfoTip text={locale.t('generation.model.checkpoint_tip')} /></label>
-      {#if currentModelMetadataKey()}
+      {#if generation.currentModelMetadataKey()}
         <div bind:this={architecturePickerEl} class="relative shrink-0">
           <button
             type="button"
-            class="shrink-0 text-[10px] px-2 py-0.5 rounded-full border transition-colors cursor-pointer {isModelMetadataLoading
+            class="shrink-0 text-[10px] px-2 py-0.5 rounded-full border transition-colors cursor-pointer {generation.isModelMetadataLoading
               ? 'bg-amber-600/15 text-amber-300 border-amber-600/30 hover:bg-amber-600/25'
               : currentFamilyOverride()
                 ? 'bg-indigo-600/20 text-indigo-300 border-indigo-600/30 hover:bg-indigo-600/30'

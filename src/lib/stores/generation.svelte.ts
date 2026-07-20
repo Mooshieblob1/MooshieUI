@@ -14,7 +14,10 @@ import {
   TURBO_MODEL_VARIANTS,
   signalsIndicateVPred,
   familyRequiresSeparateClip,
+  familyIsSdxlLike,
+  toTurboModelVariant,
 } from "../utils/modelFamily.js";
+import { readModelSpec, type ModelSpec } from "../utils/api.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import type {
   ExtraPromptBox,
@@ -30,6 +33,34 @@ import { promptPresets } from "./promptPresets.svelte.js";
 const STORE_KEY = "generation-settings";
 const PROMPT_HISTORY_KEY = "mooshieui.promptHistory.v1";
 const MAX_PROMPT_HISTORY = 100;
+
+/** ModelSpec fields the model info panel renders; a spec with none is treated as empty. */
+const MODEL_SPEC_DISPLAY_FIELDS = [
+  "title",
+  "author",
+  "description",
+  "architecture",
+  "hash",
+  "resolution",
+  "prediction_type",
+  "trigger_phrase",
+  "usage_hint",
+  "tags",
+  "license",
+] as const;
+
+/** Every model signal cleared — used for no model, unsupported files, and failed detection. */
+const UNKNOWN_MODEL_METADATA = {
+  modelspecPredictionType: null,
+  modelspecPredictKey: null,
+  modelspecHeaderVPred: false,
+  modelFamily: "unknown" as ModelFamily,
+  modelIsSdxlLike: false,
+  modelTurboVariant: "none" as TurboModelVariant,
+  modelRecommendedVae: null,
+  modelRecommendedClipModel: null,
+  modelRecommendedClipType: null,
+};
 
 export interface GenerationToParamsOptions {
   fixedPresetChoices?: ReadonlyMap<string, string>;
@@ -462,6 +493,16 @@ class GenerationStore {
   modelRecommendedClipType = $state<string | null>(null);
   /** Manual per-model family override keyed by `category::filename`. */
   modelFamilyOverrides = $state<Record<string, ModelFamily>>({});
+  /** True while a read_modelspec call is in flight for the current model. */
+  isModelMetadataLoading = $state(false);
+  /** ModelSpec for the current model, or null when it carries no display fields. */
+  modelSpec = $state<ModelSpec | null>(null);
+  /** True when the backend returned no usable spec for the current model. */
+  modelSpecUnavailable = $state(false);
+  /** `category::filename` the metadata above was resolved for. */
+  private _loadedModelMetadataKey = "";
+  /** Guards against out-of-order read_modelspec responses. */
+  private _latestModelMetadataRequestId = 0;
   get mode(): GenerationMode {
     return this._mode;
   }
@@ -712,6 +753,116 @@ class GenerationStore {
     }
     this.modelFamilyOverrides = next;
     this.saveSettings();
+  }
+
+  /** `category::filename` identifying the currently selected model. */
+  currentModelMetadataKey(): string {
+    if (this.useSplitModel && this.diffusionModel) {
+      return `diffusion_models::${this.diffusionModel}`;
+    }
+    if (this.checkpoint) return `checkpoints::${this.checkpoint}`;
+    return "";
+  }
+
+  /** Reset every model signal to its unknown-model default. */
+  clearModelMetadata(): void {
+    this._latestModelMetadataRequestId += 1;
+    this._loadedModelMetadataKey = "";
+    this.isModelMetadataLoading = false;
+    this.modelSpec = null;
+    this.modelSpecUnavailable = false;
+    this.applyModelMetadata(UNKNOWN_MODEL_METADATA);
+  }
+
+  /**
+   * Record a manual family override as the resolved metadata for `cacheKey` so
+   * the App-level effect treats it as loaded instead of re-running detection.
+   */
+  prepareManualOverride(cacheKey: string): void {
+    this._latestModelMetadataRequestId += 1;
+    this._loadedModelMetadataKey = cacheKey;
+    this.isModelMetadataLoading = false;
+    this.modelSpec = null;
+    this.modelSpecUnavailable = false;
+  }
+
+  /** Drop the cached key so the next fetch re-runs backend detection. */
+  invalidateModelMetadataCache(): void {
+    this._latestModelMetadataRequestId += 1;
+    this._loadedModelMetadataKey = "";
+    this.isModelMetadataLoading = false;
+  }
+
+  /**
+   * Resolve and apply family/spec metadata for the selected model. Driven by an
+   * $effect in App.svelte rather than ModelSelector: that component is unmounted
+   * whenever the Model panel is collapsed, and quality-tag injection in
+   * toParams() keys off modelFamily, so it was silently skipped in that state.
+   */
+  async fetchAndApplyModelMetadata(category: string, filename: string): Promise<void> {
+    // GGUF carries no safetensors header, but the backend still resolves
+    // family/turbo/recommended-encoder info from the filename and sidecars.
+    const supportsSpec =
+      filename.endsWith(".safetensors") || filename.toLowerCase().endsWith(".gguf");
+    if (!filename || !supportsSpec) {
+      this.clearModelMetadata();
+      return;
+    }
+
+    const metadataKey = `${category}::${filename}`;
+    const manualOverride = this.modelFamilyOverrides[metadataKey] ?? null;
+    if (manualOverride) {
+      this.prepareManualOverride(metadataKey);
+      this.applyModelMetadata({
+        ...UNKNOWN_MODEL_METADATA,
+        modelFamily: manualOverride,
+        modelIsSdxlLike: familyIsSdxlLike(manualOverride),
+      });
+      this.applyModelSpecificPreset();
+      return;
+    }
+
+    if (metadataKey === this._loadedModelMetadataKey && this.modelFamily !== "unknown") return;
+
+    const requestId = ++this._latestModelMetadataRequestId;
+    this.isModelMetadataLoading = true;
+    try {
+      const spec = await readModelSpec(category, filename);
+      if (requestId !== this._latestModelMetadataRequestId) return;
+      if (this.currentModelMetadataKey() !== metadataKey) return;
+
+      this.modelSpec = MODEL_SPEC_DISPLAY_FIELDS.some((field) => !!spec?.[field]) ? spec : null;
+      this.modelSpecUnavailable = !this.modelSpec;
+
+      const family = (spec?.family as ModelFamily | undefined) ?? "unknown";
+      this._loadedModelMetadataKey = metadataKey;
+      this.isModelMetadataLoading = false;
+      this.applyModelMetadata({
+        modelspecPredictionType: spec?.prediction_type ?? null,
+        modelspecPredictKey: spec?.predict_key ?? null,
+        modelspecHeaderVPred: spec?.header_v_pred === "true",
+        modelFamily: family,
+        modelIsSdxlLike: spec?.is_sdxl_like === "true",
+        modelTurboVariant: toTurboModelVariant(spec?.turbo_model_variant),
+        modelRecommendedVae: spec?.recommended_vae ?? null,
+        modelRecommendedClipModel: spec?.recommended_clip_model ?? null,
+        modelRecommendedClipType: spec?.recommended_clip_type ?? null,
+      });
+      this.ensureRecommendedSplitClip(models.textEncoders);
+      this.ensureRecommendedSplitVae(models.vaes);
+      this.applyModelSpecificPreset();
+      // Nothing resolved — clear the key so a later selection retries detection.
+      if (family === "unknown") this._loadedModelMetadataKey = "";
+    } catch {
+      if (requestId !== this._latestModelMetadataRequestId) return;
+      if (this.currentModelMetadataKey() !== metadataKey) return;
+
+      this._loadedModelMetadataKey = "";
+      this.isModelMetadataLoading = false;
+      this.modelSpec = null;
+      this.modelSpecUnavailable = true;
+      this.applyModelMetadata(UNKNOWN_MODEL_METADATA);
+    }
   }
 
   ensureRecommendedSplitClip(encoders: string[], save = false): void {
@@ -1292,7 +1443,6 @@ class GenerationStore {
 
   async loadSettings() {
     try {
-      this._storeReady = true;
       const saved = await ipcStore.get<Record<string, any>>(STORE_KEY);
       if (saved) {
         const savedMode = isGenerationMode(saved.mode) ? saved.mode : this._mode;
@@ -1454,6 +1604,11 @@ class GenerationStore {
       }
     } catch (e) {
       console.error("Failed to load settings:", e);
+    } finally {
+      // Must stay after the awaited read: saveSettings() is a no-op until this
+      // flips, so a keystroke during startup can't persist defaults over the
+      // restored values. Set on the error path too, or saves break for good.
+      this._storeReady = true;
     }
   }
 

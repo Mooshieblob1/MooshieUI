@@ -37,6 +37,7 @@ const de: Record<string, string> = {
   "app.status.starting": "Starting...",
   "app.status.starting_comfyui": "Starting ComfyUI...",
   "app.status.connecting": "Connecting...",
+  "app.startup.initializing": "Wird initialisiert...",
   "app.status.failed_to_start": "Failed to start: {message}",
   "app.status.unknown_error": "unknown error",
   "app.status.auto_start_disabled": "ComfyUI not started (auto-start disabled)",

@@ -124,3 +124,15 @@ export const SPLIT_ONLY_FAMILIES: ReadonlySet<ModelFamily> = new Set([
 export function familyRequiresSeparateClip(family: ModelFamily | null | undefined): boolean {
   return !!family && SPLIT_ONLY_FAMILIES.has(family);
 }
+
+/** SDXL-architecture families, used when a manual override skips backend detection. */
+export function familyIsSdxlLike(family: ModelFamily): boolean {
+  return (["sdxl", "illustrious", "pony", "mugen"] as ReadonlyArray<ModelFamily>).includes(family);
+}
+
+/** Coerce a raw ModelSpec string into a known turbo variant. */
+export function toTurboModelVariant(value: string | undefined): TurboModelVariant {
+  return TURBO_MODEL_VARIANTS.includes(value as TurboModelVariant)
+    ? (value as TurboModelVariant)
+    : "none";
+}

@@ -1,3 +1,14 @@
+## What's New in v1.7.2
+
+### New features
+- **Startup lock**: while MooshieUI and ComfyUI are starting up, an "Initializing..." overlay covers the app content so nothing can be changed or typed until everything is loaded. Saved settings load in the background, and interacting before that finished could write half-loaded defaults over your saved values. The overlay clears as soon as ComfyUI connects, and immediately if auto-start is disabled or startup fails, so the status banner and its Start ComfyUI button stay reachable.
+
+### Fixes
+- **Quality tags now apply when the Model panel is collapsed**: model architecture detection only ran while the Model panel was open, so launching with it collapsed left the family as "unknown" and quality tags were skipped with no visible sign. Detection now runs no matter which panels are collapsed, so quality tags, model presets, and the recommended encoder and VAE all apply on launch.
+- **Typing during startup no longer resets settings**: saving was enabled before the saved settings finished loading, so a keystroke in the prompt box during startup could persist the in-memory defaults over what was on disk. This showed up most often as the auto quality tags toggle turning itself back off between launches.
+
+---
+
 ## What's New in v1.7.1
 
 ### Fixes
