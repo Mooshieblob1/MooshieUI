@@ -44,6 +44,11 @@
   let files = $state<ManagedModelFile[]>([]);
   let folders = $state<ManagedModelFolder[]>([]);
   let installDirs = $state<ModelInstallDir[]>([]);
+  // Install dirs for every category, so a file can be moved across categories
+  // (e.g. a diffusion-only checkpoint stranded in `checkpoints/` relocated to
+  // `diffusion_models/`). Loaded once on mount; the active category is kept
+  // fresh by loadCategory().
+  let allInstallDirs = $state<Record<string, ModelInstallDir[]>>({});
   let search = $state("");
   let viewMode = $state<"list" | "tree">("list");
   let collapsed = $state<Set<string>>(new Set());
@@ -73,7 +78,25 @@
 
   onMount(() => {
     void loadCategory();
+    void loadAllInstallDirs();
   });
+
+  // Fetch install dirs for every category up front so cross-category move
+  // destinations are available without switching tabs. Best-effort per
+  // category: a failure leaves that category out of the move picker rather
+  // than blocking the modal.
+  async function loadAllInstallDirs() {
+    const entries = await Promise.all(
+      categories.map(async (category): Promise<[string, ModelInstallDir[]]> => {
+        try {
+          return [category.id, await getModelInstallDirs(category.id)];
+        } catch {
+          return [category.id, []];
+        }
+      }),
+    );
+    allInstallDirs = { ...allInstallDirs, ...Object.fromEntries(entries) };
+  }
 
   function formatModified(ms: number): string {
     if (!ms) return locale.t("common.none");
@@ -89,6 +112,7 @@
   }
 
   interface MoveOption {
+    category: string;
     directory: string;
     path: string;
     label: string;
@@ -99,23 +123,46 @@
     options: MoveOption[];
   }
 
+  function moveOptionValue(opt: MoveOption): string {
+    return `${opt.category}|||${opt.directory}|||${opt.path}`;
+  }
+
   function moveGroupsFor(file: ManagedModelFile): MoveOptionGroup[] {
     const currentDir = file.directory;
     const currentFolder = modelFolderPath(file.filename);
-    return installDirs
+    // Same-category destinations: every install dir plus its subfolders,
+    // excluding the file's current location.
+    const groups: MoveOptionGroup[] = installDirs
       .map((dir) => {
         const options: MoveOption[] = [];
         if (!(dir.path === currentDir && currentFolder === "")) {
-          options.push({ directory: dir.path, path: "", label: locale.t("common.none") });
+          options.push({ category: file.category, directory: dir.path, path: "", label: locale.t("common.none") });
         }
         for (const folder of folders) {
           if (folder.directory !== dir.path) continue;
           if (dir.path === currentDir && folder.path === currentFolder) continue;
-          options.push({ directory: folder.directory, path: folder.path, label: folder.path });
+          options.push({ category: file.category, directory: folder.directory, path: folder.path, label: folder.path });
         }
         return { dirLabel: dir.label, options };
       })
       .filter((group) => group.options.length > 0);
+
+    // Cross-category destinations: the root of each other category's install
+    // dir(s). Subfolders are omitted to keep the picker light; the user can
+    // reorganize within the target category afterward.
+    for (const category of categories) {
+      if (category.id === file.category) continue;
+      const dirs = allInstallDirs[category.id] ?? [];
+      const options: MoveOption[] = dirs.map((dir) => ({
+        category: category.id,
+        directory: dir.path,
+        path: "",
+        label: dir.label,
+      }));
+      if (options.length > 0) groups.push({ dirLabel: category.label(), options });
+    }
+
+    return groups;
   }
 
   function nodeKey(node: FolderTreeNode): string {
@@ -140,6 +187,7 @@
       installDirs = nextDirs;
       files = nextFiles;
       folders = nextFolders;
+      allInstallDirs = { ...allInstallDirs, [category]: nextDirs };
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
       files = [];
@@ -213,7 +261,7 @@
     notice = null;
     deleteTarget = null;
     moveTarget = file;
-    moveDestination = `${firstOption.directory}|||${firstOption.path}`;
+    moveDestination = moveOptionValue(firstOption);
   }
 
   async function refreshModels() {
@@ -239,17 +287,29 @@
 
   async function confirmMove() {
     if (!moveTarget || !moveDestination) return;
-    const separatorIndex = moveDestination.indexOf("|||");
-    if (separatorIndex < 0) return;
-    const destDirectory = moveDestination.slice(0, separatorIndex);
-    const destPath = moveDestination.slice(separatorIndex + 3);
+    // Encoded as `category|||directory|||path`; category and directory never
+    // contain the separator, so parse the first two segments off the front.
+    const firstSep = moveDestination.indexOf("|||");
+    if (firstSep < 0) return;
+    const secondSep = moveDestination.indexOf("|||", firstSep + 3);
+    if (secondSep < 0) return;
+    const destCategory = moveDestination.slice(0, firstSep);
+    const destDirectory = moveDestination.slice(firstSep + 3, secondSep);
+    const destPath = moveDestination.slice(secondSep + 3);
     busy = true;
     actionError = null;
     const movedName = moveTarget.filename;
     try {
       const basename = moveTarget.filename.split("/").pop() ?? moveTarget.filename;
       const targetFilename = destPath ? `${destPath}/${basename}` : basename;
-      await moveModelFile(moveTarget.category, moveTarget.filename, moveTarget.directory, destDirectory, targetFilename);
+      await moveModelFile(
+        moveTarget.category,
+        moveTarget.filename,
+        moveTarget.directory,
+        destDirectory,
+        targetFilename,
+        destCategory,
+      );
       moveTarget = null;
       moveDestination = "";
       await Promise.all([loadCategory(), refreshModels()]);
@@ -604,7 +664,7 @@
               {#each moveGroups as group}
                 <optgroup label={group.dirLabel}>
                   {#each group.options as opt}
-                    <option value={`${opt.directory}|||${opt.path}`}>{opt.label}</option>
+                    <option value={moveOptionValue(opt)}>{opt.label}</option>
                   {/each}
                 </optgroup>
               {/each}

@@ -628,6 +628,7 @@ pub(crate) fn move_model_file_for_config(
     comfyui_path: &str,
     extra_model_paths: Option<&str>,
     category: &str,
+    target_category: &str,
     filename: &str,
     source_directory: &str,
     target_directory: &str,
@@ -635,8 +636,12 @@ pub(crate) fn move_model_file_for_config(
 ) -> Result<(), AppError> {
     let source_dir =
         find_known_model_dir(comfyui_path, extra_model_paths, category, source_directory)?;
-    let target_dir =
-        find_known_model_dir(comfyui_path, extra_model_paths, category, target_directory)?;
+    let target_dir = find_known_model_dir(
+        comfyui_path,
+        extra_model_paths,
+        target_category,
+        target_directory,
+    )?;
     let source = model_file_path_in_dir(&source_dir.path, filename)?;
     let target = model_file_path_in_dir(&target_dir.path, target_filename)?;
 
@@ -789,6 +794,7 @@ pub async fn move_model_file(
     source_directory: String,
     target_directory: String,
     target_filename: Option<String>,
+    target_category: Option<String>,
 ) -> Result<(), AppError> {
     let config = state.config.read().await;
     let comfyui_path = config.comfyui_path.clone();
@@ -796,11 +802,16 @@ pub async fn move_model_file(
     drop(config);
 
     let target_filename = target_filename.unwrap_or_else(|| filename.clone());
+    // Cross-category moves (e.g. a diffusion-only checkpoint mistakenly placed in
+    // `checkpoints/` relocated to `diffusion_models/`) pass a distinct target
+    // category; omitting it keeps the move within the source category.
+    let target_category = target_category.unwrap_or_else(|| category.clone());
     tokio::task::spawn_blocking(move || {
         move_model_file_for_config(
             &comfyui_path,
             extra_model_paths.as_deref(),
             &category,
+            &target_category,
             &filename,
             &source_directory,
             &target_directory,
@@ -4035,9 +4046,13 @@ pub(crate) async fn read_modelspec_internal(
     // trigger phrase, ...) for the model info panel. Header-only read — no
     // hashing. Runtime keys resolved above take precedence. This also populates
     // an inferred `architecture` (from tensor-key patterns) when the file has no
-    // declared modelspec.architecture. Safetensors only — GGUF has no such header.
+    // declared modelspec.architecture. GGUF has no safetensors header, but its
+    // binary header still carries `general.architecture` plus the tensor-name
+    // table, so it feeds the same structural detection below.
     let display_meta = if is_safetensors {
         read_safetensors_modelspec(&path).ok().flatten()
+    } else if is_gguf {
+        read_gguf_architecture_meta(&path).ok().flatten()
     } else {
         None
     };
@@ -4053,18 +4068,43 @@ pub(crate) async fn read_modelspec_internal(
     // checkpoint has nothing else to identify it and its text encoder would
     // otherwise degrade to whatever encoder happens to be installed first.
     //
-    // Anima overrides the softer signals outright: it is a DiT model, not a
-    // classic UNet, so standard ControlNet cannot apply to it and only the Anima
-    // LLLite path works. Every other architecture merely fills in a family that
-    // filename/sidecar/CivitAI detection left unknown, so a more specific family
-    // (`flux1krea`, `illustrious`, ...) is never downgraded to its generic parent.
+    // Resolution rule (structural vs. the softer filename/sidecar/CivitAI family):
+    //   - Anima always wins: it is a DiT, not a classic UNet, so standard
+    //     ControlNet cannot apply and only the Anima LLLite path works. A wrong
+    //     guess is unrunnable, not merely suboptimal.
+    //   - An unknown soft family is filled in from the structural result.
+    //   - Otherwise the two are compared by architecture *class*. When both
+    //     classes are known and differ, the filename named a structurally
+    //     incompatible family (e.g. a flux-named file that is really SDXL) and
+    //     the weights win, correcting the family and recording the mismatch.
+    //   - Same class, or either side without a structural signature, keeps the
+    //     softer, more specific family (`illustrious` over `sdxl`, `flux1krea`
+    //     over `flux`, `krea2` untouched) — a structural result never downgrades
+    //     a compatible sub-family, and never overrides a family it cannot classify.
     if let Some(structural) = result
         .get("architecture")
         .map(String::as_str)
         .and_then(family_from_architecture)
     {
         let current = result.get("family").map(String::as_str);
-        if structural == "anima" || current.is_none() || current == Some("unknown") {
+        let (should_override, is_mismatch) = if structural == "anima" {
+            let mismatch = current.is_some_and(|f| f != "unknown" && f != structural);
+            (true, mismatch)
+        } else {
+            match current {
+                None | Some("unknown") => (true, false),
+                Some(soft) => match (architecture_class(soft), architecture_class(structural)) {
+                    (Some(sc), Some(tc)) if sc != tc => (true, true),
+                    _ => (false, false),
+                },
+            }
+        };
+        if is_mismatch {
+            if let Some(soft) = result.get("family").cloned() {
+                result.insert("filename_family_mismatch".to_string(), soft);
+            }
+        }
+        if should_override {
             result.insert("family".to_string(), structural.to_string());
             result.insert(
                 "is_sdxl_like".to_string(),
@@ -4223,6 +4263,242 @@ pub(crate) fn read_safetensors_modelspec(
     }
 }
 
+// --- GGUF header parsing ---------------------------------------------------
+//
+// GGUF files have no safetensors JSON header, but their binary header still
+// carries a `general.architecture` string and the full tensor-name table, so
+// the same structural detection used for safetensors applies. Only the header
+// (metadata KV block + tensor-info block) is read, never the tensor data. The
+// layout and value-type tags follow the GGUF v2/v3 spec as implemented by
+// city96/ComfyUI-GGUF, which is what actually loads these files in the app.
+
+const GGUF_MAGIC: u32 = 0x4655_4747; // "GGUF" little-endian
+const GGUF_TYPE_UINT8: u32 = 0;
+const GGUF_TYPE_INT8: u32 = 1;
+const GGUF_TYPE_UINT16: u32 = 2;
+const GGUF_TYPE_INT16: u32 = 3;
+const GGUF_TYPE_UINT32: u32 = 4;
+const GGUF_TYPE_INT32: u32 = 5;
+const GGUF_TYPE_FLOAT32: u32 = 6;
+const GGUF_TYPE_BOOL: u32 = 7;
+const GGUF_TYPE_STRING: u32 = 8;
+const GGUF_TYPE_ARRAY: u32 = 9;
+const GGUF_TYPE_UINT64: u32 = 10;
+const GGUF_TYPE_INT64: u32 = 11;
+const GGUF_TYPE_FLOAT64: u32 = 12;
+
+const GGUF_MAX_STRING_LEN: u64 = 1024 * 1024; // 1 MB
+const GGUF_MAX_KV_COUNT: u64 = 10_000;
+const GGUF_MAX_TENSOR_COUNT: u64 = 200_000;
+const GGUF_MAX_ARRAY_COUNT: u64 = 1_000_000_000;
+const GGUF_MAX_NDIMS: u32 = 8;
+
+fn read_u32_le<R: Read>(reader: &mut R) -> Result<u32, AppError> {
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf)?;
+    Ok(u32::from_le_bytes(buf))
+}
+
+fn read_u64_le<R: Read>(reader: &mut R) -> Result<u64, AppError> {
+    let mut buf = [0u8; 8];
+    reader.read_exact(&mut buf)?;
+    Ok(u64::from_le_bytes(buf))
+}
+
+/// Skip `n` bytes without allocating a buffer for them.
+fn skip_bytes<R: Read>(reader: &mut R, mut n: u64) -> Result<(), AppError> {
+    let mut chunk = [0u8; 4096];
+    while n > 0 {
+        let take = n.min(chunk.len() as u64) as usize;
+        reader.read_exact(&mut chunk[..take])?;
+        n -= take as u64;
+    }
+    Ok(())
+}
+
+/// Byte size of a fixed-width GGUF scalar value type, or `None` for
+/// variable-length types (string, array).
+fn gguf_scalar_size(vtype: u32) -> Option<u64> {
+    match vtype {
+        GGUF_TYPE_UINT8 | GGUF_TYPE_INT8 | GGUF_TYPE_BOOL => Some(1),
+        GGUF_TYPE_UINT16 | GGUF_TYPE_INT16 => Some(2),
+        GGUF_TYPE_UINT32 | GGUF_TYPE_INT32 | GGUF_TYPE_FLOAT32 => Some(4),
+        GGUF_TYPE_UINT64 | GGUF_TYPE_INT64 | GGUF_TYPE_FLOAT64 => Some(8),
+        _ => None,
+    }
+}
+
+fn read_gguf_string<R: Read>(reader: &mut R) -> Result<String, AppError> {
+    let len = read_u64_le(reader)?;
+    if len > GGUF_MAX_STRING_LEN {
+        return Err(AppError::Other("GGUF string too long".into()));
+    }
+    let mut buf = vec![0u8; len as usize];
+    reader.read_exact(&mut buf)?;
+    String::from_utf8(buf).map_err(|_| AppError::Other("Invalid UTF-8 in GGUF string".into()))
+}
+
+fn skip_gguf_string<R: Read>(reader: &mut R) -> Result<(), AppError> {
+    let len = read_u64_le(reader)?;
+    if len > GGUF_MAX_STRING_LEN {
+        return Err(AppError::Other("GGUF string too long".into()));
+    }
+    skip_bytes(reader, len)
+}
+
+/// Skip a single GGUF metadata value of the given type (only the value body —
+/// the type tag has already been read). Nested arrays are rejected; unknown
+/// types are an error so a malformed header fails cleanly rather than desyncing.
+fn skip_gguf_value<R: Read>(reader: &mut R, vtype: u32) -> Result<(), AppError> {
+    if let Some(size) = gguf_scalar_size(vtype) {
+        return skip_bytes(reader, size);
+    }
+    match vtype {
+        GGUF_TYPE_STRING => skip_gguf_string(reader),
+        GGUF_TYPE_ARRAY => {
+            let elem_type = read_u32_le(reader)?;
+            if elem_type == GGUF_TYPE_ARRAY {
+                return Err(AppError::Other("Nested GGUF arrays unsupported".into()));
+            }
+            let count = read_u64_le(reader)?;
+            if count > GGUF_MAX_ARRAY_COUNT {
+                return Err(AppError::Other("GGUF array too long".into()));
+            }
+            if let Some(size) = gguf_scalar_size(elem_type) {
+                skip_bytes(reader, size.saturating_mul(count))
+            } else if elem_type == GGUF_TYPE_STRING {
+                for _ in 0..count {
+                    skip_gguf_string(reader)?;
+                }
+                Ok(())
+            } else {
+                Err(AppError::Other("Unknown GGUF array element type".into()))
+            }
+        }
+        _ => Err(AppError::Other("Unknown GGUF value type".into())),
+    }
+}
+
+/// Map a city96/ComfyUI-GGUF `general.architecture` value onto the app's
+/// internal architecture string (the same space `infer_architecture_from_keys`
+/// produces, so `family_from_architecture` consumes it unchanged).
+fn gguf_arch_to_app_arch(gguf_arch: &str) -> Option<&'static str> {
+    match gguf_arch.to_ascii_lowercase().as_str() {
+        "flux" => Some("flux"),
+        "sd1" => Some("stable-diffusion-v1-5"),
+        "sdxl" => Some("stable-diffusion-xl-v1-base"),
+        "sd3" => Some("stable-diffusion-3-medium"),
+        "aura" | "auraflow" => Some("auraflow"),
+        "wan" | "wan21" | "wan2.1" => Some("wan2.1"),
+        "cosmos" => Some("cosmos_predict2"),
+        "qwen_image" | "qwenimage" | "qwen-image" => Some("qwen_image"),
+        "pixart" => Some("pixart"),
+        "hunyuan_dit" | "hunyuandit" => Some("hunyuandit"),
+        "kolors" => Some("kolors"),
+        _ => None,
+    }
+}
+
+/// Parse a GGUF header for structural architecture detection.
+///
+/// Returns `{"architecture": ..., "gguf_architecture": <raw>}` when the file's
+/// architecture resolves from its tensor names or `general.architecture` key.
+/// Any parse failure (truncated, non-GGUF, unexpected type) logs a warning and
+/// returns `Ok(None)`: a malformed GGUF must degrade to filename detection,
+/// never fail the whole modelspec read.
+fn read_gguf_architecture_meta(
+    path: &std::path::Path,
+) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    match read_gguf_architecture_meta_inner(path) {
+        Ok(meta) => Ok(meta),
+        Err(e) => {
+            log::warn!("GGUF header parse failed for {}: {}", path.display(), e);
+            Ok(None)
+        }
+    }
+}
+
+fn read_gguf_architecture_meta_inner(
+    path: &std::path::Path,
+) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
+    // BufReader is essential: the header is walked with many tiny read_exact
+    // calls (one per string length, per tensor name, per dim), so an unbuffered
+    // File would issue thousands of syscalls.
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(file);
+
+    let magic = read_u32_le(&mut reader)?;
+    if magic != GGUF_MAGIC {
+        // Not a GGUF container; nothing to detect.
+        return Ok(None);
+    }
+    let version = read_u32_le(&mut reader)?;
+    if !(2..=3).contains(&version) {
+        // v1 used 32-bit counts; attempting the 64-bit layout below on it would
+        // misparse, but the caps catch the garbage and fall back to Ok(None).
+        log::warn!("Unexpected GGUF version {} for {}", version, path.display());
+    }
+
+    let tensor_count = read_u64_le(&mut reader)?;
+    if tensor_count > GGUF_MAX_TENSOR_COUNT {
+        return Err(AppError::Other("GGUF tensor count too large".into()));
+    }
+    let kv_count = read_u64_le(&mut reader)?;
+    if kv_count > GGUF_MAX_KV_COUNT {
+        return Err(AppError::Other("GGUF KV count too large".into()));
+    }
+
+    // Metadata KV block: capture general.architecture, skip everything else.
+    let mut general_arch: Option<String> = None;
+    for _ in 0..kv_count {
+        let key = read_gguf_string(&mut reader)?;
+        let vtype = read_u32_le(&mut reader)?;
+        if key == "general.architecture" && vtype == GGUF_TYPE_STRING {
+            general_arch = Some(read_gguf_string(&mut reader)?);
+        } else {
+            skip_gguf_value(&mut reader, vtype)?;
+        }
+    }
+
+    // Tensor-info block: name, dims, ggml type, offset. Collect names only.
+    let mut names: Vec<String> = Vec::new();
+    for _ in 0..tensor_count {
+        let name = read_gguf_string(&mut reader)?;
+        let n_dims = read_u32_le(&mut reader)?;
+        if n_dims > GGUF_MAX_NDIMS {
+            return Err(AppError::Other(
+                "GGUF tensor has too many dimensions".into(),
+            ));
+        }
+        skip_bytes(&mut reader, (n_dims as u64) * 8)?; // dims: n_dims * u64
+        let _ggml_type = read_u32_le(&mut reader)?;
+        let _offset = read_u64_le(&mut reader)?;
+        names.push(name);
+    }
+
+    // Tensor names are ground truth and are checked first: they catch Anima's
+    // `llm_adapter`, which a `general.architecture` of "cosmos" cannot tell from
+    // plain Cosmos. Fall back to the declared architecture key otherwise.
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let architecture = infer_architecture_from_key_names(&name_refs).or_else(|| {
+        general_arch
+            .as_deref()
+            .and_then(gguf_arch_to_app_arch)
+            .map(str::to_string)
+    });
+
+    let Some(architecture) = architecture else {
+        return Ok(None);
+    };
+
+    let mut result = std::collections::HashMap::new();
+    result.insert("architecture".to_string(), architecture);
+    if let Some(raw) = general_arch {
+        result.insert("gguf_architecture".to_string(), raw);
+    }
+    Ok(Some(result))
+}
+
 /// Container prefix that the bulk of a checkpoint's tensors sit under.
 ///
 /// Diffusion weights are rarely stored under bare names: ldm/sgm checkpoints
@@ -4230,7 +4506,7 @@ pub(crate) fn read_safetensors_modelspec(
 /// uses `net.`, and audio models use `model.model.`. Architecture patterns only
 /// match once the wrapper is stripped. Mirrors ComfyUI's
 /// `unet_prefix_from_state_dict`, which is what actually has to load the file.
-fn dominant_tensor_key_prefix(keys: &[&String]) -> &'static str {
+fn dominant_tensor_key_prefix(names: &[&str]) -> &'static str {
     const CANDIDATES: [&str; 4] = [
         "model.diffusion_model.",
         "diffusion_model.",
@@ -4240,7 +4516,7 @@ fn dominant_tensor_key_prefix(keys: &[&String]) -> &'static str {
     let mut best = "";
     let mut best_count = 0usize;
     for candidate in CANDIDATES {
-        let count = keys.iter().filter(|k| k.starts_with(candidate)).count();
+        let count = names.iter().filter(|k| k.starts_with(candidate)).count();
         if count > best_count {
             best_count = count;
             best = candidate;
@@ -4254,24 +4530,37 @@ fn dominant_tensor_key_prefix(keys: &[&String]) -> &'static str {
     }
 }
 
-/// Infer model architecture by examining tensor key name patterns in the safetensors header.
+/// Infer model architecture from safetensors header keys.
+///
+/// Thin wrapper over [`infer_architecture_from_key_names`] that projects the
+/// JSON header's object keys into `&str`s. GGUF detection calls the key-names
+/// form directly with its tensor-name table.
+fn infer_architecture_from_keys(header: &serde_json::Map<String, Value>) -> Option<String> {
+    let names: Vec<&str> = header.keys().map(String::as_str).collect();
+    infer_architecture_from_key_names(&names)
+}
+
+/// Infer model architecture by examining tensor key name patterns.
 ///
 /// Patterns are matched against names with the container prefix stripped, so a
 /// checkpoint saved as `model.diffusion_model.double_blocks.0…` is recognised
 /// the same as a bare `double_blocks.0…` dump. The markers themselves follow
-/// ComfyUI's `detect_unet_config`.
-fn infer_architecture_from_keys(header: &serde_json::Map<String, Value>) -> Option<String> {
-    let keys: Vec<&String> = header.keys().collect();
-    let prefix = dominant_tensor_key_prefix(&keys);
+/// ComfyUI's `detect_unet_config`. Shared by the safetensors header reader and
+/// the GGUF header reader — both hand it their tensor-name list.
+fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
+    let prefix = dominant_tensor_key_prefix(names);
     let bare: Vec<&str> = if prefix.is_empty() {
-        keys.iter().map(|k| k.as_str()).collect()
+        names.to_vec()
     } else {
-        keys.iter().filter_map(|k| k.strip_prefix(prefix)).collect()
+        names
+            .iter()
+            .filter_map(|k| k.strip_prefix(prefix))
+            .collect()
     };
 
     let starts_with = |p: &str| bare.iter().any(|k| k.starts_with(p));
     let contains = |s: &str| bare.iter().any(|k| k.contains(s));
-    let has_key = |name: &str| bare.iter().any(|k| *k == name);
+    let has_key = |name: &str| bare.contains(&name);
 
     // Anima: a Cosmos-Predict2 backbone plus a Qwen3 LLM adapter. Checked before
     // plain Cosmos because it shares that backbone — the adapter is what makes
@@ -4335,7 +4624,7 @@ fn infer_architecture_from_keys(header: &serde_json::Map<String, Value>) -> Opti
         // conditioner.embedders.1 (dual text encoder in a full checkpoint, which
         // sits outside the diffusion-model prefix so it is matched unstripped).
         let is_sdxl = contains("label_emb")
-            || keys
+            || names
                 .iter()
                 .any(|k| k.starts_with("conditioner.embedders.1."));
         if is_sdxl {
@@ -4367,6 +4656,36 @@ fn family_from_architecture(architecture: &str) -> Option<&'static str> {
         "kolors" => Some("kolors"),
         "stable-diffusion-xl-v1-base" => Some("sdxl"),
         "stable-diffusion-v1-5" => Some("sd15"),
+        _ => None,
+    }
+}
+
+/// Structural class of a model family. Families that share tensor-key topology
+/// share a class, because structural detection can prove which class a file
+/// belongs to but not which sub-family within it (tensor keys cannot tell an
+/// Illustrious from a stock SDXL, or a Flux dev from a schnell).
+///
+/// `None` means the family has no implemented structural signature, so a
+/// structural guess must never override it (e.g. Krea 2, Z-Image, Flux 2
+/// variants). This keeps the veto conservative: it only fires when the file's
+/// weights prove a *different, known* class than the filename claimed.
+fn architecture_class(family: &str) -> Option<&'static str> {
+    match family {
+        // Classic SDXL-shaped UNets. Mugen is SDXL-shaped too (it is driven with
+        // SDXL-style sampling in templates/mod.rs), so a mugen-by-filename tag is
+        // a compatible refinement of a structural SDXL result, not a conflict.
+        "sdxl" | "illustrious" | "pony" | "mugen" => Some("sdxl"),
+        "sd15" => Some("sd15"),
+        "flux" | "flux1d" | "flux1s" | "flux1krea" | "chroma" => Some("flux"),
+        "anima" => Some("anima"),
+        "wan" => Some("wan"),
+        "qwen" => Some("qwen_image"),
+        "sd3" => Some("sd3"),
+        "auraflow" => Some("auraflow"),
+        "pixart" => Some("pixart"),
+        "hunyuandit" => Some("hunyuandit"),
+        "cascade" => Some("cascade"),
+        "kolors" => Some("kolors"),
         _ => None,
     }
 }

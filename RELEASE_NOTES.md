@@ -1,3 +1,15 @@
+## What's New in v1.7.4
+
+### New features
+- **Move a model to a different category in the Model Manager**: the Move option only listed other folders inside the model's own category, so a checkpoint that really belonged in the diffusion models folder (a bare DiT with no built-in text encoder, for example) could not be relocated from inside the app. Move now shows every category as its own destination group, so you can send a file from Checkpoints to Diffusion Models, LoRAs, VAEs, or any other category in one step.
+- **Download to the Diffusion Models folder from the Model Hub**: the direct URL download picker had no Diffusion Model target, so a DiT-only checkpoint downloaded by URL landed in Checkpoints where it could not generate. Diffusion Model is now one of the download categories.
+
+### Fixes
+- **A model's weights now override a misleading filename**: an architecture read from the tensor structure was only used to fill in a family that was still unknown, so a file whose name disagreed with its contents (an SDXL model named like a Flux one, say) kept the wrong family along with the wrong sampling and latent settings. When the weights clearly identify a different architecture than the name suggests, the weights now win.
+- **GGUF models are detected from their header**: quantized GGUF files were never inspected structurally, so their family came from the filename alone. Their header architecture and tensor names are now read the same way safetensors are, so a renamed GGUF still resolves to the correct model family.
+
+---
+
 ## What's New in v1.7.3
 
 ### Fixes

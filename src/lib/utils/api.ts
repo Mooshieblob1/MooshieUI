@@ -241,6 +241,7 @@ export async function moveModelFile(
   sourceDirectory: string,
   targetDirectory: string,
   targetFilename?: string,
+  targetCategory?: string,
 ): Promise<void> {
   return ipcInvoke("move_model_file", {
     category,
@@ -248,6 +249,7 @@ export async function moveModelFile(
     sourceDirectory,
     targetDirectory,
     targetFilename: targetFilename ?? filename,
+    targetCategory: targetCategory ?? category,
   });
 }
 

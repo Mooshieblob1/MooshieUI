@@ -85,6 +85,7 @@
 
   const categoryOptions = $derived([
     { value: "checkpoints", label: locale.t("modelhub.filter.checkpoint") },
+    { value: "diffusion_models", label: locale.t("generation.model.diffusion_model") },
     { value: "loras", label: locale.t("modelhub.filter.lora") },
     { value: "upscale_models", label: locale.t("modelhub.filter.upscaler") },
     { value: "vae", label: locale.t("modelhub.filter.vae") },

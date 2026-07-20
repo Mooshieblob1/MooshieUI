@@ -3479,6 +3479,10 @@ async fn dispatch_command(
                 .as_str()
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| filename.clone());
+            let target_category = args["targetCategory"]
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| category.clone());
             let config = state.config.read().await;
             let comfyui_path = config.comfyui_path.clone();
             let extra_model_paths = config.extra_model_paths.clone();
@@ -3489,6 +3493,7 @@ async fn dispatch_command(
                     &comfyui_path,
                     extra_model_paths.as_deref(),
                     &category,
+                    &target_category,
                     &filename,
                     &source_directory,
                     &target_directory,
