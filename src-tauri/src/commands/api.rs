@@ -3319,10 +3319,12 @@ fn recommended_clip_from_available(
     }
 
     if family == "anima" {
+        // Strict: Anima's llm_adapter is trained against Qwen3-0.6B, so any other
+        // encoder produces garbage rather than an error. Omit the model instead of
+        // substituting one and let the frontend offer the download.
         // Matches the curated Anima recommended-model entries (CLIPLoader type "wan").
         let preferred =
-            find_first_text_encoder_matching(encoders, &["qwen_3_06b_base", "qwen_3_06b"])
-                .or_else(|| encoders.first().cloned());
+            find_first_text_encoder_matching(encoders, &["qwen_3_06b_base", "qwen_3_06b"]);
         return Some((preferred, "wan"));
     }
 
@@ -4045,18 +4047,30 @@ pub(crate) async fn read_modelspec_internal(
         }
     }
 
-    // Tensor-key architecture is ground truth for Wan2.1 / Anima checkpoints:
-    // they are DiT models, not classic UNets, so standard ControlNet cannot be
-    // applied to them — only the Anima LLLite path works. The soft filename and
-    // baseModel heuristics above miss Anima fine-tunes that were renamed without
-    // an `anima`/`yume` token (e.g. "PerfectDeliberate") and have no Wan
-    // baseModel sidecar/CivitAI tag. When the structural inference says Wan, it
-    // overrides the softer signals so ControlNet routes to Anima LLLite.
-    if result.get("family").map(String::as_str) != Some("anima")
-        && result.get("architecture").map(String::as_str) == Some("wan2.1")
+    // Tensor keys are structural ground truth: they describe the weights that are
+    // actually in the file, unlike a filename or a sidecar, which can be renamed
+    // or missing. Anima ships with an empty metadata block, so a renamed Anima
+    // checkpoint has nothing else to identify it and its text encoder would
+    // otherwise degrade to whatever encoder happens to be installed first.
+    //
+    // Anima overrides the softer signals outright: it is a DiT model, not a
+    // classic UNet, so standard ControlNet cannot apply to it and only the Anima
+    // LLLite path works. Every other architecture merely fills in a family that
+    // filename/sidecar/CivitAI detection left unknown, so a more specific family
+    // (`flux1krea`, `illustrious`, ...) is never downgraded to its generic parent.
+    if let Some(structural) = result
+        .get("architecture")
+        .map(String::as_str)
+        .and_then(family_from_architecture)
     {
-        result.insert("family".to_string(), "anima".to_string());
-        result.insert("is_sdxl_like".to_string(), "false".to_string());
+        let current = result.get("family").map(String::as_str);
+        if structural == "anima" || current.is_none() || current == Some("unknown") {
+            result.insert("family".to_string(), structural.to_string());
+            result.insert(
+                "is_sdxl_like".to_string(),
+                is_sdxl_like_family(structural).to_string(),
+            );
+        }
     }
 
     if category == "diffusion_models" {
@@ -4209,70 +4223,118 @@ pub(crate) fn read_safetensors_modelspec(
     }
 }
 
+/// Container prefix that the bulk of a checkpoint's tensors sit under.
+///
+/// Diffusion weights are rarely stored under bare names: ldm/sgm checkpoints
+/// wrap them in `model.diffusion_model.`, the Cosmos family (including Anima)
+/// uses `net.`, and audio models use `model.model.`. Architecture patterns only
+/// match once the wrapper is stripped. Mirrors ComfyUI's
+/// `unet_prefix_from_state_dict`, which is what actually has to load the file.
+fn dominant_tensor_key_prefix(keys: &[&String]) -> &'static str {
+    const CANDIDATES: [&str; 4] = [
+        "model.diffusion_model.",
+        "diffusion_model.",
+        "model.model.",
+        "net.",
+    ];
+    let mut best = "";
+    let mut best_count = 0usize;
+    for candidate in CANDIDATES {
+        let count = keys.iter().filter(|k| k.starts_with(candidate)).count();
+        if count > best_count {
+            best_count = count;
+            best = candidate;
+        }
+    }
+    // A few stray matches are noise; a real container prefix covers most of the file.
+    if best_count > 5 {
+        best
+    } else {
+        ""
+    }
+}
+
 /// Infer model architecture by examining tensor key name patterns in the safetensors header.
+///
+/// Patterns are matched against names with the container prefix stripped, so a
+/// checkpoint saved as `model.diffusion_model.double_blocks.0…` is recognised
+/// the same as a bare `double_blocks.0…` dump. The markers themselves follow
+/// ComfyUI's `detect_unet_config`.
 fn infer_architecture_from_keys(header: &serde_json::Map<String, Value>) -> Option<String> {
     let keys: Vec<&String> = header.keys().collect();
+    let prefix = dominant_tensor_key_prefix(&keys);
+    let bare: Vec<&str> = if prefix.is_empty() {
+        keys.iter().map(|k| k.as_str()).collect()
+    } else {
+        keys.iter().filter_map(|k| k.strip_prefix(prefix)).collect()
+    };
+
+    let starts_with = |p: &str| bare.iter().any(|k| k.starts_with(p));
+    let contains = |s: &str| bare.iter().any(|k| k.contains(s));
+    let has_key = |name: &str| bare.iter().any(|k| *k == name);
+
+    // Anima: a Cosmos-Predict2 backbone plus a Qwen3 LLM adapter. Checked before
+    // plain Cosmos because it shares that backbone — the adapter is what makes
+    // it Anima, and what makes it require the Qwen3-0.6B text encoder.
+    if starts_with("llm_adapter.") && contains("blocks.0.mlp.layer1.") {
+        return Some("anima".to_string());
+    }
+    if starts_with("blocks.0.mlp.layer1.") {
+        return Some("cosmos_predict2".to_string());
+    }
+
+    // Wan 2.1 (DiT video model)
+    if has_key("head.modulation") {
+        return Some("wan2.1".to_string());
+    }
 
     // Flux: uses double_blocks / single_blocks (DiT architecture)
-    let has_double_blocks = keys.iter().any(|k| k.starts_with("double_blocks."));
-    let has_single_blocks = keys.iter().any(|k| k.starts_with("single_blocks."));
-    if has_double_blocks && has_single_blocks {
+    if starts_with("double_blocks.") && starts_with("single_blocks.") {
         return Some("flux".to_string());
     }
 
+    // Qwen-Image: MMDiT with a dedicated text-stream norm
+    if has_key("txt_norm.weight") && starts_with("transformer_blocks.") {
+        return Some("qwen_image".to_string());
+    }
+
     // SD3 / SD3.5: uses joint_blocks (MMDiT architecture)
-    if keys.iter().any(|k| k.starts_with("joint_blocks.")) {
+    if starts_with("joint_blocks.") || starts_with("transformer_blocks.0.attn.add_q_proj.") {
         return Some("stable-diffusion-3-medium".to_string());
     }
 
     // AuraFlow: has single_transformer_blocks + double_transformer_blocks
-    if keys
-        .iter()
-        .any(|k| k.starts_with("double_transformer_blocks."))
-        && keys
-            .iter()
-            .any(|k| k.starts_with("single_transformer_blocks."))
-    {
+    if starts_with("double_transformer_blocks.") && starts_with("single_transformer_blocks.") {
         return Some("auraflow".to_string());
     }
 
     // HunyuanDiT: mlp_t5 + pooler patterns
-    if keys.iter().any(|k| k.contains("mlp_t5")) {
+    if contains("mlp_t5") {
         return Some("hunyuandit".to_string());
     }
 
-    // Wan 2.1 / Anima (DiT transformer blocks with cross-attn — not classic UNet)
-    let has_wan_blocks = keys.iter().any(|k| {
-        k.starts_with("blocks.") && (k.contains(".cross_attn.") || k.contains(".self_attn."))
-    });
-    if has_wan_blocks {
-        return Some("wan2.1".to_string());
-    }
-
     // Stable Cascade: has "down_blocks" + "up_blocks" with "clip_txt_mapper"
-    if keys.iter().any(|k| k.contains("clip_txt_mapper")) {
+    if contains("clip_txt_mapper") {
         return Some("stable_cascade".to_string());
     }
 
-    // PixArt: has blocks with cross_attn (PixArt-alpha/sigma architecture)
-    if keys.iter().any(|k| k.starts_with("adaln_single.")) {
+    // PixArt: alpha/sigma share the adaln_single conditioning stack
+    if starts_with("adaln_single.") {
         return Some("pixart".to_string());
     }
 
     // Kolors: ChatGLM-based text encoder
-    if keys.iter().any(|k| k.contains("chatglm")) {
+    if contains("chatglm") {
         return Some("kolors".to_string());
     }
 
-    // Check for UNet-based architectures (SD 1.5 / SDXL)
-    let has_unet = keys
-        .iter()
-        .any(|k| k.starts_with("model.diffusion_model.") || k.starts_with("diffusion_model."));
-
-    if has_unet {
-        // SDXL check: has label_emb (y-embedding for SDXL's 2816-dim vector)
-        // or conditioner.embedders.1 (dual text encoder in full checkpoint)
-        let is_sdxl = keys.iter().any(|k| k.contains("label_emb"))
+    // Classic UNet architectures (SD 1.5 / SDXL)
+    let is_unet_prefix = prefix == "model.diffusion_model." || prefix == "diffusion_model.";
+    if is_unet_prefix || starts_with("input_blocks.") {
+        // SDXL check: has label_emb (y-embedding for SDXL's 2816-dim vector) or
+        // conditioner.embedders.1 (dual text encoder in a full checkpoint, which
+        // sits outside the diffusion-model prefix so it is matched unstripped).
+        let is_sdxl = contains("label_emb")
             || keys
                 .iter()
                 .any(|k| k.starts_with("conditioner.embedders.1."));
@@ -4282,17 +4344,31 @@ fn infer_architecture_from_keys(header: &serde_json::Map<String, Value>) -> Opti
         return Some("stable-diffusion-v1-5".to_string());
     }
 
-    // Diffusion-only models (unet/dit without the model. prefix)
-    let has_input_blocks = keys.iter().any(|k| k.starts_with("input_blocks."));
-    if has_input_blocks {
-        let is_sdxl = keys.iter().any(|k| k.contains("label_emb"));
-        if is_sdxl {
-            return Some("stable-diffusion-xl-v1-base".to_string());
-        }
-        return Some("stable-diffusion-v1-5".to_string());
-    }
-
     None
+}
+
+/// Map a structurally inferred architecture onto the app's model family.
+///
+/// Only architectures that map unambiguously onto a single family are listed:
+/// tensor keys cannot tell a Flux dev from a schnell, or an Illustrious from a
+/// stock SDXL, so those resolve to the generic family and are only ever used to
+/// fill in a family that other detection left unknown.
+fn family_from_architecture(architecture: &str) -> Option<&'static str> {
+    match architecture {
+        "anima" => Some("anima"),
+        "wan2.1" => Some("wan"),
+        "flux" => Some("flux"),
+        "qwen_image" => Some("qwen"),
+        "stable-diffusion-3-medium" => Some("sd3"),
+        "auraflow" => Some("auraflow"),
+        "pixart" => Some("pixart"),
+        "hunyuandit" => Some("hunyuandit"),
+        "stable_cascade" => Some("cascade"),
+        "kolors" => Some("kolors"),
+        "stable-diffusion-xl-v1-base" => Some("sdxl"),
+        "stable-diffusion-v1-5" => Some("sd15"),
+        _ => None,
+    }
 }
 
 /// Read `{stem}.png` / `.jpg` sidecar preview next to a model file, if present.

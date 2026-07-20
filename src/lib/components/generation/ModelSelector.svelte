@@ -116,6 +116,40 @@
       },
     },
     {
+      label: "Anima Base v1.0 (FP8)",
+      size: "",
+      sizeKey: "common.local",
+      detectionOnly: true,
+      minComputeCapability: 8.9,
+      gateHint: "Ada / Blackwell only",
+      splitModel: {
+        diffusionModel: {
+          filename: "anima-base-v1.0-fp8.safetensors",
+          url: "",
+          category: "diffusion_models",
+        },
+        clipModel: {
+          filename: "qwen_3_06b_base.safetensors",
+          url: "",
+          category: "text_encoders",
+          clipType: "wan",
+        },
+        vaeModel: {
+          filename: "qwen_image_vae.safetensors",
+          url: "",
+          category: "vae",
+        },
+      },
+      autoSettings: {
+        steps: 30,
+        cfg: 4,
+        samplerName: "er_sde",
+        upscaleSteps: 10,
+        upscaleDenoise: 0.3,
+        facefixSteps: 10,
+      },
+    },
+    {
       label: "Anima Preview 3",
       size: "",
       sizeKey: "common.local",

@@ -1,5 +1,14 @@
 # Changelog
 
+## What's New in v1.7.3
+
+### Fixes
+- **Models are now recognized from their weights, not just their filename**: architecture detection compared tensor names without accounting for the container prefix that checkpoints actually store them under. Anima keeps its weights under `net.`, so it was not detected at all, and Wan 2.1 and Flux keep theirs under `model.diffusion_model.`, so both were misread as SD 1.5. Detection now strips that prefix the way ComfyUI does and identifies Anima, Cosmos Predict2, Wan 2.1, Flux, Qwen-Image, SD3, SDXL, and SD 1.5 from their weights no matter what the file is named.
+- **Anima picks the right text encoder**: Anima ships with no embedded metadata, so once structural detection failed there was nothing left to identify it. The family fell back to "unknown" and the text encoder fell back to whichever one happened to be installed first, which is why an Anima FP8 build could load a completely unrelated encoder. Anima is now detected by its Qwen3 adapter regardless of filename, and if no Qwen3-0.6B encoder is installed the recommendation is left empty so the download prompt appears, instead of silently substituting an encoder that produces garbage images rather than an error.
+- **Anima Base v1.0 (FP8) is listed**: `anima-base-v1.0-fp8.safetensors` was missing from the model list, so selecting it did not pair the matching text encoder and VAE or apply the Anima generation presets.
+
+---
+
 ## What's New in v1.7.2
 
 ### New features
