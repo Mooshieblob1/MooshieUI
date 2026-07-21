@@ -144,7 +144,11 @@ If you [sponsor the project](https://github.com/sponsors/Mooshieblob1), here is 
 - **SaaS & dev tooling** - the paid services and tools used to actually build and ship MooshieUI.
 - **GitHub Pro+** - CI/CD minutes for the build, release, and security-scan pipelines.
 
-The goal is simply to stop the project from costing me money to keep alive. Anything beyond covering costs just goes right back into building more features, faster. Sponsoring is completely optional and the app will always be free and open source either way. Thank you for even considering it. 🙏
+The goal is simply to stop the project from costing me money to keep alive. Anything beyond covering costs just goes right back into building more features, faster.
+
+Longer term, the ideal is that MooshieUI can outlast my own availability. I intend to support this project for as long as I can, but every maintainer has lulls, and life can pull you away for a stretch. A small buffer means the domain, hosting, and infrastructure stay paid up through those quiet periods, so the project stays online and usable even when I am not actively maintaining it.
+
+Sponsoring is completely optional and the app will always be free and open source either way. Thank you for even considering it. 🙏
 
 ---
 
