@@ -468,8 +468,8 @@ const fr: Record<string, string> = {
   "settings.advanced_mode.cancel": "Cancel",
 
   // ── Génération ──────────────────────────────────────────
-  "generation.mode.txt2img": "Texte vers image",
-  "generation.mode.img2img": "Image vers image",
+  "generation.mode.txt2img": "Txt2Img",
+  "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "Inpainting",
 
   // Prompts

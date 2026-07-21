@@ -465,8 +465,8 @@ const es: Record<string, string> = {
   // ── Generación ──────────────────────────────────────────
   "generation.notification.image_ready_body": "Tu generación completada está lista para ver.",
   "generation.notification.images_ready_body": "{count} imágenes generadas están listas para ver.",
-  "generation.mode.txt2img": "Texto a imagen",
-  "generation.mode.img2img": "Imagen a imagen",
+  "generation.mode.txt2img": "Txt2Img",
+  "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "Inpainting",
 
   // Prompts

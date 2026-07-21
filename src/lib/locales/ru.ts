@@ -459,8 +459,8 @@ const ru: Record<string, string> = {
   "settings.advanced_mode.cancel": "Cancel",
 
   // ── Генерация ───────────────────────────────────────────
-  "generation.mode.txt2img": "Текст в изображение",
-  "generation.mode.img2img": "Изображение в изображение",
+  "generation.mode.txt2img": "Txt2Img",
+  "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "Инпейнтинг",
 
   "generation.prompts.title": "Промпты",

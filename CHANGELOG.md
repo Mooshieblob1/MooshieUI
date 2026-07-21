@@ -1,5 +1,13 @@
 # Changelog
 
+## What's New in v1.7.5
+
+### Fixes and maintenance
+- **Generation mode labels no longer wrap in narrow panels**: the mode switcher labels read "Text to Image" and "Image to Image", which broke onto a second line when the generation panel was sized narrow. They are now the standard short forms "Txt2Img" and "Img2Img" in every language (Chinese already used compact forms and is unchanged).
+- **Combined prompt toggle joins the prompt action row**: the button that switches between separate positive and negative boxes and the single combined box sat by itself above the prompt. It now shares a row with the Enhance, Compose, and Regional prompt buttons.
+
+---
+
 ## What's New in v1.7.4
 
 ### New features

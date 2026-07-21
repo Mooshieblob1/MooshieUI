@@ -497,8 +497,8 @@ const pl: Record<string, string> = {
   "settings.advanced_mode.cancel": "Anuluj",
 
   // ── Generation ──────────────────────────────────────────
-  "generation.mode.txt2img": "Tekst na obraz",
-  "generation.mode.img2img": "Obraz na obraz",
+  "generation.mode.txt2img": "Txt2Img",
+  "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "Inpainting",
 
   // Prompts

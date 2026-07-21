@@ -468,8 +468,8 @@ const ja: Record<string, string> = {
   "settings.advanced_mode.cancel": "Cancel",
 
   // ── 生成 ────────────────────────────────────────────────
-  "generation.mode.txt2img": "テキストから画像",
-  "generation.mode.img2img": "画像から画像",
+  "generation.mode.txt2img": "Txt2Img",
+  "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "インペインティング",
 
   // プロンプト

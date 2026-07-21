@@ -269,15 +269,9 @@
           <span class="font-mono max-w-28 truncate">@{displayName}</span>
         </button>
       {/each}
-      <button
-        type="button"
-        onclick={() => (combinedMode = !combinedMode)}
-        class="shrink-0 text-neutral-400 hover:text-neutral-200 transition-colors p-0.5"
-        title={combinedMode ? locale.t('generation.prompts.combined_mode_split') : locale.t('generation.prompts.combined_mode_toggle')}
-        aria-label={combinedMode ? locale.t('generation.prompts.combined_mode_split') : locale.t('generation.prompts.combined_mode_toggle')}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
-      </button>
+      {#if combinedMode && activeTab === "negative"}
+        {@render combineToggle()}
+      {/if}
       </div>
     </div>
     {#if combinedMode && activeTab === "negative"}
@@ -318,23 +312,26 @@
           <span class="text-[10px] text-neutral-400">{locale.t("prompt_assistant.loading_model")}</span>
         {/if}
       </div>
-      <button
-        type="button"
-        disabled={!regionalPromptingSupported}
-        onclick={() => {
-          if (!regionalPromptingSupported) {
-            gallery.showToast(locale.t("generation.regional.unsupported"), "warning");
-            return;
-          }
-          onOpenRegionalPrompt?.();
-        }}
-        class="rounded-lg border px-2 py-0.5 text-[10px] transition-colors disabled:cursor-not-allowed {regionalPromptingSupported
-          ? 'border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-indigo-500 hover:text-indigo-200'
-          : 'border-neutral-800 bg-neutral-950 text-neutral-500'}"
-        title={!regionalPromptingSupported ? locale.t("generation.regional.unsupported") : undefined}
-      >
-        {locale.t("generation.regional.button", { count: String(generation.regionalPrompts.length) })}
-      </button>
+      <div class="flex items-center gap-1.5">
+        <button
+          type="button"
+          disabled={!regionalPromptingSupported}
+          onclick={() => {
+            if (!regionalPromptingSupported) {
+              gallery.showToast(locale.t("generation.regional.unsupported"), "warning");
+              return;
+            }
+            onOpenRegionalPrompt?.();
+          }}
+          class="rounded-lg border px-2 py-0.5 text-[10px] transition-colors disabled:cursor-not-allowed {regionalPromptingSupported
+            ? 'border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-indigo-500 hover:text-indigo-200'
+            : 'border-neutral-800 bg-neutral-950 text-neutral-500'}"
+          title={!regionalPromptingSupported ? locale.t("generation.regional.unsupported") : undefined}
+        >
+          {locale.t("generation.regional.button", { count: String(generation.regionalPrompts.length) })}
+        </button>
+        {@render combineToggle()}
+      </div>
     </div>
     {#if generation.isAnima}
       <div class="text-[10px] text-amber-400/80 mb-1">{locale.t('generation.prompts.anima_artist_tip')}</div>
@@ -354,6 +351,18 @@
     <ExtraPromptBoxList side="positive" />
     {/if}
   </div>
+
+  {#snippet combineToggle()}
+    <button
+      type="button"
+      onclick={() => (combinedMode = !combinedMode)}
+      class="shrink-0 text-neutral-400 hover:text-neutral-200 transition-colors p-0.5"
+      title={combinedMode ? locale.t('generation.prompts.combined_mode_split') : locale.t('generation.prompts.combined_mode_toggle')}
+      aria-label={combinedMode ? locale.t('generation.prompts.combined_mode_split') : locale.t('generation.prompts.combined_mode_toggle')}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+    </button>
+  {/snippet}
 
   {#snippet negativeFields()}
   <div class="transition-opacity {generation.disablesNegativePrompt ? 'opacity-40 pointer-events-none' : ''}">

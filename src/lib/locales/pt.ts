@@ -459,8 +459,8 @@ const pt: Record<string, string> = {
   "settings.advanced_mode.cancel": "Cancel",
 
   // ── Geração ─────────────────────────────────────────────
-  "generation.mode.txt2img": "Texto para Imagem",
-  "generation.mode.img2img": "Imagem para Imagem",
+  "generation.mode.txt2img": "Txt2Img",
+  "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "Inpainting",
 
   "generation.prompts.title": "Prompts",

@@ -480,8 +480,8 @@ const de: Record<string, string> = {
   "settings.advanced_mode.cancel": "Cancel",
 
   // ── Generierung ─────────────────────────────────────────
-  "generation.mode.txt2img": "Text zu Bild",
-  "generation.mode.img2img": "Bild zu Bild",
+  "generation.mode.txt2img": "Txt2Img",
+  "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "Inpainting",
 
   "generation.prompts.title": "Prompts",

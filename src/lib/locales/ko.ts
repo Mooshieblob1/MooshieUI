@@ -459,8 +459,8 @@ const ko: Record<string, string> = {
   "settings.advanced_mode.cancel": "Cancel",
 
   // ── 생성 ────────────────────────────────────────────────
-  "generation.mode.txt2img": "텍스트에서 이미지",
-  "generation.mode.img2img": "이미지에서 이미지",
+  "generation.mode.txt2img": "Txt2Img",
+  "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "인페인팅",
 
   "generation.prompts.title": "프롬프트",
