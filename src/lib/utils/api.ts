@@ -31,7 +31,8 @@ export async function getEmbeddings(): Promise<string[]> {
 
 export interface GenerateResponse {
   prompt_id: string;
-  seed: number;
+  /** Decimal string — 63-bit seeds exceed JS's safe-integer range. */
+  seed: string;
   queue_position?: number;
   queue_total?: number;
 }

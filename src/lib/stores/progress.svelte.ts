@@ -43,8 +43,8 @@ class ProgressStore {
   /** Persists wasUpscaled from the last completed prompt (for PreviewImage overlay). */
   private _lastCompletedWasUpscaled = $state(false);
 
-  /** The seed used by the most recently completed generation. */
-  lastCompletedSeed = $state<number | null>(null);
+  /** The seed used by the most recently completed generation (decimal string). */
+  lastCompletedSeed = $state<string | null>(null);
 
   /** Global queue position for this user's next prompt (0 = generating now). */
   queuePosition = $state<number | null>(null);
@@ -337,7 +337,7 @@ class ProgressStore {
 
     if (item) {
       this._lastCompletedWasUpscaled = item.wasUpscaled;
-      if (item.params != null && item.params.seed != null && item.params.seed >= 0) {
+      if (item.params != null && item.params.seed != null && item.params.seed !== "-1") {
         this.lastCompletedSeed = item.params.seed;
       }
       // Capture total generation time. Prefer the per-prompt startedAt (robust

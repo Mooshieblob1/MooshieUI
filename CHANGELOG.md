@@ -1,5 +1,16 @@
 # Changelog
 
+## What's New in v1.7.6
+
+### Fixes
+- **Large seeds are preserved exactly**: ComfyUI seeds use the full 63-bit range, but the app carried them as JavaScript numbers, which only hold 53 bits precisely. A seed like 8173306563118891294 was silently rounded, so reusing it from an image's metadata, remixing, or building a regional inpaint chain reproduced a different image than the one it came from. Seeds are now carried as exact decimal strings from the seed box all the way to ComfyUI and back, so any seed round-trips faithfully. The seed field accepts the full range, and settings saved by an older version load unchanged.
+- **Gallery search reads MooshieUI's own seed, steps, and CFG**: the gallery index expected these values as numbers, but MooshieUI writes them into image metadata as strings, so pictures generated in-app were indexed with no seed, steps, or CFG and did not turn up when filtering the gallery by those fields. The index now reads either form.
+
+### Improvements
+- **A one-time hint points to the relocated Interrogate button**: the Interrogate tool moved from the panel list to the sidebar in an earlier release, and returning users could not find where it went (issue #488). A small dismissible bubble now points at the sidebar button; opening Interrogate once, or closing the bubble, hides it for good.
+
+---
+
 ## What's New in v1.7.5
 
 ### Fixes and maintenance

@@ -2803,10 +2803,11 @@ async fn dispatch_command(
                 }
             });
 
-            // Return immediately — the frontend tracks progress via SSE/WebSocket events
+            // Return immediately — the frontend tracks progress via SSE/WebSocket events.
+            // Seed as a string: 63-bit values exceed JS's 2^53 safe-integer range.
             Ok(serde_json::json!({
                 "prompt_id": placeholder_id,
-                "seed": seed,
+                "seed": seed.to_string(),
                 "queue_position": queue_pos,
                 "queue_total": queue_total,
             }))

@@ -1118,6 +1118,17 @@
   let showInterrogateQuickModal = $state(false);
   let interrogateSidebarBtn = $state<HTMLButtonElement | undefined>();
 
+  // One-time speech bubble pointing at the sidebar interrogate button, for
+  // users who knew the feature from its pre-v1.6.0 spot in the panel list
+  // (issue #488). UI layout pref → localStorage, like the combined-prompt
+  // toggle. Using the button also dismisses it: the feature was found.
+  const INTERROGATE_HINT_KEY = "mooshieui.hint.interrogate-sidebar.v1";
+  let showInterrogateHint = $state(localStorage.getItem(INTERROGATE_HINT_KEY) !== "true");
+  function dismissInterrogateHint() {
+    showInterrogateHint = false;
+    try { localStorage.setItem(INTERROGATE_HINT_KEY, "true"); } catch {}
+  }
+
   /** Shared runner for the quick-interrogate flows: opens the results modal,
    *  wires the progress/stage listeners, then runs the supplied IPC call. */
   async function runQuickInterrogation(previewUrl: string | null, run: () => Promise<InterrogationResult>) {
@@ -1464,7 +1475,9 @@
 
       if (mode === "seed") {
         if (metadata.seed !== undefined) {
-          generation.seed = Number(metadata.seed) || generation.seed;
+          // Assign the string as-is: Number() would round 63-bit seeds past 2^53.
+          const seed = metadata.seed.trim();
+          if (/^\d+$/.test(seed)) generation.seed = seed;
           gallery.showToast(locale.t("gallery.toast.applied_seed"), "success");
         } else {
           gallery.showToast(locale.t("gallery.toast.no_seed"), "info");
@@ -1516,12 +1529,14 @@
       }
 
       if (mode === "remix") {
-        generation.seed = -1;
+        generation.seed = "-1";
         gallery.showToast(locale.t("gallery.toast.loaded_remix"), "success");
         return;
       }
 
-      if (metadata.seed !== undefined) generation.seed = Number(metadata.seed) || generation.seed;
+      if (metadata.seed !== undefined && /^\d+$/.test(metadata.seed.trim())) {
+        generation.seed = metadata.seed.trim();
+      }
       gallery.showToast(locale.t("gallery.toast.applied_settings"), "success");
     } catch (e) {
       console.error("Failed to apply metadata:", e);
@@ -3065,30 +3080,62 @@
 
     <div class="flex-1"></div>
 
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <button
-      bind:this={interrogateSidebarBtn}
-      class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {showInterrogateQuickModal
-        ? 'bg-indigo-600 text-white'
-        : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'} mx-auto"
-      onclick={() => (showInterrogateQuickModal = true)}
-      ondragenter={(e) => { e.preventDefault(); startInterrogateHoverTimer(); }}
-      ondragover={(e) => { e.preventDefault(); }}
-      ondragleave={cancelInterrogateHoverTimer}
-      title={locale.t('generation.interrogate.title')}
-    >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        class="w-4.5 h-4.5 pointer-events-none"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        ><path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" /><path d="M21 17v2a2 2 0 0 1-2 2h-2" /><path d="M7 21H5a2 2 0 0 1-2-2v-2" /><circle cx="12" cy="12" r="3" /><path d="m16 16-1.5-1.5" /></svg
+    <div class="relative mx-auto">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <button
+        bind:this={interrogateSidebarBtn}
+        class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {showInterrogateQuickModal
+          ? 'bg-indigo-600 text-white'
+          : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}"
+        onclick={() => { dismissInterrogateHint(); showInterrogateQuickModal = true; }}
+        ondragenter={(e) => { e.preventDefault(); startInterrogateHoverTimer(); }}
+        ondragover={(e) => { e.preventDefault(); }}
+        ondragleave={cancelInterrogateHoverTimer}
+        title={locale.t('generation.interrogate.title')}
       >
-    </button>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class="w-4.5 h-4.5 pointer-events-none"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          ><path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" /><path d="M21 17v2a2 2 0 0 1-2 2h-2" /><path d="M7 21H5a2 2 0 0 1-2-2v-2" /><circle cx="12" cy="12" r="3" /><path d="m16 16-1.5-1.5" /></svg
+        >
+      </button>
+      {#if showInterrogateHint}
+        <div
+          role="status"
+          class="absolute left-full top-1/2 z-50 ml-3 w-56 -translate-y-1/2 rounded-lg border border-[var(--theme-accent-500)] bg-neutral-800 p-2.5 pr-7 shadow-xl shadow-black/40"
+        >
+          <div
+            class="absolute top-1/2 -left-1.25 h-2 w-2 -translate-y-1/2 rotate-45 border-b border-l border-[var(--theme-accent-500)] bg-neutral-800"
+          ></div>
+          <p class="text-xs leading-snug text-neutral-200">
+            {locale.t("generation.interrogate.hint_moved")}
+          </p>
+          <button
+            class="absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200"
+            onclick={dismissInterrogateHint}
+            aria-label={locale.t("common.close")}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-3 w-3"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              ><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg
+            >
+          </button>
+        </div>
+      {/if}
+    </div>
 
     <button
       class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors {currentPage ===

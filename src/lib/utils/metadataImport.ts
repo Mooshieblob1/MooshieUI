@@ -141,8 +141,9 @@ function applySampler(meta: Record<string, string>): boolean {
     if (!isNaN(v)) { generation.denoise = v; applied = true; }
   }
   if (meta.seed) {
-    const v = parseInt(meta.seed, 10);
-    if (!isNaN(v)) { generation.seed = v; applied = true; }
+    // Keep the seed as a string: parseInt would round 63-bit seeds past 2^53.
+    const trimmed = meta.seed.trim();
+    if (/^\d+$/.test(trimmed)) { generation.seed = trimmed; applied = true; }
   }
   return applied;
 }

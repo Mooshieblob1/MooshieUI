@@ -502,8 +502,8 @@
       }
 
       // Use shared seed for random seeds so the grid is consistent
-      if (params.seed < 0) {
-        params.seed = sharedSeed;
+      if (params.seed === "-1") {
+        params.seed = String(sharedSeed);
       }
 
       try {

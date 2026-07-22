@@ -7,7 +7,7 @@
   import EditableValue from "../ui/EditableValue.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
 
-  let randomSeed = $derived(generation.seed === -1);
+  let randomSeed = $derived(generation.seed === "-1");
   const activeModelName = $derived((generation.diffusionModel || generation.checkpoint || "").toLowerCase());
   const hasAnimaRecommendation = $derived(generation.isAnima || activeModelName.includes("anima"));
   const hasJuiceRecommendation = $derived(
@@ -277,23 +277,24 @@
             class="text-[10px] px-1.5 py-0.5 rounded {randomSeed
               ? 'bg-indigo-600 text-white'
               : 'bg-neutral-700 text-neutral-300'} transition-colors"
-            onclick={() => (generation.seed = randomSeed ? (progress.lastCompletedSeed ?? 0) : -1)}
+            onclick={() => (generation.seed = randomSeed ? (progress.lastCompletedSeed ?? "0") : "-1")}
           >
             {locale.t('generation.sampler.seed_random')}
           </button>
         </div>
       </label>
       <!-- Single editable box: shows "Random" as a placeholder when RNG is on, and
-           typing a value switches off RNG automatically — no need to toggle first (#394). -->
+           typing a value switches off RNG automatically — no need to toggle first (#394).
+           type="text": a number input would round 63-bit seeds past 2^53. -->
       <input
-        type="number"
-        min="0"
+        type="text"
+        inputmode="numeric"
         value={randomSeed ? '' : generation.seed}
         placeholder={locale.t('generation.sampler.random_display')}
         oninput={(e) => {
-          const raw = e.currentTarget.value.trim();
-          const n = Number(raw);
-          generation.seed = raw === '' || Number.isNaN(n) ? -1 : Math.max(0, Math.floor(n));
+          const digits = e.currentTarget.value.replace(/\D/g, '');
+          if (e.currentTarget.value !== digits) e.currentTarget.value = digits;
+          generation.seed = digits === '' ? "-1" : digits;
         }}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
       />

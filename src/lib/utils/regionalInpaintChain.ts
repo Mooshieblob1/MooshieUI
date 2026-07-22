@@ -29,7 +29,7 @@ export interface RegionalInpaintChainCallbacks {
   submit: (
     params: GenerationParams,
     ctx: RegionalInpaintChainStepContext,
-  ) => Promise<{ promptId: string; seed: number }>;
+  ) => Promise<{ promptId: string; seed: string }>;
   onStep?: (info: { phase: "base" | "region"; index: number; total: number }) => void;
   onWaitingForOutput?: () => void;
   shouldCancel?: () => boolean;

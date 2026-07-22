@@ -8,9 +8,12 @@ use crate::state::AppState;
 use crate::templates;
 
 /// Response from the generate command, includes the resolved seed.
+/// The seed is serialized as a string: 63-bit values exceed JavaScript's
+/// 2^53 safe-integer range and would be silently rounded as a JSON number.
 #[derive(serde::Serialize)]
 pub struct GenerateResponse {
     pub prompt_id: String,
+    #[serde(serialize_with = "crate::comfyui::types::seed_string::serialize")]
     pub seed: i64,
 }
 

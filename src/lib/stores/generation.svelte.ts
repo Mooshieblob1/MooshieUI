@@ -360,7 +360,8 @@ class GenerationStore {
   scheduler = $state("sgm_uniform");
   steps = $state(20);
   cfg = $state(1.4);
-  seed = $state(-1);
+  // Decimal string ("-1" = random): 63-bit seeds exceed JS's safe-integer range.
+  seed = $state("-1");
   width = $state(512);
   height = $state(512);
   batchSize = $state(1);
@@ -1453,7 +1454,8 @@ class GenerationStore {
         if (saved.scheduler) this.scheduler = saved.scheduler;
         if (saved.steps) this.steps = saved.steps;
         if (saved.cfg !== undefined) this.cfg = saved.cfg;
-        if (saved.seed !== undefined) this.seed = saved.seed;
+        // String(...) coerces seeds persisted as numbers by older versions.
+        if (saved.seed !== undefined) this.seed = String(saved.seed);
         if (saved.width) this.width = saved.width;
         if (saved.height) this.height = saved.height;
         if (saved.batchSize) this.batchSize = saved.batchSize;

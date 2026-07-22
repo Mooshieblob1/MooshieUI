@@ -92,6 +92,40 @@ pub struct PositiveRegion {
     pub strength: f64,
 }
 
+/// Seeds are 63-bit and exceed JavaScript's 2^53 safe-integer range, so they
+/// must cross the IPC/JSON boundary as strings. Serializes an i64 as a decimal
+/// string; accepts a string or a bare number (old persisted settings/clients).
+pub mod seed_string {
+    use serde::{de, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &i64, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&v.to_string())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
+        struct SeedVisitor;
+        impl<'de> de::Visitor<'de> for SeedVisitor {
+            type Value = i64;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a seed as an integer or string")
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<i64, E> {
+                Ok(v)
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<i64, E> {
+                Ok(v as i64)
+            }
+            fn visit_f64<E: de::Error>(self, v: f64) -> Result<i64, E> {
+                Ok(v as i64)
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<i64, E> {
+                v.trim().parse::<i64>().map_err(de::Error::custom)
+            }
+        }
+        d.deserialize_any(SeedVisitor)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerationParams {
     pub mode: String,
@@ -112,6 +146,7 @@ pub struct GenerationParams {
     pub scheduler: String,
     pub steps: u32,
     pub cfg: f64,
+    #[serde(with = "seed_string")]
     pub seed: i64,
     pub width: u32,
     pub height: u32,

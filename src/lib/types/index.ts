@@ -96,7 +96,8 @@ export interface GenerationParams {
   scheduler: string;
   steps: number;
   cfg: number;
-  seed: number;
+  /** Decimal string ("-1" = random) — 63-bit seeds exceed JS's safe-integer range. */
+  seed: string;
   width: number;
   height: number;
   batch_size: number;

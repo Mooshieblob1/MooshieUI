@@ -121,6 +121,18 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Read a JSON value as i64, accepting either a number or a decimal string.
+fn json_i64(v: &serde_json::Value) -> Option<i64> {
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+}
+
+/// Read a JSON value as f64, accepting either a number or a decimal string.
+fn json_f64(v: &serde_json::Value) -> Option<f64> {
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+}
+
 /// Parse the embedded SwarmUI `sui_image_params` JSON into queryable columns.
 fn extract_params(metadata: &HashMap<String, String>) -> ParsedParams {
     let mut p = ParsedParams::default();
@@ -144,9 +156,11 @@ fn extract_params(metadata: &HashMap<String, String>) -> ParsedParams {
                     .get("scheduler")
                     .and_then(|x| x.as_str())
                     .map(str::to_owned);
-                p.cfg = obj.get("cfgscale").and_then(|x| x.as_f64());
-                p.steps = obj.get("steps").and_then(|x| x.as_i64());
-                p.seed = obj.get("seed").and_then(|x| x.as_i64());
+                // MooshieUI writes these SwarmUI values as JSON strings (see
+                // metadata::format_swarmui_json); SwarmUI itself uses numbers.
+                p.cfg = obj.get("cfgscale").and_then(json_f64);
+                p.steps = obj.get("steps").and_then(json_i64);
+                p.seed = obj.get("seed").and_then(json_i64);
                 p.width = obj.get("width").and_then(|x| x.as_i64());
                 p.height = obj.get("height").and_then(|x| x.as_i64());
             }
