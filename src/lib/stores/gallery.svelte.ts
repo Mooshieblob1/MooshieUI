@@ -965,7 +965,8 @@ class GalleryStore {
         if (!fetchUrl && galleryFilename) {
           fetchUrl = await fullImageUrl(galleryFilename);
         }
-        if (!fetchUrl) fetchUrl = image.url || (this.selectedImage === image ? this.lightboxUrl : null);
+        if (!fetchUrl)
+          fetchUrl = (image.url || (this.selectedImage === image ? this.lightboxUrl : null)) ?? undefined;
         if (fetchUrl) {
           try {
             const resp = await fetch(fetchUrl);
