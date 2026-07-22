@@ -162,12 +162,12 @@ const pl: Record<string, string> = {
   "setup.attention.sage_v1": "SageAttention v1",
   "setup.attention.sage_v1_desc": "Kwantyzowany attention INT8 (czysty Triton). Szybka instalacja, GPU Ampere+.",
   "setup.attention.sage_v2": "SageAttention v2",
-  "setup.attention.sage_v2_desc": "Attention INT8+FP8 z jądrami CUDA. Najszybszy na Ada/Hopper. Wymaga zestawu narzędzi CUDA.",
+  "setup.attention.sage_v2_desc": "Attention INT8+FP8 z jądrami CUDA. Najszybszy na Ada/Hopper. Gotowy wheel na Windows; kompilacja ze źródeł na Linuksie.",
   "setup.attention.flash_v1": "FlashAttention v1",
   "setup.attention.flash_v1_desc": "Attention z efektywnym wykorzystaniem pamięci. GPU NVIDIA Ampere+.",
   "setup.attention.flash_v2": "FlashAttention v2",
   "setup.attention.flash_v2_desc": "Najszybszy attention z efektywnym wykorzystaniem pamięci. GPU NVIDIA Ampere+.",
-  "setup.attention.compile_warning": "Ta opcja kompiluje ze źródeł i może potrwać 10+ minut. Wymaga zainstalowanego zestawu narzędzi CUDA.",
+  "setup.attention.compile_warning": "FlashAttention (oraz SageAttention v2 na Linuksie) kompiluje się ze źródeł i może potrwać 10+ minut. Kompilacja wymaga zainstalowanego zestawu narzędzi CUDA.",
   "setup.attention.install_target": "Pakiety backendu attention instalują się do środowiska wirtualnego utworzonego dla tej instalacji MooshieUI.",
   "setup.attention.external_env": "Jeśli później używasz zewnętrznego ComfyUI lub zarządzanego przez ComfyCLI, zainstaluj do środowiska Python, które faktycznie uruchamia tę instancję ComfyUI.",
   "setup.mode_local": "Instalacja lokalna",
@@ -963,6 +963,7 @@ const pl: Record<string, string> = {
 
   // Interrogate modal
   "generation.interrogate.title": "Analiza obrazu",
+  "generation.interrogate.hint_moved": "Analiza obrazu została przeniesiona tutaj. Kliknij, aby ją otworzyć, lub upuść obraz na ten przycisk.",
   "generation.interrogate.paste_clipboard": "Wklej ze schowka",
   "generation.interrogate.browse_file": "Przeglądaj obrazy",
   "generation.interrogate.tip": "Analizuj obraz, aby wyodrębnić tagi (postać, artysta, ogólne). Upuść obraz, przeglądaj pliki lub wklej ze schowka. Tagi można zastosować bezpośrednio do Twojego promptu.",

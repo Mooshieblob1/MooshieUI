@@ -136,12 +136,12 @@ const es: Record<string, string> = {
   "setup.attention.sage_v1": "SageAttention v1",
   "setup.attention.sage_v1_desc": "Atención cuantizada INT8 (Triton puro). Instalación rápida, GPUs Ampere+.",
   "setup.attention.sage_v2": "SageAttention v2",
-  "setup.attention.sage_v2_desc": "Atención INT8+FP8 con kernels CUDA. Más rápida en Ada/Hopper. Requiere CUDA toolkit.",
+  "setup.attention.sage_v2_desc": "Atención INT8+FP8 con kernels CUDA. Más rápida en Ada/Hopper. Wheel precompilado en Windows; compilación desde fuente en Linux.",
   "setup.attention.flash_v1": "FlashAttention v1",
   "setup.attention.flash_v1_desc": "Atención eficiente en memoria. GPUs NVIDIA Ampere+.",
   "setup.attention.flash_v2": "FlashAttention v2",
   "setup.attention.flash_v2_desc": "Atención más rápida y eficiente en memoria. GPUs NVIDIA Ampere+.",
-  "setup.attention.compile_warning": "Esta opción compila desde el código fuente y puede tardar 10+ minutos. Requiere CUDA toolkit.",
+  "setup.attention.compile_warning": "FlashAttention (y SageAttention v2 en Linux) compila desde el código fuente y puede tardar 10+ minutos. Compilar requiere el CUDA toolkit instalado.",
   "setup.attention.install_target": "Attention backend packages install into the venv created for this MooshieUI install.",
   "setup.attention.external_env": "If you later use an external or ComfyCLI-managed ComfyUI, install into the Python environment that actually runs that ComfyUI instance.",
   "setup.mode_local": "Local install",
@@ -838,6 +838,7 @@ const es: Record<string, string> = {
 
   // Modal de interrogación
   "generation.interrogate.title": "Interrogar imagen",
+  "generation.interrogate.hint_moved": "La interrogación de imágenes se ha movido aquí. Haz clic para abrirla o suelta una imagen en este botón.",
   "generation.interrogate.paste_clipboard": "Pegar desde el portapapeles",
   "generation.interrogate.browse_file": "Buscar imagen",
   "generation.interrogate.tip": "Analiza una imagen para extraer etiquetas (personaje, artista, general). Arrastra una imagen, explora tus archivos o pega desde el portapapeles. Las etiquetas se pueden aplicar directamente a tu prompt.",

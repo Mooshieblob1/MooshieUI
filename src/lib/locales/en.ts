@@ -163,12 +163,12 @@ const en: Record<string, string> = {
   "setup.attention.sage_v1": "SageAttention v1",
   "setup.attention.sage_v1_desc": "INT8 quantized attention (pure Triton). Fast install, Ampere+ GPUs.",
   "setup.attention.sage_v2": "SageAttention v2",
-  "setup.attention.sage_v2_desc": "INT8+FP8 attention with CUDA kernels. Fastest on Ada/Hopper. Requires CUDA toolkit.",
+  "setup.attention.sage_v2_desc": "INT8+FP8 attention with CUDA kernels. Fastest on Ada/Hopper. Prebuilt wheel on Windows; source build on Linux.",
   "setup.attention.flash_v1": "FlashAttention v1",
   "setup.attention.flash_v1_desc": "Memory-efficient attention. NVIDIA Ampere+ GPUs.",
   "setup.attention.flash_v2": "FlashAttention v2",
   "setup.attention.flash_v2_desc": "Fastest memory-efficient attention. NVIDIA Ampere+ GPUs.",
-  "setup.attention.compile_warning": "This option compiles from source and may take 10+ minutes. Requires CUDA toolkit installed.",
+  "setup.attention.compile_warning": "FlashAttention (and SageAttention v2 on Linux) compiles from source and may take 10+ minutes. Compiling requires the CUDA toolkit installed.",
   "setup.attention.install_target": "Attention backend packages install into the venv created for this MooshieUI install.",
   "setup.attention.external_env": "If you later use an external or ComfyCLI-managed ComfyUI, install into the Python environment that actually runs that ComfyUI instance.",
   "setup.mode_local": "Local install",
@@ -964,6 +964,7 @@ const en: Record<string, string> = {
 
   // Interrogate modal
   "generation.interrogate.title": "Interrogate Image",
+  "generation.interrogate.hint_moved": "Image interrogation has moved here. Click to open it, or drop an image onto this button.",
   "generation.interrogate.paste_clipboard": "Paste from Clipboard",
   "generation.interrogate.browse_file": "Browse for Image",
   "generation.interrogate.tip": "Analyze an image to extract tags (character, artist, general). Drop an image, browse your files, or paste from clipboard. Tags can be applied directly to your prompt.",

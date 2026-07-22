@@ -6524,8 +6524,9 @@ pub struct AttentionBackendStatus {
     pub compute_capability: Option<f32>,
     /// OS family ("windows" | "linux" | "macos").
     pub os: String,
-    /// Whether the CUDA toolkit (`nvcc`) is on PATH — required to build the
-    /// source-only backends (sage_v2 / flash_v1 / flash_v2) on Windows.
+    /// Whether the CUDA toolkit (`nvcc`) is on PATH — required for backends
+    /// that compile from source on this platform (flash_v1 / flash_v2 on
+    /// Windows, sage_v2 on Linux).
     pub nvcc_available: bool,
     /// Per-backend support, so the UI can disable options the machine can't use.
     pub support: Vec<BackendSupport>,
@@ -6570,24 +6571,28 @@ fn nvcc_available() -> bool {
 
 /// Compute per-backend support from detected capabilities. Hard-block rules:
 /// no NVIDIA GPU → all non-default blocked; compute cap below the backend's
-/// minimum → blocked; on Windows, source-built backends need `nvcc` → blocked
-/// when missing. Everything else is attempt-install-and-verify.
+/// minimum → blocked; backends that compile from source on this platform need
+/// `nvcc` → blocked when missing. Everything else is attempt-install-and-verify.
 fn compute_backend_support(
     compute_capability: Option<f32>,
     nvcc: bool,
     is_windows: bool,
 ) -> Vec<BackendSupport> {
-    // (backend, min compute capability, source-build requiring nvcc on Windows)
-    const MATRIX: [(&str, f32, bool); 4] = [
-        ("sage_v1", 8.0, false), // wheel; triton at runtime (triton-windows on Windows)
-        ("sage_v2", 8.0, true),  // CUDA source build
-        ("flash_v1", 7.5, true), // source build
-        ("flash_v2", 8.0, true), // source build on Windows; Linux sdist may fetch a wheel
+    // (backend, min compute capability, needs nvcc on Windows, needs nvcc elsewhere)
+    const MATRIX: [(&str, f32, bool, bool); 4] = [
+        ("sage_v1", 8.0, false, false), // wheel; triton at runtime (triton-windows on Windows)
+        ("sage_v2", 8.0, false, true),  // prebuilt wheel on Windows; CUDA source build on Linux
+        ("flash_v1", 7.5, true, false), // source build on Windows
+        ("flash_v2", 8.0, true, false), // source build on Windows; Linux sdist may fetch a wheel
     ];
     MATRIX
         .iter()
-        .map(|(backend, min_cc, source_build)| {
-            let needs_nvcc = *source_build && is_windows;
+        .map(|(backend, min_cc, nvcc_windows, nvcc_other)| {
+            let needs_nvcc = if is_windows {
+                *nvcc_windows
+            } else {
+                *nvcc_other
+            };
             let (supported, reason) = match compute_capability {
                 None => (false, Some("no_nvidia_gpu".to_string())),
                 Some(cc) if cc < *min_cc => (false, Some("compute_capability".to_string())),
@@ -6785,6 +6790,28 @@ pub async fn install_attention_backend_core(
         }
     }
 
+    // SageAttention 2.x is not on PyPI: on Windows resolve a prebuilt wheel
+    // matched to the venv's torch/CUDA/Python build. Resolution runs before the
+    // uninstall step so a failed lookup leaves the venv untouched.
+    let sage2_wheel: Option<crate::attention::ResolvedWheel> = if backend == "sage_v2" && is_windows
+    {
+        emit("Detecting the venv's PyTorch build...");
+        let build = crate::attention::probe_torch_build(&venv_python)
+            .await
+            .map_err(|e| AppError::Other(format!("Cannot install sage_v2: {}", e)))?;
+        emit(&format!(
+            "Looking up a prebuilt SageAttention v2 wheel for {}...",
+            build.describe()
+        ));
+        let wheel = crate::attention::resolve_sage2_windows_wheel(&state.http_client, &build)
+            .await
+            .map_err(|e| AppError::Other(format!("Cannot install sage_v2: {}", e)))?;
+        emit(&format!("Found wheel: {}", wheel.file_name));
+        Some(wheel)
+    } else {
+        None
+    };
+
     // Package names (no version specifier) backing each backend, for uninstall/rollback.
     let base_names: Vec<&str> = match backend.as_str() {
         "sage_v1" | "sage_v2" => {
@@ -6820,36 +6847,44 @@ pub async fn install_attention_backend_core(
     // Step 2: Install the requested backend
     if backend != "default" {
         // Packages plus extra pip flags for the requested backend.
-        let (packages, extra_flags): (Vec<&str>, Vec<&str>) = match backend.as_str() {
+        let (packages, extra_flags): (Vec<String>, Vec<String>) = match backend.as_str() {
             "sage_v1" => {
                 emit("Installing SageAttention v1...");
                 if is_windows {
-                    (vec!["sageattention==1.0.6", "triton-windows"], vec![])
-                } else {
-                    (vec!["sageattention==1.0.6"], vec![])
-                }
-            }
-            "sage_v2" => {
-                emit("Installing SageAttention v2 (CUDA kernels — may take a few minutes)...");
-                if is_windows {
                     (
-                        vec!["sageattention>=2.0.0,<3.0.0", "triton-windows"],
-                        vec!["--no-build-isolation"],
+                        vec!["sageattention==1.0.6".into(), "triton-windows".into()],
+                        vec![],
                     )
                 } else {
-                    (
-                        vec!["sageattention>=2.0.0,<3.0.0"],
-                        vec!["--no-build-isolation"],
-                    )
+                    (vec!["sageattention==1.0.6".into()], vec![])
                 }
             }
+            "sage_v2" => match &sage2_wheel {
+                Some(wheel) => {
+                    emit("Installing the prebuilt SageAttention v2 wheel...");
+                    (vec![wheel.url.clone(), "triton-windows".into()], vec![])
+                }
+                None => {
+                    emit("Building SageAttention v2 from source (CUDA kernels — this can take 10+ minutes)...");
+                    (
+                        vec![crate::attention::SAGE2_LINUX_GIT_SPEC.into()],
+                        vec!["--no-build-isolation".into()],
+                    )
+                }
+            },
             "flash_v1" => {
                 emit("Installing FlashAttention v1...");
-                (vec!["flash-attn<2.0"], vec!["--no-build-isolation"])
+                (
+                    vec!["flash-attn<2.0".into()],
+                    vec!["--no-build-isolation".into()],
+                )
             }
             "flash_v2" => {
                 emit("Installing FlashAttention v2 (may compile from source — this can take 10+ minutes)...");
-                (vec!["flash-attn"], vec!["--no-build-isolation"])
+                (
+                    vec!["flash-attn".into()],
+                    vec!["--no-build-isolation".into()],
+                )
             }
             _ => unreachable!(),
         };

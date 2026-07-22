@@ -163,12 +163,12 @@ const fr: Record<string, string> = {
   "setup.attention.sage_v1": "SageAttention v1",
   "setup.attention.sage_v1_desc": "Attention quantifiée INT8 (Triton pur). Installation rapide, GPU Ampere+.",
   "setup.attention.sage_v2": "SageAttention v2",
-  "setup.attention.sage_v2_desc": "Attention INT8+FP8 avec noyaux CUDA. Plus rapide sur Ada/Hopper. Nécessite le toolkit CUDA.",
+  "setup.attention.sage_v2_desc": "Attention INT8+FP8 avec noyaux CUDA. Plus rapide sur Ada/Hopper. Wheel précompilé sous Windows ; compilation depuis les sources sous Linux.",
   "setup.attention.flash_v1": "FlashAttention v1",
   "setup.attention.flash_v1_desc": "Attention économe en mémoire. GPU NVIDIA Ampere+.",
   "setup.attention.flash_v2": "FlashAttention v2",
   "setup.attention.flash_v2_desc": "Attention la plus rapide et économe en mémoire. GPU NVIDIA Ampere+.",
-  "setup.attention.compile_warning": "Cette option compile depuis les sources et peut prendre 10+ minutes. Nécessite le toolkit CUDA.",
+  "setup.attention.compile_warning": "FlashAttention (et SageAttention v2 sous Linux) compile depuis les sources et peut prendre 10+ minutes. La compilation nécessite le toolkit CUDA.",
   "setup.attention.install_target": "Attention backend packages install into the venv created for this MooshieUI install.",
   "setup.attention.external_env": "If you later use an external or ComfyCLI-managed ComfyUI, install into the Python environment that actually runs that ComfyUI instance.",
   "setup.mode_local": "Local install",
@@ -802,6 +802,7 @@ const fr: Record<string, string> = {
 
   // Modal d'interrogation
   "generation.interrogate.title": "Interroger l'image",
+  "generation.interrogate.hint_moved": "L'interrogation d'image a été déplacée ici. Cliquez pour l'ouvrir ou déposez une image sur ce bouton.",
   "generation.interrogate.paste_clipboard": "Coller depuis le presse-papiers",
   "generation.interrogate.browse_file": "Parcourir une image",
   "generation.interrogate.tip": "Analyser une image pour extraire les tags (personnage, artiste, général). Déposez une image, parcourez vos fichiers ou collez depuis le presse-papiers. Les tags peuvent être appliqués directement au prompt.",

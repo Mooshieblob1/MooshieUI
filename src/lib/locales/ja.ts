@@ -163,12 +163,12 @@ const ja: Record<string, string> = {
   "setup.attention.sage_v1": "SageAttention v1",
   "setup.attention.sage_v1_desc": "INT8量子化Attention（純Triton）。高速インストール、Ampere+ GPU。",
   "setup.attention.sage_v2": "SageAttention v2",
-  "setup.attention.sage_v2_desc": "INT8+FP8 Attention、CUDAカーネル付き。Ada/Hopperで最速。CUDAツールキット必要。",
+  "setup.attention.sage_v2_desc": "INT8+FP8 Attention、CUDAカーネル付き。Ada/Hopperで最速。Windowsはビルド済みwheel、Linuxはソースからビルド。",
   "setup.attention.flash_v1": "FlashAttention v1",
   "setup.attention.flash_v1_desc": "メモリ効率的なAttention。NVIDIA Ampere+ GPU。",
   "setup.attention.flash_v2": "FlashAttention v2",
   "setup.attention.flash_v2_desc": "最速のメモリ効率的Attention。NVIDIA Ampere+ GPU。",
-  "setup.attention.compile_warning": "このオプションはソースからコンパイルし、１０分以上かかる場合があります。CUDAツールキットが必要です。",
+  "setup.attention.compile_warning": "FlashAttention（およびLinuxのSageAttention v2）はソースからコンパイルし、１０分以上かかる場合があります。コンパイルにはCUDAツールキットが必要です。",
   "setup.attention.install_target": "Attention backend packages install into the venv created for this MooshieUI install.",
   "setup.attention.external_env": "If you later use an external or ComfyCLI-managed ComfyUI, install into the Python environment that actually runs that ComfyUI instance.",
   "setup.mode_local": "Local install",
@@ -802,6 +802,7 @@ const ja: Record<string, string> = {
 
   // 画像解析モーダル
   "generation.interrogate.title": "画像を解析",
+  "generation.interrogate.hint_moved": "画像解析はこちらに移動しました。クリックして開くか、このボタンに画像をドロップしてください。",
   "generation.interrogate.paste_clipboard": "クリップボードから貼り付け",
   "generation.interrogate.browse_file": "画像を参照",
   "generation.interrogate.tip": "画像を分析してタグ（キャラクター、アーティスト、一般）を抽出します。画像をドロップするか、ファイルを参照するか、クリップボードから貼り付けます。タグはプロンプトに直接適用できます。",

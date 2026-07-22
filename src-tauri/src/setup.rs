@@ -1263,6 +1263,7 @@ async fn step_install_attention_backend(
     base: &Path,
     backend: &str,
     net: &SetupNetworkOpts,
+    http: &reqwest::Client,
 ) -> Result<(), String> {
     let is_windows = cfg!(target_os = "windows");
     match backend {
@@ -1276,12 +1277,50 @@ async fn step_install_attention_backend(
             verify_attention_import(base, "sageattention").await
         }
         "sage_v2" => {
-            emit_log(app, "Installing SageAttention v2 (CUDA kernels)...");
-            let mut pkgs = vec!["sageattention>=2.0.0,<3.0.0", "--no-build-isolation"];
+            // SageAttention 2.x is not on PyPI: Windows installs a prebuilt
+            // wheel matched to the venv's torch/CUDA/Python build, Linux
+            // compiles the pinned upstream source.
             if is_windows {
-                pkgs.push("triton-windows");
+                emit_log(app, "Detecting the venv's PyTorch build...");
+                let build = crate::attention::probe_torch_build(&venv_python(base))
+                    .await
+                    .map_err(|e| format!("cannot install sage_v2: {}", e))?;
+                emit_log(
+                    app,
+                    &format!(
+                        "Looking up a prebuilt SageAttention v2 wheel for {}...",
+                        build.describe()
+                    ),
+                );
+                let wheel = crate::attention::resolve_sage2_windows_wheel(http, &build)
+                    .await
+                    .map_err(|e| format!("cannot install sage_v2: {}", e))?;
+                emit_log(app, &format!("Installing {}...", wheel.file_name));
+                uv_pip(
+                    app,
+                    base,
+                    &[wheel.url.as_str(), "triton-windows"],
+                    net,
+                    true,
+                )
+                .await?;
+            } else {
+                emit_log(
+                    app,
+                    "Building SageAttention v2 from source (CUDA kernels)...",
+                );
+                uv_pip(
+                    app,
+                    base,
+                    &[
+                        crate::attention::SAGE2_LINUX_GIT_SPEC,
+                        "--no-build-isolation",
+                    ],
+                    net,
+                    true,
+                )
+                .await?;
             }
-            uv_pip(app, base, &pkgs, net, true).await?;
             verify_attention_import(base, "sageattention").await
         }
         "flash_v1" => {
@@ -2115,7 +2154,9 @@ pub async fn run_setup(
             &format!("Installing attention backend ({})...", attention),
             88,
         );
-        if let Err(e) = step_install_attention_backend(&app, &base, &attention, &net).await {
+        if let Err(e) =
+            step_install_attention_backend(&app, &base, &attention, &net, &state.http_client).await
+        {
             // Non-fatal, but reset to "default" so we never persist a backend whose
             // package isn't actually installed (which would crash ComfyUI at launch).
             log::warn!(

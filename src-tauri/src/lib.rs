@@ -1,3 +1,4 @@
+pub mod attention;
 pub mod auth;
 pub mod comfyui;
 #[cfg(any(feature = "desktop", feature = "server"))]
