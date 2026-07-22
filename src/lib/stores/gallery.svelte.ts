@@ -14,6 +14,7 @@ import {
   getOutputImage,
   copyImageToClipboard,
   copyBytesToClipboard,
+  copyGalleryImageToClipboard,
   getGalleryImagePath,
   getStorageInfo,
   readImageMetadata,
@@ -1000,18 +1001,14 @@ class GalleryStore {
       // Tauri mode: prefer native clipboard
       if (image.gallery_filename) {
         if (image.gallery_filename.endsWith(".jxl")) {
-          // JXL can't be pasted as an image from the raw file path —
-          // transcode to PNG first and copy bytes via native clipboard.
-          // PNG transcode strips metadata, so re-embed it client-side.
-          let pngBytes = await loadGalleryImagePng(image.gallery_filename);
-          if (image.metadata) {
-            try {
-              pngBytes = await embedPngMetadataBytes(pngBytes, image.metadata, generation.metadataMode);
-            } catch (e) {
-              console.warn("Failed to embed PNG metadata into JXL clipboard copy:", e);
-            }
-          }
-          await copyBytesToClipboard(pngBytes, "png");
+          // JXL can't be pasted as an image from the raw file path — the
+          // backend transcodes to PNG (with metadata embedded) and puts it on
+          // the clipboard in one call, so no image bytes cross IPC.
+          await copyGalleryImageToClipboard(
+            image.gallery_filename,
+            image.metadata ?? undefined,
+            generation.metadataMode,
+          );
         } else {
           const path = await getGalleryImagePath(image.gallery_filename);
           await copyImageToClipboard(path);

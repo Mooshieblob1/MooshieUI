@@ -1800,27 +1800,13 @@ fn infer_image_mime(bytes: &[u8], ext_hint: Option<&str>) -> &'static str {
 /// Much faster than decoding PNGs and preserves all metadata.
 #[cfg(target_os = "windows")]
 fn clipboard_set_file_drop_win(path: &std::path::Path) -> Result<(), AppError> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-
-    let path_escaped = path.display().to_string().replace('\'', "''");
-    let ps_cmd = format!(
-        "Add-Type -AssemblyName System.Windows.Forms; \
-         $f = New-Object System.Collections.Specialized.StringCollection; \
-         $f.Add('{}'); \
-         [System.Windows.Forms.Clipboard]::SetFileDropList($f)",
-        path_escaped
-    );
-    let status = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &ps_cmd])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .status()
-        .map_err(|e| AppError::Other(format!("PowerShell failed: {}", e)))?;
-    if !status.success() {
-        return Err(AppError::Other(
-            "Failed to copy file to clipboard via PowerShell".into(),
-        ));
-    }
+    let path_str = path.to_string_lossy().into_owned();
+    // Guard must stay alive for the write; DoClear empties the clipboard first
+    // (the crate's default FileList setter leaves stale formats behind).
+    let _clip = clipboard_win::Clipboard::new_attempts(10)
+        .map_err(|e| AppError::Other(format!("Failed to open clipboard: {}", e)))?;
+    clipboard_win::raw::set_file_list_with(&[path_str.as_str()], clipboard_win::options::DoClear)
+        .map_err(|e| AppError::Other(format!("Failed to set clipboard file list: {}", e)))?;
     Ok(())
 }
 
@@ -2123,6 +2109,80 @@ pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> 
         let mime = infer_image_mime(&image_bytes, ext_str.as_deref());
 
         native_clipboard_write(&image_bytes, mime)
+    }
+}
+
+/// Copy a gallery image to the system clipboard entirely on the Rust side.
+/// JXL images are decoded once and encoded to a single metadata-bearing PNG —
+/// no image bytes ever cross the IPC boundary (the old flow shipped a
+/// multi-megabyte PNG over IPC four times). Non-JXL images are put on the
+/// clipboard straight from disk.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn copy_gallery_image_to_clipboard(
+    filename: String,
+    metadata: Option<std::collections::HashMap<String, String>>,
+    metadata_mode: Option<String>,
+) -> Result<(), AppError> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(AppError::Other("Invalid filename".into()));
+    }
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    let path = resolve_gallery_image_path(&dir, &filename)
+        .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
+
+    if filename.ends_with(".jxl") {
+        let jxl_bytes = std::fs::read(&path)?;
+        let mode = crate::metadata::MetadataMode::from_str(
+            metadata_mode.as_deref().unwrap_or("text_chunk"),
+        );
+        let params = metadata.filter(|m| !m.is_empty());
+        let png_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+            let img = crate::jxl::decode_to_rgba8(&jxl_bytes).map_err(|e| e.to_string())?;
+            // Prefer the metadata the frontend already holds; fall back to
+            // whatever is embedded in the JXL itself.
+            let params = params.or_else(|| {
+                crate::metadata::read_image_metadata(&jxl_bytes)
+                    .ok()
+                    .flatten()
+            });
+            match params {
+                Some(p) => crate::metadata::encode_png_with_metadata_rgba8(
+                    &img.rgba, img.width, img.height, &p, mode,
+                ),
+                None => crate::jxl::encode_rgba8_png(&img.rgba, img.width, img.height)
+                    .map_err(|e| e.to_string()),
+            }
+        })
+        .await
+        .map_err(|e| AppError::Other(format!("Task panicked: {}", e)))?
+        .map_err(AppError::Other)?;
+
+        native_clipboard_write(&png_bytes, "image/png")
+    } else {
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| AppError::Other(e.to_string()))?;
+
+        #[cfg(target_os = "windows")]
+        {
+            clipboard_set_file_drop_win(&canonical)
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let image_bytes = std::fs::read(&canonical)
+                .map_err(|e| AppError::Other(format!("Failed to read image file: {}", e)))?;
+
+            let ext_str = canonical
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.to_ascii_lowercase());
+            let mime = infer_image_mime(&image_bytes, ext_str.as_deref());
+
+            native_clipboard_write(&image_bytes, mime)
+        }
     }
 }
 

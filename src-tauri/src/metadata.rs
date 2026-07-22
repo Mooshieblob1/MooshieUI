@@ -173,6 +173,59 @@ pub fn embed_png_metadata(
     Ok(output)
 }
 
+/// Encode raw 8-bit RGBA pixels as a PNG with embedded metadata in a single
+/// pass. Fast path for callers that already hold decoded pixels (e.g. after a
+/// JXL decode), avoiding the decode/re-encode round-trip of
+/// [`embed_png_metadata`]. 8-bit only — the JXL decoder always yields RGBA8.
+pub fn encode_png_with_metadata_rgba8(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    params: &HashMap<String, String>,
+    mode: MetadataMode,
+) -> Result<Vec<u8>, String> {
+    let json_text = format_swarmui_json(params);
+
+    let mut pixel_buf = rgba.to_vec();
+    let effective_mode = if mode == MetadataMode::StealthAlpha || mode == MetadataMode::Both {
+        match encode_stealth_alpha(&mut pixel_buf, width, height, 4, &json_text) {
+            Ok(()) => mode,
+            Err(e) => {
+                log::warn!(
+                    "Stealth alpha encoding failed ({}), falling back to text_chunk only",
+                    e
+                );
+                pixel_buf.copy_from_slice(rgba);
+                MetadataMode::TextChunk
+            }
+        }
+    } else {
+        mode
+    };
+
+    let mut output = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut output, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+
+        if effective_mode == MetadataMode::TextChunk || effective_mode == MetadataMode::Both {
+            encoder
+                .add_text_chunk("parameters".to_string(), json_text)
+                .map_err(|e| format!("Failed to add text chunk: {}", e))?;
+        }
+
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| format!("PNG encode error: {}", e))?;
+        writer
+            .write_image_data(&pixel_buf)
+            .map_err(|e| format!("PNG write error: {}", e))?;
+    }
+
+    Ok(output)
+}
+
 /// Read metadata from PNG bytes.
 /// Tries stealth alpha first, then PNG text chunks (SwarmUI JSON → A1111 fallback).
 pub fn read_png_metadata(image_bytes: &[u8]) -> Result<Option<HashMap<String, String>>, String> {

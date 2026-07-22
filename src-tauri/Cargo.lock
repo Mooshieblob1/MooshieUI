@@ -623,6 +623,7 @@ dependencies = [
  "axum-server",
  "base64 0.22.1",
  "chrono",
+ "clipboard-win",
  "csv",
  "dirs",
  "env_logger",

@@ -544,6 +544,15 @@ export async function copyBytesToClipboard(bytes: number[], ext: string): Promis
   return ipcInvoke("copy_bytes_to_clipboard", { bytes, ext });
 }
 
+/** Copy a gallery image to the clipboard fully Rust-side (no image bytes cross IPC). */
+export async function copyGalleryImageToClipboard(
+  filename: string,
+  metadata?: Record<string, string>,
+  metadataMode?: string,
+): Promise<void> {
+  return ipcInvoke("copy_gallery_image_to_clipboard", { filename, metadata, metadataMode });
+}
+
 export async function getGalleryImagePath(filename: string): Promise<string> {
   return ipcInvoke("get_gallery_image_path", { filename });
 }

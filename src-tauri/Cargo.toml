@@ -90,3 +90,6 @@ tar = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tar = "0.4"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+clipboard-win = "5"

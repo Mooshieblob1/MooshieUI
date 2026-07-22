@@ -404,6 +404,7 @@ pub fn run() {
             commands::api::rename_gallery_image,
             commands::api::copy_image_to_clipboard,
             commands::api::copy_bytes_to_clipboard,
+            commands::api::copy_gallery_image_to_clipboard,
             commands::api::find_model_by_hash,
             commands::api::hash_model_file,
             commands::api::civitai_lookup_hash,
