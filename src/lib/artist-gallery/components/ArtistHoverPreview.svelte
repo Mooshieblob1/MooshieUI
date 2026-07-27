@@ -50,7 +50,6 @@
   {:else if entry && entry.imageUrl && !failed}
     <img
       use:cachedSrc={entry.imageUrl}
-      src={entry.imageUrl}
       alt={entry.tag}
       loading="eager"
       decoding="async"

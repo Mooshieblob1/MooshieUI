@@ -26,6 +26,11 @@ function withToken(url: string): string {
   return `${url}${sep}token=${encodeURIComponent(token)}`;
 }
 
+/** True for absolute CDN URLs (i.e. not already rewritten to the local proxy). */
+export function isCdnUrl(url: string): boolean {
+  return url.startsWith(CDN_PREFIX);
+}
+
 export function proxiedCdnUrl(url: string): string {
   if (isBrowserMode && url.startsWith(CDN_PREFIX)) {
     return withToken(`/internal-api/_cdn/${url.slice(CDN_PREFIX.length)}`);
@@ -66,3 +71,32 @@ export const cdnFetch: typeof fetch | undefined = isTauri || isBrowserMode
       return globalThis.fetch(input as RequestInfo, init);
     }) as typeof fetch
   : undefined;
+
+/**
+ * Fetch a CDN object as raw bytes.
+ *
+ * Browser/server mode goes through the same-origin `/internal-api/_cdn/...`
+ * proxy, which streams the body through untouched. Tauri desktop goes through
+ * the `cdn_proxy_fetch_bytes` command, because the CDN sends no
+ * `Access-Control-Allow-Origin` at all and the webview's `fetch` is therefore
+ * blocked for every origin the app runs under.
+ *
+ * Accepts either a raw CDN URL or one already run through `proxiedCdnUrl`.
+ */
+export async function cdnFetchBytes(url: string): Promise<ArrayBuffer> {
+  if (isTauri && url.startsWith(CDN_PREFIX)) {
+    const path = url.slice(CDN_PREFIX.length);
+    const b64 = await ipcInvoke<string>("cdn_proxy_fetch_bytes", { path });
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
+  }
+
+  // `proxiedCdnUrl` is idempotent, so a pre-proxied path passes through.
+  const response = await globalThis.fetch(proxiedCdnUrl(url), {
+    credentials: "omit",
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.arrayBuffer();
+}

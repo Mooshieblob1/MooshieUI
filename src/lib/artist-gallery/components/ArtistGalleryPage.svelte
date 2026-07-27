@@ -8,6 +8,7 @@
   import ArtistLightbox from "./ArtistLightbox.svelte";
   import FavouritesManager from "./FavouritesManager.svelte";
   import { proxiedCdnUrl } from "../../utils/cdnFetch.js";
+  import { cachedSrc } from "../imageCache.js";
   import { CharacterExplorer } from "../../animadex/index.js";
   import type { AnimadexCharacter } from "../../animadex/types.js";
   import { generation } from "../../stores/generation.svelte.js";
@@ -794,7 +795,7 @@
             <div class="relative aspect-3/4 w-full overflow-hidden rounded-t-lg bg-neutral-800">
               {#if url}
                 <img
-                  src={url}
+                  use:cachedSrc={url}
                   alt={hit.tag}
                   loading="eager"
                   decoding="auto"

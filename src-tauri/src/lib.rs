@@ -411,6 +411,7 @@ pub fn run() {
             commands::api::civitai_lookup_image,
             commands::api::save_model_sidecar_thumbnail,
             commands::api::cdn_proxy_fetch,
+            commands::api::cdn_proxy_fetch_bytes,
             commands::api::animadex_proxy_fetch,
             commands::api::civitai_search_models,
             commands::api::civitai_get_model,

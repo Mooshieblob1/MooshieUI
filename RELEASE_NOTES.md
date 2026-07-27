@@ -1,3 +1,10 @@
+## What's New in v1.7.7
+
+### Fixes
+- **Artist gallery images now load on Linux**: the artist gallery serves its preview images as AVIF, which Windows and macOS decode natively but the Linux webview (WebKitGTK) is usually built without support for, so every thumbnail showed as a broken image (issue #507). The app now detects that at startup and, only on the affected webviews, decodes the images itself in WebAssembly and converts them to a format the webview can draw. Converted images are cached, so the work happens once per image rather than once per view. Windows and macOS are unaffected and keep loading images exactly as before.
+
+---
+
 ## What's New in v1.7.6
 
 ### Fixes

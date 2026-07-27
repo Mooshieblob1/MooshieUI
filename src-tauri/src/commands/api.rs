@@ -893,6 +893,40 @@ pub async fn cdn_proxy_fetch(
     Ok(body)
 }
 
+/// Proxy a GET request to the Mooshieblob CDN and return the response body as
+/// base64. Same hardcoded-origin restriction as [`cdn_proxy_fetch`]; this
+/// variant exists for binary payloads (artist gallery AVIF images), which
+/// `resp.text()` would corrupt. Base64 rather than a byte array because the IPC
+/// transport is JSON on both desktop and browser mode.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn cdn_proxy_fetch_bytes(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> Result<String, AppError> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    let clean = path.trim_start_matches('/');
+    let url = format!("https://cdn.mooshieblob.com/{}", clean);
+    let resp = state
+        .http_client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| AppError::Other(format!("CDN fetch failed: {}", e)))?;
+    if !resp.status().is_success() {
+        return Err(AppError::ApiError {
+            status: resp.status().as_u16(),
+            message: format!("CDN returned {} for {}", resp.status(), clean),
+        });
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| AppError::Other(format!("CDN body read failed: {}", e)))?;
+    Ok(STANDARD.encode(&bytes))
+}
+
 /// Proxy a GET request to animadex.net (characters API only). Used by the Tauri
 /// desktop app for JSON fetches that would otherwise be blocked by CORS.
 /// Only paths under `api/characters/` are allowed — not an open proxy.
