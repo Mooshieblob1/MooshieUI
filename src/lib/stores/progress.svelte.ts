@@ -1,9 +1,9 @@
-import type { GenerationParams } from "../types/index.js";
+import type { GenerationMode, GenerationParams } from "../types/index.js";
 import { locale } from "./locale.svelte.js";
 
 export interface QueuedPrompt {
   promptId: string;
-  mode: "txt2img" | "img2img" | "inpainting";
+  mode: GenerationMode;
   wasUpscaled: boolean;
   params: GenerationParams;
   enqueuedAt: number;
@@ -25,14 +25,11 @@ class ProgressStore {
   currentNode = $state<string | null>(null);
   previewImage = $state<string | null>(null);
   lastOutputImage = $state<string | null>(null);
-  modeLastOutput = $state<{
-    txt2img: string | null;
-    img2img: string | null;
-    inpainting: string | null;
-  }>({
+  modeLastOutput = $state<Record<GenerationMode, string | null>>({
     txt2img: null,
     img2img: null,
     inpainting: null,
+    image_edit: null,
   });
 
   /** Which sampling pass we're on: 0 = not started, 1 = initial, 2 = upscale */
@@ -83,7 +80,7 @@ class ProgressStore {
     return this.activePromptId;
   }
 
-  get currentMode(): "txt2img" | "img2img" | "inpainting" {
+  get currentMode(): GenerationMode {
     return this.activePrompt?.mode ?? "txt2img";
   }
 
@@ -197,11 +194,11 @@ class ProgressStore {
       : locale.t("progress.generating");
   }
 
-  setActiveMode(mode: "txt2img" | "img2img" | "inpainting") {
+  setActiveMode(mode: GenerationMode) {
     this.lastOutputImage = this.modeLastOutput[mode];
   }
 
-  setLastOutputForMode(mode: "txt2img" | "img2img" | "inpainting", image: string | null) {
+  setLastOutputForMode(mode: GenerationMode, image: string | null) {
     this.modeLastOutput = {
       ...this.modeLastOutput,
       [mode]: image,
@@ -269,7 +266,7 @@ class ProgressStore {
   enqueue(
     promptId: string,
     wasUpscaled: boolean = false,
-    mode: "txt2img" | "img2img" | "inpainting" = "txt2img",
+    mode: GenerationMode = "txt2img",
     params: GenerationParams | null = null,
   ) {
     const existingIdx = this.pendingPrompts.findIndex((p) => p.promptId === promptId);
@@ -508,7 +505,7 @@ class ProgressStore {
   startGeneration(
     promptId: string,
     upscaled: boolean = false,
-    mode: "txt2img" | "img2img" | "inpainting" = "txt2img",
+    mode: GenerationMode = "txt2img",
     params: GenerationParams | null = null,
   ) {
     this.enqueue(promptId, upscaled, mode, params);

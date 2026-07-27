@@ -21,6 +21,7 @@ import { readModelSpec, type ModelSpec } from "../utils/api.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import type {
   ExtraPromptBox,
+  GenerationMode,
   GenerationParams,
   LoraEntry,
   RegionalPromptSelection,
@@ -87,6 +88,8 @@ interface ModelPreset {
   width: number;
   height: number;
   upscaleDenoise?: number;
+  /** FluxGuidance override (guidance-distilled families that read it in the template, e.g. Kontext). */
+  fluxGuidance?: number;
   /** Sampler to use when `samplerName` is absent from the backend's enumerated list. Defaults to "euler". */
   samplerFallback?: string;
 }
@@ -177,8 +180,15 @@ function translatePromptWeightSyntax(prompt: string): string {
 
 type StylePresetId = "none" | "anime" | "cinematic" | "photoreal" | "digital_art" | "line_art";
 
-const GENERATION_MODES = ["txt2img", "img2img", "inpainting"] as const;
-type GenerationMode = (typeof GENERATION_MODES)[number];
+// `satisfies` ties the runtime list to the shared union in types/index.ts, so a
+// mode added here without updating that union is a compile error rather than a
+// silent drift across the gallery/progress/save-to-gallery consumers.
+const GENERATION_MODES = [
+  "txt2img",
+  "img2img",
+  "inpainting",
+  "image_edit",
+] as const satisfies readonly GenerationMode[];
 
 interface ModeToggleState {
   differentialDiffusion: boolean;
@@ -209,6 +219,7 @@ function createDefaultModeToggles(): ModeToggleStates {
     txt2img: defaultModeToggleState(),
     img2img: defaultModeToggleState(),
     inpainting: defaultModeToggleState(),
+    image_edit: defaultModeToggleState(),
   };
 }
 
@@ -417,6 +428,8 @@ class GenerationStore {
   controlnetEndPercent = $state(1.0);
   styleTransferEnabled = $state(false);
   styleReferenceImage = $state<string | null>(null);
+  /** Image Edit mode reference images; slot 0 primary, slots 1-2 Qwen Edit Plus extras. */
+  editReferenceImages = $state<(string | null)[]>([null, null, null]);
   styleTransferLowScaleEnd = $state(1.5);
   styleTransferHighScaleStart = $state(1.0);
   styleTransferBeta = $state(50);
@@ -618,6 +631,31 @@ class GenerationStore {
     return this.modelFamily === "qwen";
   }
 
+  /** True when the selected model is Qwen Image Edit (single reference image). */
+  get isQwenEdit(): boolean {
+    return this.modelFamily === "qwen_edit";
+  }
+
+  /** True when the selected model is Qwen Image Edit Plus (up to 3 reference images). */
+  get isQwenEditPlus(): boolean {
+    return this.modelFamily === "qwen_edit_plus";
+  }
+
+  /** True when the selected model is Flux.1 Kontext (image edit). Kept out of isFlux. */
+  get isFluxKontext(): boolean {
+    return this.modelFamily === "flux1kontext";
+  }
+
+  /** True when the selected model is an Image Edit family. */
+  get supportsImageEditMode(): boolean {
+    return this.isQwenEdit || this.isQwenEditPlus || this.isFluxKontext;
+  }
+
+  /** Number of reference-image slots the current edit family accepts (3 for Plus, else 1). */
+  get editReferenceSlotCount(): number {
+    return this.isQwenEditPlus ? 3 : 1;
+  }
+
   /** True when the selected model is a Pony Diffusion variant. */
   get isPony(): boolean {
     return this.modelFamily === "pony";
@@ -628,8 +666,9 @@ class GenerationStore {
     return this.modelFamily === "auraflow";
   }
 
-  /** In img2img/inpainting, the loaded source image owns width/height. */
+  /** In img2img/inpainting/image_edit, the loaded source image owns width/height. */
   get hasAuthoritativeEditSource(): boolean {
+    if (this._mode === "image_edit") return !!this.editReferenceImages[0];
     return (this._mode === "img2img" || this._mode === "inpainting") && !!this.inputImage;
   }
 
@@ -1148,6 +1187,9 @@ class GenerationStore {
     if (preset.upscaleDenoise !== undefined) {
       this.upscaleDenoise = preset.upscaleDenoise;
     }
+    if (preset.fluxGuidance !== undefined) {
+      this.fluxGuidance = preset.fluxGuidance;
+    }
   }
 
   applyModelSpecificPreset() {
@@ -1402,6 +1444,32 @@ class GenerationStore {
         };
         break;
 
+      // Qwen Image Edit / Edit Plus reuse the Qwen sampler preset.
+      case "qwen_edit":
+      case "qwen_edit_plus":
+        preset = {
+          steps: 30,
+          cfg: 4.0,
+          samplerName: "er_sde",
+          scheduler: "sgm_uniform",
+          width: 1024,
+          height: 1024,
+        };
+        break;
+
+      // Flux.1 Kontext is guidance-distilled; low CFG with FluxGuidance in the template.
+      case "flux1kontext":
+        preset = {
+          steps: 28,
+          cfg: 1.0,
+          samplerName: "euler",
+          scheduler: "simple",
+          width: 1024,
+          height: 1024,
+          fluxGuidance: 2.5,
+        };
+        break;
+
       case "ideogram4":
         preset = {
           steps: 20,
@@ -1519,6 +1587,13 @@ class GenerationStore {
         if (saved.controlnetEndPercent !== undefined) this.controlnetEndPercent = saved.controlnetEndPercent;
         if (saved.styleTransferEnabled !== undefined) this.styleTransferEnabled = saved.styleTransferEnabled;
         if (saved.styleReferenceImage !== undefined) this.styleReferenceImage = saved.styleReferenceImage;
+        if (Array.isArray(saved.editReferenceImages)) {
+          const slots = saved.editReferenceImages
+            .slice(0, 3)
+            .map((v: unknown) => (typeof v === "string" && v ? v : null));
+          while (slots.length < 3) slots.push(null);
+          this.editReferenceImages = slots;
+        }
         if (saved.styleTransferLowScaleEnd !== undefined) this.styleTransferLowScaleEnd = saved.styleTransferLowScaleEnd;
         if (saved.styleTransferHighScaleStart !== undefined) this.styleTransferHighScaleStart = saved.styleTransferHighScaleStart;
         if (saved.styleTransferBeta !== undefined) this.styleTransferBeta = saved.styleTransferBeta;
@@ -1673,6 +1748,7 @@ class GenerationStore {
         controlnetEndPercent: this.controlnetEndPercent,
         styleTransferEnabled: this.styleTransferEnabled,
         styleReferenceImage: this.styleReferenceImage,
+        editReferenceImages: this.editReferenceImages,
         styleTransferLowScaleEnd: this.styleTransferLowScaleEnd,
         styleTransferHighScaleStart: this.styleTransferHighScaleStart,
         styleTransferBeta: this.styleTransferBeta,
@@ -1774,6 +1850,7 @@ class GenerationStore {
       controlnetEndPercent: this.controlnetEndPercent,
       styleTransferEnabled: this.styleTransferEnabled,
       styleReferenceImage: this.styleReferenceImage,
+      editReferenceImages: this.editReferenceImages,
       styleTransferLowScaleEnd: this.styleTransferLowScaleEnd,
       styleTransferHighScaleStart: this.styleTransferHighScaleStart,
       styleTransferBeta: this.styleTransferBeta,
@@ -2176,6 +2253,7 @@ class GenerationStore {
       style_transfer_pmi_alpha: this.styleTransferPmiAlpha,
       style_transfer_megapixels: this.styleTransferMegapixels,
       style_transfer_blocks: this.styleTransferBlocks,
+      edit_reference_images: this.editReferenceImages.filter((v): v is string => !!v),
     };
 
     if (options.overrides) {

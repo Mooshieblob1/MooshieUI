@@ -283,6 +283,10 @@ pub struct GenerationParams {
     /// Blocks range for UntwistingRoPE node (e.g. "0-999").
     #[serde(default = "default_style_transfer_blocks")]
     pub style_transfer_blocks: String,
+    /// Reference images for Image Edit mode (ComfyUI input filenames). Slot 0 is
+    /// the primary edit source; slots 1-2 are Qwen Image Edit Plus extras.
+    #[serde(default)]
+    pub edit_reference_images: Vec<String>,
 }
 
 fn default_output_bit_depth() -> String {

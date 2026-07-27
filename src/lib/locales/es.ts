@@ -468,6 +468,7 @@ const es: Record<string, string> = {
   "generation.mode.txt2img": "Txt2Img",
   "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "Inpainting",
+  "generation.mode.image_edit": "Edición de imagen",
 
   // Prompts
   "generation.prompts.title": "Prompts",
@@ -670,6 +671,18 @@ const es: Record<string, string> = {
   "generation.image.drag_desc": "Arrastra una generación existente aquí para cargarla y editarla.",
   "generation.image.denoise": "Eliminación de ruido",
   "generation.image.denoise_tip": "Cuánto cambia la IA la imagen de entrada. 0 = sin cambios, 1 = imagen completamente nueva ignorando la entrada. Valores bajos (0.3-0.5) mantienen la composición original, valores altos (0.6-0.8) permiten más libertad creativa.",
+  // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
+  "generation.image_edit.title": "Edición de imagen",
+  "generation.image_edit.hint": "Describe el cambio en el prompt (por ejemplo, \"pon el cielo morado\"). El modelo edita tu imagen de referencia en lugar de generar desde cero.",
+  "generation.image_edit.wrong_model": "El modelo seleccionado no admite edición de imágenes. Elige un modelo Qwen Image Edit, Qwen Image Edit Plus o Flux.1 Kontext.",
+  "generation.image_edit.reference_image": "Imagen de referencia",
+  "generation.image_edit.reference_image_n": "Imagen de referencia {n}",
+  "generation.image_edit.reference_set": "Imagen de referencia establecida",
+  "generation.image_edit.upload_prompt": "explorar",
+  "generation.image_edit.drop_hint": "Suelta una imagen o",
+  "generation.image_edit.family_badge.qwen_edit": "Qwen Image Edit",
+  "generation.image_edit.family_badge.qwen_edit_plus": "Qwen Image Edit Plus",
+  "generation.image_edit.family_badge.flux1kontext": "Flux.1 Kontext",
   "generation.drag_to_move": "Arrastra para mover la sección",
   "generation.drag_to_resize": "Arrastra para redimensionar, doble clic para restablecer",
 
@@ -1548,6 +1561,7 @@ const es: Record<string, string> = {
   "artist_gallery.category_label": "Categoría:",
   "artist_gallery.category_all": "Todos ({count})",
   "artist_gallery.category_uncat": "Sin categoría ({count})",
+  "artist_gallery.category_hint": "Haz clic en el punto junto al corazon de un artista favorito para asignarle una categoria.",
   "artist_gallery.load_error": "Error al cargar artistas: {error}",
   "artist_gallery.loading_artists": "cargando artistas…",
   "artist_gallery.searching": "Buscando…",

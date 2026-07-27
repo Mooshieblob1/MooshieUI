@@ -1252,6 +1252,7 @@ pub fn save_to_gallery_inner(
         Some("txt2img") => "txt2img",
         Some("img2img") => "img2img",
         Some("inpainting") => "inpainting",
+        Some("image_edit") => "image_edit",
         _ => "unknown",
     };
 
@@ -3067,6 +3068,21 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     if bm == "zimagebase" {
         return "zib";
     }
+    // Qwen Image Edit variants must be checked before the generic "qwen" bucket.
+    // Plus (2509/2511, multi-image) is the more specific match.
+    if bm.contains("qwen")
+        && (bm.contains("edit plus")
+            || bm.contains("edit-plus")
+            || bm.contains("edit_plus")
+            || bm.contains("editplus")
+            || bm.contains("2509")
+            || bm.contains("2511"))
+    {
+        return "qwen_edit_plus";
+    }
+    if bm.contains("qwen") && bm.contains("edit") {
+        return "qwen_edit";
+    }
     if bm.contains("qwen") {
         return "qwen";
     }
@@ -3100,6 +3116,9 @@ fn model_family_from_base_model(base_model: &str) -> &'static str {
     }
     if bm.contains("chroma") {
         return "chroma";
+    }
+    if bm.contains("kontext") {
+        return "flux1kontext";
     }
     if bm.contains("flux") {
         return "flux";
@@ -3182,6 +3201,11 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
     {
         return Some("flux2d");
     }
+    // Flux.1 Kontext (image edit). Must precede the generic flux1d matcher, which
+    // would otherwise claim "flux1-kontext-dev" via the flux+1+d token test.
+    if name.contains("kontext") {
+        return Some("flux1kontext");
+    }
     if name.contains("flux.1 krea")
         || name.contains("flux1krea")
         || (name.contains("flux") && name.contains("krea"))
@@ -3223,6 +3247,20 @@ fn model_family_from_filename(filename: &str) -> Option<&'static str> {
         || (name.contains("zimage") && name.contains("base"))
     {
         return Some("zib");
+    }
+    // Qwen Image Edit variants precede the generic "qwen" bucket; Plus (multi-image,
+    // 2509/2511) is the more specific match and is tested first.
+    if name.contains("qwen")
+        && (name.contains("edit_plus")
+            || name.contains("edit-plus")
+            || name.contains("editplus")
+            || name.contains("2509")
+            || name.contains("2511"))
+    {
+        return Some("qwen_edit_plus");
+    }
+    if name.contains("qwen") && name.contains("edit") {
+        return Some("qwen_edit");
     }
     if name.contains("qwen") {
         return Some("qwen");
@@ -3369,7 +3407,10 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
         return None;
     }
 
-    if matches!(family, "anima" | "qwen" | "wan") {
+    if matches!(
+        family,
+        "anima" | "qwen" | "qwen_edit" | "qwen_edit_plus" | "wan"
+    ) {
         return find_first_vae_matching(vaes, &["qwen"]).or_else(|| vaes.first().cloned());
     }
 
@@ -3392,7 +3433,7 @@ fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String])
 
     if matches!(
         family,
-        "flux" | "flux1d" | "flux1s" | "flux1krea" | "chroma" | "zib" | "zit"
+        "flux" | "flux1d" | "flux1s" | "flux1krea" | "flux1kontext" | "chroma" | "zib" | "zit"
     ) {
         return find_first_vae_matching(vaes, &["flux"]).or_else(|| vaes.first().cloned());
     }
@@ -3433,7 +3474,7 @@ fn recommended_clip_from_available(
         return Some((preferred, "wan"));
     }
 
-    if matches!(family, "qwen" | "wan") {
+    if matches!(family, "qwen" | "qwen_edit" | "qwen_edit_plus" | "wan") {
         let preferred = find_first_text_encoder_matching(encoders, &["qwen2.5-vl", "qwen_2.5_vl"])
             .or_else(|| encoders.first().cloned());
         return Some((preferred, "qwen_image"));
@@ -3476,7 +3517,7 @@ fn recommended_clip_from_available(
 
     if matches!(
         family,
-        "flux" | "flux1d" | "flux1s" | "flux1krea" | "chroma"
+        "flux" | "flux1d" | "flux1s" | "flux1krea" | "flux1kontext" | "chroma"
     ) {
         let preferred = find_first_text_encoder_matching(encoders, &["flan_t5_xxl", "t5_xxl"])
             .or_else(|| encoders.first().cloned());

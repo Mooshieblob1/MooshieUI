@@ -500,6 +500,7 @@ const pl: Record<string, string> = {
   "generation.mode.txt2img": "Txt2Img",
   "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "Inpainting",
+  "generation.mode.image_edit": "Edycja obrazu",
 
   // Prompts
   "generation.prompts.title": "Prompty",
@@ -710,6 +711,19 @@ const pl: Record<string, string> = {
   "generation.drag_to_resize": "Przeciągnij, aby zmienić rozmiar; dwukliknij, aby zresetować",
 
   "generation.image.denoise_tip": "Jak bardzo AI zmienia obraz wejściowy. 0 = brak zmian, 1 = zupełnie nowy obraz ignorujący wejście. Niższe wartości (0.3-0.5) zachowują oryginalną kompozycję, wyższe (0.6-0.8) dają więcej swobody twórczej.",
+
+  // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
+  "generation.image_edit.title": "Edycja obrazu",
+  "generation.image_edit.hint": "Opisz zmianę w prompcie (na przykład \"zmień niebo na fioletowe\"). Model edytuje podany obraz referencyjny zamiast generować od zera.",
+  "generation.image_edit.wrong_model": "Wybrany model nie obsługuje edycji obrazów. Wybierz model Qwen Image Edit, Qwen Image Edit Plus lub Flux.1 Kontext.",
+  "generation.image_edit.reference_image": "Obraz referencyjny",
+  "generation.image_edit.reference_image_n": "Obraz referencyjny {n}",
+  "generation.image_edit.reference_set": "Obraz referencyjny ustawiony",
+  "generation.image_edit.upload_prompt": "przeglądaj",
+  "generation.image_edit.drop_hint": "Upuść obraz lub",
+  "generation.image_edit.family_badge.qwen_edit": "Qwen Image Edit",
+  "generation.image_edit.family_badge.qwen_edit_plus": "Qwen Image Edit Plus",
+  "generation.image_edit.family_badge.flux1kontext": "Flux.1 Kontext",
 
   // Inpainting
   "generation.inpaint.title": "Inpainting i warstwy",
@@ -1620,6 +1634,7 @@ const pl: Record<string, string> = {
   "artist_gallery.category_label": "Kategoria:",
   "artist_gallery.category_all": "Wszystkie ({count})",
   "artist_gallery.category_uncat": "Bez kategorii ({count})",
+  "artist_gallery.category_hint": "Kliknij kropke obok serca ulubionego artysty, aby przypisac go do kategorii.",
   "artist_gallery.load_error": "Nie udało się załadować artystów: {error}",
   "artist_gallery.loading_artists": "ładowanie artystów…",
   "artist_gallery.searching": "Wyszukiwanie…",

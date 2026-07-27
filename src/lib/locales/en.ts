@@ -501,6 +501,7 @@ const en: Record<string, string> = {
   "generation.mode.txt2img": "Txt2Img",
   "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "Inpainting",
+  "generation.mode.image_edit": "Image Edit",
 
   // Prompts
   "generation.prompts.title": "Prompts",
@@ -711,6 +712,19 @@ const en: Record<string, string> = {
   "generation.drag_to_resize": "Drag to resize, double-click to reset",
 
   "generation.image.denoise_tip": "How much the AI changes the input image. 0 = no change, 1 = completely new image ignoring the input. Lower values (0.3-0.5) keep the original composition, higher values (0.6-0.8) allow more creative freedom.",
+
+  // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
+  "generation.image_edit.title": "Image Edit",
+  "generation.image_edit.hint": "Describe the change in the prompt (for example \"make the sky purple\"). The model edits your reference image instead of generating from scratch.",
+  "generation.image_edit.wrong_model": "The selected model does not support image editing. Choose a Qwen Image Edit, Qwen Image Edit Plus, or Flux.1 Kontext model.",
+  "generation.image_edit.reference_image": "Reference Image",
+  "generation.image_edit.reference_image_n": "Reference Image {n}",
+  "generation.image_edit.reference_set": "Reference image set",
+  "generation.image_edit.upload_prompt": "browse",
+  "generation.image_edit.drop_hint": "Drop an image or",
+  "generation.image_edit.family_badge.qwen_edit": "Qwen Image Edit",
+  "generation.image_edit.family_badge.qwen_edit_plus": "Qwen Image Edit Plus",
+  "generation.image_edit.family_badge.flux1kontext": "Flux.1 Kontext",
 
   // Inpainting
   "generation.inpaint.title": "Inpainting & Layers",
@@ -1621,6 +1635,7 @@ const en: Record<string, string> = {
   "artist_gallery.category_label": "Category:",
   "artist_gallery.category_all": "All ({count})",
   "artist_gallery.category_uncat": "Uncategorised ({count})",
+  "artist_gallery.category_hint": "Click the dot beside a favourited artist's heart to put them in a category.",
   "artist_gallery.load_error": "Failed to load artists: {error}",
   "artist_gallery.loading_artists": "loading artists…",
   "artist_gallery.searching": "Searching…",

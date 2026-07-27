@@ -4,6 +4,7 @@ import { locale } from "../stores/locale.svelte.js";
 import type {
   AppConfig,
   GalleryImageEntry,
+  GenerationMode,
   GenerationParams,
   GpuStats,
   InterrogationResult,
@@ -433,7 +434,7 @@ export async function saveToGallery(
   filename: string,
   subfolder: string,
   promptId: string,
-  mode?: "txt2img" | "img2img" | "inpainting",
+  mode?: GenerationMode,
   metadata?: Record<string, string>,
   metadataMode?: string,
 ): Promise<string> {
@@ -444,7 +445,7 @@ export async function saveToGalleryBytes(
   imageBytes: number[],
   filename: string,
   promptId: string,
-  mode?: "txt2img" | "img2img" | "inpainting",
+  mode?: GenerationMode,
   metadata?: Record<string, string>,
   metadataMode?: string,
 ): Promise<string> {
@@ -455,7 +456,7 @@ export async function saveToGalleryTemp(
   tempFilename: string,
   filename: string,
   promptId: string,
-  mode?: "txt2img" | "img2img" | "inpainting",
+  mode?: GenerationMode,
   metadata?: Record<string, string>,
   metadataMode?: string,
 ): Promise<string> {

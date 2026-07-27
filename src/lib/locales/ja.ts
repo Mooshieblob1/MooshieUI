@@ -471,6 +471,7 @@ const ja: Record<string, string> = {
   "generation.mode.txt2img": "Txt2Img",
   "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "インペインティング",
+  "generation.mode.image_edit": "画像編集",
 
   // プロンプト
   "generation.prompts.title": "プロンプト",
@@ -638,6 +639,18 @@ const ja: Record<string, string> = {
   "generation.image.drag_desc": "既存の生成画像をここにドラッグして編集用に読み込みます。",
   "generation.image.denoise": "デノイズ",
   "generation.image.denoise_tip": "AIが入力画像をどれだけ変更するか。0 = 変更なし、1 = 入力を無視して完全に新しい画像。低い値（0.3-0.5）は元の構図を保持、高い値（0.6-0.8）はより自由な創造を許可。",
+  // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
+  "generation.image_edit.title": "画像編集",
+  "generation.image_edit.hint": "変更内容をプロンプトに記述してください（例：\"空を紫にする\"）。モデルはゼロから生成するのではなく、参照画像を編集します。",
+  "generation.image_edit.wrong_model": "選択したモデルは画像編集をサポートしていません。Qwen Image Edit、Qwen Image Edit Plus、またはFlux.1 Kontextモデルを選択してください。",
+  "generation.image_edit.reference_image": "参照画像",
+  "generation.image_edit.reference_image_n": "参照画像 {n}",
+  "generation.image_edit.reference_set": "参照画像を設定しました",
+  "generation.image_edit.upload_prompt": "参照",
+  "generation.image_edit.drop_hint": "画像をドロップ、または",
+  "generation.image_edit.family_badge.qwen_edit": "Qwen Image Edit",
+  "generation.image_edit.family_badge.qwen_edit_plus": "Qwen Image Edit Plus",
+  "generation.image_edit.family_badge.flux1kontext": "Flux.1 Kontext",
   "generation.drag_to_move": "ドラッグしてセクションを移動",
   "generation.drag_to_resize": "ドラッグしてリサイズ、ダブルクリックでリセット",
 
@@ -1511,6 +1524,7 @@ const ja: Record<string, string> = {
   "artist_gallery.category_label": "カテゴリ:",
   "artist_gallery.category_all": "すべて ({count})",
   "artist_gallery.category_uncat": "未分類 ({count})",
+  "artist_gallery.category_hint": "お気に入りアーティストのハートの横にあるドットをクリックすると、カテゴリを設定できます。",
   "artist_gallery.load_error": "アーティストの読み込みに失敗: {error}",
   "artist_gallery.loading_artists": "アーティストを読み込み中…",
   "artist_gallery.searching": "検索中…",

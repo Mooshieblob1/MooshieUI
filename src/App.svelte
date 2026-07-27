@@ -24,7 +24,7 @@
   import { accessibility } from "./lib/stores/accessibility.svelte.js";
   import { locale } from "./lib/stores/locale.svelte.js";
   import { prefsSync } from "./lib/stores/prefsSync.svelte.js";
-  import type { GenerationParams, OutputImage, InterrogationResult } from "./lib/types/index.js";
+  import type { GenerationMode, GenerationParams, OutputImage, InterrogationResult } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
   import { downloads } from "./lib/stores/downloads.svelte.js";
@@ -1681,7 +1681,7 @@
 
   function finalizeOutputImages(
     promptId: string,
-    mode: "txt2img" | "img2img" | "inpainting",
+    mode: GenerationMode,
     wasUpscaled: boolean,
     params: GenerationParams | null,
     images: Array<{ blob: Blob; url: string; tempFilename?: string; displayTempFilename?: string }>,
@@ -1921,7 +1921,7 @@
     rows: number,
     cols: number,
     cellLabels: string[],
-    mode: "txt2img" | "img2img" | "inpainting",
+    mode: GenerationMode,
   ) {
     try {
       const loadImg = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {

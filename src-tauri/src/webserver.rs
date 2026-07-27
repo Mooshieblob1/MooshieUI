@@ -5446,6 +5446,7 @@ fn save_to_gallery_in_dir(
         Some("txt2img") => "txt2img",
         Some("img2img") => "img2img",
         Some("inpainting") => "inpainting",
+        Some("image_edit") => "image_edit",
         _ => "unknown",
     };
 

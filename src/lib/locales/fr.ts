@@ -471,6 +471,7 @@ const fr: Record<string, string> = {
   "generation.mode.txt2img": "Txt2Img",
   "generation.mode.img2img": "Img2Img",
   "generation.mode.inpainting": "Inpainting",
+  "generation.mode.image_edit": "Édition d'image",
 
   // Prompts
   "generation.prompts.title": "Prompts",
@@ -638,6 +639,18 @@ const fr: Record<string, string> = {
   "generation.image.drag_desc": "Faites glisser une génération existante ici pour la charger en édition.",
   "generation.image.denoise": "Débruitage",
   "generation.image.denoise_tip": "À quel point l'IA modifie l'image d'entrée. 0 = aucun changement, 1 = image entièrement nouvelle ignorant l'entrée. Valeurs basses (0.3-0.5) conservent la composition, valeurs hautes (0.6-0.8) permettent plus de liberté créative.",
+  // Image Edit (Qwen Image Edit / Edit Plus, Flux.1 Kontext)
+  "generation.image_edit.title": "Édition d'image",
+  "generation.image_edit.hint": "Décrivez la modification dans le prompt (par exemple \"rendez le ciel violet\"). Le modèle modifie votre image de référence plutôt que de générer à partir de zéro.",
+  "generation.image_edit.wrong_model": "Le modèle sélectionné ne prend pas en charge l'édition d'image. Choisissez un modèle Qwen Image Edit, Qwen Image Edit Plus ou Flux.1 Kontext.",
+  "generation.image_edit.reference_image": "Image de référence",
+  "generation.image_edit.reference_image_n": "Image de référence {n}",
+  "generation.image_edit.reference_set": "Image de référence définie",
+  "generation.image_edit.upload_prompt": "parcourir",
+  "generation.image_edit.drop_hint": "Déposez une image ou",
+  "generation.image_edit.family_badge.qwen_edit": "Qwen Image Edit",
+  "generation.image_edit.family_badge.qwen_edit_plus": "Qwen Image Edit Plus",
+  "generation.image_edit.family_badge.flux1kontext": "Flux.1 Kontext",
   "generation.drag_to_move": "Glisser pour déplacer la section",
   "generation.drag_to_resize": "Glisser pour redimensionner, double-cliquer pour réinitialiser",
 
@@ -1510,6 +1523,7 @@ const fr: Record<string, string> = {
   "artist_gallery.category_label": "Catégorie :",
   "artist_gallery.category_all": "Tous ({count})",
   "artist_gallery.category_uncat": "Sans catégorie ({count})",
+  "artist_gallery.category_hint": "Cliquez sur le point a cote du coeur d'un artiste favori pour le classer dans une categorie.",
   "artist_gallery.load_error": "Échec du chargement des artistes : {error}",
   "artist_gallery.loading_artists": "chargement des artistes…",
   "artist_gallery.searching": "Recherche…",

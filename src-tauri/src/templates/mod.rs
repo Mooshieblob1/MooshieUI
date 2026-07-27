@@ -1,5 +1,6 @@
 pub mod controlnet;
 pub mod facefix;
+pub mod image_edit;
 pub mod img2img;
 pub mod inpainting;
 pub mod segment_detail;
@@ -52,6 +53,20 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
     {
         return Err(
             "Inpainting mode requires a mask image — please paint a mask before generating.".into(),
+        );
+    }
+
+    if matches!(params.mode.as_str(), "image_edit")
+        && params
+            .edit_reference_images
+            .first()
+            .map(|s| s.trim())
+            .unwrap_or("")
+            .is_empty()
+    {
+        return Err(
+            "Image Edit mode requires a reference image — please upload one before generating."
+                .into(),
         );
     }
 
@@ -356,6 +371,7 @@ pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
     let mut result = match params.mode.as_str() {
         "img2img" => img2img::build(params, seed),
         "inpainting" => inpainting::build(params, seed),
+        "image_edit" => image_edit::build(params, seed),
         _ => txt2img::build(params, seed),
     };
 
@@ -484,6 +500,9 @@ pub fn needs_sd3_latent(params: &GenerationParams) -> bool {
             | "zib"
             | "zit"
             | "qwen"
+            | "qwen_edit"
+            | "qwen_edit_plus"
+            | "flux1kontext"
             | "anima"
             | "wan"
             | "krea2"

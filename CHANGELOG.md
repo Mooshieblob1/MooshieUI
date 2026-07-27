@@ -1,5 +1,18 @@
 # Changelog
 
+## What's New in v1.8.0
+
+### New features
+- **Image Edit mode**: a fourth generation mode alongside Txt2Img, Img2Img, and Inpainting, for instruction-driven editing of an existing image. Load a reference image, describe the change in the prompt ("make the sky purple"), and the model edits that image instead of generating from scratch. Three model families are supported, all using stock ComfyUI nodes with nothing extra to install: Qwen Image Edit and Flux.1 Kontext take a single reference image, and Qwen Image Edit Plus takes up to three so you can combine subjects from separate pictures. The reference slots accept drag and drop, paste, or file browse, and work in both the desktop app and browser mode. The mode picks up the right workflow automatically from the loaded model, and warns when the selected model cannot edit images.
+
+### Fixes
+- **Searching inside Favourites no longer escapes the filter**: in the artist gallery, turning on the Favourites filter and then typing a search returned matches from the entire artist index rather than only favourited artists, which made the filter look broken. Search now runs within whatever filter is active. It also searches the full favourites list rather than the capped result set the index returns, so a favourite that ranks low globally still shows up.
+
+### Improvements
+- **Categorising an artist is now discoverable**: assigning artists to categories was only reachable by right-clicking a card, with nothing on screen to suggest it. Uncategorised cards now show a dashed "+" chip in place of the category dot, the category filter bar has a "New category" button, and a short hint spells out the right-click action.
+
+---
+
 ## What's New in v1.7.7
 
 ### Fixes

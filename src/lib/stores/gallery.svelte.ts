@@ -1,4 +1,4 @@
-import type { OutputImage } from "../types/index.js";
+import type { GenerationMode, OutputImage } from "../types/index.js";
 import {
   listGalleryImageEntries,
   loadGalleryImage,
@@ -33,6 +33,22 @@ import {
   type ArtistTagIndex,
 } from "../artist-gallery/detection.js";
 import type { ArtistSearchHit } from "../artist-gallery/types.js";
+
+/**
+ * Mode segment of a modern gallery filename (`{promptId}__{mode}__{name}`),
+ * or undefined for legacy names and the backend's "unknown" placeholder.
+ */
+function parseGenerationMode(value: string): GenerationMode | undefined {
+  switch (value) {
+    case "txt2img":
+    case "img2img":
+    case "inpainting":
+    case "image_edit":
+      return value;
+    default:
+      return undefined;
+  }
+}
 
 /** Convert a gallery filename to a thumbnail URL. In Tauri, uses the custom protocol; in browser, uses the HTTP server. */
 async function thumbnailUrl(filename: string): Promise<string> {
@@ -461,15 +477,12 @@ class GalleryStore {
     // Mirror loadFromDisk's modern-format parse: {promptId}__{mode}__{origFilename}.
     let promptId = "";
     let origFilename = galleryFilename;
-    let generationMode: "txt2img" | "img2img" | "inpainting" | undefined;
+    let generationMode: GenerationMode | undefined;
     let isUpscaled = false;
     const modernParts = galleryFilename.split("__");
     if (modernParts.length >= 3) {
       promptId = modernParts[0] ?? "";
-      const mode = modernParts[1] ?? "";
-      if (mode === "txt2img" || mode === "img2img" || mode === "inpainting") {
-        generationMode = mode;
-      }
+      generationMode = parseGenerationMode(modernParts[1] ?? "");
       origFilename = modernParts.slice(2).join("__");
       const lowered = origFilename.toLowerCase();
       isUpscaled = lowered.includes("upscale") || lowered.includes("upscaled");
@@ -642,15 +655,12 @@ class GalleryStore {
           // New format: {promptId}__{mode}__{origFilename}; legacy: {promptId}_{origFilename}
           let promptId = "";
           let origFilename = filename;
-          let generationMode: "txt2img" | "img2img" | "inpainting" | undefined;
+          let generationMode: GenerationMode | undefined;
           let isUpscaled = false;
           const modernParts = filename.split("__");
           if (modernParts.length >= 3) {
             promptId = modernParts[0] ?? "";
-            const mode = modernParts[1] ?? "";
-            if (mode === "txt2img" || mode === "img2img" || mode === "inpainting") {
-              generationMode = mode;
-            }
+            generationMode = parseGenerationMode(modernParts[1] ?? "");
             origFilename = modernParts.slice(2).join("__");
             if (generationMode === "img2img") {
               const lowered = origFilename.toLowerCase();
@@ -1231,10 +1241,9 @@ class GalleryStore {
     }
   }
 
-  private inferModeFromFilename(
-    image: OutputImage,
-  ): "txt2img" | "img2img" | "inpainting" {
+  private inferModeFromFilename(image: OutputImage): GenerationMode {
     const n = `${image.filename} ${image.gallery_filename ?? ""}`.toLowerCase();
+    if (n.includes("image_edit")) return "image_edit";
     if (n.includes("inpaint") || n.includes("mask")) return "inpainting";
     if (n.includes("img2img") || n.includes("upscale")) return "img2img";
     return "txt2img";

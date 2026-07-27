@@ -81,8 +81,15 @@ export interface ExtraPromptBox {
   content: string;
 }
 
+/**
+ * Generation modes the app supports. Exported so every consumer (gallery
+ * filename parsing, progress tracking, the save-to-gallery wrappers) shares one
+ * definition — hand-copied unions silently drift when a mode is added.
+ */
+export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "image_edit";
+
 export interface GenerationParams {
-  mode: "txt2img" | "img2img" | "inpainting";
+  mode: GenerationMode;
   positive_prompt: string;
   negative_prompt: string;
   positive_segments: PromptSegment[];
@@ -168,6 +175,8 @@ export interface GenerationParams {
   style_transfer_pmi_alpha?: number;
   style_transfer_megapixels?: number;
   style_transfer_blocks?: string;
+  /** Image Edit mode reference images (ComfyUI input filenames); slot 0 primary. */
+  edit_reference_images?: string[];
 }
 
 export interface OutputImage {
@@ -175,7 +184,7 @@ export interface OutputImage {
   subfolder: string;
   type: string;
   prompt_id: string;
-  generation_mode?: "txt2img" | "img2img" | "inpainting";
+  generation_mode?: GenerationMode;
   is_upscaled?: boolean;
   url?: string;
   thumbnailUrl?: string;

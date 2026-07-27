@@ -440,17 +440,18 @@
     );
   });
 
-  const filteredEntries = $derived.by(() => {
-    if (!showOnlyFavourites) return sortedEntries;
-    const favMap = artistFavourites.favourites;
-    return sortedEntries.filter((e) => {
-      const fav = favMap[e.slug];
-      if (!fav) return false;
-      if (favouriteCategoryFilter === "all") return true;
-      if (favouriteCategoryFilter === "__uncat") return fav.categoryId === null;
-      return fav.categoryId === favouriteCategoryFilter;
-    });
-  });
+  /** True when a hit passes the active favourites + category filter. */
+  function matchesFavouriteFilter(hit: ArtistSearchHit): boolean {
+    const fav = artistFavourites.favourites[hit.slug];
+    if (!fav) return false;
+    if (favouriteCategoryFilter === "all") return true;
+    if (favouriteCategoryFilter === "__uncat") return fav.categoryId === null;
+    return fav.categoryId === favouriteCategoryFilter;
+  }
+
+  const filteredEntries = $derived.by(() =>
+    showOnlyFavourites ? sortedEntries.filter(matchesFavouriteFilter) : sortedEntries,
+  );
   const totalPages = $derived(Math.max(1, Math.ceil(filteredEntries.length / pageSize)));
   const safePage = $derived(Math.min(currentPage, totalPages));
   const pageEntries = $derived(
@@ -460,7 +461,35 @@
   // When the user is typing in the search box, show search results directly
   // in the grid instead of the normal paginated results.
   const isSearching = $derived(queryInput.trim().length > 0);
-  const gridEntries = $derived<ArtistSearchHit[]>(isSearching ? store.results : pageEntries);
+
+  /** Same normalisation the client's search applies, so both paths agree. */
+  function normalizeQuery(text: string): string {
+    return text.toLowerCase().trim().replace(/\s+/g, "_").replace(/\\/g, "").replace(/^@+/, "");
+  }
+
+  /**
+   * Favourites-scoped search. The client's remote search caps at 50 hits across
+   * the WHOLE index, so post-filtering it to favourites would silently drop a
+   * favourite ranked below that cut. Search the already-filtered favourites set
+   * locally instead: complete, and prefix matches still rank first.
+   */
+  const favouriteSearchEntries = $derived.by(() => {
+    const q = normalizeQuery(queryInput);
+    if (!q) return filteredEntries;
+    const prefix: ArtistSearchHit[] = [];
+    const contains: ArtistSearchHit[] = [];
+    for (const hit of filteredEntries) {
+      const slugLower = hit.slug.toLowerCase();
+      if (slugLower.startsWith(q)) prefix.push(hit);
+      else if (slugLower.includes(q) || hit.tag.toLowerCase().includes(q)) contains.push(hit);
+    }
+    return [...prefix, ...contains];
+  });
+
+  const searchEntries = $derived<ArtistSearchHit[]>(
+    showOnlyFavourites ? favouriteSearchEntries : store.results,
+  );
+  const gridEntries = $derived<ArtistSearchHit[]>(isSearching ? searchEntries : pageEntries);
 
   // ---------------------------------------------------------------------------
   // Image preload cache
@@ -704,7 +733,16 @@
               <span class="text-neutral-500">({counts[cat.id] ?? 0})</span>
             </button>
           {/each}
+          <button
+            type="button"
+            class="rounded px-2 py-0.5 text-xs text-indigo-300 transition-colors hover:bg-neutral-800 hover:text-indigo-200"
+            onclick={() => showFavouritesManager = true}
+            title={locale.t('artist_gallery.manage_title')}
+          >
+            {locale.t('artist_gallery.cat_new')}
+          </button>
         </div>
+        <p class="mt-1 px-1.5 text-[11px] text-neutral-500">{locale.t('artist_gallery.category_hint')}</p>
       {/if}
     {/if}
   </header>
@@ -719,7 +757,7 @@
     {:else}
       <p class="px-4 pt-2 text-xs text-neutral-500">
         {#if isSearching}
-          {store.searchLoading ? locale.t('artist_gallery.searching') : (store.results.length === 1 ? locale.t('artist_gallery.search_result_one', { query: queryInput }) : locale.t('artist_gallery.search_results', { count: locale.formatInteger(store.results.length), query: queryInput }))}
+          {store.searchLoading && !showOnlyFavourites ? locale.t('artist_gallery.searching') : (searchEntries.length === 1 ? locale.t('artist_gallery.search_result_one', { query: queryInput }) : locale.t('artist_gallery.search_results', { count: locale.formatInteger(searchEntries.length), query: queryInput }))}
         {:else}
           {locale.t('artist_gallery.hint_copy')}
         {/if}
@@ -841,14 +879,16 @@
               <div class="relative flex shrink-0 items-center gap-1">
                 <span class="text-xs text-neutral-500">{formatPostCount(hit)}</span>
                 {#if isFav}
+                  <!-- Uncategorised reads as a dashed "+" chip so the picker is
+                       findable; assigned shows the category colour. -->
                   <button
                     type="button"
-                    class="flex h-4 w-4 items-center justify-center rounded-full border border-neutral-700 transition-transform hover:scale-110"
+                    class="flex h-4 w-4 items-center justify-center rounded-full border text-[10px] leading-none transition-transform hover:scale-110 {favCat ? 'border-neutral-700' : 'border-dashed border-neutral-500 text-neutral-400 hover:border-indigo-400 hover:text-indigo-300'}"
                     style={favCat ? `background-color: ${favCat.color}` : "background-color: transparent"}
                     onclick={(e) => openCategoryPicker(hit.slug, e)}
                     aria-label={favCat ? locale.t('artist_gallery.change_category_aria', { name: favCat.name }) : locale.t('artist_gallery.assign_category_aria')}
                     title={favCat ? favCat.name : locale.t('artist_gallery.assign_category_aria')}
-                  ></button>
+                  >{favCat ? '' : '+'}</button>
                 {/if}
                 <button
                   type="button"
