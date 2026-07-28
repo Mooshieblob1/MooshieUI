@@ -83,6 +83,51 @@ function extractMissingModel(raw: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Quantization formats ComfyUI has shipped in `QUANT_ALGOS`. Used to recognise a
+ * format name in a bare `KeyError` when no traceback is attached, without
+ * swallowing unrelated `KeyError`s.
+ */
+const KNOWN_QUANT_FORMATS = new Set([
+  "float8_e4m3fn",
+  "float8_e5m2",
+  "nvfp4",
+  "mxfp8",
+  "int8_tensorwise",
+  "convrot_w4a4",
+]);
+
+/** Shape of a quant-format name, so formats added upstream still match. */
+const QUANT_FORMAT_SHAPE = /^(?:int|uint|fp|float|nv|mx|convrot)[\w.]*$/i;
+
+/**
+ * Detects a checkpoint whose quantization format the installed ComfyUI is too
+ * old to understand, and returns that format name.
+ *
+ * ComfyUI dereferences `QUANT_ALGOS[module.quant_format]` in `comfy/ops.py`
+ * before the dispatch chain that would raise a readable
+ * `ValueError: Unsupported quantization format: X`, so an unknown format
+ * surfaces as a bare `KeyError` whose entire message is the format name -- e.g.
+ * an INT8 checkpoint on ComfyUI older than v0.27.0 reports just
+ * `'int8_tensorwise'`. Both forms mean the same thing to a user, so match the
+ * explicit one first and fall back to the KeyError.
+ */
+function extractUnsupportedQuantFormat(raw: string, haystack: string): string | undefined {
+  const explicit = raw.match(/unsupported quantization format:\s*'?([\w.\-]+)'?/i);
+  if (explicit) return explicit[1];
+
+  const key = raw.match(/KeyError:\s*'([^']+)'/) || raw.match(/(?:^|\n)\s*'([^'\s]+)'\s*(?:\n|$)/);
+  if (!key) return undefined;
+  const candidate = key[1];
+
+  // A traceback through the quant tables is proof on its own. Without one
+  // (browser mode can relay a thinner payload) require the key to actually look
+  // like a quantization format, so a stray KeyError is not misreported.
+  const fromQuantTable = haystack.includes("quant_algos") || haystack.includes("quant_format");
+  if (fromQuantTable || KNOWN_QUANT_FORMATS.has(candidate.toLowerCase())) return candidate;
+  return QUANT_FORMAT_SHAPE.test(candidate) && candidate.length >= 4 ? candidate : undefined;
+}
+
 /** Pulls a missing/unknown node class name out of the error text. */
 function extractMissingNode(raw: string): string | undefined {
   const m =
@@ -226,7 +271,20 @@ export function classifyGenerationError(input: ErrorInput): ClassifiedGeneration
     }
   }
 
-  // 8. Generic fallback. If we have any exception message, show it rather than
+  // 8. The checkpoint is quantized in a format the pinned ComfyUI predates
+  // (e.g. int8_tensorwise landed in ComfyUI v0.27.0). Left unclassified this
+  // reaches the user as a bare Python KeyError like `'int8_tensorwise'`, which
+  // says nothing about what to do. Updating ComfyUI is the fix.
+  const quantFormat = extractUnsupportedQuantFormat(raw, haystack);
+  if (quantFormat) {
+    return {
+      messageKey: "generation.error.quant_format_unsupported",
+      params: { format: quantFormat },
+      durationMs: ACTIONABLE_MS,
+    };
+  }
+
+  // 9. Generic fallback. If we have any exception message, show it rather than
   // a bare "Generation failed".
   if (typeof input === "object" && input) {
     const detail = asText(input.exception_message) || asText(input.error);

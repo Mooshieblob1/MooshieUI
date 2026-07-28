@@ -2011,6 +2011,7 @@ const ko: Record<string, string> = {
   "generation.error.model_not_found_generic": "선택한 모델을 ComfyUI에서 사용할 수 없습니다. 모델과 VAE 설정을 확인하거나, 방금 파일을 추가하거나 이름을 변경했다면 ComfyUI를 다시 시작하세요.",
   "generation.error.missing_node": "이 워크플로에는 설치되지 않은 커스텀 노드가 필요합니다: {node}. ComfyUI에 설치하고 다시 시작하세요.",
   "generation.error.component_mismatch": "이 모델 구성 요소들이 서로 맞지 않습니다. 체크포인트, VAE, LoRA, CLIP이 모두 같은 모델 계열(예: 모두 SDXL)인지 확인하세요.",
+  "generation.error.quant_format_unsupported": "이 모델은 '{format}' 양자화 형식을 사용하지만 설치된 ComfyUI가 지원하지 않습니다. 설정 > 성능에서 ComfyUI를 업데이트하거나 양자화되지 않은 버전의 모델을 선택하세요.",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",

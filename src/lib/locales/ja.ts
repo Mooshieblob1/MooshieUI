@@ -2036,6 +2036,7 @@ const ja: Record<string, string> = {
   "generation.error.model_not_found_generic": "選択したモデルがComfyUIで利用できません。モデルとVAEの設定を確認するか、ファイルを追加・名前変更した直後の場合はComfyUIを再起動してください。",
   "generation.error.missing_node": "このワークフローには未インストールのカスタムノードが必要です: {node}。ComfyUIにインストールして再起動してください。",
   "generation.error.component_mismatch": "これらのモデルコンポーネントは組み合わせできません。チェックポイント、VAE、LoRA、CLIPがすべて同じモデルファミリー(例: すべてSDXL)であることを確認してください。",
+  "generation.error.quant_format_unsupported": "このモデルは量子化形式「{format}」を使用していますが、インストール済みのComfyUIは対応していません。設定 > パフォーマンスでComfyUIを更新するか、量子化されていないバージョンのモデルを選んでください。",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",

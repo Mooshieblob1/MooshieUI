@@ -2011,6 +2011,7 @@ const it: Record<string, string> = {
   "generation.error.model_not_found_generic": "Un modello selezionato non è disponibile in ComfyUI. Controlla le impostazioni di modello e VAE oppure riavvia ComfyUI se hai appena aggiunto o rinominato un file.",
   "generation.error.missing_node": "Questo workflow richiede un nodo personalizzato non installato: {node}. Installalo in ComfyUI e riavvia.",
   "generation.error.component_mismatch": "Questi componenti del modello non sono compatibili tra loro. Assicurati che checkpoint, VAE, LoRA e CLIP appartengano tutti alla stessa famiglia di modelli (ad esempio tutti SDXL).",
+  "generation.error.quant_format_unsupported": "Questo modello usa il formato di quantizzazione '{format}', che il ComfyUI installato non supporta. Aggiorna ComfyUI in Impostazioni > Prestazioni, oppure scegli una versione non quantizzata del modello.",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",

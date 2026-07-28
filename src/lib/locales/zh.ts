@@ -2053,6 +2053,7 @@ const zh: Record<string, string> = {
   "generation.error.model_not_found_generic": "ComfyUI 中没有所选的模型。请检查模型和 VAE 设置，或者如果你刚添加或重命名了文件，请重启 ComfyUI。",
   "generation.error.missing_node": "此工作流需要一个尚未安装的自定义节点：{node}。请在 ComfyUI 中安装并重启。",
   "generation.error.component_mismatch": "这些模型组件互不匹配。请确保检查点、VAE、LoRA 和 CLIP 都属于同一模型系列（例如都是 SDXL）。",
+  "generation.error.quant_format_unsupported": "该模型使用了 '{format}' 量化格式，你安装的 ComfyUI 不支持。请在 设置 > 效能 中更新 ComfyUI，或改用未量化的模型版本。",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",

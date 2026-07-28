@@ -76,6 +76,7 @@ const pl: Record<string, string> = {
   "generation.error.model_not_found_generic": "Wybrany model jest niedostępny w ComfyUI. Sprawdź ustawienia modelu i VAE lub uruchom ponownie ComfyUI, jeśli właśnie dodałeś lub zmieniłeś nazwę pliku.",
   "generation.error.missing_node": "Ten przepływ pracy wymaga niestandardowego węzła, który nie jest zainstalowany: {node}. Zainstaluj go w ComfyUI i uruchom ponownie.",
   "generation.error.component_mismatch": "Te komponenty modelu nie pasują do siebie. Upewnij się, że checkpoint, VAE, LoRA i CLIP są przeznaczone dla tej samej rodziny modeli (np. wszystkie SDXL).",
+  "generation.error.quant_format_unsupported": "Ten model używa formatu kwantyzacji '{format}', którego zainstalowane ComfyUI nie obsługuje. Zaktualizuj ComfyUI w Ustawienia > Wydajność albo wybierz nieskwantyzowaną wersję modelu.",
 
   // ── App Status ─────────────────────────────────────────
   "app.status.starting": "Uruchamianie...",

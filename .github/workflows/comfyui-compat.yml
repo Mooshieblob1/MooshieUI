@@ -4,7 +4,7 @@ name: ComfyUI Compatibility Check
 # against them, and (on pass) opens a PR bumping the pinned COMFYUI_REF.
 #
 # Why: MooshieUI pins ComfyUI to a release tag (COMFYUI_REF in
-# src-tauri/src/setup.rs). Bumping it is usually safe for the app, but ComfyUI's
+# src-tauri/src/comfyui_version.rs). Bumping it is usually safe for the app, but ComfyUI's
 # internal refactors can break the bundled custom nodes (which import deep
 # ComfyUI internals). This workflow is the checker for that: it reproduces the
 # app's ensure_mooshie_nodes deploy, starts ComfyUI in CPU mode, and verifies
@@ -47,6 +47,7 @@ jobs:
       target_ref: ${{ steps.v.outputs.target_ref }}
       should_test: ${{ steps.v.outputs.should_test }}
       is_newer: ${{ steps.v.outputs.is_newer }}
+      pin_file: ${{ steps.v.outputs.pin_file }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -60,11 +61,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          CURRENT=$(grep -oP 'COMFYUI_REF:\s*&str\s*=\s*"\K[^"]+' src-tauri/src/setup.rs)
-          if [ -z "$CURRENT" ]; then
-            echo "::error::Could not parse COMFYUI_REF from src-tauri/src/setup.rs"
+          # Locate the pin by content, not by a hardcoded path. The constant has
+          # moved between modules once already (setup.rs -> comfyui_version.rs),
+          # and the hardcoded grep failed silently under `set -e` for weeks
+          # afterwards, so the whole check never ran. `|| true` keeps a no-match
+          # from killing the step before the explicit error below.
+          PIN_FILE=$(grep -rlE 'const COMFYUI_REF:[[:space:]]*&str[[:space:]]*=' src-tauri/src | head -n1 || true)
+          if [ -z "$PIN_FILE" ]; then
+            echo "::error::Could not locate the COMFYUI_REF declaration under src-tauri/src"
             exit 1
           fi
+          CURRENT=$(sed -nE 's/.*COMFYUI_REF:[[:space:]]*&str[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$PIN_FILE" | head -n1)
+          if [ -z "$CURRENT" ]; then
+            echo "::error::Could not parse COMFYUI_REF from $PIN_FILE"
+            exit 1
+          fi
+          echo "pin_file=$PIN_FILE" >> "$GITHUB_OUTPUT"
           echo "current_ref=$CURRENT" >> "$GITHUB_OUTPUT"
 
           if [ -n "${INPUT_TARGET}" ]; then
@@ -89,6 +101,7 @@ jobs:
             echo "should_test=false" >> "$GITHUB_OUTPUT"
           fi
 
+          echo "Pin file    : $PIN_FILE"
           echo "Current pin : $CURRENT"
           echo "Candidate   : $TARGET"
           echo "Newer       : $IS_NEWER"
@@ -162,10 +175,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CURRENT: ${{ needs.detect.outputs.current_ref }}
           TARGET: ${{ needs.detect.outputs.target_ref }}
+          PIN_FILE: ${{ needs.detect.outputs.pin_file }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           BRANCH="bot/comfyui-bump-${TARGET}"
+
+          if [ -z "${PIN_FILE}" ] || [ ! -f "${PIN_FILE}" ]; then
+            echo "::error::Pin file '${PIN_FILE}' from the detect job is missing. Aborting."
+            exit 1
+          fi
 
           # Idempotency: if an open PR for this exact bump already exists, stop.
           EXISTING=$(gh pr list --state open --head "$BRANCH" --json number --jq 'length')
@@ -174,15 +193,15 @@ jobs:
             exit 0
           fi
 
-          # Bump exactly the one pinned-version line. setup.rs declares it as
+          # Bump exactly the one pinned-version line. The pin file declares it as
           #   pub const COMFYUI_REF: &str = "vX.Y.Z";
-          sed -i -E "s|(COMFYUI_REF:[[:space:]]*&str[[:space:]]*=[[:space:]]*\")[^\"]+(\";)|\1${TARGET}\2|" src-tauri/src/setup.rs
-          if git diff --quiet -- src-tauri/src/setup.rs; then
+          sed -i -E "s|(COMFYUI_REF:[[:space:]]*&str[[:space:]]*=[[:space:]]*\")[^\"]+(\";)|\1${TARGET}\2|" "$PIN_FILE"
+          if git diff --quiet -- "$PIN_FILE"; then
             echo "::error::COMFYUI_REF line was not changed (could not find the pin). Aborting."
             exit 1
           fi
           # Confirm the new value is exactly the candidate tag.
-          NEWPIN=$(grep -oP 'COMFYUI_REF:\s*&str\s*=\s*"\K[^"]+' src-tauri/src/setup.rs)
+          NEWPIN=$(sed -nE 's/.*COMFYUI_REF:[[:space:]]*&str[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$PIN_FILE" | head -n1)
           if [ "$NEWPIN" != "$TARGET" ]; then
             echo "::error::Post-edit pin is '$NEWPIN', expected '$TARGET'. Aborting."
             exit 1
@@ -191,7 +210,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
-          git add src-tauri/src/setup.rs
+          git add "$PIN_FILE"
           git commit -m "chore(comfyui): bump pinned ComfyUI to ${TARGET}"
           git push --force-with-lease --set-upstream origin "$BRANCH"
 

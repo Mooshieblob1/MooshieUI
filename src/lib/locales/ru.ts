@@ -2011,6 +2011,7 @@ const ru: Record<string, string> = {
   "generation.error.model_not_found_generic": "Выбранная модель недоступна в ComfyUI. Проверьте настройки модели и VAE или перезапустите ComfyUI, если вы только что добавили или переименовали файл.",
   "generation.error.missing_node": "Для этого рабочего процесса нужен пользовательский узел, который не установлен: {node}. Установите его в ComfyUI и перезапустите.",
   "generation.error.component_mismatch": "Эти компоненты модели несовместимы друг с другом. Убедитесь, что чекпойнт, VAE, LoRA и CLIP относятся к одному семейству моделей (например, все SDXL).",
+  "generation.error.quant_format_unsupported": "Эта модель использует формат квантизации '{format}', который не поддерживается установленным ComfyUI. Обновите ComfyUI в разделе Настройки > Производительность или выберите неквантизованную версию модели.",
 
   // ── Synced from en.ts (missing keys) ──
   "checkpoint.civitai_image_ref_placeholder": "CivitAI image URL or id",

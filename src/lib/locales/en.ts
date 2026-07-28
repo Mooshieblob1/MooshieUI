@@ -77,6 +77,7 @@ const en: Record<string, string> = {
   "generation.error.model_not_found_generic": "A selected model isn't available in ComfyUI. Check your model and VAE settings, or restart ComfyUI if you just added or renamed a file.",
   "generation.error.missing_node": "This workflow needs a custom node that isn't installed: {node}. Install it in ComfyUI and restart.",
   "generation.error.component_mismatch": "These model components don't fit together. Make sure the checkpoint, VAE, LoRAs, and CLIP are all for the same model family (for example all SDXL).",
+  "generation.error.quant_format_unsupported": "This model uses the '{format}' quantization format, which your installed ComfyUI doesn't support. Update ComfyUI in Settings > Performance, or pick a non-quantized version of the model.",
 
   // ── App Status ─────────────────────────────────────────
   "app.status.starting": "Starting...",
