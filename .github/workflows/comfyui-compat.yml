@@ -132,9 +132,14 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip
           # CPU-only torch first so the unpinned torch in ComfyUI's requirements
-          # is already satisfied and pip does not pull a CUDA build.
-          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          # is already satisfied and pip does not pull a CUDA build. torchaudio
+          # must be in this list too: ComfyUI imports it via comfy/sd.py, and
+          # leaving it to requirements.txt pulls the CUDA wheel from PyPI, which
+          # then fails to dlopen libcudart on the CPU runner.
+          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
           pip install -r comfyui-target/requirements.txt
+          # Fail loudly here rather than as an opaque boot crash later.
+          python -c "import torch, torchvision, torchaudio; print(f'torch {torch.__version__} / torchvision {torchvision.__version__} / torchaudio {torchaudio.__version__}')"
           # ultralytics backs the face-detailer node; pin parsed from nodes.rs
           # (single source of truth) via Python to avoid grep -P portability issues.
           PIN=$(python -c 'import re; t=open("src-tauri/src/comfyui/nodes.rs",encoding="utf-8").read(); m=re.search(r"MOOSHIE_NODES_REQUIREMENTS:\s*&str\s*=\s*\"([^\"]*)\"", t); print((m.group(1).encode().decode("unicode_escape").strip()) if m else "ultralytics")')
