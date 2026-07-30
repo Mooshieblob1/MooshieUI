@@ -50,16 +50,35 @@
 
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
   let backdropEl = $state<HTMLDivElement | null>(null);
-  let clickOverlayEl = $state<HTMLDivElement | null>(null);
+  let clickMirrorEl = $state<HTMLDivElement | null>(null);
   let spellcheckOverlayEl = $state<HTMLDivElement | null>(null);
   let spellMenuVisible = $state(false);
   let spellMenuX = $state(0);
   let spellMenuY = $state(0);
   let spellMenuItems = $state<ContextMenuItem[]>([]);
   let scrollbarWidth = $state(0);
+  let overlayScrollTop = $state(0);
+  let overlayScrollLeft = $state(0);
+
+  /**
+   * The overlays mirror the textarea character for character, so their content box has
+   * to match its content box exactly: a sub-pixel difference moves wrap points and the
+   * mirror gains or loses a line. The textarea reserves a scrollbar gutter, so the
+   * overlays must reserve an identical one. `scrollbar-gutter: stable` lets the engine
+   * do that at full precision (it applies to `overflow: hidden` boxes too). The JS
+   * fallback can only ever be an integer approximation, because offsetWidth and
+   * clientWidth are rounded — measurably wrong at 125%/150% display scaling.
+   */
+  const supportsScrollbarGutter =
+    typeof CSS !== "undefined" &&
+    typeof CSS.supports === "function" &&
+    CSS.supports("scrollbar-gutter", "stable");
+  const gutterStyle = $derived(
+    supportsScrollbarGutter ? "scrollbar-gutter: stable;" : `right: ${scrollbarWidth}px;`,
+  );
 
   function updateScrollbarWidth() {
-    if (textareaEl) {
+    if (!supportsScrollbarGutter && textareaEl) {
       const computedStyle = window.getComputedStyle(textareaEl);
       const borderLeft = parseFloat(computedStyle.borderLeftWidth) || 0;
       const borderRight = parseFloat(computedStyle.borderRightWidth) || 0;
@@ -508,6 +527,20 @@
   );
   const showClickableOverlay = $derived(autocomplete.clickableOverlayEnabled && clickableSegments.length > 0);
 
+  /** One painted box. Coordinates are relative to the mirror's border box, unscrolled. */
+  interface HighlightRect {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  }
+  /** A tag and the boxes covering it — more than one when it straddles a line break. */
+  interface HighlightGroup {
+    segment: PromptClickableSegment;
+    rects: HighlightRect[];
+  }
+  let highlightGroups = $state<HighlightGroup[]>([]);
+
   // Exclude the token under the caret only when there's no active selection.
   const spellcheckCaret = $derived(selectionStart === selectionEnd ? selectionStart : -1);
   const spellcheckRanges = $derived(
@@ -533,6 +566,56 @@
     });
   });
 
+  /** The mirror holds the whole prompt as one text node; that node is the layout source. */
+  function mirrorTextNode(): Text | null {
+    const node = clickMirrorEl?.firstChild ?? null;
+    return node && node.nodeType === Node.TEXT_NODE ? (node as Text) : null;
+  }
+
+  /**
+   * Measure where each clickable tag actually sits and store the boxes to paint.
+   *
+   * The overlay used to draw one <span> per segment directly over the textarea. Splitting
+   * the mirrored text into separate inline boxes makes the engine accumulate advance
+   * widths per box instead of across the whole run, so at some container widths it picks
+   * different line-break points than the textarea does — and from the first divergent
+   * break onwards every hover box was drawn a line down and hundreds of pixels sideways.
+   * The mirror is now a single unbroken text node, which cannot break differently, and
+   * the boxes are painted separately from Range rectangles measured against it.
+   */
+  function measureHighlights() {
+    const node = mirrorTextNode();
+    if (!node || !clickMirrorEl) {
+      highlightGroups = [];
+      return;
+    }
+    // Store unscrolled coordinates relative to the mirror's border box, so scrolling
+    // only has to translate the paint layer instead of re-measuring every tag.
+    const origin = clickMirrorEl.getBoundingClientRect();
+    const dx = clickMirrorEl.scrollLeft - origin.left;
+    const dy = clickMirrorEl.scrollTop - origin.top;
+    const range = document.createRange();
+    const groups: HighlightGroup[] = [];
+    for (const segment of clickableSegments) {
+      // The mirror can still hold the previous value for a frame after an edit.
+      if (!segment.clickable || segment.end > node.length) continue;
+      range.setStart(node, segment.start);
+      range.setEnd(node, segment.end);
+      const rects: HighlightRect[] = [];
+      for (const box of range.getClientRects()) {
+        if (box.width <= 0 || box.height <= 0) continue;
+        rects.push({
+          left: box.left + dx,
+          top: box.top + dy,
+          width: box.width,
+          height: box.height,
+        });
+      }
+      if (rects.length > 0) groups.push({ segment, rects });
+    }
+    highlightGroups = groups;
+  }
+
   function handleClickableSegmentMouseDown(event: MouseEvent, segment: PromptClickableSegment) {
     if (!textareaEl || !segment.clickable) return;
     // Right-click is handled via oncontextmenu; don't clobber the selection here.
@@ -542,7 +625,7 @@
     // clicked character instead of re-selecting the whole segment. The first click
     // keeps the whole-segment select (the weight-button workflow).
     if (textareaEl.selectionStart === segment.start && textareaEl.selectionEnd === segment.end) {
-      const caret = getCaretFromPoint(event.clientX, event.clientY);
+      const caret = getCaretFromPoint(segment, event.clientX, event.clientY);
       if (caret >= 0) {
         event.preventDefault();
         event.stopPropagation();
@@ -570,48 +653,35 @@
   }
 
   /**
-   * Map a viewport point to an absolute character offset in the prompt, using the
-   * clickable/spellcheck overlay text nodes as the mirror layout. Each overlay
-   * covers [0, value.length) contiguously with one span per segment/piece, so the
-   * absolute offset is the summed length of preceding sibling spans plus the local
-   * caret offset — independent of which overlay the hit test lands on. Returns -1
-   * when the caret can't be resolved (caller falls back to native behavior).
+   * Map a viewport point to an absolute character offset inside `segment`.
+   *
+   * A Range over [i, i+1) on the mirror gives the exact box of a single character, so
+   * walking the segment's characters resolves the caret without document hit testing —
+   * which would have to see through the `pointer-events: none` mirror. Segments are
+   * single tags, so the scan is short. Returns -1 when the point is on none of the
+   * lines the segment occupies (the caller falls back to selecting the whole segment).
    */
-  function getCaretFromPoint(clientX: number, clientY: number): number {
-    let node: Node | null = null;
-    let localOffset = 0;
-    const doc = document as Document & {
-      caretRangeFromPoint?: (x: number, y: number) => Range | null;
-      caretPositionFromPoint?: (
-        x: number,
-        y: number,
-      ) => { offsetNode: Node; offset: number } | null;
-    };
-    if (typeof doc.caretRangeFromPoint === "function") {
-      const range = doc.caretRangeFromPoint(clientX, clientY);
-      if (range) {
-        node = range.startContainer;
-        localOffset = range.startOffset;
-      }
-    } else if (typeof doc.caretPositionFromPoint === "function") {
-      const pos = doc.caretPositionFromPoint(clientX, clientY);
-      if (pos) {
-        node = pos.offsetNode;
-        localOffset = pos.offset;
-      }
+  function getCaretFromPoint(
+    segment: PromptClickableSegment,
+    clientX: number,
+    clientY: number,
+  ): number {
+    const node = mirrorTextNode();
+    if (!node || segment.end > node.length) return -1;
+    const range = document.createRange();
+    let caret = -1;
+    for (let i = segment.start; i < segment.end; i++) {
+      range.setStart(node, i);
+      range.setEnd(node, i + 1);
+      const box = range.getClientRects()[0];
+      if (!box) continue;
+      if (clientY < box.top || clientY >= box.bottom) continue;
+      caret = clientX < box.left + box.width / 2 ? i : i + 1;
+      // Past the right edge of this glyph the caret can still move on; stop once the
+      // point falls within it, so the last matching character on the line wins.
+      if (clientX < box.right) break;
     }
-    if (!node || node.nodeType !== Node.TEXT_NODE) return -1;
-    const span = node.parentElement;
-    const container = span?.parentElement ?? null;
-    if (!container || (container !== clickOverlayEl && container !== spellcheckOverlayEl)) {
-      return -1;
-    }
-    let offset = 0;
-    for (const child of Array.from(container.children)) {
-      if (child === span) return offset + localOffset;
-      offset += (child.textContent ?? "").length;
-    }
-    return -1;
+    return caret;
   }
 
   /**
@@ -684,18 +754,22 @@
   }
 
   function syncScroll() {
-    if (textareaEl && backdropEl) {
+    if (!textareaEl) return;
+    if (backdropEl) {
       backdropEl.scrollTop = textareaEl.scrollTop;
       backdropEl.scrollLeft = textareaEl.scrollLeft;
     }
-    if (textareaEl && clickOverlayEl) {
-      clickOverlayEl.scrollTop = textareaEl.scrollTop;
-      clickOverlayEl.scrollLeft = textareaEl.scrollLeft;
-    }
-    if (textareaEl && spellcheckOverlayEl) {
+    // The click mirror is deliberately not scrolled: it paints nothing, and Range
+    // rectangles come from layout, so they are correct for text below the fold too.
+    // It could not track the textarea anyway — a textarea is inline-level, so the
+    // wrapper the mirror fills is a few pixels taller and clamps scrollTop lower.
+    if (spellcheckOverlayEl) {
       spellcheckOverlayEl.scrollTop = textareaEl.scrollTop;
       spellcheckOverlayEl.scrollLeft = textareaEl.scrollLeft;
     }
+    // The highlight boxes hold unscrolled coordinates, so the layer translates instead.
+    overlayScrollTop = textareaEl.scrollTop;
+    overlayScrollLeft = textareaEl.scrollLeft;
   }
 
   // Restore saved height and persist future resize changes via ResizeObserver.
@@ -724,17 +798,42 @@
         }
       }
       updateScrollbarWidth();
+      measureHighlights();
     });
     resizeObserver.observe(textareaEl);
   });
 
-  // Keep scrollbar width and scroll position updated as the value changes.
+  // Keep scrollbar width, scroll position and highlight geometry in step with the text.
+  // Measuring inside rAF lets Svelte flush the mirror first; the reads there are
+  // untracked, so the dependencies this effect needs are listed explicitly.
   $effect(() => {
-    value; // track value
+    void value;
+    void clickableSegments;
+    void clickMirrorEl;
     requestAnimationFrame(() => {
       updateScrollbarWidth();
       syncScroll();
+      measureHighlights();
     });
+  });
+
+  // Text metrics also change when the webfont swaps in and when the UI font scale is
+  // changed (`--font-scale` on the root element). Neither resizes the textarea's own
+  // box, so the ResizeObserver above never fires for them and the boxes would go stale.
+  $effect(() => {
+    let cancelled = false;
+    void document.fonts?.ready.then(() => {
+      if (!cancelled) measureHighlights();
+    });
+    const rootObserver = new MutationObserver(() => measureHighlights());
+    rootObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["style"],
+    });
+    return () => {
+      cancelled = true;
+      rootObserver.disconnect();
+    };
   });
 
   onDestroy(() => {
@@ -881,7 +980,7 @@
       <div
         bind:this={backdropEl}
         class="absolute inset-0 pointer-events-none overflow-hidden rounded-lg px-3 py-2 text-sm leading-5 whitespace-pre-wrap break-words border border-transparent"
-        style="color: transparent; z-index: 0; right: {scrollbarWidth}px;"
+        style="color: transparent; z-index: 0; {gutterStyle}"
       >{@html highlightedHtml}</div>
     {/if}
 
@@ -904,31 +1003,51 @@
     ></textarea>
 
     {#if showClickableOverlay}
+      <!--
+        Measurement mirror. One unbroken text node, so it cannot pick different line
+        breaks than the textarea (per-segment spans could, and did). Nothing is drawn
+        here: the boxes are painted by the sibling layer below from Range rectangles
+        measured against this text, which keeps them glued to the real glyphs.
+      -->
       <div
-        bind:this={clickOverlayEl}
+        bind:this={clickMirrorEl}
         aria-hidden="true"
         class="absolute inset-0 overflow-hidden rounded-lg px-3 py-2 text-sm leading-5 whitespace-pre-wrap break-words border border-transparent select-none"
-        style="pointer-events: none; color: transparent; z-index: 2; right: {scrollbarWidth}px;"
+        style="pointer-events: none; color: transparent; z-index: 2; {gutterStyle}"
+      >{value}</div>
+
+      <div
+        aria-hidden="true"
+        class="absolute inset-0 overflow-hidden rounded-lg"
+        style="pointer-events: none; z-index: 2;"
       >
-        {#each clickableSegments as segment (segment.start + ':' + segment.end + ':' + segment.kind)}
-          {#if segment.clickable}
+        <div
+          style="position: absolute; left: 0; top: 0; transform: translate({-overlayScrollLeft}px, {-overlayScrollTop}px);"
+        >
+          {#each highlightGroups as group (group.segment.start + ':' + group.segment.end + ':' + group.segment.kind)}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <span
-              class="pointer-events-auto cursor-pointer rounded-[4px] transition-colors box-decoration-clone {selectionStart === segment.start && selectionEnd === segment.end
-                ? segment.kind === 'weighted'
-                  ? 'bg-amber-400/28 shadow-[inset_0_0_0_1px_rgba(252,211,77,0.8),0_0_10px_rgba(251,191,36,0.35)]'
-                  : 'bg-indigo-400/24 shadow-[inset_0_0_0_1px_rgba(165,180,252,0.8),0_0_10px_rgba(129,140,248,0.35)]'
-                : segment.kind === 'weighted'
-                  ? 'bg-amber-500/16 hover:bg-amber-500/22 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.4)] hover:shadow-[inset_0_0_0_1px_rgba(251,191,36,0.55)]'
-                  : 'hover:bg-indigo-500/18 hover:shadow-[inset_0_0_0_1px_rgba(129,140,248,0.5)]'}"
-              style="color: transparent;"
-              onmousedown={(event) => handleClickableSegmentMouseDown(event, segment)}
-              oncontextmenu={(event) => handleClickableSegmentContextMenu(event, segment)}
-            >{value.slice(segment.start, segment.end)}</span>
-          {:else}
-            <span style="color: transparent;">{value.slice(segment.start, segment.end)}</span>
-          {/if}
-        {/each}
+            <div
+              class="group"
+              onmousedown={(event) => handleClickableSegmentMouseDown(event, group.segment)}
+              oncontextmenu={(event) => handleClickableSegmentContextMenu(event, group.segment)}
+            >
+              {#each group.rects as rect, i (i)}
+                <!-- A tag split across a line break paints one box per line; grouping
+                     them means hovering either fragment lights the whole tag. -->
+                <div
+                  class="absolute pointer-events-auto cursor-pointer rounded-[4px] transition-colors {selectionStart === group.segment.start && selectionEnd === group.segment.end
+                    ? group.segment.kind === 'weighted'
+                      ? 'bg-amber-400/28 shadow-[inset_0_0_0_1px_rgba(252,211,77,0.8),0_0_10px_rgba(251,191,36,0.35)]'
+                      : 'bg-indigo-400/24 shadow-[inset_0_0_0_1px_rgba(165,180,252,0.8),0_0_10px_rgba(129,140,248,0.35)]'
+                    : group.segment.kind === 'weighted'
+                      ? 'bg-amber-500/16 group-hover:bg-amber-500/22 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.4)] group-hover:shadow-[inset_0_0_0_1px_rgba(251,191,36,0.55)]'
+                      : 'group-hover:bg-indigo-500/18 group-hover:shadow-[inset_0_0_0_1px_rgba(129,140,248,0.5)]'}"
+                  style="left: {rect.left}px; top: {rect.top}px; width: {rect.width}px; height: {rect.height}px;"
+                ></div>
+              {/each}
+            </div>
+          {/each}
+        </div>
       </div>
     {/if}
 
@@ -937,7 +1056,7 @@
         bind:this={spellcheckOverlayEl}
         aria-hidden="true"
         class="absolute inset-0 overflow-hidden rounded-lg px-3 py-2 text-sm leading-5 whitespace-pre-wrap break-words border border-transparent select-none"
-        style="pointer-events: none; color: transparent; z-index: 3; right: {scrollbarWidth}px;"
+        style="pointer-events: none; color: transparent; z-index: 3; {gutterStyle}"
       >
         {#each spellcheckPieces as piece (piece.start + ':' + piece.end)}
           {#if piece.unknown}

@@ -188,6 +188,29 @@ const TAG_COLORS: Record<string, { bg: string; border: string; glow: string }> =
 };
 
 /**
+ * Open a highlight pill span.
+ *
+ * The backdrop this HTML lands in mirrors a textarea character-for-character,
+ * so a pill must add ZERO horizontal advance width. Any left/right border,
+ * padding or margin pushes every following character right of where the real
+ * text sits, and the error accumulates with each pill until the highlight is
+ * visibly detached; it also moves wrap points, so the mirror can gain a line
+ * the textarea does not have and lose vertical alignment too.
+ *
+ * The outline is therefore an inset box-shadow (painted, never laid out)
+ * instead of a border, and only vertical padding is used — on an inline box
+ * vertical padding paints without affecting line height. Same approach as the
+ * clickable overlay spans in PromptTextarea.svelte.
+ */
+function highlightPill(colors: { bg: string; border: string; glow: string }): string {
+  return (
+    `<span style="display:inline;color:transparent;background:${colors.bg};` +
+    `border-radius:4px;box-shadow:inset 0 0 0 1px ${colors.border},${colors.glow};` +
+    `padding:1px 0;-webkit-box-decoration-break:clone;box-decoration-break:clone;">`
+  );
+}
+
+/**
  * Render prompt text as HTML with styled highlights for scheduling blocks.
  * Used by the backdrop overlay behind the textarea.
  */
@@ -233,7 +256,7 @@ export function renderHighlightedPrompt(raw: string, knownPresetSlugs?: Readonly
 
     const colors = TAG_COLORS[tagType] ?? TAG_COLORS.from;
 
-    html += `<span style="display:inline;color:transparent;background:${colors.bg};border:1px solid ${colors.border};border-radius:4px;box-shadow:${colors.glow};padding:1px 3px;margin:0 1px;">`;
+    html += highlightPill(colors);
     html += escapeHtml(fullMatch);
     html += `</span>`;
   }
@@ -268,7 +291,7 @@ function renderPresetSegment(text: string, knownPresetSlugs?: ReadonlySet<string
     const glow = known
       ? "0 0 8px rgba(99, 102, 241, 0.30)"
       : "0 0 6px rgba(239, 68, 68, 0.25)";
-    html += `<span style="display:inline;color:transparent;background:${bg};border:1px solid ${border};border-radius:4px;box-shadow:${glow};padding:1px 3px;margin:0 1px;">`;
+    html += highlightPill({ bg, border, glow });
     html += escapeHtml(match[0]);
     html += `</span>`;
   }
@@ -305,7 +328,7 @@ function renderSegmentAwareText(
   let lastIndex = 0;
   for (const range of ranges) {
     html += renderPresetSegment(text.slice(lastIndex, range.start), knownPresetSlugs);
-    html += `<span style="display:inline;color:transparent;background:${SEGMENT_TAG_COLOR.bg};border:1px solid ${SEGMENT_TAG_COLOR.border};border-radius:4px;box-shadow:${SEGMENT_TAG_COLOR.glow};padding:1px 3px;margin:0 1px;">`;
+    html += highlightPill(SEGMENT_TAG_COLOR);
     html += escapeHtml(text.slice(range.start, range.end));
     html += `</span>`;
     lastIndex = range.end;
