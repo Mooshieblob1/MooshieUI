@@ -1,5 +1,14 @@
 # Changelog
 
+## What's New in v1.8.1
+
+### Fixes
+- **Models using newer quantization formats load again**: MooshieUI pins the ComfyUI version it installs and updates to, and that pin had fallen two releases behind. A model saved in a quantization format newer than the pin was not recognised, and generation stopped with a bare "int8_tensorwise" that gave no clue the installed ComfyUI was the problem (issue #511). The pin is now ComfyUI v0.28.0, which covers both int8_tensorwise and convrot_w4a4. Existing installs pick it up from Update ComfyUI under Settings > Performance.
+- **An unsupported quantization format now explains itself**: when a model uses a format the installed ComfyUI does not know, the error names the format and tells you to update ComfyUI or choose a non-quantized version of the model, instead of showing the raw format string on its own.
+- **Prompt highlighting stays lined up with the prompt**: the coloured pills behind scheduled prompts, and the clickable tag targets, are drawn on invisible layers sitting over the prompt box, and those layers could wrap their text at different points than the box itself. From the first mismatch onwards every highlight drifted, ending up a line down and well off to the side, and clicking a tag could land on a different one. The layers now mirror the prompt exactly, and highlights are positioned from measured text rather than from redrawn text, so they hold their place at any window width, font size, and display scaling. A tag broken across two lines now highlights as a single tag.
+
+---
+
 ## What's New in v1.8.0
 
 ### New features
