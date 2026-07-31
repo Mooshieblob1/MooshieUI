@@ -81,8 +81,18 @@ pub fn inject_controlnet(result: &mut WorkflowResult, params: &ControlNetParam) 
     result.negative_source = (cn_apply_id, 1);
 }
 
-/// Inject Anima ControlNet-LLLite via kohya-ss/ComfyUI-Anima-LLLite.
-/// Unlike standard ControlNet, the LLLite node patches MODEL and returns MODEL.
+/// Inject Anima ControlNet-LLLite. Unlike standard ControlNet, the LLLite node
+/// patches MODEL and returns MODEL, so it rewires the sampler's model input
+/// rather than the conditioning.
+///
+/// Targets ComfyUI core's `ModelPatchLoader` -> `AnimaLLLiteApply` pair
+/// (`comfy_extras/nodes_model_patch.py`, core since v0.29.0). Core registers
+/// `AnimaLLLiteApply` under the same class name as kohya-ss/ComfyUI-Anima-LLLite
+/// and wins that collision (`load_custom_node` ignores custom classes that
+/// shadow core ones), so the third-party signature (`lllite_name` naming a file
+/// in `models/controlnet/`, plus `preserve_wrapper`) is unreachable and was
+/// failing validation with `required_input_missing: model_patch` (#522).
+/// Weights now load through `ModelPatchLoader` from `models/model_patches/`.
 pub fn inject_anima_lllite(
     result: &mut WorkflowResult,
     params: &ControlNetParam,
@@ -154,17 +164,25 @@ pub fn inject_anima_lllite(
         None
     };
 
+    let patch_loader_id = next_id.to_string();
+    workflow.insert(
+        patch_loader_id.clone(),
+        json!({
+            "class_type": "ModelPatchLoader",
+            "inputs": {
+                "name": params.controlnet_model.as_deref().unwrap_or("")
+            }
+        }),
+    );
+    *next_id += 1;
+
     let mut inputs = serde_json::Map::new();
     inputs.insert("model".into(), json!([model_source.0, model_source.1]));
-    inputs.insert(
-        "lllite_name".into(),
-        json!(params.controlnet_model.as_deref().unwrap_or("")),
-    );
+    inputs.insert("model_patch".into(), json!([patch_loader_id, 0]));
     inputs.insert("image".into(), json!([image_source.0, image_source.1]));
     inputs.insert("strength".into(), json!(params.strength));
     inputs.insert("start_percent".into(), json!(params.start_percent));
     inputs.insert("end_percent".into(), json!(params.end_percent));
-    inputs.insert("preserve_wrapper".into(), json!(true));
     if let Some((mask_node, mask_output)) = mask_source {
         inputs.insert("mask".into(), json!([mask_node, mask_output]));
     }
@@ -341,17 +359,41 @@ mod tests {
         }
     }
 
+    /// Guards the core `ModelPatchLoader` -> `AnimaLLLiteApply` shape. Emitting
+    /// the third-party `lllite_name` / `preserve_wrapper` inputs instead fails
+    /// validation on every ComfyUI >= 0.29 (#522).
     #[test]
-    fn inject_anima_lllite_preserves_wrapper_and_rewires_sampler() {
+    fn inject_anima_lllite_loads_model_patch_and_rewires_sampler() {
         let mut result = sample_workflow_result();
 
         inject_anima_lllite(&mut result, &sample_controlnet(), None);
 
         let apply_id = result.model_source.0.clone();
         let apply_node = result.workflow.get(&apply_id).unwrap();
+        assert_eq!(
+            apply_node.get("class_type").unwrap(),
+            &json!("AnimaLLLiteApply")
+        );
         let inputs = apply_node.get("inputs").unwrap();
 
-        assert_eq!(inputs.get("preserve_wrapper").unwrap(), &json!(true));
+        assert!(inputs.get("lllite_name").is_none());
+        assert!(inputs.get("preserve_wrapper").is_none());
+
+        let patch_source = inputs.get("model_patch").unwrap().as_array().unwrap();
+        let patch_id = patch_source[0].as_str().unwrap();
+        let patch_node = result.workflow.get(patch_id).unwrap();
+        assert_eq!(
+            patch_node.get("class_type").unwrap(),
+            &json!("ModelPatchLoader")
+        );
+        assert_eq!(
+            patch_node
+                .get("inputs")
+                .and_then(|i| i.get("name"))
+                .unwrap(),
+            &json!("anima-lllite-test.safetensors")
+        );
+
         assert_eq!(
             result
                 .workflow
@@ -360,6 +402,31 @@ mod tests {
                 .and_then(|inputs| inputs.get("model"))
                 .unwrap(),
             &json!([apply_id, 0])
+        );
+    }
+
+    #[test]
+    fn inject_anima_lllite_wires_mask_for_inpainting_preset() {
+        let mut result = sample_workflow_result();
+        let mut params = sample_controlnet();
+        params.preset = Some("inpainting".into());
+
+        inject_anima_lllite(&mut result, &params, Some("mask.png"));
+
+        let apply_node = result.workflow.get(&result.model_source.0).unwrap();
+        let mask_source = apply_node
+            .get("inputs")
+            .and_then(|inputs| inputs.get("mask"))
+            .and_then(|mask| mask.as_array())
+            .expect("inpainting preset must wire a mask");
+        let mask_id = mask_source[0].as_str().unwrap();
+        assert_eq!(
+            result
+                .workflow
+                .get(mask_id)
+                .and_then(|node| node.get("class_type"))
+                .unwrap(),
+            &json!("LoadImageMask")
         );
     }
 }

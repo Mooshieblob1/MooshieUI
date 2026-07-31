@@ -193,7 +193,6 @@ MooshieUI stands on the shoulders of a huge amount of open-source work. Sincere 
 Auto-installed into ComfyUI alongside MooshieUI's own nodes:
 
 - **[comfyui_controlnet_aux](https://github.com/Fannovel16/comfyui_controlnet_aux)** (Fannovel16) - ControlNet preprocessors (Canny, Depth, OpenPose, LineArt, and more).
-- **[ComfyUI-Anima-LLLite](https://github.com/kohya-ss/ComfyUI-Anima-LLLite)** (kohya-ss) - LLLite ControlNet support for Anima.
 - **[ComfyUi-Untwisting-RoPE](https://github.com/BigStationW/ComfyUi-Untwisting-RoPE)** and **[ComfyUi-Scale-Image-to-Total-Pixels-Advanced](https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced)** (BigStationW) - training-free style transfer (the Anima style-transfer workflow is ported from Untwisting-RoPE's examples) and advanced image scaling.
 
 ### Research implemented by MooshieUI's own nodes

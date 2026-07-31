@@ -1,8 +1,22 @@
+/**
+ * ComfyUI models subdirectory a ControlNet weight belongs in. Anima LLLite
+ * weights load through core's `ModelPatchLoader`, which only lists
+ * `models/model_patches/`; everything else uses `ControlNetLoader`.
+ */
+export type ControlNetModelCategory = "controlnet" | "model_patches";
+
 export interface ControlNetModelEntry {
   filename: string;
   url: string;
   preprocessor?: string | null;
   defaults?: ControlNetDefaults;
+  /** Defaults to "controlnet" when omitted. */
+  category?: ControlNetModelCategory;
+}
+
+/** Resolve the models subdirectory for an entry. */
+export function modelCategory(entry: ControlNetModelEntry): ControlNetModelCategory {
+  return entry.category ?? "controlnet";
 }
 
 export interface ControlNetDefaults {
@@ -92,6 +106,7 @@ export const CONTROLNET_PRESETS: ControlNetPreset[] = [
       anima: {
         filename: "anima-lllite-depth-1.safetensors",
         url: "https://huggingface.co/Mooshie/Anima-LLLite/resolve/main/anima-lllite-depth-1.safetensors",
+        category: "model_patches",
         defaults: { strength: 1.2, startPercent: 0, endPercent: 1 },
       },
     },
@@ -153,6 +168,7 @@ export const CONTROLNET_PRESETS: ControlNetPreset[] = [
       anima: {
         filename: "anima-lllite-any-test-like-1-step1000.safetensors",
         url: "https://huggingface.co/Mooshie/Anima-LLLite/resolve/main/anima-lllite-any-test-like-1-step1000.safetensors",
+        category: "model_patches",
         defaults: { strength: 1.25, startPercent: 0, endPercent: 1 },
       },
     },
@@ -166,6 +182,7 @@ export const CONTROLNET_PRESETS: ControlNetPreset[] = [
       anima: {
         filename: "anima-lllite-any-test-like-1-step2000.safetensors",
         url: "https://huggingface.co/Mooshie/Anima-LLLite/resolve/main/anima-lllite-any-test-like-1-step2000.safetensors",
+        category: "model_patches",
         defaults: { strength: 1.0, startPercent: 0, endPercent: 1 },
       },
     },
@@ -180,6 +197,7 @@ export const CONTROLNET_PRESETS: ControlNetPreset[] = [
       anima: {
         filename: "anima-lllite-inpainting-v1.safetensors",
         url: "https://huggingface.co/Mooshie/Anima-LLLite/resolve/main/anima-lllite-inpainting-v1.safetensors",
+        category: "model_patches",
         defaults: { strength: 1.0, startPercent: 0, endPercent: 1 },
       },
     },

@@ -736,8 +736,17 @@ export async function fetchCachedImage(url: string): Promise<string> {
   return ipcInvoke("fetch_cached_image", { url });
 }
 
-export async function checkNodeAvailable(nodeClass: string): Promise<boolean> {
-  return ipcInvoke("check_node_available", { nodeClass });
+/**
+ * Is a ComfyUI node class registered? Pass `requiredInputs` when the class name
+ * alone is ambiguous: ComfyUI lets a core node and a custom node claim the same
+ * name (core wins), so the registered class can have an entirely different input
+ * shape from the one the workflow builder emits.
+ */
+export async function checkNodeAvailable(
+  nodeClass: string,
+  requiredInputs?: string[],
+): Promise<boolean> {
+  return ipcInvoke("check_node_available", { nodeClass, requiredInputs });
 }
 
 export async function isCustomNodeInstalled(nodeName: string): Promise<boolean> {
@@ -1030,15 +1039,16 @@ export async function readClipboardImageSafe(): Promise<number[]> {
 }
 
 export async function exportLogs(destination: string): Promise<void> {
-  return ipcInvoke("export_logs", {
+  await ipcInvoke("export_logs", {
     destination,
     frontendLogs: getLogSnapshot(),
   });
 }
 
-// Browser/server mode: the backend has no meaningful local path to write to for
-// a remote browser, so it returns the diagnostic text and the caller triggers a
-// client-side download.
+// Omitting `destination` returns the diagnostic text instead of writing a file.
+// Used by the diagnostics copy button and error reports on desktop, and in
+// browser mode where the backend has no meaningful local path to write to for a
+// remote browser (the caller triggers a client-side download).
 export async function exportLogsContent(): Promise<string> {
   const res = await ipcInvoke<{ content: string }>("export_logs", {
     frontendLogs: getLogSnapshot(),

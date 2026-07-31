@@ -22,6 +22,8 @@
     getPresetDefaults,
     getPresetModel,
     getPresetPreprocessor,
+    modelCategory,
+    type ControlNetModelEntry,
   } from "../../config/controlnet-presets.js";
   import { ipcListen, isTauri, authHeaders } from "../../utils/ipc.js";
   import { onMount } from "svelte";
@@ -30,8 +32,8 @@
 
   let preprocessorAvailable = $state<boolean | null>(null);
   let animaLlliteAvailable = $state<boolean | null>(null);
-  let installing = $state<"controlnet_aux" | "anima_lllite" | false>(false);
-  let installErrorFor = $state<{ controlnet_aux?: string | null; anima_lllite?: string | null }>({});
+  let installing = $state<"controlnet_aux" | false>(false);
+  let installErrorFor = $state<{ controlnet_aux?: string | null }>({});
   let installStep = $state("");
   let installMessage = $state("");
   let preprocessorPreviewPromptId = $state<string | null>(null);
@@ -75,6 +77,12 @@
           .filter((preset) => ANIMA_PRESET_IDS.includes(preset.id))
           .sort((a, b) => ANIMA_PRESET_IDS.indexOf(a.id) - ANIMA_PRESET_IDS.indexOf(b.id))
       : CONTROLNET_PRESETS,
+  );
+
+  // Anima routes through AnimaLLLiteApply, whose weights ModelPatchLoader reads
+  // from models/model_patches/; every other architecture uses ControlNetLoader.
+  const customModeModels = $derived(
+    generation.isAnima ? models.modelPatches : models.controlnetModels,
   );
 
   const selectedPresetPreprocessor = $derived(
@@ -129,11 +137,15 @@
       installStep = data.step;
       installMessage = data.message;
     });
-    // Check if preprocessor and Anima LLLite nodes are installed
+    // Check the preprocessor package and the core Anima LLLite nodes.
+    // AnimaLLLiteApply is checked by input signature, not just by name: the old
+    // kohya-ss custom node registers the same class name with a `lllite_name`
+    // input instead of `model_patch`, and ComfyUI resolves that collision in
+    // core's favour, so the name alone says nothing about which one is loaded.
     try {
       [preprocessorAvailable, animaLlliteAvailable] = await Promise.all([
         nodePackageAvailable("comfyui_controlnet_aux", "CannyEdgePreprocessor"),
-        nodePackageAvailable("ComfyUI-Anima-LLLite", "AnimaLLLiteApply"),
+        checkNodeAvailable("AnimaLLLiteApply", ["model_patch"]).catch(() => false),
       ]);
     } catch {
       preprocessorAvailable = false;
@@ -145,8 +157,10 @@
     await ipcListen("comfyui:controlnet_preprocessor", handlePreprocessorPreviewEvent);
   });
 
-  function isModelInstalled(filename: string): boolean {
-    return models.controlnetModels.includes(filename);
+  function isModelInstalled(entry: ControlNetModelEntry): boolean {
+    const installed =
+      modelCategory(entry) === "model_patches" ? models.modelPatches : models.controlnetModels;
+    return installed.includes(entry.filename);
   }
 
   function applyPresetState(presetId: string) {
@@ -172,11 +186,11 @@
 
     const model = applyPresetState(presetId);
     if (model) {
-      if (!isModelInstalled(model.filename)) {
+      if (!isModelInstalled(model)) {
         downloading = model.filename;
         downloadError = null;
         try {
-          await downloadModel(model.url, "controlnet", model.filename);
+          await downloadModel(model.url, modelCategory(model), model.filename);
           await models.refresh();
         } catch (e) {
           downloadError = locale.t('generation.controlnet.download_failed', { error: String(e) });
@@ -277,7 +291,7 @@
 
   /** Generic node-package installer that handles clone → restart → verify flow */
   async function installNodePackage(
-    packageId: "controlnet_aux" | "anima_lllite",
+    packageId: "controlnet_aux",
     repoUrl: string,
     folderName: string,
     verifyNode: string,
@@ -345,16 +359,6 @@
       "comfyui_controlnet_aux",
       "CannyEdgePreprocessor",
       (available) => { preprocessorAvailable = available; },
-    );
-  }
-
-  async function installAnimaLllite() {
-    await installNodePackage(
-      "anima_lllite",
-      "https://github.com/kohya-ss/ComfyUI-Anima-LLLite.git",
-      "ComfyUI-Anima-LLLite",
-      "AnimaLLLiteApply",
-      (available) => { animaLlliteAvailable = available; },
     );
   }
 
@@ -535,49 +539,14 @@
   </div>
 
   {#if generation.controlnetEnabled}
-    <!-- Anima LLLite install warning -->
-    {#if generation.isAnima && animaLlliteAvailable === false && generation.controlnetMode === "preset"}
+    <!--
+      Anima LLLite comes from ComfyUI core (ModelPatchLoader + AnimaLLLiteApply),
+      so there is nothing to install: an older ComfyUI simply cannot run it.
+      Shown in custom mode too, since Anima routes through the same node there.
+    -->
+    {#if generation.isAnima && animaLlliteAvailable === false}
       <div class="bg-amber-900/30 border border-amber-700/50 rounded-lg px-3 py-2 text-xs text-amber-300">
-        {#if installing === "anima_lllite"}
-          <div class="space-y-2">
-            <div class="flex items-center gap-2">
-              <div class="w-3.5 h-3.5 shrink-0 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
-              <span class="font-medium">
-                {#if installStep === "clone"}
-                  {locale.t('generation.controlnet.clone_step')}
-                {:else if installStep === "restart"}
-                  {locale.t('generation.controlnet.restart_step')}
-                {:else if installStep === "verify"}
-                  {locale.t('generation.controlnet.verify_step')}
-                {:else}
-                  {locale.t('generation.controlnet.installing_step')}
-                {/if}
-              </span>
-            </div>
-            {#if installMessage}
-              <div class="bg-neutral-900/60 rounded px-2 py-1.5 font-mono text-[10px] text-neutral-400 max-h-20 overflow-y-auto break-all">
-                {installMessage}
-              </div>
-            {/if}
-            <div class="w-full bg-amber-900/50 rounded-full h-1.5 overflow-hidden">
-              <div
-                class="bg-amber-400 h-full rounded-full transition-[width] duration-500"
-                style="width: {installStep === 'clone' ? '25' : installStep === 'restart' ? '80' : installStep === 'verify' ? '95' : '10'}%"
-              ></div>
-            </div>
-          </div>
-        {:else}
-          <p class="mb-1.5">{locale.t('generation.controlnet.anima_lllite_install')}</p>
-          <button
-            onclick={installAnimaLllite}
-            class="px-3 py-1 rounded bg-amber-700 hover:bg-amber-600 text-white text-xs transition-colors"
-          >
-            {locale.t('generation.controlnet.install_restart')}
-          </button>
-        {/if}
-        {#if installErrorFor["anima_lllite"]}
-          <p class="text-red-400 mt-1">{installErrorFor["anima_lllite"]}</p>
-        {/if}
+        {locale.t('generation.controlnet.anima_lllite_unsupported')}
       </div>
     {/if}
 
@@ -764,7 +733,7 @@
           class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
         >
           <option value={null}>{locale.t('generation.controlnet.select_model')}</option>
-          {#each models.controlnetModels as model}
+          {#each customModeModels as model}
             <option value={model}>{model}</option>
           {/each}
         </select>

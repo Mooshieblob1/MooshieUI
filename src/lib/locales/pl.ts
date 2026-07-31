@@ -782,7 +782,7 @@ const pl: Record<string, string> = {
   "generation.controlnet.select_model": "Wybierz model...",
 
   // ControlNet — Anima LLLite
-  "generation.controlnet.anima_lllite_install": "Anima ControlNet wymaga rozszerzenia AnimaLLLite dla ComfyUI. Zainstaluj je, aby używać ControlNet z modelami Anima.",
+  "generation.controlnet.anima_lllite_unsupported": "Anima ControlNet wymaga ComfyUI 0.29 lub nowszego, które udostępnia węzeł AnimaLLLiteApply. Zaktualizuj ComfyUI, aby używać ControlNet z modelami Anima.",
   "generation.controlnet.prepare_preprocessor": "Podgląd preprocesora",
   "generation.controlnet.prepare_preprocessor_tip": "Uruchom preprocesor na obrazie sterującym i wyświetl podgląd wyniku przed generowaniem.",
   "generation.controlnet.preprocessor_preparing": "Przygotowywanie...",

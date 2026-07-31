@@ -36,26 +36,24 @@ const GGUF_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage 
     verify_nodes: &["UnetLoaderGGUF", "CLIPLoaderGGUF"],
 }];
 
-const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[
-    RequiredCustomNodePackage {
-        name: "comfyui_controlnet_aux",
-        git_url: "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
-        verify_nodes: &[
-            "CannyEdgePreprocessor",
-            "DepthAnythingV2Preprocessor",
-            "OpenposePreprocessor",
-            "LineArtPreprocessor",
-            "ScribblePreprocessor",
-            "HEDPreprocessor",
-            "FakeScribblePreprocessor",
-        ],
-    },
-    RequiredCustomNodePackage {
-        name: "ComfyUI-Anima-LLLite",
-        git_url: "https://github.com/kohya-ss/ComfyUI-Anima-LLLite.git",
-        verify_nodes: &["AnimaLLLiteApply"],
-    },
-];
+// Anima ControlNet-LLLite is deliberately absent: ComfyUI ships
+// `ModelPatchLoader` + `AnimaLLLiteApply` in core (comfy_extras/nodes_model_patch.py)
+// since v0.29.0, and `load_custom_node` ignores custom classes that shadow core
+// names, so installing kohya-ss/ComfyUI-Anima-LLLite could never take effect and
+// only made the app emit the unreachable third-party input shape (#522).
+const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
+    name: "comfyui_controlnet_aux",
+    git_url: "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
+    verify_nodes: &[
+        "CannyEdgePreprocessor",
+        "DepthAnythingV2Preprocessor",
+        "OpenposePreprocessor",
+        "LineArtPreprocessor",
+        "ScribblePreprocessor",
+        "HEDPreprocessor",
+        "FakeScribblePreprocessor",
+    ],
+}];
 
 /// Substring present in [`format_missing_mooshie_nodes_error`] output.
 pub const MISSING_MOOSHIE_NODES_MARKER: &str = "has not loaded required MooshieUI custom nodes";

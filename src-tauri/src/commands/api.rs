@@ -303,6 +303,7 @@ fn known_model_subdirs() -> Vec<&'static str> {
         "diffusion_models",
         "text_encoders",
         "ultralytics",
+        "model_patches",
     ]
     .iter()
     .flat_map(|category| category_subdirs(category).iter().copied())
@@ -2238,15 +2239,50 @@ pub async fn copy_gallery_image_to_clipboard(
     }
 }
 
+/// Does an `/object_info/{class}` payload describe `node_class` with every name
+/// in `required_inputs` present in its input spec?
+///
+/// A class name alone is not proof the node is the one we emit for: ComfyUI lets
+/// two packages claim the same name (core wins), so `AnimaLLLiteApply` may exist
+/// while taking a completely different input shape (#522). Checking the inputs
+/// distinguishes them.
+pub(crate) fn node_info_matches(
+    info: &Value,
+    node_class: &str,
+    required_inputs: Option<&[String]>,
+) -> bool {
+    let Some(node) = info.get(node_class) else {
+        return false;
+    };
+    let Some(required_inputs) = required_inputs else {
+        return true;
+    };
+    let input = node.get("input");
+    required_inputs.iter().all(|name| {
+        ["required", "optional"].iter().any(|group| {
+            input
+                .and_then(|input| input.get(group))
+                .and_then(|group| group.get(name))
+                .is_some()
+        })
+    })
+}
+
 /// Check if a ComfyUI node class is available (used to detect custom node packages).
+/// Pass `required_inputs` to also assert the node's input signature.
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn check_node_available(
     state: State<'_, Arc<AppState>>,
     node_class: String,
+    required_inputs: Option<Vec<String>>,
 ) -> Result<bool, AppError> {
     match state.api_get(&format!("/object_info/{}", node_class)).await {
-        Ok(val) => Ok(val.get(&node_class).is_some()),
+        Ok(val) => Ok(node_info_matches(
+            &val,
+            &node_class,
+            required_inputs.as_deref(),
+        )),
         Err(_) => Ok(false),
     }
 }
@@ -5158,6 +5194,12 @@ pub(crate) fn category_subdirs(category: &str) -> &'static [&'static str] {
             "Models/TextEncoders",
         ],
         "ultralytics" => &["ultralytics", "models/ultralytics", "Models/ultralytics"],
+        "model_patches" => &[
+            "model_patches",
+            "ModelPatches",
+            "models/model_patches",
+            "Models/model_patches",
+        ],
         _ => &[],
     }
 }
@@ -5813,22 +5855,31 @@ fn collect_image_files_recursive(
     Ok(())
 }
 
-/// Export application logs and system information to a user-chosen file
-/// for troubleshooting. Collects:
+/// Export application logs and system information for troubleshooting. Collects:
 /// - ComfyUI subprocess stderr log
 /// - App config (sanitized)
 /// - Basic system/platform info
 /// - Rust-side log path references
+///
+/// With `destination`, writes the report to that path and returns an empty
+/// object. Without it, returns `{ content }` so callers that only want the text
+/// (diagnostics copy, error reports) get the Rust-side logs too. The browser
+/// branch in `webserver.rs` has the same contract.
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn export_logs(
     state: State<'_, Arc<AppState>>,
-    destination: String,
+    destination: Option<String>,
     frontend_logs: Option<Vec<String>>,
-) -> Result<(), AppError> {
+) -> Result<Value, AppError> {
     let output = build_diagnostic_log(&state, frontend_logs).await;
-    std::fs::write(&destination, &output)?;
-    Ok(())
+    match destination {
+        Some(path) => {
+            std::fs::write(&path, &output)?;
+            Ok(json!({}))
+        }
+        None => Ok(json!({ "content": output })),
+    }
 }
 
 /// Shallow-recursive walk collecting managed model files (`.safetensors`,
@@ -5888,6 +5939,7 @@ fn append_models_section(output: &mut String, comfyui_path: &str, extra_model_pa
         "diffusion_models",
         "text_encoders",
         "ultralytics",
+        "model_patches",
     ];
     const MAX_FILES_PER_CATEGORY: usize = 200;
 

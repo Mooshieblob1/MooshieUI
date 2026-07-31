@@ -4062,8 +4062,17 @@ async fn dispatch_command(
                 .as_str()
                 .ok_or("Missing nodeClass")?
                 .to_string();
+            let required_inputs: Option<Vec<String>> = args["requiredInputs"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            });
             match state.api_get(&format!("/object_info/{}", node_class)).await {
-                Ok(val) => Ok(serde_json::json!(val.get(&node_class).is_some())),
+                Ok(val) => Ok(serde_json::json!(crate::commands::api::node_info_matches(
+                    &val,
+                    &node_class,
+                    required_inputs.as_deref()
+                ))),
                 Err(_) => Ok(serde_json::json!(false)),
             }
         }

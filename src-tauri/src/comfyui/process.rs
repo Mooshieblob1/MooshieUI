@@ -154,9 +154,65 @@ fn classify_flat_model_dir(path: &std::path::Path) -> &'static str {
         "clip"
     } else if name.contains("unet") || name.contains("diffusion") {
         "diffusion_models"
+    } else if name.contains("model_patch") || name.contains("modelpatch") {
+        "model_patches"
     } else {
         // Unknown flat directory — default to loras (most common fringe case)
         "loras"
+    }
+}
+
+/// Relocate Anima ControlNet-LLLite weights from `models/controlnet/` to
+/// `models/model_patches/`.
+///
+/// Releases up to v1.9.0 downloaded these into `models/controlnet/` because the
+/// third-party `AnimaLLLiteApply` took a `lllite_name` from that folder. Core
+/// ComfyUI now owns that class name and loads the weights through
+/// `ModelPatchLoader`, which only lists `models/model_patches/` (#522). Existing
+/// installs would otherwise show an empty model dropdown after upgrading.
+///
+/// Best-effort and non-fatal: a file already present at the destination is left
+/// alone (not deleted), and any IO failure is logged and skipped.
+fn migrate_anima_lllite_weights(comfyui_path: &str) {
+    let models = std::path::Path::new(comfyui_path).join("models");
+    let src_dir = models.join("controlnet");
+    let dest_dir = models.join("model_patches");
+
+    let entries = match std::fs::read_dir(&src_dir) {
+        Ok(entries) => entries,
+        // No controlnet dir yet (fresh install) — nothing to migrate.
+        Err(_) => return,
+    };
+
+    let mut moved = 0usize;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.to_lowercase().starts_with("anima-lllite-") {
+            continue;
+        }
+        if !entry.path().is_file() {
+            continue;
+        }
+        let dest = dest_dir.join(&name);
+        if dest.exists() {
+            log::debug!("Anima LLLite weight {} already migrated, skipping", name);
+            continue;
+        }
+        if let Err(e) = std::fs::create_dir_all(&dest_dir) {
+            log::warn!("Failed to create {:?}: {}", dest_dir, e);
+            return;
+        }
+        match std::fs::rename(entry.path(), &dest) {
+            Ok(()) => moved += 1,
+            Err(e) => log::warn!("Failed to move Anima LLLite weight {}: {}", name, e),
+        }
+    }
+
+    if moved > 0 {
+        log::info!(
+            "Migrated {} Anima LLLite weight(s) from models/controlnet to models/model_patches",
+            moved
+        );
     }
 }
 
@@ -271,6 +327,8 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
             .join("main.py")
             .exists();
         if main_exists {
+            // Must run before launch: ComfyUI caches its model file lists at startup.
+            migrate_anima_lllite_weights(&config.comfyui_path);
             super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
                 .map_err(AppError::ProcessSpawnFailed)?;
             // Non-fatal: logs a warning on failure rather than blocking startup.
@@ -706,6 +764,14 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
                             "    Models/text_encoders\n",
                             "    Models/TextEncoders\n",
                             "    dlbackend/comfyui/models/text_encoders\n",
+                            // Anima ControlNet-LLLite weights load through core's
+                            // ModelPatchLoader, which reads this folder (not controlnet).
+                            "  model_patches: |\n",
+                            "    model_patches\n",
+                            "    ModelPatches\n",
+                            "    models/model_patches\n",
+                            "    Models/model_patches\n",
+                            "    dlbackend/comfyui/models/model_patches\n",
                         ),
                         idx = i + 1,
                         dir = quoted_dir
@@ -1146,6 +1212,8 @@ pub async fn start_worker_process(
             .join("main.py")
             .exists();
         if main_exists {
+            // Must run before launch: ComfyUI caches its model file lists at startup.
+            migrate_anima_lllite_weights(&config.comfyui_path);
             super::nodes::ensure_mooshie_nodes(&config.comfyui_path)
                 .map_err(AppError::ProcessSpawnFailed)?;
             // Non-fatal: logs a warning on failure rather than blocking startup.

@@ -237,9 +237,9 @@ jobs:
           {
             echo "Automated ComfyUI compatibility check."
             echo
-            echo "The custom-node compatibility smoke test passed for ComfyUI ${TARGET} (current pin ${CURRENT}). Every bundled MooshieUI custom node registered against that ComfyUI release."
+            echo "The custom-node compatibility smoke test passed for ComfyUI ${TARGET} (current pin ${CURRENT}). Every bundled MooshieUI custom node registered against that ComfyUI release, and the core nodes the workflow builder emits by hand still take the inputs it wires."
             echo
-            echo "Scope: this check covers the bundled MooshieUI nodes only. External ControlNet and style-transfer packages are third-party git repos and are not covered by the smoke test."
+            echo "Scope: this check covers the bundled MooshieUI nodes plus the input signatures of the core ComfyUI nodes MooshieUI emits directly. External ControlNet and style-transfer packages are third-party git repos and are not covered by the smoke test."
             echo
             echo "The in-app updater preserves users' models, outputs, and custom nodes."
             echo

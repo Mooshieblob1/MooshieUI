@@ -1303,7 +1303,7 @@ const zhTw: Record<string, string> = {
   "generation.controlnet.preset_scribble_desc": "手繪草圖引導 — 將粗略的畫變成藝術",
   "generation.controlnet.preset_softedge": "軟邊緣",
   "generation.controlnet.preset_softedge_desc": "柔和的結構邊緣（HED） — 自然的邊緣保留",
-  "generation.controlnet.anima_lllite_install": "Anima ControlNet requires the AnimaLLLite ComfyUI extension. Install it to use ControlNet with Anima models.",
+  "generation.controlnet.anima_lllite_unsupported": "Anima ControlNet requires ComfyUI 0.29 or newer, which provides the AnimaLLLiteApply node. Update ComfyUI to use ControlNet with Anima models.",
   "generation.controlnet.prepare_preprocessor": "Preview preprocessor",
   "generation.controlnet.prepare_preprocessor_tip": "Run the preprocessor on the control image and preview the result before generating.",
   "generation.controlnet.preprocessor_preparing": "Preparing...",

@@ -24,11 +24,12 @@ The list of required node classes and the ultralytics pin are parsed from
 
 Scope
 -----
-Covers the BUNDLED MooshieUI nodes only (the ones the app embeds and is directly
-responsible for). The external ControlNet / style-transfer packages
-(comfyui_controlnet_aux, ComfyUi-Untwisting-RoPE, ...) are third-party git repos
-cloned at runtime; their compatibility is their own maintainers' concern and is
-out of scope here. This limitation is logged, not silently skipped.
+Covers the BUNDLED MooshieUI nodes, plus the input signatures of the CORE
+ComfyUI nodes the workflow builder emits by hand. The external ControlNet /
+style-transfer packages (comfyui_controlnet_aux, ComfyUi-Untwisting-RoPE, ...)
+are third-party git repos cloned at runtime; their compatibility is their own
+maintainers' concern and is out of scope here. This limitation is logged, not
+silently skipped.
 
 Usage
 -----
@@ -84,6 +85,25 @@ DEFAULT_REQUIRED_CLASSES = [
 ]
 DEFAULT_MOOSHIE_REQUIREMENTS = "ultralytics==8.4.75\n"
 
+# Core ComfyUI node classes the workflow builder emits by hand, with the inputs
+# it wires. Registration alone proves nothing here: ComfyUI can keep a class
+# name while changing its input shape, and a custom node can claim a name that
+# core later takes over (core wins, silently). That is exactly how Anima
+# ControlNet broke in #522, where the class existed but wanted `model_patch`
+# instead of the third-party node's `lllite_name`. Checking the signature turns
+# that into a failed pin bump instead of a failed generation.
+REQUIRED_CORE_NODE_INPUTS = {
+    "ModelPatchLoader": ["name"],
+    "AnimaLLLiteApply": [
+        "model",
+        "model_patch",
+        "image",
+        "strength",
+        "start_percent",
+        "end_percent",
+    ],
+}
+
 
 def log(msg: str) -> None:
     print(msg, flush=True)
@@ -109,6 +129,25 @@ def parse_required_classes(nodes_rs: Path) -> list[str]:
         log("WARN: REQUIRED_MOOSHIE_NODE_CLASSES parsed empty; using built-in list")
         return list(DEFAULT_REQUIRED_CLASSES)
     return classes
+
+
+def check_core_node_inputs(object_info: dict) -> list[str]:
+    """Report every core node whose input spec no longer matches what we emit."""
+    problems = []
+    for node_class, expected in REQUIRED_CORE_NODE_INPUTS.items():
+        info = object_info.get(node_class)
+        if info is None:
+            problems.append(f"{node_class}: not registered")
+            continue
+        spec = info.get("input") or {}
+        present = set(spec.get("required") or {}) | set(spec.get("optional") or {})
+        missing = [name for name in expected if name not in present]
+        if missing:
+            problems.append(
+                f"{node_class}: missing input(s) {', '.join(missing)} "
+                f"(registered inputs: {', '.join(sorted(present)) or 'none'})"
+            )
+    return problems
 
 
 def parse_mooshie_requirements(nodes_rs: Path) -> str:
@@ -253,9 +292,11 @@ def main() -> int:
     log(f"repo root      : {repo_root}")
     log(f"ComfyUI dir    : {comfyui_dir}")
     log(f"required nodes : {', '.join(required)}")
+    log(f"core signatures: {', '.join(REQUIRED_CORE_NODE_INPUTS)}")
     log(
-        "scope note     : bundled MooshieUI nodes only; external ControlNet / "
-        "style-transfer git packages are NOT covered by this test."
+        "scope note     : bundled MooshieUI nodes and core node signatures only; "
+        "external ControlNet / style-transfer git packages are NOT covered by "
+        "this test."
     )
 
     log("\n[1/3] Deploying bundled MooshieUI nodes...")
@@ -279,9 +320,10 @@ def main() -> int:
         _terminate(proc)
         return 1
 
-    log("\n[3/3] Verifying required node classes are registered...")
+    log("\n[3/3] Verifying required node classes and core node signatures...")
     registered = set(object_info.keys())
     missing = [c for c in required if c not in registered]
+    signature_problems = check_core_node_inputs(object_info)
 
     _terminate(proc)
 
@@ -289,20 +331,29 @@ def main() -> int:
         "comfyui_dir": str(comfyui_dir),
         "required": required,
         "missing": missing,
+        "core_input_problems": signature_problems,
         "registered_count": len(registered),
-        "passed": not missing,
+        "passed": not missing and not signature_problems,
     }
     if args.summary_json:
         Path(args.summary_json).write_text(json.dumps(result, indent=2), encoding="utf-8")
 
     if missing:
         log(f"FAIL: {len(missing)} required node class(es) did not register: {', '.join(missing)}")
-        log("\nThese nodes likely failed to import against this ComfyUI version.")
-        log("----- ComfyUI log tail -----")
+        log("These nodes likely failed to import against this ComfyUI version.")
+    if signature_problems:
+        log(f"FAIL: {len(signature_problems)} core node input signature mismatch(es):")
+        for problem in signature_problems:
+            log(f"  - {problem}")
+        log("MooshieUI emits these core nodes directly, so a changed input shape "
+            "breaks generation at runtime rather than at startup (see #522).")
+    if missing or signature_problems:
+        log("\n----- ComfyUI log tail -----")
         log(tail(log_path))
         return 1
 
-    log(f"PASS: all {len(required)} required node classes registered "
+    log(f"PASS: all {len(required)} required node classes registered and "
+        f"{len(REQUIRED_CORE_NODE_INPUTS)} core node signatures intact "
         f"({len(registered)} total nodes in /object_info).")
     return 0
 

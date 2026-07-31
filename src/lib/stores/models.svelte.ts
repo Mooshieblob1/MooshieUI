@@ -45,6 +45,8 @@ class ModelsStore {
   textEncoders = $state<string[]>([]);
   controlnetModels = $state<string[]>([]);
   ultralyticsModels = $state<string[]>([]);
+  /** ModelPatchLoader weights (`models/model_patches/`), e.g. Anima LLLite. */
+  modelPatches = $state<string[]>([]);
   loading = $state(false);
 
   async refresh() {
@@ -55,7 +57,7 @@ class ModelsStore {
       // layout) or `clip/` (legacy ComfyUI / Forge layout). Fetch both and
       // merge so the picker doesn't miss encoders in the legacy directory
       // (e.g. `qwen_3_8b_fp4mixed.safetensors` placed under `clip/`).
-      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, unetModels, textEncoders, clipEncoders, controlnetModels, ultralyticsModels] =
+      const [checkpoints, vaes, loras, samplerInfo, embeddings, upscaleModels, diffusionModels, unetModels, textEncoders, clipEncoders, controlnetModels, ultralyticsModels, modelPatches] =
         await Promise.all([
           getModels("checkpoints"),
           getModels("vae"),
@@ -69,6 +71,7 @@ class ModelsStore {
           getModels("clip").catch(() => [] as string[]),
           getModels("controlnet").catch(() => [] as string[]),
           getModels("ultralytics").catch(() => [] as string[]),
+          getModels("model_patches").catch(() => [] as string[]),
         ]);
 
       console.log("ModelsStore: got checkpoints:", checkpoints);
@@ -90,6 +93,7 @@ class ModelsStore {
         this.textEncoders,
         this.controlnetModels,
         this.ultralyticsModels,
+        this.modelPatches,
       ] = await Promise.all([
         mergeWithDiskModels("checkpoints", checkpoints),
         mergeWithDiskModels("vae", vaes),
@@ -101,6 +105,7 @@ class ModelsStore {
         mergeWithDiskModels("text_encoders", mergedEncoders),
         mergeWithDiskModels("controlnet", controlnetModels),
         mergeWithDiskModels("ultralytics", ultralyticsModels),
+        mergeWithDiskModels("model_patches", modelPatches),
       ]);
       this.diffusionModels = Array.from(new Set([...diffusionModelFiles, ...unetModelFiles])).sort((a, b) =>
         a.localeCompare(b, undefined, { sensitivity: "base" }),

@@ -1324,7 +1324,7 @@ const de: Record<string, string> = {
   "generation.controlnet.preset_scribble_desc": "Handgezeichnete Skizzenführung — verwandelt grobe Zeichnungen in Kunst",
   "generation.controlnet.preset_softedge": "Weiche Kanten",
   "generation.controlnet.preset_softedge_desc": "Weiche strukturelle Kanten (HED) — natürliche Kantenbewahrung",
-  "generation.controlnet.anima_lllite_install": "Anima ControlNet requires the AnimaLLLite ComfyUI extension. Install it to use ControlNet with Anima models.",
+  "generation.controlnet.anima_lllite_unsupported": "Anima ControlNet requires ComfyUI 0.29 or newer, which provides the AnimaLLLiteApply node. Update ComfyUI to use ControlNet with Anima models.",
   "generation.controlnet.prepare_preprocessor": "Preview preprocessor",
   "generation.controlnet.prepare_preprocessor_tip": "Run the preprocessor on the control image and preview the result before generating.",
   "generation.controlnet.preprocessor_preparing": "Preparing...",

@@ -1,5 +1,16 @@
 # Changelog
 
+## What's New in v1.9.1
+
+### Fixes
+- **Anima ControlNet works again**: since v1.9.0, turning on ControlNet with an Anima model failed with "required input missing: model_patch" (issue #522). ComfyUI v0.29.0 added its own `AnimaLLLiteApply` node under the same name as the third-party extension MooshieUI was installing, and ComfyUI always keeps its own version when two nodes claim a name, so the extension could never load while the app kept sending the older node's inputs. MooshieUI now builds the workflow around ComfyUI's built-in node and no longer installs the extension. LLLite weights move from the controlnet folder to the model patches folder on the next start, since that is where the built-in loader looks, so presets and already-downloaded weights keep working with nothing to reinstall. On a ComfyUI older than 0.29 the panel now says to update rather than offering an install that cannot help.
+- **Logs can be read without saving a file first**: the desktop app can return the captured log text directly, the way browser mode already did, so grabbing a diagnostic dump no longer has to go through a save dialog.
+
+### Maintenance
+- The weekly ComfyUI compatibility check now verifies the inputs of the built-in nodes MooshieUI wires by hand, not just that those nodes exist. A renamed or reshaped input, which is what broke Anima ControlNet, now fails the check instead of reaching a generation.
+
+---
+
 ## What's New in v1.9.0
 
 ### New features
