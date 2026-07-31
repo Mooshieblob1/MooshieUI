@@ -96,6 +96,12 @@
         .then((status) => {
           attentionSupport = status.support;
           attentionCC = status.compute_capability;
+          // Re-running setup over an existing install must not silently downgrade
+          // the attention backend: run_setup persists whatever this wizard submits,
+          // so start from the configured backend rather than from "default".
+          if (status.current && attentionBackend === "default") {
+            attentionBackend = status.current;
+          }
           // If the pre-selected backend turns out to be unsupported, fall back.
           if (attentionBackend !== "default" && supportFor(attentionBackend)?.supported === false) {
             attentionBackend = "default";

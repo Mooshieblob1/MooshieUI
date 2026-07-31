@@ -685,7 +685,16 @@ async fn step_create_venv(app: &AppHandle, base: &Path) -> Result<(), String> {
         &[("UV_PYTHON_INSTALL_DIR", &python_dir_str)],
     )
     .await
-    .map_err(|_| "Failed to create virtual environment".to_string())
+    .map_err(|_| {
+        // The most common cause on Windows is a Python process still holding
+        // `venv\Scripts\python.exe` open, which uv reports as "Access is denied.
+        // (os error 5)". Setup stops its own ComfyUI first, so a survivor here is
+        // either a keep_alive process or one started outside MooshieUI.
+        "Failed to create virtual environment. If the log above says \"Access is denied\", \
+         a Python process is still using the environment — close any running ComfyUI \
+         (including one left running by the keep-alive setting) and run setup again."
+            .to_string()
+    })
 }
 
 async fn detect_gpu_type() -> String {
@@ -1205,6 +1214,95 @@ async fn step_install_deps(
     run_command_logged(app, cmd)
         .await
         .map_err(|_| "Failed to install ComfyUI dependencies".to_string())
+}
+
+/// True when the venv's torch is a CUDA build (`torch.version.cuda` is set).
+/// Used to decide whether `triton-windows` is worth installing — no GPU vendor is
+/// persisted in config, so the venv itself is the source of truth on update runs.
+async fn venv_torch_is_cuda(base: &Path) -> bool {
+    let mut cmd = tokio::process::Command::new(venv_python(base));
+    cmd.arg("-c")
+        .arg("import torch,sys; sys.exit(0 if torch.version.cuda else 1)");
+    hide_window(&mut cmd);
+    matches!(cmd.output().await, Ok(out) if out.status.success())
+}
+
+/// Ensure `triton-windows` is present on Windows + CUDA installs.
+///
+/// The convrot quantization kernels in `comfy-kitchen` (pinned by ComfyUI's own
+/// requirements.txt) pick a backend in the order hip → cuda → triton → eager.
+/// When the prebuilt CUDA kernels can't load, triton is the last fast path; without
+/// it comfy-kitchen silently degrades to pure-PyTorch eager and a quantized model
+/// generates *slower* than its unquantized base. Linux CUDA torch wheels bundle
+/// triton; Windows torch does not, and upstream triton publishes no Windows wheels.
+///
+/// Non-fatal by design: eager still produces correct images, so a failure here is a
+/// speed warning, never a blocked install.
+async fn ensure_quant_kernel_backend(app: &AppHandle, base: &Path, net: &SetupNetworkOpts) {
+    if !cfg!(target_os = "windows") {
+        return;
+    }
+    if !venv_torch_is_cuda(base).await {
+        return;
+    }
+    emit_log(app, "Ensuring Triton (fast quantization kernels)...");
+    if let Err(e) = uv_pip(app, base, &["triton-windows"], net, true).await {
+        emit_log(
+            app,
+            &format!(
+                "Warning: could not install triton-windows ({}). Quantized (convrot) models will still work but run slower.",
+                e
+            ),
+        );
+    }
+}
+
+/// Verify the quantization kernel package imports in the venv.
+///
+/// `comfy-kitchen` is pinned by ComfyUI's requirements.txt and provides the
+/// int4/int8 convrot kernels. If it is missing or broken, quantized checkpoints fail
+/// at generate time with an opaque `convrot_w4a4` error; surfacing it here points at
+/// the real cause. Non-fatal: unquantized models don't need it.
+async fn verify_quant_stack(app: &AppHandle, base: &Path) {
+    let mut cmd = tokio::process::Command::new(venv_python(base));
+    cmd.arg("-c").arg("import comfy_kitchen");
+    hide_window(&mut cmd);
+    match cmd.output().await {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            emit_log(
+                app,
+                &format!(
+                    "Warning: comfy_kitchen could not be imported ({}). Quantized (convrot) models will not load.",
+                    stderr.trim()
+                ),
+            );
+        }
+        Err(e) => emit_log(
+            app,
+            &format!("Warning: could not check the quantization kernels: {}", e),
+        ),
+    }
+
+    // comfy-kitchen falls back to pure-PyTorch eager when no fast kernel backend
+    // loads, and an eager quantized model generates *slower* than its unquantized
+    // base. Installing triton-windows is not enough on its own: its JIT needs a
+    // C compiler at runtime, so a package that pip-installed cleanly can still
+    // fail to import. Check the import, not just the install.
+    if cfg!(target_os = "windows") && venv_torch_is_cuda(base).await {
+        let mut cmd = tokio::process::Command::new(venv_python(base));
+        cmd.arg("-c").arg("import triton");
+        hide_window(&mut cmd);
+        if !matches!(cmd.output().await, Ok(out) if out.status.success()) {
+            emit_log(
+                app,
+                "Warning: Triton could not be imported. Quantized (convrot) models will still \
+                 generate correctly, but fall back to slow eager kernels and can be slower than \
+                 the unquantized model.",
+            );
+        }
+    }
 }
 
 fn step_install_custom_nodes(base: &Path) -> Result<(), String> {
@@ -2087,6 +2185,15 @@ pub async fn run_setup(
     let base = data_dir(&app)?;
     std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
 
+    // 0. Stop ComfyUI first. Re-running setup over an existing install rewrites
+    //    the venv, and on Windows an executable that is currently running cannot
+    //    be replaced — a live ComfyUI holds `venv\Scripts\python.exe` open and
+    //    `uv venv` fails with "Access is denied. (os error 5)". Same reason
+    //    `update_comfyui` stops the server before touching the working tree.
+    crate::comfyui::process::stop_comfyui_process(&state)
+        .await
+        .ok();
+
     // 1. Download uv
     emit(&app, "uv", "Downloading uv package manager...", 5);
     step_download_uv(&app, &base, &state.http_client).await?;
@@ -2137,6 +2244,11 @@ pub async fn run_setup(
     // 6. Install ComfyUI deps
     emit(&app, "deps", "Installing ComfyUI dependencies...", 75);
     step_install_deps(&app, &base, &net).await?;
+
+    // 6b. Quantization (convrot) kernels: comfy-kitchen ships with the deps above,
+    // but needs Triton for its fast path on Windows. Both steps are non-fatal.
+    ensure_quant_kernel_backend(&app, &base, &net).await;
+    verify_quant_stack(&app, &base).await;
 
     // 7. Custom nodes
     emit(&app, "nodes", "Installing MooshieUI custom nodes...", 85);
@@ -2344,6 +2456,11 @@ pub async fn update_comfyui(
     };
     emit(&app, "deps", "Updating ComfyUI dependencies...", 55);
     step_install_deps(&app, &base, &net).await?;
+
+    // 3b. Re-ensure the quantization kernel backend: a new ComfyUI release can bump
+    // comfy-kitchen, and an attention-backend switch may have happened since setup.
+    ensure_quant_kernel_backend(&app, &base, &net).await;
+    verify_quant_stack(&app, &base).await;
 
     // 4. Redeploy bundled MooshieUI custom nodes (content-hash gated internally).
     emit(&app, "nodes", "Redeploying MooshieUI custom nodes...", 85);
