@@ -76,6 +76,8 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSegmentDetailer",
     "MooshieSoftGuidance",
     "MooshieSmartGuidance",
+    "MooshieCheckpointLoaderPath",
+    "MooshieDiffusionLoaderPath",
     "NanoSaurLoader",
     "ApplyTiledDiffusion",
 ];

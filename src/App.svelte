@@ -7,6 +7,7 @@
   import GenerationPage from "./lib/components/generation/GenerationPage.svelte";
   import SettingsPage from "./lib/components/settings/SettingsPage.svelte";
   import GalleryPage from "./lib/components/gallery/GalleryPage.svelte";
+  import CompareViewer from "./lib/components/gallery/CompareViewer.svelte";
   import ModelHubPage from "./lib/components/modelhub/ModelHubPage.svelte";
   import { ArtistGalleryPage } from "./lib/artist-gallery/index.js";
   import { connection } from "./lib/stores/connection.svelte.js";
@@ -294,22 +295,30 @@
     const checkpoint = generation.checkpoint;
     const diffusionModel = generation.diffusionModel;
     const useSplitModel = generation.useSplitModel;
+    // Physical folder when detection reclassified the model (e.g. a Flux unet
+    // sitting in checkpoints/); null when the file is where it belongs.
+    const sourceCategory = generation.modelSourceCategory;
     // Read eagerly: clearing a manual override must re-trigger detection, and
     // the async body below runs after the tracking window has closed.
     void generation.modelFamilyOverrides;
 
     if (useSplitModel && diffusionModel) {
-      void generation.fetchAndApplyModelMetadata("diffusion_models", diffusionModel);
+      void generation.fetchAndApplyModelMetadata(
+        sourceCategory ?? "diffusion_models",
+        diffusionModel,
+      );
     } else if (checkpoint) {
-      void generation.fetchAndApplyModelMetadata("checkpoints", checkpoint);
+      void generation.fetchAndApplyModelMetadata(sourceCategory ?? "checkpoints", checkpoint);
     } else {
       generation.clearModelMetadata();
     }
   });
 
-  // Document-level keyboard handler for lightbox (fallback for browser focus issues)
+  // Document-level keyboard handler for lightbox (fallback for browser focus issues).
+  // The compare viewer sits on top of the lightbox and owns Escape/arrows while
+  // it is open, so stand down rather than closing the lightbox underneath it.
   $effect(() => {
-    if (!gallery.lightboxOpen) return;
+    if (!gallery.lightboxOpen || gallery.compareOpen) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") gallery.closeLightbox();
       if (e.key === "ArrowLeft") navigateLightbox("prev");
@@ -896,6 +905,16 @@
     showContextMenu = true;
   }
 
+  /**
+   * One menu entry drives the whole compare flow: pin the first image, then
+   * pick a second one (or un-pin the same image to back out).
+   */
+  function comparePinLabel(image: OutputImage) {
+    if (!gallery.comparePin) return locale.t("gallery.compare.pin");
+    if (gallery.comparePin === image) return locale.t("gallery.compare.unpin");
+    return locale.t("gallery.compare.with_pinned");
+  }
+
   const contextMenuItems = $derived.by((): ContextMenuItem[] => {
     const image = contextMenuImage;
     if (!image) {
@@ -931,6 +950,8 @@
       { label: locale.t("gallery.img2img"), action: () => img2imgImage(image) },
       { label: locale.t("gallery.inpaint"), action: () => inpaintImage(image) },
       ...(!image.is_upscaled ? [{ label: locale.t("gallery.upscale"), action: () => upscaleImage(image) }] : []),
+      { label: "", action: () => {}, separator: true },
+      { label: comparePinLabel(image), action: () => gallery.toggleComparePin(image) },
       { label: "", action: () => {}, separator: true },
       { label: locale.t("gallery.save_as"), action: () => gallery.saveImageAs(image) },
       { label: locale.t("gallery.copy"), action: () => gallery.copyToClipboard(image) },
@@ -1690,7 +1711,8 @@
     if (images.length === 0) return;
 
     const newImages: OutputImage[] = images.map((img, i) => {
-      const ext = img.blob.type === "image/jxl" ? "jxl" : "png";
+      const ext =
+        img.blob.type === "image/jxl" ? "jxl" : img.blob.type === "image/webp" ? "webp" : "png";
       return {
         filename: `${promptId}_${i}.${ext}`,
         subfolder: "",
@@ -2396,8 +2418,11 @@
                     console.log("[output_image] no display copy, using displayImage:", url ? "present" : "EMPTY");
                   }
                 } else {
+                  // PNG and WebP are both WebView2-renderable, so the canonical
+                  // file doubles as the display copy — no second temp file.
                   const rawBytes = await readTempImage(data.temp_filename);
-                  blob = new Blob([new Uint8Array(rawBytes)], { type: "image/png" });
+                  const mime = data.format === "webp" ? "image/webp" : "image/png";
+                  blob = new Blob([new Uint8Array(rawBytes)], { type: mime });
                   url = URL.createObjectURL(blob);
                 }
               } else {
@@ -2460,7 +2485,10 @@
             const raw = atob(data.image);
             const bytes = new Uint8Array(raw.length);
             for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-            const displayMime = data.display_format === "webp" ? "image/webp" : "image/png";
+            // `display_format` only accompanies JXL; a plain WebP output is its
+            // own display copy, so fall back to the canonical format.
+            const displayMime =
+              data.display_format === "webp" || data.format === "webp" ? "image/webp" : "image/png";
             const displayBlob = new Blob([bytes], { type: displayMime });
             url = URL.createObjectURL(displayBlob);
 
@@ -3534,6 +3562,20 @@
         <!-- Separator -->
         <div class="w-px h-5 bg-neutral-700/60 mx-0.5"></div>
 
+        <!-- Compare group -->
+        <button
+          title={gallery.selectedImage ? comparePinLabel(gallery.selectedImage) : locale.t("gallery.compare.pin")}
+          class="flex items-center justify-center w-8 h-8 rounded-lg transition-colors {gallery.comparePin && gallery.comparePin === gallery.selectedImage
+            ? 'bg-indigo-600/80 hover:bg-indigo-500 text-neutral-100'
+            : 'bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100'}"
+          onclick={() => gallery.selectedImage && gallery.toggleComparePin(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/><polyline points="7 10 5 12 7 14"/><polyline points="17 10 19 12 17 14"/></svg>
+        </button>
+
+        <!-- Separator -->
+        <div class="w-px h-5 bg-neutral-700/60 mx-0.5"></div>
+
         <!-- Export group -->
         <button
           title={locale.t('gallery.save_as')}
@@ -3610,6 +3652,32 @@
         </div>
       {/if}
     </div>
+  </div>
+{/if}
+
+<!-- A/B comparison viewer (issue #517) -->
+{#if gallery.compareOpen}
+  <CompareViewer />
+{/if}
+
+<!-- Waiting for the second image of a comparison. Sits above the lightbox so the
+     user can keep browsing there to find the counterpart. -->
+{#if gallery.comparePin && !gallery.compareOpen}
+  <div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-70 flex items-center gap-3 rounded-xl border border-indigo-700/60 bg-neutral-900/95 px-3 py-2 shadow-2xl shadow-black/40 backdrop-blur-sm">
+    {#if gallery.comparePin.url || gallery.comparePin.thumbnailUrl}
+      <img
+        src={gallery.comparePin.thumbnailUrl ?? gallery.comparePin.url}
+        alt=""
+        class="h-10 w-10 shrink-0 rounded-lg border border-neutral-700 object-cover bg-neutral-950"
+      />
+    {/if}
+    <span class="text-xs text-neutral-200">{locale.t("gallery.compare.pick_second")}</span>
+    <button
+      class="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+      onclick={() => gallery.cancelComparePin()}
+    >
+      {locale.t("common.cancel")}
+    </button>
   </div>
 {/if}
 

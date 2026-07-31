@@ -1,4 +1,9 @@
-import type { GenerationMode, OutputImage } from "../types/index.js";
+import type {
+  CompareMode,
+  CompareOrientation,
+  GenerationMode,
+  OutputImage,
+} from "../types/index.js";
 import {
   listGalleryImageEntries,
   loadGalleryImage,
@@ -10,7 +15,7 @@ import {
   deleteGalleryImage,
   renameGalleryImage,
   saveImageFile,
-  embedPngMetadataBytes,
+  embedImageMetadataBytes,
   getOutputImage,
   copyImageToClipboard,
   copyBytesToClipboard,
@@ -139,6 +144,24 @@ function pngNormalizedFilename(filename: string): string {
   return filename.replace(PNG_NORMALIZED_EXTENSION_RE, ".png");
 }
 
+const WEBP_SAVE_EXTENSIONS = ["webp"];
+const WEBP_NORMALIZED_EXTENSION_RE = /\.(jxl|png|jpe?g)$/i;
+
+/**
+ * WebP gallery files are exported as-is rather than transcoded to PNG: the
+ * format is universally readable and the file already carries its metadata
+ * (EXIF UserComment plus, in stealth mode, the alpha LSBs).
+ */
+function webpNormalizedFilename(filename: string): string {
+  return WEBP_NORMALIZED_EXTENSION_RE.test(filename)
+    ? filename.replace(WEBP_NORMALIZED_EXTENSION_RE, ".webp")
+    : filename;
+}
+
+function isWebpGalleryFile(filename: string | undefined): boolean {
+  return filename?.toLowerCase().endsWith(".webp") ?? false;
+}
+
 const GALLERY_BOARDS_KEY = "mooshieui.gallery.boards.v1";
 const GALLERY_BOARD_NAMES_KEY = "mooshieui.gallery.boardNames.v1";
 
@@ -183,6 +206,22 @@ class GalleryStore {
   artistIndexReady = $state(false);
   /** True while autoSortByArtist is running. */
   autoSorting = $state(false);
+  /** A/B comparison viewer (issue #517). */
+  compareOpen = $state(false);
+  compareA = $state<OutputImage | null>(null);
+  compareB = $state<OutputImage | null>(null);
+  compareUrlA = $state<string | null>(null);
+  compareUrlB = $state<string | null>(null);
+  compareLoading = $state(false);
+  /** Blend mode and divider axis, kept across opens within a session. */
+  compareMode = $state<CompareMode>("slider");
+  compareOrientation = $state<CompareOrientation>("horizontal");
+  /** Image held as side A while the user picks the second image to compare. */
+  comparePin = $state<OutputImage | null>(null);
+  /** Blob URLs this store created for the comparison and must revoke itself. */
+  private _compareOwnedUrls = new Set<string>();
+  /** Bumped on every open/side change so stale async resolves are discarded. */
+  private _compareToken = 0;
   private _toastTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * Per-image persist promises.  Resolves with the gallery filename once
@@ -507,18 +546,193 @@ class GalleryStore {
 
   closeLightbox() {
     if (this.lightboxUrl?.startsWith("blob:")) {
-      // Don't revoke a blob URL that is still referenced by a session image
-      // or by progress.lastOutputImage — revoking would break subsequent
-      // lightbox opens and the post-generation preview in PreviewImage.
+      // Don't revoke a blob URL that is still referenced by a session image,
+      // by progress.lastOutputImage, or by the open comparison viewer —
+      // revoking would break subsequent lightbox opens, the post-generation
+      // preview in PreviewImage, or a comparison side.
       const isShared =
         this.sessionImages.some((img) => img.url === this.lightboxUrl) ||
         progress.lastOutputImage === this.lightboxUrl ||
-        progress.previewImage === this.lightboxUrl;
+        progress.previewImage === this.lightboxUrl ||
+        this.compareUrlA === this.lightboxUrl ||
+        this.compareUrlB === this.lightboxUrl;
       if (!isShared) URL.revokeObjectURL(this.lightboxUrl);
     }
     this.lightboxOpen = false;
     this.selectedImage = null;
     this.lightboxUrl = null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // A/B comparison (issue #517)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Resolve a displayable URL for an image, mirroring openLightbox's source
+   * preference: the backend-served gallery file when it is browser-decodable,
+   * the session blob URL otherwise, and an on-demand decode (JXL is transcoded
+   * to WebP) for persisted files without a blob. `owned` marks URLs created
+   * here — the only ones safe to revoke.
+   */
+  private async resolveCompareUrl(
+    image: OutputImage,
+  ): Promise<{ url: string | null; owned: boolean }> {
+    const galleryFilename = await this.resolveGalleryFilename(image);
+    const isJxl = galleryFilename?.endsWith(".jxl") ?? false;
+    if (galleryFilename && !isJxl) {
+      return { url: await fullImageUrl(galleryFilename), owned: false };
+    }
+    // Session images (and persisted JXL that already has a WebP blob) display
+    // straight from the blob URL, which the session owns — never revoke it here.
+    if (image.url) return { url: image.url, owned: false };
+    if (galleryFilename) {
+      try {
+        return { url: await this.loadFullImage(galleryFilename), owned: true };
+      } catch (e) {
+        console.error("Failed to load full image for compare:", e);
+        return { url: null, owned: false };
+      }
+    }
+    return { url: image.fullImageUrl ?? null, owned: false };
+  }
+
+  private releaseCompareUrl(url: string | null) {
+    if (!url || !this._compareOwnedUrls.has(url)) return;
+    this._compareOwnedUrls.delete(url);
+    if (url !== this.lightboxUrl) URL.revokeObjectURL(url);
+  }
+
+  /** Open the comparison viewer on two images. */
+  async openCompare(a: OutputImage, b: OutputImage) {
+    const token = ++this._compareToken;
+    this.comparePin = null;
+    this.releaseCompareUrl(this.compareUrlA);
+    this.releaseCompareUrl(this.compareUrlB);
+    this.compareUrlA = null;
+    this.compareUrlB = null;
+    this.compareA = a;
+    this.compareB = b;
+    this.compareOpen = true;
+    this.compareLoading = true;
+    try {
+      const [resolvedA, resolvedB] = await Promise.all([
+        this.resolveCompareUrl(a),
+        this.resolveCompareUrl(b),
+      ]);
+      if (token !== this._compareToken) {
+        // Superseded while resolving — drop anything we created.
+        for (const r of [resolvedA, resolvedB]) {
+          if (r.owned && r.url) URL.revokeObjectURL(r.url);
+        }
+        return;
+      }
+      if (resolvedA.owned && resolvedA.url) this._compareOwnedUrls.add(resolvedA.url);
+      if (resolvedB.owned && resolvedB.url) this._compareOwnedUrls.add(resolvedB.url);
+      this.compareUrlA = resolvedA.url;
+      this.compareUrlB = resolvedB.url;
+      if (!resolvedA.url || !resolvedB.url) {
+        this.showToast(locale.t("gallery.compare.load_failed"), "error");
+      }
+    } finally {
+      if (token === this._compareToken) this.compareLoading = false;
+    }
+  }
+
+  /** Replace one side of the comparison, keeping the other in place. */
+  async setCompareSide(side: "a" | "b", image: OutputImage) {
+    if (!this.compareOpen) return;
+    const token = ++this._compareToken;
+    const previous = side === "a" ? this.compareUrlA : this.compareUrlB;
+    if (side === "a") this.compareA = image;
+    else this.compareB = image;
+    this.compareLoading = true;
+    try {
+      const resolved = await this.resolveCompareUrl(image);
+      if (token !== this._compareToken) {
+        if (resolved.owned && resolved.url) URL.revokeObjectURL(resolved.url);
+        return;
+      }
+      if (resolved.owned && resolved.url) this._compareOwnedUrls.add(resolved.url);
+      this.releaseCompareUrl(previous);
+      if (side === "a") this.compareUrlA = resolved.url;
+      else this.compareUrlB = resolved.url;
+      if (!resolved.url) this.showToast(locale.t("gallery.compare.load_failed"), "error");
+    } finally {
+      if (token === this._compareToken) this.compareLoading = false;
+    }
+  }
+
+  /**
+   * Images the comparison viewer can step through: persisted first, then
+   * session-only ones. addImages() pushes the same object into both arrays,
+   * so identity dedupe is enough.
+   */
+  private compareNavList(): OutputImage[] {
+    const seen = new Set<OutputImage>();
+    const list: OutputImage[] = [];
+    for (const img of [...this.images, ...this.sessionImages]) {
+      if (seen.has(img)) continue;
+      seen.add(img);
+      list.push(img);
+    }
+    return list;
+  }
+
+  /** Step one side of the comparison to the previous/next image (wraps). */
+  async navigateCompare(side: "a" | "b", direction: "prev" | "next") {
+    const list = this.compareNavList();
+    if (list.length < 2) return;
+    const current = side === "a" ? this.compareA : this.compareB;
+    const index = current ? list.indexOf(current) : -1;
+    if (index === -1) return;
+    const nextIndex =
+      direction === "next"
+        ? (index + 1) % list.length
+        : (index - 1 + list.length) % list.length;
+    const next = list[nextIndex];
+    if (next) await this.setCompareSide(side, next);
+  }
+
+  /** Swap which image is A and which is B (URLs move with them). */
+  swapCompare() {
+    const image = this.compareA;
+    const url = this.compareUrlA;
+    this.compareA = this.compareB;
+    this.compareUrlA = this.compareUrlB;
+    this.compareB = image;
+    this.compareUrlB = url;
+  }
+
+  closeCompare() {
+    this._compareToken++;
+    this.releaseCompareUrl(this.compareUrlA);
+    this.releaseCompareUrl(this.compareUrlB);
+    this.compareOpen = false;
+    this.compareLoading = false;
+    this.compareA = null;
+    this.compareB = null;
+    this.compareUrlA = null;
+    this.compareUrlB = null;
+  }
+
+  /**
+   * One-button compare flow: the first image is pinned as side A, the second
+   * opens the viewer. Re-clicking the pinned image cancels the pick.
+   */
+  toggleComparePin(image: OutputImage) {
+    if (!this.comparePin) {
+      this.comparePin = image;
+      return;
+    }
+    if (this.comparePin === image) {
+      this.comparePin = null;
+      return;
+    }
+    void this.openCompare(this.comparePin, image);
+  }
+
+  cancelComparePin() {
+    this.comparePin = null;
   }
 
   showToast(
@@ -793,10 +1007,13 @@ class GalleryStore {
     let bytes: number[] | null = null;
     const isJxlGallery = image.gallery_filename?.endsWith(".jxl") ?? false;
     if (image.gallery_filename) {
-      // JXL files are transcoded to PNG — universally compatible with metadata support.
-      bytes = isJxlGallery
-        ? await loadGalleryImagePng(image.gallery_filename)
-        : await loadGalleryImage(image.gallery_filename);
+      // JXL and WebP are transcoded server-side to PNG — universally compatible,
+      // and the Rust path re-embeds the metadata losslessly instead of round-tripping
+      // the pixels through a canvas (which would destroy stealth-alpha bits).
+      bytes =
+        isJxlGallery || isWebpGalleryFile(image.gallery_filename)
+          ? await loadGalleryImagePng(image.gallery_filename)
+          : await loadGalleryImage(image.gallery_filename);
     } else if (image.sessionBlob && image.sessionBlob.type !== "image/jxl") {
       bytes = await this._blobToPngBytes(image.sessionBlob);
     } else if (isBrowserMode && (image.displayTempFilename || image.tempFilename)) {
@@ -824,26 +1041,53 @@ class GalleryStore {
     return this._ensurePngBytes(bytes);
   }
 
+  /**
+   * Raw WebP bytes for an image whose canonical form is WebP, or `null` when it
+   * is not a WebP image. WebP is exported natively rather than transcoded: it is
+   * universally readable, and re-encoding would strip the stealth-alpha bits.
+   */
+  private async _resolveWebpBytes(image: OutputImage): Promise<number[] | null> {
+    if (image.gallery_filename && isWebpGalleryFile(image.gallery_filename)) {
+      // `loadGalleryImageDisplay` returns WebP files verbatim (no transcode).
+      return await loadGalleryImageDisplay(image.gallery_filename);
+    }
+    if (image.sessionBlob?.type === "image/webp") {
+      return await blobToBytes(image.sessionBlob);
+    }
+    return null;
+  }
+
   /** Save an image to a user-chosen location via native file dialog (or browser download). */
   async saveImageAs(image: OutputImage) {
     if (this.saving) return;
     this.saving = true;
     try {
-      let bytes = await this.resolveImagePngBytes(image);
+      const webpBytes = await this._resolveWebpBytes(image);
+      let bytes = webpBytes ?? (await this.resolveImagePngBytes(image));
+      const isWebp = webpBytes !== null;
       if (image.metadata) {
         try {
-          bytes = await embedPngMetadataBytes(bytes, image.metadata, generation.metadataMode);
+          bytes = await embedImageMetadataBytes(bytes, image.metadata, generation.metadataMode);
         } catch (e) {
-          console.warn("Failed to embed PNG metadata into export:", e);
+          console.warn("Failed to embed metadata into export:", e);
         }
       }
 
-      const defaultFilename = pngNormalizedFilename(image.filename);
-      const path = await showSaveDialog(defaultFilename, PNG_SAVE_EXTENSIONS);
+      const defaultFilename = isWebp
+        ? webpNormalizedFilename(image.filename)
+        : pngNormalizedFilename(image.filename);
+      const path = await showSaveDialog(
+        defaultFilename,
+        isWebp ? WEBP_SAVE_EXTENSIONS : PNG_SAVE_EXTENSIONS
+      );
       if (path) {
         await saveImageFile(bytes, path);
       } else {
-        triggerBrowserDownload(new Uint8Array(bytes), defaultFilename, "image/png");
+        triggerBrowserDownload(
+          new Uint8Array(bytes),
+          defaultFilename,
+          isWebp ? "image/webp" : "image/png"
+        );
       }
       this.showToast(locale.t("gallery.toast.image_saved"), "success");
     } catch (e) {
@@ -895,10 +1139,13 @@ class GalleryStore {
   /** Save an image directly to a specific directory (manual save mode). Embeds metadata. */
   async saveImageToDir(image: OutputImage, dir: string) {
     try {
-      let bytes = await this.resolveImagePngBytes(image);
-      const filename = pngNormalizedFilename(image.filename || `image_${Date.now()}.png`);
+      const webpBytes = await this._resolveWebpBytes(image);
+      let bytes = webpBytes ?? (await this.resolveImagePngBytes(image));
+      const rawName = image.filename || `image_${Date.now()}.png`;
+      const filename =
+        webpBytes !== null ? webpNormalizedFilename(rawName) : pngNormalizedFilename(rawName);
       if (image.metadata) {
-        bytes = await embedPngMetadataBytes(bytes, image.metadata, generation.metadataMode);
+        bytes = await embedImageMetadataBytes(bytes, image.metadata, generation.metadataMode);
       }
       await saveImageFile(bytes, `${dir}/${filename}`);
       this.showToast(locale.t("gallery.toast.image_saved"), "success");
@@ -950,7 +1197,7 @@ class GalleryStore {
             if (pngBytes) {
               if (image.metadata) {
                 try {
-                  pngBytes = await embedPngMetadataBytes(pngBytes, image.metadata, generation.metadataMode);
+                  pngBytes = await embedImageMetadataBytes(pngBytes, image.metadata, generation.metadataMode);
                 } catch (e) {
                   console.warn("Failed to embed PNG metadata into JXL clipboard copy:", e);
                 }
@@ -1091,7 +1338,7 @@ class GalleryStore {
       }
 
       if (metadata) {
-        bytes = await embedPngMetadataBytes(bytes, metadata);
+        bytes = await embedImageMetadataBytes(bytes, metadata);
       }
 
       if (isBrowserMode) {

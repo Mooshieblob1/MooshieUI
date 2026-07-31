@@ -48,6 +48,17 @@ const MODEL_SPEC_DISPLAY_FIELDS = [
   "usage_hint",
   "tags",
   "license",
+  "thumbnail",
+  "date",
+  "implementation",
+  "hash_sha256",
+  "merged_from",
+  "preprocessor",
+  "encoder_layer",
+  "sai_model_spec",
+  // Any declared modelspec.* field at all is worth opening the panel for: the
+  // panel renders unrecognised fields in its catch-all section.
+  "modelspec_keys",
 ] as const;
 
 /** Every model signal cleared — used for no model, unsupported files, and failed detection. */
@@ -413,6 +424,17 @@ class GenerationStore {
   fluxGuidance = $state(3.5);
   useSplitModel = $state(false);
   diffusionModel = $state<string | null>(null);
+  /**
+   * Folder the active model physically lives in when it doesn't match what the
+   * model actually is (a split-file model dropped into `checkpoints/`, or a full
+   * checkpoint in `diffusion_models/`). `null` when the file is where it belongs.
+   *
+   * Detection flips `useSplitModel` silently; this records the physical folder so
+   * metadata lookups keep using the real path and the backend can resolve an
+   * absolute path for the Mooshie path-based loader nodes (ComfyUI's stock
+   * loaders only accept filenames from their own folder listing).
+   */
+  modelSourceCategory = $state<string | null>(null);
   clipModel = $state<string | null>(null);
   clipType = $state<string | null>(null);
   stylePreset = $state<StylePresetId>("none");
@@ -449,7 +471,8 @@ class GenerationStore {
   facefixMaxFaces = $state(8);
   facefixAutoPrompt = $state(false);
   outputBitDepth = $state<"8bit" | "16bit">("8bit");
-  outputFormat = $state<"png" | "jxl">("png");
+  /** WebP is lossless VP8L and always 8-bit (no 16-bit VP8L variant exists). */
+  outputFormat = $state<"png" | "jxl" | "webp">("png");
   metadataMode = $state<"text_chunk" | "stealth" | "both">("both");
   autoQualityTags = $state(true);
   /** UI-reveal toggle for the custom quality tags editor (values apply based on autoQualityTags). */
@@ -795,12 +818,18 @@ class GenerationStore {
     this.saveSettings();
   }
 
-  /** `category::filename` identifying the currently selected model. */
+  /**
+   * `category::filename` identifying the currently selected model, keyed on the
+   * folder the file physically lives in. Using the physical folder matters after a
+   * silent reclassification: the loaded-metadata key and the manual family
+   * override key must both survive a restart that restores `useSplitModel: true`
+   * for a model that still sits in `checkpoints/`.
+   */
   currentModelMetadataKey(): string {
     if (this.useSplitModel && this.diffusionModel) {
-      return `diffusion_models::${this.diffusionModel}`;
+      return `${this.modelSourceCategory ?? "diffusion_models"}::${this.diffusionModel}`;
     }
-    if (this.checkpoint) return `checkpoints::${this.checkpoint}`;
+    if (this.checkpoint) return `${this.modelSourceCategory ?? "checkpoints"}::${this.checkpoint}`;
     return "";
   }
 
@@ -811,6 +840,7 @@ class GenerationStore {
     this.isModelMetadataLoading = false;
     this.modelSpec = null;
     this.modelSpecUnavailable = false;
+    this.modelSourceCategory = null;
     this.applyModelMetadata(UNKNOWN_MODEL_METADATA);
   }
 
@@ -888,6 +918,7 @@ class GenerationStore {
         modelRecommendedClipModel: spec?.recommended_clip_model ?? null,
         modelRecommendedClipType: spec?.recommended_clip_type ?? null,
       });
+      this.applyDetectedModelKind(category, filename, spec?.model_kind ?? null);
       this.ensureRecommendedSplitClip(models.textEncoders);
       this.ensureRecommendedSplitVae(models.vaes);
       this.applyModelSpecificPreset();
@@ -903,6 +934,49 @@ class GenerationStore {
       this.modelSpecUnavailable = true;
       this.applyModelMetadata(UNKNOWN_MODEL_METADATA);
     }
+  }
+
+  /**
+   * Silently switch loader mode when detection says the file isn't what its folder
+   * claims. Backend `model_kind` comes from safetensors tensor keys (baked CLIP/VAE
+   * trees mean a full checkpoint, diffusion-only keys mean a split file), from the
+   * container for GGUF, or from the resolved family as a fallback.
+   *
+   * No dialog, no banner: the user picked a file and it just works. `modelSourceCategory`
+   * keeps pointing at the physical folder so the backend can load it by absolute path.
+   */
+  private applyDetectedModelKind(
+    category: string,
+    filename: string,
+    modelKind: string | null,
+  ): void {
+    // GGUF stays on the existing error path: UnetLoaderGGUF is a third-party node
+    // with no absolute-path input, so a misplaced .gguf can't be loaded anyway.
+    if (!modelKind || filename.toLowerCase().endsWith(".gguf")) {
+      this.modelSourceCategory = null;
+      return;
+    }
+
+    if (modelKind === "diffusion_model" && category === "checkpoints") {
+      this.modelSourceCategory = "checkpoints";
+      // Order matters: diffusionModel must be set before useSplitModel so no
+      // reactive effect ever observes split mode with an unresolved model.
+      this.diffusionModel = filename;
+      this.useSplitModel = true;
+      return;
+    }
+
+    if (modelKind === "checkpoint" && category === "diffusion_models") {
+      this.modelSourceCategory = "diffusion_models";
+      this.checkpoint = filename;
+      this.useSplitModel = false;
+      this.diffusionModel = null;
+      this.clipModel = null;
+      this.clipType = null;
+      return;
+    }
+
+    this.modelSourceCategory = null;
   }
 
   ensureRecommendedSplitClip(encoders: string[], save = false): void {
@@ -1573,6 +1647,8 @@ class GenerationStore {
         if (saved.fluxGuidance !== undefined) this.fluxGuidance = saved.fluxGuidance;
         if (saved.useSplitModel !== undefined) this.useSplitModel = saved.useSplitModel;
         if (saved.diffusionModel !== undefined) this.diffusionModel = saved.diffusionModel;
+        if (saved.modelSourceCategory !== undefined)
+          this.modelSourceCategory = saved.modelSourceCategory;
         if (saved.clipModel !== undefined) this.clipModel = saved.clipModel;
         if (saved.clipType !== undefined) this.clipType = saved.clipType;
         if (saved.stylePreset !== undefined) this.stylePreset = saved.stylePreset;
@@ -1623,7 +1699,7 @@ class GenerationStore {
         this._mode = savedMode;
         this.applyModeToggleState(this.modeToggles[savedMode] ?? defaultModeToggleState());
         if (saved.outputBitDepth) this.outputBitDepth = saved.outputBitDepth;
-        if (saved.outputFormat === "png" || saved.outputFormat === "jxl") this.outputFormat = saved.outputFormat;
+        if (saved.outputFormat === "png" || saved.outputFormat === "jxl" || saved.outputFormat === "webp") this.outputFormat = saved.outputFormat;
         if (saved.metadataMode) this.metadataMode = saved.metadataMode;
         if (saved.autoQualityTags !== undefined) this.autoQualityTags = saved.autoQualityTags;
         if (saved.customQualityTagsEnabled !== undefined) this.customQualityTagsEnabled = saved.customQualityTagsEnabled;
@@ -1734,6 +1810,7 @@ class GenerationStore {
         fluxGuidance: this.fluxGuidance,
         useSplitModel: this.useSplitModel,
         diffusionModel: this.diffusionModel,
+        modelSourceCategory: this.modelSourceCategory,
         clipModel: this.clipModel,
         clipType: this.clipType,
         stylePreset: this.stylePreset,
@@ -1836,6 +1913,7 @@ class GenerationStore {
       fluxGuidance: this.fluxGuidance,
       useSplitModel: this.useSplitModel,
       diffusionModel: this.diffusionModel,
+      modelSourceCategory: this.modelSourceCategory,
       clipModel: this.clipModel,
       clipType: this.clipType,
       stylePreset: this.stylePreset,
@@ -2215,6 +2293,7 @@ class GenerationStore {
       diffusion_model: this.diffusionModel,
       clip_model: this.clipModel,
       clip_type: this.clipType,
+      model_source_category: this.modelSourceCategory,
       controlnet: this.controlnetEnabled
         ? {
             enabled: true,

@@ -110,6 +110,7 @@ fn format_label(fmt: ImageFormat) -> &'static str {
     match fmt {
         ImageFormat::Png => "png",
         ImageFormat::Jxl => "jxl",
+        ImageFormat::WebP => "webp",
         ImageFormat::Unknown => "unknown",
     }
 }

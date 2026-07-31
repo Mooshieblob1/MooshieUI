@@ -1025,18 +1025,20 @@ pub async fn save_text_file(content: String, path: String) -> Result<(), AppErro
     Ok(())
 }
 
-/// Embed metadata into raw PNG bytes and return the result — no disk save.
-/// Used when copying a freshly-generated image before it has been persisted to gallery.
+/// Embed metadata into raw image bytes and return the result — no disk save.
+/// Used when copying or exporting a freshly-generated image before it has been
+/// persisted to gallery. The output keeps the input's container format (PNG or
+/// WebP), so callers must not assume PNG.
 #[cfg(feature = "desktop")]
 #[tauri::command]
-pub async fn embed_png_metadata_bytes(
+pub async fn embed_image_metadata_bytes(
     image_bytes: Vec<u8>,
     metadata: std::collections::HashMap<String, String>,
     metadata_mode: Option<String>,
 ) -> Result<Vec<u8>, AppError> {
     let mode =
         crate::metadata::MetadataMode::from_str(metadata_mode.as_deref().unwrap_or("text_chunk"));
-    crate::metadata::embed_png_metadata(&image_bytes, &metadata, mode).map_err(AppError::Other)
+    crate::metadata::embed_image_metadata(&image_bytes, &metadata, mode).map_err(AppError::Other)
 }
 
 #[cfg(feature = "desktop")]
@@ -1266,6 +1268,7 @@ pub fn save_to_gallery_inner(
     };
     let ext = match detected_format {
         crate::metadata::ImageFormat::Jxl => "jxl",
+        crate::metadata::ImageFormat::WebP => "webp",
         _ => "png",
     };
     let cfg = crate::config::load_persisted_config();
@@ -1327,6 +1330,15 @@ pub fn save_to_gallery_inner(
                     Ok(embedded) => embedded,
                     Err(e) => {
                         log::warn!("Failed to embed JXL metadata: {}, saving without", e);
+                        bytes.to_vec()
+                    }
+                }
+            }
+            crate::metadata::ImageFormat::WebP => {
+                match crate::metadata::embed_webp_metadata(bytes, meta, embed_mode) {
+                    Ok(embedded) => embedded,
+                    Err(e) => {
+                        log::warn!("Failed to embed WebP metadata: {}, saving without", e);
                         bytes.to_vec()
                     }
                 }
@@ -1474,16 +1486,17 @@ pub(crate) async fn load_gallery_image_png_from_dir(
     let path = resolve_gallery_image_path(gallery_dir, filename)
         .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
     let bytes = std::fs::read(&path)?;
-    if filename.ends_with(".jxl") {
+    if filename.ends_with(".jxl") || filename.ends_with(".webp") {
         let png = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
             let img = decode_gallery_image(&bytes)?;
             let mut buf = std::io::Cursor::new(Vec::new());
             img.write_to(&mut buf, image::ImageFormat::Png)
                 .map_err(|e| format!("PNG encode failed: {}", e))?;
             let png = buf.into_inner();
-            // The JXL may carry embedded generation metadata; the freshly encoded
-            // PNG does not. Re-embed it as a standard PNG text chunk so the
-            // exported file stays portable and metadata-complete.
+            // The source may carry embedded generation metadata (JXL box or WebP
+            // EXIF chunk); the freshly encoded PNG does not. Re-embed it as a
+            // standard PNG text chunk so the exported file stays portable and
+            // metadata-complete.
             match crate::metadata::read_image_metadata(&bytes) {
                 Ok(Some(meta)) => Ok(crate::metadata::embed_png_metadata(
                     &png,
@@ -2148,10 +2161,11 @@ pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), AppError> 
 }
 
 /// Copy a gallery image to the system clipboard entirely on the Rust side.
-/// JXL images are decoded once and encoded to a single metadata-bearing PNG —
-/// no image bytes ever cross the IPC boundary (the old flow shipped a
-/// multi-megabyte PNG over IPC four times). Non-JXL images are put on the
-/// clipboard straight from disk.
+/// JXL and WebP images are decoded once and encoded to a single
+/// metadata-bearing PNG — no image bytes ever cross the IPC boundary (the old
+/// flow shipped a multi-megabyte PNG over IPC four times), and PNG is the only
+/// bitmap format every paste target understands. PNGs are put on the clipboard
+/// straight from disk.
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn copy_gallery_image_to_clipboard(
@@ -2167,27 +2181,30 @@ pub async fn copy_gallery_image_to_clipboard(
     let path = resolve_gallery_image_path(&dir, &filename)
         .map_err(|e| AppError::Other(format!("{}: {}", e, filename)))?;
 
-    if filename.ends_with(".jxl") {
-        let jxl_bytes = std::fs::read(&path)?;
+    if filename.ends_with(".jxl") || filename.ends_with(".webp") {
+        let src_bytes = std::fs::read(&path)?;
         let mode = crate::metadata::MetadataMode::from_str(
             metadata_mode.as_deref().unwrap_or("text_chunk"),
         );
         let params = metadata.filter(|m| !m.is_empty());
         let png_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-            let img = crate::jxl::decode_to_rgba8(&jxl_bytes).map_err(|e| e.to_string())?;
+            let decoded = decode_gallery_image(&src_bytes)?.into_rgba8();
+            let (width, height) = (decoded.width(), decoded.height());
+            let rgba = decoded.into_raw();
             // Prefer the metadata the frontend already holds; fall back to
-            // whatever is embedded in the JXL itself.
+            // whatever is embedded in the source file itself.
             let params = params.or_else(|| {
-                crate::metadata::read_image_metadata(&jxl_bytes)
+                crate::metadata::read_image_metadata(&src_bytes)
                     .ok()
                     .flatten()
             });
             match params {
-                Some(p) => crate::metadata::encode_png_with_metadata_rgba8(
-                    &img.rgba, img.width, img.height, &p, mode,
-                ),
-                None => crate::jxl::encode_rgba8_png(&img.rgba, img.width, img.height)
-                    .map_err(|e| e.to_string()),
+                Some(p) => {
+                    crate::metadata::encode_png_with_metadata_rgba8(&rgba, width, height, &p, mode)
+                }
+                None => {
+                    crate::jxl::encode_rgba8_png(&rgba, width, height).map_err(|e| e.to_string())
+                }
             }
         })
         .await
@@ -3402,6 +3419,38 @@ fn find_first_text_encoder_matching(encoders: &[String], markers: &[&str]) -> Op
     })
 }
 
+/// Families that are never distributed as a full single-file checkpoint: their
+/// text encoder always ships separately. Loading one through
+/// `CheckpointLoaderSimple` yields a `None` CLIP and fails at conditioning, so
+/// the family alone is enough to conclude the file is a bare diffusion model.
+///
+/// Rust mirror of `SPLIT_ONLY_FAMILIES` in
+/// [`src/lib/utils/modelFamily.ts`](../../../src/lib/utils/modelFamily.ts) — keep
+/// the two in sync.
+pub(crate) fn family_requires_separate_clip(family: &str) -> bool {
+    matches!(
+        family,
+        "anima"
+            | "wan"
+            | "qwen"
+            | "qwen_edit"
+            | "qwen_edit_plus"
+            | "flux"
+            | "flux1d"
+            | "flux1s"
+            | "flux1krea"
+            | "flux1kontext"
+            | "flux2d"
+            | "flux2klein9b"
+            | "flux2klein9bbase"
+            | "flux2klein4b"
+            | "flux2klein4bbase"
+            | "chroma"
+            | "ideogram4"
+            | "krea2"
+    )
+}
+
 fn recommended_vae_from_available(category: &str, family: &str, vaes: &[String]) -> Option<String> {
     if category != "diffusion_models" || vaes.is_empty() {
         return None;
@@ -4248,7 +4297,30 @@ pub(crate) async fn read_modelspec_internal(
         }
     }
 
-    if category == "diffusion_models" {
+    // Last-resort kind detection: a file whose weights were unreadable or whose
+    // tensor names matched nothing still declares a family, and some families are
+    // never shipped as a full checkpoint at all.
+    if !result.contains_key("model_kind") {
+        if let Some(family) = result.get("family") {
+            if family_requires_separate_clip(family) {
+                result.insert("model_kind".to_string(), "diffusion_model".to_string());
+                result.insert("model_kind_source".to_string(), "family".to_string());
+            }
+        }
+    }
+
+    // Recommendations are a split-model concern: a full checkpoint bakes its own
+    // CLIP and VAE. Keyed on what the file *is* rather than the folder it sits in,
+    // so a diffusion model in `checkpoints/` still gets its encoder and VAE picked
+    // out. Restricted to the two model categories a generation can load from —
+    // other categories (loras, ...) have no loader to recommend for.
+    let effective_is_split = matches!(category, "checkpoints" | "diffusion_models")
+        && (category == "diffusion_models"
+            || result.get("model_kind").map(String::as_str) == Some("diffusion_model"));
+    if effective_is_split {
+        // The helpers gate on this category internally; a reclassified checkpoint
+        // must take the same path as a correctly-placed diffusion model.
+        let category = "diffusion_models";
         let family = result
             .get("family")
             .cloned()
@@ -4340,7 +4412,20 @@ pub(crate) fn read_safetensors_runtime_metadata(
     }
 }
 
-/// Parse the safetensors JSON header and extract modelspec.* fields.
+/// Ceiling on a single `__metadata__` value shipped to the frontend. A ModelSpec
+/// thumbnail is a base64 data URI and is normally well under a megabyte; without
+/// a cap a pathological blob would cross IPC on every model selection.
+const MAX_METADATA_VALUE_BYTES: usize = 4 * 1024 * 1024;
+
+/// Parse the safetensors JSON header and extract every `modelspec.*` field.
+///
+/// All fields are returned with the `modelspec.` prefix stripped, plus:
+/// - `modelspec_keys`: comma-joined list of the field names that were actually
+///   declared in the file, so the frontend can render unrecognised ModelSpec
+///   fields without also surfacing the derived keys added by
+///   [`read_modelspec_internal`].
+/// - `architecture_inferred`: `"true"` when `architecture` came from tensor-key
+///   inference rather than a declared `modelspec.architecture`.
 pub(crate) fn read_safetensors_modelspec(
     path: &std::path::Path,
 ) -> Result<Option<std::collections::HashMap<String, String>>, AppError> {
@@ -4368,14 +4453,35 @@ pub(crate) fn read_safetensors_modelspec(
     };
 
     let mut result = std::collections::HashMap::new();
+    let mut declared_fields: Vec<String> = Vec::new();
     for (key, value) in metadata {
-        if let Some(s) = value.as_str() {
-            if let Some(field) = key.strip_prefix("modelspec.") {
-                result.insert(field.to_string(), s.to_string());
-            } else if key == "prediction_type" && !result.contains_key("prediction_type") {
-                result.insert("prediction_type".to_string(), s.to_string());
+        // `__metadata__` is specified as string→string, but some trainers write
+        // raw numbers and bools. Stringify those instead of dropping the field.
+        let text = match value {
+            Value::Null => continue,
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        if let Some(field) = key.strip_prefix("modelspec.") {
+            if text.len() > MAX_METADATA_VALUE_BYTES {
+                log::warn!(
+                    "Skipping oversized ModelSpec field '{}' ({} bytes) in {}",
+                    field,
+                    text.len(),
+                    path.display()
+                );
+                continue;
             }
+            declared_fields.push(field.to_string());
+            result.insert(field.to_string(), text);
+        } else if key == "prediction_type" && !result.contains_key("prediction_type") {
+            result.insert("prediction_type".to_string(), text);
         }
+    }
+
+    if !declared_fields.is_empty() {
+        declared_fields.sort();
+        result.insert("modelspec_keys".to_string(), declared_fields.join(","));
     }
 
     if header.get("v_pred").is_some() {
@@ -4383,11 +4489,20 @@ pub(crate) fn read_safetensors_modelspec(
     }
 
     // If no modelspec.architecture, infer from tensor key patterns in the header
-    if !result.contains_key("architecture") {
-        if let Some(Value::Object(top)) = Some(&header) {
+    if let Some(Value::Object(top)) = Some(&header) {
+        if !result.contains_key("architecture") {
             if let Some(arch) = infer_architecture_from_keys(top) {
                 result.insert("architecture".to_string(), arch);
+                result.insert("architecture_inferred".to_string(), "true".to_string());
             }
+        }
+        // Which loader the weights actually need, independent of the folder the
+        // file sits in. `__metadata__` is not a tensor and cannot match any of
+        // the structural prefixes, so it is left in place.
+        let names: Vec<&str> = top.keys().map(String::as_str).collect();
+        if let Some(kind) = infer_model_kind_from_key_names(&names) {
+            result.insert("model_kind".to_string(), kind.to_string());
+            result.insert("model_kind_source".to_string(), "tensor_keys".to_string());
         }
     }
 
@@ -4622,12 +4737,16 @@ fn read_gguf_architecture_meta_inner(
             .map(str::to_string)
     });
 
-    let Some(architecture) = architecture else {
-        return Ok(None);
-    };
-
     let mut result = std::collections::HashMap::new();
-    result.insert("architecture".to_string(), architecture);
+    // GGUF quantisation is only ever applied to a single component, so a GGUF in
+    // a model folder is always a bare diffusion model — there is no such thing as
+    // a GGUF full checkpoint with baked CLIP and VAE. Recorded even when the
+    // architecture is unknown, since the kind is certain either way.
+    result.insert("model_kind".to_string(), "diffusion_model".to_string());
+    result.insert("model_kind_source".to_string(), "gguf".to_string());
+    if let Some(architecture) = architecture {
+        result.insert("architecture".to_string(), architecture);
+    }
     if let Some(raw) = general_arch {
         result.insert("gguf_architecture".to_string(), raw);
     }
@@ -4768,6 +4887,60 @@ fn infer_architecture_from_key_names(names: &[&str]) -> Option<String> {
         return Some("stable-diffusion-v1-5".to_string());
     }
 
+    None
+}
+
+/// Tensor trees that only a full single-file checkpoint carries. `first_stage_model.`
+/// is the ldm/sgm VAE, the others are baked text encoders (`text_encoders.` is
+/// ComfyUI's all-in-one packing used by the fp8 Flux/SD3 releases). Presence of
+/// any of these is what makes `CheckpointLoaderSimple` able to return a CLIP and
+/// a VAE instead of `None`.
+const FULL_CHECKPOINT_KEY_PREFIXES: [&str; 4] = [
+    "cond_stage_model.",
+    "conditioner.embedders.",
+    "first_stage_model.",
+    "text_encoders.",
+];
+
+/// Containers that hold diffusion weights. A full checkpoint carries these too,
+/// so they are only conclusive once the prefixes above are known to be absent.
+const DIFFUSION_KEY_PREFIXES: [&str; 7] = [
+    "model.diffusion_model.",
+    "diffusion_model.",
+    "double_blocks.",
+    "single_blocks.",
+    "joint_blocks.",
+    "transformer_blocks.",
+    "net.",
+];
+
+/// A handful of matches is noise (a stray buffer, a merge artefact); a real
+/// tensor tree covers dozens of keys. Same reasoning as
+/// [`dominant_tensor_key_prefix`].
+const MIN_TENSOR_TREE_KEYS: usize = 5;
+
+/// Infer whether a file is a full checkpoint or a bare diffusion model from its
+/// tensor names.
+///
+/// This is the structural answer to "which loader does this file need", which is
+/// otherwise guessed from whichever folder the file happens to sit in. A Flux
+/// unet dropped into `checkpoints/` and an SDXL checkpoint dropped into
+/// `diffusion_models/` both load wrong (or not at all) on the folder-based guess,
+/// and the weights themselves are the only signal that cannot be renamed away.
+///
+/// Returns `None` when neither signature is present (a LoRA, an embedding, an
+/// unrecognised container) so callers keep their folder-based default rather than
+/// acting on a coin flip.
+fn infer_model_kind_from_key_names(names: &[&str]) -> Option<&'static str> {
+    let has_tree = |prefix: &str| {
+        names.iter().filter(|k| k.starts_with(prefix)).count() > MIN_TENSOR_TREE_KEYS
+    };
+    if FULL_CHECKPOINT_KEY_PREFIXES.iter().copied().any(has_tree) {
+        return Some("checkpoint");
+    }
+    if DIFFUSION_KEY_PREFIXES.iter().copied().any(has_tree) {
+        return Some("diffusion_model");
+    }
     None
 }
 
@@ -6948,22 +7121,21 @@ pub async fn install_attention_backend_core(
     };
 
     // Package names (no version specifier) backing each backend, for uninstall/rollback.
+    // triton-windows is deliberately absent: it is also the fast-kernel path for
+    // comfy-kitchen (int4/int8 convrot quantized models), so rolling back a failed
+    // SageAttention install must not strip it and silently halve quant throughput.
     let base_names: Vec<&str> = match backend.as_str() {
-        "sage_v1" | "sage_v2" => {
-            if is_windows {
-                vec!["sageattention", "triton-windows"]
-            } else {
-                vec!["sageattention"]
-            }
-        }
+        "sage_v1" | "sage_v2" => vec!["sageattention"],
         "flash_v1" | "flash_v2" => vec!["flash-attn"],
         _ => vec![],
     };
 
-    // Step 1: Uninstall any existing attention packages (ignore errors). Includes
-    // triton-windows on Windows since we install it alongside SageAttention there.
+    // Step 1: Uninstall any existing attention packages (ignore errors).
+    // triton-windows is intentionally left installed: comfy-kitchen needs it for
+    // fast convrot quant kernels and falls back to slow eager PyTorch without it,
+    // so switching attention backend must not regress quantized-model speed.
     emit("Removing old attention packages...");
-    let mut uninstall_old: Vec<&str> = vec![
+    let uninstall_old: Vec<&str> = vec![
         "pip",
         "uninstall",
         "--python",
@@ -6971,9 +7143,6 @@ pub async fn install_attention_backend_core(
         "sageattention",
         "flash-attn",
     ];
-    if is_windows {
-        uninstall_old.push("triton-windows");
-    }
     let _ = tokio_command_no_window(&uv)
         .args(&uninstall_old)
         .output()

@@ -1,3 +1,19 @@
+## What's New in v1.9.0
+
+### New features
+- **Compare two images against each other**: a new comparison viewer for judging one image against another without opening them in a separate program (issue #517). Press Compare on any image to pin it, then pick a second image to open the viewer. Four ways to look at the pair: Slider drags a divider across the images, horizontally or vertically; Fade blends between them; Difference highlights only what changed, for spotting a subtle seed or CFG shift; and Side by side puts them next to each other. Both images zoom and pan together, so a detail stays aligned as you look closer: scroll to zoom, drag to pan, double-click to reset. The left and right arrow keys step image B through the rest of the gallery, holding Shift steps image A, so you can hold one image fixed and flip through candidates against it. Compare is reachable from the gallery grid and list, the lightbox toolbar, and the right-click menu on a freshly generated image.
+- **WebP as a third save format**: alongside PNG and JPEG XL, images can now be saved as lossless WebP. It is smaller than PNG, and unlike JXL every browser, phone, and image viewer opens it directly, so it suits images headed somewhere outside the app. Generation parameters are stored in the file the same way A1111 stores them, as an EXIF UserComment, so exiftool, civitai, and the usual web UIs read them back, and Stealth Alpha metadata works too because the format is lossless. WebP has no 16-bit mode, so choosing it locks bit depth to 8-bit and the 16-bit button explains why. Saving a WebP out of the gallery keeps the original file rather than converting it.
+- **Models load from whichever folder they are in**: a diffusion model (unet or DiT only) dropped into the checkpoints folder, or a full checkpoint sitting in diffusion models, used to fail at generation time because ComfyUI's loaders only accept files from their own folder. MooshieUI now reads the weights themselves to tell which kind a file really is, switches to the matching loader without asking, and loads the file by its full path. Misfiled models simply work, with no moving of files and no error to decipher. Quantized GGUF files are unchanged, since their loader comes from a third-party node that takes no path.
+- **Fuller model information**: the model info panel now shows the preview thumbnail stored in the file, along with its date, implementation, SHA256 hash, the models it was merged from, preprocessor, encoder layer, and ModelSpec version. An architecture worked out from the weights rather than declared in the file is marked as inferred, and any remaining field the file declares is listed as-is, so nothing a model author wrote is hidden.
+
+### Fixes
+- **Prompts in Japanese, Chinese, Korean, or with emoji keep their metadata**: the standard PNG text chunk only holds Latin-1 characters, so a single CJK character or emoji anywhere in the prompt made writing metadata fail, and the image was saved with no generation parameters at all. Those prompts now go into the PNG format's UTF-8 text chunk instead, which the same tools read, so the parameters survive and can be sent back into the app. Reading metadata also picks up UTF-8 and compressed text chunks, so images written by other tools that use them are no longer treated as having none.
+
+### Maintenance
+- **ComfyUI pin moves to v0.29.0**, and the weekly compatibility check now also verifies that the quantization kernel package ComfyUI depends on is still pinned and importable, so a future version bump cannot quietly break quantized models the way it did before v1.8.1.
+
+---
+
 ## What's New in v1.8.1
 
 ### Fixes

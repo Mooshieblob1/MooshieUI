@@ -321,10 +321,13 @@
       <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.bit_depth')}<InfoTip text={locale.t('generation.sampler.bit_depth_tip')} /></label>
       <div class="flex gap-1">
         {#each ["8bit", "16bit"] as depth}
+          {@const depthLocked = depth === "16bit" && generation.outputFormat === "webp"}
           <button
+            disabled={depthLocked}
+            title={depthLocked ? locale.t('generation.sampler.bit_16_webp_disabled') : undefined}
             class="flex-1 py-1 text-[11px] rounded-lg border transition-colors {generation.outputBitDepth === depth
               ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
-              : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'}"
+              : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'} {depthLocked ? 'opacity-40 cursor-not-allowed hover:border-neutral-700' : ''}"
             onclick={() => generation.outputBitDepth = depth as "8bit" | "16bit"}
           >
             {depth === "8bit" ? locale.t('generation.sampler.bit_8') : locale.t('generation.sampler.bit_16')}
@@ -335,14 +338,22 @@
     <div>
       <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.output_format')}<InfoTip text={locale.t('generation.sampler.output_format_tip')} /></label>
       <div class="flex gap-1">
-        {#each ["png", "jxl"] as fmt}
+        {#each ["png", "jxl", "webp"] as fmt}
           <button
             class="flex-1 py-1 text-[11px] rounded-lg border transition-colors {generation.outputFormat === fmt
               ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300'
               : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'}"
-            onclick={() => generation.outputFormat = fmt as "png" | "jxl"}
+            onclick={() => {
+              generation.outputFormat = fmt as "png" | "jxl" | "webp";
+              // Lossless WebP (VP8L) has no 16-bit variant, so keep the pair valid.
+              if (fmt === "webp") generation.outputBitDepth = "8bit";
+            }}
           >
-            {fmt === "png" ? locale.t('generation.sampler.format_png') : locale.t('generation.sampler.format_jxl')}
+            {fmt === "png"
+              ? locale.t('generation.sampler.format_png')
+              : fmt === "jxl"
+                ? locale.t('generation.sampler.format_jxl')
+                : locale.t('generation.sampler.format_webp')}
           </button>
         {/each}
       </div>

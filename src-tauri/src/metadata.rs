@@ -35,6 +35,7 @@ pub fn is_png_16bit(image_bytes: &[u8]) -> Result<bool, String> {
 pub enum ImageFormat {
     Png,
     Jxl,
+    WebP,
     Unknown,
 }
 
@@ -42,6 +43,8 @@ pub enum ImageFormat {
 pub fn detect_format(bytes: &[u8]) -> ImageFormat {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         ImageFormat::Png
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        ImageFormat::WebP
     } else if bytes.len() >= 12
         && bytes[0..12]
             == [
@@ -75,18 +78,62 @@ pub fn read_jxl_metadata(image_bytes: &[u8]) -> Result<Option<HashMap<String, St
     Ok(parse_swarmui_json(xmp.trim()))
 }
 
-/// Format-aware dispatcher: returns metadata for PNG or JXL image bytes.
+/// Format-aware dispatcher: returns metadata for PNG, JXL, or WebP image bytes.
 pub fn read_image_metadata(bytes: &[u8]) -> Result<Option<HashMap<String, String>>, String> {
     match detect_format(bytes) {
         ImageFormat::Png => read_png_metadata(bytes),
         ImageFormat::Jxl => read_jxl_metadata(bytes),
+        ImageFormat::WebP => read_webp_metadata(bytes),
         ImageFormat::Unknown => Ok(None),
+    }
+}
+
+/// Format-aware dispatcher: embeds metadata into PNG, JXL, or WebP bytes and
+/// returns the result in the **same** container format, so callers exporting or
+/// copying raw bytes never have to transcode just to attach metadata.
+///
+/// JXL carries metadata in an `xml ` box and has no stealth-alpha variant, so
+/// `mode` is ignored there.
+pub fn embed_image_metadata(
+    image_bytes: &[u8],
+    params: &HashMap<String, String>,
+    mode: MetadataMode,
+) -> Result<Vec<u8>, String> {
+    match detect_format(image_bytes) {
+        ImageFormat::Png => embed_png_metadata(image_bytes, params, mode),
+        ImageFormat::Jxl => embed_jxl_metadata(image_bytes, params),
+        ImageFormat::WebP => embed_webp_metadata(image_bytes, params, mode),
+        ImageFormat::Unknown => Err("Unsupported image format for metadata embedding".to_string()),
     }
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/// Attach the SwarmUI JSON under the `parameters` keyword.
+///
+/// `tEXt` is what A1111, SwarmUI and every downstream reader expect, but the PNG
+/// spec restricts it to ISO 8859-1: a single CJK character or emoji in the prompt
+/// makes `write_header` fail, and callers then save the image with **no** metadata
+/// at all. `iTXt` is the spec's UTF-8 chunk type (same keyword, read by PIL /
+/// ImageSharp / exiftool), so non-Latin-1 payloads fall back to it instead of
+/// being dropped.
+fn add_parameters_chunk<W: std::io::Write>(
+    encoder: &mut png::Encoder<'_, W>,
+    json_text: String,
+) -> Result<(), String> {
+    // Mirrors the png crate's own Latin-1 predicate (`u8::try_from(c as u32)`).
+    if json_text.chars().all(|c| (c as u32) < 0x100) {
+        encoder
+            .add_text_chunk("parameters".to_string(), json_text)
+            .map_err(|e| format!("Failed to add text chunk: {}", e))
+    } else {
+        encoder
+            .add_itxt_chunk("parameters".to_string(), json_text)
+            .map_err(|e| format!("Failed to add iTXt chunk: {}", e))
+    }
+}
 
 /// Embed metadata into PNG image bytes using the specified mode.
 pub fn embed_png_metadata(
@@ -157,9 +204,7 @@ pub fn embed_png_metadata(
         }
 
         if effective_mode == MetadataMode::TextChunk || effective_mode == MetadataMode::Both {
-            encoder
-                .add_text_chunk("parameters".to_string(), json_text)
-                .map_err(|e| format!("Failed to add text chunk: {}", e))?;
+            add_parameters_chunk(&mut encoder, json_text)?;
         }
 
         let mut writer = encoder
@@ -210,9 +255,7 @@ pub fn encode_png_with_metadata_rgba8(
         encoder.set_depth(png::BitDepth::Eight);
 
         if effective_mode == MetadataMode::TextChunk || effective_mode == MetadataMode::Both {
-            encoder
-                .add_text_chunk("parameters".to_string(), json_text)
-                .map_err(|e| format!("Failed to add text chunk: {}", e))?;
+            add_parameters_chunk(&mut encoder, json_text)?;
         }
 
         let mut writer = encoder
@@ -241,19 +284,36 @@ pub fn read_png_metadata(image_bytes: &[u8]) -> Result<Option<HashMap<String, St
         .map_err(|e| format!("PNG decode error: {}", e))?;
     let info = reader.info();
 
-    for chunk in &info.uncompressed_latin1_text {
-        if chunk.keyword == "parameters" {
-            let text = chunk.text.trim();
-            if text.starts_with('{') {
-                if let Some(parsed) = parse_swarmui_json(text) {
-                    return Ok(Some(parsed));
-                }
-            }
-            return Ok(Some(parse_a1111_params(text)));
+    // tEXt first (what A1111 and our own Latin-1 writes use), then iTXt/zTXt —
+    // where non-Latin-1 prompts and other tools' UTF-8 metadata live.
+    let raw_text = info
+        .uncompressed_latin1_text
+        .iter()
+        .find(|c| c.keyword == "parameters")
+        .map(|c| c.text.clone())
+        .or_else(|| {
+            info.utf8_text
+                .iter()
+                .find(|c| c.keyword == "parameters")
+                .and_then(|c| c.get_text().ok())
+        })
+        .or_else(|| {
+            info.compressed_latin1_text
+                .iter()
+                .find(|c| c.keyword == "parameters")
+                .and_then(|c| c.get_text().ok())
+        });
+
+    let Some(raw_text) = raw_text else {
+        return Ok(None);
+    };
+    let text = raw_text.trim();
+    if text.starts_with('{') {
+        if let Some(parsed) = parse_swarmui_json(text) {
+            return Ok(Some(parsed));
         }
     }
-
-    Ok(None)
+    Ok(Some(parse_a1111_params(text)))
 }
 
 // ---------------------------------------------------------------------------
@@ -475,8 +535,18 @@ fn read_stealth_alpha(image_bytes: &[u8]) -> Result<Option<HashMap<String, Strin
         .map_err(|e| format!("PNG frame read error: {}", e))?;
     buf.truncate(output_info.buffer_size());
 
-    let w = info.width as usize;
-    let h = info.height as usize;
+    decode_stealth_alpha_pixels(&buf, info.width as usize, info.height as usize, bpp)
+}
+
+/// Decode stealth-alpha metadata straight out of an interleaved RGBA pixel
+/// buffer. Container-agnostic (PNG and WebP both funnel through here) — `bpp` is
+/// bytes per pixel: 4 for RGBA8, 8 for RGBA16.
+fn decode_stealth_alpha_pixels(
+    buf: &[u8],
+    w: usize,
+    h: usize,
+    bpp: usize,
+) -> Result<Option<HashMap<String, String>>, String> {
     let pixel_count = w * h;
     let magic_bits = STEALTH_MAGIC.len() * 8;
 
@@ -543,6 +613,415 @@ fn read_stealth_alpha(image_bytes: &[u8]) -> Result<Option<HashMap<String, Strin
     } else {
         Ok(None)
     }
+}
+
+// ---------------------------------------------------------------------------
+// WebP (RIFF) metadata
+// ---------------------------------------------------------------------------
+//
+// WebP metadata parity with PNG/JXL needs two independent carriers:
+//
+//   * an `EXIF` RIFF chunk holding the SwarmUI JSON as the Exif sub-IFD
+//     UserComment — the A1111/piexif convention, so exiftool, civitai and the
+//     web UIs all read it;
+//   * stealth alpha LSBs, which survive because every WebP this app writes is
+//     VP8L (lossless) — `image`'s WebP encoder has no lossy mode, so pixels
+//     round-trip bit-exactly.
+//
+// The RIFF surgery is hand-rolled rather than delegated to a crate so chunk
+// ordering (VP8X, ICCP, image data, EXIF, XMP) is guaranteed to follow the spec
+// and no new dependency is pulled in for ~100 lines of container edits.
+
+/// EXIF-present flag in the VP8X feature byte.
+const VP8X_FLAG_EXIF: u8 = 0x08;
+/// Alpha-present flag in the VP8X feature byte.
+const VP8X_FLAG_ALPHA: u8 = 0x10;
+
+/// A single RIFF chunk: 4-byte FourCC plus its payload (padding excluded).
+struct RiffChunk {
+    id: [u8; 4],
+    payload: Vec<u8>,
+}
+
+/// Split a WebP file into its RIFF chunks.
+fn parse_webp_chunks(bytes: &[u8]) -> Result<Vec<RiffChunk>, String> {
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
+        return Err("Not a WebP (RIFF/WEBP) file".to_string());
+    }
+    // The RIFF size field covers everything after it. Clamp to the real buffer
+    // length so a truncated or over-declared file still parses what it has.
+    let riff_size = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+    let end = riff_size.saturating_add(8).min(bytes.len());
+
+    let mut chunks = Vec::new();
+    let mut pos = 12usize;
+    while pos + 8 <= end {
+        let mut id = [0u8; 4];
+        id.copy_from_slice(&bytes[pos..pos + 4]);
+        let size = u32::from_le_bytes([
+            bytes[pos + 4],
+            bytes[pos + 5],
+            bytes[pos + 6],
+            bytes[pos + 7],
+        ]) as usize;
+        let data_start = pos + 8;
+        let data_end = data_start
+            .checked_add(size)
+            .ok_or_else(|| "WebP chunk size overflow".to_string())?;
+        if data_end > end {
+            return Err(format!(
+                "Truncated WebP chunk {}",
+                String::from_utf8_lossy(&id)
+            ));
+        }
+        chunks.push(RiffChunk {
+            id,
+            payload: bytes[data_start..data_end].to_vec(),
+        });
+        // Odd-sized chunks carry a single pad byte.
+        pos = data_end + (size & 1);
+    }
+    Ok(chunks)
+}
+
+/// Reassemble a WebP file from chunks, in the given order.
+fn write_webp_chunks(chunks: &[RiffChunk]) -> Vec<u8> {
+    let mut body: Vec<u8> = b"WEBP".to_vec();
+    for c in chunks {
+        body.extend_from_slice(&c.id);
+        body.extend_from_slice(&(c.payload.len() as u32).to_le_bytes());
+        body.extend_from_slice(&c.payload);
+        if !c.payload.len().is_multiple_of(2) {
+            body.push(0);
+        }
+    }
+    let mut out = Vec::with_capacity(body.len() + 8);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    out.extend_from_slice(&body);
+    out
+}
+
+/// Read canvas size and the alpha-used flag straight out of a VP8L chunk header
+/// (signature byte 0x2F, then a 32-bit LSB-first field: 14 bits width-1,
+/// 14 bits height-1, 1 bit alpha_is_used, 3 bits version).
+fn parse_vp8l_header(payload: &[u8]) -> Option<(u32, u32, bool)> {
+    if payload.len() < 5 || payload[0] != 0x2F {
+        return None;
+    }
+    let bits = u32::from_le_bytes([payload[1], payload[2], payload[3], payload[4]]);
+    let width = (bits & 0x3FFF) + 1;
+    let height = ((bits >> 14) & 0x3FFF) + 1;
+    let alpha = ((bits >> 28) & 1) == 1;
+    Some((width, height, alpha))
+}
+
+/// Insert (or replace) the `EXIF` chunk of a WebP file, promoting a simple-format
+/// file to the extended (VP8X) format when needed. Chunks are re-emitted in the
+/// order the container spec requires: VP8X, ICCP, image data, EXIF, XMP.
+fn set_webp_exif(bytes: &[u8], exif: &[u8]) -> Result<Vec<u8>, String> {
+    let chunks = parse_webp_chunks(bytes)?;
+
+    let mut vp8x = match chunks.iter().find(|c| &c.id == b"VP8X") {
+        Some(c) => c.payload.clone(),
+        None => {
+            // Simple format: synthesize the 10-byte VP8X header from the VP8L
+            // header. Lossy (VP8) simple files never come out of this app, so
+            // there is nothing to derive a canvas from — let the caller fall
+            // back to saving the image without a text chunk.
+            let (w, h, alpha) = chunks
+                .iter()
+                .find(|c| &c.id == b"VP8L")
+                .and_then(|c| parse_vp8l_header(&c.payload))
+                .ok_or_else(|| {
+                    "WebP has neither a VP8X header nor a VP8L chunk to derive the canvas from"
+                        .to_string()
+                })?;
+            let mut p = vec![0u8; 10];
+            if alpha {
+                p[0] |= VP8X_FLAG_ALPHA;
+            }
+            p[4..7].copy_from_slice(&(w - 1).to_le_bytes()[0..3]);
+            p[7..10].copy_from_slice(&(h - 1).to_le_bytes()[0..3]);
+            p
+        }
+    };
+    if vp8x.len() < 10 {
+        return Err("Malformed VP8X chunk".to_string());
+    }
+    vp8x[0] |= VP8X_FLAG_EXIF;
+
+    let mut icc: Vec<RiffChunk> = Vec::new();
+    let mut image_data: Vec<RiffChunk> = Vec::new();
+    let mut xmp: Vec<RiffChunk> = Vec::new();
+    for c in chunks {
+        match &c.id {
+            // Rebuilt above / replaced below.
+            b"VP8X" | b"EXIF" => {}
+            b"ICCP" => icc.push(c),
+            b"XMP " => xmp.push(c),
+            _ => image_data.push(c),
+        }
+    }
+
+    let mut out: Vec<RiffChunk> = Vec::with_capacity(image_data.len() + 3);
+    out.push(RiffChunk {
+        id: *b"VP8X",
+        payload: vp8x,
+    });
+    out.extend(icc);
+    out.extend(image_data);
+    out.push(RiffChunk {
+        id: *b"EXIF",
+        payload: exif.to_vec(),
+    });
+    out.extend(xmp);
+    Ok(write_webp_chunks(&out))
+}
+
+/// Extract the raw `EXIF` chunk payload from WebP bytes, if present.
+fn get_webp_exif(bytes: &[u8]) -> Option<Vec<u8>> {
+    parse_webp_chunks(bytes)
+        .ok()?
+        .into_iter()
+        .find(|c| &c.id == b"EXIF")
+        .map(|c| c.payload)
+}
+
+/// Build a minimal little-endian EXIF (TIFF) blob whose only tag is the Exif
+/// sub-IFD UserComment (0x9286) carrying `text`. This mirrors what piexif (and
+/// therefore A1111) writes for WebP, so external readers find the parameters
+/// where they expect them.
+fn build_exif_user_comment_blob(text: &str) -> Vec<u8> {
+    // "UNICODE\0" + UTF-16BE rather than the ASCII charset code: prompts are
+    // routinely non-Latin, and an ASCII prefix in front of UTF-8 bytes makes
+    // strict readers mangle them.
+    let mut payload: Vec<u8> = b"UNICODE\0".to_vec();
+    for unit in text.encode_utf16() {
+        payload.extend_from_slice(&unit.to_be_bytes());
+    }
+
+    const IFD0_OFFSET: u32 = 8; // right after the 8-byte TIFF header
+    const EXIF_IFD_OFFSET: u32 = 26; // IFD0 = 2 count + 12 entry + 4 next
+    const VALUE_OFFSET: u32 = 44; // Exif IFD = 2 count + 12 entry + 4 next
+
+    let mut out = Vec::with_capacity(VALUE_OFFSET as usize + payload.len());
+    out.extend_from_slice(b"II");
+    out.extend_from_slice(&42u16.to_le_bytes());
+    out.extend_from_slice(&IFD0_OFFSET.to_le_bytes());
+    // IFD0: a single entry, the Exif sub-IFD pointer.
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&0x8769u16.to_le_bytes()); // ExifIFDPointer
+    out.extend_from_slice(&4u16.to_le_bytes()); // LONG
+    out.extend_from_slice(&1u32.to_le_bytes());
+    out.extend_from_slice(&EXIF_IFD_OFFSET.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // no next IFD
+                                                // Exif sub-IFD: a single entry, UserComment.
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&0x9286u16.to_le_bytes()); // UserComment
+    out.extend_from_slice(&7u16.to_le_bytes()); // UNDEFINED
+    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    out.extend_from_slice(&VALUE_OFFSET.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // no next IFD
+    debug_assert_eq!(out.len(), VALUE_OFFSET as usize);
+    out.extend_from_slice(&payload);
+    out
+}
+
+/// Decode a UTF-16 byte run into a String with the given endianness.
+fn utf16_string(bytes: &[u8], big_endian: bool) -> String {
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|p| {
+            if big_endian {
+                u16::from_be_bytes([p[0], p[1]])
+            } else {
+                u16::from_le_bytes([p[0], p[1]])
+            }
+        })
+        .collect();
+    String::from_utf16_lossy(&units)
+}
+
+/// Strip the 8-byte EXIF character-code prefix from a UserComment payload and
+/// decode the remainder.
+fn decode_user_comment(raw: &[u8]) -> String {
+    if raw.len() >= 8 {
+        let (prefix, body) = raw.split_at(8);
+        if prefix == b"UNICODE\0" {
+            // The charset code does not record endianness. Everything this app
+            // writes is big-endian; probe for the JSON opening brace so files
+            // from little-endian writers still read.
+            let be = utf16_string(body, true);
+            if be.contains('{') {
+                return be;
+            }
+            let le = utf16_string(body, false);
+            if le.contains('{') {
+                return le;
+            }
+            return be;
+        }
+        if prefix == b"ASCII\0\0\0" || prefix == b"\0\0\0\0\0\0\0\0" {
+            return String::from_utf8_lossy(body)
+                .trim_end_matches('\0')
+                .to_string();
+        }
+    }
+    String::from_utf8_lossy(raw)
+        .trim_end_matches('\0')
+        .to_string()
+}
+
+/// Pull the UserComment text out of an EXIF (TIFF) blob, checking IFD0 and then
+/// the Exif sub-IFD it points at. Handles both byte orders.
+fn read_exif_user_comment(exif: &[u8]) -> Option<String> {
+    // WebP EXIF chunks hold a bare TIFF stream, but the JPEG APP1 "Exif\0\0"
+    // prefix shows up in the wild — tolerate it.
+    let tiff = if exif.starts_with(b"Exif\0\0") {
+        &exif[6..]
+    } else {
+        exif
+    };
+    if tiff.len() < 8 {
+        return None;
+    }
+    let le = match &tiff[0..2] {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let u16_at = |o: usize| -> Option<u16> {
+        let b = tiff.get(o..o + 2)?;
+        Some(if le {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        })
+    };
+    let u32_at = |o: usize| -> Option<u32> {
+        let b = tiff.get(o..o + 4)?;
+        Some(if le {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        })
+    };
+    if u16_at(2)? != 42 {
+        return None;
+    }
+
+    // Returns (UserComment value range, Exif sub-IFD offset) for one IFD.
+    let scan = |ifd: usize| -> (Option<(usize, usize)>, Option<usize>) {
+        let mut user_comment = None;
+        let mut sub_ifd = None;
+        let Some(count) = u16_at(ifd) else {
+            return (None, None);
+        };
+        for i in 0..count as usize {
+            let e = ifd + 2 + i * 12;
+            let (Some(tag), Some(ty), Some(cnt), Some(val)) =
+                (u16_at(e), u16_at(e + 2), u32_at(e + 4), u32_at(e + 8))
+            else {
+                continue;
+            };
+            match tag {
+                0x8769 => sub_ifd = Some(val as usize),
+                0x9286 => {
+                    let type_size = match ty {
+                        1 | 2 | 6 | 7 => 1,
+                        3 | 8 => 2,
+                        4 | 9 | 11 => 4,
+                        _ => 8,
+                    };
+                    let len = (cnt as usize).saturating_mul(type_size);
+                    // Values of 4 bytes or fewer sit inline in the entry.
+                    let start = if len <= 4 { e + 8 } else { val as usize };
+                    user_comment = Some((start, len));
+                }
+                _ => {}
+            }
+        }
+        (user_comment, sub_ifd)
+    };
+
+    let (mut found, sub_ifd) = scan(u32_at(4)? as usize);
+    if found.is_none() {
+        found = scan(sub_ifd?).0;
+    }
+    let (start, len) = found?;
+    let raw = tiff.get(start..start.checked_add(len)?)?;
+    Some(decode_user_comment(raw))
+}
+
+/// Embed SwarmUI-compatible metadata into WebP bytes.
+///
+/// Stealth alpha runs first (it rewrites pixels and re-encodes, which would drop
+/// an already-spliced EXIF chunk), then the EXIF chunk goes in. As with PNG, a
+/// stealth failure degrades to the text carrier alone rather than losing the
+/// metadata entirely.
+pub fn embed_webp_metadata(
+    image_bytes: &[u8],
+    params: &HashMap<String, String>,
+    mode: MetadataMode,
+) -> Result<Vec<u8>, String> {
+    let json_text = format_swarmui_json(params);
+
+    let (mut out, effective_mode) =
+        if mode == MetadataMode::StealthAlpha || mode == MetadataMode::Both {
+            match embed_webp_stealth_alpha(image_bytes, &json_text) {
+                Ok(bytes) => (bytes, mode),
+                Err(e) => {
+                    log::warn!(
+                        "WebP stealth alpha encoding failed ({}), falling back to EXIF only",
+                        e
+                    );
+                    (image_bytes.to_vec(), MetadataMode::TextChunk)
+                }
+            }
+        } else {
+            (image_bytes.to_vec(), mode)
+        };
+
+    if effective_mode == MetadataMode::TextChunk || effective_mode == MetadataMode::Both {
+        out = set_webp_exif(&out, &build_exif_user_comment_blob(&json_text))?;
+    }
+
+    Ok(out)
+}
+
+/// Decode a WebP, write the stealth-alpha bit stream into its alpha channel and
+/// re-encode losslessly (VP8L), which preserves the LSBs exactly.
+fn embed_webp_stealth_alpha(image_bytes: &[u8], json_text: &str) -> Result<Vec<u8>, String> {
+    let img = image::load_from_memory_with_format(image_bytes, image::ImageFormat::WebP)
+        .map_err(|e| format!("WebP decode error: {}", e))?;
+    let (width, height) = (img.width(), img.height());
+    let mut rgba = img.to_rgba8().into_raw();
+    encode_stealth_alpha(&mut rgba, width, height, 4, json_text)?;
+    crate::jxl::encode_rgba8_webp_from_raw(&rgba, width, height, false).map_err(|e| e.to_string())
+}
+
+/// Read MooshieUI/SwarmUI metadata from WebP bytes: stealth alpha first (it
+/// survives re-uploads), then the EXIF UserComment chunk.
+pub fn read_webp_metadata(image_bytes: &[u8]) -> Result<Option<HashMap<String, String>>, String> {
+    if let Ok(Some(params)) = read_webp_stealth_alpha(image_bytes) {
+        return Ok(Some(params));
+    }
+    let Some(exif) = get_webp_exif(image_bytes) else {
+        return Ok(None);
+    };
+    let Some(text) = read_exif_user_comment(&exif) else {
+        return Ok(None);
+    };
+    Ok(parse_swarmui_json(text.trim()))
+}
+
+fn read_webp_stealth_alpha(image_bytes: &[u8]) -> Result<Option<HashMap<String, String>>, String> {
+    let img = image::load_from_memory_with_format(image_bytes, image::ImageFormat::WebP)
+        .map_err(|e| format!("WebP decode error: {}", e))?;
+    let (width, height) = (img.width(), img.height());
+    let rgba = img.to_rgba8().into_raw();
+    decode_stealth_alpha_pixels(&rgba, width as usize, height as usize, 4)
 }
 
 // ---------------------------------------------------------------------------
@@ -958,5 +1437,197 @@ mod tests {
             magic.push(byte_val);
         }
         assert_eq!(&magic, b"stealth_pngcomp", "Magic header should match");
+    }
+
+    /// A deterministic non-uniform RGBA image, so a lossless round-trip is
+    /// actually meaningful (a flat fill would pass even under lossy encoding).
+    fn make_test_rgba(width: u32, height: u32) -> Vec<u8> {
+        let mut buf = Vec::with_capacity((width * height * 4) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                buf.push((x * 7 % 256) as u8);
+                buf.push((y * 13 % 256) as u8);
+                buf.push(((x + y) * 3 % 256) as u8);
+                buf.push(255);
+            }
+        }
+        buf
+    }
+
+    fn make_test_webp(width: u32, height: u32) -> Vec<u8> {
+        let rgba = make_test_rgba(width, height);
+        crate::jxl::encode_rgba8_webp_from_raw(&rgba, width, height, false).unwrap()
+    }
+
+    fn test_params() -> HashMap<String, String> {
+        let mut params = HashMap::new();
+        // Non-Latin text checks the UTF-16 UserComment encoding.
+        params.insert(
+            "positive_prompt".to_string(),
+            "webp round trip テスト".to_string(),
+        );
+        params.insert("seed".to_string(), "987654321".to_string());
+        params.insert("steps".to_string(), "28".to_string());
+        params
+    }
+
+    fn assert_params_match(read: &HashMap<String, String>) {
+        assert_eq!(
+            read.get("positive_prompt").map(String::as_str),
+            Some("webp round trip テスト")
+        );
+        assert_eq!(read.get("seed").map(String::as_str), Some("987654321"));
+        assert_eq!(read.get("steps").map(String::as_str), Some("28"));
+    }
+
+    #[test]
+    fn webp_format_detection() {
+        assert_eq!(detect_format(&make_test_webp(32, 32)), ImageFormat::WebP);
+    }
+
+    #[test]
+    fn webp_exif_round_trip() {
+        let webp = make_test_webp(64, 48);
+        let params = test_params();
+
+        let embedded = embed_webp_metadata(&webp, &params, MetadataMode::TextChunk).unwrap();
+
+        assert_eq!(detect_format(&embedded), ImageFormat::WebP);
+        assert!(
+            get_webp_exif(&embedded).is_some(),
+            "EXIF chunk should be present"
+        );
+        // Text-chunk mode must not touch the pixels, so no stealth payload exists
+        // and the generic reader has to fall through to EXIF.
+        assert!(read_webp_stealth_alpha(&embedded).unwrap().is_none());
+        let read = read_image_metadata(&embedded).unwrap().expect("metadata");
+        assert_params_match(&read);
+    }
+
+    #[test]
+    fn webp_stealth_alpha_round_trip_is_lossless() {
+        let (w, h) = (64u32, 48u32);
+        let webp = make_test_webp(w, h);
+        let params = test_params();
+
+        let embedded = embed_webp_metadata(&webp, &params, MetadataMode::StealthAlpha).unwrap();
+
+        let read = read_webp_stealth_alpha(&embedded)
+            .unwrap()
+            .expect("stealth metadata");
+        assert_params_match(&read);
+        // Stealth-only mode writes no EXIF chunk.
+        assert!(get_webp_exif(&embedded).is_none());
+
+        // VP8L is lossless: RGB must survive bit-exactly (alpha carries the
+        // payload in its LSBs, so only its top 7 bits are comparable).
+        let original = make_test_rgba(w, h);
+        let decoded = image::load_from_memory_with_format(&embedded, image::ImageFormat::WebP)
+            .unwrap()
+            .to_rgba8()
+            .into_raw();
+        assert_eq!(decoded.len(), original.len());
+        for (i, (dec, orig)) in decoded
+            .chunks_exact(4)
+            .zip(original.chunks_exact(4))
+            .enumerate()
+        {
+            assert_eq!(&dec[0..3], &orig[0..3], "RGB changed at pixel {}", i);
+            assert_eq!(dec[3] | 1, orig[3] | 1, "alpha changed at pixel {}", i);
+        }
+    }
+
+    #[test]
+    fn webp_both_modes_round_trip() {
+        let webp = make_test_webp(64, 48);
+        let params = test_params();
+
+        let embedded = embed_webp_metadata(&webp, &params, MetadataMode::Both).unwrap();
+
+        // Both carriers must be independently readable.
+        assert_params_match(
+            &read_webp_stealth_alpha(&embedded)
+                .unwrap()
+                .expect("stealth metadata"),
+        );
+        let exif = get_webp_exif(&embedded).expect("EXIF chunk");
+        let text = read_exif_user_comment(&exif).expect("UserComment");
+        assert_params_match(&parse_swarmui_json(text.trim()).expect("parsed EXIF JSON"));
+    }
+
+    #[test]
+    fn embed_image_metadata_preserves_container_format() {
+        let params = test_params();
+
+        let png = embed_image_metadata(&make_test_png(64, 64, false), &params, MetadataMode::Both)
+            .unwrap();
+        assert_eq!(detect_format(&png), ImageFormat::Png);
+        assert_params_match(&read_image_metadata(&png).unwrap().expect("png metadata"));
+
+        let webp =
+            embed_image_metadata(&make_test_webp(64, 48), &params, MetadataMode::Both).unwrap();
+        assert_eq!(detect_format(&webp), ImageFormat::WebP);
+        assert_params_match(&read_image_metadata(&webp).unwrap().expect("webp metadata"));
+    }
+
+    /// PNG `tEXt` is ISO 8859-1 only, so a CJK prompt used to make the whole
+    /// embed fail and the image was saved with no metadata at all. Those payloads
+    /// must land in `iTXt` (UTF-8) and still read back.
+    #[test]
+    fn png_text_chunk_falls_back_to_itxt_for_non_latin1() {
+        let png = embed_png_metadata(
+            &make_test_png(32, 32, false),
+            &test_params(),
+            MetadataMode::TextChunk,
+        )
+        .unwrap();
+
+        {
+            let reader = png::Decoder::new(Cursor::new(&png[..]))
+                .read_info()
+                .unwrap();
+            let info = reader.info();
+            assert!(
+                info.uncompressed_latin1_text.is_empty(),
+                "Japanese text is not representable as tEXt"
+            );
+            assert!(
+                info.utf8_text.iter().any(|c| c.keyword == "parameters"),
+                "expected an iTXt fallback chunk"
+            );
+        }
+
+        assert_params_match(&read_image_metadata(&png).unwrap().expect("png metadata"));
+    }
+
+    /// ASCII/Latin-1 payloads must keep using `tEXt`, which is the chunk
+    /// A1111-compatible readers look for.
+    #[test]
+    fn png_text_chunk_stays_latin1_when_representable() {
+        let mut params = HashMap::new();
+        params.insert("positive_prompt".to_string(), "plain prompt".to_string());
+        params.insert("seed".to_string(), "1".to_string());
+
+        let png = embed_png_metadata(
+            &make_test_png(32, 32, false),
+            &params,
+            MetadataMode::TextChunk,
+        )
+        .unwrap();
+
+        let reader = png::Decoder::new(Cursor::new(&png[..]))
+            .read_info()
+            .unwrap();
+        let info = reader.info();
+        assert!(
+            info.uncompressed_latin1_text
+                .iter()
+                .any(|c| c.keyword == "parameters"),
+            "expected a tEXt chunk"
+        );
+        assert!(
+            info.utf8_text.is_empty(),
+            "iTXt fallback should not be used"
+        );
     }
 }

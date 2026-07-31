@@ -684,6 +684,13 @@
   let interrogateImageUrl = $state<string | null>(null);
   let interrogateError = $state<string | null>(null);
 
+  /** Compare entry label: pin the first image, then pick the second (issue #517). */
+  function comparePinLabel(image: OutputImage): string {
+    if (!gallery.comparePin) return locale.t("gallery.compare.pin");
+    if (gallery.comparePin === image) return locale.t("gallery.compare.unpin");
+    return locale.t("gallery.compare.with_pinned");
+  }
+
   function handleSessionContextMenu(image: OutputImage, x: number, y: number) {
     ctxMenuImage = image;
     ctxMenuX = x;
@@ -699,6 +706,8 @@
       { label: "", action: () => {}, separator: true },
       { label: locale.t('generation.ctx.upscale'), action: () => upscaleImage(image) },
       { label: locale.t('generation.ctx.inpaint'), action: () => inpaintImage(image) },
+      { label: "", action: () => {}, separator: true },
+      { label: comparePinLabel(image), action: () => gallery.toggleComparePin(image) },
       { label: "", action: () => {}, separator: true },
       { label: locale.t('generation.ctx.save_as'), action: () => gallery.saveImageAs(image) },
       { label: locale.t('generation.ctx.copy'), action: () => gallery.copyToClipboard(image) },

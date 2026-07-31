@@ -30,17 +30,18 @@ fn comfyui_ws_config() -> WebSocketConfig {
 
 /// Result of processing a MOOSHIE_OUTPUT_IMAGE (event_type 100) binary frame.
 struct ProcessedOutputImage {
-    format: &'static str, // "jxl" or "png"
+    format: &'static str, // "jxl", "webp", or "png"
     ext: &'static str,    // file extension for the canonical image
     bit_depth: u8,
-    image_bytes: Vec<u8>,           // encoded JXL or PNG bytes
+    image_bytes: Vec<u8>,           // encoded JXL, WebP, or PNG bytes
     display_bytes: Option<Vec<u8>>, // WebP or PNG display copy (for JXL only)
     display_format: &'static str,   // "webp", "png", or "none"
     encode_ms: u64,
 }
 
 /// Decode a MOOSHIE_OUTPUT_IMAGE binary frame (event_type 100) and, for raw RGBA
-/// payloads (format_tags 3/4), encode to JXL + a WebP/PNG display copy.
+/// payloads (format_tags 3/4/5), encode to JXL + a WebP/PNG display copy, or to
+/// lossless WebP directly (tag 5).
 /// Shared by the Tauri, headless, and multi-GPU WebSocket handlers.
 async fn process_output_image(data: &[u8]) -> Option<ProcessedOutputImage> {
     if data.len() < 8 {
@@ -126,6 +127,46 @@ async fn process_output_image(data: &[u8]) -> Option<ProcessedOutputImage> {
                 display_opt,
                 disp_fmt,
             )
+        }
+        5 => {
+            // Raw 8-bit RGBA pixels destined for lossless WebP. The canonical
+            // image is itself browser-displayable, so no separate display copy
+            // is produced (unlike JXL, which browsers cannot render).
+            if data.len() < 16 {
+                log::warn!("MooshieSaveImage raw frame too small: len={}", data.len());
+                return None;
+            }
+            let width = u16::from_be_bytes([data[8], data[9]]) as u32;
+            let height = u16::from_be_bytes([data[10], data[11]]) as u32;
+            let channels = data[12];
+            let depth = data[13];
+            // WebP has no 16-bit sample format, so the Python node always packs
+            // 8-bit for this tag; anything else means a protocol mismatch.
+            if channels != 4 || depth != 8 {
+                log::warn!(
+                    "MooshieSaveImage webp header rejected: ch={} depth={}",
+                    channels,
+                    depth
+                );
+                return None;
+            }
+            let pixels = data[16..].to_vec();
+            let result = tokio::task::spawn_blocking(move || {
+                crate::jxl::encode_rgba8_webp_from_raw(&pixels, width, height, false)
+            })
+            .await;
+            let webp_bytes = match result {
+                Ok(Ok(bytes)) => bytes,
+                Ok(Err(e)) => {
+                    log::error!("WebP encode failed: {}", e);
+                    return None;
+                }
+                Err(e) => {
+                    log::error!("WebP encode task panicked: {}", e);
+                    return None;
+                }
+            };
+            ("webp", "webp", 8, webp_bytes, None, "none")
         }
         2 => ("png", "png", 16, data[8..].to_vec(), None, "png"),
         _ => ("png", "png", 8, data[8..].to_vec(), None, "png"),

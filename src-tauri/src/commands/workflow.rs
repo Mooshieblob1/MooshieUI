@@ -41,6 +41,42 @@ pub async fn generate(
         )?;
     }
 
+    let mut params = params;
+    // Misplaced model: the file lives in a folder that doesn't match what it
+    // actually is (e.g. a Flux unet dropped into models/checkpoints/). ComfyUI's
+    // stock loaders validate the filename against their own folder listing and
+    // would reject it, so resolve an absolute path here and let the workflow use
+    // the Mooshie path-based loader nodes instead.
+    if let Some(source_category) = params.model_source_category.clone() {
+        let active_model = if params.use_split_model {
+            params.diffusion_model.clone()
+        } else {
+            Some(params.checkpoint.clone())
+        };
+        if let Some(filename) = active_model.filter(|f| !f.is_empty()) {
+            let resolved = {
+                let config = state.config.read().await;
+                crate::commands::api::resolve_model_path(
+                    &config.comfyui_path,
+                    config.extra_model_paths.as_deref(),
+                    &source_category,
+                    &filename,
+                )
+            };
+            match resolved {
+                Some(path) => {
+                    params.resolved_model_path = Some(path.to_string_lossy().to_string());
+                }
+                None => {
+                    return Err(AppError::InvalidWorkflow(format!(
+                        "Model file not found: {}/{}",
+                        source_category, filename
+                    )));
+                }
+            }
+        }
+    }
+
     let seed = if params.seed < 0 {
         (rand::random::<u64>() >> 1) as i64
     } else {

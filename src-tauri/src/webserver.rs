@@ -1725,6 +1725,15 @@ async fn embed_temp_metadata_handler(
                 }
             }
         }
+        crate::metadata::ImageFormat::WebP => {
+            match crate::metadata::embed_webp_metadata(&bytes, &metadata, embed_mode) {
+                Ok(b) => (b, "webp"),
+                Err(e) => {
+                    log::warn!("embed_temp_metadata (WebP) failed: {}", e);
+                    return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response();
+                }
+            }
+        }
         _ => match crate::metadata::embed_png_metadata(&bytes, &metadata, embed_mode) {
             Ok(b) => (b, "png"),
             Err(e) => {
@@ -2576,7 +2585,7 @@ async fn dispatch_command(
             Ok(serde_json::json!(out))
         }
         "load_gallery_image_png" => {
-            // JXL → PNG transcode for downloading / clipboard. PNG keeps
+            // JXL/WebP → PNG transcode for downloading / clipboard. PNG keeps
             // metadata intact and is supported everywhere.
             let filename = args["filename"]
                 .as_str()
@@ -2588,13 +2597,26 @@ async fn dispatch_command(
             let dir = user_gallery_dir(username).ok_or("Cannot find gallery directory")?;
             let path = dir.join(&filename);
             let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-            let out = if filename.to_ascii_lowercase().ends_with(".jxl") {
+            let lower = filename.to_ascii_lowercase();
+            let out = if lower.ends_with(".jxl") || lower.ends_with(".webp") {
                 tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
                     let img = commands::api::decode_gallery_image(&bytes)?;
                     let mut buf = std::io::Cursor::new(Vec::new());
                     img.write_to(&mut buf, image::ImageFormat::Png)
                         .map_err(|e| format!("PNG encode failed: {}", e))?;
-                    Ok(buf.into_inner())
+                    let png = buf.into_inner();
+                    // Re-embed the source file's generation metadata (JXL box or
+                    // WebP EXIF chunk) as a PNG text chunk so the export is
+                    // metadata-complete, matching the desktop path.
+                    match crate::metadata::read_image_metadata(&bytes) {
+                        Ok(Some(meta)) => Ok(crate::metadata::embed_png_metadata(
+                            &png,
+                            &meta,
+                            crate::metadata::MetadataMode::TextChunk,
+                        )
+                        .unwrap_or(png)),
+                        _ => Ok(png),
+                    }
                 })
                 .await
                 .map_err(|e| format!("Task panicked: {}", e))?
@@ -3127,7 +3149,7 @@ async fn dispatch_command(
             let result = crate::metadata::read_image_metadata(&bytes).map_err(|e| e.to_string())?;
             serde_json::to_value(result).map_err(|e| e.to_string())
         }
-        "embed_png_metadata_bytes" => {
+        "embed_image_metadata_bytes" => {
             let image_bytes: Vec<u8> = serde_json::from_value(args["imageBytes"].clone())
                 .map_err(|e| format!("Invalid imageBytes: {}", e))?;
             let metadata: std::collections::HashMap<String, String> =
@@ -3140,7 +3162,7 @@ async fn dispatch_command(
             let mode = crate::metadata::MetadataMode::from_str(
                 metadata_mode.as_deref().unwrap_or("text_chunk"),
             );
-            let result = crate::metadata::embed_png_metadata(&image_bytes, &metadata, mode)
+            let result = crate::metadata::embed_image_metadata(&image_bytes, &metadata, mode)
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::json!(result))
         }
@@ -5553,6 +5575,7 @@ fn save_to_gallery_in_dir(
     let detected_format = crate::metadata::detect_format(bytes);
     let ext = match detected_format {
         crate::metadata::ImageFormat::Jxl => "jxl",
+        crate::metadata::ImageFormat::WebP => "webp",
         _ => "png",
     };
     let gallery_filename = format!("{}.{}", rendered_base, ext);
@@ -5577,6 +5600,10 @@ fn save_to_gallery_in_dir(
             }
             crate::metadata::ImageFormat::Jxl => {
                 crate::metadata::embed_jxl_metadata(bytes, meta).unwrap_or_else(|_| bytes.to_vec())
+            }
+            crate::metadata::ImageFormat::WebP => {
+                crate::metadata::embed_webp_metadata(bytes, meta, embed_mode)
+                    .unwrap_or_else(|_| bytes.to_vec())
             }
             crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }

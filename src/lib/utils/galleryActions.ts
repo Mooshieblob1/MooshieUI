@@ -100,11 +100,17 @@ export async function loadOutputImageForGenerationInput(
   const uploadFilename = pngFilename(image.filename, fallbackFilename);
 
   if (image.gallery_filename) {
-    const isJxl = image.gallery_filename.toLowerCase().endsWith(".jxl");
-    const bytes = isJxl
+    // JXL and WebP are transcoded to PNG server-side; PNG is the one format every
+    // stage of the ComfyUI input pipeline is guaranteed to accept.
+    const lower = image.gallery_filename.toLowerCase();
+    const needsTranscode = lower.endsWith(".jxl") || lower.endsWith(".webp");
+    const bytes = needsTranscode
       ? await loadGalleryImagePng(image.gallery_filename)
       : await loadGalleryImage(image.gallery_filename);
-    return { bytes, filename: isJxl ? uploadFilename : image.filename || fallbackFilename };
+    return {
+      bytes,
+      filename: needsTranscode ? uploadFilename : image.filename || fallbackFilename,
+    };
   }
 
   if (image.sessionBlob && image.sessionBlob.type !== "image/jxl") {

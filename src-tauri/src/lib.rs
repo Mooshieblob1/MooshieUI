@@ -389,7 +389,7 @@ pub fn run() {
             commands::api::open_directory,
             commands::api::save_image_file,
             commands::api::save_text_file,
-            commands::api::embed_png_metadata_bytes,
+            commands::api::embed_image_metadata_bytes,
             commands::api::save_to_gallery,
             commands::api::save_to_gallery_bytes,
             commands::api::save_to_gallery_temp,

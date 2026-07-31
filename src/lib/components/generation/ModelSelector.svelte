@@ -301,6 +301,50 @@
   const modelSpec = $derived(generation.modelSpec);
   const modelSpecUnavailable = $derived(generation.modelSpecUnavailable);
 
+  /** ModelSpec fields the info panel gives a dedicated row to. */
+  const RENDERED_MODEL_SPEC_FIELDS = new Set([
+    "thumbnail",
+    "title",
+    "author",
+    "date",
+    "description",
+    "architecture",
+    "implementation",
+    "sai_model_spec",
+    "resolution",
+    "prediction_type",
+    "trigger_phrase",
+    "usage_hint",
+    "preprocessor",
+    "encoder_layer",
+    "merged_from",
+    "hash_sha256",
+    "tags",
+    "license",
+  ]);
+
+  /**
+   * Fields the file declared that have no dedicated row — rendered verbatim so a
+   * non-standard or newly added ModelSpec key is never silently dropped. Driven
+   * by `modelspec_keys` so derived backend keys (family, recommended_vae, ...)
+   * stay out of the list.
+   */
+  const extraModelSpecFields = $derived.by(() => {
+    const declared = modelSpec?.modelspec_keys;
+    if (!declared) return [];
+    return declared
+      .split(",")
+      .map((field) => field.trim())
+      .filter((field) => field && !RENDERED_MODEL_SPEC_FIELDS.has(field))
+      .map((field) => ({ field, value: modelSpec?.[field] ?? "" }))
+      .filter((entry) => entry.value !== "");
+  });
+
+  /** A ModelSpec thumbnail is a base64 data URI; ignore anything else. */
+  const modelSpecThumbnail = $derived(
+    modelSpec?.thumbnail?.startsWith("data:image/") ? modelSpec.thumbnail : null
+  );
+
   /** Strip HTML tags and convert to readable plain text. */
   function stripHtml(html: string): string {
     return html
@@ -926,9 +970,12 @@
   }
 
   function selectCheckpoint(name: string) {
-    // Clear split model state when selecting a normal checkpoint
+    // Clear split model state when selecting a normal checkpoint. Detection may
+    // flip this back (and re-set modelSourceCategory) if the file turns out to be
+    // a split-file model that just happens to live in checkpoints/.
     generation.useSplitModel = false;
     generation.diffusionModel = null;
+    generation.modelSourceCategory = null;
     generation.clipModel = null;
     generation.clipType = null;
     // generation.vae = "";  // Reset selected vae for checkpoint
@@ -956,6 +1003,7 @@
     generation.useSplitModel = true;
     generation.diffusionModel = filename;
     generation.checkpoint = filename;
+    generation.modelSourceCategory = null;
     await generation.fetchAndApplyModelMetadata("diffusion_models", filename);
     generation.applyModelSpecificPreset();
   }
@@ -1044,7 +1092,10 @@
       }
     }
 
-    // Use resolved filenames (handles renamed files detected by hash)
+    // Use resolved filenames (handles renamed files detected by hash). Curated
+    // entries always download into the canonical folder, so no source-category
+    // override applies.
+    generation.modelSourceCategory = null;
     if (rec.splitModel) {
       const sm = rec.splitModel;
       generation.useSplitModel = true;
@@ -1274,11 +1325,24 @@
       </button>
       {#if showModelInfo}
         <div class="mt-1.5 bg-neutral-800/60 border border-neutral-700/50 rounded-lg p-2.5 space-y-1.5 text-xs">
+          {#if modelSpecThumbnail}
+            <img
+              src={modelSpecThumbnail}
+              alt={locale.t('generation.model.thumbnail_alt')}
+              class="w-full max-h-48 object-contain rounded-md bg-neutral-900/60"
+            />
+          {/if}
           {#if modelSpec.title}
             <div class="font-medium text-neutral-200">{modelSpec.title}</div>
           {/if}
           {#if modelSpec.author}
             <div class="text-neutral-500">by {modelSpec.author}</div>
+          {/if}
+          {#if modelSpec.date}
+            <div class="flex gap-2">
+              <span class="text-neutral-500">{locale.t('generation.model.date_label')}</span>
+              <span class="text-neutral-300">{modelSpec.date}</span>
+            </div>
           {/if}
           {#if modelSpec.description}
             <div class="text-neutral-400 text-[11px] whitespace-pre-line max-h-32 overflow-y-auto">{stripHtml(modelSpec.description)}</div>
@@ -1286,7 +1350,18 @@
           {#if modelSpec.architecture}
             <div class="flex gap-2">
               <span class="text-neutral-500">{locale.t('generation.model.architecture_label')}</span>
-              <span class="text-neutral-300">{modelSpec.architecture}</span>
+              <span class="text-neutral-300">
+                {modelSpec.architecture}
+                {#if modelSpec.architecture_inferred === "true"}
+                  <span class="text-neutral-500">({locale.t('generation.model.architecture_inferred')})</span>
+                {/if}
+              </span>
+            </div>
+          {/if}
+          {#if modelSpec.implementation}
+            <div class="flex gap-2">
+              <span class="text-neutral-500 shrink-0">{locale.t('generation.model.implementation_label')}</span>
+              <span class="text-neutral-300 break-all">{modelSpec.implementation}</span>
             </div>
           {/if}
           {#if modelSpec.hash}
@@ -1297,6 +1372,19 @@
                 class="text-neutral-500 hover:text-neutral-300 transition-colors"
                 title={locale.t('generation.model.copy_hash')}
                 onclick={() => { if (modelSpec?.hash) navigator.clipboard.writeText(modelSpec.hash); }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z"/><path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5z"/></svg>
+              </button>
+            </div>
+          {/if}
+          {#if modelSpec.hash_sha256}
+            <div class="flex gap-2 items-center">
+              <span class="text-neutral-500 shrink-0">{locale.t('generation.model.hash_sha256_label')}</span>
+              <span class="text-neutral-300 font-mono text-[10px] truncate">{modelSpec.hash_sha256}</span>
+              <button
+                class="text-neutral-500 hover:text-neutral-300 transition-colors shrink-0"
+                title={locale.t('generation.model.copy_hash')}
+                onclick={() => { if (modelSpec?.hash_sha256) navigator.clipboard.writeText(modelSpec.hash_sha256); }}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z"/><path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5z"/></svg>
               </button>
@@ -1336,6 +1424,24 @@
           {#if modelSpec.usage_hint}
             <div class="text-neutral-400 text-[11px] italic whitespace-pre-line">{stripHtml(modelSpec.usage_hint)}</div>
           {/if}
+          {#if modelSpec.preprocessor}
+            <div class="flex gap-2">
+              <span class="text-neutral-500 shrink-0">{locale.t('generation.model.preprocessor_label')}</span>
+              <span class="text-neutral-300 break-all">{modelSpec.preprocessor}</span>
+            </div>
+          {/if}
+          {#if modelSpec.encoder_layer}
+            <div class="flex gap-2">
+              <span class="text-neutral-500 shrink-0">{locale.t('generation.model.encoder_layer_label')}</span>
+              <span class="text-neutral-300">{modelSpec.encoder_layer}</span>
+            </div>
+          {/if}
+          {#if modelSpec.merged_from}
+            <div class="flex gap-2">
+              <span class="text-neutral-500 shrink-0">{locale.t('generation.model.merged_from_label')}</span>
+              <span class="text-neutral-300 break-words">{modelSpec.merged_from}</span>
+            </div>
+          {/if}
           {#if modelSpec.tags}
             <div class="flex flex-wrap gap-1 mt-1">
               {#each modelSpec.tags.split(",").map(t => t.trim()).filter(Boolean) as tag}
@@ -1343,10 +1449,27 @@
               {/each}
             </div>
           {/if}
+          {#if extraModelSpecFields.length}
+            <div class="pt-1.5 border-t border-neutral-700/50 space-y-1">
+              <div class="text-neutral-500 text-[10px] uppercase tracking-wide">{locale.t('generation.model.other_fields_label')}</div>
+              {#each extraModelSpecFields as entry (entry.field)}
+                <div class="flex gap-2 text-[10px]">
+                  <span class="text-neutral-600 shrink-0 font-mono">{entry.field}</span>
+                  <span class="text-neutral-400 break-all whitespace-pre-line max-h-24 overflow-y-auto">{entry.value}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
           {#if modelSpec.license}
             <div class="flex gap-2 text-[10px]">
               <span class="text-neutral-600">{locale.t('generation.model.license_label')}</span>
               <span class="text-neutral-500">{modelSpec.license}</span>
+            </div>
+          {/if}
+          {#if modelSpec.sai_model_spec}
+            <div class="flex gap-2 text-[10px]">
+              <span class="text-neutral-600">{locale.t('generation.model.spec_version_label')}</span>
+              <span class="text-neutral-500">{modelSpec.sai_model_spec}</span>
             </div>
           {/if}
         </div>

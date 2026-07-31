@@ -187,6 +187,22 @@ pub struct ModelLoadResult {
     pub next_id: u32,
 }
 
+/// Absolute path to use when the active model is stored in a folder that doesn't
+/// match what it actually is (a split-file model in `checkpoints/`, or a full
+/// checkpoint in `diffusion_models/`).
+///
+/// `model_source_category` is set by the frontend when detection reclassified the
+/// model; `resolved_model_path` is filled in by the `generate` command. Both are
+/// required — without the resolved path there is nothing for the path loaders to
+/// open, so the caller falls back to the stock loaders.
+fn misplaced_model_path(params: &GenerationParams) -> Option<&str> {
+    params.model_source_category.as_deref()?;
+    params
+        .resolved_model_path
+        .as_deref()
+        .filter(|p| !p.is_empty())
+}
+
 /// Load model nodes — either a single CheckpointLoaderSimple or split UNETLoader + CLIPLoader + VAELoader.
 /// Also handles the LoRA chain and optional separate VAE override.
 pub fn load_model_nodes(
@@ -237,6 +253,17 @@ pub fn load_model_nodes(
                 "class_type": "UnetLoaderGGUF",
                 "inputs": {
                     "unet_name": unet_name
+                }
+            })
+        } else if let Some(path) = misplaced_model_path(params) {
+            // Split-file model physically stored in another folder (usually
+            // checkpoints/). UNETLoader validates unet_name against its own folder
+            // listing and would reject it, so load by absolute path instead.
+            json!({
+                "class_type": "MooshieDiffusionLoaderPath",
+                "inputs": {
+                    "unet_path": path,
+                    "weight_dtype": "default"
                 }
             })
         } else {
@@ -290,17 +317,25 @@ pub fn load_model_nodes(
         vae_source = (vae_id, 0);
         next_id += 1;
     } else {
-        // Standard CheckpointLoaderSimple
+        // Standard CheckpointLoaderSimple, or the path-based Mooshie loader when the
+        // checkpoint physically lives outside models/checkpoints/.
         let checkpoint_id = next_id.to_string();
-        workflow.insert(
-            checkpoint_id.clone(),
+        let checkpoint_node = if let Some(path) = misplaced_model_path(params) {
+            json!({
+                "class_type": "MooshieCheckpointLoaderPath",
+                "inputs": {
+                    "ckpt_path": path
+                }
+            })
+        } else {
             json!({
                 "class_type": "CheckpointLoaderSimple",
                 "inputs": {
                     "ckpt_name": params.checkpoint
                 }
-            }),
-        );
+            })
+        };
+        workflow.insert(checkpoint_id.clone(), checkpoint_node);
         model_source = (checkpoint_id.clone(), 0);
         clip_source = (checkpoint_id.clone(), 1);
         vae_source = (checkpoint_id.clone(), 2);
@@ -431,6 +466,7 @@ fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: 
         result.next_id += 1;
         let output_format = match params.output_format.as_str() {
             "jxl" => "jxl_raw",
+            "webp" => "webp_raw",
             _ => "png",
         };
         result.workflow.insert(
@@ -464,6 +500,7 @@ fn finish_workflow(mut result: WorkflowResult, params: &GenerationParams, seed: 
     let save_id = result.next_id.to_string();
     let output_format = match params.output_format.as_str() {
         "jxl" => "jxl_raw",
+        "webp" => "webp_raw",
         _ => "png",
     };
     result.workflow.insert(

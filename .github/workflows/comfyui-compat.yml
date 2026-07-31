@@ -147,6 +147,20 @@ jobs:
           echo "Installing MooshieUI node dependency: $PIN"
           pip install "$PIN"
 
+      - name: Verify the quantization kernel stack (comfy-kitchen)
+        run: |
+          set -euo pipefail
+          # comfy-kitchen provides the int4/int8 convrot kernels used by quantized
+          # checkpoints. It is pinned by ComfyUI's own requirements.txt, so a pin
+          # bump that drops or breaks it would silently turn every quantized model
+          # into a generate-time "convrot_w4a4" failure for users. Fail here instead.
+          if ! grep -qiE '^comfy[-_]kitchen' comfyui-target/requirements.txt; then
+            echo "::error::comfy-kitchen is no longer pinned in ComfyUI's requirements.txt. Quantized (convrot) model support depends on it."
+            exit 1
+          fi
+          grep -iE '^comfy[-_]kitchen' comfyui-target/requirements.txt
+          python -c "import comfy_kitchen; print('comfy_kitchen import OK:', getattr(comfy_kitchen, '__version__', 'unknown'))"
+
       - name: Run custom-node compatibility smoke test
         run: |
           python scripts/comfyui-compat/smoke_test.py \

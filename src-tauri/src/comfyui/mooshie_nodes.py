@@ -12,6 +12,7 @@ import numpy as np
 
 import comfy.sample
 import comfy.samplers
+import comfy.sd
 import comfy.utils
 import comfy.model_management
 import folder_paths
@@ -508,6 +509,7 @@ class MooshieSaveImage:
     FMT_PNG_16 = 2       # 16-bit PNG (uint16, higher precision for post-processing)
     FMT_RAW_RGBA8 = 3    # 8-bit RGBA raw pixels  + 8-byte geometry header
     FMT_RAW_RGBA16 = 4   # 16-bit RGBA raw pixels + 8-byte geometry header (native endian)
+    FMT_RAW_RGBA8_WEBP = 5  # 8-bit RGBA raw pixels, encoded to lossless WebP in Rust
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -517,7 +519,7 @@ class MooshieSaveImage:
             },
             "optional": {
                 "bit_depth": (["8bit", "16bit"], {"default": "8bit"}),
-                "output_format": (["png", "jxl_raw"], {"default": "png"}),
+                "output_format": (["png", "jxl_raw", "webp_raw"], {"default": "png"}),
                 "output_role": (["final", "controlnet_preprocessor"], {"default": "final"}),
             },
         }
@@ -529,14 +531,18 @@ class MooshieSaveImage:
     DESCRIPTION = (
         "Sends images directly over WebSocket instead of writing to disk. "
         "Supports 8/16-bit PNG (default) and raw RGBA (encoded to JPEG XL "
-        "in the Tauri backend when output_format=jxl_raw)."
+        "in the Tauri backend when output_format=jxl_raw, or lossless WebP "
+        "when output_format=webp_raw)."
     )
 
     def save_images(self, images, bit_depth="8bit", output_format="png", output_role="final"):
         from server import PromptServer
 
         server = PromptServer.instance
-        want_raw = (output_format == "jxl_raw")
+        # WebP is 8-bit only (the container has no 16-bit sample format), so the
+        # raw payload is always packed at 8 bits regardless of the bit_depth input.
+        want_webp = (output_format == "webp_raw")
+        want_raw = want_webp or (output_format == "jxl_raw")
         event_type = self.MOOSHIE_CONTROLNET_PREPROCESSOR_EVENT_TYPE if output_role == "controlnet_preprocessor" else self.MOOSHIE_EVENT_TYPE
 
         for i in range(images.shape[0]):
@@ -553,7 +559,10 @@ class MooshieSaveImage:
                       "This usually means VRAM was corrupted by rapid generation interrupts. "
                       "Try generating again — the models will be reloaded cleanly.")
 
-            if want_raw:
+            if want_webp:
+                _, image_bytes = self._encode_raw(frame, "8bit")
+                fmt_tag = self.FMT_RAW_RGBA8_WEBP
+            elif want_raw:
                 fmt_tag, image_bytes = self._encode_raw(frame, bit_depth)
             elif bit_depth == "16bit":
                 fmt_tag = self.FMT_PNG_16
@@ -676,14 +685,115 @@ class MooshieSaveImage:
         return float("nan")
 
 
+_MODEL_EXTENSIONS = (".safetensors", ".sft", ".ckpt", ".pt", ".pth", ".bin")
+
+
+def _validate_model_path(node_name, path):
+    """Resolve and sanity-check an absolute model path supplied as a STRING input.
+
+    The stock loaders take a combo of filenames from one folder, so a model that
+    physically sits in the "wrong" folder (a unet in models/checkpoints/, say) is
+    rejected at /prompt validation time. MooshieUI detects the real model kind and
+    passes an absolute path instead; the Tauri backend has already resolved it
+    against ComfyUI's model roots, so here we only guard against typos and
+    non-model files.
+    """
+    if not path or not path.strip():
+        raise ValueError(f"{node_name}: empty model path")
+    resolved = os.path.abspath(os.path.expanduser(path.strip()))
+    if not os.path.isfile(resolved):
+        raise ValueError(f"{node_name}: model file not found: {resolved}")
+    if not resolved.lower().endswith(_MODEL_EXTENSIONS):
+        raise ValueError(f"{node_name}: not a recognized model file: {resolved}")
+    return resolved
+
+
+class MooshieCheckpointLoaderPath:
+    """CheckpointLoaderSimple that takes an absolute path instead of a folder combo."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "ckpt_path": ("STRING", {"default": "", "multiline": False}),
+            }
+        }
+
+    RETURN_TYPES = ("MODEL", "CLIP", "VAE")
+    FUNCTION = "load_checkpoint"
+    CATEGORY = "mooshie"
+    DESCRIPTION = (
+        "Loads a full checkpoint (baked CLIP + VAE) from an absolute path, so a "
+        "checkpoint stored outside models/checkpoints/ still loads."
+    )
+
+    def load_checkpoint(self, ckpt_path):
+        path = _validate_model_path("MooshieCheckpointLoaderPath", ckpt_path)
+        print(f"[MooshieCheckpointLoaderPath] loading {path}")
+        out = comfy.sd.load_checkpoint_guess_config(
+            path,
+            output_vae=True,
+            output_clip=True,
+            embedding_directory=folder_paths.get_folder_paths("embeddings"),
+        )
+        return out[:3]
+
+
+class MooshieDiffusionLoaderPath:
+    """UNETLoader that takes an absolute path instead of a folder combo."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "unet_path": ("STRING", {"default": "", "multiline": False}),
+            },
+            "optional": {
+                "weight_dtype": (
+                    ["default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"],
+                    {"default": "default"},
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "load_unet"
+    CATEGORY = "mooshie"
+    DESCRIPTION = (
+        "Loads a diffusion model (unet/DiT only, no baked CLIP or VAE) from an "
+        "absolute path, so a split-file model stored outside "
+        "models/diffusion_models/ still loads."
+    )
+
+    def load_unet(self, unet_path, weight_dtype="default"):
+        path = _validate_model_path("MooshieDiffusionLoaderPath", unet_path)
+        # Mirrors core UNETLoader's dtype handling.
+        model_options = {}
+        if weight_dtype == "fp8_e4m3fn":
+            model_options["dtype"] = torch.float8_e4m3fn
+        elif weight_dtype == "fp8_e4m3fn_fast":
+            model_options["dtype"] = torch.float8_e4m3fn
+            model_options["fp8_optimizations"] = True
+        elif weight_dtype == "fp8_e5m2":
+            model_options["dtype"] = torch.float8_e5m2
+
+        print(f"[MooshieDiffusionLoaderPath] loading {path} (weight_dtype={weight_dtype})")
+        model = comfy.sd.load_diffusion_model(path, model_options=model_options)
+        return (model,)
+
+
 NODE_CLASS_MAPPINGS = {
     "MooshieFaceDetailer": MooshieFaceDetailer,
     "MooshieSegmentDetailer": MooshieSegmentDetailer,
     "MooshieSaveImage": MooshieSaveImage,
+    "MooshieCheckpointLoaderPath": MooshieCheckpointLoaderPath,
+    "MooshieDiffusionLoaderPath": MooshieDiffusionLoaderPath,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MooshieFaceDetailer": "Mooshie Face Detailer",
     "MooshieSegmentDetailer": "Mooshie Segment Detailer",
     "MooshieSaveImage": "Mooshie Save Image",
+    "MooshieCheckpointLoaderPath": "Mooshie Checkpoint Loader (path)",
+    "MooshieDiffusionLoaderPath": "Mooshie Diffusion Model Loader (path)",
 }

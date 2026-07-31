@@ -44,6 +44,13 @@
     return image.generated_at_ms ?? 0;
   }
 
+  /** Compare button label: pin the first image, then pick the second (issue #517). */
+  function comparePinTitle(image: OutputImage): string {
+    if (!gallery.comparePin) return locale.t("gallery.compare.pin");
+    if (gallery.comparePin === image) return locale.t("gallery.compare.unpin");
+    return locale.t("gallery.compare.with_pinned");
+  }
+
   function getImageSize(image: OutputImage): number {
     return image.file_size_bytes ?? 0;
   }
@@ -416,6 +423,7 @@
                     {/if}
                     <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100 disabled:opacity-50" disabled={gallery.saving} onclick={() => gallery.saveImageAs(image)}>{gallery.saving ? locale.t("gallery.saving") : locale.t("gallery.save")}</button>
                     <button class="px-2 py-1 text-[11px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-100" onclick={() => gallery.copyToClipboard(image)}>{locale.t("gallery.copy")}</button>
+                    <button class="px-2 py-1 text-[11px] rounded text-neutral-100 {gallery.comparePin === image ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-neutral-800 hover:bg-neutral-700'}" title={comparePinTitle(image)} onclick={() => gallery.toggleComparePin(image)}>{locale.t("gallery.compare.short")}</button>
                     <button class="px-2 py-1 text-[11px] rounded bg-red-900/80 hover:bg-red-800 text-neutral-100" onclick={() => gallery.deleteImage(image)}>{locale.t("gallery.delete")}</button>
                   </div>
                 </div>
@@ -444,6 +452,7 @@
                     {/if}
                     <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow disabled:opacity-50" disabled={gallery.saving} title={locale.t("gallery.save_as")} onclick={(e) => { e.stopPropagation(); gallery.saveImageAs(image); }}>↓</button>
                     <button class="w-7 h-7 flex items-center justify-center rounded bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200 shadow" title={locale.t("gallery.copy")} onclick={(e) => { e.stopPropagation(); gallery.copyToClipboard(image); }}>⧉</button>
+                    <button class="w-7 h-7 flex items-center justify-center rounded shadow {gallery.comparePin === image ? 'bg-indigo-600 hover:bg-indigo-500 text-neutral-100' : 'bg-neutral-800/90 hover:bg-neutral-700 text-neutral-200'}" title={comparePinTitle(image)} onclick={(e) => { e.stopPropagation(); gallery.toggleComparePin(image); }}>⇄</button>
                     <button class="w-7 h-7 flex items-center justify-center rounded bg-red-900/80 hover:bg-red-800 text-red-300 hover:text-red-200 shadow" title={locale.t("gallery.delete")} onclick={(e) => { e.stopPropagation(); gallery.deleteImage(image); }}>×</button>
                   </div>
                 </div>

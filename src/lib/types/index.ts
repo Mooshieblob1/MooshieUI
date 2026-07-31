@@ -143,6 +143,10 @@ export interface GenerationParams {
   diffusion_model: string | null;
   clip_model: string | null;
   clip_type: string | null;
+  /** Folder the active model physically lives in when it contradicts its detected
+   *  kind ("checkpoints" / "diffusion_models"); null when correctly placed. The
+   *  backend resolves it to an absolute path for the Mooshie path loader nodes. */
+  model_source_category: string | null;
   /** Auto face-refinement pass after the main sample. */
   facefix_enabled: boolean;
   /** YOLO/segmentation detector model filename, or null for the default. */
@@ -159,7 +163,7 @@ export interface GenerationParams {
   is_sdxl_like?: boolean;
   is_vpred_model?: boolean;
   output_bit_depth: string;
-  /** Storage format for this generation: "png" (default) or "jxl". */
+  /** Storage format for this generation: "png" (default), "jxl", or "webp". */
   output_format: string;
   /** Anima Untwisting RoPE style transfer (txt2img only). */
   style_transfer_enabled?: boolean;
@@ -209,6 +213,12 @@ export interface GalleryImageEntry {
   size_bytes: number;
   modified_ms: number;
 }
+
+/** How the A/B comparison viewer blends the two images. */
+export type CompareMode = "slider" | "fade" | "difference" | "side_by_side";
+
+/** Divider axis for slider mode (also the split axis for side-by-side). */
+export type CompareOrientation = "horizontal" | "vertical";
 
 export interface SamplerInfo {
   samplers: string[];

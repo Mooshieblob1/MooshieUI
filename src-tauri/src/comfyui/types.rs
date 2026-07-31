@@ -206,6 +206,19 @@ pub struct GenerationParams {
     /// CLIP model type for CLIPLoader (e.g. "wan", "sd3", etc.)
     #[serde(default)]
     pub clip_type: Option<String>,
+    /// Folder the active model physically lives in, set only when it disagrees
+    /// with what the file actually is (a diffusion model in `checkpoints/`, or a
+    /// full checkpoint in `diffusion_models/`). `None` for correctly-placed files.
+    ///
+    /// ComfyUI's stock loaders validate the filename against their own folder's
+    /// listing, so a misplaced file cannot be named to them — it is loaded by
+    /// absolute path instead (see `resolved_model_path`).
+    #[serde(default)]
+    pub model_source_category: Option<String>,
+    /// Absolute path to the active model, resolved backend-side when
+    /// `model_source_category` is set. Never sent by the frontend.
+    #[serde(default)]
+    pub resolved_model_path: Option<String>,
     /// Optional ControlNet parameters
     #[serde(default)]
     pub controlnet: Option<ControlNetParam>,
@@ -246,8 +259,8 @@ pub struct GenerationParams {
     #[serde(default = "default_output_bit_depth")]
     pub output_bit_depth: String,
     /// Storage format the Rust bridge will produce for this generation.
-    /// "png" (default, backward compatible) or "jxl" (raw pixels out of
-    /// ComfyUI, encoded to JPEG XL in the Tauri backend).
+    /// "png" (default, backward compatible), "jxl" or "webp" (raw pixels out of
+    /// ComfyUI, encoded to JPEG XL / lossless WebP in the Tauri backend).
     #[serde(default = "default_output_format")]
     pub output_format: String,
     /// Anima Untwisting RoPE training-free style transfer (txt2img only in v1).

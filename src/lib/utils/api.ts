@@ -422,12 +422,16 @@ export async function saveTextFile(
   return ipcInvoke("save_text_file", { content, path });
 }
 
-export async function embedPngMetadataBytes(
+/**
+ * Embed generation metadata into raw image bytes, returning bytes in the *same*
+ * container format (PNG text chunk, JXL `xml ` box, or WebP EXIF/stealth alpha).
+ */
+export async function embedImageMetadataBytes(
   imageBytes: number[],
   metadata: Record<string, string>,
   metadataMode?: string
 ): Promise<number[]> {
-  return ipcInvoke("embed_png_metadata_bytes", { imageBytes, metadata, metadataMode });
+  return ipcInvoke("embed_image_metadata_bytes", { imageBytes, metadata, metadataMode });
 }
 
 export async function saveToGallery(
@@ -603,6 +607,7 @@ export async function setStorageLimit(username: string, limitBytes: number): Pro
 }
 
 export interface ModelSpec {
+  // Derived by the backend, not declared in the file.
   base_model?: string;
   family?: string;
   is_sdxl_like?: string;
@@ -611,9 +616,42 @@ export interface ModelSpec {
   recommended_clip_model?: string;
   recommended_clip_type?: string;
   hash?: string;
+  filename_family_mismatch?: string;
+  gguf_architecture?: string;
+  /**
+   * Which loader the weights actually need, regardless of the folder the file is
+   * in: `"checkpoint"` (baked CLIP + VAE) or `"diffusion_model"` (unet/DiT only).
+   * Absent when detection was inconclusive.
+   */
+  model_kind?: string;
+  /** How `model_kind` was determined: `"tensor_keys"`, `"gguf"`, or `"family"`. */
+  model_kind_source?: string;
+  /** "true" when `architecture` came from tensor-key inference, not the file. */
+  architecture_inferred?: string;
+  /** Comma-joined names of the `modelspec.*` fields actually declared in the file. */
+  modelspec_keys?: string;
+  header_v_pred?: string;
+  // SAI ModelSpec fields (`modelspec.*`, prefix stripped).
+  sai_model_spec?: string;
+  architecture?: string;
+  implementation?: string;
+  title?: string;
+  description?: string;
+  author?: string;
+  date?: string;
+  hash_sha256?: string;
+  license?: string;
+  usage_hint?: string;
+  /** base64 data URI. */
+  thumbnail?: string;
+  tags?: string;
+  merged_from?: string;
   prediction_type?: string;
   predict_key?: string;
-  header_v_pred?: string;
+  resolution?: string;
+  trigger_phrase?: string;
+  preprocessor?: string;
+  encoder_layer?: string;
   [key: string]: string | undefined;
 }
 
