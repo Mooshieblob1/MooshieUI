@@ -6973,9 +6973,18 @@ pub async fn check_attention_backend_core(
                 let stdout = String::from_utf8_lossy(&o.stdout);
                 let known = ["sageattention", "flash-attn", "triton", "triton-windows"];
                 for line in stdout.lines() {
-                    let pkg = line.split_whitespace().next().unwrap_or("").to_lowercase();
+                    let mut cols = line.split_whitespace();
+                    let pkg = cols.next().unwrap_or("").to_lowercase();
                     if known.iter().any(|k| pkg == *k) {
-                        venv_packages.push(pkg);
+                        // Keep `uv pip list`'s version column. SageAttention v1 and v2
+                        // both install under the package name `sageattention`, so the
+                        // bare name cannot tell a user which one is active — and the
+                        // v2 wheel's local version (e.g. "2.2.0+cu128torch2.9.1.post6")
+                        // also shows whether it matches the venv's torch build.
+                        match cols.next() {
+                            Some(version) => venv_packages.push(format!("{} {}", pkg, version)),
+                            None => venv_packages.push(pkg),
+                        }
                     }
                 }
             }
