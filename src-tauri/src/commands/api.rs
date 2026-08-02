@@ -6591,6 +6591,26 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     let _ = writeln!(output, "=== ComfyUI Log ===");
     let log_path = std::env::temp_dir().join("comfyui-desktop-stderr.log");
     let _ = writeln!(output, "(Source: {})", log_path.display());
+    // This file is truncated only when MooshieUI spawns ComfyUI itself. When it
+    // attached to an already-running server instead, the contents can be from a
+    // much earlier launch with a different ComfyUI/PyTorch version, so stamp the
+    // age rather than let a stale log be read as the current session's.
+    if let Ok(age) = std::fs::metadata(&log_path)
+        .and_then(|m| m.modified())
+        .and_then(|t| {
+            std::time::SystemTime::now()
+                .duration_since(t)
+                .map_err(|e| std::io::Error::other(e.to_string()))
+        })
+    {
+        let secs = age.as_secs();
+        let _ = writeln!(
+            output,
+            "(Last written {}h {}m ago)",
+            secs / 3600,
+            (secs % 3600) / 60
+        );
+    }
     match std::fs::read_to_string(&log_path) {
         Ok(content) => {
             if content.is_empty() {
