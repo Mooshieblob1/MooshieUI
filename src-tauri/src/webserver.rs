@@ -1633,19 +1633,40 @@ async fn serve_video_file(
             )
                 .into_response()
         }
-        None => match tokio::fs::read(path).await {
-            Ok(bytes) => (
+        None => {
+            // No Range header: stream the file in chunks rather than reading it
+            // whole. A 15 s H3 mp4 can be hundreds of MB, and the browser-mode
+            // save-video-as download takes this branch. Content-Length stays
+            // exact so downloads are still verifiable and resumable.
+            let stream = futures_util::stream::unfold(Some(file), |state| async move {
+                let mut file = state?;
+                let mut buf = vec![0u8; 256 * 1024];
+                match file.read(&mut buf).await {
+                    Ok(0) => None,
+                    Ok(n) => {
+                        buf.truncate(n);
+                        Some((
+                            Ok::<_, std::io::Error>(axum::body::Bytes::from(buf)),
+                            Some(file),
+                        ))
+                    }
+                    // Ending the stream with the error surfaces a truncated
+                    // body to the client instead of silently short-reading.
+                    Err(e) => Some((Err(e), None)),
+                }
+            });
+            (
                 StatusCode::OK,
                 [
                     ("content-type", "video/mp4".to_string()),
                     ("accept-ranges", "bytes".to_string()),
+                    ("content-length", len.to_string()),
                     ("cache-control", "no-cache".to_string()),
                 ],
-                bytes,
+                axum::body::Body::from_stream(stream),
             )
-                .into_response(),
-            Err(_) => (StatusCode::NOT_FOUND, "Video not found").into_response(),
-        },
+                .into_response()
+        }
     }
 }
 

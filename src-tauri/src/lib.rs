@@ -378,25 +378,47 @@ pub fn run() {
                             );
                         }
                         None => {
+                            // No Range header: hand back a bounded first chunk,
+                            // not the whole file. The Tauri custom-protocol
+                            // responder takes an owned Vec<u8> and cannot
+                            // stream, and a 15 s H3 mp4 can be hundreds of MB.
+                            // Players follow the 206 with real Range requests,
+                            // which the arm above serves.
                             use std::io::Read;
-                            let mut bytes = Vec::new();
-                            match file.read_to_end(&mut bytes) {
-                                Ok(_) => responder.respond(
+                            if len == 0 {
+                                responder.respond(
                                     tauri::http::Response::builder()
                                         .status(200)
                                         .header("Content-Type", "video/mp4")
                                         .header("Accept-Ranges", "bytes")
                                         .header("Cache-Control", "no-cache")
-                                        .body(bytes)
-                                        .unwrap(),
-                                ),
-                                Err(_) => responder.respond(
-                                    tauri::http::Response::builder()
-                                        .status(404)
                                         .body(Vec::new())
                                         .unwrap(),
-                                ),
+                                );
+                                return;
                             }
+                            let end = (crate::http_range::OPEN_END_CHUNK - 1).min(len - 1);
+                            let mut buf = vec![0u8; (end + 1) as usize];
+                            if file.read_exact(&mut buf).is_err() {
+                                responder.respond(
+                                    tauri::http::Response::builder()
+                                        .status(500)
+                                        .body(Vec::new())
+                                        .unwrap(),
+                                );
+                                return;
+                            }
+                            let partial = end + 1 < len;
+                            let mut builder = tauri::http::Response::builder()
+                                .status(if partial { 206 } else { 200 })
+                                .header("Content-Type", "video/mp4")
+                                .header("Accept-Ranges", "bytes")
+                                .header("Cache-Control", "no-cache");
+                            if partial {
+                                builder =
+                                    builder.header("Content-Range", format!("bytes 0-{end}/{len}"));
+                            }
+                            responder.respond(builder.body(buf).unwrap());
                         }
                     }
                     return;
