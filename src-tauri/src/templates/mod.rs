@@ -34,14 +34,14 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
             ));
         }
         for (label, file) in [
-            ("diffusion model", params.video_diffusion_model.as_deref()),
-            ("text encoder", params.video_clip_model.as_deref()),
-            ("video VAE", params.video_vae_model.as_deref()),
-            ("audio VAE", params.video_audio_vae_model.as_deref()),
+            ("a diffusion model", params.video_diffusion_model.as_deref()),
+            ("a text encoder", params.video_clip_model.as_deref()),
+            ("a video VAE", params.video_vae_model.as_deref()),
+            ("an audio VAE", params.video_audio_vae_model.as_deref()),
         ] {
             if file.map(str::trim).unwrap_or("").is_empty() {
                 return Err(format!(
-                    "Video generation requires a {} — open the model panel to download the MiniMax H3 files.",
+                    "Video generation requires {} — open the model panel to download the MiniMax H3 files.",
                     label
                 ));
             }
