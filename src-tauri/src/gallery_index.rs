@@ -103,7 +103,28 @@ fn init_schema(c: &Connection) -> rusqlite::Result<()> {
             VALUES (new.id, new.prompt, new.negative_prompt, new.checkpoint);
         END;
         "#,
-    )
+    )?;
+    apply_migrations(c);
+    Ok(())
+}
+
+/// Additive, idempotent column migrations. SQLite has no ADD COLUMN IF NOT
+/// EXISTS, so a re-run fails with "duplicate column name" — that exact error
+/// is expected and swallowed; anything else is logged.
+fn apply_migrations(c: &Connection) {
+    for ddl in [
+        "ALTER TABLE images ADD COLUMN media_type TEXT NOT NULL DEFAULT 'image'",
+        "ALTER TABLE images ADD COLUMN duration_seconds REAL",
+        "ALTER TABLE images ADD COLUMN fps REAL",
+        "ALTER TABLE images ADD COLUMN poster_path TEXT",
+    ] {
+        if let Err(e) = c.execute_batch(ddl) {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column name") {
+                log::warn!("gallery_index: migration failed ({ddl}): {msg}");
+            }
+        }
+    }
 }
 
 fn format_label(fmt: ImageFormat) -> &'static str {
@@ -111,6 +132,7 @@ fn format_label(fmt: ImageFormat) -> &'static str {
         ImageFormat::Png => "png",
         ImageFormat::Jxl => "jxl",
         ImageFormat::WebP => "webp",
+        ImageFormat::Mp4 => "mp4",
         ImageFormat::Unknown => "unknown",
     }
 }
@@ -264,6 +286,84 @@ pub fn upsert(
 
     if let Err(e) = res {
         log::warn!("gallery_index: upsert failed for {}: {e}", path_str);
+    }
+}
+
+/// Metadata for an indexed video, computed by the save pipeline.
+pub struct VideoIndexMeta {
+    pub duration_seconds: f64,
+    pub fps: f64,
+    pub width: u32,
+    pub height: u32,
+    /// Absolute path of the `{stem}_poster.webp` sidecar, if one was saved.
+    pub poster_path: Option<String>,
+}
+
+/// Upsert a gallery video into the index. Best-effort: errors are logged, not
+/// returned. Videos carry no embedded generation metadata in v1, so
+/// prompt/seed/checkpoint stay NULL (enrichment is a later PR).
+pub fn upsert_video(path: &Path, file_size: u64, meta: &VideoIndexMeta) {
+    let guard = conn().lock();
+    let Ok(mut guard) = guard else {
+        log::warn!("gallery_index: mutex poisoned, skipping video upsert");
+        return;
+    };
+    let Some(ref mut c) = *guard else {
+        return; // DB disabled
+    };
+
+    let path_str = path.to_string_lossy().to_string();
+    let res = c.execute(
+        r#"
+        INSERT INTO images (
+            path, format, file_size, width, height, created_at,
+            media_type, duration_seconds, fps, poster_path
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'video', ?7, ?8, ?9)
+        ON CONFLICT(path) DO UPDATE SET
+            format           = excluded.format,
+            file_size        = excluded.file_size,
+            width            = excluded.width,
+            height           = excluded.height,
+            media_type       = excluded.media_type,
+            duration_seconds = excluded.duration_seconds,
+            fps              = excluded.fps,
+            poster_path      = excluded.poster_path
+        "#,
+        params![
+            path_str,
+            format_label(ImageFormat::Mp4),
+            file_size as i64,
+            meta.width as i64,
+            meta.height as i64,
+            now_ms(),
+            meta.duration_seconds,
+            meta.fps,
+            meta.poster_path,
+        ],
+    );
+
+    if let Err(e) = res {
+        log::warn!("gallery_index: video upsert failed for {}: {e}", path_str);
+    }
+}
+
+/// Point a video row at a new poster path after a rename. Best-effort.
+pub fn update_poster_path(video_path: &Path, poster_path: &Path) {
+    let guard = conn().lock();
+    let Ok(guard) = guard else {
+        return;
+    };
+    let Some(ref c) = *guard else {
+        return;
+    };
+    let video_str = video_path.to_string_lossy().to_string();
+    let poster_str = poster_path.to_string_lossy().to_string();
+    if let Err(e) = c.execute(
+        "UPDATE images SET poster_path = ?1 WHERE path = ?2",
+        params![poster_str, video_str],
+    ) {
+        log::warn!("gallery_index: poster update failed for {video_str}: {e}");
     }
 }
 

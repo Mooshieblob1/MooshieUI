@@ -5614,6 +5614,7 @@ fn save_to_gallery_in_dir(
                 crate::metadata::embed_webp_metadata(bytes, meta, embed_mode)
                     .unwrap_or_else(|_| bytes.to_vec())
             }
+            crate::metadata::ImageFormat::Mp4 => bytes.to_vec(),
             crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {
