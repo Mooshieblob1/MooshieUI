@@ -368,7 +368,16 @@ pub fn update_poster_path(video_path: &Path, poster_path: &Path) {
     }
 }
 
-/// Duration in seconds for every indexed video, keyed by file basename.
+/// Playback metadata for one indexed video row.
+#[derive(Debug, Clone, Copy)]
+pub struct VideoMeta {
+    pub duration_seconds: f64,
+    /// `None` when the row predates the `fps` column or the encoder did not
+    /// report a rate. Callers fall back to 24.
+    pub fps: Option<f64>,
+}
+
+/// One query for the whole video table, keyed by gallery path.
 ///
 /// This is the first **reader** on the index. The gallery listing needs a
 /// duration badge per mp4, and one query for the whole table beats a lookup
@@ -379,7 +388,7 @@ pub fn update_poster_path(video_path: &Path, poster_path: &Path) {
 ///
 /// Best-effort like every other function here: an unavailable or broken index
 /// yields an empty map and the listing simply shows no duration badges.
-pub fn video_durations() -> HashMap<String, f64> {
+pub fn video_meta() -> HashMap<String, VideoMeta> {
     let mut out = HashMap::new();
     let guard = conn().lock();
     let Ok(guard) = guard else {
@@ -389,31 +398,42 @@ pub fn video_durations() -> HashMap<String, f64> {
         return out;
     };
     let mut stmt = match c.prepare(
-        "SELECT path, duration_seconds FROM images \
+        "SELECT path, duration_seconds, fps FROM images \
          WHERE media_type = 'video' AND duration_seconds IS NOT NULL",
     ) {
         Ok(s) => s,
         Err(e) => {
-            log::warn!("gallery_index: duration query prepare failed: {e}");
+            log::warn!("gallery_index: video meta query prepare failed: {e}");
             return out;
         }
     };
     let rows = match stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, f64>(1)?,
+            row.get::<_, Option<f64>>(2)?,
+        ))
     }) {
         Ok(r) => r,
         Err(e) => {
-            log::warn!("gallery_index: duration query failed: {e}");
+            log::warn!("gallery_index: video meta query failed: {e}");
             return out;
         }
     };
-    for (path, duration) in rows.flatten() {
-        let name = Path::new(&path)
+    for row in rows.flatten() {
+        let name = Path::new(&row.0)
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or(path.as_str())
+            .unwrap_or(row.0.as_str())
             .to_string();
-        out.insert(name, duration);
+        out.insert(
+            name,
+            VideoMeta {
+                duration_seconds: row.1,
+                // A stored 0.0 is meaningless as a frame rate; treat it as absent.
+                fps: row.2.filter(|v| *v > 0.0),
+            },
+        );
     }
     out
 }

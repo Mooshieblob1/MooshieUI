@@ -32,6 +32,10 @@ class ProgressStore {
    * URL so Range requests keep working. Cleared when a new generation starts.
    */
   lastOutputVideo = $state<string | null>(null);
+  /** Frame rate of `lastOutputVideo`, from the `comfyui:output_video` event. */
+  lastOutputVideoFps = $state<number | null>(null);
+  /** Gallery filename of `lastOutputVideo`; enables export from the preview. */
+  lastOutputVideoFilename = $state<string | null>(null);
   modeLastOutput = $state<Record<GenerationMode, string | null>>({
     txt2img: null,
     img2img: null,
@@ -314,6 +318,8 @@ class ProgressStore {
       this.totalSteps = 0;
       this.previewImage = null;
       this.lastOutputVideo = null;
+      this.lastOutputVideoFps = null;
+      this.lastOutputVideoFilename = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
       const now = Date.now();
@@ -387,6 +393,8 @@ class ProgressStore {
       this.currentNode = null;
       this.previewImage = null;
       this.lastOutputVideo = null;
+      this.lastOutputVideoFps = null;
+      this.lastOutputVideoFilename = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
       this.generationStartTime = null;
@@ -408,6 +416,8 @@ class ProgressStore {
     this.currentNode = null;
     this.previewImage = null;
     this.lastOutputVideo = null;
+    this.lastOutputVideoFps = null;
+    this.lastOutputVideoFilename = null;
     this.samplingPass = 0;
     this._lastProgressNode = null;
     this.generationStartTime = null;

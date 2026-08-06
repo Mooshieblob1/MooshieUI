@@ -2594,7 +2594,7 @@ async fn dispatch_command(
                 return Ok(serde_json::json!([]));
             }
             // One query for the whole video table, not one per directory entry.
-            let durations = crate::gallery_index::video_durations();
+            let meta = crate::gallery_index::video_meta();
             let mut files: Vec<_> = std::fs::read_dir(&dir)
                 .map_err(|e| e.to_string())?
                 .filter_map(|entry| {
@@ -2612,12 +2612,13 @@ async fn dispatch_command(
                         .duration_since(std::time::UNIX_EPOCH)
                         .ok()?
                         .as_millis() as u64;
-                    let duration_seconds = durations.get(&name).copied();
+                    let entry_meta = meta.get(&name);
                     Some(serde_json::json!({
                         "filename": name,
                         "size_bytes": metadata.len(),
                         "modified_ms": modified_ms,
-                        "duration_seconds": duration_seconds,
+                        "duration_seconds": entry_meta.map(|m| m.duration_seconds),
+                        "fps": entry_meta.and_then(|m| m.fps),
                     }))
                 })
                 .collect();
