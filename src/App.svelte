@@ -3642,6 +3642,9 @@
           loop
           playsinline
           oncontextmenu={openLightboxContextMenu}
+          onkeydown={(e) => {
+            if (e.key === "ArrowLeft" || e.key === "ArrowRight") e.stopPropagation();
+          }}
         ></video>
       {:else if gallery.lightboxUrl}
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
