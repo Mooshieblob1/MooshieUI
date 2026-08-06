@@ -1014,6 +1014,8 @@ const ja: Record<string, string> = {
   "gallery.inpaint": "インペイント",
   "gallery.upscale": "アップスケール",
   "gallery.save_as": "名前を付けて保存",
+  "gallery.save_video_as": "動画を名前を付けて保存...",
+  "gallery.play_video": "動画を再生",
   "gallery.copy": "コピー",
   "gallery.delete": "削除",
   "gallery.all_images": "すべての画像",
@@ -1132,6 +1134,7 @@ const ja: Record<string, string> = {
   "gallery.mode.img2img": "画像から画像",
   "gallery.mode.inpainting": "インペインティング",
   "gallery.mode.unknown": "不明なモード",
+  "gallery.mode.video": "動画",
 
   // ギャラリートースト
   "gallery.toast.loaded_upscale": "アップスケール用に画像を読み込みました",
@@ -1146,6 +1149,9 @@ const ja: Record<string, string> = {
   "gallery.toast.applied_settings": "PNGメタデータから生成設定を適用しました",
   "gallery.toast.failed_metadata": "メタデータの読み取りに失敗しました",
   "gallery.toast.image_saved": "画像を保存しました",
+  "gallery.toast.video_saved": "動画を保存しました",
+  "gallery.toast.failed_save_video": "動画の保存に失敗しました",
+  "gallery.toast.copy_video_unsupported": "動画はクリップボードにコピーできません",
   "gallery.toast.not_saved_yet": "画像はまだギャラリーに保存されていません",
   "gallery.toast.no_save_dir": "保存ディレクトリが設定されていません — 設定 › ギャラリーで追加してください",
   "gallery.toast.failed_save": "画像の保存に失敗しました",
@@ -1983,6 +1989,7 @@ const ja: Record<string, string> = {
 
   "controlnet.preprocessor_preview_alt": "Preprocessor preview",
   "preview.alt": "Preview",
+  "preview.video_alt": "動画プレビュー",
   "canvas.inpaint_preview_alt": "Inpainting generation preview",
   "canvas.staged_alt": "Staged",
   "generation.model_spec_badge": "ModelSpec",

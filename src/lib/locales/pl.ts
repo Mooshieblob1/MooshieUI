@@ -1239,6 +1239,8 @@ const pl: Record<string, string> = {
   "gallery.inpaint": "Inpaint",
   "gallery.upscale": "Powiększ",
   "gallery.save_as": "Zapisz jako",
+  "gallery.save_video_as": "Zapisz wideo jako...",
+  "gallery.play_video": "Odtwórz wideo",
   "gallery.copy": "Kopiuj",
   "gallery.delete": "Usuń",
   "gallery.all_images": "Wszystkie obrazy",
@@ -1357,6 +1359,7 @@ const pl: Record<string, string> = {
   "gallery.mode.img2img": "Obraz do obrazu",
   "gallery.mode.inpainting": "Inpainting",
   "gallery.mode.unknown": "Nieznany tryb",
+  "gallery.mode.video": "Wideo",
 
   // Gallery toast messages
   "gallery.toast.loaded_upscale": "Obraz załadowany do powiększania",
@@ -1371,6 +1374,9 @@ const pl: Record<string, string> = {
   "gallery.toast.applied_settings": "Zastosowano ustawienia generowania z metadanych PNG",
   "gallery.toast.failed_metadata": "Nie udało się odczytać metadanych",
   "gallery.toast.image_saved": "Obraz zapisany",
+  "gallery.toast.video_saved": "Zapisano wideo",
+  "gallery.toast.failed_save_video": "Nie udało się zapisać wideo",
+  "gallery.toast.copy_video_unsupported": "Nie można kopiować wideo do schowka",
   "gallery.toast.not_saved_yet": "Obraz nie został jeszcze zapisany do Galerii",
   "gallery.toast.no_save_dir": "Nie skonfigurowano katalogu zapisu — dodaj go w Ustawienia › Galeria",
   "gallery.toast.failed_save": "Nie udało się zapisać obrazu",
@@ -2160,6 +2166,7 @@ const pl: Record<string, string> = {
 
   "controlnet.preprocessor_preview_alt": "Podgląd preprocesora",
   "preview.alt": "Podgląd",
+  "preview.video_alt": "Podgląd wideo",
   "canvas.inpaint_preview_alt": "Podgląd generacji inpaintingu",
   "canvas.staged_alt": "Staged",
   "generation.model_spec_badge": "ModelSpec",

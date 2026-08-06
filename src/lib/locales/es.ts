@@ -1051,6 +1051,8 @@ const es: Record<string, string> = {
   "gallery.inpaint": "Inpaint",
   "gallery.upscale": "Aumentar escala",
   "gallery.save_as": "Guardar como",
+  "gallery.save_video_as": "Guardar vídeo como...",
+  "gallery.play_video": "Reproducir vídeo",
   "gallery.copy": "Copiar",
   "gallery.delete": "Eliminar",
   "gallery.all_images": "Todas las imágenes",
@@ -1169,6 +1171,7 @@ const es: Record<string, string> = {
   "gallery.mode.img2img": "Imagen a imagen",
   "gallery.mode.inpainting": "Inpainting",
   "gallery.mode.unknown": "Modo desconocido",
+  "gallery.mode.video": "Vídeo",
 
   // Mensajes toast de galería
   "gallery.toast.loaded_upscale": "Imagen cargada para escalado",
@@ -1183,6 +1186,9 @@ const es: Record<string, string> = {
   "gallery.toast.applied_settings": "Ajustes de generación aplicados desde metadatos PNG",
   "gallery.toast.failed_metadata": "Error al leer metadatos",
   "gallery.toast.image_saved": "Imagen guardada",
+  "gallery.toast.video_saved": "Vídeo guardado",
+  "gallery.toast.failed_save_video": "No se pudo guardar el vídeo",
+  "gallery.toast.copy_video_unsupported": "Los vídeos no se pueden copiar al portapapeles",
   "gallery.toast.not_saved_yet": "La imagen aún no se ha guardado en la galería",
   "gallery.toast.no_save_dir": "No hay directorio de guardado configurado — añade uno en Ajustes › Galería",
   "gallery.toast.failed_save": "Error al guardar la imagen",
@@ -2022,6 +2028,7 @@ const es: Record<string, string> = {
 
   "controlnet.preprocessor_preview_alt": "Preprocessor preview",
   "preview.alt": "Preview",
+  "preview.video_alt": "Vista previa del vídeo",
   "canvas.inpaint_preview_alt": "Inpainting generation preview",
   "canvas.staged_alt": "Staged",
   "generation.model_spec_badge": "ModelSpec",

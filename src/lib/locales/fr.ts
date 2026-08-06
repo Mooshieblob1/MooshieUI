@@ -1014,6 +1014,8 @@ const fr: Record<string, string> = {
   "gallery.inpaint": "Inpaint",
   "gallery.upscale": "Upscale",
   "gallery.save_as": "Enregistrer sous",
+  "gallery.save_video_as": "Enregistrer la vidéo sous...",
+  "gallery.play_video": "Lire la vidéo",
   "gallery.copy": "Copier",
   "gallery.delete": "Supprimer",
   "gallery.all_images": "Toutes les images",
@@ -1132,6 +1134,7 @@ const fr: Record<string, string> = {
   "gallery.mode.img2img": "Image vers image",
   "gallery.mode.inpainting": "Inpainting",
   "gallery.mode.unknown": "Mode inconnu",
+  "gallery.mode.video": "Vidéo",
 
   // Messages toast galerie
   "gallery.toast.loaded_upscale": "Image chargée pour l'upscale",
@@ -1146,6 +1149,9 @@ const fr: Record<string, string> = {
   "gallery.toast.applied_settings": "Paramètres de génération appliqués depuis les métadonnées PNG",
   "gallery.toast.failed_metadata": "Échec de la lecture des métadonnées",
   "gallery.toast.image_saved": "Image enregistrée",
+  "gallery.toast.video_saved": "Vidéo enregistrée",
+  "gallery.toast.failed_save_video": "Échec de l'enregistrement de la vidéo",
+  "gallery.toast.copy_video_unsupported": "Les vidéos ne peuvent pas être copiées dans le presse-papiers",
   "gallery.toast.not_saved_yet": "Image pas encore enregistrée dans la galerie",
   "gallery.toast.no_save_dir": "Aucun répertoire de sauvegarde configuré — ajoutez-en un dans Paramètres › Galerie",
   "gallery.toast.failed_save": "Échec de l’enregistrement de l’image",
@@ -1984,6 +1990,7 @@ const fr: Record<string, string> = {
 
   "controlnet.preprocessor_preview_alt": "Preprocessor preview",
   "preview.alt": "Preview",
+  "preview.video_alt": "Aperçu de la vidéo",
   "canvas.inpaint_preview_alt": "Inpainting generation preview",
   "canvas.staged_alt": "Staged",
   "generation.model_spec_badge": "ModelSpec",

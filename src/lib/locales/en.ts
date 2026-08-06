@@ -1240,6 +1240,8 @@ const en: Record<string, string> = {
   "gallery.inpaint": "Inpaint",
   "gallery.upscale": "Upscale",
   "gallery.save_as": "Save As",
+  "gallery.save_video_as": "Save Video As...",
+  "gallery.play_video": "Play video",
   "gallery.copy": "Copy",
   "gallery.delete": "Delete",
   "gallery.all_images": "All Images",
@@ -1358,6 +1360,7 @@ const en: Record<string, string> = {
   "gallery.mode.img2img": "Image to Image",
   "gallery.mode.inpainting": "Inpainting",
   "gallery.mode.unknown": "Unknown Mode",
+  "gallery.mode.video": "Video",
 
   // Gallery toast messages
   "gallery.toast.loaded_upscale": "Image loaded for upscaling",
@@ -1372,6 +1375,9 @@ const en: Record<string, string> = {
   "gallery.toast.applied_settings": "Applied generation settings from PNG metadata",
   "gallery.toast.failed_metadata": "Failed to read metadata",
   "gallery.toast.image_saved": "Image saved",
+  "gallery.toast.video_saved": "Video saved",
+  "gallery.toast.failed_save_video": "Failed to save video",
+  "gallery.toast.copy_video_unsupported": "Videos can't be copied to the clipboard",
   "gallery.toast.not_saved_yet": "Image not saved to gallery yet",
   "gallery.toast.no_save_dir": "No save directory configured — add one in Settings › Gallery",
   "gallery.toast.failed_save": "Failed to save image",
@@ -2161,6 +2167,7 @@ const en: Record<string, string> = {
 
   "controlnet.preprocessor_preview_alt": "Preprocessor preview",
   "preview.alt": "Preview",
+  "preview.video_alt": "Video preview",
   "canvas.inpaint_preview_alt": "Inpainting generation preview",
   "canvas.staged_alt": "Staged",
   "generation.model_spec_badge": "ModelSpec",
