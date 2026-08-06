@@ -314,7 +314,10 @@ async fn handle_video_output(
     // WS-side id resolves the owner directly. Desktop generations have no
     // owner and land in the root gallery.
     let owner = state.prompt_queue.owner_of(prompt_id);
-    let gallery_dir = crate::webserver::user_gallery_dir(owner.as_deref())?;
+    let Some(gallery_dir) = crate::webserver::user_gallery_dir(owner.as_deref()) else {
+        log::warn!("[video] gallery unavailable, dropping video output for prompt {prompt_id}");
+        return None;
+    };
 
     let prompt_id_owned = prompt_id.to_string();
     let saved = tokio::task::spawn_blocking(move || {

@@ -1968,9 +1968,17 @@ pub async fn rename_gallery_image(
         let old_poster = old_path.with_file_name(format!("{old_stem}_poster.webp"));
         if old_poster.is_file() {
             let new_poster = old_path.with_file_name(format!("{new_stem}_poster.webp"));
-            if std::fs::rename(&old_poster, &new_poster).is_ok() {
-                crate::gallery_index::rename(&old_poster, &new_poster);
-                crate::gallery_index::update_poster_path(&new_path, &new_poster);
+            match std::fs::rename(&old_poster, &new_poster) {
+                Ok(()) => {
+                    crate::gallery_index::rename(&old_poster, &new_poster);
+                    crate::gallery_index::update_poster_path(&new_path, &new_poster);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[gallery] poster rename failed ({} -> ...): {e}",
+                        old_poster.display()
+                    );
+                }
             }
         }
     }

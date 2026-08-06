@@ -377,23 +377,27 @@ pub fn run() {
                                     .unwrap(),
                             );
                         }
-                        None => match std::fs::read(&file_path) {
-                            Ok(bytes) => responder.respond(
-                                tauri::http::Response::builder()
-                                    .status(200)
-                                    .header("Content-Type", "video/mp4")
-                                    .header("Accept-Ranges", "bytes")
-                                    .header("Cache-Control", "no-cache")
-                                    .body(bytes)
-                                    .unwrap(),
-                            ),
-                            Err(_) => responder.respond(
-                                tauri::http::Response::builder()
-                                    .status(404)
-                                    .body(Vec::new())
-                                    .unwrap(),
-                            ),
-                        },
+                        None => {
+                            use std::io::Read;
+                            let mut bytes = Vec::new();
+                            match file.read_to_end(&mut bytes) {
+                                Ok(_) => responder.respond(
+                                    tauri::http::Response::builder()
+                                        .status(200)
+                                        .header("Content-Type", "video/mp4")
+                                        .header("Accept-Ranges", "bytes")
+                                        .header("Cache-Control", "no-cache")
+                                        .body(bytes)
+                                        .unwrap(),
+                                ),
+                                Err(_) => responder.respond(
+                                    tauri::http::Response::builder()
+                                        .status(404)
+                                        .body(Vec::new())
+                                        .unwrap(),
+                                ),
+                            }
+                        }
                     }
                     return;
                 }
