@@ -105,7 +105,7 @@
 
   $effect(() => {
     // Start auto-play when component mounts or when not generating
-    if (!progress.isGenerating && !progress.displayImage) {
+    if (!progress.isGenerating && !progress.displayImage && !progress.lastOutputVideo) {
       startAutoPlay();
     } else {
       stopAutoPlay();
@@ -353,7 +353,21 @@
 </script>
 
 <div class="relative w-full aspect-square bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 flex items-center justify-center overflow-hidden group">
-  {#if progress.displayImage}
+  {#if progress.lastOutputVideo}
+    <!-- A finished video wins over the last sampled still frame. Not wrapped
+         in the preview button: native controls and a click-to-open-lightbox
+         button cannot share the same element. -->
+    <!-- svelte-ignore a11y_media_has_caption -->
+    <video
+      src={progress.lastOutputVideo}
+      class="w-full h-full object-contain"
+      controls
+      autoplay
+      loop
+      playsinline
+      aria-label={locale.t("preview.video_alt")}
+    ></video>
+  {:else if progress.displayImage}
     <button
       class="w-full h-full cursor-pointer"
       onclick={openPreviewLightbox}

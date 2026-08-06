@@ -2524,6 +2524,34 @@
         fetches.push(fetchPromise);
         pendingOutputFetches.set(pid, fetches);
       }),
+      ipcListen("comfyui:output_video", async (event: any) => {
+        // MooshieSaveVideo (WS event 102) has already moved the mp4 and its
+        // poster sidecar into the gallery directory and indexed them, so the
+        // payload carries a gallery filename, not bytes.
+        //
+        // NOTE: this event is not registered with cache_temp_event, so an SSE
+        // client that connects late gets no replay. Adding the entry here is
+        // what makes the video appear without a manual refresh; late clients
+        // fall back to the normal loadFromDisk() listing.
+        const data = event.payload;
+        const videoFilename = data?.video_filename;
+        if (typeof videoFilename !== "string" || !videoFilename) return;
+
+        // Filter by prompt_id, matching the output_image listener: reject
+        // events belonging to another user's prompt in browser mode.
+        if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
+
+        const durationSeconds =
+          typeof data.duration_seconds === "number" ? data.duration_seconds : undefined;
+
+        await gallery.addPersistedImage(videoFilename, {
+          duration_seconds: durationSeconds,
+        });
+
+        // Play it in the progress preview. The gallery URL is Range-served, so
+        // the preview never buffers the whole clip.
+        progress.lastOutputVideo = await gallery.loadFullImage(videoFilename);
+      }),
       ipcListen("comfyui:executing", async (event: any) => {
         const data = event.payload;
         console.log("Executing event:", data);
