@@ -43,9 +43,395 @@ pub fn compute_h3_dimensions(aspect_ratio: &str, megapixels: f64) -> (u32, u32) 
     (snap(width), snap(height))
 }
 
+/// Build the complete MiniMax H3 video workflow for either variant.
+///
+/// Returns the final workflow JSON directly — never routed through
+/// `finish_workflow`. The negative prompt is unused by design: `BasicGuider`
+/// has no negative conditioning input.
+pub fn build(params: &GenerationParams, seed: i64) -> Value {
+    let (width, height) =
+        compute_h3_dimensions(&params.video_aspect_ratio, params.video_megapixels);
+    let length = compute_h3_frame_length(params.video_duration_seconds);
+
+    let mut workflow = serde_json::Map::new();
+    let mut next_id: u32 = 1;
+
+    let unet_id = next_id.to_string();
+    workflow.insert(
+        unet_id.clone(),
+        json!({
+            "class_type": "UNETLoader",
+            "inputs": {
+                "unet_name": params.video_diffusion_model.as_deref().unwrap_or(""),
+                "weight_dtype": "default"
+            }
+        }),
+    );
+    next_id += 1;
+
+    let clip_id = next_id.to_string();
+    workflow.insert(
+        clip_id.clone(),
+        json!({
+            "class_type": "CLIPLoader",
+            "inputs": {
+                "clip_name": params.video_clip_model.as_deref().unwrap_or(""),
+                "type": "minimax"
+            }
+        }),
+    );
+    next_id += 1;
+
+    let vae_id = next_id.to_string();
+    workflow.insert(
+        vae_id.clone(),
+        json!({
+            "class_type": "VAELoader",
+            "inputs": { "vae_name": params.video_vae_model.as_deref().unwrap_or("") }
+        }),
+    );
+    next_id += 1;
+
+    let audio_vae_id = next_id.to_string();
+    workflow.insert(
+        audio_vae_id.clone(),
+        json!({
+            "class_type": "VAELoader",
+            "inputs": { "vae_name": params.video_audio_vae_model.as_deref().unwrap_or("") }
+        }),
+    );
+    next_id += 1;
+
+    let h3_id = if params.video_variant == "ref2va" {
+        let mut inputs = serde_json::Map::new();
+        inputs.insert("clip".to_string(), json!([clip_id.as_str(), 0]));
+        inputs.insert("vae".to_string(), json!([vae_id.as_str(), 0]));
+        inputs.insert("audio_vae".to_string(), json!([audio_vae_id.as_str(), 0]));
+        inputs.insert("prompt".to_string(), json!(params.positive_prompt));
+        inputs.insert("width".to_string(), json!(width));
+        inputs.insert("height".to_string(), json!(height));
+        inputs.insert("length".to_string(), json!(length));
+        inputs.insert("ref_image_size".to_string(), json!("match"));
+        for (i, filename) in params
+            .video_ref_images
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .take(9)
+            .enumerate()
+        {
+            let load_id = next_id.to_string();
+            workflow.insert(
+                load_id.clone(),
+                json!({ "class_type": "LoadImage", "inputs": { "image": filename } }),
+            );
+            next_id += 1;
+            inputs.insert(format!("ref_image_{}", i + 1), json!([load_id.as_str(), 0]));
+        }
+        let id = next_id.to_string();
+        workflow.insert(
+            id.clone(),
+            json!({ "class_type": "MiniMaxH3ReferenceToVideo", "inputs": inputs }),
+        );
+        next_id += 1;
+        id
+    } else {
+        let mut inputs = serde_json::Map::new();
+        inputs.insert("clip".to_string(), json!([clip_id.as_str(), 0]));
+        inputs.insert("vae".to_string(), json!([vae_id.as_str(), 0]));
+        inputs.insert("prompt".to_string(), json!(params.positive_prompt));
+        inputs.insert("width".to_string(), json!(width));
+        inputs.insert("height".to_string(), json!(height));
+        inputs.insert("length".to_string(), json!(length));
+        for (key, frame) in [
+            ("first_frame", params.video_first_frame.as_deref()),
+            ("last_frame", params.video_last_frame.as_deref()),
+        ] {
+            let filename = frame.map(str::trim).unwrap_or("");
+            if filename.is_empty() {
+                continue;
+            }
+            let load_id = next_id.to_string();
+            workflow.insert(
+                load_id.clone(),
+                json!({ "class_type": "LoadImage", "inputs": { "image": filename } }),
+            );
+            next_id += 1;
+            inputs.insert(key.to_string(), json!([load_id.as_str(), 0]));
+        }
+        let id = next_id.to_string();
+        workflow.insert(
+            id.clone(),
+            json!({ "class_type": "MiniMaxH3ImageToVideo", "inputs": inputs }),
+        );
+        next_id += 1;
+        id
+    };
+
+    let noise_id = next_id.to_string();
+    workflow.insert(
+        noise_id.clone(),
+        json!({ "class_type": "RandomNoise", "inputs": { "noise_seed": seed } }),
+    );
+    next_id += 1;
+
+    let sampler_select_id = next_id.to_string();
+    workflow.insert(
+        sampler_select_id.clone(),
+        json!({
+            "class_type": "KSamplerSelect",
+            "inputs": { "sampler_name": "res_multistep" }
+        }),
+    );
+    next_id += 1;
+
+    let scheduler_id = next_id.to_string();
+    workflow.insert(
+        scheduler_id.clone(),
+        json!({
+            "class_type": "BasicScheduler",
+            "inputs": {
+                "model": [unet_id.as_str(), 0],
+                "scheduler": "simple",
+                "steps": 20,
+                "denoise": 1.0
+            }
+        }),
+    );
+    next_id += 1;
+
+    let guider_id = next_id.to_string();
+    workflow.insert(
+        guider_id.clone(),
+        json!({
+            "class_type": "BasicGuider",
+            "inputs": {
+                "model": [unet_id.as_str(), 0],
+                "conditioning": [h3_id.as_str(), 0]
+            }
+        }),
+    );
+    next_id += 1;
+
+    let sampler_id = next_id.to_string();
+    workflow.insert(
+        sampler_id.clone(),
+        json!({
+            "class_type": "SamplerCustomAdvanced",
+            "inputs": {
+                "noise": [noise_id.as_str(), 0],
+                "guider": [guider_id.as_str(), 0],
+                "sampler": [sampler_select_id.as_str(), 0],
+                "sigmas": [scheduler_id.as_str(), 0],
+                "latent_image": [h3_id.as_str(), 1]
+            }
+        }),
+    );
+    next_id += 1;
+
+    let decode_id = next_id.to_string();
+    workflow.insert(
+        decode_id.clone(),
+        json!({
+            "class_type": "VAEDecode",
+            "inputs": {
+                "samples": [sampler_id.as_str(), 0],
+                "vae": [vae_id.as_str(), 0]
+            }
+        }),
+    );
+    next_id += 1;
+
+    let audio_decode_id = next_id.to_string();
+    workflow.insert(
+        audio_decode_id.clone(),
+        json!({
+            "class_type": "VAEDecodeAudio",
+            "inputs": {
+                "samples": [sampler_id.as_str(), 0],
+                "vae": [audio_vae_id.as_str(), 0]
+            }
+        }),
+    );
+    next_id += 1;
+
+    let create_video_id = next_id.to_string();
+    workflow.insert(
+        create_video_id.clone(),
+        json!({
+            "class_type": "CreateVideo",
+            "inputs": {
+                "images": [decode_id.as_str(), 0],
+                "audio": [audio_decode_id.as_str(), 0],
+                "fps": 24.0
+            }
+        }),
+    );
+    next_id += 1;
+
+    let save_id = next_id.to_string();
+    workflow.insert(
+        save_id,
+        json!({
+            "class_type": "MooshieSaveVideo",
+            "inputs": {
+                "video": [create_video_id.as_str(), 0],
+                "filename_prefix": "mooshie_video"
+            }
+        }),
+    );
+
+    Value::Object(workflow)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::comfyui::types::GenerationParams;
+
+    /// Minimal deserialization-based constructor — `GenerationParams` has
+    /// required fields and no `Default`, so tests build it from JSON. The
+    /// diffusion filename is derived from the variant so validation's
+    /// cross-variant guard (Task 3) accepts it.
+    fn video_params(variant: &str) -> GenerationParams {
+        serde_json::from_value(json!({
+            "mode": "video",
+            "positive_prompt": "a red fox running through snow",
+            "negative_prompt": "",
+            "checkpoint": "",
+            "loras": [],
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "steps": 28,
+            "cfg": 1.0,
+            "seed": "42",
+            "width": 0,
+            "height": 0,
+            "batch_size": 1,
+            "denoise": 1.0,
+            "upscale_enabled": false,
+            "upscale_method": "latent",
+            "upscale_scale": 1.0,
+            "upscale_denoise": 0.5,
+            "upscale_steps": 10,
+            "upscale_tile_size": 1024,
+            "upscale_tiling": false,
+            "video_variant": variant,
+            "video_duration_seconds": 5.0,
+            "video_megapixels": 0.4,
+            "video_aspect_ratio": "16:9",
+            "video_diffusion_model": format!("minimax_h3_{variant}_nvfp4.safetensors"),
+            "video_clip_model": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+            "video_vae_model": "minimax_h3_video_vae_fp16.safetensors",
+            "video_audio_vae_model": "minimax_h3_audio_vae_fp32.safetensors"
+        }))
+        .expect("valid test params")
+    }
+
+    fn nodes_of_class<'a>(workflow: &'a Value, class_type: &str) -> Vec<&'a Value> {
+        workflow
+            .as_object()
+            .expect("workflow is an object")
+            .values()
+            .filter(|node| node["class_type"] == class_type)
+            .collect()
+    }
+
+    #[test]
+    fn fl2va_graph_has_expected_shape() {
+        let workflow = build(&video_params("fl2va"), 42);
+        assert_eq!(nodes_of_class(&workflow, "MiniMaxH3ImageToVideo").len(), 1);
+        assert!(nodes_of_class(&workflow, "MiniMaxH3ReferenceToVideo").is_empty());
+        assert!(nodes_of_class(&workflow, "LoadImage").is_empty());
+        assert_eq!(nodes_of_class(&workflow, "UNETLoader").len(), 1);
+        assert_eq!(nodes_of_class(&workflow, "VAELoader").len(), 2);
+        assert_eq!(nodes_of_class(&workflow, "VAEDecode").len(), 1);
+        assert_eq!(nodes_of_class(&workflow, "VAEDecodeAudio").len(), 1);
+        assert_eq!(nodes_of_class(&workflow, "MooshieSaveVideo").len(), 1);
+        assert!(nodes_of_class(&workflow, "MooshieSaveImage").is_empty());
+
+        let h3 = nodes_of_class(&workflow, "MiniMaxH3ImageToVideo")[0];
+        assert_eq!(
+            h3["inputs"]["prompt"],
+            json!("a red fox running through snow")
+        );
+        assert_eq!(h3["inputs"]["width"], json!(832));
+        assert_eq!(h3["inputs"]["height"], json!(480));
+        assert_eq!(h3["inputs"]["length"], json!(124));
+        assert!(h3["inputs"].get("first_frame").is_none());
+        assert!(h3["inputs"].get("last_frame").is_none());
+
+        let clip = nodes_of_class(&workflow, "CLIPLoader")[0];
+        assert_eq!(clip["inputs"]["type"], json!("minimax"));
+
+        let noise = nodes_of_class(&workflow, "RandomNoise")[0];
+        assert_eq!(noise["inputs"]["noise_seed"], json!(42));
+
+        let sampler_select = nodes_of_class(&workflow, "KSamplerSelect")[0];
+        assert_eq!(
+            sampler_select["inputs"]["sampler_name"],
+            json!("res_multistep")
+        );
+
+        let scheduler = nodes_of_class(&workflow, "BasicScheduler")[0];
+        assert_eq!(scheduler["inputs"]["scheduler"], json!("simple"));
+        assert_eq!(scheduler["inputs"]["steps"], json!(20));
+        assert_eq!(scheduler["inputs"]["denoise"], json!(1.0));
+
+        let sampler = nodes_of_class(&workflow, "SamplerCustomAdvanced")[0];
+        assert_eq!(sampler["inputs"]["latent_image"][1], json!(1));
+
+        let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
+        assert_eq!(create_video["inputs"]["fps"], json!(24.0));
+        assert!(create_video["inputs"]["audio"].is_array());
+
+        let save = nodes_of_class(&workflow, "MooshieSaveVideo")[0];
+        assert_eq!(save["inputs"]["filename_prefix"], json!("mooshie_video"));
+    }
+
+    #[test]
+    fn fl2va_wires_first_and_last_frames() {
+        let mut params = video_params("fl2va");
+        params.video_first_frame = Some("first.png".to_string());
+        params.video_last_frame = Some("last.png".to_string());
+        let workflow = build(&params, 1);
+        assert_eq!(nodes_of_class(&workflow, "LoadImage").len(), 2);
+        let h3 = nodes_of_class(&workflow, "MiniMaxH3ImageToVideo")[0];
+        assert!(h3["inputs"]["first_frame"].is_array());
+        assert!(h3["inputs"]["last_frame"].is_array());
+    }
+
+    #[test]
+    fn fl2va_ignores_blank_frame_entries() {
+        let mut params = video_params("fl2va");
+        params.video_first_frame = Some("  ".to_string());
+        let workflow = build(&params, 1);
+        assert!(nodes_of_class(&workflow, "LoadImage").is_empty());
+        let h3 = nodes_of_class(&workflow, "MiniMaxH3ImageToVideo")[0];
+        assert!(h3["inputs"].get("first_frame").is_none());
+    }
+
+    #[test]
+    fn ref2va_wires_reference_images_individually() {
+        let mut params = video_params("ref2va");
+        params.video_ref_images = vec![
+            "a.png".to_string(),
+            "b.png".to_string(),
+            "".to_string(),
+            "c.png".to_string(),
+        ];
+        let workflow = build(&params, 1);
+        assert!(nodes_of_class(&workflow, "MiniMaxH3ImageToVideo").is_empty());
+        let h3 = nodes_of_class(&workflow, "MiniMaxH3ReferenceToVideo")[0];
+        assert!(h3["inputs"]["audio_vae"].is_array());
+        assert_eq!(h3["inputs"]["ref_image_size"], json!("match"));
+        assert!(h3["inputs"]["ref_image_1"].is_array());
+        assert!(h3["inputs"]["ref_image_2"].is_array());
+        assert!(h3["inputs"]["ref_image_3"].is_array());
+        assert!(h3["inputs"].get("ref_image_4").is_none());
+        assert_eq!(nodes_of_class(&workflow, "LoadImage").len(), 3);
+    }
 
     #[test]
     fn frame_length_snaps_up_to_17n_plus_5() {
