@@ -3,8 +3,9 @@
 //! The index mirrors per-image metadata into a queryable form so future
 //! features (search UI, sidecar-less metadata browsing, duplicate detection)
 //! can read it without walking the gallery directory and parsing every
-//! image. At present there is **no reader** — writes are best-effort and
-//! never block or fail the save/delete paths.
+//! image. Writes are best-effort and never block or fail the save/delete
+//! paths. The only reader is `video_durations()`, used by the gallery
+//! listing; it is equally best-effort and degrades to an empty map.
 //!
 //! The DB lives at `{gallery_dir}/index.sqlite` and is initialized lazily on
 //! first use. FTS5 provides full-text search over prompt, negative_prompt,
@@ -365,6 +366,56 @@ pub fn update_poster_path(video_path: &Path, poster_path: &Path) {
     ) {
         log::warn!("gallery_index: poster update failed for {video_str}: {e}");
     }
+}
+
+/// Duration in seconds for every indexed video, keyed by file basename.
+///
+/// This is the first **reader** on the index. The gallery listing needs a
+/// duration badge per mp4, and one query for the whole table beats a lookup
+/// per directory entry. Keyed by basename rather than by full path because
+/// the listing walks a directory while the stored paths are absolute; gallery
+/// video names embed a prompt UUID (`{promptId}__video__{stem}.mp4`), so
+/// basenames are unique in practice.
+///
+/// Best-effort like every other function here: an unavailable or broken index
+/// yields an empty map and the listing simply shows no duration badges.
+pub fn video_durations() -> HashMap<String, f64> {
+    let mut out = HashMap::new();
+    let guard = conn().lock();
+    let Ok(guard) = guard else {
+        return out;
+    };
+    let Some(ref c) = *guard else {
+        return out;
+    };
+    let mut stmt = match c.prepare(
+        "SELECT path, duration_seconds FROM images \
+         WHERE media_type = 'video' AND duration_seconds IS NOT NULL",
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("gallery_index: duration query prepare failed: {e}");
+            return out;
+        }
+    };
+    let rows = match stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+    }) {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("gallery_index: duration query failed: {e}");
+            return out;
+        }
+    };
+    for (path, duration) in rows.flatten() {
+        let name = Path::new(&path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path.as_str())
+            .to_string();
+        out.insert(name, duration);
+    }
+    out
 }
 
 /// Update an image's path in the index after a rename. Best-effort: errors are

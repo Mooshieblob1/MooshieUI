@@ -49,6 +49,9 @@ pub struct GalleryImageEntry {
     pub filename: String,
     pub size_bytes: u64,
     pub modified_ms: u64,
+    /// Playback length for `.mp4` entries, read from the gallery index.
+    /// `None` for images and for videos the index does not know about.
+    pub duration_seconds: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1540,6 +1543,9 @@ pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppE
         return Ok(vec![]);
     }
 
+    // One query for the whole video table, not one per directory entry.
+    let durations = crate::gallery_index::video_durations();
+
     let mut files: Vec<_> = std::fs::read_dir(&dir)?
         .filter_map(|entry| {
             let entry = entry.ok()?;
@@ -1555,16 +1561,40 @@ pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppE
                 .ok()?
                 .as_millis() as u64;
 
+            let duration_seconds = durations.get(&name).copied();
+
             Some(GalleryImageEntry {
                 filename: name,
                 size_bytes: metadata.len(),
                 modified_ms,
+                duration_seconds,
             })
         })
         .collect();
 
     files.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
     Ok(files)
+}
+
+/// Copy a gallery file to a caller-chosen destination path.
+///
+/// Used by save-video-as. Videos are far too large to marshal through IPC as a
+/// byte array: Tauri v2 serializes `Vec<u8>` as a JSON number array, so a few
+/// hundred MB of mp4 would balloon into gigabytes of JSON. The copy happens in
+/// Rust instead. Browser mode never calls this (it downloads straight from the
+/// `/internal-api/_gallery/` URL), so there is no webserver dispatch arm.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn copy_gallery_file_to(filename: String, dest_path: String) -> Result<(), AppError> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(AppError::Other("Invalid filename".into()));
+    }
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    let src = resolve_gallery_image_path(&dir, &filename)
+        .map_err(|e| AppError::Other(format!("Read failed: {}", e)))?;
+    tokio::fs::copy(&src, &dest_path).await?;
+    Ok(())
 }
 
 #[cfg(feature = "desktop")]

@@ -468,6 +468,7 @@ pub fn run() {
             commands::api::save_to_gallery_temp,
             commands::api::list_gallery_images,
             commands::api::list_gallery_image_entries,
+            commands::api::copy_gallery_file_to,
             commands::api::load_gallery_image,
             commands::api::load_gallery_image_display,
             commands::api::load_gallery_image_png,
