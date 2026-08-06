@@ -7,6 +7,7 @@ pub mod segment_detail;
 pub mod style_transfer;
 pub mod txt2img;
 pub mod upscale;
+pub mod video;
 
 use serde_json::{json, Value};
 
