@@ -391,6 +391,7 @@ pub fn run() {
                                         .status(200)
                                         .header("Content-Type", "video/mp4")
                                         .header("Accept-Ranges", "bytes")
+                                        .header("Content-Length", "0")
                                         .header("Cache-Control", "no-cache")
                                         .body(Vec::new())
                                         .unwrap(),
@@ -413,6 +414,7 @@ pub fn run() {
                                 .status(if partial { 206 } else { 200 })
                                 .header("Content-Type", "video/mp4")
                                 .header("Accept-Ranges", "bytes")
+                                .header("Content-Length", (end + 1).to_string())
                                 .header("Cache-Control", "no-cache");
                             if partial {
                                 builder =
