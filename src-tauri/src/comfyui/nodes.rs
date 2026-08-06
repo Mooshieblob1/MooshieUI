@@ -70,6 +70,7 @@ pub const MISSING_GGUF_NODES_MARKER: &str = "Required GGUF custom nodes failed t
 
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveImage",
+    "MooshieSaveVideo",
     "MooshieFaceDetailer",
     "MooshieSegmentDetailer",
     "MooshieSoftGuidance",
