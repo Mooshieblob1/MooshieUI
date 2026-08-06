@@ -3170,6 +3170,17 @@ async fn dispatch_command(
                 std::fs::remove_file(&path).map_err(|e| e.to_string())?;
             }
             crate::gallery_index::remove(&path);
+            // Videos own a poster sidecar that listings never surface; delete it
+            // together with its mp4, matching the desktop `delete_gallery_image`
+            // command. Without this, deleting a video in browser mode orphans the
+            // poster file and its index row forever.
+            if let Some(stem) = filename.strip_suffix(".mp4") {
+                let poster = path.with_file_name(format!("{stem}_poster.webp"));
+                if poster.is_file() {
+                    let _ = std::fs::remove_file(&poster);
+                    crate::gallery_index::remove(&poster);
+                }
+            }
             Ok(serde_json::json!(null))
         }
         "rename_gallery_image" => {

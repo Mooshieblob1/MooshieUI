@@ -126,7 +126,17 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
                 json!({ "class_type": "LoadImage", "inputs": { "image": filename } }),
             );
             next_id += 1;
-            inputs.insert(format!("ref_image_{}", i + 1), json!([load_id.as_str(), 0]));
+            // ComfyUI's Autogrow (COMFY_AUTOGROW_V3) expands the `ref_images` slot into
+            // dotted paths: the template names are 0-based (`[f"{prefix}{i}" for i in
+            // range(max)]`) and each is prefixed with the Autogrow input's own id, so the
+            // first reference image is `ref_images.ref_image_0`. `build_nested_inputs`
+            // then splits on `.` to hand the node a single `ref_images` dict. A bare
+            // `ref_image_0` (or any 1-based name) is rejected with
+            // "execute() got an unexpected keyword argument".
+            inputs.insert(
+                format!("ref_images.ref_image_{}", i),
+                json!([load_id.as_str(), 0]),
+            );
         }
         let id = next_id.to_string();
         workflow.insert(
@@ -426,10 +436,10 @@ mod tests {
         let h3 = nodes_of_class(&workflow, "MiniMaxH3ReferenceToVideo")[0];
         assert!(h3["inputs"]["audio_vae"].is_array());
         assert_eq!(h3["inputs"]["ref_image_size"], json!("match"));
-        assert!(h3["inputs"]["ref_image_1"].is_array());
-        assert!(h3["inputs"]["ref_image_2"].is_array());
-        assert!(h3["inputs"]["ref_image_3"].is_array());
-        assert!(h3["inputs"].get("ref_image_4").is_none());
+        assert!(h3["inputs"]["ref_images.ref_image_0"].is_array());
+        assert!(h3["inputs"]["ref_images.ref_image_1"].is_array());
+        assert!(h3["inputs"]["ref_images.ref_image_2"].is_array());
+        assert!(h3["inputs"].get("ref_images.ref_image_3").is_none());
         assert_eq!(nodes_of_class(&workflow, "LoadImage").len(), 3);
     }
 
