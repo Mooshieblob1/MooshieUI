@@ -81,6 +81,7 @@
     if (mode === "txt2img") return locale.t("gallery.mode.txt2img");
     if (mode === "img2img") return locale.t("gallery.mode.img2img");
     if (mode === "inpainting") return locale.t("gallery.mode.inpainting");
+    if (mode === "video") return locale.t("gallery.mode.video");
     return locale.t("gallery.mode.unknown");
   }
 
