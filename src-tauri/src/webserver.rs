@@ -5430,7 +5430,7 @@ fn get_lan_ips() -> Vec<String> {
 /// Resolve the gallery directory for a given user.
 /// Admin/localhost (username=None) uses the root gallery dir.
 /// LAN users get a per-user subdirectory: `gallery/users/{username}/`.
-fn user_gallery_dir(username: Option<&str>) -> Option<std::path::PathBuf> {
+pub(crate) fn user_gallery_dir(username: Option<&str>) -> Option<std::path::PathBuf> {
     let base = config::gallery_dir()?;
     match username {
         Some(name) => {
