@@ -1831,6 +1831,14 @@ pub fn generate_thumbnail(
     filename: &str,
     max_size: u32,
 ) -> Result<Vec<u8>, String> {
+    // Videos can't be decoded by the image crate; their thumbnail is the
+    // poster sidecar written at save time.
+    let filename: String = if filename.to_ascii_lowercase().ends_with(".mp4") {
+        format!("{}_poster.webp", &filename[..filename.len() - 4])
+    } else {
+        filename.to_string()
+    };
+    let filename = filename.as_str();
     let path = resolve_gallery_image_path(gallery_dir, filename)
         .map_err(|e| format!("Read failed: {}", e))?;
     let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;

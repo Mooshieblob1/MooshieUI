@@ -7,6 +7,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod gallery_index;
+pub mod http_range;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod interrogator;
 pub mod jxl;
@@ -274,6 +275,11 @@ pub fn run() {
         })
         .register_asynchronous_uri_scheme_protocol("gallery", |ctx, request, responder| {
             let _app_handle = ctx.app_handle().clone();
+            let range_header = request
+                .headers()
+                .get("range")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
             std::thread::spawn(move || {
                 let uri = request.uri().to_string();
                 // URL format varies by platform:
@@ -328,6 +334,69 @@ pub fn run() {
                             return;
                         }
                     };
+                if filename.to_ascii_lowercase().ends_with(".mp4") {
+                    let mut file = match std::fs::File::open(&file_path) {
+                        Ok(f) => f,
+                        Err(_) => {
+                            responder.respond(
+                                tauri::http::Response::builder()
+                                    .status(404)
+                                    .body(Vec::new())
+                                    .unwrap(),
+                            );
+                            return;
+                        }
+                    };
+                    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+                    match range_header
+                        .as_deref()
+                        .and_then(|h| crate::http_range::parse(h, len))
+                    {
+                        Some((start, end)) => {
+                            use std::io::{Read, Seek, SeekFrom};
+                            let mut buf = vec![0u8; (end - start + 1) as usize];
+                            let ok = file.seek(SeekFrom::Start(start)).is_ok()
+                                && file.read_exact(&mut buf).is_ok();
+                            if !ok {
+                                responder.respond(
+                                    tauri::http::Response::builder()
+                                        .status(500)
+                                        .body(Vec::new())
+                                        .unwrap(),
+                                );
+                                return;
+                            }
+                            responder.respond(
+                                tauri::http::Response::builder()
+                                    .status(206)
+                                    .header("Content-Type", "video/mp4")
+                                    .header("Accept-Ranges", "bytes")
+                                    .header("Content-Range", format!("bytes {start}-{end}/{len}"))
+                                    .header("Cache-Control", "no-cache")
+                                    .body(buf)
+                                    .unwrap(),
+                            );
+                        }
+                        None => match std::fs::read(&file_path) {
+                            Ok(bytes) => responder.respond(
+                                tauri::http::Response::builder()
+                                    .status(200)
+                                    .header("Content-Type", "video/mp4")
+                                    .header("Accept-Ranges", "bytes")
+                                    .header("Cache-Control", "no-cache")
+                                    .body(bytes)
+                                    .unwrap(),
+                            ),
+                            Err(_) => responder.respond(
+                                tauri::http::Response::builder()
+                                    .status(404)
+                                    .body(Vec::new())
+                                    .unwrap(),
+                            ),
+                        },
+                    }
+                    return;
+                }
                 match std::fs::read(&file_path) {
                     Ok(data) => {
                         // Detect content type from extension

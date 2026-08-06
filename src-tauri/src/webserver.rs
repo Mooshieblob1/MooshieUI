@@ -1519,6 +1519,9 @@ async fn gallery_image_handler(
     };
 
     let file_path = gallery_dir.join(&filename);
+    if filename.to_ascii_lowercase().ends_with(".mp4") {
+        return serve_video_file(&file_path, headers.get(axum::http::header::RANGE)).await;
+    }
     match tokio::fs::read(&file_path).await {
         Ok(data) => {
             let lower = filename.to_ascii_lowercase();
@@ -1586,6 +1589,63 @@ async fn gallery_image_handler(
                 .into_response()
         }
         Err(_) => (StatusCode::NOT_FOUND, "Image not found").into_response(),
+    }
+}
+
+/// Serve an mp4 with single-range support so `<video>` seeking works.
+/// Open-ended ranges are capped (see `http_range::OPEN_END_CHUNK`) — players
+/// re-request as they play, so the server never reads a whole multi-hundred-MB
+/// file for one request.
+async fn serve_video_file(
+    path: &std::path::Path,
+    range: Option<&axum::http::HeaderValue>,
+) -> Response {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut file = match tokio::fs::File::open(path).await {
+        Ok(f) => f,
+        Err(_) => return (StatusCode::NOT_FOUND, "Video not found").into_response(),
+    };
+    let len = match file.metadata().await {
+        Ok(m) => m.len(),
+        Err(_) => 0,
+    };
+    match range
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| crate::http_range::parse(h, len))
+    {
+        Some((start, end)) => {
+            if file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Seek failed").into_response();
+            }
+            let mut buf = vec![0u8; (end - start + 1) as usize];
+            if file.read_exact(&mut buf).await.is_err() {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Read failed").into_response();
+            }
+            (
+                StatusCode::PARTIAL_CONTENT,
+                [
+                    ("content-type", "video/mp4".to_string()),
+                    ("accept-ranges", "bytes".to_string()),
+                    ("content-range", format!("bytes {start}-{end}/{len}")),
+                    ("cache-control", "no-cache".to_string()),
+                ],
+                buf,
+            )
+                .into_response()
+        }
+        None => match tokio::fs::read(path).await {
+            Ok(bytes) => (
+                StatusCode::OK,
+                [
+                    ("content-type", "video/mp4".to_string()),
+                    ("accept-ranges", "bytes".to_string()),
+                    ("cache-control", "no-cache".to_string()),
+                ],
+                bytes,
+            )
+                .into_response(),
+            Err(_) => (StatusCode::NOT_FOUND, "Video not found").into_response(),
+        },
     }
 }
 
