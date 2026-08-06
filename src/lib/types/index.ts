@@ -86,7 +86,7 @@ export interface ExtraPromptBox {
  * filename parsing, progress tracking, the save-to-gallery wrappers) shares one
  * definition — hand-copied unions silently drift when a mode is added.
  */
-export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "image_edit";
+export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "image_edit" | "video";
 
 export interface GenerationParams {
   mode: GenerationMode;
@@ -203,6 +203,8 @@ export interface OutputImage {
   displayTempFilename?: string;
   file_size_bytes?: number;
   generated_at_ms?: number;
+  /** Playback length in seconds. Present only for `.mp4` gallery entries. */
+  duration_seconds?: number;
   /** Total wall-clock generation time in ms for this image (top-left badge). */
   generationTimeMs?: number;
   metadata?: Record<string, string> | null;
@@ -212,6 +214,8 @@ export interface GalleryImageEntry {
   filename: string;
   size_bytes: number;
   modified_ms: number;
+  /** Playback length in seconds. Present only for `.mp4` entries. */
+  duration_seconds?: number;
 }
 
 /** How the A/B comparison viewer blends the two images. */

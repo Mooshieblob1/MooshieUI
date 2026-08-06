@@ -527,6 +527,15 @@ export async function loadGalleryImagePng(filename: string): Promise<number[]> {
   return ipcInvoke("load_gallery_image_png", { filename });
 }
 
+/**
+ * Copy a gallery file to `destPath`. Desktop only: browser mode downloads
+ * straight from the gallery URL instead. Used by save-video-as, because an
+ * mp4 is too large to return through IPC as a byte array.
+ */
+export async function copyGalleryFileTo(filename: string, destPath: string): Promise<void> {
+  return ipcInvoke("copy_gallery_file_to", { filename, destPath });
+}
+
 /** Read a file from the temp_images directory by filename (no path traversal). */
 export async function readTempImage(filename: string): Promise<number[]> {
   return ipcInvoke("read_temp_image", { filename });

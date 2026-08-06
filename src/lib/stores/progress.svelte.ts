@@ -25,11 +25,19 @@ class ProgressStore {
   currentNode = $state<string | null>(null);
   previewImage = $state<string | null>(null);
   lastOutputImage = $state<string | null>(null);
+  /**
+   * Playable URL of the video the last finished generation produced, or null.
+   * Videos never go through `previewImage`/`lastOutputImage`: those hold blob
+   * or data URLs for stills, while a video is played from its `gallery://`
+   * URL so Range requests keep working. Cleared when a new generation starts.
+   */
+  lastOutputVideo = $state<string | null>(null);
   modeLastOutput = $state<Record<GenerationMode, string | null>>({
     txt2img: null,
     img2img: null,
     inpainting: null,
     image_edit: null,
+    video: null,
   });
 
   /** Which sampling pass we're on: 0 = not started, 1 = initial, 2 = upscale */
@@ -305,6 +313,7 @@ class ProgressStore {
       this.currentStep = 0;
       this.totalSteps = 0;
       this.previewImage = null;
+      this.lastOutputVideo = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
       const now = Date.now();
@@ -377,6 +386,7 @@ class ProgressStore {
       this.totalSteps = 0;
       this.currentNode = null;
       this.previewImage = null;
+      this.lastOutputVideo = null;
       this.samplingPass = 0;
       this._lastProgressNode = null;
       this.generationStartTime = null;
@@ -397,6 +407,7 @@ class ProgressStore {
     this.totalSteps = 0;
     this.currentNode = null;
     this.previewImage = null;
+    this.lastOutputVideo = null;
     this.samplingPass = 0;
     this._lastProgressNode = null;
     this.generationStartTime = null;

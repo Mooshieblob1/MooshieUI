@@ -199,6 +199,7 @@ const GENERATION_MODES = [
   "img2img",
   "inpainting",
   "image_edit",
+  "video",
 ] as const satisfies readonly GenerationMode[];
 
 interface ModeToggleState {
@@ -231,6 +232,7 @@ function createDefaultModeToggles(): ModeToggleStates {
     img2img: defaultModeToggleState(),
     inpainting: defaultModeToggleState(),
     image_edit: defaultModeToggleState(),
+    video: defaultModeToggleState(),
   };
 }
 
