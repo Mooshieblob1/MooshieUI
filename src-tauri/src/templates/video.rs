@@ -547,4 +547,23 @@ mod tests {
         params.style_transfer_enabled = true;
         assert!(crate::templates::validate_generation_params(&params).is_ok());
     }
+
+    /// Dev utility for the manual structural probe (not part of the suite).
+    /// Writes ready-to-POST /prompt bodies for both variants to the system
+    /// temp dir. Run:
+    /// `cargo test --manifest-path src-tauri/Cargo.toml print_h3_workflow_json -- --ignored --nocapture`
+    #[test]
+    #[ignore = "dev utility for the manual ComfyUI structural probe"]
+    fn print_h3_workflow_json() {
+        for variant in ["fl2va", "ref2va"] {
+            let mut params = video_params(variant);
+            if variant == "ref2va" {
+                params.video_ref_images = vec!["ref_probe.png".to_string()];
+            }
+            let body = json!({ "prompt": build(&params, 42) });
+            let path = std::env::temp_dir().join(format!("h3_{variant}_workflow.json"));
+            std::fs::write(&path, serde_json::to_string_pretty(&body).unwrap()).unwrap();
+            println!("wrote {}", path.display());
+        }
+    }
 }
