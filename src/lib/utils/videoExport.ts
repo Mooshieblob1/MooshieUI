@@ -15,7 +15,7 @@ export const AUTO_SEAM_THRESHOLD = 2.0;
 /** Rust: `DEFAULT_CROSSFADE_FRAMES` */
 export const DEFAULT_CROSSFADE_FRAMES = 4;
 
-export type ExportFormat = "webp" | "gif";
+export type ExportFormat = "avif" | "webp" | "gif";
 export type LoopMode = "auto" | "none" | "trim" | "crossfade" | "pingpong";
 export type SizeTarget = "discord" | "nitro" | "none";
 
@@ -33,6 +33,21 @@ export interface ExportPreset {
   quality: number;
 }
 
+/**
+ * AVIF is the recommended default: roughly a quarter of the WebP byte count at comparable
+ * quality, and it encodes faster. The trade-off is reach - Discord, Slack, Teams and Signal
+ * will not animate an AVIF inline, they post it as a file attachment. The popover states that
+ * per format rather than hiding it, so WebP stays a first-class choice for sharing.
+ *
+ * `quality` here is an AV1 quality 0-100, not the libwebp scale. The numbers are lower than the
+ * WebP presets on purpose - AVIF at 63 is visually comparable to WebP at 80.
+ */
+export const AVIF_PRESETS: ExportPreset[] = [
+  { id: "preset_smooth", fpsTarget: "source", width: 480, quality: 55 },
+  { id: "preset_balanced", fpsTarget: 24, width: 640, quality: 63 },
+  { id: "preset_max", fpsTarget: "source", width: 832, quality: 75 },
+];
+
 /** Spec Section 2, "Presets, split by format". WebP is the default tab. */
 export const WEBP_PRESETS: ExportPreset[] = [
   { id: "preset_smooth", fpsTarget: "source", width: 480, quality: 75 },
@@ -45,6 +60,35 @@ export const GIF_PRESETS: ExportPreset[] = [
   { id: "preset_balanced", fpsTarget: 16, width: 640, quality: 192 },
   { id: "preset_max", fpsTarget: 24, width: 832, quality: 256 },
 ];
+
+/** Presets for a format, in the order the popover shows them. */
+export function presetsFor(format: ExportFormat): ExportPreset[] {
+  if (format === "avif") return AVIF_PRESETS;
+  if (format === "webp") return WEBP_PRESETS;
+  return GIF_PRESETS;
+}
+
+/**
+ * Valid range for the overloaded `quality` field.
+ *
+ * `quality` means three different things by format: an AV1 quality for AVIF, a libwebp quality
+ * for WebP, and a palette colour count for GIF. The advanced slider reads its bounds from here
+ * instead of hardcoding them.
+ */
+export function qualityRange(format: ExportFormat): { min: number; max: number } {
+  return format === "gif" ? { min: 2, max: 256 } : { min: 0, max: 100 };
+}
+
+/**
+ * Whether the container honours an explicit repeat count.
+ *
+ * AVIF accepts a `loop` argument at encode time but neither Pillow nor typical players read it
+ * back - animated AVIF loops continuously regardless. The popover disables the repeat-count
+ * control for AVIF and shows `video.export.loop_count_unsupported`.
+ */
+export function supportsLoopCount(format: ExportFormat): boolean {
+  return format !== "avif";
+}
 
 /** Rust: `divisors` */
 function divisors(n: number): number[] {
@@ -138,6 +182,9 @@ export function overSizeLimit(bytes: number, target: SizeTarget): boolean {
  *
  * `frames` must be the post-loop-mode count: ping-pong nearly doubles it, and
  * the estimate has to say so before the click.
+ *
+ * The AVIF coefficient (0.015) is 0.06 / 4, measured at roughly a quarter of
+ * the WebP byte count on a 48-frame 480x270 sample.
  */
 export function estimateBytes(
   format: ExportFormat,
@@ -145,7 +192,7 @@ export function estimateBytes(
   width: number,
   height: number
 ): number {
-  const k = format === "webp" ? 0.06 : 0.35;
+  const k = format === "avif" ? 0.015 : format === "webp" ? 0.06 : 0.35;
   return Math.round(frames * width * height * k);
 }
 
