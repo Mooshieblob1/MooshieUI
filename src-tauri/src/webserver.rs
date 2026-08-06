@@ -221,15 +221,10 @@ fn is_staff_only_event(event: &str) -> bool {
         || event == "custom_node:installed"
 }
 
-/// Gallery files we list, count against storage quotas, and expire — must stay
-/// in sync with the formats `save_to_gallery` can write (JXL included).
+/// Which gallery files the browser-mode endpoints list, quota-count, and
+/// expire. Delegates to the canonical filter next to the save pipeline.
 fn is_gallery_image_filename(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower.ends_with(".png")
-        || lower.ends_with(".jpg")
-        || lower.ends_with(".jpeg")
-        || lower.ends_with(".webp")
-        || lower.ends_with(".jxl")
+    crate::commands::api::is_listable_gallery_file(name)
 }
 
 /// Commands that moderators (and admins) can execute.
@@ -5879,9 +5874,20 @@ fn cleanup_expired_images(auth: &AuthState) {
                     if let Ok(age) = now.duration_since(modified) {
                         if age > expiry {
                             let size = meta.len();
-                            if std::fs::remove_file(file_entry.path()).is_ok() {
+                            let path = file_entry.path();
+                            if std::fs::remove_file(&path).is_ok() {
                                 expired_count += 1;
                                 expired_bytes += size;
+                                crate::gallery_index::remove(&path);
+                                // Videos own a poster sidecar that listings
+                                // never surface; expire it with its mp4.
+                                if let Some(stem) = name.strip_suffix(".mp4") {
+                                    let poster = user_dir.join(format!("{stem}_poster.webp"));
+                                    if poster.is_file() {
+                                        let _ = std::fs::remove_file(&poster);
+                                        crate::gallery_index::remove(&poster);
+                                    }
+                                }
                             }
                         }
                     }
