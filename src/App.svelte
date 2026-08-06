@@ -3522,6 +3522,7 @@
       <!-- Action buttons -->
       {#if gallery.selectedImage}
       <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-neutral-900/70 backdrop-blur-sm rounded-xl px-2 py-1.5 border border-neutral-700/50">
+        {#if !gallery.lightboxIsVideo}
         <!-- Generation group -->
         <button
           title={locale.t("gallery.img2img")}
@@ -3600,13 +3601,14 @@
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/><polyline points="7 10 5 12 7 14"/><polyline points="17 10 19 12 17 14"/></svg>
         </button>
+        {/if}
 
         <!-- Separator -->
         <div class="w-px h-5 bg-neutral-700/60 mx-0.5"></div>
 
         <!-- Export group -->
         <button
-          title={locale.t('gallery.save_as')}
+          title={locale.t(gallery.lightboxIsVideo ? "gallery.save_video_as" : "gallery.save_as")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={gallery.saving}
           onclick={() => gallery.selectedImage && gallery.saveImageAs(gallery.selectedImage)}

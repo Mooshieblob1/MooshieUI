@@ -979,7 +979,7 @@ class GalleryStore {
     const BATCH = 12;
     // Capture object references (not indices) so that later insertions into
     // this.images cannot cause us to skip or mis-target images.
-    const pending = this.images.filter((img) => img && !img.metadata && img.gallery_filename);
+    const pending = this.images.filter((img) => img && !img.metadata && img.gallery_filename && !isVideoImage(img));
     console.debug(`[artist] Hydrating metadata for ${pending.length} / ${this.images.length} images`);
     let hydrated = 0;
     for (let b = 0; b < pending.length; b += BATCH) {
@@ -1149,12 +1149,14 @@ class GalleryStore {
    * never pass through JS either.
    */
   async saveVideoAs(image: OutputImage) {
-    const videoFilename = await this.resolveGalleryFilename(image);
-    if (!videoFilename) {
-      this.showToast(locale.t("gallery.toast.not_saved_yet"), "error");
-      return;
-    }
+    if (this.saving) return;
+    this.saving = true;
     try {
+      const videoFilename = await this.resolveGalleryFilename(image);
+      if (!videoFilename) {
+        this.showToast(locale.t("gallery.toast.not_saved_yet"), "error");
+        return;
+      }
       if (isTauri) {
         const { save } = await import("@tauri-apps/plugin-dialog");
         const path = await save({
@@ -1176,6 +1178,8 @@ class GalleryStore {
     } catch (e) {
       console.error("Failed to save video:", e);
       this.showToast(locale.t("gallery.toast.failed_save_video"), "error");
+    } finally {
+      this.saving = false;
     }
   }
 
