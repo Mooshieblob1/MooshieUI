@@ -205,6 +205,8 @@ export interface OutputImage {
   generated_at_ms?: number;
   /** Playback length in seconds. Present only for `.mp4` gallery entries. */
   duration_seconds?: number;
+  /** Frame rate for video entries; the player falls back to 24 when absent. */
+  fps?: number;
   /** Total wall-clock generation time in ms for this image (top-left badge). */
   generationTimeMs?: number;
   metadata?: Record<string, string> | null;
@@ -216,6 +218,8 @@ export interface GalleryImageEntry {
   modified_ms: number;
   /** Playback length in seconds. Present only for `.mp4` entries. */
   duration_seconds?: number;
+  /** Frame rate for video entries; the player falls back to 24 when absent. */
+  fps?: number;
 }
 
 /** How the A/B comparison viewer blends the two images. */

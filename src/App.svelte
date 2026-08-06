@@ -2543,14 +2543,18 @@
 
         const durationSeconds =
           typeof data.duration_seconds === "number" ? data.duration_seconds : undefined;
+        const videoFps = typeof data.fps === "number" && data.fps > 0 ? data.fps : undefined;
 
         await gallery.addPersistedImage(videoFilename, {
           duration_seconds: durationSeconds,
+          fps: videoFps,
         });
 
         // Play it in the progress preview. The gallery URL is Range-served, so
         // the preview never buffers the whole clip.
         progress.lastOutputVideo = await gallery.loadFullImage(videoFilename);
+        progress.lastOutputVideoFps = videoFps ?? null;
+        progress.lastOutputVideoFilename = videoFilename;
       }),
       ipcListen("comfyui:executing", async (event: any) => {
         const data = event.payload;

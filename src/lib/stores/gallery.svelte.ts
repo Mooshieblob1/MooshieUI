@@ -542,7 +542,7 @@ class GalleryStore {
    */
   async addPersistedImage(
     galleryFilename: string,
-    videoMeta?: { duration_seconds?: number },
+    videoMeta?: { duration_seconds?: number; fps?: number },
   ) {
     // Mirror loadFromDisk's modern-format parse: {promptId}__{mode}__{origFilename}.
     let promptId = "";
@@ -570,6 +570,7 @@ class GalleryStore {
       gallery_filename: galleryFilename,
       generated_at_ms: Date.now(),
       duration_seconds: videoMeta?.duration_seconds,
+      fps: videoMeta?.fps,
     };
     this.images = [entry, ...this.images];
     // Pull in the embedded metadata (artist detection etc.) in the background.
@@ -934,6 +935,7 @@ class GalleryStore {
             file_size_bytes: entry.size_bytes,
             generated_at_ms: entry.modified_ms,
             duration_seconds: entry.duration_seconds,
+            fps: entry.fps,
           });
         } catch (e) {
           console.error(`Failed to parse gallery entry ${filename}:`, e);
