@@ -481,4 +481,70 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn build_workflow_dispatches_video_without_finish_workflow() {
+        let workflow = crate::templates::build_workflow(&video_params("fl2va"), 42);
+        assert_eq!(nodes_of_class(&workflow, "MooshieSaveVideo").len(), 1);
+        assert!(nodes_of_class(&workflow, "MooshieSaveImage").is_empty());
+    }
+
+    #[test]
+    fn validate_accepts_valid_video_params() {
+        assert!(crate::templates::validate_generation_params(&video_params("fl2va")).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_unknown_variant() {
+        let mut params = video_params("fl2va");
+        params.video_variant = "t2v".to_string();
+        assert!(crate::templates::validate_generation_params(&params).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_missing_model_files() {
+        let mut params = video_params("fl2va");
+        params.video_clip_model = None;
+        let err = crate::templates::validate_generation_params(&params).unwrap_err();
+        assert!(err.contains("text encoder"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_non_h3_diffusion_model() {
+        let mut params = video_params("fl2va");
+        params.video_diffusion_model = Some("wan2.2_t2v_fp8.safetensors".to_string());
+        assert!(crate::templates::validate_generation_params(&params).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_cross_variant_diffusion_model() {
+        let mut params = video_params("fl2va");
+        params.video_diffusion_model = Some("minimax_h3_ref2va_nvfp4.safetensors".to_string());
+        assert!(crate::templates::validate_generation_params(&params).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_out_of_range_duration() {
+        let mut params = video_params("fl2va");
+        params.video_duration_seconds = 0.5;
+        assert!(crate::templates::validate_generation_params(&params).is_err());
+        params.video_duration_seconds = 16.0;
+        assert!(crate::templates::validate_generation_params(&params).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_ref2va_without_references() {
+        let params = video_params("ref2va");
+        let err = crate::templates::validate_generation_params(&params).unwrap_err();
+        assert!(err.contains("reference image"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn validate_video_ignores_stale_image_mode_flags() {
+        // Mode switches can leave image-only toggles set; they must not
+        // block video generation (the video arm early-returns).
+        let mut params = video_params("fl2va");
+        params.style_transfer_enabled = true;
+        assert!(crate::templates::validate_generation_params(&params).is_ok());
+    }
 }
