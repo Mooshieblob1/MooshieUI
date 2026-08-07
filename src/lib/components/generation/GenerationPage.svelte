@@ -15,6 +15,7 @@
   import ControlNetSettings from "./ControlNetSettings.svelte";
   import StyleTransferSettings from "./StyleTransferSettings.svelte";
   import ImageEditSettings from "./ImageEditSettings.svelte";
+  import VideoSettingsPanel from "../video/VideoSettingsPanel.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
   import ProgressBar from "../progress/ProgressBar.svelte";
@@ -64,6 +65,7 @@
     | "prompts"
     | "imageInputs"
     | "imageEdit"
+    | "videoSettings"
     | "inpaintLayers"
     | "generationSettings"
     | "model"
@@ -80,6 +82,7 @@
     { id: "img2img" as const, label: () => locale.t('generation.mode.img2img') },
     { id: "inpainting" as const, label: () => locale.t('generation.mode.inpainting') },
     { id: "image_edit" as const, label: () => locale.t('generation.mode.image_edit') },
+    { id: "video" as const, label: () => locale.t('generation.mode.video') },
   ];
 
   let canvasEditorRef: CanvasEditor | undefined = $state();
@@ -103,6 +106,7 @@
     prompts: "left",
     imageInputs: "left",
     imageEdit: "left",
+    videoSettings: "left",
     inpaintLayers: "right",
     generationSettings: "right",
     model: "right",
@@ -131,6 +135,7 @@
     "prompts",
     "imageInputs",
     "imageEdit",
+    "videoSettings",
     "inpaintLayers",
     "generationSettings",
     "model",
@@ -277,6 +282,7 @@
     if (section === "prompts") return locale.t('generation.prompts.title');
     if (section === "imageInputs") return locale.t('generation.image.title');
     if (section === "imageEdit") return locale.t('generation.image_edit.title');
+    if (section === "videoSettings") return locale.t('generation.video.title');
     if (section === "inpaintLayers") return locale.t('generation.inpaint.title');
     if (section === "generationSettings") return locale.t('generation.settings.title');
     if (section === "model") return locale.t('generation.model.title');
@@ -287,6 +293,11 @@
   }
 
   function sectionVisible(section: SectionId): boolean {
+    // Video carries its own geometry, model trio and sampler settings inside the
+    // video panel, so every image-pipeline section is inapplicable there.
+    if (generation.mode === "video")
+      return section === "prompts" || section === "videoSettings";
+    if (section === "videoSettings") return false;
     if (section === "imageInputs")
       return generation.mode === "img2img" || generation.mode === "inpainting";
     if (section === "imageEdit") return generation.mode === "image_edit";
@@ -329,6 +340,7 @@
   let dimensionsSectionOpen = $state(savedCollapse.dimensions !== false);
   let imageSectionOpen = $state(savedCollapse.imageInputs !== false);
   let imageEditSectionOpen = $state(savedCollapse.imageEdit !== false);
+  let videoSettingsSectionOpen = $state(savedCollapse.videoSettings !== false);
   let layersSectionOpen = $state(savedCollapse.inpaintLayers !== false);
   let controlsSectionOpen = $state(savedCollapse.generationSettings !== false);
   let modelSectionOpen = $state(savedCollapse.model !== false);
@@ -344,6 +356,7 @@
       dimensions: dimensionsSectionOpen,
       imageInputs: imageSectionOpen,
       imageEdit: imageEditSectionOpen,
+      videoSettings: videoSettingsSectionOpen,
       inpaintLayers: layersSectionOpen,
       generationSettings: controlsSectionOpen,
       model: modelSectionOpen,
@@ -1947,6 +1960,27 @@
     </div>
   {/snippet}
 
+  {#snippet videoSettingsSection()}
+    <div bind:this={sectionRefs['videoSettings']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'videoSettings' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("videoSettings")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (videoSettingsSectionOpen = !videoSettingsSectionOpen)}
+          title={videoSettingsSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.video.title') }) : locale.t('common.expand', { section: locale.t('generation.video.title') })}
+        >
+          <span class="font-medium">{locale.t('generation.video.title')}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {videoSettingsSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if videoSettingsSectionOpen}
+        <div class="px-3 pb-2 pt-0.5 space-y-3">
+          <VideoSettingsPanel />
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
   {#snippet facefixSection()}
     <div bind:this={sectionRefs['facefix']} data-drop-section="facefix" class="relative rounded-lg bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'facefix' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'} border {metadataDropTarget === 'facefix' ? 'border-indigo-500/70 ring-2 ring-indigo-500/40' : 'border-neutral-800'} transition-colors"
       ondragenter={(e) => onMetadataDragEnter(e, "facefix")}
@@ -2022,6 +2056,8 @@
       {@render imageInputsSection()}
     {:else if section === "imageEdit"}
       {@render imageEditSection()}
+    {:else if section === "videoSettings"}
+      {@render videoSettingsSection()}
     {:else if section === "inpaintLayers"}
       {@render inpaintLayersSection()}
     {:else if section === "generationSettings"}

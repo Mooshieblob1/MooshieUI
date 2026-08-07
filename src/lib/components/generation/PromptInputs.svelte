@@ -16,6 +16,8 @@
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import PromptAssistantSetupModal from "./PromptAssistantSetupModal.svelte";
   import PromptComposeModal from "./PromptComposeModal.svelte";
+  import H3PromptGuide from "../video/H3PromptGuide.svelte";
+  import { buildH3Context } from "../../utils/h3Prompt.js";
 
   interface Props {
     showHistory?: boolean;
@@ -92,7 +94,12 @@
   let undoSnapshot = $state<string | null>(null);
   let showUndo = $state(false);
   let undoTimer: ReturnType<typeof setTimeout> | null = null;
-  let _pendingAction = $state<"enhance" | "compose" | null>(null);
+  let _pendingAction = $state<"enhance" | "enhance_h3" | "compose" | null>(null);
+
+  // Video prompts go through a different rewrite entirely: H3 wants prose in its
+  // own trained section format, not danbooru tags, so the button is separate
+  // rather than a branch inside `runEnhance`.
+  const isVideoMode = $derived(generation.mode === "video");
 
   async function onEnhanceClick() {
     if (!promptAssistant.isAvailable) {
@@ -118,6 +125,55 @@
       }
     } catch (e) {
       console.error("Prompt enhance failed:", e);
+      gallery.showToast(mapLlmError(String(e)), "error");
+    }
+  }
+
+  async function onEnhanceH3Click() {
+    if (!promptAssistant.isAvailable) {
+      _pendingAction = "enhance_h3";
+      promptAssistant.setupModalOpen = true;
+      return;
+    }
+    await runEnhanceH3();
+  }
+
+  async function runEnhanceH3() {
+    const current = generation.positivePrompt?.trim();
+    if (!current) return;
+    try {
+      const result = await promptAssistant.enhanceForH3(
+        current,
+        buildH3Context({
+          variant: generation.videoVariant,
+          frames: generation.videoFrameLength,
+          hasFirstFrame: !!generation.videoFirstFrame,
+          hasLastFrame: !!generation.videoLastFrame,
+          referenceImageCount: generation.videoRefImageFilenames.length,
+        }),
+      );
+      if (!result.text) {
+        gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
+        return;
+      }
+      undoSnapshot = generation.positivePrompt;
+      generation.positivePrompt = result.text;
+      generation.saveSettings();
+      triggerUndo();
+      // Applied either way: a near-miss rewrite is still a better starting point
+      // than the prose it replaced, and undo is one click away. The warning names
+      // the rule the model broke so the guide below shows what to fix by hand.
+      if (!result.ok) {
+        gallery.showToast(
+          locale.t("prompt_assistant.h3_format_warning", {
+            rule: result.rule ?? "",
+          }),
+          "warning",
+          { durationMs: 12000 },
+        );
+      }
+    } catch (e) {
+      console.error("H3 prompt rewrite failed:", e);
       gallery.showToast(mapLlmError(String(e)), "error");
     }
   }
@@ -163,6 +219,7 @@
     const action = _pendingAction;
     _pendingAction = null;
     if (action === "enhance") runEnhance();
+    else if (action === "enhance_h3") runEnhanceH3();
     else if (action === "compose") promptAssistant.composeModalOpen = true;
   }
 
@@ -279,18 +336,25 @@
     {:else}
     <div class="mb-1 flex items-center justify-between">
       <div class="flex items-center gap-1.5">
+        <!-- One enhance button, two rewrites. The image one grounds on danbooru
+             tags, which is exactly wrong for H3 prose, so video mode swaps it
+             out rather than offering both. -->
         <button
           class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
           disabled={promptAssistant.isGenerating || !generation.positivePrompt?.trim()}
-          title={locale.t("prompt_assistant.enhance_tooltip")}
-          onclick={onEnhanceClick}
+          title={isVideoMode
+            ? locale.t("prompt_assistant.enhance_h3_tooltip")
+            : locale.t("prompt_assistant.enhance_tooltip")}
+          onclick={isVideoMode ? onEnhanceH3Click : onEnhanceClick}
         >
           {#if promptAssistant.isGenerating}
             <span class="inline-block animate-spin">⟳</span>
           {:else}
             ✨
           {/if}
-          {locale.t("prompt_assistant.enhance")}
+          {isVideoMode
+            ? locale.t("prompt_assistant.enhance_h3")
+            : locale.t("prompt_assistant.enhance")}
         </button>
         <button
           class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
@@ -438,6 +502,10 @@
   {/if}
 
   <SegmentRefinementPanel />
+
+  {#if isVideoMode}
+    <H3PromptGuide />
+  {/if}
 
   {#if showHistory && sortedPromptHistory.length > 0}
     <div class="rounded-lg border border-neutral-800 bg-neutral-900/50 p-2.5 space-y-2">

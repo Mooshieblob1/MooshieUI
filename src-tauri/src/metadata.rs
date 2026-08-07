@@ -36,6 +36,7 @@ pub enum ImageFormat {
     Png,
     Jxl,
     WebP,
+    Mp4,
     Unknown,
 }
 
@@ -55,6 +56,9 @@ pub fn detect_format(bytes: &[u8]) -> ImageFormat {
     } else if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0x0A {
         // Naked JXL codestream
         ImageFormat::Jxl
+    } else if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+        // ISO BMFF (mp4): size box then "ftyp" brand at offset 4.
+        ImageFormat::Mp4
     } else {
         ImageFormat::Unknown
     }
@@ -84,6 +88,7 @@ pub fn read_image_metadata(bytes: &[u8]) -> Result<Option<HashMap<String, String
         ImageFormat::Png => read_png_metadata(bytes),
         ImageFormat::Jxl => read_jxl_metadata(bytes),
         ImageFormat::WebP => read_webp_metadata(bytes),
+        ImageFormat::Mp4 => Ok(None),
         ImageFormat::Unknown => Ok(None),
     }
 }
@@ -103,6 +108,7 @@ pub fn embed_image_metadata(
         ImageFormat::Png => embed_png_metadata(image_bytes, params, mode),
         ImageFormat::Jxl => embed_jxl_metadata(image_bytes, params),
         ImageFormat::WebP => embed_webp_metadata(image_bytes, params, mode),
+        ImageFormat::Mp4 => Err("Metadata embedding is not supported for mp4 video".to_string()),
         ImageFormat::Unknown => Err("Unsupported image format for metadata embedding".to_string()),
     }
 }
@@ -1598,6 +1604,14 @@ mod tests {
         }
 
         assert_params_match(&read_image_metadata(&png).unwrap().expect("png metadata"));
+    }
+
+    #[test]
+    fn detects_mp4() {
+        let mut bytes = vec![0x00, 0x00, 0x00, 0x20];
+        bytes.extend_from_slice(b"ftypisom");
+        bytes.extend_from_slice(&[0u8; 8]);
+        assert_eq!(detect_format(&bytes), ImageFormat::Mp4);
     }
 
     /// ASCII/Latin-1 payloads must keep using `tEXt`, which is the chunk

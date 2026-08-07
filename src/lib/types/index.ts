@@ -86,7 +86,17 @@ export interface ExtraPromptBox {
  * filename parsing, progress tracking, the save-to-gallery wrappers) shares one
  * definition — hand-copied unions silently drift when a mode is added.
  */
-export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "image_edit";
+export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "image_edit" | "video";
+
+/**
+ * MiniMax H3 workflow variants. `fl2va` drives the first/last-frame graph (which
+ * doubles as text-to-video when neither frame is set); `ref2va` drives the
+ * reference-image graph. Each variant needs its own diffusion model file.
+ */
+export type VideoVariant = "fl2va" | "ref2va";
+
+/** Aspect ratios the H3 dimension solver understands; anything else falls back to 16:9. */
+export type VideoAspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 
 export interface GenerationParams {
   mode: GenerationMode;
@@ -181,6 +191,24 @@ export interface GenerationParams {
   style_transfer_blocks?: string;
   /** Image Edit mode reference images (ComfyUI input filenames); slot 0 primary. */
   edit_reference_images?: string[];
+  // --- Video generation (MiniMax H3) ---
+  video_variant?: VideoVariant;
+  /** 1-15 s; the backend snaps this to the nearest 17n+5 frame count at 24 fps. */
+  video_duration_seconds?: number;
+  /** Pixel budget; the backend derives width/height from this plus the aspect ratio. */
+  video_megapixels?: number;
+  video_aspect_ratio?: VideoAspectRatio;
+  /** fl2va first-frame image (ComfyUI input filename). */
+  video_first_frame?: string | null;
+  /** fl2va last-frame image (ComfyUI input filename). */
+  video_last_frame?: string | null;
+  /** ref2va reference images (ComfyUI input filenames), at most 9. */
+  video_ref_images?: string[];
+  video_rife_enabled?: boolean;
+  video_diffusion_model?: string | null;
+  video_clip_model?: string | null;
+  video_vae_model?: string | null;
+  video_audio_vae_model?: string | null;
 }
 
 export interface OutputImage {
@@ -203,6 +231,10 @@ export interface OutputImage {
   displayTempFilename?: string;
   file_size_bytes?: number;
   generated_at_ms?: number;
+  /** Playback length in seconds. Present only for `.mp4` gallery entries. */
+  duration_seconds?: number;
+  /** Frame rate for video entries; the player falls back to 24 when absent. */
+  fps?: number;
   /** Total wall-clock generation time in ms for this image (top-left badge). */
   generationTimeMs?: number;
   metadata?: Record<string, string> | null;
@@ -212,6 +244,10 @@ export interface GalleryImageEntry {
   filename: string;
   size_bytes: number;
   modified_ms: number;
+  /** Playback length in seconds. Present only for `.mp4` entries. */
+  duration_seconds?: number;
+  /** Frame rate for video entries; the player falls back to 24 when absent. */
+  fps?: number;
 }
 
 /** How the A/B comparison viewer blends the two images. */
@@ -301,10 +337,14 @@ export interface AppConfig {
   theme_profiles: ThemeProfile[];
   /** Prompt assistant: use an external OpenAI-compatible endpoint instead of the local llama-server. */
   llm_external_enabled: boolean;
+  /** External LLM provider id: anthropic | openai | xai | openrouter | custom. */
+  llm_provider: string;
   /** External LLM API root, e.g. http://localhost:1234/v1 or https://api.openai.com/v1. */
   llm_external_base_url: string;
   /** External LLM API key (Bearer token; empty for keyless local servers). */
   llm_external_api_key: string;
+  /** Blanked for non-admin browser clients; true when a key is stored server-side. */
+  llm_external_api_key_configured?: boolean;
   /** External LLM model name (e.g. gpt-4o-mini). */
   llm_external_model: string;
 }
@@ -425,4 +465,27 @@ export interface LlmStatus {
 export interface PromptAssistantOpts {
   length?: "short" | "medium" | "detailed";
   include_artists?: boolean;
+}
+
+/** Ids of the external LLM providers the backend registry knows about. */
+export type LlmProviderId =
+  | "anthropic"
+  | "openai"
+  | "xai"
+  | "openrouter"
+  | "custom";
+
+/**
+ * Provider settings as the backend reports them. The API key is deliberately
+ * absent: it is stored in Rust config and never crosses into the frontend.
+ */
+export interface LlmProviderState {
+  provider: LlmProviderId | string;
+  base_url: string;
+  model: string;
+  api_key_configured: boolean;
+  /** The provider has a sign-in flow this build implements. */
+  oauth: boolean;
+  /** The external provider, not the bundled local model, is what runs. */
+  enabled: boolean;
 }

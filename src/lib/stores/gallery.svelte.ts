@@ -20,9 +20,11 @@ import {
   copyImageToClipboard,
   copyBytesToClipboard,
   copyGalleryImageToClipboard,
+  copyFileToClipboard,
   getGalleryImagePath,
   getStorageInfo,
   readImageMetadata,
+  copyGalleryFileTo,
   type StorageInfo,
 } from "../utils/api.js";
 import { isTauri, isBrowserMode, getAuthToken } from "../utils/ipc.js";
@@ -40,6 +42,16 @@ import {
 import type { ArtistSearchHit } from "../artist-gallery/types.js";
 
 /**
+ * Whether a gallery entry is a video. Keyed off the stored filename rather
+ * than a flag, because every path that produces an `OutputImage` already
+ * knows the filename and `.mp4` is the only video extension the save
+ * pipeline writes.
+ */
+export function isVideoImage(image: OutputImage): boolean {
+  return image.gallery_filename?.toLowerCase().endsWith(".mp4") ?? false;
+}
+
+/**
  * Mode segment of a modern gallery filename (`{promptId}__{mode}__{name}`),
  * or undefined for legacy names and the backend's "unknown" placeholder.
  */
@@ -49,6 +61,7 @@ function parseGenerationMode(value: string): GenerationMode | undefined {
     case "img2img":
     case "inpainting":
     case "image_edit":
+    case "video":
       return value;
     default:
       return undefined;
@@ -145,6 +158,7 @@ function pngNormalizedFilename(filename: string): string {
 }
 
 const WEBP_SAVE_EXTENSIONS = ["webp"];
+const MP4_SAVE_EXTENSIONS = ["mp4"];
 const WEBP_NORMALIZED_EXTENSION_RE = /\.(jxl|png|jpe?g)$/i;
 
 /**
@@ -434,6 +448,16 @@ class GalleryStore {
     this.lastSelectedImage = image;
     this.lightboxOpen = true;
     const isJxl = image.gallery_filename?.endsWith(".jxl") ?? false;
+    // Videos always play from the streaming URL. Never blob-ify an mp4: a 15 s
+    // H3 clip can be hundreds of MB, and <video> needs Range requests to seek.
+    if (isVideoImage(image)) {
+      const videoFilename = await this.resolveGalleryFilename(image);
+      if (videoFilename) {
+        this.lightboxUrl = await fullImageUrl(videoFilename);
+        this.lightboxLoading = false;
+        return;
+      }
+    }
     if (image.fullImageUrl && !isJxl) {
       // Serve the real image from backend — supports right-click → Save with metadata.
       // JXL is excluded: WebView2 cannot decode JXL natively, so we always use the
@@ -481,6 +505,11 @@ class GalleryStore {
     }
   }
 
+  /** Whether the open lightbox is showing a video rather than a still. */
+  get lightboxIsVideo(): boolean {
+    return this.selectedImage ? isVideoImage(this.selectedImage) : false;
+  }
+
   /** Open lightbox with a raw image URL (e.g. preview blob). */
   openLightboxUrl(url: string) {
     this.selectedImage = null;
@@ -512,7 +541,10 @@ class GalleryStore {
    * editor) at the top of the gallery. The backend's "image_saved" broadcast is
    * not consumed by the frontend, so newly written files must be surfaced here.
    */
-  async addPersistedImage(galleryFilename: string) {
+  async addPersistedImage(
+    galleryFilename: string,
+    videoMeta?: { duration_seconds?: number; fps?: number },
+  ) {
     // Mirror loadFromDisk's modern-format parse: {promptId}__{mode}__{origFilename}.
     let promptId = "";
     let origFilename = galleryFilename;
@@ -538,6 +570,8 @@ class GalleryStore {
       fullImageUrl: await fullImageUrl(galleryFilename),
       gallery_filename: galleryFilename,
       generated_at_ms: Date.now(),
+      duration_seconds: videoMeta?.duration_seconds,
+      fps: videoMeta?.fps,
     };
     this.images = [entry, ...this.images];
     // Pull in the embedded metadata (artist detection etc.) in the background.
@@ -901,6 +935,8 @@ class GalleryStore {
             gallery_filename: filename,
             file_size_bytes: entry.size_bytes,
             generated_at_ms: entry.modified_ms,
+            duration_seconds: entry.duration_seconds,
+            fps: entry.fps,
           });
         } catch (e) {
           console.error(`Failed to parse gallery entry ${filename}:`, e);
@@ -946,7 +982,7 @@ class GalleryStore {
     const BATCH = 12;
     // Capture object references (not indices) so that later insertions into
     // this.images cannot cause us to skip or mis-target images.
-    const pending = this.images.filter((img) => img && !img.metadata && img.gallery_filename);
+    const pending = this.images.filter((img) => img && !img.metadata && img.gallery_filename && !isVideoImage(img));
     console.debug(`[artist] Hydrating metadata for ${pending.length} / ${this.images.length} images`);
     let hydrated = 0;
     for (let b = 0; b < pending.length; b += BATCH) {
@@ -980,6 +1016,11 @@ class GalleryStore {
 
   /** Load full-resolution image data on demand. Returns the blob URL. */
   async loadFullImage(galleryFilename: string): Promise<string> {
+    // mp4: hand back the streaming URL. Decoding into a blob would defeat
+    // Range requests and pull the whole clip into memory.
+    if (galleryFilename.toLowerCase().endsWith(".mp4")) {
+      return fullImageUrl(galleryFilename);
+    }
     // Use the display variant: JXL files are transcoded to WebP server-side
     // since WebView2 cannot natively decode JXL in <img> tags.
     const bytes = await loadGalleryImageDisplay(galleryFilename);
@@ -1059,6 +1100,10 @@ class GalleryStore {
 
   /** Save an image to a user-chosen location via native file dialog (or browser download). */
   async saveImageAs(image: OutputImage) {
+    if (isVideoImage(image)) {
+      await this.saveVideoAs(image);
+      return;
+    }
     if (this.saving) return;
     this.saving = true;
     try {
@@ -1092,6 +1137,50 @@ class GalleryStore {
       this.showToast(locale.t("gallery.toast.image_saved"), "success");
     } catch (e) {
       console.error("Failed to save image:", e);
+    } finally {
+      this.saving = false;
+    }
+  }
+
+  /**
+   * Save a gallery video to a user-chosen location.
+   *
+   * Video bytes are never marshalled through IPC: Tauri v2 serializes
+   * `Vec<u8>` as a JSON number array, so a few hundred MB of mp4 would balloon
+   * into gigabytes of JSON. On desktop Rust copies the file; in browser mode
+   * the anchor downloads straight from the streaming endpoint, so the bytes
+   * never pass through JS either.
+   */
+  async saveVideoAs(image: OutputImage) {
+    if (this.saving) return;
+    this.saving = true;
+    try {
+      const videoFilename = await this.resolveGalleryFilename(image);
+      if (!videoFilename) {
+        this.showToast(locale.t("gallery.toast.not_saved_yet"), "error");
+        return;
+      }
+      if (isTauri) {
+        const { save } = await import("@tauri-apps/plugin-dialog");
+        const path = await save({
+          defaultPath: videoFilename,
+          filters: [{ name: "Videos", extensions: MP4_SAVE_EXTENSIONS }],
+        });
+        if (!path) return;
+        await copyGalleryFileTo(videoFilename, path);
+      } else {
+        const url = await fullImageUrl(videoFilename);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = videoFilename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+      this.showToast(locale.t("gallery.toast.video_saved"), "success");
+    } catch (e) {
+      console.error("Failed to save video:", e);
+      this.showToast(locale.t("gallery.toast.failed_save_video"), "error");
     } finally {
       this.saving = false;
     }
@@ -1157,6 +1246,10 @@ class GalleryStore {
 
   /** Copy a gallery image file to clipboard (as file reference). */
   async copyToClipboard(image: OutputImage) {
+    if (isVideoImage(image)) {
+      await this.copyVideoToClipboard(image);
+      return;
+    }
     this.showToast(locale.t("gallery.toast.copying"), "info", true);
     try {
       if (isBrowserMode) {
@@ -1281,6 +1374,37 @@ class GalleryStore {
       this.showToast(locale.t("gallery.toast.copied"), "success");
     } catch (e) {
       console.error("Failed to copy to clipboard:", e);
+      this.showToast(locale.t("gallery.toast.failed_copy"), "error");
+    }
+  }
+
+  /**
+   * Copy a gallery video to the clipboard as a file reference.
+   *
+   * Nothing here decodes or re-encodes: an mp4 goes on the clipboard the same
+   * way a file manager puts one there, so pasting into a chat client or a
+   * folder yields the original file, audio included.
+   *
+   * Browser mode has no equivalent - the clipboard lives on the server, not on
+   * the machine looking at the page - so it keeps the unsupported toast.
+   */
+  private async copyVideoToClipboard(image: OutputImage) {
+    if (isBrowserMode) {
+      this.showToast(locale.t("gallery.toast.copy_video_unsupported"), "error");
+      return;
+    }
+    this.showToast(locale.t("gallery.toast.copying"), "info", true);
+    try {
+      const videoFilename = await this.resolveGalleryFilename(image);
+      if (!videoFilename) {
+        this.showToast(locale.t("gallery.toast.not_saved_yet"), "info");
+        return;
+      }
+      const path = await getGalleryImagePath(videoFilename);
+      await copyFileToClipboard(path);
+      this.showToast(locale.t("gallery.toast.copied"), "success");
+    } catch (e) {
+      console.error("Failed to copy video to clipboard:", e);
       this.showToast(locale.t("gallery.toast.failed_copy"), "error");
     }
   }
