@@ -377,6 +377,19 @@ pub struct VideoMeta {
     pub fps: Option<f64>,
 }
 
+/// Pixel dimensions for one indexed video, by gallery path.
+pub fn video_dimensions(path: &str) -> Option<(u32, u32)> {
+    let guard = conn().lock().ok()?;
+    let c = guard.as_ref()?;
+    c.query_row(
+        "SELECT width, height FROM images WHERE path = ?1",
+        [path],
+        |row| Ok((row.get::<_, i64>(0)? as u32, row.get::<_, i64>(1)? as u32)),
+    )
+    .ok()
+    .filter(|(w, h)| *w > 0 && *h > 0)
+}
+
 /// One query for the whole video table, keyed by gallery path.
 ///
 /// This is the first **reader** on the index. The gallery listing needs a
