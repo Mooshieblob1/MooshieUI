@@ -1,4 +1,4 @@
-//! Animated GIF / WebP export from gallery videos.
+//! Animated AVIF / WebP / GIF export from gallery videos.
 //!
 //! The pure functions in this module are the canonical implementation of the
 //! export math. `src/lib/utils/videoExport.ts` mirrors them so the popover can
@@ -128,6 +128,328 @@ pub fn over_size_limit(bytes: u64, target: &str) -> bool {
         "nitro" => bytes > 500 * 1024 * 1024,
         _ => false,
     }
+}
+
+use crate::error::AppError;
+use crate::state::AppState;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use tauri::{Emitter, State};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+/// Piped to the venv's python on stdin. Nothing to install, nothing to version,
+/// nothing to go stale.
+const EXPORT_SCRIPT: &str = include_str!("video_export.py");
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VideoExportResult {
+    pub path: String,
+    pub size_bytes: u64,
+    pub frame_count: u32,
+    /// 0-100, measured on the source frames after fps resampling.
+    pub seam_delta: f32,
+    /// What `auto` resolved to; echoes the request for the other modes.
+    pub applied_loop_mode: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportCapability {
+    pub available: bool,
+    pub reason: Option<String>,
+}
+
+/// Where exports land before Save as / Copy act on them. Swept at app start.
+pub fn export_temp_dir() -> PathBuf {
+    std::env::temp_dir().join("mooshie-export")
+}
+
+/// Delete last session's exports. Called once from setup; failures are logged
+/// and ignored, because a stale temp file is not worth blocking startup over.
+pub fn sweep_export_temp_dir() {
+    let dir = export_temp_dir();
+    if !dir.exists() {
+        return;
+    }
+    if let Err(e) = std::fs::remove_dir_all(&dir) {
+        log::warn!("[export] could not sweep {}: {e}", dir.display());
+    }
+}
+
+/// Resolve the venv's python, or explain exactly what is missing.
+async fn resolve_python(state: &AppState) -> Result<PathBuf, AppError> {
+    let venv_path = {
+        let cfg = state.config.read().await;
+        cfg.venv_path.clone()
+    };
+    if venv_path.trim().is_empty() {
+        return Err(AppError::Other(
+            "No Python environment is configured. Set one up in Settings to enable export.".into(),
+        ));
+    }
+    let python = crate::commands::api::resolve_venv_python_bin(&venv_path);
+    if !python.exists() {
+        return Err(AppError::Other(format!(
+            "Python not found at {}. Reinstall or repoint the environment in Settings.",
+            python.display()
+        )));
+    }
+    Ok(python)
+}
+
+/// One-time capability check: does the venv's python have what the script
+/// imports? Cheap enough to run on popover open, so the buttons can disable
+/// before the click rather than failing after it.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn probe_video_export(state: State<'_, AppState>) -> Result<ExportCapability, AppError> {
+    Ok(probe_export_inner(&state).await)
+}
+
+pub(crate) async fn probe_export_inner(state: &AppState) -> ExportCapability {
+    let python = match resolve_python(state).await {
+        Ok(p) => p,
+        Err(e) => {
+            return ExportCapability {
+                available: false,
+                reason: Some(e.to_string()),
+            }
+        }
+    };
+    let mut cmd = tokio::process::Command::new(&python);
+    cmd.arg("-c")
+        .arg("import av, numpy, PIL; print('ok')")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    match cmd.output().await {
+        Ok(out) if out.status.success() => ExportCapability {
+            available: true,
+            reason: None,
+        },
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let last = stderr.lines().last().unwrap_or("unknown import failure");
+            ExportCapability {
+                available: false,
+                reason: Some(last.to_string()),
+            }
+        }
+        Err(e) => ExportCapability {
+            available: false,
+            reason: Some(e.to_string()),
+        },
+    }
+}
+
+/// Shared by the Tauri command and the browser-mode dispatch arm. `app` is
+/// `None` in browser mode, where progress goes out over SSE only.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_export(
+    app: Option<&tauri::AppHandle>,
+    state: &AppState,
+    source: &Path,
+    format: &str,
+    fps: u32,
+    width: u32,
+    quality: u32,
+    loop_count: u32,
+    loop_mode: &str,
+    crossfade_frames: u32,
+) -> Result<VideoExportResult, AppError> {
+    if !source.exists() {
+        return Err(AppError::Other(
+            "That video is no longer in the gallery.".into(),
+        ));
+    }
+    let python = resolve_python(state).await?;
+
+    // Source dimensions come from the gallery index; if the row is missing we
+    // let the requested width through unchanged and let the decoder scale.
+    let (src_w, src_h) = source_dimensions(source);
+    let (out_w, out_h) = if src_w > 0 {
+        output_dimensions(src_w, src_h, width)
+    } else {
+        (width & !1, 0)
+    };
+
+    let dir = export_temp_dir();
+    std::fs::create_dir_all(&dir)?;
+    let stem = source
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "export".into());
+    // AVIF is the default arm: it is the recommended format, so an unknown string
+    // resolves to it rather than to the largest output.
+    let ext = match format {
+        "gif" => "gif",
+        "webp" => "webp",
+        _ => "avif",
+    };
+    // Deterministic: re-exporting the same settings overwrites rather than
+    // piling temp files up.
+    let out_path = dir.join(format!("{stem}_{out_w}w_{fps}fps_{loop_mode}.{ext}"));
+
+    let job = serde_json::json!({
+        "source": source.to_string_lossy(),
+        "out": out_path.to_string_lossy(),
+        "format": ext,
+        "fps": fps,
+        "width": out_w,
+        "height": out_h,
+        "quality": quality,
+        "loop_count": loop_count,
+        "loop_mode": loop_mode,
+        "crossfade_frames": crossfade_frames,
+        "auto_threshold": AUTO_SEAM_THRESHOLD,
+    });
+
+    let mut cmd = tokio::process::Command::new(&python);
+    cmd.arg("-")
+        .arg(job.to_string())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| AppError::Other(format!("Could not start Python: {e}")))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(EXPORT_SCRIPT.as_bytes()).await?;
+        stdin.shutdown().await?;
+        drop(stdin);
+    }
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AppError::Other("Python produced no stdout".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AppError::Other("Python produced no stderr".into()))?;
+
+    // Drain stderr concurrently so a chatty failure cannot deadlock the pipe.
+    let stderr_task = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        let mut collected = Vec::new();
+        while let Ok(Some(line)) = lines.next_line().await {
+            collected.push(line);
+        }
+        collected
+    });
+
+    let mut result: Option<VideoExportResult> = None;
+    let mut script_error: Option<String> = None;
+    let mut seam_delta_val = 0.0_f32;
+
+    let mut lines = BufReader::new(stdout).lines();
+    while let Some(line) = lines.next_line().await? {
+        let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if let Some(err) = msg.get("error").and_then(|v| v.as_str()) {
+            script_error = Some(err.to_string());
+            continue;
+        }
+        if let Some(res) = msg.get("result") {
+            result = serde_json::from_value(res.clone()).ok();
+            continue;
+        }
+        if let Some(d) = msg.get("seam_delta").and_then(|v| v.as_f64()) {
+            seam_delta_val = d as f32;
+        }
+        emit_progress(app, state, &msg);
+    }
+
+    let status = child.wait().await?;
+    let stderr_lines = stderr_task.await.unwrap_or_default();
+
+    if !status.success() || result.is_none() {
+        let reason = script_error
+            .or_else(|| stderr_lines.last().cloned())
+            .unwrap_or_else(|| format!("Python exited with {status}"));
+        return Err(AppError::Other(reason));
+    }
+
+    let result = result.expect("checked is_none above");
+
+    // Cross-check the mirror: Python resolves `auto` locally so it can do it in
+    // the same pass it measures the seam. If the two halves ever disagree, that
+    // is a drift bug and we want it in the log rather than silent.
+    if loop_mode == "auto" {
+        let expected = resolve_auto(seam_delta_val);
+        if expected != result.applied_loop_mode {
+            log::warn!(
+                "[export] auto resolution drift: rust={expected} python={} (seam {seam_delta_val})",
+                result.applied_loop_mode
+            );
+        }
+    }
+
+    Ok(result)
+}
+
+fn emit_progress(app: Option<&tauri::AppHandle>, state: &AppState, payload: &serde_json::Value) {
+    if let Some(app) = app {
+        let _ = app.emit("export:progress", payload.clone());
+    }
+    state.broadcast("export:progress", payload.clone());
+}
+
+/// Source dimensions from the gallery index, keyed by full path. Returns
+/// `(0, 0)` when the row is unknown.
+fn source_dimensions(source: &Path) -> (u32, u32) {
+    let path_str = source.to_string_lossy().to_string();
+    crate::gallery_index::video_dimensions(&path_str).unwrap_or((0, 0))
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn export_video_animation(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    filename: String,
+    format: String,
+    fps: u32,
+    width: u32,
+    quality: u32,
+    loop_count: u32,
+    loop_mode: String,
+    crossfade_frames: u32,
+) -> Result<VideoExportResult, AppError> {
+    // Basename only; never let a caller walk out of the gallery.
+    let name = Path::new(&filename)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .ok_or_else(|| AppError::Other("Invalid filename".into()))?;
+    if !crate::commands::api::is_listable_gallery_file(&name) {
+        return Err(AppError::Other("Not a gallery file".into()));
+    }
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    let source = dir.join(&name);
+
+    run_export(
+        Some(&app),
+        state.inner(),
+        &source,
+        &format,
+        fps,
+        width,
+        quality,
+        loop_count,
+        &loop_mode,
+        crossfade_frames,
+    )
+    .await
 }
 
 #[cfg(test)]
