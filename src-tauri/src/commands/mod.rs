@@ -7,6 +7,7 @@ pub mod interrogator;
 pub mod prompt_assistant;
 #[cfg(feature = "desktop")]
 pub mod server;
+pub mod video_export;
 #[cfg(feature = "desktop")]
 pub mod websocket;
 #[cfg(feature = "desktop")]
