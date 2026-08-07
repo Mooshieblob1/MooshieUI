@@ -40,6 +40,10 @@
   // back to the playhead while the user is mid-drag.
   let scrubbing = $state(false);
   let scrubPos = $state(0);
+  /** 0-100 mean absolute pixel difference between first and last frame, or null if unmeasurable. */
+  let seamDelta = $state<number | null>(null);
+  /** True once measurement has been attempted for the current clip. */
+  let seamDeltaComputed = false;
 
   const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
   /** Half-window around the wrap, in seconds. 1.2 s total. */
@@ -56,6 +60,96 @@
     const m = Math.floor(t / 60);
     const s = Math.floor(t % 60);
     return `${m}:${s.toString().padStart(2, "0")}`;
+  }
+
+  /** Draw videoEl into ctx at 64x64 and return the pixel data, or null on SecurityError. */
+  function grab(ctx: CanvasRenderingContext2D): Uint8ClampedArray | null {
+    if (!videoEl) return null;
+    ctx.drawImage(videoEl, 0, 0, 64, 64);
+    try {
+      return ctx.getImageData(0, 0, 64, 64).data;
+    } catch {
+      // SecurityError: the gallery:// custom protocol tainted the canvas.
+      // Treated as optional - hide the number, never surface an error, and
+      // leave seam-check playback working exactly as it does without it.
+      return null;
+    }
+  }
+
+  async function seekTo(t: number): Promise<void> {
+    if (!videoEl) return;
+    // Capture a non-null ref so TypeScript can narrow inside the Promise callback.
+    const el = videoEl;
+    await new Promise<void>((resolve) => {
+      let fallback: ReturnType<typeof setTimeout> | null = null;
+      const done = () => {
+        // Clear the fallback timer so it does not fire a second resolve() after
+        // the seeked event already fired.
+        if (fallback !== null) clearTimeout(fallback);
+        el.removeEventListener("seeked", done);
+        resolve();
+      };
+      el.addEventListener("seeked", done);
+      el.currentTime = t;
+      // A seek to where we already are fires no seeked event; do not hang.
+      fallback = setTimeout(done, 400);
+    });
+  }
+
+  /**
+   * Measures the mean absolute pixel difference (0-100) between the first and
+   * last frame of the clip at 64x64.
+   *
+   * 64x64 is deliberate: it captures whether the composition matches, not
+   * whether individual pixels do, so encoder noise does not drown the signal.
+   *
+   * This is a convenience readout only. The authoritative seam delta that drives
+   * Auto loop mode is measured in Python during export, where the pixels are
+   * always reachable regardless of CORS/protocol tainting.
+   *
+   * Always called with seamMode already true, so onTimeUpdate clamps any
+   * mid-clip position. We do not seek back to resumeAt on exit - that seek
+   * would be immediately overridden. toggleSeam's .then() block handles the
+   * final park at duration - SEAM_HALF and restores playback there.
+   */
+  async function measureSeam() {
+    if (seamDeltaComputed || !videoEl || duration <= 0) return;
+    seamDeltaComputed = true;
+
+    const wasPaused = videoEl.paused;
+    videoEl.pause();
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+    try {
+      if (!ctx) return;
+
+      await seekTo(0);
+      const first = grab(ctx);
+      if (!first) return;
+
+      await seekTo(Math.max(0, duration - 0.5 / (fps > 0 ? fps : 24)));
+      const last = grab(ctx);
+      if (!last) return;
+
+      let sum = 0;
+      let n = 0;
+      for (let i = 0; i < first.length; i += 4) {
+        sum += Math.abs(first[i] - last[i]);
+        sum += Math.abs(first[i + 1] - last[i + 1]);
+        sum += Math.abs(first[i + 2] - last[i + 2]);
+        n += 3;
+      }
+      seamDelta = (sum / n / 255) * 100;
+    } finally {
+      // Do not seek back to a captured resumeAt: seamMode is active, so
+      // onTimeUpdate would clamp any mid-clip restore immediately. The .then()
+      // block in toggleSeam owns final positioning. Only restore play state here.
+      if (!wasPaused) videoEl?.play().catch(() => {});
+    }
   }
 
   function togglePlay() {
@@ -85,10 +179,15 @@
     seamMode = !seamMode;
     if (!videoEl || duration <= 0) return;
     if (seamMode) {
-      // Loop the 1.2 s straddling the wrap. Watching the same window over and
-      // over is how you actually judge whether a loop is seamless.
-      videoEl.currentTime = Math.max(0, duration - SEAM_HALF);
-      videoEl.play().catch(() => {});
+      // Measure first (measureSeam restores play state in its finally block),
+      // then park in the wrap window. The .then() seek is what actually lands;
+      // measureSeam intentionally skips the mid-clip restore because seamMode is
+      // active and onTimeUpdate would clamp it immediately anyway.
+      void measureSeam().then(() => {
+        if (!seamMode || !videoEl) return;
+        videoEl.currentTime = Math.max(0, duration - SEAM_HALF);
+        videoEl.play().catch(() => {});
+      });
     }
     // Toggling off leaves playback exactly where it is.
   }
@@ -173,6 +272,13 @@
 
   $effect(() => () => {
     if (idleTimer) clearTimeout(idleTimer);
+  });
+
+  $effect(() => {
+    // `src` is the dependency: a new clip needs a new measurement.
+    void src;
+    seamDelta = null;
+    seamDeltaComputed = false;
   });
 </script>
 
@@ -379,7 +485,16 @@
               {locale.t("video.player.seam_check")}
             </button>
 
-            <!-- Task 9 inserts the seam-delta readout here. -->
+            {#if seamDelta !== null}
+              <span
+                class="text-xs tabular-nums px-1.5"
+                class:text-green-400={seamDelta < 2}
+                class:text-amber-400={seamDelta >= 2 && seamDelta <= 10}
+                class:text-red-400={seamDelta > 10}
+              >
+                {locale.t("video.player.seam_delta", { value: seamDelta.toFixed(1) })}
+              </span>
+            {/if}
             <!-- Task 10 inserts the export button here, gated on `filename`. -->
           </div>
         {/if}
