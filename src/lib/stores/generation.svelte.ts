@@ -18,6 +18,12 @@ import {
   toTurboModelVariant,
 } from "../utils/modelFamily.js";
 import { readModelSpec, type ModelSpec } from "../utils/api.js";
+import {
+  H3_DIFFUSION_MARKERS,
+  H3_MAX_REF_IMAGES,
+  computeH3Dimensions,
+  computeH3FrameLength,
+} from "../utils/videoParams.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import type {
   ExtraPromptBox,
@@ -26,6 +32,8 @@ import type {
   LoraEntry,
   RegionalPromptSelection,
   RegionalPromptStrategy,
+  VideoAspectRatio,
+  VideoVariant,
 } from "../types/index.js";
 import { models } from "./models.svelte.js";
 import { styles } from "./styles.svelte.js";
@@ -500,6 +508,75 @@ class GenerationStore {
   regionalPrompts = $state<RegionalPromptSelection[]>([]);
   /** SDXL/Illustrious: conditioning areas vs sequential inpaint. Anima always uses inpaint chain. */
   regionalPromptStrategy = $state<RegionalPromptStrategy>("conditioning");
+
+  // --- Video mode (MiniMax H3) ---
+  /** "fl2va" (first/last frame, also plain text-to-video) or "ref2va" (reference images). */
+  videoVariant = $state<VideoVariant>("fl2va");
+  /** Requested duration; the backend snaps it to the nearest 17n+5 frame count at 24 fps. */
+  videoDurationSeconds = $state(5);
+  /** Pixel budget the backend turns into width/height together with the aspect ratio. */
+  videoMegapixels = $state(0.4);
+  videoAspectRatio = $state<VideoAspectRatio>("16:9");
+  /** fl2va first/last frame slots (ComfyUI input filenames); both optional. */
+  videoFirstFrame = $state<string | null>(null);
+  videoLastFrame = $state<string | null>(null);
+  /** ref2va reference image slots (ComfyUI input filenames); at most 9, holes allowed. */
+  videoRefImages = $state<(string | null)[]>(Array(H3_MAX_REF_IMAGES).fill(null));
+  /** RIFE 2x frame interpolation. No installer exists yet, so this stays false. */
+  videoRifeEnabled = $state(false);
+  videoDiffusionModel = $state<string | null>(null);
+  videoClipModel = $state<string | null>(null);
+  videoVaeModel = $state<string | null>(null);
+  videoAudioVaeModel = $state<string | null>(null);
+
+  /** Frame count the backend will use for the current duration. */
+  get videoFrameLength(): number {
+    return computeH3FrameLength(this.videoDurationSeconds);
+  }
+
+  /** Width/height the backend will derive from the current ratio and megapixels. */
+  get videoDimensions(): { width: number; height: number } {
+    return computeH3Dimensions(this.videoAspectRatio, this.videoMegapixels);
+  }
+
+  /** Non-empty ref2va reference filenames, in slot order. */
+  get videoRefImageFilenames(): string[] {
+    return this.videoRefImages.filter((v): v is string => !!v && !!v.trim());
+  }
+
+  /** Whether the four MiniMax H3 model files are all selected. */
+  get videoModelsReady(): boolean {
+    return [
+      this.videoDiffusionModel,
+      this.videoClipModel,
+      this.videoVaeModel,
+      this.videoAudioVaeModel,
+    ].every((v) => !!v && !!v.trim());
+  }
+
+  /** Whether the diffusion model file looks like the selected variant's H3 weights. */
+  get videoDiffusionModelMatchesVariant(): boolean {
+    const name = (this.videoDiffusionModel ?? "").toLowerCase();
+    if (!name) return true;
+    const other = this.videoVariant === "fl2va" ? "ref2va" : "fl2va";
+    return !name.includes(other);
+  }
+
+  /** Whether the diffusion model file carries a MiniMax H3 fingerprint. */
+  get videoDiffusionModelLooksLikeH3(): boolean {
+    const name = (this.videoDiffusionModel ?? "").toLowerCase();
+    if (!name) return true;
+    return H3_DIFFUSION_MARKERS.some((marker) => name.includes(marker));
+  }
+
+  /** Whether the video mode has everything it needs to submit a generation. */
+  get videoReady(): boolean {
+    if (!this.videoModelsReady) return false;
+    if (!this.videoDiffusionModelLooksLikeH3) return false;
+    if (!this.videoDiffusionModelMatchesVariant) return false;
+    if (this.videoVariant === "ref2va" && this.videoRefImageFilenames.length === 0) return false;
+    return true;
+  }
 
   /** Whether the developer mode section in Settings has been unlocked (10 version taps). Not persisted. */
   devModeUnlocked = $state(false);
@@ -1672,6 +1749,28 @@ class GenerationStore {
           while (slots.length < 3) slots.push(null);
           this.editReferenceImages = slots;
         }
+        if (saved.videoVariant === "fl2va" || saved.videoVariant === "ref2va")
+          this.videoVariant = saved.videoVariant;
+        if (saved.videoDurationSeconds !== undefined)
+          this.videoDurationSeconds = saved.videoDurationSeconds;
+        if (saved.videoMegapixels !== undefined) this.videoMegapixels = saved.videoMegapixels;
+        if (saved.videoAspectRatio !== undefined) this.videoAspectRatio = saved.videoAspectRatio;
+        if (saved.videoFirstFrame !== undefined) this.videoFirstFrame = saved.videoFirstFrame;
+        if (saved.videoLastFrame !== undefined) this.videoLastFrame = saved.videoLastFrame;
+        if (Array.isArray(saved.videoRefImages)) {
+          const slots = saved.videoRefImages
+            .slice(0, H3_MAX_REF_IMAGES)
+            .map((v: unknown) => (typeof v === "string" && v ? v : null));
+          while (slots.length < H3_MAX_REF_IMAGES) slots.push(null);
+          this.videoRefImages = slots;
+        }
+        if (saved.videoRifeEnabled !== undefined) this.videoRifeEnabled = saved.videoRifeEnabled;
+        if (saved.videoDiffusionModel !== undefined)
+          this.videoDiffusionModel = saved.videoDiffusionModel;
+        if (saved.videoClipModel !== undefined) this.videoClipModel = saved.videoClipModel;
+        if (saved.videoVaeModel !== undefined) this.videoVaeModel = saved.videoVaeModel;
+        if (saved.videoAudioVaeModel !== undefined)
+          this.videoAudioVaeModel = saved.videoAudioVaeModel;
         if (saved.styleTransferLowScaleEnd !== undefined) this.styleTransferLowScaleEnd = saved.styleTransferLowScaleEnd;
         if (saved.styleTransferHighScaleStart !== undefined) this.styleTransferHighScaleStart = saved.styleTransferHighScaleStart;
         if (saved.styleTransferBeta !== undefined) this.styleTransferBeta = saved.styleTransferBeta;
@@ -1865,6 +1964,18 @@ class GenerationStore {
         autoSaveDirs: this.autoSaveDirs,
         regionalPrompts: this.regionalPrompts,
         regionalPromptStrategy: this.regionalPromptStrategy,
+        videoVariant: this.videoVariant,
+        videoDurationSeconds: this.videoDurationSeconds,
+        videoMegapixels: this.videoMegapixels,
+        videoAspectRatio: this.videoAspectRatio,
+        videoFirstFrame: this.videoFirstFrame,
+        videoLastFrame: this.videoLastFrame,
+        videoRefImages: this.videoRefImages,
+        videoRifeEnabled: this.videoRifeEnabled,
+        videoDiffusionModel: this.videoDiffusionModel,
+        videoClipModel: this.videoClipModel,
+        videoVaeModel: this.videoVaeModel,
+        videoAudioVaeModel: this.videoAudioVaeModel,
       });
       triggerSync();
     } catch (e) {
@@ -1968,6 +2079,18 @@ class GenerationStore {
       regionalPrompts: this.regionalPrompts,
       regionalPromptStrategy: this.regionalPromptStrategy,
       modelFamilyOverrides: this.modelFamilyOverrides,
+      videoVariant: this.videoVariant,
+      videoDurationSeconds: this.videoDurationSeconds,
+      videoMegapixels: this.videoMegapixels,
+      videoAspectRatio: this.videoAspectRatio,
+      videoFirstFrame: this.videoFirstFrame,
+      videoLastFrame: this.videoLastFrame,
+      videoRefImages: this.videoRefImages,
+      videoRifeEnabled: this.videoRifeEnabled,
+      videoDiffusionModel: this.videoDiffusionModel,
+      videoClipModel: this.videoClipModel,
+      videoVaeModel: this.videoVaeModel,
+      videoAudioVaeModel: this.videoAudioVaeModel,
     };
   }
 
@@ -2000,7 +2123,12 @@ class GenerationStore {
   }
 
   toParams(options: GenerationToParamsOptions = {}) {
-    if (this.useSplitModel) {
+    // Video mode loads its own UNet/CLIP/VAE trio from the `video_*` fields and
+    // never touches `checkpoint`, so the image-pipeline model guards below would
+    // block generation over state video does not use.
+    const isVideo = this._mode === "video";
+
+    if (!isVideo && this.useSplitModel) {
       if (!this.diffusionModel) {
         throw new Error("Split model is selected, but no diffusion model is resolved yet.");
       }
@@ -2019,7 +2147,7 @@ class GenerationStore {
     // text encoder in a single checkpoint. If one was placed in `checkpoints/`
     // and loaded via CheckpointLoaderSimple, ComfyUI returns a None CLIP and
     // fails with "clip input is invalid: None". Surface an actionable error.
-    if (!this.useSplitModel && familyRequiresSeparateClip(this.modelFamily)) {
+    if (!isVideo && !this.useSplitModel && familyRequiresSeparateClip(this.modelFamily)) {
       throw new Error(
         `"${this.checkpoint}" is a ${this.modelFamily} diffusion model with no built-in text encoder. ` +
           `Move it to ComfyUI's diffusion_models/ folder and select it as a diffusion model, ` +
@@ -2335,6 +2463,20 @@ class GenerationStore {
       style_transfer_megapixels: this.styleTransferMegapixels,
       style_transfer_blocks: this.styleTransferBlocks,
       edit_reference_images: this.editReferenceImages.filter((v): v is string => !!v),
+      video_variant: this.videoVariant,
+      video_duration_seconds: this.videoDurationSeconds,
+      video_megapixels: this.videoMegapixels,
+      video_aspect_ratio: this.videoAspectRatio,
+      // fl2va's frame slots are optional (no frames = text-to-video), so a
+      // stale ref2va-only state must not leak first/last frames and vice versa.
+      video_first_frame: this.videoVariant === "fl2va" ? this.videoFirstFrame : null,
+      video_last_frame: this.videoVariant === "fl2va" ? this.videoLastFrame : null,
+      video_ref_images: this.videoVariant === "ref2va" ? this.videoRefImageFilenames : [],
+      video_rife_enabled: this.videoRifeEnabled,
+      video_diffusion_model: this.videoDiffusionModel,
+      video_clip_model: this.videoClipModel,
+      video_vae_model: this.videoVaeModel,
+      video_audio_vae_model: this.videoAudioVaeModel,
     };
 
     if (options.overrides) {

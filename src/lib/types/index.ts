@@ -88,6 +88,16 @@ export interface ExtraPromptBox {
  */
 export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "image_edit" | "video";
 
+/**
+ * MiniMax H3 workflow variants. `fl2va` drives the first/last-frame graph (which
+ * doubles as text-to-video when neither frame is set); `ref2va` drives the
+ * reference-image graph. Each variant needs its own diffusion model file.
+ */
+export type VideoVariant = "fl2va" | "ref2va";
+
+/** Aspect ratios the H3 dimension solver understands; anything else falls back to 16:9. */
+export type VideoAspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+
 export interface GenerationParams {
   mode: GenerationMode;
   positive_prompt: string;
@@ -181,6 +191,24 @@ export interface GenerationParams {
   style_transfer_blocks?: string;
   /** Image Edit mode reference images (ComfyUI input filenames); slot 0 primary. */
   edit_reference_images?: string[];
+  // --- Video generation (MiniMax H3) ---
+  video_variant?: VideoVariant;
+  /** 1-15 s; the backend snaps this to the nearest 17n+5 frame count at 24 fps. */
+  video_duration_seconds?: number;
+  /** Pixel budget; the backend derives width/height from this plus the aspect ratio. */
+  video_megapixels?: number;
+  video_aspect_ratio?: VideoAspectRatio;
+  /** fl2va first-frame image (ComfyUI input filename). */
+  video_first_frame?: string | null;
+  /** fl2va last-frame image (ComfyUI input filename). */
+  video_last_frame?: string | null;
+  /** ref2va reference images (ComfyUI input filenames), at most 9. */
+  video_ref_images?: string[];
+  video_rife_enabled?: boolean;
+  video_diffusion_model?: string | null;
+  video_clip_model?: string | null;
+  video_vae_model?: string | null;
+  video_audio_vae_model?: string | null;
 }
 
 export interface OutputImage {

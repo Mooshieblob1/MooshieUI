@@ -1,0 +1,559 @@
+<script lang="ts">
+  import { onMount } from "svelte";
+  import { generation } from "../../stores/generation.svelte.js";
+  import { locale } from "../../stores/locale.svelte.js";
+  import { detectLlmHardware, getModels, readClipboardImageSafe, uploadImageBytes } from "../../utils/api.js";
+  import {
+    H3_ASPECT_RATIOS,
+    H3_FPS,
+    H3_MAX_DURATION_SECONDS,
+    H3_MAX_REF_IMAGES,
+    H3_MEGAPIXEL_OPTIONS,
+    H3_MIN_DURATION_SECONDS,
+    estimateH3ModelGb,
+    estimateH3VramGb,
+  } from "../../utils/videoParams.js";
+  import { scrollCapture } from "../../utils/scrollCapture.js";
+  import type { VideoAspectRatio, VideoVariant } from "../../types/index.js";
+  import EditableValue from "../ui/EditableValue.svelte";
+  import InfoTip from "../ui/InfoTip.svelte";
+
+  /**
+   * One upload target. `fl2va` exposes two (first frame / last frame), `ref2va`
+   * exposes a growing list of reference slots. Keys are stable per variant so a
+   * preview URL survives collapsing and re-expanding the section.
+   */
+  interface FrameSlot {
+    key: string;
+    label: string;
+    filename: string | null;
+    assign: (value: string | null) => void;
+  }
+
+  const variants: { id: VideoVariant; labelKey: string; descKey: string }[] = [
+    { id: "fl2va", labelKey: "generation.video.variant_fl2va", descKey: "generation.video.variant_fl2va_desc" },
+    { id: "ref2va", labelKey: "generation.video.variant_ref2va", descKey: "generation.video.variant_ref2va_desc" },
+  ];
+
+  let diffusionModels = $state<string[]>([]);
+  let clipModels = $state<string[]>([]);
+  let vaeModels = $state<string[]>([]);
+  let detectedVramGb = $state<number | null>(null);
+
+  let previews = $state<Record<string, string | null>>({});
+  let uploadingSlot = $state<string | null>(null);
+  let dropSlot = $state<string | null>(null);
+  let pasteSlot = $state<string | null>(null);
+  let uploadError = $state<string | null>(null);
+  let dropZone = $state<HTMLElement | null>(null);
+
+  const dimensions = $derived(generation.videoDimensions);
+
+  /** Highest filled reference slot, so the list grows one empty slot at a time. */
+  const visibleRefSlots = $derived(
+    Math.min(
+      H3_MAX_REF_IMAGES,
+      generation.videoRefImages.reduce((last, value, index) => (value ? index + 1 : last), 0) + 1,
+    ),
+  );
+
+  const slots = $derived<FrameSlot[]>(
+    generation.videoVariant === "fl2va"
+      ? [
+          {
+            key: "first",
+            label: locale.t("generation.video.first_frame"),
+            filename: generation.videoFirstFrame,
+            assign: (value) => (generation.videoFirstFrame = value),
+          },
+          {
+            key: "last",
+            label: locale.t("generation.video.last_frame"),
+            filename: generation.videoLastFrame,
+            assign: (value) => (generation.videoLastFrame = value),
+          },
+        ]
+      : Array.from({ length: visibleRefSlots }, (_, index) => ({
+          key: `ref${index}`,
+          label: locale.t("generation.video.ref_slot", { index: index + 1 }),
+          filename: generation.videoRefImages[index] ?? null,
+          assign: (value: string | null) => {
+            generation.videoRefImages = generation.videoRefImages.map((current, i) =>
+              i === index ? value : current,
+            );
+          },
+        })),
+  );
+
+  const requiredVramGb = $derived(
+    estimateH3VramGb(
+      dimensions.width,
+      dimensions.height,
+      generation.videoFrameLength,
+      estimateH3ModelGb(generation.videoDiffusionModel),
+    ),
+  );
+  const vramWarning = $derived(detectedVramGb !== null && requiredVramGb > detectedVramGb);
+
+  onMount(() => {
+    void loadModelLists();
+    void loadHardware();
+  });
+
+  async function loadModelLists() {
+    const [diffusion, clip, vae] = await Promise.all([
+      getModels("diffusion_models").catch(() => [] as string[]),
+      getModels("text_encoders").catch(() => [] as string[]),
+      getModels("vae").catch(() => [] as string[]),
+    ]);
+    diffusionModels = diffusion;
+    clipModels = clip;
+    vaeModels = vae;
+  }
+
+  async function loadHardware() {
+    try {
+      const hardware = await detectLlmHardware();
+      const maxVramMb = hardware.gpus.reduce((max, gpu) => Math.max(max, gpu.vram_mb), 0);
+      detectedVramGb = maxVramMb > 0 ? maxVramMb / 1024 : null;
+    } catch {
+      detectedVramGb = null;
+    }
+  }
+
+  // Paste into whichever slot the pointer is over, matching ImageEditSettings.
+  $effect(() => {
+    const el = dropZone;
+    if (!el) return;
+    const onPaste = async (event: ClipboardEvent) => {
+      const slot = pasteSlot;
+      if (slot === null) return;
+      const target = event.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+        return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const bytes = await readClipboardImageSafe();
+      if (!bytes) return;
+      const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+      await uploadToSlot(slot, new File([blob], `${slot}.png`, { type: "image/png" }));
+    };
+    window.addEventListener("paste", onPaste, { capture: true });
+    return () => window.removeEventListener("paste", onPaste, { capture: true });
+  });
+
+  function setPreview(key: string, url: string | null) {
+    const current = previews[key];
+    if (current && current !== url) URL.revokeObjectURL(current);
+    previews = { ...previews, [key]: url };
+  }
+
+  /** Decode and downscale to keep multi-megapixel drops off the wire. */
+  async function prepareImage(file: File, maxDimension = 1536): Promise<File> {
+    const bitmap = await createImageBitmap(file).catch(() => null);
+    if (!bitmap) return file;
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+    if (scale >= 1) {
+      bitmap.close();
+      return file;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      bitmap.close();
+      return file;
+    }
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), "image/png"),
+    );
+    if (!blob) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".png", { type: "image/png" });
+  }
+
+  function findSlot(key: string): FrameSlot | undefined {
+    return slots.find((slot) => slot.key === key);
+  }
+
+  async function uploadToSlot(key: string, file: File) {
+    if (!file.type.startsWith("image/")) return;
+    const slot = findSlot(key);
+    if (!slot) return;
+    uploadError = null;
+    const prepared = await prepareImage(file);
+    setPreview(key, URL.createObjectURL(prepared));
+    uploadingSlot = key;
+    try {
+      const buffer = await prepared.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(buffer));
+      const result = await uploadImageBytes(bytes, prepared.name);
+      slot.assign(result.name);
+      generation.saveSettings();
+    } catch (e) {
+      console.error("Failed to upload video frame:", e);
+      uploadError = String(e);
+      setPreview(key, null);
+      slot.assign(null);
+    } finally {
+      uploadingSlot = null;
+    }
+  }
+
+  function clearSlot(key: string) {
+    setPreview(key, null);
+    findSlot(key)?.assign(null);
+    generation.saveSettings();
+  }
+
+  function setVariant(variant: VideoVariant) {
+    generation.videoVariant = variant;
+    generation.saveSettings();
+  }
+</script>
+
+<div class="space-y-3" bind:this={dropZone}>
+  <!-- Variant -->
+  <div>
+    <span class="block text-xs text-neutral-400 mb-1.5">
+      {locale.t("generation.video.variant")}
+      <InfoTip text={locale.t("generation.video.variant_tip")} />
+    </span>
+    <div class="grid grid-cols-2 gap-2">
+      {#each variants as variant (variant.id)}
+        <button
+          type="button"
+          class="rounded-lg border px-3 py-2 text-left transition-colors {generation.videoVariant ===
+          variant.id
+            ? 'border-indigo-500 bg-indigo-500/10'
+            : 'border-neutral-700 bg-neutral-800/40 hover:border-neutral-600'}"
+          onclick={() => setVariant(variant.id)}
+        >
+          <span class="block text-xs font-medium text-neutral-100">{locale.t(variant.labelKey)}</span>
+          <span class="block text-[11px] leading-tight text-neutral-500 mt-0.5">
+            {locale.t(variant.descKey)}
+          </span>
+        </button>
+      {/each}
+    </div>
+  </div>
+
+  <!-- Duration -->
+  <div use:scrollCapture>
+    <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+      <span>
+        {locale.t("generation.video.duration")}
+        <InfoTip text={locale.t("generation.video.duration_tip")} />
+      </span>
+      <EditableValue
+        value={generation.videoDurationSeconds}
+        min={H3_MIN_DURATION_SECONDS}
+        max={H3_MAX_DURATION_SECONDS}
+        step={0.5}
+        decimals={1}
+        suffix="s"
+        onchange={(v) => {
+          generation.videoDurationSeconds = v;
+          generation.saveSettings();
+        }}
+      />
+    </label>
+    <input
+      type="range"
+      bind:value={generation.videoDurationSeconds}
+      onchange={() => generation.saveSettings()}
+      min={H3_MIN_DURATION_SECONDS}
+      max={H3_MAX_DURATION_SECONDS}
+      step="0.5"
+      class="w-full accent-indigo-500"
+    />
+    <p class="text-[11px] text-neutral-500 mt-1">
+      {locale.t("generation.video.frame_count", {
+        frames: generation.videoFrameLength,
+        fps: H3_FPS,
+      })}
+    </p>
+  </div>
+
+  <!-- Geometry -->
+  <div class="grid grid-cols-2 gap-3">
+    <div>
+      <label class="block text-xs text-neutral-400 mb-1" for="video-aspect-ratio">
+        {locale.t("generation.video.aspect_ratio")}
+      </label>
+      <select
+        id="video-aspect-ratio"
+        value={generation.videoAspectRatio}
+        onchange={(e) => {
+          generation.videoAspectRatio = (e.currentTarget as HTMLSelectElement)
+            .value as VideoAspectRatio;
+          generation.saveSettings();
+        }}
+        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+      >
+        {#each H3_ASPECT_RATIOS as ratio (ratio)}
+          <option value={ratio}>{ratio}</option>
+        {/each}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-neutral-400 mb-1" for="video-megapixels">
+        {locale.t("generation.video.megapixels")}
+        <InfoTip text={locale.t("generation.video.megapixels_tip")} />
+      </label>
+      <select
+        id="video-megapixels"
+        value={generation.videoMegapixels}
+        onchange={(e) => {
+          generation.videoMegapixels = Number((e.currentTarget as HTMLSelectElement).value);
+          generation.saveSettings();
+        }}
+        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+      >
+        {#each H3_MEGAPIXEL_OPTIONS as option (option)}
+          <option value={option}>{option} MP</option>
+        {/each}
+      </select>
+    </div>
+  </div>
+  <p class="text-[11px] text-neutral-500 -mt-1">
+    {locale.t("generation.video.resolution", {
+      width: dimensions.width,
+      height: dimensions.height,
+    })}
+  </p>
+
+  <!-- VRAM warning -->
+  {#if vramWarning}
+    <div
+      class="flex items-start gap-2 rounded-lg border border-amber-600/60 bg-amber-900/25 px-3 py-2 text-xs text-amber-200"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        class="w-4 h-4 shrink-0 mt-px"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+        <line x1="12" y1="9" x2="12" y2="13" />
+        <line x1="12" y1="17" x2="12.01" y2="17" />
+      </svg>
+      <span>
+        {locale.t("generation.video.vram_warning", {
+          detected: (detectedVramGb ?? 0).toFixed(1),
+          required: requiredVramGb.toFixed(1),
+        })}
+      </span>
+    </div>
+  {/if}
+
+  <!-- Frame / reference slots -->
+  <div class="space-y-2">
+    <span class="block text-xs text-neutral-400">
+      {generation.videoVariant === "fl2va"
+        ? locale.t("generation.video.frames")
+        : locale.t("generation.video.ref_images")}
+      <InfoTip
+        text={generation.videoVariant === "fl2va"
+          ? locale.t("generation.video.frames_tip")
+          : locale.t("generation.video.ref_images_tip")}
+      />
+    </span>
+
+    {#if generation.videoVariant === "ref2va" && generation.videoRefImageFilenames.length === 0}
+      <p class="text-[11px] text-amber-300">{locale.t("generation.video.ref_required")}</p>
+    {/if}
+
+    <div class="grid grid-cols-2 gap-2">
+      {#each slots as slot (slot.key)}
+        {@const preview = previews[slot.key]}
+        <div>
+          <span class="text-[11px] text-neutral-500 block mb-1">{slot.label}</span>
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            role="button"
+            tabindex="0"
+            class="relative rounded-lg border border-dashed bg-neutral-800/40 min-h-[88px] flex flex-col items-center justify-center p-2 transition-colors {dropSlot ===
+            slot.key
+              ? 'border-indigo-500 bg-indigo-500/10'
+              : 'border-neutral-600 hover:border-neutral-500'}"
+            onmouseenter={() => (pasteSlot = slot.key)}
+            onmouseleave={() => {
+              if (pasteSlot === slot.key) pasteSlot = null;
+            }}
+            ondragenter={(e) => {
+              e.preventDefault();
+              dropSlot = slot.key;
+            }}
+            ondragover={(e) => e.preventDefault()}
+            ondragleave={() => {
+              if (dropSlot === slot.key) dropSlot = null;
+            }}
+            ondrop={async (e) => {
+              e.preventDefault();
+              dropSlot = null;
+              const file = e.dataTransfer?.files?.[0];
+              if (file) await uploadToSlot(slot.key, file);
+            }}
+          >
+            {#if preview || slot.filename}
+              {#if preview}
+                <img src={preview} alt="" class="max-h-24 rounded object-contain mb-1.5" />
+              {:else}
+                <p class="text-[11px] text-neutral-500 mb-1.5 text-center break-all">
+                  {slot.filename}
+                </p>
+              {/if}
+              <button
+                type="button"
+                class="text-[11px] text-red-400 hover:text-red-300"
+                onclick={() => clearSlot(slot.key)}
+              >
+                {locale.t("common.remove")}
+              </button>
+            {:else}
+              <p class="text-[11px] text-neutral-500 text-center">
+                {locale.t("generation.image_edit.drop_hint")}
+                <label class="text-indigo-400 hover:text-indigo-300 cursor-pointer ml-1">
+                  {locale.t("generation.image_edit.upload_prompt")}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    class="hidden"
+                    onchange={async (e) => {
+                      const file = (e.currentTarget as HTMLInputElement).files?.[0];
+                      if (file) await uploadToSlot(slot.key, file);
+                    }}
+                  />
+                </label>
+              </p>
+            {/if}
+            {#if uploadingSlot === slot.key}
+              <div
+                class="absolute inset-0 flex items-center justify-center bg-neutral-900/70 rounded-lg"
+              >
+                <div
+                  class="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"
+                ></div>
+              </div>
+            {/if}
+          </div>
+        </div>
+      {/each}
+    </div>
+
+    {#if uploadError}
+      <p class="text-[11px] text-red-400">{uploadError}</p>
+    {/if}
+  </div>
+
+  <!-- Models -->
+  <div class="space-y-2 pt-1 border-t border-neutral-800">
+    <span class="block text-xs text-neutral-400 pt-2">
+      {locale.t("generation.video.models")}
+      <InfoTip text={locale.t("generation.video.models_tip")} />
+    </span>
+
+    <div>
+      <label class="block text-[11px] text-neutral-500 mb-1" for="video-diffusion-model">
+        {locale.t("generation.video.diffusion_model")}
+      </label>
+      <select
+        id="video-diffusion-model"
+        value={generation.videoDiffusionModel ?? ""}
+        onchange={(e) => {
+          const value = (e.currentTarget as HTMLSelectElement).value;
+          generation.videoDiffusionModel = value || null;
+          generation.saveSettings();
+        }}
+        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+      >
+        <option value="">{locale.t("generation.video.select_model")}</option>
+        {#each diffusionModels as model (model)}
+          <option value={model}>{model}</option>
+        {/each}
+      </select>
+      {#if !generation.videoDiffusionModelLooksLikeH3}
+        <p class="text-[11px] text-amber-300 mt-1">{locale.t("generation.video.not_h3_warning")}</p>
+      {:else if !generation.videoDiffusionModelMatchesVariant}
+        <p class="text-[11px] text-amber-300 mt-1">
+          {locale.t("generation.video.variant_mismatch_warning")}
+        </p>
+      {/if}
+    </div>
+
+    <div>
+      <label class="block text-[11px] text-neutral-500 mb-1" for="video-clip-model">
+        {locale.t("generation.video.clip_model")}
+      </label>
+      <select
+        id="video-clip-model"
+        value={generation.videoClipModel ?? ""}
+        onchange={(e) => {
+          const value = (e.currentTarget as HTMLSelectElement).value;
+          generation.videoClipModel = value || null;
+          generation.saveSettings();
+        }}
+        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+      >
+        <option value="">{locale.t("generation.video.select_model")}</option>
+        {#each clipModels as model (model)}
+          <option value={model}>{model}</option>
+        {/each}
+      </select>
+    </div>
+
+    <div class="grid grid-cols-2 gap-2">
+      <div>
+        <label class="block text-[11px] text-neutral-500 mb-1" for="video-vae-model">
+          {locale.t("generation.video.vae_model")}
+        </label>
+        <select
+          id="video-vae-model"
+          value={generation.videoVaeModel ?? ""}
+          onchange={(e) => {
+            const value = (e.currentTarget as HTMLSelectElement).value;
+            generation.videoVaeModel = value || null;
+            generation.saveSettings();
+          }}
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+        >
+          <option value="">{locale.t("generation.video.select_model")}</option>
+          {#each vaeModels as model (model)}
+            <option value={model}>{model}</option>
+          {/each}
+        </select>
+      </div>
+      <div>
+        <label class="block text-[11px] text-neutral-500 mb-1" for="video-audio-vae-model">
+          {locale.t("generation.video.audio_vae_model")}
+        </label>
+        <select
+          id="video-audio-vae-model"
+          value={generation.videoAudioVaeModel ?? ""}
+          onchange={(e) => {
+            const value = (e.currentTarget as HTMLSelectElement).value;
+            generation.videoAudioVaeModel = value || null;
+            generation.saveSettings();
+          }}
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+        >
+          <option value="">{locale.t("generation.video.select_model")}</option>
+          {#each vaeModels as model (model)}
+            <option value={model}>{model}</option>
+          {/each}
+        </select>
+      </div>
+    </div>
+
+    {#if !generation.videoModelsReady}
+      <p class="text-[11px] text-amber-300">{locale.t("generation.video.models_missing")}</p>
+    {/if}
+  </div>
+</div>
