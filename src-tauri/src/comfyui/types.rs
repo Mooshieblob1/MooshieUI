@@ -219,6 +219,35 @@ pub struct GenerationParams {
     /// `model_source_category` is set. Never sent by the frontend.
     #[serde(default)]
     pub resolved_model_path: Option<String>,
+    // --- Video generation (MiniMax H3) ---
+    /// "fl2va" (first/last frame -> video+audio) or "ref2va" (reference images).
+    /// Empty string when the client predates video support.
+    #[serde(default)]
+    pub video_variant: String,
+    #[serde(default = "default_video_duration_seconds")]
+    pub video_duration_seconds: f64,
+    #[serde(default = "default_video_megapixels")]
+    pub video_megapixels: f64,
+    #[serde(default = "default_video_aspect_ratio")]
+    pub video_aspect_ratio: String,
+    /// First-frame image for fl2va, same encoding as `input_image`.
+    #[serde(default)]
+    pub video_first_frame: Option<String>,
+    #[serde(default)]
+    pub video_last_frame: Option<String>,
+    /// Up to 9 reference images for ref2va.
+    #[serde(default)]
+    pub video_ref_images: Vec<String>,
+    #[serde(default)]
+    pub video_rife_enabled: bool,
+    #[serde(default)]
+    pub video_diffusion_model: Option<String>,
+    #[serde(default)]
+    pub video_clip_model: Option<String>,
+    #[serde(default)]
+    pub video_vae_model: Option<String>,
+    #[serde(default)]
+    pub video_audio_vae_model: Option<String>,
     /// Optional ControlNet parameters
     #[serde(default)]
     pub controlnet: Option<ControlNetParam>,
@@ -356,6 +385,18 @@ fn default_style_transfer_blocks() -> String {
 
 fn default_region_strength() -> f64 {
     1.0
+}
+
+fn default_video_duration_seconds() -> f64 {
+    5.0
+}
+
+fn default_video_megapixels() -> f64 {
+    0.4
+}
+
+fn default_video_aspect_ratio() -> String {
+    "16:9".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
