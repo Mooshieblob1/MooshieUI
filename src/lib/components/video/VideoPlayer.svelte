@@ -44,6 +44,8 @@
   let seamDelta = $state<number | null>(null);
   /** True once measurement has been attempted for the current clip. */
   let seamDeltaComputed = false;
+  /** Incremented on every clip change; lets in-flight measureSeam detect it is stale. */
+  let measureGen = 0;
 
   const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
   /** Half-window around the wrap, in seconds. 1.2 s total. */
@@ -115,6 +117,9 @@
   async function measureSeam() {
     if (seamDeltaComputed || !videoEl || duration <= 0) return;
     seamDeltaComputed = true;
+    // Snapshot the generation counter so we can detect if the clip changes
+    // mid-measurement and discard the stale result without skipping the restore.
+    const gen = ++measureGen;
 
     const wasPaused = videoEl.paused;
     videoEl.pause();
@@ -143,11 +148,14 @@
         sum += Math.abs(first[i + 2] - last[i + 2]);
         n += 3;
       }
-      seamDelta = (sum / n / 255) * 100;
+      // Guard against a clip change that happened while we were awaiting seeks.
+      if (gen === measureGen) seamDelta = (sum / n / 255) * 100;
     } finally {
       // Do not seek back to a captured resumeAt: seamMode is active, so
       // onTimeUpdate would clamp any mid-clip restore immediately. The .then()
       // block in toggleSeam owns final positioning. Only restore play state here.
+      // The finally runs unconditionally - a superseded run still owns restoring
+      // the playback state it changed.
       if (!wasPaused) videoEl?.play().catch(() => {});
     }
   }
@@ -276,9 +284,12 @@
 
   $effect(() => {
     // `src` is the dependency: a new clip needs a new measurement.
+    // Incrementing measureGen invalidates any in-flight measureSeam so it
+    // cannot write a stale result after this reset completes.
     void src;
     seamDelta = null;
     seamDeltaComputed = false;
+    measureGen++;
   });
 </script>
 
