@@ -936,6 +936,17 @@ export async function copyFileToClipboard(path: string): Promise<void> {
 }
 
 /**
+ * Copy a file produced by the export pipeline to a caller-chosen destination.
+ *
+ * Desktop only: browser mode downloads straight from the export URL instead.
+ * There is deliberately no webserver dispatch arm - this mirrors the reasoning
+ * in copy_gallery_file_to, which is the exact analogue for gallery files.
+ */
+export async function copyFileTo(srcPath: string, destPath: string): Promise<void> {
+  return ipcInvoke("copy_file_to", { srcPath, destPath });
+}
+
+/**
  * Browser-mode download URL for an export. The encode ran on the server, so the
  * browser fetches the produced file by basename out of the export temp dir.
  */

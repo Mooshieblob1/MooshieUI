@@ -519,6 +519,41 @@ pub async fn copy_file_to_clipboard(path: String) -> Result<(), AppError> {
     }
 }
 
+/// Copy a file produced by the export pipeline to a caller-chosen destination path.
+///
+/// Desktop only: browser mode downloads straight from the export endpoint URL
+/// instead of calling this command, exactly as `copy_gallery_file_to` does for
+/// gallery files. There is deliberately no webserver dispatch arm.
+///
+/// The source is restricted to the export temp directory so the frontend cannot
+/// use this command to read arbitrary paths off the filesystem. The source path
+/// is canonicalized before the containment check so that `..` sequences and
+/// symlinks are resolved first.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn copy_file_to(src_path: String, dest_path: String) -> Result<(), AppError> {
+    // Canonicalize the source - this also confirms the file exists.
+    let src = PathBuf::from(&src_path)
+        .canonicalize()
+        .map_err(|e| AppError::Other(format!("Source file not found: {e}")))?;
+
+    let export_dir = export_temp_dir();
+    // Canonicalize the temp dir when it exists. If it does not, fall back to
+    // the raw path - any source that actually exists under a non-existent dir
+    // cannot pass the canonicalize step above, so this branch is unreachable
+    // in practice.
+    let temp_dir = export_dir.canonicalize().unwrap_or(export_dir);
+
+    if !src.starts_with(&temp_dir) {
+        return Err(AppError::Other(
+            "Source path is outside the export directory.".into(),
+        ));
+    }
+
+    tokio::fs::copy(&src, &dest_path).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

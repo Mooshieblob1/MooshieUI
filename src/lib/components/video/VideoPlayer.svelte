@@ -1,5 +1,6 @@
 <script lang="ts">
   import { locale } from "../../stores/locale.svelte.js";
+  import VideoExportPopover from "./VideoExportPopover.svelte";
 
   interface Props {
     /** Range-serving gallery URL. */
@@ -46,6 +47,14 @@
   let seamDeltaComputed = false;
   /** Incremented on every clip change; lets in-flight measureSeam detect it is stale. */
   let measureGen = 0;
+
+  let exportOpen = $state(false);
+  let videoWidth = $state(0);
+  let videoHeight = $state(0);
+
+  const clipFrames = $derived(
+    duration > 0 && fps > 0 ? Math.max(1, Math.round(duration * fps)) : 0
+  );
 
   const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
   /** Half-window around the wrap, in seconds. 1.2 s total. */
@@ -325,6 +334,8 @@
       playsinline
       onloadedmetadata={() => {
         duration = videoEl?.duration ?? 0;
+        videoWidth = videoEl?.videoWidth ?? 0;
+        videoHeight = videoEl?.videoHeight ?? 0;
       }}
       ontimeupdate={onTimeUpdate}
       onprogress={onProgress}
@@ -506,7 +517,27 @@
                 {locale.t("video.player.seam_delta", { value: seamDelta.toFixed(1) })}
               </span>
             {/if}
-            <!-- Task 10 inserts the export button here, gated on `filename`. -->
+            {#if filename}
+              <div class="relative ml-auto">
+                <button
+                  class="px-2 py-1 rounded-lg text-xs text-neutral-100"
+                  class:bg-neutral-700={exportOpen}
+                  onclick={() => (exportOpen = !exportOpen)}
+                >
+                  {locale.t("video.export.open")}
+                </button>
+                {#if exportOpen}
+                  <VideoExportPopover
+                    {filename}
+                    sourceFps={fps}
+                    sourceWidth={videoWidth}
+                    sourceHeight={videoHeight}
+                    frameCount={clipFrames}
+                    onClose={() => (exportOpen = false)}
+                  />
+                {/if}
+              </div>
+            {/if}
           </div>
         {/if}
       </div>

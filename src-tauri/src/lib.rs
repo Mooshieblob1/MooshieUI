@@ -572,6 +572,7 @@ pub fn run() {
             commands::video_export::export_video_animation,
             commands::video_export::probe_video_export,
             commands::video_export::copy_file_to_clipboard,
+            commands::video_export::copy_file_to,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
