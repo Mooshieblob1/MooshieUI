@@ -7,6 +7,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod gallery_index;
+pub mod http_range;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod interrogator;
 pub mod jxl;
@@ -132,6 +133,9 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
         .setup(move |_app| {
+            // Last session's export temp files are dead weight.
+            commands::video_export::sweep_export_temp_dir();
+
             // Clean up and create temp image directory
             temp_images::init();
 
@@ -274,6 +278,11 @@ pub fn run() {
         })
         .register_asynchronous_uri_scheme_protocol("gallery", |ctx, request, responder| {
             let _app_handle = ctx.app_handle().clone();
+            let range_header = request
+                .headers()
+                .get("range")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
             std::thread::spawn(move || {
                 let uri = request.uri().to_string();
                 // URL format varies by platform:
@@ -328,6 +337,97 @@ pub fn run() {
                             return;
                         }
                     };
+                if filename.to_ascii_lowercase().ends_with(".mp4") {
+                    let mut file = match std::fs::File::open(&file_path) {
+                        Ok(f) => f,
+                        Err(_) => {
+                            responder.respond(
+                                tauri::http::Response::builder()
+                                    .status(404)
+                                    .body(Vec::new())
+                                    .unwrap(),
+                            );
+                            return;
+                        }
+                    };
+                    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+                    match range_header
+                        .as_deref()
+                        .and_then(|h| crate::http_range::parse(h, len))
+                    {
+                        Some((start, end)) => {
+                            use std::io::{Read, Seek, SeekFrom};
+                            let mut buf = vec![0u8; (end - start + 1) as usize];
+                            let ok = file.seek(SeekFrom::Start(start)).is_ok()
+                                && file.read_exact(&mut buf).is_ok();
+                            if !ok {
+                                responder.respond(
+                                    tauri::http::Response::builder()
+                                        .status(500)
+                                        .body(Vec::new())
+                                        .unwrap(),
+                                );
+                                return;
+                            }
+                            responder.respond(
+                                tauri::http::Response::builder()
+                                    .status(206)
+                                    .header("Content-Type", "video/mp4")
+                                    .header("Accept-Ranges", "bytes")
+                                    .header("Content-Range", format!("bytes {start}-{end}/{len}"))
+                                    .header("Cache-Control", "no-cache")
+                                    .body(buf)
+                                    .unwrap(),
+                            );
+                        }
+                        None => {
+                            // No Range header: hand back a bounded first chunk,
+                            // not the whole file. The Tauri custom-protocol
+                            // responder takes an owned Vec<u8> and cannot
+                            // stream, and a 15 s H3 mp4 can be hundreds of MB.
+                            // Players follow the 206 with real Range requests,
+                            // which the arm above serves.
+                            use std::io::Read;
+                            if len == 0 {
+                                responder.respond(
+                                    tauri::http::Response::builder()
+                                        .status(200)
+                                        .header("Content-Type", "video/mp4")
+                                        .header("Accept-Ranges", "bytes")
+                                        .header("Content-Length", "0")
+                                        .header("Cache-Control", "no-cache")
+                                        .body(Vec::new())
+                                        .unwrap(),
+                                );
+                                return;
+                            }
+                            let end = (crate::http_range::OPEN_END_CHUNK - 1).min(len - 1);
+                            let mut buf = vec![0u8; (end + 1) as usize];
+                            if file.read_exact(&mut buf).is_err() {
+                                responder.respond(
+                                    tauri::http::Response::builder()
+                                        .status(500)
+                                        .body(Vec::new())
+                                        .unwrap(),
+                                );
+                                return;
+                            }
+                            let partial = end + 1 < len;
+                            let mut builder = tauri::http::Response::builder()
+                                .status(if partial { 206 } else { 200 })
+                                .header("Content-Type", "video/mp4")
+                                .header("Accept-Ranges", "bytes")
+                                .header("Content-Length", (end + 1).to_string())
+                                .header("Cache-Control", "no-cache");
+                            if partial {
+                                builder =
+                                    builder.header("Content-Range", format!("bytes 0-{end}/{len}"));
+                            }
+                            responder.respond(builder.body(buf).unwrap());
+                        }
+                    }
+                    return;
+                }
                 match std::fs::read(&file_path) {
                     Ok(data) => {
                         // Detect content type from extension
@@ -395,6 +495,7 @@ pub fn run() {
             commands::api::save_to_gallery_temp,
             commands::api::list_gallery_images,
             commands::api::list_gallery_image_entries,
+            commands::api::copy_gallery_file_to,
             commands::api::load_gallery_image,
             commands::api::load_gallery_image_display,
             commands::api::load_gallery_image_png,
@@ -429,6 +530,8 @@ pub fn run() {
             commands::api::check_node_available,
             commands::api::is_custom_node_installed,
             commands::api::install_custom_node,
+            commands::api::is_rife_installed,
+            commands::api::install_rife,
             commands::api::install_pip_package,
             commands::api::check_python_import,
             commands::websocket::connect_ws,
@@ -452,6 +555,14 @@ pub fn run() {
             commands::prompt_assistant::unload_llm,
             commands::prompt_assistant::enhance_prompt,
             commands::prompt_assistant::compose_prompt,
+            commands::prompt_assistant::get_llm_provider,
+            commands::prompt_assistant::set_llm_provider,
+            commands::prompt_assistant::set_llm_api_key,
+            commands::prompt_assistant::set_llm_model,
+            commands::prompt_assistant::set_llm_base_url,
+            commands::prompt_assistant::list_external_llm_models,
+            commands::prompt_assistant::connect_llm_oauth,
+            commands::prompt_assistant::call_external_llm,
             commands::api::fetch_cached_image,
             commands::api::read_clipboard_image,
             commands::api::get_gpu_stats,
@@ -468,6 +579,10 @@ pub fn run() {
             setup::reinstall_pytorch,
             setup::get_comfyui_version,
             setup::update_comfyui,
+            commands::video_export::export_video_animation,
+            commands::video_export::probe_video_export,
+            commands::video_export::copy_file_to_clipboard,
+            commands::video_export::copy_file_to,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -1,5 +1,6 @@
 import { ipcInvoke, ipcListen, isBrowserMode, isTauri } from "./ipc.js";
 import { getLogSnapshot } from "./log-buffer.js";
+import type { ExportFormat } from "./videoExport.js";
 import { locale } from "../stores/locale.svelte.js";
 import type {
   AppConfig,
@@ -10,6 +11,7 @@ import type {
   InterrogationResult,
   LlmCatalogEntry,
   LlmHardware,
+  LlmProviderState,
   LlmStatus,
   OutputImage,
   PromptAssistantOpts,
@@ -527,6 +529,15 @@ export async function loadGalleryImagePng(filename: string): Promise<number[]> {
   return ipcInvoke("load_gallery_image_png", { filename });
 }
 
+/**
+ * Copy a gallery file to `destPath`. Desktop only: browser mode downloads
+ * straight from the gallery URL instead. Used by save-video-as, because an
+ * mp4 is too large to return through IPC as a byte array.
+ */
+export async function copyGalleryFileTo(filename: string, destPath: string): Promise<void> {
+  return ipcInvoke("copy_gallery_file_to", { filename, destPath });
+}
+
 /** Read a file from the temp_images directory by filename (no path traversal). */
 export async function readTempImage(filename: string): Promise<number[]> {
   return ipcInvoke("read_temp_image", { filename });
@@ -757,6 +768,20 @@ export async function installCustomNode(gitUrl: string, nodeName: string): Promi
   return ipcInvoke("install_custom_node", { gitUrl, nodeName });
 }
 
+/**
+ * Are the RIFE frame-interpolation nodes and the `rife49.pth` checkpoint both on
+ * disk? A disk check rather than a stored flag, so deleting the pack or pointing
+ * the app at a different ComfyUI install re-arms the installer.
+ */
+export async function isRifeInstalled(): Promise<boolean> {
+  return ipcInvoke("is_rife_installed", {});
+}
+
+/** Clone the frame-interpolation pack and download its checkpoint. Reports through `install:progress`. */
+export async function installRife(): Promise<void> {
+  return ipcInvoke("install_rife", {});
+}
+
 export async function installPipPackage(packageName: string): Promise<void> {
   return ipcInvoke("install_pip_package", { package: packageName });
 }
@@ -880,6 +905,81 @@ export async function interrogateImagePath(path: string): Promise<InterrogationR
   return ipcInvoke("interrogate_image_path", { path });
 }
 
+export interface VideoExportResult {
+  path: string;
+  size_bytes: number;
+  frame_count: number;
+  /** 0-100, measured on the source frames. */
+  seam_delta: number;
+  /** What "auto" resolved to; echoes the request for the other modes. */
+  applied_loop_mode: string;
+  /**
+   * Whether an audio track actually landed in the file. MP4 only, and asking is
+   * not the same as getting: a source without audio degrades to a silent export
+   * rather than failing.
+   */
+  has_audio: boolean;
+}
+
+export interface ExportCapability {
+  available: boolean;
+  reason: string | null;
+  /** Whether this venv's PyAV can encode H.264. Gates the MP4 tab on its own. */
+  mp4: boolean;
+}
+
+export async function exportVideoAnimation(args: {
+  filename: string;
+  format: ExportFormat;
+  fps: number;
+  width: number;
+  quality: number;
+  loopCount: number;
+  loopMode: string;
+  crossfadeFrames: number;
+  keepAudio: boolean;
+}): Promise<VideoExportResult> {
+  return ipcInvoke("export_video_animation", {
+    filename: args.filename,
+    format: args.format,
+    fps: args.fps,
+    width: args.width,
+    quality: args.quality,
+    loopCount: args.loopCount,
+    loopMode: args.loopMode,
+    crossfadeFrames: args.crossfadeFrames,
+    keepAudio: args.keepAudio,
+  });
+}
+
+export async function probeVideoExport(): Promise<ExportCapability> {
+  return ipcInvoke("probe_video_export", {});
+}
+
+export async function copyFileToClipboard(path: string): Promise<void> {
+  return ipcInvoke("copy_file_to_clipboard", { path });
+}
+
+/**
+ * Copy a file produced by the export pipeline to a caller-chosen destination.
+ *
+ * Desktop only: browser mode downloads straight from the export URL instead.
+ * There is deliberately no webserver dispatch arm - this mirrors the reasoning
+ * in copy_gallery_file_to, which is the exact analogue for gallery files.
+ */
+export async function copyFileTo(srcPath: string, destPath: string): Promise<void> {
+  return ipcInvoke("copy_file_to", { srcPath, destPath });
+}
+
+/**
+ * Browser-mode download URL for an export. The encode ran on the server, so the
+ * browser fetches the produced file by basename out of the export temp dir.
+ */
+export function exportDownloadUrl(path: string): string {
+  const name = path.split(/[\\/]/).pop() ?? "";
+  return `/internal-api/_export/${encodeURIComponent(name)}`;
+}
+
 export async function interrogateGalleryImage(filename: string): Promise<InterrogationResult> {
   return ipcInvoke("interrogate_gallery_image", { filename });
 }
@@ -913,7 +1013,7 @@ export async function unloadLlm(): Promise<void> {
 }
 
 /**
- * Run a prompt-assistant command (enhance/compose).
+ * Run a prompt-assistant command (enhance/compose/raw external call).
  *
  * Desktop (Tauri) calls the command synchronously — there is no proxy in front.
  * Browser mode is served through a reverse proxy (Cloudflare on the hosted
@@ -923,7 +1023,7 @@ export async function unloadLlm(): Promise<void> {
  * the SSE event channel, which keep-alives and isn't bound by the proxy timeout.
  */
 async function runPromptAssistant(
-  command: "enhance_prompt" | "compose_prompt",
+  command: "enhance_prompt" | "compose_prompt" | "call_external_llm",
   args: Record<string, unknown>,
 ): Promise<string> {
   if (!isBrowserMode) {
@@ -1001,6 +1101,60 @@ export async function composePrompt(
   opts?: PromptAssistantOpts,
 ): Promise<string> {
   return runPromptAssistant("compose_prompt", { description, family, opts });
+}
+
+/**
+ * Current external LLM provider settings. The API key never crosses this
+ * boundary — only whether one is configured.
+ */
+export async function getLlmProvider(): Promise<LlmProviderState> {
+  return ipcInvoke("get_llm_provider");
+}
+
+/** Switch providers. Clears the stored key when the provider actually changes. */
+export async function setLlmProvider(provider: string): Promise<LlmProviderState> {
+  return ipcInvoke("set_llm_provider", { provider });
+}
+
+/** Store (or clear) the key in Rust config. An empty key disables the external path. */
+export async function setLlmApiKey(apiKey: string): Promise<LlmProviderState> {
+  return ipcInvoke("set_llm_api_key", { apiKey });
+}
+
+export async function setLlmModel(model: string): Promise<LlmProviderState> {
+  return ipcInvoke("set_llm_model", { model });
+}
+
+/** Only meaningful for the self-hosted "custom" provider; the rest pin their own. */
+export async function setLlmBaseUrl(baseUrl: string): Promise<LlmProviderState> {
+  return ipcInvoke("set_llm_base_url", { baseUrl });
+}
+
+/** `GET {base_url}/models` against the configured provider, ids only. */
+export async function listExternalLlmModels(): Promise<string[]> {
+  return ipcInvoke("list_external_llm_models");
+}
+
+/**
+ * Desktop-only OAuth sign-in (PKCE, loopback redirect). Browser mode has no arm
+ * for this: the loopback listener binds on the server, not the user's machine.
+ */
+export async function connectLlmOauth(provider: string): Promise<LlmProviderState> {
+  return ipcInvoke("connect_llm_oauth", { provider });
+}
+
+/**
+ * One system+user turn against whichever backend is configured — the external
+ * provider when one is set up, otherwise the bundled local model. Used by the
+ * H3 prompt rewrite, which needs its own system prompt instead of the booru
+ * grounding enhance/compose apply.
+ */
+export async function callExternalLlm(
+  system: string,
+  prompt: string,
+  maxTokens?: number,
+): Promise<string> {
+  return runPromptAssistant("call_external_llm", { system, prompt, maxTokens });
 }
 
 export async function readClipboardImage(): Promise<number[]> {

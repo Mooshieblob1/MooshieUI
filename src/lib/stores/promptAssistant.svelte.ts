@@ -7,11 +7,27 @@ import {
   unloadLlm,
   enhancePrompt,
   composePrompt,
+  getLlmProvider,
+  setLlmProvider,
+  setLlmApiKey,
+  setLlmModel,
+  setLlmBaseUrl,
+  listExternalLlmModels,
+  connectLlmOauth,
+  callExternalLlm,
 } from "../utils/api.js";
 import { ipcListen } from "../utils/ipc.js";
+import {
+  H3_MAX_TOKENS,
+  h3RetryInstruction,
+  h3RewriteSystemPrompt,
+  validateH3Response,
+} from "../utils/h3Prompt.js";
+import type { H3PromptContext, H3RewriteResult } from "../utils/h3Prompt.js";
 import type {
   LlmHardware,
   LlmCatalogEntry,
+  LlmProviderState,
   LlmStatus,
   PromptAssistantOpts,
 } from "../types/index.js";
@@ -40,6 +56,16 @@ class PromptAssistantStore {
 
   setupModalOpen = $state(false);
   composeModalOpen = $state(false);
+
+  /**
+   * External provider settings as Rust reports them. The API key never crosses
+   * this boundary — only `api_key_configured` does — so nothing here is secret.
+   */
+  provider = $state<LlmProviderState | null>(null);
+  /** Model ids from the provider's `/models` endpoint, empty until fetched. */
+  externalModels = $state<string[]>([]);
+  /** A provider mutation or model listing is in flight. */
+  providerBusy = $state(false);
 
   /** True once at least one model is installed. */
   get hasInstalledModel(): boolean {
@@ -70,6 +96,10 @@ class PromptAssistantStore {
     } catch (e) {
       console.warn("[promptAssistant] init failed", e);
     }
+    // Kept out of the batch above: the provider commands are moderator-gated in
+    // browser mode, so a regular web client's rejection must not take hardware,
+    // catalog and status down with it.
+    await this.loadProvider();
   }
 
   async refreshStatus(): Promise<void> {
@@ -120,6 +150,77 @@ class PromptAssistantStore {
     await this.refreshStatus();
   }
 
+  /**
+   * Adopt a provider snapshot returned by any of the setters. `enabled` mirrors
+   * `llm_external_enabled`, which gates `isAvailable`, so it is folded into the
+   * cached status rather than costing another round trip.
+   */
+  private applyProvider(next: LlmProviderState): void {
+    this.provider = next;
+    if (this.status && this.status.external_enabled !== next.enabled) {
+      this.status = { ...this.status, external_enabled: next.enabled };
+    }
+  }
+
+  /** Non-fatal: the provider commands are moderator-gated in browser mode. */
+  async loadProvider(): Promise<void> {
+    try {
+      this.applyProvider(await getLlmProvider());
+    } catch (e) {
+      console.warn("[promptAssistant] provider load failed", e);
+    }
+  }
+
+  private async mutateProvider(
+    fn: () => Promise<LlmProviderState>,
+  ): Promise<void> {
+    this.providerBusy = true;
+    try {
+      this.applyProvider(await fn());
+    } finally {
+      this.providerBusy = false;
+    }
+  }
+
+  /** Switching providers clears the stored key server-side; drop the stale list. */
+  async selectProvider(id: string): Promise<void> {
+    this.externalModels = [];
+    await this.mutateProvider(() => setLlmProvider(id));
+  }
+
+  /** An empty key clears it and disables the external path. */
+  async saveApiKey(apiKey: string): Promise<void> {
+    await this.mutateProvider(() => setLlmApiKey(apiKey));
+  }
+
+  async saveModel(model: string): Promise<void> {
+    await this.mutateProvider(() => setLlmModel(model));
+  }
+
+  async saveBaseUrl(baseUrl: string): Promise<void> {
+    this.externalModels = [];
+    await this.mutateProvider(() => setLlmBaseUrl(baseUrl));
+  }
+
+  /** Desktop only: the PKCE loopback listener binds on the user's own machine. */
+  async connectOauth(id: string): Promise<void> {
+    await this.mutateProvider(() => connectLlmOauth(id));
+  }
+
+  /** Turns the model field into a picker. Silent on failure — many self-hosted
+   *  endpoints implement chat completions without `/models`. */
+  async refreshExternalModels(): Promise<void> {
+    this.providerBusy = true;
+    try {
+      this.externalModels = [...(await listExternalLlmModels())];
+    } catch (e) {
+      console.warn("[promptAssistant] model listing failed", e);
+      this.externalModels = [];
+    } finally {
+      this.providerBusy = false;
+    }
+  }
+
   private async withStageListener<T>(fn: () => Promise<T>): Promise<T> {
     const unlisten = await ipcListen("llm:stage", (event: any) => {
       this.stage = event.payload as string;
@@ -143,6 +244,55 @@ class PromptAssistantStore {
       return await this.withStageListener(() =>
         enhancePrompt(prompt, family, opts),
       );
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * Rewrite prose into MiniMax H3's trained prompt format.
+   *
+   * Deliberately bypasses `enhance()`: that path is danbooru-tag machinery
+   * (candidate retrieval, tag repair, reconciliation) and would mangle H3 prose.
+   * This sends the format's own system prompt straight through instead.
+   *
+   * Small local models miss the format on the first try often enough to be the
+   * normal case, so a failed check buys exactly one retry that quotes the
+   * violated rule back. A second failure still returns the text, flagged, so the
+   * caller can show it beside the manual template rather than claim success.
+   */
+  async enhanceForH3(
+    prompt: string,
+    ctx: H3PromptContext,
+  ): Promise<H3RewriteResult> {
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        const system = h3RewriteSystemPrompt(ctx);
+        const first = (
+          await callExternalLlm(system, prompt, H3_MAX_TOKENS)
+        ).trim();
+        const check = validateH3Response(first, ctx);
+        if (check.ok || !check.rule) {
+          return { text: first, ok: check.ok, rule: check.rule };
+        }
+        const second = (
+          await callExternalLlm(
+            system,
+            h3RetryInstruction(check.rule, first),
+            H3_MAX_TOKENS,
+          )
+        ).trim();
+        const recheck = validateH3Response(second, ctx);
+        if (recheck.ok) return { text: second, ok: true, rule: null };
+        // Prefer whichever attempt produced something; the second can come back
+        // empty when the model gives up on the correction.
+        return {
+          text: second || first,
+          ok: false,
+          rule: recheck.rule ?? check.rule,
+        };
+      });
     } finally {
       this.isGenerating = false;
     }

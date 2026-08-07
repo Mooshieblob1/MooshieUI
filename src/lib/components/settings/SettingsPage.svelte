@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { AppConfig, QueueInfo } from "../../types/index.js";
+  import type { AppConfig, LlmProviderState, QueueInfo } from "../../types/index.js";
   import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, getComfyuiVersion, updateComfyui } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus, BackendSupport, ComfyUiVersionInfo } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
@@ -15,6 +15,7 @@
   import GpuStatusPanel from "./GpuStatusPanel.svelte";
   import ModelRequestsPanel from "./ModelRequestsPanel.svelte";
   import QualityTagsEditor from "./QualityTagsEditor.svelte";
+  import LlmProviderPanel from "./LlmProviderPanel.svelte";
   import { ipcInvoke, ipcListen, isTauri, isBrowserMode, authHeaders, clearAuthToken } from "../../utils/ipc.js";
   import { useMobileLayout, isMobileUA, setForceDesktopOverride } from "../../utils/device.js";
   import {
@@ -1298,6 +1299,22 @@
     } catch (e) {
       error = `Failed to save: ${e}`;
     }
+  }
+
+  /**
+   * Mirror an LLM provider mutation back into the cached config.
+   *
+   * The provider commands write Rust config directly, so this snapshot goes
+   * stale the moment one runs and a later unrelated `autoSave()` would revert
+   * provider, base URL and model. (The API key needs no mirroring — Rust's
+   * `preserve_secrets` carries a stored key across any full-config save.)
+   */
+  function onProviderState(next: LlmProviderState) {
+    if (!config) return;
+    config.llm_provider = next.provider;
+    config.llm_external_base_url = next.base_url;
+    config.llm_external_model = next.model;
+    config.llm_external_enabled = next.enabled;
   }
 
   /** Install a different attention backend and update config. */
@@ -3679,55 +3696,14 @@
               />
             </div>
 
-            <!-- External OpenAI-compatible LLM endpoint (#389) -->
-            <div class="border-t border-neutral-800 pt-3 mt-1 space-y-3">
-              <label class="flex items-center justify-between gap-3 cursor-pointer">
-                <span>
-                  <span class="text-xs text-neutral-300 block">{locale.t('settings.prompt_assistant.external_title')}</span>
-                  <span class="text-[10px] text-neutral-500">{locale.t('settings.prompt_assistant.external_desc')}</span>
-                </span>
-                <input
-                  type="checkbox"
-                  bind:checked={config.llm_external_enabled}
-                  onchange={async () => { await autoSave(); await promptAssistant.refreshStatus(); }}
-                  class="accent-indigo-500 w-4 h-4 shrink-0"
-                />
-              </label>
-              {#if config.llm_external_enabled}
-                <div>
-                  <label class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.external_url')}</label>
-                  <input
-                    type="text"
-                    bind:value={config.llm_external_base_url}
-                    onchange={() => autoSave()}
-                    placeholder="http://localhost:1234/v1"
-                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
-                  />
-                </div>
-                <div>
-                  <label class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.external_model')}</label>
-                  <input
-                    type="text"
-                    bind:value={config.llm_external_model}
-                    onchange={() => autoSave()}
-                    placeholder="gpt-4o-mini"
-                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
-                  />
-                </div>
-                <div>
-                  <label class="text-xs text-neutral-400 block mb-1">{locale.t('settings.prompt_assistant.external_key')}</label>
-                  <input
-                    type="password"
-                    bind:value={config.llm_external_api_key}
-                    onchange={() => autoSave()}
-                    placeholder="sk-..."
-                    autocomplete="off"
-                    class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
-                  />
-                  <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.prompt_assistant.external_key_hint')}</p>
-                </div>
-              {/if}
-            </div>
+            <!-- External LLM provider (#389). Its own component: every field
+                 but the enable toggle is written by a dedicated Rust command,
+                 not by this page's full-config autosave. -->
+            <LlmProviderPanel
+              bind:enabled={config.llm_external_enabled}
+              {autoSave}
+              onstate={onProviderState}
+            />
           </div>
           {/if}
         </section>
