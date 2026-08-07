@@ -14,6 +14,8 @@
     presetsFor,
     qualityRange,
     supportsLoopCount,
+    supportsAudio,
+    extFor,
     offeredFps,
     presetFps,
     outputDimensions,
@@ -53,15 +55,21 @@
   let loopMode = $state<LoopMode>("auto");
   let crossfadeFrames = $state(DEFAULT_CROSSFADE_FRAMES);
   let sizeTarget = $state<SizeTarget>("discord");
+  // MP4 is the only format that can carry the clip's audio, and H3 always writes
+  // one, so the default is to keep it. `audioOn` folds in the cases where the
+  // track cannot survive at all - format and loop mode both veto it.
+  let keepAudio = $state(true);
 
-  let capability = $state<{ available: boolean; reason: string | null } | null>(null);
+  let capability = $state<{ available: boolean; reason: string | null; mp4: boolean } | null>(
+    null
+  );
   let running = $state(false);
   let progressLabel = $state("");
   let result = $state<VideoExportResult | null>(null);
   let errorText = $state<string | null>(null);
   let errorDetail = $state<string | null>(null);
 
-  const ALL_FORMATS: ExportFormat[] = ["avif", "webp", "gif"];
+  const ALL_FORMATS: ExportFormat[] = ["avif", "webp", "gif", "mp4"];
   const LOOP_MODES: LoopMode[] = ["auto", "none", "trim", "crossfade", "pingpong"];
 
   const presets = $derived(presetsFor(format));
@@ -76,11 +84,26 @@
   );
   const qRange = $derived(qualityRange(format));
   const canCrossfade = $derived(crossfadeAvailable(frameCount, crossfadeFrames));
+  // Whether the checkbox can do anything at all, as opposed to whether it is ticked.
+  const audioPossible = $derived(supportsAudio(format, loopMode));
+  const audioOn = $derived(keepAudio && audioPossible);
+  // The probe reports libx264 separately from the venv itself: a venv can be
+  // perfectly able to write AVIF and still have no H.264 encoder.
+  const mp4Blocked = $derived(capability !== null && capability.available && !capability.mp4);
 
   function sizeFor(f: ExportFormat): number {
     // Real bytes replace the estimate only for the format actually encoded.
     if (result && f === format) return result.size_bytes;
-    return estimateBytes(f, outFrames, dims.width, dims.height);
+    // The audio term only applies to the format that would actually carry one,
+    // so each column of the comparison row stays honest about itself.
+    return estimateBytes(
+      f,
+      outFrames,
+      dims.width,
+      dims.height,
+      fps,
+      keepAudio && supportsAudio(f, loopMode)
+    );
   }
 
   const shownBytes = $derived(sizeFor(format));
@@ -110,8 +133,14 @@
 
   $effect(() => {
     probeVideoExport()
-      .then((c) => (capability = c))
-      .catch((e) => (capability = { available: false, reason: String(e) }));
+      .then((c) => {
+        capability = c;
+        // The probe is async, so MP4 is selectable for the moment before it
+        // answers. If it comes back without an H.264 encoder, step off the tab
+        // rather than leaving the user on one that cannot run.
+        if (!c.mp4 && format === "mp4") setFormat("avif");
+      })
+      .catch((e) => (capability = { available: false, reason: String(e), mp4: false }));
   });
 
   $effect(() => {
@@ -138,6 +167,7 @@
     void loopCount;
     void loopMode;
     void crossfadeFrames;
+    void keepAudio;
     result = null;
   });
 
@@ -156,6 +186,7 @@
         loopCount,
         loopMode,
         crossfadeFrames,
+        keepAudio: audioOn,
       });
       result = r;
       return r;
@@ -175,7 +206,7 @@
     // encode and Copy after Save as is instant.
     const r = result ?? (await runExport());
     if (!r) return;
-    const ext = format === "gif" ? "gif" : format === "webp" ? "webp" : "avif";
+    const ext = extFor(format);
     const base = filename.replace(/\.[^.]+$/, "");
     if (isTauri) {
       const { save } = await import("@tauri-apps/plugin-dialog");
@@ -237,9 +268,11 @@
   <div class="flex gap-1">
     {#each ALL_FORMATS as f (f)}
       <button
-        class="flex-1 min-w-0 px-2 py-1 rounded-lg text-xs flex flex-col items-center leading-tight"
+        class="flex-1 min-w-0 px-2 py-1 rounded-lg text-xs flex flex-col items-center leading-tight disabled:opacity-40"
         class:bg-neutral-700={format === f}
         class:bg-neutral-800={format !== f}
+        disabled={f === "mp4" && mp4Blocked}
+        title={f === "mp4" && mp4Blocked ? locale.t("video.export.mp4_unavailable") : undefined}
         onclick={() => setFormat(f)}
       >
         <span>{locale.t(`video.export.format_${f}`)}</span>
@@ -256,6 +289,10 @@
   <p class="text-[11px] text-neutral-400">
     {locale.t(`video.export.compat_${format}`)}
   </p>
+
+  {#if mp4Blocked}
+    <p class="text-[11px] text-amber-400">{locale.t("video.export.mp4_unavailable")}</p>
+  {/if}
 
   <!-- Presets -->
   <div class="flex gap-1">
@@ -292,6 +329,22 @@
       {/each}
     </div>
   </div>
+
+  <!-- Audio. MP4 only, and hidden rather than disabled on the others: an animated
+       image has no audio track to keep, so the control would be meaningless there
+       rather than merely unavailable. It sits next to the loop-mode chips because
+       ping-pong is what takes it away. -->
+  {#if format === "mp4"}
+    <div class="flex flex-col gap-1">
+      <label class="flex items-center gap-2 text-xs">
+        <input type="checkbox" bind:checked={keepAudio} disabled={!audioPossible} />
+        <span class="text-neutral-400">{locale.t("video.export.keep_audio")}</span>
+      </label>
+      {#if !audioPossible}
+        <p class="text-[11px] text-neutral-400">{locale.t("video.export.audio_pingpong")}</p>
+      {/if}
+    </div>
+  {/if}
 
   <button
     class="text-[11px] text-neutral-400 hover:text-neutral-200 text-left"
@@ -392,11 +445,12 @@
     </div>
   {/if}
 
-  <!-- Size comparison across all three formats: apples to apples, same frame count and
-       dimensions, only the per-format coefficient differs. -->
+  <!-- Size comparison across all four formats: apples to apples, same frame count and
+       dimensions, only the per-format coefficient differs (plus MP4's audio term).
+       Wraps because four columns do not fit one 320px row. -->
   <div class="flex flex-col gap-1">
     <span class="text-[11px] text-neutral-400">{locale.t("video.export.size_compare")}</span>
-    <div class="flex gap-2 text-[11px] tabular-nums">
+    <div class="flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] tabular-nums">
       {#each ALL_FORMATS as f (f)}
         <span
           class:text-neutral-100={format === f}
@@ -426,6 +480,13 @@
         target: locale.t(`video.export.target_${sizeTarget}`),
       })}
     </p>
+  {/if}
+
+  <!-- Asking for audio is not the same as getting it: a source with no track, or
+       one the mp4 container will not hold, degrades to a silent export rather than
+       failing. Say so here instead of letting the user find out on playback. -->
+  {#if result && audioOn && !result.has_audio}
+    <p class="text-[11px] text-amber-400">{locale.t("video.export.audio_dropped")}</p>
   {/if}
 
   {#if errorText}

@@ -898,11 +898,19 @@ export interface VideoExportResult {
   seam_delta: number;
   /** What "auto" resolved to; echoes the request for the other modes. */
   applied_loop_mode: string;
+  /**
+   * Whether an audio track actually landed in the file. MP4 only, and asking is
+   * not the same as getting: a source without audio degrades to a silent export
+   * rather than failing.
+   */
+  has_audio: boolean;
 }
 
 export interface ExportCapability {
   available: boolean;
   reason: string | null;
+  /** Whether this venv's PyAV can encode H.264. Gates the MP4 tab on its own. */
+  mp4: boolean;
 }
 
 export async function exportVideoAnimation(args: {
@@ -914,6 +922,7 @@ export async function exportVideoAnimation(args: {
   loopCount: number;
   loopMode: string;
   crossfadeFrames: number;
+  keepAudio: boolean;
 }): Promise<VideoExportResult> {
   return ipcInvoke("export_video_animation", {
     filename: args.filename,
@@ -924,6 +933,7 @@ export async function exportVideoAnimation(args: {
     loopCount: args.loopCount,
     loopMode: args.loopMode,
     crossfadeFrames: args.crossfadeFrames,
+    keepAudio: args.keepAudio,
   });
 }
 

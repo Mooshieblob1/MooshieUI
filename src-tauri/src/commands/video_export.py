@@ -1,8 +1,9 @@
-"""Animated AVIF / WebP / GIF export for MooshieUI.
+"""Animated AVIF / WebP / GIF and re-encoded MP4 export for MooshieUI.
 
 Piped to the ComfyUI venv's python on stdin; the job is one JSON argv.
 Decodes with PyAV, reshapes the frame list with numpy for the chosen loop
-mode, and encodes with PIL. Every one of those is already in the venv - this
+mode, and encodes with PIL - except MP4, which PIL cannot write, so that one
+round-trips through PyAV. Every one of those is already in the venv - this
 script must never add a dependency.
 
 Protocol: one JSON object per stdout line. Progress lines carry "stage";
@@ -183,6 +184,97 @@ def encode_avif(frames, out_path, fps, quality, loop_count):
     )
 
 
+def add_audio_copy_stream(out, in_stream):
+    """Declare a verbatim copy of the source audio track on the output container.
+
+    `add_stream_from_template` is the PyAV 13+ spelling; older builds say
+    `add_stream(template=...)`. Both produce a stream whose codec parameters are
+    copied rather than re-derived, which is what makes a copy a copy.
+    """
+    if hasattr(out, "add_stream_from_template"):
+        return out.add_stream_from_template(in_stream)
+    return out.add_stream(template=in_stream)
+
+
+def encode_mp4(frames, out_path, fps, crf, source_path, keep_audio):
+    """H.264 in mp4, optionally carrying the source clip's audio over untouched.
+
+    Copying the audio is both lossless and far simpler than re-encoding it:
+    PyAV's AAC encoder needs an AudioFifo and a resampler to feed it fixed
+    1024-sample frames, and none of that buys anything when the source track is
+    already AAC in an mp4 - which is exactly what MiniMax H3 writes.
+
+    Returns whether an audio track actually made it into the file, so the UI can
+    say so rather than leaving the user to discover a silent export.
+    """
+    height, width = frames[0].shape[0], frames[0].shape[1]
+    # The video's own length, which is what the audio gets truncated to. Every
+    # loop mode either keeps the frame count or changes it deliberately, and the
+    # audio has to follow the result rather than the source.
+    duration = len(frames) / float(fps) if fps > 0 else 0.0
+
+    src = None
+    audio_in = None
+    audio_out = None
+    wrote_audio = False
+    with av.open(out_path, mode="w") as out:
+        vstream = out.add_stream("libx264", rate=fps, options={"crf": str(crf)})
+        vstream.width = width
+        vstream.height = height
+        # 4:2:0 8-bit is the only combination every browser, phone and chat client
+        # decodes. libx264 would otherwise pick 4:4:4 from the rgb24 input and
+        # produce a file that plays in ffplay and nowhere else.
+        vstream.pix_fmt = "yuv420p"
+
+        # Every stream has to be declared before the first packet is muxed, so the
+        # audio is set up here even though it is written last.
+        if keep_audio:
+            try:
+                src = av.open(source_path)
+                if src.streams.audio:
+                    audio_in = src.streams.audio[0]
+                    audio_out = add_audio_copy_stream(out, audio_in)
+            except Exception as exc:  # noqa: BLE001 - a silent mp4 beats no mp4
+                emit({"stage": "audio_skipped", "reason": str(exc)})
+                audio_in = None
+                audio_out = None
+
+        try:
+            for i, fr in enumerate(frames):
+                for packet in vstream.encode(av.VideoFrame.from_ndarray(fr, format="rgb24")):
+                    out.mux(packet)
+                if i % 8 == 0:
+                    emit({"stage": "encode", "done": i, "total": len(frames)})
+            # Drain the encoder's lookahead queue; without this the tail of the
+            # clip never reaches the file.
+            for packet in vstream.encode():
+                out.mux(packet)
+
+            if audio_in is not None:
+                try:
+                    for packet in src.demux(audio_in):
+                        # demux yields a final empty flush packet with no dts.
+                        if packet.dts is None:
+                            continue
+                        if (
+                            duration > 0
+                            and packet.pts is not None
+                            and float(packet.pts * audio_in.time_base) >= duration
+                        ):
+                            break
+                        # Reassigning the stream rescales pts/dts into the output
+                        # time base; the packet payload is never touched.
+                        packet.stream = audio_out
+                        out.mux(packet)
+                        wrote_audio = True
+                except Exception as exc:  # noqa: BLE001
+                    emit({"stage": "audio_skipped", "reason": str(exc)})
+        finally:
+            if src is not None:
+                src.close()
+    return wrote_audio
+
+
 def main():
     job = json.loads(sys.argv[1])
     frames, src_fps = decode(job["source"], job["width"], job["height"])
@@ -202,10 +294,22 @@ def main():
 
     out_path = job["out"]
     fmt = job["format"]
+    has_audio = False
     if fmt == "gif":
         encode_gif(frames, out_path, job["fps"], job["quality"], job["loop_count"])
     elif fmt == "webp":
         encode_webp(frames, out_path, job["fps"], job["quality"], job["loop_count"])
+    elif fmt == "mp4":
+        # The Rust side already cleared keep_audio for the formats and loop modes
+        # that cannot carry a track; .get() only covers an older caller.
+        has_audio = encode_mp4(
+            frames,
+            out_path,
+            job["fps"],
+            job.get("crf", 20),
+            job["source"],
+            job.get("keep_audio", False),
+        )
     else:
         encode_avif(frames, out_path, job["fps"], job["quality"], job["loop_count"])
 
@@ -219,6 +323,7 @@ def main():
                 "frame_count": len(frames),
                 "seam_delta": delta,
                 "applied_loop_mode": mode,
+                "has_audio": has_audio,
             }
         }
     )
