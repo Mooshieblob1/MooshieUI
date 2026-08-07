@@ -292,12 +292,14 @@
   });
 
   $effect(() => {
-    // `src` is the dependency: a new clip needs a new measurement.
+    // `src` is the dependency: a new clip needs a new measurement, and a new
+    // clip deserves a fresh attempt even if the previous one failed to decode.
     // Incrementing measureGen invalidates any in-flight measureSeam so it
     // cannot write a stale result after this reset completes.
     void src;
     seamDelta = null;
     seamDeltaComputed = false;
+    decodeFailed = false;
     measureGen++;
   });
 </script>
