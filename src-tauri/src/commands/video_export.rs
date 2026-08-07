@@ -452,6 +452,73 @@ pub async fn export_video_animation(
     .await
 }
 
+/// Put a file on the clipboard as a *file*, not as pixels, so pasting into
+/// Discord or a file manager produces the file itself.
+///
+/// Linux has no portable file-clipboard mechanism outside a desktop toolkit,
+/// so it copies the path as text. That is a degraded result and the button's
+/// tooltip says so before the click rather than after.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn copy_file_to_clipboard(path: String) -> Result<(), AppError> {
+    let p = PathBuf::from(&path);
+    if !p.exists() {
+        return Err(AppError::Other(format!("File not found: {path}")));
+    }
+    let p = p
+        .canonicalize()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        crate::commands::api::clipboard_set_file_drop_win(&p)
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // osascript, not objc2: this is the mechanism `native_clipboard_write` already
+        // uses for macOS, and it adds no dependency. `POSIX file` puts a file reference
+        // on the pasteboard, so Finder and chat clients paste the file itself.
+        let script = format!("set the clipboard to POSIX file \"{}\"", p.display());
+        let status = std::process::Command::new("osascript")
+            .args(["-e", &script])
+            .status()
+            .map_err(|e| AppError::Other(format!("osascript failed: {e}")))?;
+        if !status.success() {
+            return Err(AppError::Other(
+                "The clipboard rejected the file reference.".into(),
+            ));
+        }
+        return Ok(());
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        // Path as text. Honest degraded path; the tooltip warned about it.
+        // stdout and stderr must be null -- xclip forks a background daemon that
+        // inherits piped fds and causes wait() to hang forever.
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("xclip")
+            .args(["-selection", "clipboard"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| AppError::Other(format!("Could not run xclip to copy the path: {e}")))?;
+        if let Some(ref mut stdin) = child.stdin {
+            stdin
+                .write_all(path.as_bytes())
+                .map_err(|e| AppError::Other(format!("xclip stdin write failed: {e}")))?;
+        }
+        drop(child.stdin.take());
+        child
+            .wait()
+            .map_err(|e| AppError::Other(format!("xclip wait failed: {e}")))?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

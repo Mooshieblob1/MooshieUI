@@ -2041,7 +2041,7 @@ fn infer_image_mime(bytes: &[u8], ext_hint: Option<&str>) -> &'static str {
 /// Put a file on the Windows clipboard as a file-drop (like right-click → Copy in Explorer).
 /// Much faster than decoding PNGs and preserves all metadata.
 #[cfg(target_os = "windows")]
-fn clipboard_set_file_drop_win(path: &std::path::Path) -> Result<(), AppError> {
+pub(crate) fn clipboard_set_file_drop_win(path: &std::path::Path) -> Result<(), AppError> {
     let path_str = path.to_string_lossy().into_owned();
     // Guard must stay alive for the write; DoClear empties the clipboard first
     // (the crate's default FileList setter leaves stale formats behind).
