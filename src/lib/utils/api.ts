@@ -11,6 +11,7 @@ import type {
   InterrogationResult,
   LlmCatalogEntry,
   LlmHardware,
+  LlmProviderState,
   LlmStatus,
   OutputImage,
   PromptAssistantOpts,
@@ -1012,7 +1013,7 @@ export async function unloadLlm(): Promise<void> {
 }
 
 /**
- * Run a prompt-assistant command (enhance/compose).
+ * Run a prompt-assistant command (enhance/compose/raw external call).
  *
  * Desktop (Tauri) calls the command synchronously — there is no proxy in front.
  * Browser mode is served through a reverse proxy (Cloudflare on the hosted
@@ -1022,7 +1023,7 @@ export async function unloadLlm(): Promise<void> {
  * the SSE event channel, which keep-alives and isn't bound by the proxy timeout.
  */
 async function runPromptAssistant(
-  command: "enhance_prompt" | "compose_prompt",
+  command: "enhance_prompt" | "compose_prompt" | "call_external_llm",
   args: Record<string, unknown>,
 ): Promise<string> {
   if (!isBrowserMode) {
@@ -1100,6 +1101,60 @@ export async function composePrompt(
   opts?: PromptAssistantOpts,
 ): Promise<string> {
   return runPromptAssistant("compose_prompt", { description, family, opts });
+}
+
+/**
+ * Current external LLM provider settings. The API key never crosses this
+ * boundary — only whether one is configured.
+ */
+export async function getLlmProvider(): Promise<LlmProviderState> {
+  return ipcInvoke("get_llm_provider");
+}
+
+/** Switch providers. Clears the stored key when the provider actually changes. */
+export async function setLlmProvider(provider: string): Promise<LlmProviderState> {
+  return ipcInvoke("set_llm_provider", { provider });
+}
+
+/** Store (or clear) the key in Rust config. An empty key disables the external path. */
+export async function setLlmApiKey(apiKey: string): Promise<LlmProviderState> {
+  return ipcInvoke("set_llm_api_key", { apiKey });
+}
+
+export async function setLlmModel(model: string): Promise<LlmProviderState> {
+  return ipcInvoke("set_llm_model", { model });
+}
+
+/** Only meaningful for the self-hosted "custom" provider; the rest pin their own. */
+export async function setLlmBaseUrl(baseUrl: string): Promise<LlmProviderState> {
+  return ipcInvoke("set_llm_base_url", { baseUrl });
+}
+
+/** `GET {base_url}/models` against the configured provider, ids only. */
+export async function listExternalLlmModels(): Promise<string[]> {
+  return ipcInvoke("list_external_llm_models");
+}
+
+/**
+ * Desktop-only OAuth sign-in (PKCE, loopback redirect). Browser mode has no arm
+ * for this: the loopback listener binds on the server, not the user's machine.
+ */
+export async function connectLlmOauth(provider: string): Promise<LlmProviderState> {
+  return ipcInvoke("connect_llm_oauth", { provider });
+}
+
+/**
+ * One system+user turn against whichever backend is configured — the external
+ * provider when one is set up, otherwise the bundled local model. Used by the
+ * H3 prompt rewrite, which needs its own system prompt instead of the booru
+ * grounding enhance/compose apply.
+ */
+export async function callExternalLlm(
+  system: string,
+  prompt: string,
+  maxTokens?: number,
+): Promise<string> {
+  return runPromptAssistant("call_external_llm", { system, prompt, maxTokens });
 }
 
 export async function readClipboardImage(): Promise<number[]> {

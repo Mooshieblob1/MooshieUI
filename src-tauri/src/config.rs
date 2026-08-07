@@ -149,6 +149,13 @@ pub struct AppConfig {
     /// OpenAI, OpenRouter, ...) instead of the bundled local llama-server.
     #[serde(default)]
     pub llm_external_enabled: bool,
+    /// External LLM provider id (`anthropic`, `openai`, `xai`, `openrouter`,
+    /// `custom`). Selects the wire format and the API root; the credentials and
+    /// model still live in the `llm_external_*` fields below. Installs that
+    /// predate this field default to `custom`, which is the OpenAI-compatible
+    /// behaviour they already had.
+    #[serde(default = "default_llm_provider")]
+    pub llm_provider: String,
     /// External LLM API root, e.g. `http://localhost:1234/v1` or `https://api.openai.com/v1`.
     /// `/chat/completions` is appended.
     #[serde(default)]
@@ -170,6 +177,13 @@ pub struct AppConfig {
 /// config explicitly overrides it (null/empty falls back to prefilled issues).
 fn default_report_endpoint() -> Option<String> {
     Some("https://report.mooshieblob.com/report".to_string())
+}
+
+/// Default external LLM provider id. Kept as a literal because `config` is
+/// compiled in builds that gate out `prompt_assistant`; the registry asserts it
+/// matches `providers::DEFAULT_PROVIDER`.
+fn default_llm_provider() -> String {
+    "custom".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -229,6 +243,7 @@ impl Default for AppConfig {
             tls_cert_path: None,
             tls_key_path: None,
             llm_external_enabled: false,
+            llm_provider: default_llm_provider(),
             llm_external_base_url: String::new(),
             llm_external_api_key: String::new(),
             llm_external_model: String::new(),
@@ -253,6 +268,22 @@ pub fn config_to_client_json(
             obj.insert(
                 "civitai_api_key_configured".to_string(),
                 serde_json::json!(configured),
+            );
+            // The external-LLM key is a provider credential (Anthropic, OpenAI,
+            // xAI, OpenRouter, ...) and must never reach a non-admin client.
+            // Regular users cannot call `update_config`, so blanking it here
+            // costs them nothing.
+            let llm_configured = obj
+                .get("llm_external_api_key")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.is_empty());
+            obj.insert(
+                "llm_external_api_key".to_string(),
+                serde_json::Value::String(String::new()),
+            );
+            obj.insert(
+                "llm_external_api_key_configured".to_string(),
+                serde_json::json!(llm_configured),
             );
         }
     }
@@ -451,6 +482,24 @@ pub(crate) fn normalize_config_fields(config: &mut AppConfig) {
             Some(v) => *v = v.trim().to_string(),
             None => {}
         }
+    }
+}
+
+/// Carry forward secrets a full-config save cannot legitimately have sent.
+///
+/// `update_config` replaces the whole config, and its callers hold a snapshot
+/// taken at page load. The provider commands (`set_llm_api_key`, the OAuth
+/// flow) write `llm_external_api_key` straight into Rust config, so that
+/// snapshot goes stale immediately and a later unrelated save would write the
+/// old empty string back over a working key. `config_to_client_json` also
+/// blanks the key for non-admin browser clients, which is the same hazard from
+/// the other direction. An incoming empty key is therefore a stale echo, not an
+/// intent to clear: clearing goes through `set_llm_api_key("")`.
+pub(crate) fn preserve_secrets(incoming: &mut AppConfig, current: &AppConfig) {
+    if incoming.llm_external_api_key.trim().is_empty() {
+        incoming
+            .llm_external_api_key
+            .clone_from(&current.llm_external_api_key);
     }
 }
 

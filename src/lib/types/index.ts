@@ -337,10 +337,14 @@ export interface AppConfig {
   theme_profiles: ThemeProfile[];
   /** Prompt assistant: use an external OpenAI-compatible endpoint instead of the local llama-server. */
   llm_external_enabled: boolean;
+  /** External LLM provider id: anthropic | openai | xai | openrouter | custom. */
+  llm_provider: string;
   /** External LLM API root, e.g. http://localhost:1234/v1 or https://api.openai.com/v1. */
   llm_external_base_url: string;
   /** External LLM API key (Bearer token; empty for keyless local servers). */
   llm_external_api_key: string;
+  /** Blanked for non-admin browser clients; true when a key is stored server-side. */
+  llm_external_api_key_configured?: boolean;
   /** External LLM model name (e.g. gpt-4o-mini). */
   llm_external_model: string;
 }
@@ -461,4 +465,27 @@ export interface LlmStatus {
 export interface PromptAssistantOpts {
   length?: "short" | "medium" | "detailed";
   include_artists?: boolean;
+}
+
+/** Ids of the external LLM providers the backend registry knows about. */
+export type LlmProviderId =
+  | "anthropic"
+  | "openai"
+  | "xai"
+  | "openrouter"
+  | "custom";
+
+/**
+ * Provider settings as the backend reports them. The API key is deliberately
+ * absent: it is stored in Rust config and never crosses into the frontend.
+ */
+export interface LlmProviderState {
+  provider: LlmProviderId | string;
+  base_url: string;
+  model: string;
+  api_key_configured: boolean;
+  /** The provider has a sign-in flow this build implements. */
+  oauth: boolean;
+  /** The external provider, not the bundled local model, is what runs. */
+  enabled: boolean;
 }

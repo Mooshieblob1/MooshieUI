@@ -239,6 +239,15 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "install_pip_package",
     "install_attention_backend",
     "clear_all_queues",
+    // external LLM provider settings: these mutate config and spend the
+    // instance's API key, so they follow `update_config` rather than the
+    // enhance/compose commands every user may run
+    "get_llm_provider",
+    "set_llm_provider",
+    "set_llm_api_key",
+    "set_llm_model",
+    "set_llm_base_url",
+    "list_external_llm_models",
     // previously admin-only: mode switching, filesystem, node install
     "switch_to_app_mode",
     "set_gallery_path",
@@ -2112,8 +2121,9 @@ async fn dispatch_command(
                 serde_json::from_value(args["config"].clone())
                     .map_err(|e| format!("Invalid config: {}", e))?;
             config::normalize_config_fields(&mut new_config);
-            config::save_config(&new_config)?;
             let mut current = state.config.write().await;
+            config::preserve_secrets(&mut new_config, &current);
+            config::save_config(&new_config)?;
             *current = new_config;
             Ok(serde_json::json!(null))
         }
@@ -4616,10 +4626,15 @@ async fn dispatch_command(
         #[cfg(any(feature = "desktop", feature = "server"))]
         "llm_status" => {
             let pa = &state.prompt_assistant;
+            // `external_enabled` decides whether the frontend offers the
+            // assistant at all: with an external provider configured it is
+            // usable with no local model installed.
+            let external_enabled = state.config.read().await.llm_external_enabled;
             Ok(serde_json::json!({
                 "installed_models": pa.installed_models(),
                 "active_model": pa.server.active_model(),
                 "server_running": pa.server.is_running(),
+                "external_enabled": external_enabled,
             }))
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
@@ -4738,6 +4753,107 @@ async fn dispatch_command(
                 .delete_model(&id)
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
+        }
+        // --- External LLM provider settings ---
+        // Every arm returns the same key-free projection the desktop commands
+        // return, so the settings UI is identical in both modes. `connect_llm_oauth`
+        // has no arm on purpose: the sign-in redirect lands on a loopback port owned
+        // by this process, which a browser on another machine cannot reach. Browser
+        // users paste an API key instead.
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "get_llm_provider" => {
+            let s = crate::prompt_assistant::providers::read_state(&state.config).await;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "set_llm_provider" => {
+            let provider = args["provider"].as_str().unwrap_or("").to_string();
+            let s = crate::prompt_assistant::providers::select(&state.config, &provider)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "set_llm_api_key" => {
+            let api_key = args["apiKey"].as_str().unwrap_or("").to_string();
+            let s = crate::prompt_assistant::providers::store_key(&state.config, &api_key)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "set_llm_model" => {
+            let model = args["model"].as_str().unwrap_or("").to_string();
+            let s = crate::prompt_assistant::providers::set_model(&state.config, &model)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "set_llm_base_url" => {
+            let base_url = args["baseUrl"].as_str().unwrap_or("").to_string();
+            let s = crate::prompt_assistant::providers::set_base_url(&state.config, &base_url)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "list_external_llm_models" => {
+            let models = crate::prompt_assistant::providers::list_available_models(
+                &state.http_client,
+                &state.config,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(models).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "call_external_llm" => {
+            let system = args["system"].as_str().unwrap_or("").to_string();
+            let prompt = args["prompt"].as_str().unwrap_or("").to_string();
+            let max_tokens = args["maxTokens"]
+                .as_u64()
+                .map(|v| v as u32)
+                .unwrap_or(1024)
+                .clamp(64, 4096);
+
+            match args["requestId"].as_str() {
+                // Same SSE hand-off as enhance/compose: a long rewrite would
+                // otherwise outlast the reverse proxy's ~100s limit and come back
+                // as a 524 instead of an answer.
+                Some(request_id) => {
+                    let request_id = request_id.to_string();
+                    let owner = username.map(|s| s.to_string());
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        let (event, payload) =
+                            match chat_any_headless(&state, &system, &prompt, max_tokens).await {
+                                Ok(text) => (
+                                    "llm:result",
+                                    serde_json::json!({
+                                        "request_id": request_id,
+                                        "result": text,
+                                        "_target_user": owner,
+                                    }),
+                                ),
+                                Err(e) => (
+                                    "llm:error",
+                                    serde_json::json!({
+                                        "request_id": request_id,
+                                        "error": e,
+                                        "_target_user": owner,
+                                    }),
+                                ),
+                            };
+                        state.broadcast(event, payload);
+                    });
+                    Ok(serde_json::json!({ "queued": true }))
+                }
+                None => {
+                    let text = chat_any_headless(&state, &system, &prompt, max_tokens).await?;
+                    Ok(serde_json::Value::String(text))
+                }
+            }
         }
 
         // --- File operations ---
@@ -4967,28 +5083,50 @@ async fn run_interrogation_headless(
     .map_err(|e| format!("Inference task failed: {}", e))?
 }
 
+/// Browser-mode twin of the desktop `chat_any`: route one system+user turn to
+/// the configured external provider, else to the bundled local llama-server.
+///
+/// Stage updates go out over SSE instead of a Tauri emit, and there is no
+/// download-progress callback because the browser model-download path has its
+/// own dispatch arm.
 #[cfg(any(feature = "desktop", feature = "server"))]
-pub async fn run_prompt_assistant_headless(
+pub async fn chat_any_headless(
     state: &Arc<AppState>,
-    input: &str,
-    family: &str,
-    mode: crate::prompt_assistant::grounding::GenMode,
-    length: Option<&str>,
-    include_artists: bool,
+    system: &str,
+    user: &str,
+    max_tokens: u32,
 ) -> Result<String, String> {
-    use crate::prompt_assistant::{grounding, hardware};
-    // No active-generation guard here: `prompt_queue` is shared across every user
-    // of a server/browser-mode instance, so blocking on it meant one person
-    // generating locked Enhance/Compose for everyone. Contention is instead handled
-    // by the free-VRAM check in `ensure_running`, which loads the LLM on CPU when a
-    // GPU is already busy with ComfyUI's model rather than evicting it.
-    let (model_id, idle_secs) = {
+    use crate::prompt_assistant::hardware;
+
+    let (model_id, idle_secs, ext_enabled, provider, ext_base, ext_key, ext_model) = {
         let cfg = state.config.read().await;
         (
             cfg.prompt_assistant_model_id.clone(),
             cfg.prompt_assistant_idle_timeout_secs,
+            cfg.llm_external_enabled,
+            cfg.llm_provider.clone(),
+            cfg.llm_external_base_url.clone(),
+            cfg.llm_external_api_key.clone(),
+            cfg.llm_external_model.clone(),
         )
     };
+
+    if ext_enabled {
+        state.broadcast("llm:stage", serde_json::json!("generating"));
+        return crate::prompt_assistant::server::chat_provider(
+            &state.http_client,
+            &provider,
+            &ext_base,
+            &ext_key,
+            &ext_model,
+            system,
+            user,
+            max_tokens,
+        )
+        .await
+        .map_err(|e| e.to_string());
+    }
+
     // Fall back to whatever model is already on disk when config.json carries no
     // explicit selection. This is the only path that works on read-only-config
     // deployments (e.g. a Kubernetes ConfigMap mounted at config.json), where the
@@ -5025,10 +5163,53 @@ pub async fn run_prompt_assistant_headless(
         .await
         .map_err(|e| e.to_string())?;
     state.broadcast("llm:stage", serde_json::json!("generating"));
+    state
+        .prompt_assistant
+        .server
+        .chat(&state.http_client, port, system, user, max_tokens)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(any(feature = "desktop", feature = "server"))]
+pub async fn run_prompt_assistant_headless(
+    state: &Arc<AppState>,
+    input: &str,
+    family: &str,
+    mode: crate::prompt_assistant::grounding::GenMode,
+    length: Option<&str>,
+    include_artists: bool,
+) -> Result<String, String> {
+    use crate::prompt_assistant::grounding;
+    // No active-generation guard here: `prompt_queue` is shared across every user
+    // of a server/browser-mode instance, so blocking on it meant one person
+    // generating locked Enhance/Compose for everyone. Contention is instead handled
+    // by the free-VRAM check in `ensure_running`, which loads the LLM on CPU when a
+    // GPU is already busy with ComfyUI's model rather than evicting it.
+    //
+    // Resolve the model purpose (drives tag-only grounding) the same way the
+    // desktop path does: an external endpoint is a general-purpose chat model, so
+    // it needs no local catalog entry and no installed model.
+    let (model_id, ext_enabled) = {
+        let cfg = state.config.read().await;
+        (
+            cfg.prompt_assistant_model_id.clone(),
+            cfg.llm_external_enabled,
+        )
+    };
     // A purpose-built tag upsampler is always tag-only regardless of family.
-    let purpose = crate::prompt_assistant::catalog::entry(&model_id)
-        .map(|e| e.purpose)
-        .unwrap_or_else(|| "natural_language".to_string());
+    let purpose = if ext_enabled {
+        "natural_language".to_string()
+    } else {
+        let resolved = match model_id {
+            Some(id) => Some(id),
+            None => state.prompt_assistant.installed_models().into_iter().next(),
+        };
+        resolved
+            .and_then(|id| crate::prompt_assistant::catalog::entry(&id))
+            .map(|e| e.purpose)
+            .unwrap_or_else(|| "natural_language".to_string())
+    };
     let tag_only = grounding::is_tag_only(&purpose, family);
     let candidates = grounding::retrieve_candidates(input, 40);
     let system = grounding::system_prompt(tag_only, mode, &candidates, include_artists);
@@ -5039,12 +5220,7 @@ pub async fn run_prompt_assistant_headless(
         Some("detailed") => 384,
         _ => 192,
     };
-    let raw = state
-        .prompt_assistant
-        .server
-        .chat(&state.http_client, port, &system, input, max_tokens)
-        .await
-        .map_err(|e| e.to_string())?;
+    let raw = chat_any_headless(state, &system, input, max_tokens).await?;
     let cleaned = grounding::repair(&raw, tag_only);
     // Enhance is additive: keep every user tag and don't let the model swap a
     // pinned attribute. No-op for Compose. The desktop path runs this too;
