@@ -29,13 +29,15 @@ export interface ExportPreset {
   fpsTarget: number | "source";
   /** Requested width; clamped down to the source width by `outputDimensions`. */
   width: number;
-  /** libwebp quality 0-100, or GIF palette colour count 2-256. */
+  /** AV1 quality 0-100 (AVIF), libwebp quality 0-100 (WebP), or palette colour count 2-256 (GIF). */
   quality: number;
 }
 
 /**
  * AVIF is the recommended default: roughly a quarter of the WebP byte count at comparable
- * quality, and it encodes faster. The trade-off is reach - Discord, Slack, Teams and Signal
+ * quality, and on ordinary video-like content it also encodes faster. Both advantages invert
+ * on incompressible noise, so they are content-dependent, not unconditional.
+ * The trade-off is reach - Discord, Slack, Teams and Signal
  * will not animate an AVIF inline, they post it as a file attachment. The popover states that
  * per format rather than hiding it, so WebP stays a first-class choice for sharing.
  *
