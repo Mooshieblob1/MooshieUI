@@ -1,6 +1,8 @@
 pub mod catalog;
 pub mod grounding;
 pub mod hardware;
+pub mod oauth;
+pub mod providers;
 pub mod server;
 
 use std::path::PathBuf;
