@@ -21,8 +21,7 @@
     onContextMenu = undefined,
   }: Props = $props();
 
-  // Twelve component-local fields. No store: nothing outside this component
-  // reads any of it.
+  // Component-local state. No store: nothing outside this component reads any of it.
   let videoEl = $state<HTMLVideoElement | null>(null);
   let rootEl = $state<HTMLDivElement | null>(null);
   let playing = $state(false);
@@ -37,6 +36,10 @@
   let controlsVisible = $state(true);
   let decodeFailed = $state(false);
   let overflowOpen = $state(false);
+  // Scrubber drag guard: prevents timeupdate writes from snapping the thumb
+  // back to the playhead while the user is mid-drag.
+  let scrubbing = $state(false);
+  let scrubPos = $state(0);
 
   const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
   /** Half-window around the wrap, in seconds. 1.2 s total. */
@@ -74,6 +77,7 @@
 
   function onScrub(e: Event) {
     const value = Number((e.currentTarget as HTMLInputElement).value);
+    scrubPos = value;
     if (videoEl) videoEl.currentTime = (value / 1000) * duration;
   }
 
@@ -154,8 +158,8 @@
   }
 
   function retry() {
+    // Flipping decodeFailed re-mounts the <video> element; autoplay handles the rest.
     decodeFailed = false;
-    if (videoEl) videoEl.load();
   }
 
   $effect(() => {
@@ -253,8 +257,15 @@
               type="range"
               min="0"
               max="1000"
-              value={progressPct * 10}
+              value={scrubbing ? scrubPos : progressPct * 10}
               oninput={onScrub}
+              onpointerdown={(e) => {
+                scrubPos = Number((e.currentTarget as HTMLInputElement).value);
+                scrubbing = true;
+              }}
+              onpointerup={() => (scrubbing = false)}
+              onpointercancel={() => (scrubbing = false)}
+              onchange={() => (scrubbing = false)}
               aria-label={locale.t("video.player.scrubber")}
               class="absolute inset-0 w-full appearance-none bg-transparent cursor-pointer
                      [&::-webkit-slider-thumb]:appearance-none
