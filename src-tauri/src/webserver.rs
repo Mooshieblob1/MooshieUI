@@ -1616,6 +1616,8 @@ async fn export_download_handler(
         "image/gif"
     } else if filename.ends_with(".webp") {
         "image/webp"
+    } else if filename.ends_with(".mp4") {
+        "video/mp4"
     } else {
         // AVIF is the fallback arm for the same reason run_export's is: it is the
         // recommended format, so an unexpected extension lands on it.
@@ -4723,6 +4725,7 @@ async fn dispatch_command(
                 args["loopCount"].as_u64().unwrap_or(0) as u32,
                 args["loopMode"].as_str().unwrap_or("auto"),
                 args["crossfadeFrames"].as_u64().unwrap_or(4) as u32,
+                args["keepAudio"].as_bool().unwrap_or(false),
             )
             .await
             .map_err(|e| e.to_string())?;

@@ -1,4 +1,4 @@
-//! Animated AVIF / WebP / GIF export from gallery videos.
+//! Animated AVIF / WebP / GIF and re-encoded MP4 export from gallery videos.
 //!
 //! The pure functions in this module are the canonical implementation of the
 //! export math. `src/lib/utils/videoExport.ts` mirrors them so the popover can
@@ -120,6 +120,44 @@ pub fn resolve_auto(seam_delta: f32) -> &'static str {
     }
 }
 
+/// On-disk extension for an export format.
+///
+/// AVIF is the default arm: it is the recommended format, so an unrecognised
+/// string resolves to it rather than to the largest output.
+pub fn ext_for(format: &str) -> &'static str {
+    match format {
+        "gif" => "gif",
+        "webp" => "webp",
+        "mp4" => "mp4",
+        _ => "avif",
+    }
+}
+
+/// Map the UI's 0-100 higher-is-better quality onto libx264's CRF, where lower
+/// is better.
+///
+/// The UI never shows CRF. `quality` already means an AV1 quality for AVIF and a
+/// libwebp quality for WebP, both 0-100 higher-is-better; giving MP4 a fourth,
+/// inverted meaning would be worse than mapping it here. 0 lands on CRF 34
+/// (visibly soft but tiny), 100 on CRF 14 (effectively transparent).
+pub fn quality_to_crf(quality: u32) -> u32 {
+    let q = quality.min(100) as f32;
+    (34.0 - q * 0.2).round() as u32
+}
+
+/// Whether an export keeps the source clip's audio track.
+///
+/// MP4 is the only format with an audio track at all. Ping-pong is the only loop
+/// mode that cannot keep one: it doubles the frame list and plays the second half
+/// in reverse, which no audio stream can follow. Every other mode either keeps
+/// the frames verbatim or truncates them, and the audio truncates to match.
+///
+/// `auto` resolves to `trim` or `none` at encode time - both keep audio - so it
+/// counts as audio-capable here.
+pub fn supports_audio(format: &str, loop_mode: &str) -> bool {
+    format == "mp4" && loop_mode != "pingpong"
+}
+
 /// Whether a produced file exceeds the selected platform's attachment limit.
 /// An unrecognised or absent target never produces a hint.
 pub fn over_size_limit(bytes: u64, target: &str) -> bool {
@@ -151,13 +189,37 @@ pub struct VideoExportResult {
     pub seam_delta: f32,
     /// What `auto` resolved to; echoes the request for the other modes.
     pub applied_loop_mode: String,
+    /// Whether an audio track actually landed in the file. Asking for audio is
+    /// not the same as getting it - a source with no audio track, or one the mp4
+    /// container will not hold, degrades to a silent export rather than failing,
+    /// and the popover says so instead of leaving the user to find out on
+    /// playback.
+    #[serde(default)]
+    pub has_audio: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ExportCapability {
     pub available: bool,
     pub reason: Option<String>,
+    /// Whether this venv's PyAV was built with an H.264 encoder. Everything the
+    /// animated formats need ships with PyAV itself, but libx264 is a separate
+    /// ffmpeg build option, so the MP4 tab has to be gated on it independently.
+    pub mp4: bool,
 }
+
+/// Probed with `python -c`. Written as a real multi-line program rather than a
+/// semicolon one-liner because the libx264 check needs a `try` block: PyAV
+/// raises rather than returning `None` when a codec is absent.
+const PROBE_SCRIPT: &str = concat!(
+    "import av, numpy, PIL\n",
+    "try:\n",
+    "    av.codec.Codec('libx264', 'w')\n",
+    "    mp4 = 1\n",
+    "except Exception:\n",
+    "    mp4 = 0\n",
+    "print('ok', mp4)\n",
+);
 
 /// Where exports land before Save as / Copy act on them. Swept at app start.
 pub fn export_temp_dir() -> PathBuf {
@@ -215,12 +277,13 @@ pub(crate) async fn probe_export_inner(state: &AppState) -> ExportCapability {
             return ExportCapability {
                 available: false,
                 reason: Some(e.to_string()),
+                mp4: false,
             }
         }
     };
     let mut cmd = tokio::process::Command::new(&python);
     cmd.arg("-c")
-        .arg("import av, numpy, PIL; print('ok')")
+        .arg(PROBE_SCRIPT)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     #[cfg(target_os = "windows")]
@@ -228,21 +291,34 @@ pub(crate) async fn probe_export_inner(state: &AppState) -> ExportCapability {
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
     match cmd.output().await {
-        Ok(out) if out.status.success() => ExportCapability {
-            available: true,
-            reason: None,
-        },
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            // "ok 1" / "ok 0". A missing or unreadable flag means no MP4 tab,
+            // never a broken export offered as if it worked.
+            let mp4 = stdout
+                .split_whitespace()
+                .last()
+                .map(|t| t == "1")
+                .unwrap_or(false);
+            ExportCapability {
+                available: true,
+                reason: None,
+                mp4,
+            }
+        }
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             let last = stderr.lines().last().unwrap_or("unknown import failure");
             ExportCapability {
                 available: false,
                 reason: Some(last.to_string()),
+                mp4: false,
             }
         }
         Err(e) => ExportCapability {
             available: false,
             reason: Some(e.to_string()),
+            mp4: false,
         },
     }
 }
@@ -261,6 +337,7 @@ pub(crate) async fn run_export(
     loop_count: u32,
     loop_mode: &str,
     crossfade_frames: u32,
+    keep_audio: bool,
 ) -> Result<VideoExportResult, AppError> {
     if !source.exists() {
         return Err(AppError::Other(
@@ -284,16 +361,16 @@ pub(crate) async fn run_export(
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "export".into());
-    // AVIF is the default arm: it is the recommended format, so an unknown string
-    // resolves to it rather than to the largest output.
-    let ext = match format {
-        "gif" => "gif",
-        "webp" => "webp",
-        _ => "avif",
-    };
+    let ext = ext_for(format);
     // Deterministic: re-exporting the same settings overwrites rather than
-    // piling temp files up.
+    // piling temp files up. The export temp dir is never the gallery dir, so an
+    // MP4 export cannot collide with the mp4 it is reading.
     let out_path = dir.join(format!("{stem}_{out_w}w_{fps}fps_{loop_mode}.{ext}"));
+
+    // Audio only survives on MP4, and not under ping-pong; asking for it anywhere
+    // else is silently ignored rather than treated as an error, so the popover
+    // can leave the toggle's state alone when the user switches formats.
+    let keep_audio = keep_audio && supports_audio(ext, loop_mode);
 
     let job = serde_json::json!({
         "source": source.to_string_lossy(),
@@ -303,6 +380,8 @@ pub(crate) async fn run_export(
         "width": out_w,
         "height": out_h,
         "quality": quality,
+        "crf": quality_to_crf(quality),
+        "keep_audio": keep_audio,
         "loop_count": loop_count,
         "loop_mode": loop_mode,
         "crossfade_frames": crossfade_frames,
@@ -427,6 +506,7 @@ pub async fn export_video_animation(
     loop_count: u32,
     loop_mode: String,
     crossfade_frames: u32,
+    keep_audio: bool,
 ) -> Result<VideoExportResult, AppError> {
     // Basename only; never let a caller walk out of the gallery.
     let name = Path::new(&filename)
@@ -451,6 +531,7 @@ pub async fn export_video_animation(
         loop_count,
         &loop_mode,
         crossfade_frames,
+        keep_audio,
     )
     .await
 }
@@ -663,5 +744,46 @@ mod tests {
         // No target selected means no hint, ever.
         assert!(!over_size_limit(u64::MAX, "none"));
         assert!(!over_size_limit(u64::MAX, "anything-else"));
+    }
+
+    #[test]
+    fn extensions_cover_every_format_and_default_to_avif() {
+        assert_eq!(ext_for("avif"), "avif");
+        assert_eq!(ext_for("webp"), "webp");
+        assert_eq!(ext_for("gif"), "gif");
+        assert_eq!(ext_for("mp4"), "mp4");
+        // An unrecognised format resolves to the recommended one, not the largest.
+        assert_eq!(ext_for(""), "avif");
+        assert_eq!(ext_for("mkv"), "avif");
+    }
+
+    #[test]
+    fn quality_maps_onto_the_crf_scale_inverted() {
+        // Higher UI quality must always mean a lower (better) CRF.
+        assert_eq!(quality_to_crf(0), 34);
+        assert_eq!(quality_to_crf(100), 14);
+        assert_eq!(quality_to_crf(70), 20);
+        assert_eq!(quality_to_crf(78), 18);
+        assert_eq!(quality_to_crf(90), 16);
+        // Out-of-range input clamps rather than producing a nonsense CRF.
+        assert_eq!(quality_to_crf(500), 14);
+        // Monotonically non-increasing across the whole scale.
+        for q in 1..=100u32 {
+            assert!(quality_to_crf(q) <= quality_to_crf(q - 1));
+        }
+    }
+
+    #[test]
+    fn audio_survives_only_on_mp4_and_never_under_pingpong() {
+        assert!(supports_audio("mp4", "auto"));
+        assert!(supports_audio("mp4", "none"));
+        assert!(supports_audio("mp4", "trim"));
+        assert!(supports_audio("mp4", "crossfade"));
+        // Ping-pong doubles and reverses the frames; no audio track can follow.
+        assert!(!supports_audio("mp4", "pingpong"));
+        // The animated-image formats have no audio track at all.
+        assert!(!supports_audio("avif", "none"));
+        assert!(!supports_audio("webp", "none"));
+        assert!(!supports_audio("gif", "none"));
     }
 }

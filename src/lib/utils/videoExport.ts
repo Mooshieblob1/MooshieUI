@@ -15,7 +15,7 @@ export const AUTO_SEAM_THRESHOLD = 2.0;
 /** Rust: `DEFAULT_CROSSFADE_FRAMES` */
 export const DEFAULT_CROSSFADE_FRAMES = 4;
 
-export type ExportFormat = "avif" | "webp" | "gif";
+export type ExportFormat = "avif" | "webp" | "gif" | "mp4";
 export type LoopMode = "auto" | "none" | "trim" | "crossfade" | "pingpong";
 export type SizeTarget = "discord" | "nitro" | "none";
 
@@ -29,7 +29,10 @@ export interface ExportPreset {
   fpsTarget: number | "source";
   /** Requested width; clamped down to the source width by `outputDimensions`. */
   width: number;
-  /** AV1 quality 0-100 (AVIF), libwebp quality 0-100 (WebP), or palette colour count 2-256 (GIF). */
+  /**
+   * AV1 quality 0-100 (AVIF), libwebp quality 0-100 (WebP), palette colour count 2-256 (GIF),
+   * or H.264 quality 0-100 mapped to a CRF internally (MP4).
+   */
   quality: number;
 }
 
@@ -63,18 +66,43 @@ export const GIF_PRESETS: ExportPreset[] = [
   { id: "preset_max", fpsTarget: 24, width: 832, quality: 256 },
 ];
 
+/**
+ * MP4 is the only export format that keeps the clip's audio, so its presets stay
+ * closer to the source than the animated-image ones: there is no palette or
+ * alpha budget to trade against, and H.264 handles full-rate motion cheaply.
+ *
+ * `quality` is a 0-100 scale, higher is better, mapped to a libx264 CRF by
+ * `qualityToCrf`. It deliberately reads the same direction as the AVIF and WebP
+ * scales rather than exposing CRF's inverted numbering in the UI.
+ */
+export const MP4_PRESETS: ExportPreset[] = [
+  { id: "preset_smooth", fpsTarget: "source", width: 480, quality: 70 },
+  { id: "preset_balanced", fpsTarget: 24, width: 640, quality: 78 },
+  { id: "preset_max", fpsTarget: "source", width: 832, quality: 90 },
+];
+
 /** Presets for a format, in the order the popover shows them. */
 export function presetsFor(format: ExportFormat): ExportPreset[] {
   if (format === "avif") return AVIF_PRESETS;
   if (format === "webp") return WEBP_PRESETS;
+  if (format === "mp4") return MP4_PRESETS;
   return GIF_PRESETS;
+}
+
+/** Rust: `ext_for` - the on-disk extension the backend writes for a format. */
+export function extFor(format: ExportFormat): string {
+  if (format === "gif") return "gif";
+  if (format === "webp") return "webp";
+  if (format === "mp4") return "mp4";
+  return "avif";
 }
 
 /**
  * Valid range for the overloaded `quality` field.
  *
- * `quality` means three different things by format: an AV1 quality for AVIF, a libwebp quality
- * for WebP, and a palette colour count for GIF. The advanced slider reads its bounds from here
+ * `quality` means four different things by format: an AV1 quality for AVIF, a libwebp quality
+ * for WebP, a palette colour count for GIF, and an H.264 quality for MP4. Three of the four are
+ * 0-100 higher-is-better; only GIF differs. The advanced slider reads its bounds from here
  * instead of hardcoding them.
  */
 export function qualityRange(format: ExportFormat): { min: number; max: number } {
@@ -82,14 +110,42 @@ export function qualityRange(format: ExportFormat): { min: number; max: number }
 }
 
 /**
+ * Rust: `quality_to_crf`
+ *
+ * Maps the UI's 0-100 higher-is-better quality onto libx264's CRF, where lower is
+ * better. 0 lands on CRF 34 (visibly soft but tiny) and 100 on CRF 14 (effectively
+ * transparent); the presets sit between 20 and 16.
+ */
+export function qualityToCrf(quality: number): number {
+  const q = Math.min(100, Math.max(0, Math.round(quality)));
+  return Math.round(34 - q * 0.2);
+}
+
+/**
  * Whether the container honours an explicit repeat count.
  *
  * AVIF accepts a `loop` argument at encode time but neither Pillow nor typical players read it
- * back - animated AVIF loops continuously regardless. The popover disables the repeat-count
- * control for AVIF and shows `video.export.loop_count_unsupported`.
+ * back - animated AVIF loops continuously regardless. MP4 has no repeat-count field at all;
+ * looping is the player's decision. The popover disables the repeat-count control for both and
+ * shows `video.export.loop_count_unsupported`.
  */
 export function supportsLoopCount(format: ExportFormat): boolean {
-  return format !== "avif";
+  return format !== "avif" && format !== "mp4";
+}
+
+/**
+ * Rust: `supports_audio`
+ *
+ * MP4 is the only format with an audio track, and ping-pong is the only loop mode
+ * that cannot keep one: it doubles the frame list and plays the second half in
+ * reverse, which no audio stream can follow. Every other mode either keeps the
+ * frames as-is or truncates them, and the audio truncates to match.
+ *
+ * `auto` resolves to `trim` or `none` at encode time - both keep audio - so it is
+ * treated as audio-capable here.
+ */
+export function supportsAudio(format: ExportFormat, mode: LoopMode): boolean {
+  return format === "mp4" && mode !== "pingpong";
 }
 
 /** Rust: `divisors` */
@@ -179,6 +235,13 @@ export function overSizeLimit(bytes: number, target: SizeTarget): boolean {
 }
 
 /**
+ * Bytes per second of copied AAC stereo, the audio MiniMax H3 writes into its
+ * own mp4. The MP4 export stream-copies that track rather than re-encoding it,
+ * so this is the source bitrate rather than a target of ours.
+ */
+const AUDIO_BYTES_PER_SECOND = 16_000;
+
+/**
  * Order-of-magnitude size estimate for picking a preset. Not a promise - the
  * real byte count replaces it once the export finishes.
  *
@@ -186,16 +249,28 @@ export function overSizeLimit(bytes: number, target: SizeTarget): boolean {
  * the estimate has to say so before the click.
  *
  * The AVIF coefficient (0.015) is 0.06 / 4, measured at roughly a quarter of
- * the WebP byte count on a 48-frame 480x270 sample.
+ * the WebP byte count on a 48-frame 480x270 sample. The MP4 coefficient sits
+ * between the two: inter-frame prediction beats per-frame AVIF on motion, but
+ * H.264 is an older codec than AV1.
+ *
+ * `fps` and `keepAudio` only matter for MP4, where a copied audio track can be
+ * a large fraction of a short clip's total size. They are ignored otherwise.
  */
 export function estimateBytes(
   format: ExportFormat,
   frames: number,
   width: number,
-  height: number
+  height: number,
+  fps = 0,
+  keepAudio = false
 ): number {
-  const k = format === "avif" ? 0.015 : format === "webp" ? 0.06 : 0.35;
-  return Math.round(frames * width * height * k);
+  const k =
+    format === "avif" ? 0.015 : format === "webp" ? 0.06 : format === "mp4" ? 0.035 : 0.35;
+  let bytes = frames * width * height * k;
+  if (format === "mp4" && keepAudio && fps > 0) {
+    bytes += (frames / fps) * AUDIO_BYTES_PER_SECOND;
+  }
+  return Math.round(bytes);
 }
 
 export function formatBytes(bytes: number): string {
