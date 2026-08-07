@@ -3524,9 +3524,11 @@
         </button>
       {/if}
 
-      <!-- Action buttons -->
+      <!-- Action buttons. For a video the player owns the bottom of the frame,
+           so this bar sits above the player's control chrome (~90px tall)
+           instead of on top of it. -->
       {#if gallery.selectedImage}
-      <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-neutral-900/70 backdrop-blur-sm rounded-xl px-2 py-1.5 border border-neutral-700/50">
+      <div class="absolute {gallery.lightboxIsVideo ? 'bottom-28' : 'bottom-6'} left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-neutral-900/70 backdrop-blur-sm rounded-xl px-2 py-1.5 border border-neutral-700/50">
         {#if !gallery.lightboxIsVideo}
         <!-- Generation group -->
         <button

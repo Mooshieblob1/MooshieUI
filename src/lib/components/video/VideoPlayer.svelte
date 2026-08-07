@@ -1,3 +1,13 @@
+<script module lang="ts">
+  // Audio preferences outlive any one player instance. They are module-scoped,
+  // not component-scoped, because the lightbox unmounts and remounts the player
+  // on every open and on every clip change - component state would silently
+  // reset the user's mute on each of those, which is exactly what it did.
+  // Deliberately not persisted to disk: this is a per-session preference.
+  let volume = $state(1);
+  let muted = $state(false);
+</script>
+
 <script lang="ts">
   import { locale } from "../../stores/locale.svelte.js";
   import VideoExportPopover from "./VideoExportPopover.svelte";
@@ -29,8 +39,7 @@
   let currentTime = $state(0);
   let duration = $state(0);
   let bufferedEnd = $state(0);
-  let volume = $state(1);
-  let muted = $state(false);
+  // volume and muted live in <script module> above: they survive remounts.
   let rate = $state(1);
   let looping = $state(true);
   let seamMode = $state(false);
