@@ -1,5 +1,16 @@
 # Changelog
 
+## What's New in v1.9.2
+
+### Fixes
+- **Quantized models keep their fast kernels on more NVIDIA cards**: an int8convrot or int4 model could generate slower than the unquantized model it was made from (issue #520). comfy-kitchen, the package that provides those kernels, only enables its optimized CUDA and Triton backends on a PyTorch built against CUDA 13.0 or newer, and drops to plain eager kernels below that, where a quantized model really is slower than its base. Setup was installing the CUDA 13 build only for Blackwell cards and the CUDA 12.8 build for everything else, so on a 40-series or 30-series card the quantized path was always the slow one. Setup now installs the CUDA 13 build for every GPU CUDA 13 still supports, which is compute capability 7.5 and up, and keeps CUDA 12.8 for the older cards CUDA 13 dropped.
+- **Existing installs are told when their PyTorch is too old for those kernels**: an environment keeps whatever PyTorch build it was created with, so an install made before this change stays on CUDA 12.8 until PyTorch is reinstalled. Setup now warns when that is the case and says to re-run it, and only on hardware where a newer build actually exists, so there is no advice to follow on a card CUDA 13 no longer supports.
+
+### Maintenance
+- The diagnostic report now stamps how old its ComfyUI log section is. That log is only rewritten when MooshieUI starts ComfyUI itself, so when the app attaches to a server that was already running, the contents can be from a much earlier launch on a different ComfyUI and PyTorch version, which is easy to misread as the current session.
+
+---
+
 ## What's New in v1.9.1
 
 ### Fixes

@@ -277,6 +277,92 @@ fn cache_temp_event(
     }
 }
 
+/// Handle a `MooshieSaveVideo` completion (binary WS event 102).
+///
+/// The payload after the 4-byte big-endian event id is UTF-8 JSON:
+/// `{"video_path","poster_path","fps","frame_count","width","height"}` with
+/// absolute paths inside ComfyUI's output directory. Moves the mp4 and its
+/// poster into the owning user's gallery directory, indexes them, and returns
+/// the payload to emit as `comfyui:output_video`. Any failure logs and
+/// returns None -- video output must never crash the WS loop.
+async fn handle_video_output(
+    state: &std::sync::Arc<crate::state::AppState>,
+    data: &[u8],
+    prompt_id: &str,
+) -> Option<serde_json::Value> {
+    let payload: serde_json::Value = match serde_json::from_slice(data.get(4..)?) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("[video] event 102 carried invalid JSON: {e}");
+            return None;
+        }
+    };
+    let video_path = std::path::PathBuf::from(payload.get("video_path")?.as_str()?);
+    let poster_path = payload
+        .get("poster_path")
+        .and_then(|v| v.as_str())
+        .map(std::path::PathBuf::from);
+    let fps = payload.get("fps").and_then(|v| v.as_f64()).unwrap_or(24.0);
+    let frame_count = payload
+        .get("frame_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let width = payload.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let height = payload.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+    // bind_alias copies ownership onto the ComfyUI-side prompt id, so the
+    // WS-side id resolves the owner directly. Desktop generations have no
+    // owner and land in the root gallery.
+    let owner = state.prompt_queue.owner_of(prompt_id);
+    let Some(gallery_dir) = crate::webserver::user_gallery_dir(owner.as_deref()) else {
+        log::warn!("[video] gallery unavailable, dropping video output for prompt {prompt_id}");
+        return None;
+    };
+
+    let prompt_id_owned = prompt_id.to_string();
+    let saved = tokio::task::spawn_blocking(move || {
+        crate::commands::api::save_video_to_gallery(
+            &video_path,
+            poster_path.as_deref(),
+            &gallery_dir,
+            &prompt_id_owned,
+            fps,
+            frame_count,
+            width,
+            height,
+        )
+    })
+    .await;
+    let saved = match saved {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
+            log::warn!("[video] failed to move video into gallery: {e}");
+            return None;
+        }
+        Err(e) => {
+            log::warn!("[video] gallery move task failed: {e}");
+            return None;
+        }
+    };
+
+    let duration_seconds = if fps > 0.0 {
+        frame_count as f64 / fps
+    } else {
+        0.0
+    };
+    Some(serde_json::json!({
+        "type": "video",
+        "prompt_id": prompt_id,
+        "video_filename": saved.video_filename,
+        "poster_filename": saved.poster_filename,
+        "duration_seconds": duration_seconds,
+        "fps": fps,
+        "frame_count": frame_count,
+        "width": width,
+        "height": height,
+    }))
+}
+
 #[cfg(feature = "desktop")]
 pub async fn connect_websocket(
     app_handle: AppHandle,
@@ -521,7 +607,7 @@ pub async fn connect_websocket(
                         // Skip binary events if we don't know which prompt they belong to
                         // (prevents cross-user event leaking via SSE)
                         if current_prompt_id.is_none()
-                            && matches!(event_type, 1 | 2 | 4 | 100 | 101)
+                            && matches!(event_type, 1 | 2 | 4 | 100 | 101 | 102)
                         {
                             continue;
                         }
@@ -706,6 +792,14 @@ pub async fn connect_websocket(
 
                                 emit_split(frontend_event, tauri_payload, sse_payload);
                             }
+                            102 => {
+                                let prompt_id_str = current_prompt_id.as_deref().unwrap();
+                                if let Some(payload) =
+                                    handle_video_output(&ws_state, &data, prompt_id_str).await
+                                {
+                                    emit("comfyui:output_video", payload);
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -858,7 +952,7 @@ pub async fn connect_websocket_headless(
                         let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
                         // Skip binary events if we don't know which prompt they belong to
                         if current_prompt_id.is_none()
-                            && matches!(event_type, 1 | 2 | 4 | 100 | 101)
+                            && matches!(event_type, 1 | 2 | 4 | 100 | 101 | 102)
                         {
                             continue;
                         }
@@ -923,6 +1017,14 @@ pub async fn connect_websocket_headless(
                                     "comfyui:output_image"
                                 };
                                 emit(frontend_event, payload);
+                            }
+                            102 => {
+                                let prompt_id_str = current_prompt_id.as_deref().unwrap();
+                                if let Some(payload) =
+                                    handle_video_output(&ws_state, &data, prompt_id_str).await
+                                {
+                                    emit("comfyui:output_video", payload);
+                                }
                             }
                             _ => {}
                         }
@@ -1128,7 +1230,7 @@ async fn connect_websocket_for_worker_inner(
                         }
                         let event_type = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
                         if current_prompt_id.is_none()
-                            && matches!(event_type, 1 | 2 | 4 | 100 | 101)
+                            && matches!(event_type, 1 | 2 | 4 | 100 | 101 | 102)
                         {
                             continue;
                         }
@@ -1192,6 +1294,14 @@ async fn connect_websocket_for_worker_inner(
                                     "comfyui:output_image"
                                 };
                                 emit(frontend_event, payload);
+                            }
+                            102 => {
+                                let prompt_id_str = current_prompt_id.as_deref().unwrap();
+                                if let Some(payload) =
+                                    handle_video_output(&ws_state, &data, prompt_id_str).await
+                                {
+                                    emit("comfyui:output_video", payload);
+                                }
                             }
                             _ => {}
                         }
