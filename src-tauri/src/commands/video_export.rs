@@ -134,6 +134,7 @@ use crate::error::AppError;
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tauri::{Emitter, State};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -201,7 +202,9 @@ async fn resolve_python(state: &AppState) -> Result<PathBuf, AppError> {
 /// before the click rather than failing after it.
 #[cfg(feature = "desktop")]
 #[tauri::command]
-pub async fn probe_video_export(state: State<'_, AppState>) -> Result<ExportCapability, AppError> {
+pub async fn probe_video_export(
+    state: State<'_, Arc<AppState>>,
+) -> Result<ExportCapability, AppError> {
     Ok(probe_export_inner(&state).await)
 }
 
@@ -415,7 +418,7 @@ fn source_dimensions(source: &Path) -> (u32, u32) {
 #[allow(clippy::too_many_arguments)]
 pub async fn export_video_animation(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     filename: String,
     format: String,
     fps: u32,
