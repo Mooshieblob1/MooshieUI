@@ -135,6 +135,7 @@
     void fps;
     void width;
     void quality;
+    void loopCount;
     void loopMode;
     void crossfadeFrames;
     result = null;
