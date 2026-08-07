@@ -530,6 +530,8 @@ pub fn run() {
             commands::api::check_node_available,
             commands::api::is_custom_node_installed,
             commands::api::install_custom_node,
+            commands::api::is_rife_installed,
+            commands::api::install_rife,
             commands::api::install_pip_package,
             commands::api::check_python_import,
             commands::websocket::connect_ws,

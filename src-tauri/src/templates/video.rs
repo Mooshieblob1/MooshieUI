@@ -265,15 +265,46 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
     );
     next_id += 1;
 
+    // RIFE 2x frame interpolation: doubles H3's native 24 fps to 48 without
+    // changing the clip's duration, so `CreateVideo.fps` has to double too.
+    // Every widget the node declares is sent explicitly — ComfyUI errors on a
+    // missing required input, and the pack's defaults are not guaranteed to
+    // survive a pack update.
+    let (frames_source_id, fps) = if params.video_rife_enabled {
+        let rife_id = next_id.to_string();
+        workflow.insert(
+            rife_id.clone(),
+            json!({
+                "class_type": "RIFE VFI",
+                "inputs": {
+                    "frames": [decode_id.as_str(), 0],
+                    "ckpt_name": crate::comfyui::nodes::RIFE_CKPT_FILENAME,
+                    "clear_cache_after_n_frames": 10,
+                    "multiplier": 2,
+                    "fast_mode": true,
+                    "ensemble": true,
+                    "scale_factor": 1.0,
+                    "dtype": "float32",
+                    "torch_compile": false,
+                    "batch_size": 1
+                }
+            }),
+        );
+        next_id += 1;
+        (rife_id, 48.0)
+    } else {
+        (decode_id.clone(), 24.0)
+    };
+
     let create_video_id = next_id.to_string();
     workflow.insert(
         create_video_id.clone(),
         json!({
             "class_type": "CreateVideo",
             "inputs": {
-                "images": [decode_id.as_str(), 0],
+                "images": [frames_source_id.as_str(), 0],
                 "audio": [audio_decode_id.as_str(), 0],
-                "fps": 24.0
+                "fps": fps
             }
         }),
     );
@@ -441,6 +472,72 @@ mod tests {
         assert!(h3["inputs"]["ref_images.ref_image_2"].is_array());
         assert!(h3["inputs"].get("ref_images.ref_image_3").is_none());
         assert_eq!(nodes_of_class(&workflow, "LoadImage").len(), 3);
+    }
+
+    /// Workflow key of the (single) node with `class_type` — needed to assert
+    /// on wiring, since ids are positional and shift when a node is spliced in.
+    fn node_id_of_class(workflow: &Value, class_type: &str) -> String {
+        workflow
+            .as_object()
+            .expect("workflow is an object")
+            .iter()
+            .find(|(_, node)| node["class_type"] == class_type)
+            .map(|(id, _)| id.clone())
+            .unwrap_or_else(|| panic!("no {class_type} node in workflow"))
+    }
+
+    #[test]
+    fn rife_disabled_wires_decode_straight_to_create_video() {
+        let workflow = build(&video_params("fl2va"), 1);
+        assert!(nodes_of_class(&workflow, "RIFE VFI").is_empty());
+
+        let decode_id = node_id_of_class(&workflow, "VAEDecode");
+        let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
+        assert_eq!(create_video["inputs"]["images"], json!([decode_id, 0]));
+        assert_eq!(create_video["inputs"]["fps"], json!(24.0));
+    }
+
+    #[test]
+    fn rife_enabled_splices_interpolation_and_doubles_fps() {
+        let mut params = video_params("fl2va");
+        params.video_rife_enabled = true;
+        let workflow = build(&params, 1);
+
+        assert_eq!(nodes_of_class(&workflow, "RIFE VFI").len(), 1);
+        let rife = nodes_of_class(&workflow, "RIFE VFI")[0];
+        let decode_id = node_id_of_class(&workflow, "VAEDecode");
+        assert_eq!(rife["inputs"]["frames"], json!([decode_id, 0]));
+        assert_eq!(
+            rife["inputs"]["ckpt_name"],
+            json!(crate::comfyui::nodes::RIFE_CKPT_FILENAME)
+        );
+        assert_eq!(rife["inputs"]["multiplier"], json!(2));
+
+        // ComfyUI rejects a prompt outright when a required widget is absent,
+        // so every input the node declares has to be sent.
+        for key in [
+            "frames",
+            "ckpt_name",
+            "clear_cache_after_n_frames",
+            "multiplier",
+            "fast_mode",
+            "ensemble",
+            "scale_factor",
+            "dtype",
+            "torch_compile",
+            "batch_size",
+        ] {
+            assert!(rife["inputs"].get(key).is_some(), "missing widget {key}");
+        }
+
+        let rife_id = node_id_of_class(&workflow, "RIFE VFI");
+        let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
+        assert_eq!(create_video["inputs"]["images"], json!([rife_id, 0]));
+        assert_eq!(create_video["inputs"]["fps"], json!(48.0));
+        // Interpolation touches frames only; audio still comes from the
+        // audio VAE at its own rate.
+        assert!(create_video["inputs"]["audio"].is_array());
+        assert_eq!(nodes_of_class(&workflow, "MooshieSaveVideo").len(), 1);
     }
 
     #[test]

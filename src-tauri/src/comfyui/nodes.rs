@@ -12,6 +12,11 @@ struct RequiredCustomNodePackage {
     name: &'static str,
     git_url: &'static str,
     verify_nodes: &'static [&'static str],
+    /// Requirements file to pip-install from, relative to the package root.
+    /// Almost every pack ships `requirements.txt`, but not all
+    /// (ComfyUI-Frame-Interpolation splits its deps into with/without-cupy
+    /// variants), so the name is per-package rather than hardcoded.
+    requirements_file: &'static str,
 }
 
 const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
@@ -19,11 +24,13 @@ const STYLE_TRANSFER_PACKAGES: &[RequiredCustomNodePackage] = &[
         name: "ComfyUi-Untwisting-RoPE",
         git_url: "https://github.com/BigStationW/ComfyUi-Untwisting-RoPE.git",
         verify_nodes: &["RFInversion", "UntwistingRoPE"],
+        requirements_file: "requirements.txt",
     },
     RequiredCustomNodePackage {
         name: "ComfyUi-Scale-Image-to-Total-Pixels-Advanced",
         git_url: "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git",
         verify_nodes: &["ImageScaleToTotalPixelsX"],
+        requirements_file: "requirements.txt",
     },
 ];
 
@@ -34,6 +41,7 @@ const GGUF_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage 
     name: "ComfyUI-GGUF",
     git_url: "https://github.com/city96/ComfyUI-GGUF.git",
     verify_nodes: &["UnetLoaderGGUF", "CLIPLoaderGGUF"],
+    requirements_file: "requirements.txt",
 }];
 
 // Anima ControlNet-LLLite is deliberately absent: ComfyUI ships
@@ -53,7 +61,35 @@ const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCus
         "HEDPreprocessor",
         "FakeScribblePreprocessor",
     ],
+    requirements_file: "requirements.txt",
 }];
+
+// RIFE 2x frame interpolation for video generation. Installed lazily from the
+// video settings panel rather than at startup: the pack is only useful in video
+// mode, and its checkpoint is a separate ~60 MB download.
+const RIFE_PACKAGE_DIR: &str = "ComfyUI-Frame-Interpolation";
+
+const RIFE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
+    name: RIFE_PACKAGE_DIR,
+    git_url: "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git",
+    verify_nodes: &["RIFE VFI"],
+    // The pack ships no requirements.txt. `requirements-with-cupy.txt` pulls a
+    // multi-hundred-MB CUDA-version-specific cupy wheel, which only the
+    // sepconv/GMFSS backends need; RIFE's arch imports torch only, and the ops
+    // backend is imported lazily inside each model's `vfi()` method.
+    requirements_file: "requirements-no-cupy.txt",
+}];
+
+/// Checkpoint the `RIFE VFI` node is driven with. 2x interpolation of 24 fps
+/// H3 output to 48 fps.
+pub const RIFE_CKPT_FILENAME: &str = "rife49.pth";
+
+/// First entry of the pack's own `BASE_MODEL_DOWNLOAD_URLS`, i.e. where the
+/// node itself would fetch the checkpoint from on first use. Downloading it
+/// up front keeps the install inside the app's progress UI instead of stalling
+/// mid-generation with no feedback.
+pub const RIFE_CKPT_URL: &str =
+    "https://github.com/styler00dollar/VSGAN-tensorrt-docker/releases/download/models/rife49.pth";
 
 /// Substring present in [`format_missing_mooshie_nodes_error`] output.
 pub const MISSING_MOOSHIE_NODES_MARKER: &str = "has not loaded required MooshieUI custom nodes";
@@ -67,6 +103,9 @@ pub const MISSING_STYLE_TRANSFER_NODES_MARKER: &str =
 
 /// Substring present in [`verify_required_gguf_nodes`] error output.
 pub const MISSING_GGUF_NODES_MARKER: &str = "Required GGUF custom nodes failed to load";
+
+/// Substring present in [`verify_required_rife_nodes`] error output.
+pub const MISSING_RIFE_NODES_MARKER: &str = "Required RIFE custom nodes failed to load";
 
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveImage",
@@ -438,6 +477,241 @@ pub async fn verify_required_gguf_nodes(
     ))
 }
 
+/// Directory the frame-interpolation pack loads RIFE checkpoints from.
+///
+/// Not ComfyUI's `models/` tree: the pack resolves checkpoints relative to its
+/// own source directory via `config.yaml`'s `ckpts_path: "./ckpts"`, and the
+/// subdirectory is the model package name (`vfi_models/rife`).
+pub fn rife_ckpt_dir(comfyui_path: &str) -> PathBuf {
+    Path::new(comfyui_path)
+        .join("custom_nodes")
+        .join(RIFE_PACKAGE_DIR)
+        .join("ckpts")
+        .join("rife")
+}
+
+/// Whether the RIFE pack and its checkpoint are both present on disk.
+///
+/// Deliberately a disk check rather than a persisted config flag: a flag drifts
+/// the moment a user deletes the pack, moves their ComfyUI install, or points
+/// the app at a different one, and the failure mode is a queued generation that
+/// dies on a missing node.
+pub fn is_rife_installed(comfyui_path: &str) -> bool {
+    if comfyui_path.trim().is_empty() {
+        return false;
+    }
+
+    let package_dir = Path::new(comfyui_path)
+        .join("custom_nodes")
+        .join(RIFE_PACKAGE_DIR);
+    if !package_dir.join("__init__.py").is_file() {
+        return false;
+    }
+
+    // Written by `install_requirements_if_needed` only after pip succeeds, so
+    // its presence distinguishes a finished install from a half-cloned one.
+    if !package_dir.join(".mooshieui-requirements.sha256").is_file() {
+        return false;
+    }
+
+    rife_ckpt_dir(comfyui_path)
+        .join(RIFE_CKPT_FILENAME)
+        .is_file()
+}
+
+/// Install the frame-interpolation pack that provides `RIFE VFI`.
+///
+/// Unlike the startup pack helpers this returns `Err` on failure instead of
+/// logging a warning: it runs from a user-initiated install action, where
+/// reporting success and then failing at generation time would be a lie.
+pub async fn ensure_required_rife_nodes(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+) -> Result<(), String> {
+    let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
+    std::fs::create_dir_all(&custom_nodes).map_err(|e| {
+        format!(
+            "Failed to create ComfyUI custom_nodes directory at '{}': {}",
+            custom_nodes.display(),
+            e
+        )
+    })?;
+
+    for package in RIFE_PACKAGES {
+        ensure_custom_node_package(
+            &custom_nodes,
+            venv_path,
+            network_proxy,
+            pip_index_url,
+            *package,
+        )
+        .await
+        .map_err(|e| format!("{}: {}", package.name, e))?;
+    }
+
+    log::info!("Ensured RIFE frame interpolation custom node package");
+    Ok(())
+}
+
+/// Verify ComfyUI actually loaded the `RIFE VFI` node class.
+pub async fn verify_required_rife_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+) -> Result<(), String> {
+    let mut missing = Vec::new();
+
+    for attempt in 0..5 {
+        missing = missing_packages_nodes(http_client, base_url, RIFE_PACKAGES).await?;
+        if missing.is_empty() {
+            log::info!("Verified RIFE custom node classes");
+            return Ok(());
+        }
+
+        if attempt < 4 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    Err(format!(
+        "{}: {}. Check the ComfyUI log for custom-node import errors.",
+        MISSING_RIFE_NODES_MARKER,
+        missing.join(", ")
+    ))
+}
+
+/// Install the RIFE frame-interpolation pack and its checkpoint.
+///
+/// `on_progress(step, message, done)` is invoked for each stage so the desktop
+/// command (Tauri emit) and the browser-mode handler (SSE broadcast) report
+/// progress identically from one implementation.
+pub async fn install_rife(
+    http_client: &reqwest::Client,
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+    on_progress: &(dyn Fn(&str, &str, bool) + Send + Sync),
+) -> Result<(), String> {
+    if comfyui_path.trim().is_empty() {
+        return Err("ComfyUI path is not configured".to_string());
+    }
+
+    on_progress("clone", "Installing frame interpolation nodes...", false);
+    ensure_required_rife_nodes(comfyui_path, venv_path, network_proxy, pip_index_url).await?;
+
+    let ckpt_dir = rife_ckpt_dir(comfyui_path);
+    let ckpt_path = ckpt_dir.join(RIFE_CKPT_FILENAME);
+    if ckpt_path
+        .metadata()
+        .map(|m| m.is_file() && m.len() > 0)
+        .unwrap_or(false)
+    {
+        on_progress("done", "RIFE frame interpolation is ready", true);
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(&ckpt_dir).map_err(|e| {
+        format!(
+            "Failed to create RIFE checkpoint directory at '{}': {}",
+            ckpt_dir.display(),
+            e
+        )
+    })?;
+
+    on_progress(
+        "download",
+        &format!("Downloading {}...", RIFE_CKPT_FILENAME),
+        false,
+    );
+    download_rife_checkpoint(http_client, &ckpt_path, on_progress).await?;
+
+    on_progress("done", "RIFE frame interpolation is ready", true);
+    Ok(())
+}
+
+/// Stream the RIFE checkpoint to a `.part` file, then rename into place so an
+/// interrupted download never leaves a truncated checkpoint that
+/// [`is_rife_installed`] would report as ready.
+async fn download_rife_checkpoint(
+    http_client: &reqwest::Client,
+    dest: &Path,
+    on_progress: &(dyn Fn(&str, &str, bool) + Send + Sync),
+) -> Result<(), String> {
+    use std::io::Write;
+
+    let mut response = http_client
+        .get(RIFE_CKPT_URL)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download {}: {}", RIFE_CKPT_FILENAME, e))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Failed to download {}: HTTP {}",
+            RIFE_CKPT_FILENAME,
+            response.status()
+        ));
+    }
+
+    let total = response.content_length().unwrap_or(0);
+    let partial = dest.with_extension("part");
+    let mut file = std::fs::File::create(&partial)
+        .map_err(|e| format!("Failed to create '{}': {}", partial.display(), e))?;
+
+    let mut downloaded: u64 = 0;
+    let mut last_emit: u64 = 0;
+
+    loop {
+        let chunk = match response.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(e) => {
+                drop(file);
+                let _ = std::fs::remove_file(&partial);
+                return Err(format!("Download of {} failed: {}", RIFE_CKPT_FILENAME, e));
+            }
+        };
+
+        if let Err(e) = file.write_all(&chunk) {
+            drop(file);
+            let _ = std::fs::remove_file(&partial);
+            return Err(format!("Failed to write '{}': {}", partial.display(), e));
+        }
+        downloaded += chunk.len() as u64;
+
+        if downloaded - last_emit > 1024 * 1024 {
+            last_emit = downloaded;
+            // No Content-Length means no percentage; fall back to raw megabytes.
+            let message = match (downloaded * 100).checked_div(total) {
+                Some(percent) => format!("Downloading {} ({}%)", RIFE_CKPT_FILENAME, percent),
+                None => format!(
+                    "Downloading {} ({} MB)",
+                    RIFE_CKPT_FILENAME,
+                    downloaded >> 20
+                ),
+            };
+            on_progress("download", &message, false);
+        }
+    }
+
+    file.flush()
+        .map_err(|e| format!("Failed to flush '{}': {}", partial.display(), e))?;
+    drop(file);
+
+    std::fs::rename(&partial, dest).map_err(|e| {
+        let _ = std::fs::remove_file(&partial);
+        format!(
+            "Failed to move RIFE checkpoint into '{}': {}",
+            dest.display(),
+            e
+        )
+    })?;
+
+    Ok(())
+}
+
 /// Verify that ComfyUI actually loaded every custom node class required by the
 /// built-in ControlNet presets. Directory presence alone is not enough because
 /// custom-node import failures leave the class missing from /object_info.
@@ -603,7 +877,7 @@ async fn ensure_custom_node_package(
         clone_custom_node(package.git_url, &target_dir, network_proxy).await?;
     }
 
-    let requirements = target_dir.join("requirements.txt");
+    let requirements = target_dir.join(package.requirements_file);
     if requirements.exists() {
         install_requirements_if_needed(
             &requirements,

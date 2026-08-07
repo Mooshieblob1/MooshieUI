@@ -767,6 +767,20 @@ export async function installCustomNode(gitUrl: string, nodeName: string): Promi
   return ipcInvoke("install_custom_node", { gitUrl, nodeName });
 }
 
+/**
+ * Are the RIFE frame-interpolation nodes and the `rife49.pth` checkpoint both on
+ * disk? A disk check rather than a stored flag, so deleting the pack or pointing
+ * the app at a different ComfyUI install re-arms the installer.
+ */
+export async function isRifeInstalled(): Promise<boolean> {
+  return ipcInvoke("is_rife_installed", {});
+}
+
+/** Clone the frame-interpolation pack and download its checkpoint. Reports through `install:progress`. */
+export async function installRife(): Promise<void> {
+  return ipcInvoke("install_rife", {});
+}
+
 export async function installPipPackage(packageName: string): Promise<void> {
   return ipcInvoke("install_pip_package", { package: packageName });
 }

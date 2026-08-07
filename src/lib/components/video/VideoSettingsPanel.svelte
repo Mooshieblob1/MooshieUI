@@ -1,8 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { generation } from "../../stores/generation.svelte.js";
+  import { connection } from "../../stores/connection.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { detectLlmHardware, getModels, readClipboardImageSafe, uploadImageBytes } from "../../utils/api.js";
+  import {
+    checkNodeAvailable,
+    detectLlmHardware,
+    getModels,
+    installRife,
+    isRifeInstalled,
+    readClipboardImageSafe,
+    startComfyui,
+    stopComfyui,
+    uploadImageBytes,
+  } from "../../utils/api.js";
+  import { ipcListen } from "../../utils/ipc.js";
   import {
     H3_ASPECT_RATIOS,
     H3_FPS,
@@ -35,10 +47,26 @@
     { id: "ref2va", labelKey: "generation.video.variant_ref2va", descKey: "generation.video.variant_ref2va_desc" },
   ];
 
+  /** Matches the `node_name` the Rust installer stamps on `install:progress`. */
+  const RIFE_PACKAGE_NAME = "ComfyUI-Frame-Interpolation";
+  /** ComfyUI class the pack registers. The space is part of the name. */
+  const RIFE_NODE_CLASS = "RIFE VFI";
+
   let diffusionModels = $state<string[]>([]);
   let clipModels = $state<string[]>([]);
   let vaeModels = $state<string[]>([]);
   let detectedVramGb = $state<number | null>(null);
+
+  /**
+   * `null` until the disk check answers. The frame-interpolation pack is a
+   * lazy install: it only matters in video mode and drags a ~60 MB checkpoint
+   * behind it, so nothing is fetched until the user asks for interpolation.
+   */
+  let rifeInstalled = $state<boolean | null>(null);
+  let rifeInstalling = $state(false);
+  let rifeInstallStep = $state("");
+  let rifeInstallMessage = $state("");
+  let rifeInstallError = $state<string | null>(null);
 
   let previews = $state<Record<string, string | null>>({});
   let uploadingSlot = $state<string | null>(null);
@@ -95,9 +123,24 @@
   );
   const vramWarning = $derived(detectedVramGb !== null && requiredVramGb > detectedVramGb);
 
+  /** Coarse stage weights - the install has no single measurable total. */
+  const rifeInstallPercent = $derived(
+    { clone: 20, download: 50, done: 65, restart: 80, verify: 95 }[rifeInstallStep] ?? 10,
+  );
+
   onMount(() => {
     void loadModelLists();
     void loadHardware();
+    void loadRifeState();
+    const unlisten = ipcListen("install:progress", (event: any) => {
+      const data = event.payload as { node_name: string; step: string; message: string };
+      if (data.node_name !== RIFE_PACKAGE_NAME) return;
+      rifeInstallStep = data.step;
+      rifeInstallMessage = data.message;
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
   });
 
   async function loadModelLists() {
@@ -118,6 +161,94 @@
       detectedVramGb = maxVramMb > 0 ? maxVramMb / 1024 : null;
     } catch {
       detectedVramGb = null;
+    }
+  }
+
+  async function loadRifeState() {
+    try {
+      rifeInstalled = await isRifeInstalled();
+    } catch {
+      rifeInstalled = null;
+    }
+  }
+
+  /**
+   * Toggling interpolation on with the pack missing does not flip the switch —
+   * it reveals the install prompt. The store flag only ever turns on once the
+   * nodes are actually loadable, so a queued video can never reference a node
+   * class ComfyUI does not have.
+   */
+  function toggleRife(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const next = input.checked;
+    rifeInstallError = null;
+    if (!next) {
+      generation.videoRifeEnabled = false;
+      generation.saveSettings();
+    } else if (rifeInstalled) {
+      generation.videoRifeEnabled = true;
+      generation.saveSettings();
+    } else {
+      void installRifeNodes();
+    }
+    // The browser already flipped the box on click; the store is the only
+    // thing allowed to decide what it shows, and it stays off until the
+    // nodes exist. Svelte re-applies `checked` when the store does change.
+    input.checked = generation.videoRifeEnabled;
+  }
+
+  /**
+   * Clone + checkpoint download, then a ComfyUI restart: a freshly cloned pack
+   * is not importable until the server re-scans `custom_nodes`.
+   */
+  async function installRifeNodes() {
+    rifeInstalling = true;
+    rifeInstallError = null;
+    rifeInstallStep = "clone";
+    rifeInstallMessage = locale.t("generation.video.rife_install_starting");
+    try {
+      await installRife();
+
+      rifeInstallStep = "restart";
+      rifeInstallMessage = locale.t("generation.video.rife_install_restarting");
+      connection.connected = false;
+      await stopComfyui();
+      await startComfyui();
+
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error(locale.t("generation.video.rife_install_timeout"))),
+          120_000,
+        );
+        const unlistenReady = ipcListen("comfyui:server_ready", () => {
+          clearTimeout(timeout);
+          void unlistenReady.then((fn) => fn());
+          void unlistenError.then((fn) => fn());
+          resolve();
+        });
+        const unlistenError = ipcListen("comfyui:server_error", (event: any) => {
+          clearTimeout(timeout);
+          void unlistenReady.then((fn) => fn());
+          void unlistenError.then((fn) => fn());
+          reject(new Error(event.payload?.error || locale.t("generation.video.rife_install_failed_start")));
+        });
+      });
+
+      rifeInstallStep = "verify";
+      rifeInstallMessage = locale.t("generation.video.rife_install_verifying");
+      const available = await checkNodeAvailable(RIFE_NODE_CLASS).catch(() => false);
+      if (!available) throw new Error(locale.t("generation.video.rife_install_not_loaded"));
+
+      rifeInstalled = true;
+      generation.videoRifeEnabled = true;
+      generation.saveSettings();
+    } catch (e) {
+      rifeInstallError = String(e);
+      rifeInstalled = await isRifeInstalled().catch(() => false);
+    } finally {
+      rifeInstalling = false;
+      rifeInstallStep = "";
+      rifeInstallMessage = "";
     }
   }
 
@@ -450,6 +581,69 @@
 
     {#if uploadError}
       <p class="text-[11px] text-red-400">{uploadError}</p>
+    {/if}
+  </div>
+
+  <!-- Frame interpolation (RIFE) -->
+  <div class="space-y-2">
+    <div class="flex items-center gap-2">
+      <input
+        type="checkbox"
+        id="video-rife-enabled"
+        checked={generation.videoRifeEnabled}
+        disabled={rifeInstalling}
+        class="w-4 h-4 accent-indigo-500 rounded disabled:opacity-50"
+        onchange={toggleRife}
+      />
+      <label for="video-rife-enabled" class="text-xs text-neutral-400">
+        {locale.t("generation.video.rife")}<InfoTip text={locale.t("generation.video.rife_tip")} />
+      </label>
+    </div>
+
+    <p class="text-[11px] text-neutral-500">
+      {generation.videoRifeEnabled
+        ? locale.t("generation.video.rife_on_hint", { fps: H3_FPS * 2 })
+        : locale.t("generation.video.rife_off_hint", { fps: H3_FPS })}
+    </p>
+
+    {#if rifeInstalled === false && !rifeInstalling && !generation.videoRifeEnabled}
+      <p class="text-[11px] text-neutral-500">{locale.t("generation.video.rife_install_hint")}</p>
+    {/if}
+
+    {#if rifeInstalling}
+      <div class="rounded-lg border border-amber-600/60 bg-amber-900/25 px-3 py-2 space-y-1.5">
+        <div class="flex items-center gap-2 text-xs text-amber-200">
+          <div
+            class="w-3.5 h-3.5 border-2 border-amber-300 border-t-transparent rounded-full animate-spin shrink-0"
+          ></div>
+          <span>
+            {#if rifeInstallStep === "restart"}
+              {locale.t("generation.video.rife_install_restarting")}
+            {:else if rifeInstallStep === "verify"}
+              {locale.t("generation.video.rife_install_verifying")}
+            {:else if rifeInstallStep === "download"}
+              {locale.t("generation.video.rife_install_downloading")}
+            {:else}
+              {locale.t("generation.video.rife_install_starting")}
+            {/if}
+          </span>
+        </div>
+        {#if rifeInstallMessage}
+          <p class="text-[10px] font-mono text-amber-300/80 break-all">{rifeInstallMessage}</p>
+        {/if}
+        <div class="h-1 rounded-full bg-amber-950/60 overflow-hidden">
+          <div
+            class="h-full bg-amber-400 transition-all duration-300"
+            style="width: {rifeInstallPercent}%"
+          ></div>
+        </div>
+      </div>
+    {/if}
+
+    {#if rifeInstallError}
+      <p class="text-[11px] text-red-400">
+        {locale.t("generation.video.rife_install_failed", { error: rifeInstallError })}
+      </p>
     {/if}
   </div>
 
