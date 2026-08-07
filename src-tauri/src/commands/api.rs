@@ -49,6 +49,12 @@ pub struct GalleryImageEntry {
     pub filename: String,
     pub size_bytes: u64,
     pub modified_ms: u64,
+    /// Playback length for `.mp4` entries, read from the gallery index.
+    /// `None` for images and for videos the index does not know about.
+    pub duration_seconds: Option<f64>,
+    /// Frame rate for `.mp4` entries. `None` for images and for rows that
+    /// predate the `fps` column; the player falls back to 24.
+    pub fps: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1344,6 +1350,7 @@ pub fn save_to_gallery_inner(
                     }
                 }
             }
+            crate::metadata::ImageFormat::Mp4 => bytes.to_vec(),
             crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {
@@ -1353,6 +1360,111 @@ pub fn save_to_gallery_inner(
     std::fs::write(&path, &final_bytes)?;
     crate::gallery_index::upsert(&path, final_bytes.len() as u64, detected_format, metadata);
     Ok(gallery_filename)
+}
+
+/// Result of moving a finished video (and its poster sidecar) into the gallery.
+pub struct SavedVideo {
+    pub video_filename: String,
+    pub poster_filename: Option<String>,
+}
+
+/// Rename where possible; fall back to copy+delete when ComfyUI's output dir
+/// and the gallery live on different filesystems.
+fn move_gallery_file(src: &std::path::Path, dst: &std::path::Path) -> Result<(), AppError> {
+    if std::fs::rename(src, dst).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(src, dst)?;
+    let _ = std::fs::remove_file(src);
+    Ok(())
+}
+
+/// Move a fresh mp4 (and optional poster) out of ComfyUI's output directory
+/// into `gallery_dir`, applying the user's output-filename template, then
+/// index it. Rust-side counterpart of the frontend-initiated image save path:
+/// the video is already encoded on disk, so files are moved instead of
+/// shuttling bytes through the WebSocket.
+#[allow(clippy::too_many_arguments)]
+pub fn save_video_to_gallery(
+    video_path: &std::path::Path,
+    poster_path: Option<&std::path::Path>,
+    gallery_dir: &std::path::Path,
+    prompt_id: &str,
+    fps: f64,
+    frame_count: u64,
+    width: u32,
+    height: u32,
+) -> Result<SavedVideo, AppError> {
+    if !video_path.is_file() {
+        return Err(AppError::from(format!(
+            "Video not found at {}",
+            video_path.display()
+        )));
+    }
+    std::fs::create_dir_all(gallery_dir)?;
+
+    let cfg = crate::config::load_persisted_config();
+    let stem = video_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("video");
+    let rendered = render_output_filename_base(
+        cfg.output_filename_template.as_deref(),
+        prompt_id,
+        "video",
+        stem,
+        None,
+    );
+
+    // The template can collapse distinct outputs onto one name; never
+    // overwrite an existing gallery file.
+    let mut video_filename = format!("{rendered}.mp4");
+    let mut n = 1;
+    while gallery_dir.join(&video_filename).exists() {
+        video_filename = format!("{rendered}_{n}.mp4");
+        n += 1;
+    }
+    let dest_video = gallery_dir.join(&video_filename);
+    move_gallery_file(video_path, &dest_video)?;
+
+    let video_stem = video_filename.trim_end_matches(".mp4").to_string();
+    let mut poster_filename = None;
+    let mut poster_dest_str = None;
+    if let Some(src_poster) = poster_path {
+        if src_poster.is_file() {
+            let name = format!("{video_stem}_poster.webp");
+            let dest_poster = gallery_dir.join(&name);
+            match move_gallery_file(src_poster, &dest_poster) {
+                Ok(()) => {
+                    poster_dest_str = Some(dest_poster.to_string_lossy().to_string());
+                    poster_filename = Some(name);
+                }
+                Err(e) => log::warn!("[video] poster move failed: {e}"),
+            }
+        }
+    }
+
+    let file_size = std::fs::metadata(&dest_video).map(|m| m.len()).unwrap_or(0);
+    let duration_seconds = if fps > 0.0 {
+        frame_count as f64 / fps
+    } else {
+        0.0
+    };
+    crate::gallery_index::upsert_video(
+        &dest_video,
+        file_size,
+        &crate::gallery_index::VideoIndexMeta {
+            duration_seconds,
+            fps,
+            width,
+            height,
+            poster_path: poster_dest_str,
+        },
+    );
+    Ok(SavedVideo {
+        video_filename,
+        poster_filename,
+    })
 }
 
 #[cfg(feature = "desktop")]
@@ -1385,6 +1497,23 @@ pub async fn read_image_metadata_path(
     crate::metadata::read_image_metadata(&bytes).map_err(AppError::Other)
 }
 
+/// Whether a gallery directory entry should appear in gallery listings and
+/// count toward storage quotas/expiry. Poster sidecars (`{stem}_poster.webp`)
+/// are internal to their video and never listed. Must stay in sync with the
+/// formats the save pipeline can write (images + mp4 video).
+pub(crate) fn is_listable_gallery_file(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with("_poster.webp") {
+        return false;
+    }
+    lower.ends_with(".png")
+        || lower.ends_with(".jpg")
+        || lower.ends_with(".jpeg")
+        || lower.ends_with(".webp")
+        || lower.ends_with(".jxl")
+        || lower.ends_with(".mp4")
+}
+
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn list_gallery_images() -> Result<Vec<String>, AppError> {
@@ -1397,12 +1526,7 @@ pub async fn list_gallery_images() -> Result<Vec<String>, AppError> {
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.ends_with(".png")
-                || name.ends_with(".jpg")
-                || name.ends_with(".jpeg")
-                || name.ends_with(".webp")
-                || name.ends_with(".jxl")
-            {
+            if is_listable_gallery_file(&name) {
                 Some((entry.metadata().ok()?.modified().ok()?, name))
             } else {
                 None
@@ -1422,16 +1546,14 @@ pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppE
         return Ok(vec![]);
     }
 
+    // One query for the whole video table, not one per directory entry.
+    let meta = crate::gallery_index::video_meta();
+
     let mut files: Vec<_> = std::fs::read_dir(&dir)?
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !(name.ends_with(".png")
-                || name.ends_with(".jpg")
-                || name.ends_with(".jpeg")
-                || name.ends_with(".webp")
-                || name.ends_with(".jxl"))
-            {
+            if !is_listable_gallery_file(&name) {
                 return None;
             }
 
@@ -1442,16 +1564,41 @@ pub async fn list_gallery_image_entries() -> Result<Vec<GalleryImageEntry>, AppE
                 .ok()?
                 .as_millis() as u64;
 
+            let entry_meta = meta.get(&name);
+
             Some(GalleryImageEntry {
                 filename: name,
                 size_bytes: metadata.len(),
                 modified_ms,
+                duration_seconds: entry_meta.map(|m| m.duration_seconds),
+                fps: entry_meta.and_then(|m| m.fps),
             })
         })
         .collect();
 
     files.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
     Ok(files)
+}
+
+/// Copy a gallery file to a caller-chosen destination path.
+///
+/// Used by save-video-as. Videos are far too large to marshal through IPC as a
+/// byte array: Tauri v2 serializes `Vec<u8>` as a JSON number array, so a few
+/// hundred MB of mp4 would balloon into gigabytes of JSON. The copy happens in
+/// Rust instead. Browser mode never calls this (it downloads straight from the
+/// `/internal-api/_gallery/` URL), so there is no webserver dispatch arm.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn copy_gallery_file_to(filename: String, dest_path: String) -> Result<(), AppError> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(AppError::Other("Invalid filename".into()));
+    }
+    let dir = crate::config::gallery_dir()
+        .ok_or_else(|| AppError::Other("Cannot find gallery directory".into()))?;
+    let src = resolve_gallery_image_path(&dir, &filename)
+        .map_err(|e| AppError::Other(format!("Read failed: {}", e)))?;
+    tokio::fs::copy(&src, &dest_path).await?;
+    Ok(())
 }
 
 #[cfg(feature = "desktop")]
@@ -1718,6 +1865,14 @@ pub fn generate_thumbnail(
     filename: &str,
     max_size: u32,
 ) -> Result<Vec<u8>, String> {
+    // Videos can't be decoded by the image crate; their thumbnail is the
+    // poster sidecar written at save time.
+    let filename: String = if filename.to_ascii_lowercase().ends_with(".mp4") {
+        format!("{}_poster.webp", &filename[..filename.len() - 4])
+    } else {
+        filename.to_string()
+    };
+    let filename = filename.as_str();
     let path = resolve_gallery_image_path(gallery_dir, filename)
         .map_err(|e| format!("Read failed: {}", e))?;
     let bytes = std::fs::read(&path).map_err(|e| format!("Read failed: {}", e))?;
@@ -1778,6 +1933,15 @@ pub async fn delete_gallery_image(filename: String) -> Result<(), AppError> {
         Ok(path) => {
             std::fs::remove_file(&path)?;
             crate::gallery_index::remove(&path);
+            // Videos own a poster sidecar that listings never surface; delete it
+            // together with its mp4.
+            if let Some(stem) = filename.strip_suffix(".mp4") {
+                let poster = path.with_file_name(format!("{stem}_poster.webp"));
+                if poster.is_file() {
+                    let _ = std::fs::remove_file(&poster);
+                    crate::gallery_index::remove(&poster);
+                }
+            }
         }
         Err(GalleryPathResolveError::NotFound) => {}
         Err(e) => return Err(AppError::Other(format!("{}: {}", e, filename))),
@@ -1811,6 +1975,13 @@ pub async fn rename_gallery_image(
         )));
     }
 
+    let old_is_video = old_filename.to_ascii_lowercase().ends_with(".mp4");
+    if old_is_video && !new_filename.to_ascii_lowercase().ends_with(".mp4") {
+        return Err(AppError::from(
+            "Videos must keep the .mp4 extension".to_string(),
+        ));
+    }
+
     let new_path = old_path
         .parent()
         .ok_or_else(|| AppError::Other("Invalid gallery path".into()))?
@@ -1824,6 +1995,28 @@ pub async fn rename_gallery_image(
 
     std::fs::rename(&old_path, &new_path)?;
     crate::gallery_index::rename(&old_path, &new_path);
+
+    if old_is_video {
+        let old_stem = old_filename.strip_suffix(".mp4").unwrap_or(&old_filename);
+        let new_stem = new_filename.strip_suffix(".mp4").unwrap_or(&new_filename);
+        let old_poster = old_path.with_file_name(format!("{old_stem}_poster.webp"));
+        if old_poster.is_file() {
+            let new_poster = old_path.with_file_name(format!("{new_stem}_poster.webp"));
+            match std::fs::rename(&old_poster, &new_poster) {
+                Ok(()) => {
+                    crate::gallery_index::rename(&old_poster, &new_poster);
+                    crate::gallery_index::update_poster_path(&new_path, &new_poster);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[gallery] poster rename failed ({} -> ...): {e}",
+                        old_poster.display()
+                    );
+                }
+            }
+        }
+    }
+
     Ok(new_filename)
 }
 
@@ -1848,7 +2041,7 @@ fn infer_image_mime(bytes: &[u8], ext_hint: Option<&str>) -> &'static str {
 /// Put a file on the Windows clipboard as a file-drop (like right-click → Copy in Explorer).
 /// Much faster than decoding PNGs and preserves all metadata.
 #[cfg(target_os = "windows")]
-fn clipboard_set_file_drop_win(path: &std::path::Path) -> Result<(), AppError> {
+pub(crate) fn clipboard_set_file_drop_win(path: &std::path::Path) -> Result<(), AppError> {
     let path_str = path.to_string_lossy().into_owned();
     // Guard must stay alive for the write; DoClear empties the clipboard first
     // (the crate's default FileList setter leaves stale formats behind).
@@ -2346,6 +2539,59 @@ pub async fn is_custom_node_installed(
         .join("custom_nodes")
         .join(&node_name);
     Ok(target_dir.exists())
+}
+
+/// Whether the RIFE frame-interpolation pack and its `rife49.pth` checkpoint
+/// are both present on disk.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn is_rife_installed(state: State<'_, Arc<AppState>>) -> Result<bool, AppError> {
+    let comfyui_path = state.config.read().await.comfyui_path.clone();
+    Ok(crate::comfyui::nodes::is_rife_installed(&comfyui_path))
+}
+
+/// Install the RIFE frame-interpolation pack and its checkpoint, driven by the
+/// video settings panel the first time the user enables 2x interpolation.
+/// Emits `install:progress` events with the same shape as `install_custom_node`.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn install_rife(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), AppError> {
+    let (comfyui_path, venv_path, network_proxy, pip_index_url) = {
+        let config = state.config.read().await;
+        (
+            config.comfyui_path.clone(),
+            config.venv_path.clone(),
+            config.network_proxy.clone(),
+            config.pip_index_url.clone(),
+        )
+    };
+
+    let emit_progress = |step: &str, message: &str, done: bool| {
+        let _ = app.emit(
+            "install:progress",
+            serde_json::json!({
+                "node_name": "ComfyUI-Frame-Interpolation",
+                "step": step,
+                "message": message,
+                "done": done,
+            }),
+        );
+    };
+
+    let result = crate::comfyui::nodes::install_rife(
+        &state.http_client,
+        &comfyui_path,
+        &venv_path,
+        network_proxy.as_deref(),
+        pip_index_url.as_deref(),
+        &emit_progress,
+    )
+    .await;
+
+    if let Err(e) = &result {
+        emit_progress("error", e, true);
+    }
+    result.map_err(AppError::Other)
 }
 
 /// Install a custom node from a git repository into ComfyUI's custom_nodes directory.
@@ -6591,6 +6837,26 @@ pub async fn build_diagnostic_log(state: &AppState, frontend_logs: Option<Vec<St
     let _ = writeln!(output, "=== ComfyUI Log ===");
     let log_path = std::env::temp_dir().join("comfyui-desktop-stderr.log");
     let _ = writeln!(output, "(Source: {})", log_path.display());
+    // This file is truncated only when MooshieUI spawns ComfyUI itself. When it
+    // attached to an already-running server instead, the contents can be from a
+    // much earlier launch with a different ComfyUI/PyTorch version, so stamp the
+    // age rather than let a stale log be read as the current session's.
+    if let Ok(age) = std::fs::metadata(&log_path)
+        .and_then(|m| m.modified())
+        .and_then(|t| {
+            std::time::SystemTime::now()
+                .duration_since(t)
+                .map_err(|e| std::io::Error::other(e.to_string()))
+        })
+    {
+        let secs = age.as_secs();
+        let _ = writeln!(
+            output,
+            "(Last written {}h {}m ago)",
+            secs / 3600,
+            (secs % 3600) / 60
+        );
+    }
     match std::fs::read_to_string(&log_path) {
         Ok(content) => {
             if content.is_empty() {

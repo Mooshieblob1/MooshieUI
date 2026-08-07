@@ -398,15 +398,32 @@ fn external_chat_urls(base_url: &str) -> Vec<String> {
     if base.ends_with("/chat/completions") {
         return vec![base.to_string()];
     }
-    let mut urls = vec![format!("{base}/chat/completions")];
+    versioned_candidates(base, "chat/completions")
+}
+
+/// `{base}/{path}`, plus `{base}/v1/{path}` as a 404 fallback when the base
+/// carries no trailing version segment.
+fn versioned_candidates(base: &str, path: &str) -> Vec<String> {
+    let mut urls = vec![format!("{base}/{path}")];
     let last_segment = base.rsplit('/').next().unwrap_or("");
     let versioned = last_segment.len() >= 2
         && last_segment.starts_with('v')
         && last_segment[1..].chars().all(|c| c.is_ascii_digit());
     if !versioned {
-        urls.push(format!("{base}/v1/chat/completions"));
+        urls.push(format!("{base}/v1/{path}"));
     }
     urls
+}
+
+/// Candidate model-list URLs. Users who pasted a full chat-completions endpoint
+/// as their base URL still get a working `/models` lookup.
+fn external_models_urls(base_url: &str) -> Vec<String> {
+    let base = base_url.trim().trim_end_matches('/');
+    let base = base.strip_suffix("/chat/completions").unwrap_or(base);
+    if base.ends_with("/models") {
+        return vec![base.to_string()];
+    }
+    versioned_candidates(base, "models")
 }
 
 async fn send_external_chat(
@@ -488,6 +505,193 @@ pub async fn chat_external(
         .as_str()
         .unwrap_or("")
         .to_string())
+}
+
+/// `anthropic-version` header required on every Messages API request.
+const ANTHROPIC_VERSION: &str = "2023-06-01";
+
+/// Anthropic's API root, used when the config carries no base URL.
+const ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com/v1";
+
+fn anthropic_url(base_url: &str, path: &str) -> String {
+    let base = base_url.trim().trim_end_matches('/');
+    let base = if base.is_empty() {
+        ANTHROPIC_BASE_URL
+    } else {
+        base
+    };
+    format!("{base}/{path}")
+}
+
+/// First 300 characters of an error response body, for surfacing in messages.
+async fn error_detail(resp: reqwest::Response) -> String {
+    resp.text()
+        .await
+        .unwrap_or_default()
+        .chars()
+        .take(300)
+        .collect()
+}
+
+/// Send a chat completion to Anthropic's Messages API.
+///
+/// Anthropic is not OpenAI-compatible: the path is `/messages`, auth is the
+/// `x-api-key` header rather than a bearer token, `anthropic-version` is
+/// mandatory, the system prompt is a top-level field instead of a message, and
+/// the answer arrives as a list of content blocks.
+pub async fn chat_anthropic(
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    system: &str,
+    user: &str,
+    max_tokens: u32,
+) -> Result<String, AppError> {
+    if api_key.trim().is_empty() {
+        return Err(AppError::LlmError(
+            "Anthropic requires an API key. Add one in Settings > Prompt Assistant.".into(),
+        ));
+    }
+    let body = json!({
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system,
+        "temperature": 0.7,
+        "messages": [ { "role": "user", "content": user } ]
+    });
+    let resp = client
+        .post(anthropic_url(base_url, "messages"))
+        .header("x-api-key", api_key)
+        .header("anthropic-version", ANTHROPIC_VERSION)
+        .json(&body)
+        .timeout(Duration::from_secs(120))
+        .send()
+        .await
+        .map_err(|e| AppError::LlmError(format!("Anthropic request failed: {e}")))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let detail = error_detail(resp).await;
+        return Err(AppError::LlmError(format!(
+            "Anthropic returned {status}: {detail}"
+        )));
+    }
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| AppError::LlmError(format!("Bad Anthropic response: {e}")))?;
+    // Concatenate every text block: a response can lead with a non-text block.
+    let text = v["content"]
+        .as_array()
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|b| b["type"] == "text")
+                .filter_map(|b| b["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default();
+    Ok(text)
+}
+
+/// Send a chat completion to whichever external provider is configured,
+/// picking the wire format from the provider registry.
+// One more argument than the per-wire helpers it dispatches to, which are
+// themselves at the limit. Bundling them into a struct would only move the
+// same fields somewhere else.
+#[allow(clippy::too_many_arguments)]
+pub async fn chat_provider(
+    client: &reqwest::Client,
+    provider_id: &str,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    system: &str,
+    user: &str,
+    max_tokens: u32,
+) -> Result<String, AppError> {
+    let base = super::providers::effective_base_url(provider_id, base_url);
+    match super::providers::wire_for(provider_id) {
+        super::providers::Wire::Anthropic => {
+            chat_anthropic(client, &base, api_key, model, system, user, max_tokens).await
+        }
+        super::providers::Wire::OpenAiCompatible => {
+            if base.is_empty() {
+                return Err(AppError::LlmError(
+                    "No API base URL is set for the external LLM (Settings > Prompt Assistant)."
+                        .into(),
+                ));
+            }
+            chat_external(client, &base, api_key, model, system, user, max_tokens).await
+        }
+    }
+}
+
+/// List the model ids a provider exposes.
+///
+/// Both wire formats answer `GET {root}/models` with `{"data": [{"id": ...}]}`;
+/// only the auth headers differ. Doubles as the credential round-trip check in
+/// the settings UI: a bad key fails here with the provider's own message.
+pub async fn list_models(
+    client: &reqwest::Client,
+    provider_id: &str,
+    base_url: &str,
+    api_key: &str,
+) -> Result<Vec<String>, AppError> {
+    let anthropic = super::providers::wire_for(provider_id) == super::providers::Wire::Anthropic;
+    let base = super::providers::effective_base_url(provider_id, base_url);
+    let urls = if anthropic {
+        vec![anthropic_url(&base, "models?limit=1000")]
+    } else {
+        if base.is_empty() {
+            return Err(AppError::LlmError(
+                "No API base URL is set for the external LLM (Settings > Prompt Assistant).".into(),
+            ));
+        }
+        external_models_urls(&base)
+    };
+    let send = |url: String| {
+        let mut req = client.get(url).timeout(Duration::from_secs(30));
+        if anthropic {
+            req = req
+                .header("x-api-key", api_key)
+                .header("anthropic-version", ANTHROPIC_VERSION);
+        } else if !api_key.is_empty() {
+            req = req.bearer_auth(api_key);
+        }
+        req.send()
+    };
+    let mut resp = send(urls[0].clone())
+        .await
+        .map_err(|e| AppError::LlmError(format!("Model list request failed: {e}")))?;
+    if resp.status().as_u16() == 404 && urls.len() > 1 {
+        resp = send(urls[1].clone())
+            .await
+            .map_err(|e| AppError::LlmError(format!("Model list request failed: {e}")))?;
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let detail = error_detail(resp).await;
+        return Err(AppError::LlmError(format!(
+            "Model list returned {status}: {detail}"
+        )));
+    }
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| AppError::LlmError(format!("Bad model list response: {e}")))?;
+    let mut ids: Vec<String> = v["data"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
 /// Idle watchdog implemented as a free function so it can hold an Arc clone.

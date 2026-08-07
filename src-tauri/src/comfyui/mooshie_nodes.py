@@ -685,6 +685,74 @@ class MooshieSaveImage:
         return float("nan")
 
 
+MOOSHIE_VIDEO_EVENT_TYPE = 102
+
+
+class MooshieSaveVideo:
+    """Save a VIDEO to ComfyUI's output directory and notify the Mooshie
+    backend over the client WebSocket (binary event 102) with absolute file
+    paths, so Rust can move the mp4 into the gallery without shuttling the
+    encoded bytes through the socket. Also writes a poster WebP of frame 0
+    next to the mp4 for thumbnail serving.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "video": ("VIDEO",),
+            },
+            "optional": {
+                "filename_prefix": ("STRING", {"default": "mooshie_video"}),
+            },
+        }
+
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+    FUNCTION = "save_video"
+    CATEGORY = "mooshie"
+    DESCRIPTION = "Saves the video as mp4 with a poster frame and notifies MooshieUI over WebSocket."
+
+    def save_video(self, video, filename_prefix="mooshie_video"):
+        from PIL import Image
+        from comfy_api.latest import Types
+        from server import PromptServer
+
+        width, height = video.get_dimensions()
+        full_output_folder, filename, counter, _subfolder, _prefix = (
+            folder_paths.get_save_image_path(
+                filename_prefix, folder_paths.get_output_directory(), width, height
+            )
+        )
+        video_file = f"{filename}_{counter:05}_.mp4"
+        video_path = os.path.join(full_output_folder, video_file)
+        video.save_to(video_path, format=Types.VideoContainer("mp4"), codec="auto")
+
+        components = video.get_components()
+        frames = components.images
+        frame_count = int(frames.shape[0])
+        fps = float(components.frame_rate)
+
+        poster_path = os.path.splitext(video_path)[0] + "_poster.webp"
+        frame0 = (255.0 * frames[0].cpu().numpy()).clip(0, 255).astype(np.uint8)
+        Image.fromarray(frame0[:, :, :3], "RGB").save(
+            poster_path, format="WEBP", quality=90
+        )
+
+        payload = json.dumps(
+            {
+                "video_path": os.path.abspath(video_path),
+                "poster_path": os.path.abspath(poster_path),
+                "fps": fps,
+                "frame_count": frame_count,
+                "width": int(width),
+                "height": int(height),
+            }
+        ).encode("utf-8")
+        PromptServer.instance.send_sync(MOOSHIE_VIDEO_EVENT_TYPE, payload)
+        return {"ui": {"images": []}}
+
+
 _MODEL_EXTENSIONS = (".safetensors", ".sft", ".ckpt", ".pt", ".pth", ".bin")
 
 
@@ -788,6 +856,7 @@ NODE_CLASS_MAPPINGS = {
     "MooshieSaveImage": MooshieSaveImage,
     "MooshieCheckpointLoaderPath": MooshieCheckpointLoaderPath,
     "MooshieDiffusionLoaderPath": MooshieDiffusionLoaderPath,
+    "MooshieSaveVideo": MooshieSaveVideo,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -796,4 +865,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MooshieSaveImage": "Mooshie Save Image",
     "MooshieCheckpointLoaderPath": "Mooshie Checkpoint Loader (path)",
     "MooshieDiffusionLoaderPath": "Mooshie Diffusion Model Loader (path)",
+    "MooshieSaveVideo": "Mooshie Save Video",
 }
