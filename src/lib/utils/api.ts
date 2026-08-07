@@ -1,5 +1,6 @@
 import { ipcInvoke, ipcListen, isBrowserMode, isTauri } from "./ipc.js";
 import { getLogSnapshot } from "./log-buffer.js";
+import type { ExportFormat } from "./videoExport.js";
 import { locale } from "../stores/locale.svelte.js";
 import type {
   AppConfig,
@@ -887,6 +888,60 @@ export async function interrogateImage(imageBase64: string): Promise<Interrogati
 
 export async function interrogateImagePath(path: string): Promise<InterrogationResult> {
   return ipcInvoke("interrogate_image_path", { path });
+}
+
+export interface VideoExportResult {
+  path: string;
+  size_bytes: number;
+  frame_count: number;
+  /** 0-100, measured on the source frames. */
+  seam_delta: number;
+  /** What "auto" resolved to; echoes the request for the other modes. */
+  applied_loop_mode: string;
+}
+
+export interface ExportCapability {
+  available: boolean;
+  reason: string | null;
+}
+
+export async function exportVideoAnimation(args: {
+  filename: string;
+  format: ExportFormat;
+  fps: number;
+  width: number;
+  quality: number;
+  loopCount: number;
+  loopMode: string;
+  crossfadeFrames: number;
+}): Promise<VideoExportResult> {
+  return ipcInvoke("export_video_animation", {
+    filename: args.filename,
+    format: args.format,
+    fps: args.fps,
+    width: args.width,
+    quality: args.quality,
+    loopCount: args.loopCount,
+    loopMode: args.loopMode,
+    crossfadeFrames: args.crossfadeFrames,
+  });
+}
+
+export async function probeVideoExport(): Promise<ExportCapability> {
+  return ipcInvoke("probe_video_export", {});
+}
+
+export async function copyFileToClipboard(path: string): Promise<void> {
+  return ipcInvoke("copy_file_to_clipboard", { path });
+}
+
+/**
+ * Browser-mode download URL for an export. The encode ran on the server, so the
+ * browser fetches the produced file by basename out of the export temp dir.
+ */
+export function exportDownloadUrl(path: string): string {
+  const name = path.split(/[\\/]/).pop() ?? "";
+  return `/internal-api/_export/${encodeURIComponent(name)}`;
 }
 
 export async function interrogateGalleryImage(filename: string): Promise<InterrogationResult> {

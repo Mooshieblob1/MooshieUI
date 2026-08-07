@@ -661,6 +661,11 @@ pub async fn start_server(
             "/internal-api/_gallery/{filename}",
             get(gallery_image_handler),
         )
+        // Export download endpoint (serves encoded animation files from export temp dir)
+        .route(
+            "/internal-api/_export/{filename}",
+            get(export_download_handler),
+        )
         // Temp image endpoint (ephemeral images from WS for SSE clients)
         .route(
             "/internal-api/_temp_image/{filename}",
@@ -1590,6 +1595,44 @@ async fn gallery_image_handler(
         }
         Err(_) => (StatusCode::NOT_FOUND, "Image not found").into_response(),
     }
+}
+
+/// Serve a produced export by basename out of the export temp dir.
+///
+/// Browser mode runs the encode on the server, so Download has to fetch the
+/// bytes back. Basename only, and only from that one directory - a path with
+/// any separator in it is rejected outright rather than normalised.
+async fn export_download_handler(
+    axum::extract::Path(filename): axum::extract::Path<String>,
+) -> Response {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let path = crate::commands::video_export::export_temp_dir().join(&filename);
+    let Ok(bytes) = tokio::fs::read(&path).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mime = if filename.ends_with(".gif") {
+        "image/gif"
+    } else if filename.ends_with(".webp") {
+        "image/webp"
+    } else {
+        // AVIF is the fallback arm for the same reason run_export's is: it is the
+        // recommended format, so an unexpected extension lands on it.
+        "image/avif"
+    };
+    (
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, mime.to_string()),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}\""),
+            ),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 /// Serve an mp4 with single-range support so `<video>` seeking works.
@@ -4657,6 +4700,43 @@ async fn dispatch_command(
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
             std::fs::write(&path, &image_bytes).map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
+        }
+        "export_video_animation" => {
+            let filename = args["filename"].as_str().ok_or("Missing filename")?;
+            let name = std::path::Path::new(filename)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .ok_or("Invalid filename")?;
+            if !crate::commands::api::is_listable_gallery_file(&name) {
+                return Err("Not a gallery file".into());
+            }
+            // Browser callers get their own gallery directory, not the root one.
+            let dir = user_gallery_dir(username).ok_or("Gallery unavailable")?;
+            let result = crate::commands::video_export::run_export(
+                None,
+                &state,
+                &dir.join(&name),
+                args["format"].as_str().unwrap_or("avif"),
+                args["fps"].as_u64().unwrap_or(24) as u32,
+                args["width"].as_u64().unwrap_or(640) as u32,
+                args["quality"].as_u64().unwrap_or(63) as u32,
+                args["loopCount"].as_u64().unwrap_or(0) as u32,
+                args["loopMode"].as_str().unwrap_or("auto"),
+                args["crossfadeFrames"].as_u64().unwrap_or(4) as u32,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "probe_video_export" => {
+            let cap = crate::commands::video_export::probe_export_inner(&state).await;
+            serde_json::to_value(cap).map_err(|e| e.to_string())
+        }
+        "copy_file_to_clipboard" => {
+            // The server's clipboard is not the browser user's clipboard.
+            // The frontend uses Download in browser mode and never calls this;
+            // refusing loudly beats silently copying onto the operator's machine.
+            Err("Clipboard copy is not available in browser mode".to_string())
         }
         "save_text_file" => {
             let content = args["content"]
