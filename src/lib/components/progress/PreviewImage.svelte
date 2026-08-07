@@ -14,6 +14,7 @@
     recommendedUpscaleModels,
   } from "../../utils/upscalers.js";
   import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
+  import VideoPlayer from "../video/VideoPlayer.svelte";
   import type { GenerationParams } from "../../types/index.js";
 
   let currentTipIndex = $state(0);
@@ -354,19 +355,15 @@
 
 <div class="relative w-full aspect-square bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 flex items-center justify-center overflow-hidden group">
   {#if progress.lastOutputVideo}
-    <!-- A finished video wins over the last sampled still frame. Not wrapped
-         in the preview button: native controls and a click-to-open-lightbox
-         button cannot share the same element. -->
-    <!-- svelte-ignore a11y_media_has_caption -->
-    <video
+    <!-- A finished video wins over the last sampled still frame. No context
+         menu: openPreviewContextMenu is image-scoped, and the player's own
+         Export button covers save and copy for video. -->
+    <VideoPlayer
       src={progress.lastOutputVideo}
-      class="w-full h-full object-contain"
-      controls
-      autoplay
-      loop
-      playsinline
-      aria-label={locale.t("preview.video_alt")}
-    ></video>
+      fps={progress.lastOutputVideoFps ?? 24}
+      density="compact"
+      filename={progress.lastOutputVideoFilename ?? undefined}
+    />
   {:else if progress.displayImage}
     <button
       class="w-full h-full cursor-pointer"

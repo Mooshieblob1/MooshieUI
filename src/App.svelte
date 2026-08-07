@@ -45,6 +45,7 @@
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
   import ContextMenu from "./lib/components/ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
+  import VideoPlayer from "./lib/components/video/VideoPlayer.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
   import PhotopeaEditor from "./lib/components/PhotopeaEditor.svelte";
@@ -3663,23 +3664,16 @@
       {/if}
 
       {#if gallery.lightboxUrl && gallery.lightboxIsVideo}
-        <!-- Video: the native controls own click and drag, so the zoom/pan
-             handlers used for stills are deliberately absent here. The URL is
-             the Range-serving gallery endpoint, so seeking works without ever
-             buffering the whole clip. -->
-        <!-- svelte-ignore a11y_media_has_caption -->
-        <video
+        <!-- The player owns its own chrome, keyboard handling (including the
+             arrow-key stopPropagation that used to live inline here), and
+             export affordances. Zoom and pan stay absent: they are for stills. -->
+        <VideoPlayer
           src={gallery.lightboxUrl}
-          class="max-w-full max-h-[85vh] object-contain"
-          controls
-          autoplay
-          loop
-          playsinline
-          oncontextmenu={openLightboxContextMenu}
-          onkeydown={(e) => {
-            if (e.key === "ArrowLeft" || e.key === "ArrowRight") e.stopPropagation();
-          }}
-        ></video>
+          fps={gallery.selectedImage?.fps ?? 24}
+          density="full"
+          filename={gallery.selectedImage?.gallery_filename}
+          onContextMenu={openLightboxContextMenu}
+        />
       {:else if gallery.lightboxUrl}
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <img
