@@ -3,8 +3,9 @@
 //! The index mirrors per-image metadata into a queryable form so future
 //! features (search UI, sidecar-less metadata browsing, duplicate detection)
 //! can read it without walking the gallery directory and parsing every
-//! image. At present there is **no reader** — writes are best-effort and
-//! never block or fail the save/delete paths.
+//! image. Writes are best-effort and never block or fail the save/delete
+//! paths. The only reader is `video_durations()`, used by the gallery
+//! listing; it is equally best-effort and degrades to an empty map.
 //!
 //! The DB lives at `{gallery_dir}/index.sqlite` and is initialized lazily on
 //! first use. FTS5 provides full-text search over prompt, negative_prompt,
@@ -103,7 +104,28 @@ fn init_schema(c: &Connection) -> rusqlite::Result<()> {
             VALUES (new.id, new.prompt, new.negative_prompt, new.checkpoint);
         END;
         "#,
-    )
+    )?;
+    apply_migrations(c);
+    Ok(())
+}
+
+/// Additive, idempotent column migrations. SQLite has no ADD COLUMN IF NOT
+/// EXISTS, so a re-run fails with "duplicate column name" — that exact error
+/// is expected and swallowed; anything else is logged.
+fn apply_migrations(c: &Connection) {
+    for ddl in [
+        "ALTER TABLE images ADD COLUMN media_type TEXT NOT NULL DEFAULT 'image'",
+        "ALTER TABLE images ADD COLUMN duration_seconds REAL",
+        "ALTER TABLE images ADD COLUMN fps REAL",
+        "ALTER TABLE images ADD COLUMN poster_path TEXT",
+    ] {
+        if let Err(e) = c.execute_batch(ddl) {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column name") {
+                log::warn!("gallery_index: migration failed ({ddl}): {msg}");
+            }
+        }
+    }
 }
 
 fn format_label(fmt: ImageFormat) -> &'static str {
@@ -111,6 +133,7 @@ fn format_label(fmt: ImageFormat) -> &'static str {
         ImageFormat::Png => "png",
         ImageFormat::Jxl => "jxl",
         ImageFormat::WebP => "webp",
+        ImageFormat::Mp4 => "mp4",
         ImageFormat::Unknown => "unknown",
     }
 }
@@ -265,6 +288,167 @@ pub fn upsert(
     if let Err(e) = res {
         log::warn!("gallery_index: upsert failed for {}: {e}", path_str);
     }
+}
+
+/// Metadata for an indexed video, computed by the save pipeline.
+pub struct VideoIndexMeta {
+    pub duration_seconds: f64,
+    pub fps: f64,
+    pub width: u32,
+    pub height: u32,
+    /// Absolute path of the `{stem}_poster.webp` sidecar, if one was saved.
+    pub poster_path: Option<String>,
+}
+
+/// Upsert a gallery video into the index. Best-effort: errors are logged, not
+/// returned. Videos carry no embedded generation metadata in v1, so
+/// prompt/seed/checkpoint stay NULL (enrichment is a later PR).
+pub fn upsert_video(path: &Path, file_size: u64, meta: &VideoIndexMeta) {
+    let guard = conn().lock();
+    let Ok(mut guard) = guard else {
+        log::warn!("gallery_index: mutex poisoned, skipping video upsert");
+        return;
+    };
+    let Some(ref mut c) = *guard else {
+        return; // DB disabled
+    };
+
+    let path_str = path.to_string_lossy().to_string();
+    let res = c.execute(
+        r#"
+        INSERT INTO images (
+            path, format, file_size, width, height, created_at,
+            media_type, duration_seconds, fps, poster_path
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'video', ?7, ?8, ?9)
+        ON CONFLICT(path) DO UPDATE SET
+            format           = excluded.format,
+            file_size        = excluded.file_size,
+            width            = excluded.width,
+            height           = excluded.height,
+            media_type       = excluded.media_type,
+            duration_seconds = excluded.duration_seconds,
+            fps              = excluded.fps,
+            poster_path      = excluded.poster_path
+        "#,
+        params![
+            path_str,
+            format_label(ImageFormat::Mp4),
+            file_size as i64,
+            meta.width as i64,
+            meta.height as i64,
+            now_ms(),
+            meta.duration_seconds,
+            meta.fps,
+            meta.poster_path,
+        ],
+    );
+
+    if let Err(e) = res {
+        log::warn!("gallery_index: video upsert failed for {}: {e}", path_str);
+    }
+}
+
+/// Point a video row at a new poster path after a rename. Best-effort.
+pub fn update_poster_path(video_path: &Path, poster_path: &Path) {
+    let guard = conn().lock();
+    let Ok(guard) = guard else {
+        return;
+    };
+    let Some(ref c) = *guard else {
+        return;
+    };
+    let video_str = video_path.to_string_lossy().to_string();
+    let poster_str = poster_path.to_string_lossy().to_string();
+    if let Err(e) = c.execute(
+        "UPDATE images SET poster_path = ?1 WHERE path = ?2",
+        params![poster_str, video_str],
+    ) {
+        log::warn!("gallery_index: poster update failed for {video_str}: {e}");
+    }
+}
+
+/// Playback metadata for one indexed video row.
+#[derive(Debug, Clone, Copy)]
+pub struct VideoMeta {
+    pub duration_seconds: f64,
+    /// `None` when the row predates the `fps` column or the encoder did not
+    /// report a rate. Callers fall back to 24.
+    pub fps: Option<f64>,
+}
+
+/// Pixel dimensions for one indexed video, by gallery path.
+pub fn video_dimensions(path: &str) -> Option<(u32, u32)> {
+    let guard = conn().lock().ok()?;
+    let c = guard.as_ref()?;
+    c.query_row(
+        "SELECT width, height FROM images WHERE path = ?1",
+        [path],
+        |row| Ok((row.get::<_, i64>(0)? as u32, row.get::<_, i64>(1)? as u32)),
+    )
+    .ok()
+    .filter(|(w, h)| *w > 0 && *h > 0)
+}
+
+/// One query for the whole video table, keyed by gallery path.
+///
+/// This is the first **reader** on the index. The gallery listing needs a
+/// duration badge per mp4, and one query for the whole table beats a lookup
+/// per directory entry. Keyed by basename rather than by full path because
+/// the listing walks a directory while the stored paths are absolute; gallery
+/// video names embed a prompt UUID (`{promptId}__video__{stem}.mp4`), so
+/// basenames are unique in practice.
+///
+/// Best-effort like every other function here: an unavailable or broken index
+/// yields an empty map and the listing simply shows no duration badges.
+pub fn video_meta() -> HashMap<String, VideoMeta> {
+    let mut out = HashMap::new();
+    let guard = conn().lock();
+    let Ok(guard) = guard else {
+        return out;
+    };
+    let Some(ref c) = *guard else {
+        return out;
+    };
+    let mut stmt = match c.prepare(
+        "SELECT path, duration_seconds, fps FROM images \
+         WHERE media_type = 'video' AND duration_seconds IS NOT NULL",
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("gallery_index: video meta query prepare failed: {e}");
+            return out;
+        }
+    };
+    let rows = match stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, f64>(1)?,
+            row.get::<_, Option<f64>>(2)?,
+        ))
+    }) {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("gallery_index: video meta query failed: {e}");
+            return out;
+        }
+    };
+    for row in rows.flatten() {
+        let name = Path::new(&row.0)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(row.0.as_str())
+            .to_string();
+        out.insert(
+            name,
+            VideoMeta {
+                duration_seconds: row.1,
+                // A stored 0.0 is meaningless as a frame rate; treat it as absent.
+                fps: row.2.filter(|v| *v > 0.0),
+            },
+        );
+    }
+    out
 }
 
 /// Update an image's path in the index after a rename. Best-effort: errors are

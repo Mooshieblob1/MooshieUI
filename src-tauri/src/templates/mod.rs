@@ -7,6 +7,7 @@ pub mod segment_detail;
 pub mod style_transfer;
 pub mod txt2img;
 pub mod upscale;
+pub mod video;
 
 use serde_json::{json, Value};
 
@@ -22,6 +23,79 @@ use crate::comfyui::types::{GenerationParams, PromptSegment};
 /// Both the Tauri `generate` command and the LAN web server `generate` route
 /// must call this before `build_workflow`.
 pub fn validate_generation_params(params: &GenerationParams) -> Result<(), String> {
+    // Video mode has its own parameter set; validate it and return early so
+    // image-only guards (input images, ControlNet, style transfer) never
+    // fire on stale image-mode state.
+    if params.mode == "video" {
+        if !matches!(params.video_variant.as_str(), "fl2va" | "ref2va") {
+            return Err(format!(
+                "Unknown video variant \"{}\" — expected \"fl2va\" or \"ref2va\".",
+                params.video_variant
+            ));
+        }
+        for (label, file) in [
+            ("a diffusion model", params.video_diffusion_model.as_deref()),
+            ("a text encoder", params.video_clip_model.as_deref()),
+            ("a video VAE", params.video_vae_model.as_deref()),
+            ("an audio VAE", params.video_audio_vae_model.as_deref()),
+        ] {
+            if file.map(str::trim).unwrap_or("").is_empty() {
+                return Err(format!(
+                    "Video generation requires {} — open the model panel to download the MiniMax H3 files.",
+                    label
+                ));
+            }
+        }
+        let diffusion = params
+            .video_diffusion_model
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("");
+        let diffusion_lower = diffusion.to_lowercase();
+        if !video::H3_DIFFUSION_MARKERS
+            .iter()
+            .any(|marker| diffusion_lower.contains(marker))
+        {
+            return Err(format!(
+                "\"{}\" does not look like a MiniMax H3 model — only MiniMax H3 is supported for video in this version. If this file really is one, rename it to include \"minimax\" or \"h3\".",
+                diffusion
+            ));
+        }
+        let other_variant = if params.video_variant == "fl2va" {
+            "ref2va"
+        } else {
+            "fl2va"
+        };
+        if diffusion_lower.contains(other_variant) {
+            return Err(format!(
+                "\"{}\" is a {} model, but the {} variant is selected — pick the matching diffusion model or switch variants.",
+                diffusion, other_variant, params.video_variant
+            ));
+        }
+        if !(1.0..=15.0).contains(&params.video_duration_seconds) {
+            return Err(format!(
+                "Video duration must be between 1 and 15 seconds (got {}).",
+                params.video_duration_seconds
+            ));
+        }
+        if params.video_variant == "ref2va" {
+            let ref_count = params
+                .video_ref_images
+                .iter()
+                .filter(|s| !s.trim().is_empty())
+                .count();
+            if ref_count == 0 {
+                return Err(
+                    "Reference-to-video needs at least one reference image — please upload one before generating.".into(),
+                );
+            }
+            if ref_count > 9 {
+                return Err("Reference-to-video supports at most 9 reference images.".into());
+            }
+        }
+        return Ok(());
+    }
+
     let needs_input_image =
         matches!(params.mode.as_str(), "img2img" | "inpainting") || params.refine_only;
 
@@ -398,6 +472,12 @@ pub fn load_model_nodes(
 }
 
 pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
+    // Video builds its own complete graph and must bypass finish_workflow
+    // (upscale/facefix/segment chains and MooshieSaveImage are image-only).
+    if params.mode == "video" {
+        return video::build(params, seed);
+    }
+
     if params.style_transfer_enabled && params.model_architecture == "anima" {
         let result = style_transfer::build(params, seed);
         return finish_workflow(result, params, seed);

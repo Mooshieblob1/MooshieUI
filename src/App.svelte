@@ -45,6 +45,7 @@
   import { lazyThumbnail } from "./lib/utils/lazyThumbnail.js";
   import ContextMenu from "./lib/components/ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "./lib/components/ui/ContextMenu.svelte";
+  import VideoPlayer from "./lib/components/video/VideoPlayer.svelte";
   import InterrogateModal from "./lib/components/generation/InterrogateModal.svelte";
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
   import PhotopeaEditor from "./lib/components/PhotopeaEditor.svelte";
@@ -2524,6 +2525,38 @@
         fetches.push(fetchPromise);
         pendingOutputFetches.set(pid, fetches);
       }),
+      ipcListen("comfyui:output_video", async (event: any) => {
+        // MooshieSaveVideo (WS event 102) has already moved the mp4 and its
+        // poster sidecar into the gallery directory and indexed them, so the
+        // payload carries a gallery filename, not bytes.
+        //
+        // NOTE: this event is not registered with cache_temp_event, so an SSE
+        // client that connects late gets no replay. Adding the entry here is
+        // what makes the video appear without a manual refresh; late clients
+        // fall back to the normal loadFromDisk() listing.
+        const data = event.payload;
+        const videoFilename = data?.video_filename;
+        if (typeof videoFilename !== "string" || !videoFilename) return;
+
+        // Filter by prompt_id, matching the output_image listener: reject
+        // events belonging to another user's prompt in browser mode.
+        if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
+
+        const durationSeconds =
+          typeof data.duration_seconds === "number" ? data.duration_seconds : undefined;
+        const videoFps = typeof data.fps === "number" && data.fps > 0 ? data.fps : undefined;
+
+        await gallery.addPersistedImage(videoFilename, {
+          duration_seconds: durationSeconds,
+          fps: videoFps,
+        });
+
+        // Play it in the progress preview. The gallery URL is Range-served, so
+        // the preview never buffers the whole clip.
+        progress.lastOutputVideo = await gallery.loadFullImage(videoFilename);
+        progress.lastOutputVideoFps = videoFps ?? null;
+        progress.lastOutputVideoFilename = videoFilename;
+      }),
       ipcListen("comfyui:executing", async (event: any) => {
         const data = event.payload;
         console.log("Executing event:", data);
@@ -3491,9 +3524,12 @@
         </button>
       {/if}
 
-      <!-- Action buttons -->
+      <!-- Action buttons. For a video the player owns the bottom of the frame,
+           so this bar sits above the player's control chrome (~90px tall)
+           instead of on top of it. -->
       {#if gallery.selectedImage}
-      <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-neutral-900/70 backdrop-blur-sm rounded-xl px-2 py-1.5 border border-neutral-700/50">
+      <div class="absolute {gallery.lightboxIsVideo ? 'bottom-28' : 'bottom-6'} left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 bg-neutral-900/70 backdrop-blur-sm rounded-xl px-2 py-1.5 border border-neutral-700/50">
+        {#if !gallery.lightboxIsVideo}
         <!-- Generation group -->
         <button
           title={locale.t("gallery.img2img")}
@@ -3572,13 +3608,14 @@
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/><polyline points="7 10 5 12 7 14"/><polyline points="17 10 19 12 17 14"/></svg>
         </button>
-
-        <!-- Separator -->
+        <!-- Separator (inside the guard: with no image-only group there is
+             nothing to separate, so a video would show a floating rule) -->
         <div class="w-px h-5 bg-neutral-700/60 mx-0.5"></div>
+        {/if}
 
         <!-- Export group -->
         <button
-          title={locale.t('gallery.save_as')}
+          title={locale.t(gallery.lightboxIsVideo ? "gallery.save_video_as" : "gallery.save_as")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={gallery.saving}
           onclick={() => gallery.selectedImage && gallery.saveImageAs(gallery.selectedImage)}
@@ -3628,7 +3665,18 @@
         </div>
       {/if}
 
-      {#if gallery.lightboxUrl}
+      {#if gallery.lightboxUrl && gallery.lightboxIsVideo}
+        <!-- The player owns its own chrome, keyboard handling (including the
+             arrow-key stopPropagation that used to live inline here), and
+             export affordances. Zoom and pan stay absent: they are for stills. -->
+        <VideoPlayer
+          src={gallery.lightboxUrl}
+          fps={gallery.selectedImage?.fps ?? 24}
+          density="full"
+          filename={gallery.selectedImage?.gallery_filename}
+          onContextMenu={openLightboxContextMenu}
+        />
+      {:else if gallery.lightboxUrl}
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <img
           bind:this={lbImgEl}

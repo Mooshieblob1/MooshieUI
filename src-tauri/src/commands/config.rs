@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use tauri::State;
 
-use crate::config::{normalize_config_fields, save_config, AppConfig};
+use crate::config::{normalize_config_fields, preserve_secrets, save_config, AppConfig};
 use crate::error::AppError;
 use crate::state::AppState;
 use crate::webserver;
@@ -20,8 +20,11 @@ pub async fn update_config(
     mut config: AppConfig,
 ) -> Result<(), AppError> {
     normalize_config_fields(&mut config);
-    save_config(&config).map_err(AppError::Other)?;
+    // Held across the save so a concurrent provider write cannot land between
+    // the read that carries the key forward and the write that replaces config.
     let mut current = state.config.write().await;
+    preserve_secrets(&mut config, &current);
+    save_config(&config).map_err(AppError::Other)?;
     *current = config;
     Ok(())
 }

@@ -1025,9 +1025,28 @@ async fn amd_pytorch_index_url() -> &'static str {
     "https://download.pytorch.org/whl/cpu"
 }
 
+/// "8.9" → (8, 9). `None` for anything that is not a numeric major.minor pair.
+fn parse_major_minor(s: &str) -> Option<(u32, u32)> {
+    let (major, minor) = s.trim().split_once('.')?;
+    Some((major.trim().parse().ok()?, minor.trim().parse().ok()?))
+}
+
 /// Pick the correct PyTorch CUDA wheel index for NVIDIA GPUs.
-/// Blackwell (compute ≥ 12.0) needs cu130+; older GPUs use cu128.
+///
+/// cu130 is the default for every GPU CUDA 13 still supports, and not only for
+/// Blackwell. `comfy-kitchen` — which provides the int4/int8 convrot kernels —
+/// enables its optimized CUDA and Triton backends only on a torch built against
+/// CUDA 13.0 or newer. On an older build it logs "You need pytorch with cu130 or
+/// higher to use optimized CUDA operations", marks both backends disabled, and
+/// leaves only eager, where a quantized checkpoint generates *slower* than its
+/// unquantized base.
+///
+/// CUDA 13 dropped Maxwell, Pascal and Volta, so compute capability below 7.5
+/// stays on cu128.
 async fn nvidia_pytorch_index_url() -> &'static str {
+    const CU130: &str = "https://download.pytorch.org/whl/cu130";
+    const CU128: &str = "https://download.pytorch.org/whl/cu128";
+
     let output = {
         let mut cmd = tokio::process::Command::new("nvidia-smi");
         cmd.args(["--query-gpu=compute_cap", "--format=csv,noheader,nounits"]);
@@ -1038,19 +1057,30 @@ async fn nvidia_pytorch_index_url() -> &'static str {
     if let Ok(o) = output {
         if o.status.success() {
             let stdout = String::from_utf8_lossy(&o.stdout);
-            for line in stdout.lines() {
-                if let Some((major_str, _)) = line.trim().split_once('.') {
-                    if let Ok(major) = major_str.parse::<u32>() {
-                        if major >= 12 {
-                            log::info!("Blackwell GPU detected — using cu130 PyTorch index");
-                            return "https://download.pytorch.org/whl/cu130";
-                        }
-                    }
+            // One venv serves every worker, so the oldest card decides.
+            let oldest = stdout.lines().filter_map(parse_major_minor).min();
+            if let Some(cap) = oldest {
+                if cap < (7, 5) {
+                    log::info!(
+                        "Compute capability {}.{} predates CUDA 13 — using cu128 PyTorch index",
+                        cap.0,
+                        cap.1
+                    );
+                    return CU128;
                 }
+                log::info!(
+                    "Compute capability {}.{} — using cu130 PyTorch index",
+                    cap.0,
+                    cap.1
+                );
+                return CU130;
             }
         }
     }
-    "https://download.pytorch.org/whl/cu128"
+    // Without a compute capability to check, cu128 is the safer default: it
+    // supports strictly more hardware than cu130.
+    log::warn!("Could not read compute capability from nvidia-smi — using cu128 PyTorch index");
+    CU128
 }
 
 async fn step_install_pytorch(
@@ -1227,6 +1257,20 @@ async fn venv_torch_is_cuda(base: &Path) -> bool {
     matches!(cmd.output().await, Ok(out) if out.status.success())
 }
 
+/// The CUDA version the venv's torch was built against, e.g. `(13, 0)`.
+/// `None` when torch is missing, broken, or a CPU build.
+async fn venv_torch_cuda_version(base: &Path) -> Option<(u32, u32)> {
+    let mut cmd = tokio::process::Command::new(venv_python(base));
+    cmd.arg("-c")
+        .arg("import torch; print(torch.version.cuda or '')");
+    hide_window(&mut cmd);
+    let out = cmd.output().await.ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_major_minor(&String::from_utf8_lossy(&out.stdout))
+}
+
 /// Ensure `triton-windows` is present on Windows + CUDA installs.
 ///
 /// The convrot quantization kernels in `comfy-kitchen` (pinned by ComfyUI's own
@@ -1285,9 +1329,29 @@ async fn verify_quant_stack(app: &AppHandle, base: &Path) {
         ),
     }
 
-    // comfy-kitchen falls back to pure-PyTorch eager when no fast kernel backend
-    // loads, and an eager quantized model generates *slower* than its unquantized
-    // base. Installing triton-windows is not enough on its own: its JIT needs a
+    // comfy-kitchen enables its optimized CUDA and Triton backends only on a torch
+    // built against CUDA 13.0 or newer, and drops to eager below that — where a
+    // quantized checkpoint is slower than its unquantized base. New installs get
+    // cu130 (see `nvidia_pytorch_index_url`), but an existing venv keeps whatever
+    // build it was created with until PyTorch is reinstalled. Only advise re-running
+    // setup when setup would actually pick a newer build for this GPU; on hardware
+    // CUDA 13 dropped, cu128 is the best available and the advice would be a loop.
+    if let Some((major, minor)) = venv_torch_cuda_version(base).await {
+        if major < 13 && nvidia_pytorch_index_url().await.ends_with("cu130") {
+            emit_log(
+                app,
+                &format!(
+                    "Warning: this environment's PyTorch is built against CUDA {}.{}. Quantized \
+                     (convrot) models will still generate correctly, but comfy-kitchen needs CUDA \
+                     13.0 or newer for its fast kernels and falls back to slow eager ones below \
+                     that. Re-run setup to rebuild the environment on the CUDA 13 build.",
+                    major, minor
+                ),
+            );
+        }
+    }
+
+    // Installing triton-windows is not enough on its own: its JIT needs a
     // C compiler at runtime, so a package that pip-installed cleanly can still
     // fail to import. Check the import, not just the install.
     if cfg!(target_os = "windows") && venv_torch_is_cuda(base).await {
