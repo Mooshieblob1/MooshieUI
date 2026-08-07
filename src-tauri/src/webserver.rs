@@ -221,15 +221,10 @@ fn is_staff_only_event(event: &str) -> bool {
         || event == "custom_node:installed"
 }
 
-/// Gallery files we list, count against storage quotas, and expire — must stay
-/// in sync with the formats `save_to_gallery` can write (JXL included).
+/// Which gallery files the browser-mode endpoints list, quota-count, and
+/// expire. Delegates to the canonical filter next to the save pipeline.
 fn is_gallery_image_filename(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower.ends_with(".png")
-        || lower.ends_with(".jpg")
-        || lower.ends_with(".jpeg")
-        || lower.ends_with(".webp")
-        || lower.ends_with(".jxl")
+    crate::commands::api::is_listable_gallery_file(name)
 }
 
 /// Commands that moderators (and admins) can execute.
@@ -244,10 +239,20 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "install_pip_package",
     "install_attention_backend",
     "clear_all_queues",
+    // external LLM provider settings: these mutate config and spend the
+    // instance's API key, so they follow `update_config` rather than the
+    // enhance/compose commands every user may run
+    "get_llm_provider",
+    "set_llm_provider",
+    "set_llm_api_key",
+    "set_llm_model",
+    "set_llm_base_url",
+    "list_external_llm_models",
     // previously admin-only: mode switching, filesystem, node install
     "switch_to_app_mode",
     "set_gallery_path",
     "install_custom_node",
+    "install_rife",
     "import_image_directory",
     "open_directory",
     "move_installation",
@@ -665,6 +670,11 @@ pub async fn start_server(
         .route(
             "/internal-api/_gallery/{filename}",
             get(gallery_image_handler),
+        )
+        // Export download endpoint (serves encoded animation files from export temp dir)
+        .route(
+            "/internal-api/_export/{filename}",
+            get(export_download_handler),
         )
         // Temp image endpoint (ephemeral images from WS for SSE clients)
         .route(
@@ -1524,6 +1534,9 @@ async fn gallery_image_handler(
     };
 
     let file_path = gallery_dir.join(&filename);
+    if filename.to_ascii_lowercase().ends_with(".mp4") {
+        return serve_video_file(&file_path, headers.get(axum::http::header::RANGE)).await;
+    }
     match tokio::fs::read(&file_path).await {
         Ok(data) => {
             let lower = filename.to_ascii_lowercase();
@@ -1591,6 +1604,124 @@ async fn gallery_image_handler(
                 .into_response()
         }
         Err(_) => (StatusCode::NOT_FOUND, "Image not found").into_response(),
+    }
+}
+
+/// Serve a produced export by basename out of the export temp dir.
+///
+/// Browser mode runs the encode on the server, so Download has to fetch the
+/// bytes back. Basename only, and only from that one directory - a path with
+/// any separator in it is rejected outright rather than normalised.
+async fn export_download_handler(
+    axum::extract::Path(filename): axum::extract::Path<String>,
+) -> Response {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let path = crate::commands::video_export::export_temp_dir().join(&filename);
+    let Ok(bytes) = tokio::fs::read(&path).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mime = if filename.ends_with(".gif") {
+        "image/gif"
+    } else if filename.ends_with(".webp") {
+        "image/webp"
+    } else if filename.ends_with(".mp4") {
+        "video/mp4"
+    } else {
+        // AVIF is the fallback arm for the same reason run_export's is: it is the
+        // recommended format, so an unexpected extension lands on it.
+        "image/avif"
+    };
+    (
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, mime.to_string()),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}\""),
+            ),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
+/// Serve an mp4 with single-range support so `<video>` seeking works.
+/// Open-ended ranges are capped (see `http_range::OPEN_END_CHUNK`) — players
+/// re-request as they play, so the server never reads a whole multi-hundred-MB
+/// file for one request.
+async fn serve_video_file(
+    path: &std::path::Path,
+    range: Option<&axum::http::HeaderValue>,
+) -> Response {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut file = match tokio::fs::File::open(path).await {
+        Ok(f) => f,
+        Err(_) => return (StatusCode::NOT_FOUND, "Video not found").into_response(),
+    };
+    let len = match file.metadata().await {
+        Ok(m) => m.len(),
+        Err(_) => 0,
+    };
+    match range
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| crate::http_range::parse(h, len))
+    {
+        Some((start, end)) => {
+            if file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Seek failed").into_response();
+            }
+            let mut buf = vec![0u8; (end - start + 1) as usize];
+            if file.read_exact(&mut buf).await.is_err() {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Read failed").into_response();
+            }
+            (
+                StatusCode::PARTIAL_CONTENT,
+                [
+                    ("content-type", "video/mp4".to_string()),
+                    ("accept-ranges", "bytes".to_string()),
+                    ("content-range", format!("bytes {start}-{end}/{len}")),
+                    ("cache-control", "no-cache".to_string()),
+                ],
+                buf,
+            )
+                .into_response()
+        }
+        None => {
+            // No Range header: stream the file in chunks rather than reading it
+            // whole. A 15 s H3 mp4 can be hundreds of MB, and the browser-mode
+            // save-video-as download takes this branch. Content-Length stays
+            // exact so downloads are still verifiable and resumable.
+            let stream = futures_util::stream::unfold(Some(file), |state| async move {
+                let mut file = state?;
+                let mut buf = vec![0u8; 256 * 1024];
+                match file.read(&mut buf).await {
+                    Ok(0) => None,
+                    Ok(n) => {
+                        buf.truncate(n);
+                        Some((
+                            Ok::<_, std::io::Error>(axum::body::Bytes::from(buf)),
+                            Some(file),
+                        ))
+                    }
+                    // Ending the stream with the error surfaces a truncated
+                    // body to the client instead of silently short-reading.
+                    Err(e) => Some((Err(e), None)),
+                }
+            });
+            (
+                StatusCode::OK,
+                [
+                    ("content-type", "video/mp4".to_string()),
+                    ("accept-ranges", "bytes".to_string()),
+                    ("content-length", len.to_string()),
+                    ("cache-control", "no-cache".to_string()),
+                ],
+                axum::body::Body::from_stream(stream),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -1990,8 +2121,9 @@ async fn dispatch_command(
                 serde_json::from_value(args["config"].clone())
                     .map_err(|e| format!("Invalid config: {}", e))?;
             config::normalize_config_fields(&mut new_config);
-            config::save_config(&new_config)?;
             let mut current = state.config.write().await;
+            config::preserve_secrets(&mut new_config, &current);
+            config::save_config(&new_config)?;
             *current = new_config;
             Ok(serde_json::json!(null))
         }
@@ -2517,6 +2649,8 @@ async fn dispatch_command(
             if !dir.exists() {
                 return Ok(serde_json::json!([]));
             }
+            // One query for the whole video table, not one per directory entry.
+            let meta = crate::gallery_index::video_meta();
             let mut files: Vec<_> = std::fs::read_dir(&dir)
                 .map_err(|e| e.to_string())?
                 .filter_map(|entry| {
@@ -2534,10 +2668,13 @@ async fn dispatch_command(
                         .duration_since(std::time::UNIX_EPOCH)
                         .ok()?
                         .as_millis() as u64;
+                    let entry_meta = meta.get(&name);
                     Some(serde_json::json!({
                         "filename": name,
                         "size_bytes": metadata.len(),
                         "modified_ms": modified_ms,
+                        "duration_seconds": entry_meta.map(|m| m.duration_seconds),
+                        "fps": entry_meta.and_then(|m| m.fps),
                     }))
                 })
                 .collect();
@@ -3090,6 +3227,17 @@ async fn dispatch_command(
                 std::fs::remove_file(&path).map_err(|e| e.to_string())?;
             }
             crate::gallery_index::remove(&path);
+            // Videos own a poster sidecar that listings never surface; delete it
+            // together with its mp4, matching the desktop `delete_gallery_image`
+            // command. Without this, deleting a video in browser mode orphans the
+            // poster file and its index row forever.
+            if let Some(stem) = filename.strip_suffix(".mp4") {
+                let poster = path.with_file_name(format!("{stem}_poster.webp"));
+                if poster.is_file() {
+                    let _ = std::fs::remove_file(&poster);
+                    crate::gallery_index::remove(&poster);
+                }
+            }
             Ok(serde_json::json!(null))
         }
         "rename_gallery_image" => {
@@ -4087,6 +4235,50 @@ async fn dispatch_command(
                 .join(&node_name);
             Ok(serde_json::json!(target_dir.exists()))
         }
+        "is_rife_installed" => {
+            let comfyui_path = state.config.read().await.comfyui_path.clone();
+            Ok(serde_json::json!(crate::comfyui::nodes::is_rife_installed(
+                &comfyui_path
+            )))
+        }
+        "install_rife" => {
+            let (comfyui_path, venv_path, network_proxy, pip_index_url) = {
+                let config = state.config.read().await;
+                (
+                    config.comfyui_path.clone(),
+                    config.venv_path.clone(),
+                    config.network_proxy.clone(),
+                    config.pip_index_url.clone(),
+                )
+            };
+
+            let emit = |step: &str, message: &str, done: bool| {
+                state.broadcast(
+                    "install:progress",
+                    serde_json::json!({
+                        "node_name": "ComfyUI-Frame-Interpolation",
+                        "step": step,
+                        "message": message,
+                        "done": done,
+                    }),
+                );
+            };
+
+            let result = crate::comfyui::nodes::install_rife(
+                &state.http_client,
+                &comfyui_path,
+                &venv_path,
+                network_proxy.as_deref(),
+                pip_index_url.as_deref(),
+                &emit,
+            )
+            .await;
+
+            if let Err(e) = &result {
+                emit("error", e, true);
+            }
+            result.map(|_| serde_json::json!(null))
+        }
 
         // --- Config extras ---
         "set_gallery_path" => {
@@ -4434,10 +4626,15 @@ async fn dispatch_command(
         #[cfg(any(feature = "desktop", feature = "server"))]
         "llm_status" => {
             let pa = &state.prompt_assistant;
+            // `external_enabled` decides whether the frontend offers the
+            // assistant at all: with an external provider configured it is
+            // usable with no local model installed.
+            let external_enabled = state.config.read().await.llm_external_enabled;
             Ok(serde_json::json!({
                 "installed_models": pa.installed_models(),
                 "active_model": pa.server.active_model(),
                 "server_running": pa.server.is_running(),
+                "external_enabled": external_enabled,
             }))
         }
         #[cfg(any(feature = "desktop", feature = "server"))]
@@ -4557,6 +4754,107 @@ async fn dispatch_command(
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }
+        // --- External LLM provider settings ---
+        // Every arm returns the same key-free projection the desktop commands
+        // return, so the settings UI is identical in both modes. `connect_llm_oauth`
+        // has no arm on purpose: the sign-in redirect lands on a loopback port owned
+        // by this process, which a browser on another machine cannot reach. Browser
+        // users paste an API key instead.
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "get_llm_provider" => {
+            let s = crate::prompt_assistant::providers::read_state(&state.config).await;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "set_llm_provider" => {
+            let provider = args["provider"].as_str().unwrap_or("").to_string();
+            let s = crate::prompt_assistant::providers::select(&state.config, &provider)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "set_llm_api_key" => {
+            let api_key = args["apiKey"].as_str().unwrap_or("").to_string();
+            let s = crate::prompt_assistant::providers::store_key(&state.config, &api_key)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "set_llm_model" => {
+            let model = args["model"].as_str().unwrap_or("").to_string();
+            let s = crate::prompt_assistant::providers::set_model(&state.config, &model)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "set_llm_base_url" => {
+            let base_url = args["baseUrl"].as_str().unwrap_or("").to_string();
+            let s = crate::prompt_assistant::providers::set_base_url(&state.config, &base_url)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(s).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "list_external_llm_models" => {
+            let models = crate::prompt_assistant::providers::list_available_models(
+                &state.http_client,
+                &state.config,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(models).map_err(|e| e.to_string())
+        }
+        #[cfg(any(feature = "desktop", feature = "server"))]
+        "call_external_llm" => {
+            let system = args["system"].as_str().unwrap_or("").to_string();
+            let prompt = args["prompt"].as_str().unwrap_or("").to_string();
+            let max_tokens = args["maxTokens"]
+                .as_u64()
+                .map(|v| v as u32)
+                .unwrap_or(1024)
+                .clamp(64, 4096);
+
+            match args["requestId"].as_str() {
+                // Same SSE hand-off as enhance/compose: a long rewrite would
+                // otherwise outlast the reverse proxy's ~100s limit and come back
+                // as a 524 instead of an answer.
+                Some(request_id) => {
+                    let request_id = request_id.to_string();
+                    let owner = username.map(|s| s.to_string());
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        let (event, payload) =
+                            match chat_any_headless(&state, &system, &prompt, max_tokens).await {
+                                Ok(text) => (
+                                    "llm:result",
+                                    serde_json::json!({
+                                        "request_id": request_id,
+                                        "result": text,
+                                        "_target_user": owner,
+                                    }),
+                                ),
+                                Err(e) => (
+                                    "llm:error",
+                                    serde_json::json!({
+                                        "request_id": request_id,
+                                        "error": e,
+                                        "_target_user": owner,
+                                    }),
+                                ),
+                            };
+                        state.broadcast(event, payload);
+                    });
+                    Ok(serde_json::json!({ "queued": true }))
+                }
+                None => {
+                    let text = chat_any_headless(&state, &system, &prompt, max_tokens).await?;
+                    Ok(serde_json::Value::String(text))
+                }
+            }
+        }
 
         // --- File operations ---
         "save_image_file" => {
@@ -4565,6 +4863,44 @@ async fn dispatch_command(
             let path = args["path"].as_str().ok_or("Missing path")?.to_string();
             std::fs::write(&path, &image_bytes).map_err(|e| e.to_string())?;
             Ok(serde_json::json!(null))
+        }
+        "export_video_animation" => {
+            let filename = args["filename"].as_str().ok_or("Missing filename")?;
+            let name = std::path::Path::new(filename)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .ok_or("Invalid filename")?;
+            if !crate::commands::api::is_listable_gallery_file(&name) {
+                return Err("Not a gallery file".into());
+            }
+            // Browser callers get their own gallery directory, not the root one.
+            let dir = user_gallery_dir(username).ok_or("Gallery unavailable")?;
+            let result = crate::commands::video_export::run_export(
+                None,
+                &state,
+                &dir.join(&name),
+                args["format"].as_str().unwrap_or("avif"),
+                args["fps"].as_u64().unwrap_or(24) as u32,
+                args["width"].as_u64().unwrap_or(640) as u32,
+                args["quality"].as_u64().unwrap_or(63) as u32,
+                args["loopCount"].as_u64().unwrap_or(0) as u32,
+                args["loopMode"].as_str().unwrap_or("auto"),
+                args["crossfadeFrames"].as_u64().unwrap_or(4) as u32,
+                args["keepAudio"].as_bool().unwrap_or(false),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "probe_video_export" => {
+            let cap = crate::commands::video_export::probe_export_inner(&state).await;
+            serde_json::to_value(cap).map_err(|e| e.to_string())
+        }
+        "copy_file_to_clipboard" => {
+            // The server's clipboard is not the browser user's clipboard.
+            // The frontend uses Download in browser mode and never calls this;
+            // refusing loudly beats silently copying onto the operator's machine.
+            Err("Clipboard copy is not available in browser mode".to_string())
         }
         "save_text_file" => {
             let content = args["content"]
@@ -4747,28 +5083,50 @@ async fn run_interrogation_headless(
     .map_err(|e| format!("Inference task failed: {}", e))?
 }
 
+/// Browser-mode twin of the desktop `chat_any`: route one system+user turn to
+/// the configured external provider, else to the bundled local llama-server.
+///
+/// Stage updates go out over SSE instead of a Tauri emit, and there is no
+/// download-progress callback because the browser model-download path has its
+/// own dispatch arm.
 #[cfg(any(feature = "desktop", feature = "server"))]
-pub async fn run_prompt_assistant_headless(
+pub async fn chat_any_headless(
     state: &Arc<AppState>,
-    input: &str,
-    family: &str,
-    mode: crate::prompt_assistant::grounding::GenMode,
-    length: Option<&str>,
-    include_artists: bool,
+    system: &str,
+    user: &str,
+    max_tokens: u32,
 ) -> Result<String, String> {
-    use crate::prompt_assistant::{grounding, hardware};
-    // No active-generation guard here: `prompt_queue` is shared across every user
-    // of a server/browser-mode instance, so blocking on it meant one person
-    // generating locked Enhance/Compose for everyone. Contention is instead handled
-    // by the free-VRAM check in `ensure_running`, which loads the LLM on CPU when a
-    // GPU is already busy with ComfyUI's model rather than evicting it.
-    let (model_id, idle_secs) = {
+    use crate::prompt_assistant::hardware;
+
+    let (model_id, idle_secs, ext_enabled, provider, ext_base, ext_key, ext_model) = {
         let cfg = state.config.read().await;
         (
             cfg.prompt_assistant_model_id.clone(),
             cfg.prompt_assistant_idle_timeout_secs,
+            cfg.llm_external_enabled,
+            cfg.llm_provider.clone(),
+            cfg.llm_external_base_url.clone(),
+            cfg.llm_external_api_key.clone(),
+            cfg.llm_external_model.clone(),
         )
     };
+
+    if ext_enabled {
+        state.broadcast("llm:stage", serde_json::json!("generating"));
+        return crate::prompt_assistant::server::chat_provider(
+            &state.http_client,
+            &provider,
+            &ext_base,
+            &ext_key,
+            &ext_model,
+            system,
+            user,
+            max_tokens,
+        )
+        .await
+        .map_err(|e| e.to_string());
+    }
+
     // Fall back to whatever model is already on disk when config.json carries no
     // explicit selection. This is the only path that works on read-only-config
     // deployments (e.g. a Kubernetes ConfigMap mounted at config.json), where the
@@ -4805,10 +5163,53 @@ pub async fn run_prompt_assistant_headless(
         .await
         .map_err(|e| e.to_string())?;
     state.broadcast("llm:stage", serde_json::json!("generating"));
+    state
+        .prompt_assistant
+        .server
+        .chat(&state.http_client, port, system, user, max_tokens)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(any(feature = "desktop", feature = "server"))]
+pub async fn run_prompt_assistant_headless(
+    state: &Arc<AppState>,
+    input: &str,
+    family: &str,
+    mode: crate::prompt_assistant::grounding::GenMode,
+    length: Option<&str>,
+    include_artists: bool,
+) -> Result<String, String> {
+    use crate::prompt_assistant::grounding;
+    // No active-generation guard here: `prompt_queue` is shared across every user
+    // of a server/browser-mode instance, so blocking on it meant one person
+    // generating locked Enhance/Compose for everyone. Contention is instead handled
+    // by the free-VRAM check in `ensure_running`, which loads the LLM on CPU when a
+    // GPU is already busy with ComfyUI's model rather than evicting it.
+    //
+    // Resolve the model purpose (drives tag-only grounding) the same way the
+    // desktop path does: an external endpoint is a general-purpose chat model, so
+    // it needs no local catalog entry and no installed model.
+    let (model_id, ext_enabled) = {
+        let cfg = state.config.read().await;
+        (
+            cfg.prompt_assistant_model_id.clone(),
+            cfg.llm_external_enabled,
+        )
+    };
     // A purpose-built tag upsampler is always tag-only regardless of family.
-    let purpose = crate::prompt_assistant::catalog::entry(&model_id)
-        .map(|e| e.purpose)
-        .unwrap_or_else(|| "natural_language".to_string());
+    let purpose = if ext_enabled {
+        "natural_language".to_string()
+    } else {
+        let resolved = match model_id {
+            Some(id) => Some(id),
+            None => state.prompt_assistant.installed_models().into_iter().next(),
+        };
+        resolved
+            .and_then(|id| crate::prompt_assistant::catalog::entry(&id))
+            .map(|e| e.purpose)
+            .unwrap_or_else(|| "natural_language".to_string())
+    };
     let tag_only = grounding::is_tag_only(&purpose, family);
     let candidates = grounding::retrieve_candidates(input, 40);
     let system = grounding::system_prompt(tag_only, mode, &candidates, include_artists);
@@ -4819,12 +5220,7 @@ pub async fn run_prompt_assistant_headless(
         Some("detailed") => 384,
         _ => 192,
     };
-    let raw = state
-        .prompt_assistant
-        .server
-        .chat(&state.http_client, port, &system, input, max_tokens)
-        .await
-        .map_err(|e| e.to_string())?;
+    let raw = chat_any_headless(state, &system, input, max_tokens).await?;
     let cleaned = grounding::repair(&raw, tag_only);
     // Enhance is additive: keep every user tag and don't let the model swap a
     // pinned attribute. No-op for Compose. The desktop path runs this too;
@@ -5435,7 +5831,7 @@ fn get_lan_ips() -> Vec<String> {
 /// Resolve the gallery directory for a given user.
 /// Admin/localhost (username=None) uses the root gallery dir.
 /// LAN users get a per-user subdirectory: `gallery/users/{username}/`.
-fn user_gallery_dir(username: Option<&str>) -> Option<std::path::PathBuf> {
+pub(crate) fn user_gallery_dir(username: Option<&str>) -> Option<std::path::PathBuf> {
     let base = config::gallery_dir()?;
     match username {
         Some(name) => {
@@ -5614,6 +6010,7 @@ fn save_to_gallery_in_dir(
                 crate::metadata::embed_webp_metadata(bytes, meta, embed_mode)
                     .unwrap_or_else(|_| bytes.to_vec())
             }
+            crate::metadata::ImageFormat::Mp4 => bytes.to_vec(),
             crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {
@@ -5878,9 +6275,20 @@ fn cleanup_expired_images(auth: &AuthState) {
                     if let Ok(age) = now.duration_since(modified) {
                         if age > expiry {
                             let size = meta.len();
-                            if std::fs::remove_file(file_entry.path()).is_ok() {
+                            let path = file_entry.path();
+                            if std::fs::remove_file(&path).is_ok() {
                                 expired_count += 1;
                                 expired_bytes += size;
+                                crate::gallery_index::remove(&path);
+                                // Videos own a poster sidecar that listings
+                                // never surface; expire it with its mp4.
+                                if let Some(stem) = name.strip_suffix(".mp4") {
+                                    let poster = user_dir.join(format!("{stem}_poster.webp"));
+                                    if poster.is_file() {
+                                        let _ = std::fs::remove_file(&poster);
+                                        crate::gallery_index::remove(&poster);
+                                    }
+                                }
                             }
                         }
                     }
