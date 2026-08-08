@@ -3,11 +3,13 @@ pub mod facefix;
 pub mod image_edit;
 pub mod img2img;
 pub mod inpainting;
+pub mod rife;
 pub mod segment_detail;
 pub mod style_transfer;
 pub mod txt2img;
 pub mod upscale;
 pub mod video;
+pub mod video_interpolate;
 
 use serde_json::{json, Value};
 

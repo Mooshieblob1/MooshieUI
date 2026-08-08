@@ -240,6 +240,14 @@ pub struct GenerationParams {
     pub video_ref_images: Vec<String>,
     #[serde(default)]
     pub video_rife_enabled: bool,
+    #[serde(default = "default_rife_multiplier")]
+    pub video_rife_multiplier: u32,
+    #[serde(default = "default_rife_scale_factor")]
+    pub video_rife_scale_factor: f64,
+    #[serde(default = "default_rife_fast_mode")]
+    pub video_rife_fast_mode: bool,
+    #[serde(default = "default_rife_ensemble")]
+    pub video_rife_ensemble: bool,
     /// MiniMax-H3 Turbo LoRA — distilled few-step sampling (4-8 steps instead
     /// of 20). Requires the `ComfyUI-MiniMax-H3-Turbo` custom node pack.
     #[serde(default)]
@@ -429,6 +437,22 @@ fn default_video_aspect_ratio() -> String {
 
 fn default_video_turbo_steps() -> u32 {
     6
+}
+
+fn default_rife_multiplier() -> u32 {
+    2
+}
+
+fn default_rife_scale_factor() -> f64 {
+    1.0
+}
+
+fn default_rife_fast_mode() -> bool {
+    true
+}
+
+fn default_rife_ensemble() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

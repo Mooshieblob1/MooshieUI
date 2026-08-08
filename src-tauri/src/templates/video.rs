@@ -555,33 +555,18 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
         json!([audio_decode_id.as_str(), 0])
     };
 
-    // RIFE 2x frame interpolation: doubles H3's native 24 fps to 48 without
-    // changing the clip's duration, so `CreateVideo.fps` has to double too.
-    // Every widget the node declares is sent explicitly — ComfyUI errors on a
-    // missing required input, and the pack's defaults are not guaranteed to
-    // survive a pack update.
+    // Frame interpolation emits `(N - 1) * multiplier + 1` frames, so
+    // `CreateVideo.fps` has to rise by the same factor or the clip would play
+    // back in slow motion instead of just looking smoother.
     let (frames_source_id, fps) = if params.video_rife_enabled {
+        let settings = crate::templates::rife::RifeSettings::from_params(params);
         let rife_id = next_id.to_string();
         workflow.insert(
             rife_id.clone(),
-            json!({
-                "class_type": "RIFE VFI",
-                "inputs": {
-                    "frames": [decode_id.as_str(), 0],
-                    "ckpt_name": crate::comfyui::nodes::RIFE_CKPT_FILENAME,
-                    "clear_cache_after_n_frames": 10,
-                    "multiplier": 2,
-                    "fast_mode": true,
-                    "ensemble": true,
-                    "scale_factor": 1.0,
-                    "dtype": "float32",
-                    "torch_compile": false,
-                    "batch_size": 1
-                }
-            }),
+            settings.node(json!([decode_id.as_str(), 0])),
         );
         next_id += 1;
-        (rife_id, 48.0)
+        (rife_id, settings.output_fps(24.0))
     } else {
         (decode_id.clone(), 24.0)
     };
@@ -834,6 +819,49 @@ mod tests {
         // audio VAE at its own rate.
         assert!(create_video["inputs"]["audio"].is_array());
         assert_eq!(nodes_of_class(&workflow, "MooshieSaveVideo").len(), 1);
+    }
+
+    #[test]
+    fn rife_multiplier_drives_both_the_node_and_the_output_fps() {
+        for (multiplier, expected_fps) in [(3u32, 72.0), (4u32, 96.0)] {
+            let mut params = video_params("fl2va");
+            params.video_rife_enabled = true;
+            params.video_rife_multiplier = multiplier;
+            let workflow = build(&params, 1);
+
+            let rife = nodes_of_class(&workflow, "RIFE VFI")[0];
+            assert_eq!(rife["inputs"]["multiplier"], json!(multiplier));
+            let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
+            assert_eq!(create_video["inputs"]["fps"], json!(expected_fps));
+        }
+    }
+
+    #[test]
+    fn rife_advanced_widgets_reach_the_node() {
+        let mut params = video_params("fl2va");
+        params.video_rife_enabled = true;
+        params.video_rife_scale_factor = 0.5;
+        params.video_rife_fast_mode = false;
+        params.video_rife_ensemble = false;
+        let workflow = build(&params, 1);
+
+        let rife = nodes_of_class(&workflow, "RIFE VFI")[0];
+        assert_eq!(rife["inputs"]["scale_factor"], json!(0.5));
+        assert_eq!(rife["inputs"]["fast_mode"], json!(false));
+        assert_eq!(rife["inputs"]["ensemble"], json!(false));
+    }
+
+    #[test]
+    fn rife_multiplier_from_an_untrusted_client_is_clamped() {
+        let mut params = video_params("fl2va");
+        params.video_rife_enabled = true;
+        params.video_rife_multiplier = 32;
+        let workflow = build(&params, 1);
+
+        let rife = nodes_of_class(&workflow, "RIFE VFI")[0];
+        assert_eq!(rife["inputs"]["multiplier"], json!(4));
+        let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
+        assert_eq!(create_video["inputs"]["fps"], json!(96.0));
     }
 
     #[test]

@@ -783,6 +783,27 @@ export async function installRife(): Promise<void> {
 }
 
 /**
+ * Queue a RIFE pass over a finished gallery clip. Returns the prompt id; the
+ * smoothed clip arrives as a new gallery entry through the normal video output
+ * path, so the source is never overwritten.
+ */
+export async function interpolateVideo(
+  filename: string,
+  multiplier: number,
+  scaleFactor: number,
+  fastMode: boolean,
+  ensemble: boolean,
+): Promise<{ prompt_id: string }> {
+  return ipcInvoke("interpolate_video", {
+    filename,
+    multiplier,
+    scaleFactor,
+    fastMode,
+    ensemble,
+  });
+}
+
+/**
  * Is the MiniMax-H3 Turbo node pack on disk? Only the pack: the adapter is a
  * regular LoRA download, so the panel checks `models.loras` for that half.
  */

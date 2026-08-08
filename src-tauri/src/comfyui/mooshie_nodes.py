@@ -899,6 +899,119 @@ class MooshieDiffusionLoaderPath:
         return (model,)
 
 
+class MooshieLoadVideoPath:
+    """Decode an mp4 from an absolute path into frames plus audio.
+
+    ComfyUI's stock loaders read a filename inside the input directory, but the
+    gallery lives elsewhere and post-hoc interpolation has to re-open a clip
+    that was already saved. The Rust side proves the path sits inside the
+    caller's own gallery before it ever reaches here.
+
+    `output_fps` is returned rather than assumed so the caller never has to
+    guess the source rate: interpolating an already-interpolated 48 fps clip
+    yields 96, not 48.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "video_path": ("STRING", {"default": "", "multiline": False}),
+                "fps_multiplier": ("INT", {"default": 2, "min": 1, "max": 8}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "AUDIO", "FLOAT")
+    RETURN_NAMES = ("images", "audio", "output_fps")
+    FUNCTION = "load_video"
+    CATEGORY = "mooshie"
+    DESCRIPTION = (
+        "Loads an mp4 from an absolute path as frames plus audio, and reports "
+        "the playback rate the interpolated result should use."
+    )
+
+    def load_video(self, video_path, fps_multiplier=2):
+        # Imported lazily so a ComfyUI install without PyAV can still load the
+        # rest of this module.
+        import av
+
+        path = (video_path or "").strip()
+        if not path:
+            raise ValueError("MooshieLoadVideoPath: empty video path")
+        resolved = os.path.abspath(os.path.expanduser(path))
+        if not os.path.isfile(resolved):
+            raise ValueError(f"MooshieLoadVideoPath: file not found: {resolved}")
+
+        frames = []
+        source_fps = 24.0
+        with av.open(resolved) as container:
+            if not container.streams.video:
+                raise ValueError(f"MooshieLoadVideoPath: no video stream in {resolved}")
+            stream = container.streams.video[0]
+            stream.thread_type = "AUTO"
+            if stream.average_rate:
+                source_fps = float(stream.average_rate)
+            for frame in container.decode(stream):
+                frames.append(frame.to_ndarray(format="rgb24"))
+
+        if not frames:
+            raise ValueError(f"MooshieLoadVideoPath: decoded zero frames from {resolved}")
+
+        images = torch.from_numpy(np.stack(frames).astype(np.float32) / 255.0)
+        audio = self._load_audio(resolved, len(frames) / source_fps)
+        print(
+            f"[MooshieLoadVideoPath] {len(frames)} frames at {source_fps:.3f} fps "
+            f"from {resolved}"
+        )
+        return (images, audio, float(source_fps * fps_multiplier))
+
+    @staticmethod
+    def _load_audio(path, duration_seconds):
+        """Decode the audio track, or synthesise silence of the same length.
+
+        Returning silence rather than None lets the graph wire `audio`
+        unconditionally: CreateVideo accepts a silent track, but a missing
+        required link fails prompt validation outright.
+        """
+        import av
+
+        sample_rate = 44100
+        chunks = []
+        try:
+            with av.open(path) as container:
+                if container.streams.audio:
+                    stream = container.streams.audio[0]
+                    sample_rate = int(stream.rate or sample_rate)
+                    resampler = av.audio.resampler.AudioResampler(
+                        format="fltp", layout="stereo", rate=sample_rate
+                    )
+                    for frame in container.decode(stream):
+                        for resampled in resampler.resample(frame):
+                            chunks.append(resampled.to_ndarray())
+                    for resampled in resampler.resample(None):
+                        chunks.append(resampled.to_ndarray())
+        except Exception as exc:
+            # A broken audio track must not lose the user's interpolated video.
+            print(f"[MooshieLoadVideoPath] audio decode failed ({exc}), using silence")
+            chunks = []
+
+        if chunks:
+            waveform = torch.from_numpy(np.concatenate(chunks, axis=1)).unsqueeze(0)
+        else:
+            samples = max(1, int(round(duration_seconds * sample_rate)))
+            waveform = torch.zeros((1, 2, samples), dtype=torch.float32)
+        return {"waveform": waveform, "sample_rate": sample_rate}
+
+    @classmethod
+    def IS_CHANGED(cls, video_path, fps_multiplier=2):
+        # Re-run when the file on disk changes, not just when the path string
+        # does, so re-interpolating an overwritten clip is not served stale.
+        try:
+            return os.path.getmtime(os.path.abspath(os.path.expanduser((video_path or "").strip())))
+        except OSError:
+            return float("nan")
+
+
 NODE_CLASS_MAPPINGS = {
     "MooshieFaceDetailer": MooshieFaceDetailer,
     "MooshieSegmentDetailer": MooshieSegmentDetailer,
@@ -906,6 +1019,7 @@ NODE_CLASS_MAPPINGS = {
     "MooshieCheckpointLoaderPath": MooshieCheckpointLoaderPath,
     "MooshieDiffusionLoaderPath": MooshieDiffusionLoaderPath,
     "MooshieSaveVideo": MooshieSaveVideo,
+    "MooshieLoadVideoPath": MooshieLoadVideoPath,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -915,4 +1029,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MooshieCheckpointLoaderPath": "Mooshie Checkpoint Loader (path)",
     "MooshieDiffusionLoaderPath": "Mooshie Diffusion Model Loader (path)",
     "MooshieSaveVideo": "Mooshie Save Video",
+    "MooshieLoadVideoPath": "Mooshie Load Video (Path)",
 }

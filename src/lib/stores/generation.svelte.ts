@@ -617,6 +617,12 @@ class GenerationStore {
   /** RIFE 2x frame interpolation. Only ever true once the lazy install has put
    *  the pack and its checkpoint on disk. */
   videoRifeEnabled = $state(false);
+  /** RIFE factor: output plays at 24 x this. Capped at 4, see utils/rife.ts. */
+  videoRifeMultiplier = $state(2);
+  /** RIFE flow scale: one of 0.25, 0.5, 1, 2, 4. Lower needs less memory. */
+  videoRifeScaleFactor = $state(1);
+  videoRifeFastMode = $state(true);
+  videoRifeEnsemble = $state(true);
   /** MiniMax-H3 Turbo LoRA: distilled few-step sampling. Only ever true once the
    *  lazy install has put the node pack and the adapter on disk. */
   videoTurboEnabled = $state(false);
@@ -1939,6 +1945,12 @@ class GenerationStore {
           this.videoRefImages = slots;
         }
         if (saved.videoRifeEnabled !== undefined) this.videoRifeEnabled = saved.videoRifeEnabled;
+        if (saved.videoRifeMultiplier !== undefined)
+          this.videoRifeMultiplier = saved.videoRifeMultiplier;
+        if (saved.videoRifeScaleFactor !== undefined)
+          this.videoRifeScaleFactor = saved.videoRifeScaleFactor;
+        if (saved.videoRifeFastMode !== undefined) this.videoRifeFastMode = saved.videoRifeFastMode;
+        if (saved.videoRifeEnsemble !== undefined) this.videoRifeEnsemble = saved.videoRifeEnsemble;
         if (saved.videoTurboEnabled !== undefined)
           this.videoTurboEnabled = saved.videoTurboEnabled;
         if (saved.videoTurboSteps !== undefined)
@@ -2159,6 +2171,10 @@ class GenerationStore {
         videoFirstFrameAsLast: this.videoFirstFrameAsLast,
         videoRefImages: this.videoRefImages,
         videoRifeEnabled: this.videoRifeEnabled,
+        videoRifeMultiplier: this.videoRifeMultiplier,
+        videoRifeScaleFactor: this.videoRifeScaleFactor,
+        videoRifeFastMode: this.videoRifeFastMode,
+        videoRifeEnsemble: this.videoRifeEnsemble,
         videoTurboEnabled: this.videoTurboEnabled,
         videoTurboSteps: this.videoTurboSteps,
         videoDiffusionModel: this.videoDiffusionModel,
@@ -2280,6 +2296,10 @@ class GenerationStore {
       videoFirstFrameAsLast: this.videoFirstFrameAsLast,
       videoRefImages: this.videoRefImages,
       videoRifeEnabled: this.videoRifeEnabled,
+      videoRifeMultiplier: this.videoRifeMultiplier,
+      videoRifeScaleFactor: this.videoRifeScaleFactor,
+      videoRifeFastMode: this.videoRifeFastMode,
+      videoRifeEnsemble: this.videoRifeEnsemble,
       videoTurboEnabled: this.videoTurboEnabled,
       videoTurboSteps: this.videoTurboSteps,
       videoDiffusionModel: this.videoDiffusionModel,
@@ -2681,6 +2701,10 @@ class GenerationStore {
       video_last_frame: this.videoVariant === "fl2va" ? this.videoEffectiveLastFrame : null,
       video_ref_images: this.videoVariant === "ref2va" ? this.videoRefImageFilenames : [],
       video_rife_enabled: this.videoRifeEnabled,
+      video_rife_multiplier: this.videoRifeMultiplier,
+      video_rife_scale_factor: this.videoRifeScaleFactor,
+      video_rife_fast_mode: this.videoRifeFastMode,
+      video_rife_ensemble: this.videoRifeEnsemble,
       video_turbo_enabled: this.videoTurboEnabled,
       video_turbo_steps: this.videoTurboSteps,
       video_turbo_lora: this.videoTurboEnabled ? H3_TURBO_LORA.filename : null,
