@@ -65,12 +65,89 @@ pub fn compute_h3_dimensions(aspect_ratio: &str, megapixels: f64) -> (u32, u32) 
     (snap(width), snap(height))
 }
 
+/// Flat parameter map for the metadata embedded in a generated video.
+///
+/// Keys are the same internal names the image path uses, so
+/// `format_swarmui_json` maps them onto SwarmUI's field names and a video read
+/// comes back through `parse_swarmui_json` looking exactly like an image read.
+/// Everything video-specific goes under a `mooshie_` prefix, which the
+/// formatter strips and files under `mooshie_extra`.
+pub(crate) fn video_metadata_params(
+    params: &GenerationParams,
+    seed: i64,
+) -> std::collections::HashMap<String, String> {
+    let (width, height) =
+        compute_h3_dimensions(&params.video_aspect_ratio, params.video_megapixels);
+    let steps = if params.video_turbo_enabled {
+        params
+            .video_turbo_steps
+            .clamp(H3_TURBO_MIN_STEPS, H3_TURBO_MAX_STEPS)
+    } else {
+        H3_DEFAULT_STEPS
+    };
+    // RIFE doubles H3's native 24 fps without changing the clip's duration.
+    let fps = if params.video_rife_enabled {
+        48.0
+    } else {
+        24.0
+    };
+
+    let mut out = std::collections::HashMap::new();
+    let mut put = |k: &str, v: String| {
+        if !v.is_empty() {
+            out.insert(k.to_string(), v);
+        }
+    };
+    put("positive_prompt", params.positive_prompt.clone());
+    put("negative_prompt", params.negative_prompt.clone());
+    put(
+        "model",
+        params.video_diffusion_model.clone().unwrap_or_default(),
+    );
+    put("seed", seed.to_string());
+    put("steps", steps.to_string());
+    put("mode", "video".to_string());
+    put("size", format!("{width}x{height}"));
+    put(
+        "sampler",
+        if params.video_turbo_enabled {
+            "minimax_h3_turbo".to_string()
+        } else {
+            "res_multistep".to_string()
+        },
+    );
+    put("scheduler", "simple".to_string());
+    put("mooshie_video_variant", params.video_variant.clone());
+    put("mooshie_video_fps", format!("{fps}"));
+    put(
+        "mooshie_video_duration_seconds",
+        params.video_duration_seconds.to_string(),
+    );
+    if params.video_turbo_enabled {
+        put("mooshie_video_turbo", "true".to_string());
+    }
+    if params.video_rife_enabled {
+        put("mooshie_video_rife", "true".to_string());
+    }
+    out
+}
+
+/// The SwarmUI JSON string sent to `MooshieSaveVideo`'s `metadata_json` input.
+pub(crate) fn video_metadata_json(params: &GenerationParams, seed: i64) -> String {
+    crate::metadata::format_swarmui_json(&video_metadata_params(params, seed))
+}
+
 /// Build the complete MiniMax H3 video workflow for either variant.
 ///
 /// Returns the final workflow JSON directly — never routed through
 /// `finish_workflow`. The negative prompt is unused by design: `BasicGuider`
 /// has no negative conditioning input.
-pub fn build(params: &GenerationParams, seed: i64) -> Value {
+///
+/// `include_metadata` is false when the ComfyUI server's `MooshieSaveVideo` is
+/// too old to declare the input. Setting an undeclared input fails ComfyUI's
+/// prompt validation outright, so an old node has to mean a bare video rather
+/// than a failed generation.
+pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Value {
     let (width, height) =
         compute_h3_dimensions(&params.video_aspect_ratio, params.video_megapixels);
     let length = compute_h3_frame_length(params.video_duration_seconds);
@@ -524,14 +601,20 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
     next_id += 1;
 
     let save_id = next_id.to_string();
+    let mut save_inputs = serde_json::Map::new();
+    save_inputs.insert("video".to_string(), json!([create_video_id.as_str(), 0]));
+    save_inputs.insert("filename_prefix".to_string(), json!("mooshie_video"));
+    if include_metadata {
+        save_inputs.insert(
+            "metadata_json".to_string(),
+            json!(video_metadata_json(params, seed)),
+        );
+    }
     workflow.insert(
         save_id,
         json!({
             "class_type": "MooshieSaveVideo",
-            "inputs": {
-                "video": [create_video_id.as_str(), 0],
-                "filename_prefix": "mooshie_video"
-            }
+            "inputs": Value::Object(save_inputs)
         }),
     );
 
@@ -594,7 +677,7 @@ mod tests {
 
     #[test]
     fn fl2va_graph_has_expected_shape() {
-        let workflow = build(&video_params("fl2va"), 42);
+        let workflow = build(&video_params("fl2va"), 42, false);
         assert_eq!(nodes_of_class(&workflow, "MiniMaxH3ImageToVideo").len(), 1);
         assert!(nodes_of_class(&workflow, "MiniMaxH3ReferenceToVideo").is_empty());
         assert!(nodes_of_class(&workflow, "LoadImage").is_empty());
@@ -649,7 +732,7 @@ mod tests {
         let mut params = video_params("fl2va");
         params.video_first_frame = Some("first.png".to_string());
         params.video_last_frame = Some("last.png".to_string());
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
         assert_eq!(nodes_of_class(&workflow, "LoadImage").len(), 2);
         let h3 = nodes_of_class(&workflow, "MiniMaxH3ImageToVideo")[0];
         assert!(h3["inputs"]["first_frame"].is_array());
@@ -660,7 +743,7 @@ mod tests {
     fn fl2va_ignores_blank_frame_entries() {
         let mut params = video_params("fl2va");
         params.video_first_frame = Some("  ".to_string());
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
         assert!(nodes_of_class(&workflow, "LoadImage").is_empty());
         let h3 = nodes_of_class(&workflow, "MiniMaxH3ImageToVideo")[0];
         assert!(h3["inputs"].get("first_frame").is_none());
@@ -675,7 +758,7 @@ mod tests {
             "".to_string(),
             "c.png".to_string(),
         ];
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
         assert!(nodes_of_class(&workflow, "MiniMaxH3ImageToVideo").is_empty());
         let h3 = nodes_of_class(&workflow, "MiniMaxH3ReferenceToVideo")[0];
         assert!(h3["inputs"]["audio_vae"].is_array());
@@ -701,7 +784,7 @@ mod tests {
 
     #[test]
     fn rife_disabled_wires_decode_straight_to_create_video() {
-        let workflow = build(&video_params("fl2va"), 1);
+        let workflow = build(&video_params("fl2va"), 1, false);
         assert!(nodes_of_class(&workflow, "RIFE VFI").is_empty());
 
         let decode_id = node_id_of_class(&workflow, "VAEDecode");
@@ -714,7 +797,7 @@ mod tests {
     fn rife_enabled_splices_interpolation_and_doubles_fps() {
         let mut params = video_params("fl2va");
         params.video_rife_enabled = true;
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
 
         assert_eq!(nodes_of_class(&workflow, "RIFE VFI").len(), 1);
         let rife = nodes_of_class(&workflow, "RIFE VFI")[0];
@@ -755,7 +838,7 @@ mod tests {
 
     #[test]
     fn turbo_disabled_leaves_the_base_sampling_path_alone() {
-        let workflow = build(&video_params("fl2va"), 1);
+        let workflow = build(&video_params("fl2va"), 1, false);
         assert!(nodes_of_class(&workflow, "MiniMaxH3TurboLoRA").is_empty());
         assert!(nodes_of_class(&workflow, "MiniMaxH3TurboSampler").is_empty());
 
@@ -772,7 +855,7 @@ mod tests {
         let mut params = video_params("fl2va");
         params.video_turbo_enabled = true;
         params.video_turbo_steps = 6;
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
 
         assert_eq!(nodes_of_class(&workflow, "MiniMaxH3TurboLoRA").len(), 1);
         assert_eq!(nodes_of_class(&workflow, "MiniMaxH3TurboSampler").len(), 1);
@@ -810,7 +893,7 @@ mod tests {
             let mut params = video_params("fl2va");
             params.video_turbo_enabled = true;
             params.video_turbo_steps = requested;
-            let workflow = build(&params, 1);
+            let workflow = build(&params, 1, false);
             let scheduler = nodes_of_class(&workflow, "BasicScheduler")[0];
             assert_eq!(
                 scheduler["inputs"]["steps"],
@@ -825,7 +908,7 @@ mod tests {
         let mut params = video_params("fl2va");
         params.video_turbo_enabled = true;
         params.video_turbo_lora = Some("  minimax_h3_turbo_4step_ema.safetensors  ".to_string());
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
         let lora = nodes_of_class(&workflow, "MiniMaxH3TurboLoRA")[0];
         assert_eq!(
             lora["inputs"]["lora_name"],
@@ -835,7 +918,7 @@ mod tests {
         // A blank override is a cleared dropdown, not a request for a nameless
         // adapter — it falls back to the recommended checkpoint.
         params.video_turbo_lora = Some("   ".to_string());
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
         let lora = nodes_of_class(&workflow, "MiniMaxH3TurboLoRA")[0];
         assert_eq!(
             lora["inputs"]["lora_name"],
@@ -848,7 +931,7 @@ mod tests {
         let mut params = video_params("fl2va");
         params.video_turbo_enabled = true;
         params.video_rife_enabled = true;
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
 
         assert_eq!(nodes_of_class(&workflow, "MiniMaxH3TurboLoRA").len(), 1);
         let rife_id = node_id_of_class(&workflow, "RIFE VFI");
@@ -870,7 +953,7 @@ mod tests {
 
     #[test]
     fn timeline_routes_the_graph_through_the_director() {
-        let workflow = build(&director_params("fl2va"), 1);
+        let workflow = build(&director_params("fl2va"), 1, false);
 
         assert_eq!(nodes_of_class(&workflow, "MooshieH3Director").len(), 1);
         assert!(nodes_of_class(&workflow, "MiniMaxH3ImageToVideo").is_empty());
@@ -935,7 +1018,7 @@ mod tests {
         for timeline in [None, Some(String::new()), Some("   ".to_string())] {
             let mut params = video_params("fl2va");
             params.video_timeline_data = timeline.clone();
-            let workflow = build(&params, 1);
+            let workflow = build(&params, 1, false);
             assert!(
                 nodes_of_class(&workflow, "MooshieH3Director").is_empty(),
                 "director spliced in for {timeline:?}"
@@ -948,14 +1031,14 @@ mod tests {
     fn director_wires_exactly_one_model_socket_per_variant() {
         // Both MODEL inputs are lazy and only the one matching `reference_mode`
         // is evaluated. Wiring both would load ~42 GB of DiT twice.
-        let workflow = build(&director_params("fl2va"), 1);
+        let workflow = build(&director_params("fl2va"), 1, false);
         let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
         assert!(director["inputs"]["model"].is_array());
         assert!(director["inputs"].get("model_ref2va").is_none());
 
         let mut params = director_params("ref2va");
         params.video_ref_images = vec!["a.png".to_string()];
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
         let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
         assert!(director["inputs"]["model_ref2va"].is_array());
         assert!(director["inputs"].get("model").is_none());
@@ -972,7 +1055,7 @@ mod tests {
             "  ".to_string(),
             "c.png".to_string(),
         ];
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
 
         assert_eq!(nodes_of_class(&workflow, "LoadImage").len(), 3);
         assert_eq!(nodes_of_class(&workflow, "ImageBatch").len(), 2);
@@ -991,14 +1074,14 @@ mod tests {
         // One image needs no batching at all.
         let mut params = director_params("ref2va");
         params.video_ref_images = vec!["only.png".to_string()];
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
         assert!(nodes_of_class(&workflow, "ImageBatch").is_empty());
         let load_id = node_id_of_class(&workflow, "LoadImage");
         let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
         assert_eq!(director["inputs"]["ref_images"], json!([load_id, 0]));
 
         // fl2va never reads references, so it never uploads them either.
-        let workflow = build(&director_params("fl2va"), 1);
+        let workflow = build(&director_params("fl2va"), 1, false);
         assert!(nodes_of_class(&workflow, "LoadImage").is_empty());
         let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
         assert!(director["inputs"].get("ref_images").is_none());
@@ -1008,14 +1091,14 @@ mod tests {
     fn director_audio_replaces_the_decode_only_when_the_timeline_has_audio() {
         // With no audio segments the Director's `combined_audio` is digital
         // silence rather than a passthrough, so the native decode has to stay.
-        let workflow = build(&director_params("fl2va"), 1);
+        let workflow = build(&director_params("fl2va"), 1, false);
         let decode_id = node_id_of_class(&workflow, "VAEDecodeAudio");
         let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
         assert_eq!(create_video["inputs"]["audio"], json!([decode_id, 0]));
 
         let mut params = director_params("fl2va");
         params.video_timeline_custom_audio = true;
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
         assert!(nodes_of_class(&workflow, "VAEDecodeAudio").is_empty());
         let director_id = node_id_of_class(&workflow, "MooshieH3Director");
         let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
@@ -1027,12 +1110,12 @@ mod tests {
         let mut params = director_params("fl2va");
         params.video_timeline_custom_motion = true;
         params.video_timeline_custom_audio = true;
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
         let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
         assert_eq!(director["inputs"]["use_custom_motion"], json!(true));
         assert_eq!(director["inputs"]["use_custom_audio"], json!(true));
 
-        let workflow = build(&director_params("fl2va"), 1);
+        let workflow = build(&director_params("fl2va"), 1, false);
         let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
         assert_eq!(director["inputs"]["use_custom_motion"], json!(false));
         assert_eq!(director["inputs"]["use_custom_audio"], json!(false));
@@ -1053,7 +1136,7 @@ mod tests {
             let seconds = tenths as f64 / 10.0;
             let mut params = director_params("fl2va");
             params.video_duration_seconds = seconds;
-            let workflow = build(&params, 1);
+            let workflow = build(&params, 1, false);
             let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
             assert_eq!(director["inputs"]["start_frame"], json!(0));
             assert_eq!(director["inputs"]["frame_rate"], json!(24.0));
@@ -1073,7 +1156,7 @@ mod tests {
         let mut params = director_params("fl2va");
         params.video_turbo_enabled = true;
         params.video_rife_enabled = true;
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
 
         // The adapter feeds the Director, and the Director still owns MODEL
         // downstream — taking it from the LoRA would skip the lazy evaluation.
@@ -1156,7 +1239,7 @@ mod tests {
 
     #[test]
     fn build_workflow_dispatches_video_without_finish_workflow() {
-        let workflow = crate::templates::build_workflow(&video_params("fl2va"), 42);
+        let workflow = crate::templates::build_workflow(&video_params("fl2va"), 42, true);
         assert_eq!(nodes_of_class(&workflow, "MooshieSaveVideo").len(), 1);
         assert!(nodes_of_class(&workflow, "MooshieSaveImage").is_empty());
     }
@@ -1236,6 +1319,53 @@ mod tests {
         assert!(crate::templates::validate_generation_params(&params).is_ok());
     }
 
+    #[test]
+    fn metadata_json_round_trips_through_the_swarmui_parser() {
+        let params = video_params("fl2va");
+        let json = video_metadata_json(&params, 42);
+        let read = crate::metadata::parse_swarmui_json(&json).expect("parses");
+
+        assert_eq!(
+            read.get("positive_prompt").map(String::as_str),
+            Some("a red fox running through snow")
+        );
+        assert_eq!(read.get("seed").map(String::as_str), Some("42"));
+        assert_eq!(read.get("mode").map(String::as_str), Some("video"));
+    }
+
+    #[test]
+    fn save_node_carries_metadata_when_the_node_supports_it() {
+        let workflow = build(&video_params("fl2va"), 42, true);
+        let save = nodes_of_class(&workflow, "MooshieSaveVideo");
+        let sent = save[0]["inputs"]["metadata_json"]
+            .as_str()
+            .expect("metadata_json is a string");
+        assert!(sent.contains("sui_image_params"));
+    }
+
+    #[test]
+    fn save_node_omits_metadata_when_the_node_is_too_old() {
+        let workflow = build(&video_params("fl2va"), 42, false);
+        let save = nodes_of_class(&workflow, "MooshieSaveVideo");
+        assert!(save[0]["inputs"].get("metadata_json").is_none());
+    }
+
+    #[test]
+    fn metadata_records_the_resolved_dimensions_and_steps() {
+        let params = video_params("fl2va");
+        let flat = video_metadata_params(&params, 7);
+        let (w, h) = compute_h3_dimensions(&params.video_aspect_ratio, params.video_megapixels);
+
+        assert_eq!(
+            flat.get("size").map(String::as_str),
+            Some(&format!("{w}x{h}")[..])
+        );
+        assert_eq!(
+            flat.get("steps").map(String::as_str),
+            Some(&H3_DEFAULT_STEPS.to_string()[..])
+        );
+    }
+
     /// Dev utility for the manual structural probe (not part of the suite).
     /// Writes ready-to-POST /prompt bodies for both variants to the system
     /// temp dir. Run:
@@ -1248,7 +1378,7 @@ mod tests {
             if variant == "ref2va" {
                 params.video_ref_images = vec!["ref_probe.png".to_string()];
             }
-            let body = json!({ "prompt": build(&params, 42) });
+            let body = json!({ "prompt": build(&params, 42, true) });
             let path = std::env::temp_dir().join(format!("h3_{variant}_workflow.json"));
             std::fs::write(&path, serde_json::to_string_pretty(&body).unwrap()).unwrap();
             println!("wrote {}", path.display());

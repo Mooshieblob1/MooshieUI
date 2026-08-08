@@ -2810,7 +2810,20 @@ async fn dispatch_command(
             } else {
                 params.seed
             };
-            let workflow = crate::templates::build_workflow(&params, seed);
+            let video_metadata_supported = if params.mode == "video" {
+                let base_url = state.base_url().await;
+                crate::comfyui::nodes::node_declares_input(
+                    &state.http_client,
+                    &base_url,
+                    "MooshieSaveVideo",
+                    "metadata_json",
+                )
+                .await
+            } else {
+                false
+            };
+            let workflow =
+                crate::templates::build_workflow(&params, seed, video_metadata_supported);
             let user = username.map(|s| s.to_string());
 
             log::info!(
@@ -6084,6 +6097,8 @@ fn save_to_gallery_in_dir(
                     .unwrap_or_else(|_| bytes.to_vec())
             }
             crate::metadata::ImageFormat::Mp4 => bytes.to_vec(),
+            crate::metadata::ImageFormat::Avif => bytes.to_vec(),
+            crate::metadata::ImageFormat::Gif => bytes.to_vec(),
             crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {

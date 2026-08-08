@@ -704,6 +704,9 @@ class MooshieSaveVideo:
             },
             "optional": {
                 "filename_prefix": ("STRING", {"default": "mooshie_video"}),
+                # SwarmUI-shaped JSON built by templates/video.rs. Optional so a
+                # workflow from an older MooshieUI still validates.
+                "metadata_json": ("STRING", {"default": "", "multiline": True}),
             },
         }
 
@@ -713,10 +716,21 @@ class MooshieSaveVideo:
     CATEGORY = "mooshie"
     DESCRIPTION = "Saves the video as mp4 with a poster frame and notifies MooshieUI over WebSocket."
 
-    def save_video(self, video, filename_prefix="mooshie_video"):
+    def save_video(self, video, filename_prefix="mooshie_video", metadata_json=""):
         from PIL import Image
         from comfy_api.latest import Types
         from server import PromptServer
+
+        # A raised exception in a node kills the whole prompt, so every step that
+        # touches metadata is guarded and degrades to saving without it.
+        params = None
+        if metadata_json:
+            try:
+                parsed = json.loads(metadata_json)
+                if isinstance(parsed, dict):
+                    params = parsed
+            except Exception:
+                params = None
 
         width, height = video.get_dimensions()
         full_output_folder, filename, counter, _subfolder, _prefix = (
@@ -726,7 +740,24 @@ class MooshieSaveVideo:
         )
         video_file = f"{filename}_{counter:05}_.mp4"
         video_path = os.path.join(full_output_folder, video_file)
-        video.save_to(video_path, format=Types.VideoContainer("mp4"), codec="auto")
+        # `metadata` values are json.dumps'd by save_to, so this has to be the
+        # parsed dict: handing it the original string would double-encode it.
+        # The key is `comment` because that is the one mdta key a remux without
+        # `-movflags use_metadata_tags` still carries.
+        try:
+            if params is not None:
+                video.save_to(
+                    video_path,
+                    format=Types.VideoContainer("mp4"),
+                    codec="auto",
+                    metadata={"comment": params},
+                )
+            else:
+                video.save_to(
+                    video_path, format=Types.VideoContainer("mp4"), codec="auto"
+                )
+        except Exception:
+            video.save_to(video_path, format=Types.VideoContainer("mp4"), codec="auto")
 
         components = video.get_components()
         frames = components.images
@@ -735,9 +766,27 @@ class MooshieSaveVideo:
 
         poster_path = os.path.splitext(video_path)[0] + "_poster.webp"
         frame0 = (255.0 * frames[0].cpu().numpy()).clip(0, 255).astype(np.uint8)
-        Image.fromarray(frame0[:, :, :3], "RGB").save(
-            poster_path, format="WEBP", quality=90
-        )
+        poster = Image.fromarray(frame0[:, :, :3], "RGB")
+        poster_kwargs = {"format": "WEBP", "quality": 90}
+        if params is not None:
+            try:
+                # UserComment (0x9286) in the Exif sub-IFD (0x8769), the same
+                # carrier the Rust WebP writer uses for still images.
+                exif = Image.Exif()
+                text = json.dumps(params, ensure_ascii=False)
+                exif[0x8769] = {
+                    0x9286: b"UNICODE\x00" + text.encode("utf-16-be")
+                }
+                poster_kwargs["exif"] = exif.tobytes()
+            except Exception:
+                pass
+        try:
+            poster.save(poster_path, **poster_kwargs)
+        except Exception:
+            # Same degradation as the mp4 path above: drop the metadata and
+            # save the poster anyway rather than killing the prompt.
+            poster_kwargs.pop("exif", None)
+            poster.save(poster_path, **poster_kwargs)
 
         payload = json.dumps(
             {

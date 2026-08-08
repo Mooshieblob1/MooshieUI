@@ -323,6 +323,21 @@ pub(crate) async fn probe_export_inner(state: &AppState) -> ExportCapability {
     }
 }
 
+/// The source clip's generation parameters, re-serialised as SwarmUI JSON, or
+/// an empty string when it has none.
+///
+/// Read from the file rather than the gallery SQLite row on purpose: one source
+/// of truth, it works on videos generated before metadata shipped, and the
+/// reader has to exist for drag-and-drop anyway. A column would be faster and
+/// would create two places that can disagree.
+fn source_metadata_json(source: &Path) -> String {
+    std::fs::read(source)
+        .ok()
+        .and_then(|bytes| crate::metadata::read_image_metadata(&bytes).ok().flatten())
+        .map(|params| crate::metadata::format_swarmui_json(&params))
+        .unwrap_or_default()
+}
+
 /// Shared by the Tauri command and the browser-mode dispatch arm. `app` is
 /// `None` in browser mode, where progress goes out over SSE only.
 #[allow(clippy::too_many_arguments)]
@@ -386,6 +401,7 @@ pub(crate) async fn run_export(
         "loop_mode": loop_mode,
         "crossfade_frames": crossfade_frames,
         "auto_threshold": AUTO_SEAM_THRESHOLD,
+        "metadata_json": source_metadata_json(source),
     });
 
     let mut cmd = tokio::process::Command::new(&python);
@@ -473,6 +489,13 @@ pub(crate) async fn run_export(
                 result.applied_loop_mode
             );
         }
+    }
+
+    // mp4 and avif are both ISOBMFF, so both get the sidecar that survives a
+    // chat-client upload. WebP and GIF have no equivalent box and keep only the
+    // container-native carrier Python just wrote.
+    if matches!(ext, "mp4" | "avif") {
+        crate::metadata::mirror_uuid_sidecar(&out_path);
     }
 
     Ok(result)
@@ -785,5 +808,49 @@ mod tests {
         assert!(!supports_audio("avif", "none"));
         assert!(!supports_audio("webp", "none"));
         assert!(!supports_audio("gif", "none"));
+    }
+
+    /// A minimal walkable mp4: `ftyp` plus a stub `moov`, no metadata anywhere.
+    /// `append_uuid_xmp` requires the first box to be `ftyp` and the last box to
+    /// end at EOF, and this satisfies both.
+    fn bare_mp4() -> Vec<u8> {
+        let mut buf = 20u32.to_be_bytes().to_vec();
+        buf.extend_from_slice(b"ftypisom");
+        buf.extend_from_slice(&0u32.to_be_bytes()); // minor version
+        buf.extend_from_slice(b"isom");
+        buf.extend_from_slice(&13u32.to_be_bytes());
+        buf.extend_from_slice(b"moovindex");
+        buf
+    }
+
+    #[test]
+    fn source_metadata_is_read_back_as_swarmui_json() {
+        let mut params = std::collections::HashMap::new();
+        params.insert(
+            "positive_prompt".to_string(),
+            "export round trip".to_string(),
+        );
+        params.insert("seed".to_string(), "31337".to_string());
+        let json = crate::metadata::format_swarmui_json(&params);
+
+        let dir = std::env::temp_dir().join("mooshie_export_meta");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("source.mp4");
+
+        // A clip with no metadata yields an empty string, not an error.
+        std::fs::write(&path, bare_mp4()).unwrap();
+        assert_eq!(source_metadata_json(&path), "");
+
+        // With the `uuid` sidecar `mirror_uuid_sidecar` leaves behind, it reads back.
+        std::fs::write(
+            &path,
+            crate::metadata::embed_uuid_for_test(&bare_mp4(), &json),
+        )
+        .unwrap();
+        let read = source_metadata_json(&path);
+        assert!(read.contains("export round trip"), "got: {read}");
+        assert!(read.contains("31337"), "got: {read}");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

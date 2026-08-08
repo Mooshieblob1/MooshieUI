@@ -134,6 +134,8 @@ fn format_label(fmt: ImageFormat) -> &'static str {
         ImageFormat::Jxl => "jxl",
         ImageFormat::WebP => "webp",
         ImageFormat::Mp4 => "mp4",
+        ImageFormat::Avif => "avif",
+        ImageFormat::Gif => "gif",
         ImageFormat::Unknown => "unknown",
     }
 }

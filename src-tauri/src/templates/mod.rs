@@ -478,11 +478,18 @@ pub fn load_model_nodes(
     }
 }
 
-pub fn build_workflow(params: &GenerationParams, seed: i64) -> Value {
-    // Video builds its own complete graph and must bypass finish_workflow
-    // (upscale/facefix/segment chains and MooshieSaveImage are image-only).
+/// `video_metadata_supported` is the result of probing the ComfyUI server for a
+/// `MooshieSaveVideo` new enough to declare `metadata_json`. It is ignored for
+/// image modes, which embed metadata in Rust after the fact.
+pub fn build_workflow(
+    params: &GenerationParams,
+    seed: i64,
+    video_metadata_supported: bool,
+) -> Value {
     if params.mode == "video" {
-        return video::build(params, seed);
+        // Video builds its own complete graph and must bypass finish_workflow
+        // (upscale/facefix/segment chains and MooshieSaveImage are image-only).
+        return video::build(params, seed, video_metadata_supported);
     }
 
     if params.style_transfer_enabled && params.model_architecture == "anima" {
