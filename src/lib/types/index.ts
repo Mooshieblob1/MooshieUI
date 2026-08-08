@@ -95,8 +95,12 @@ export type GenerationMode = "txt2img" | "img2img" | "inpainting" | "image_edit"
  */
 export type VideoVariant = "fl2va" | "ref2va";
 
-/** Aspect ratios the H3 dimension solver understands; anything else falls back to 16:9. */
-export type VideoAspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+/**
+ * Aspect ratio selections offered in the UI. `auto` is a UI-only value: the
+ * store resolves it to the uploaded frame's own `W:H` before the params leave
+ * the frontend, so the backend only ever sees a numeric ratio.
+ */
+export type VideoAspectRatio = "auto" | "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 
 export interface GenerationParams {
   mode: GenerationMode;
@@ -197,7 +201,8 @@ export interface GenerationParams {
   video_duration_seconds?: number;
   /** Pixel budget; the backend derives width/height from this plus the aspect ratio. */
   video_megapixels?: number;
-  video_aspect_ratio?: VideoAspectRatio;
+  /** A preset (`16:9`) or a literal `W:H` resolved from an uploaded frame. */
+  video_aspect_ratio?: string;
   /** fl2va first-frame image (ComfyUI input filename). */
   video_first_frame?: string | null;
   /** fl2va last-frame image (ComfyUI input filename). */

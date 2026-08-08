@@ -24,18 +24,32 @@ pub fn compute_h3_frame_length(seconds: f64) -> u32 {
     snapped.min(3592) as u32
 }
 
+/// `W:H` -> numerator/denominator. Accepts any positive pair, not just the five
+/// UI presets: when the user picks "match image" the frontend resolves the
+/// selection to the uploaded frame's own pixel dimensions ("1920:1080") before
+/// sending it. Anything unparseable falls back to 16:9.
+fn parse_aspect_ratio(aspect_ratio: &str) -> (f64, f64) {
+    let mut parts = aspect_ratio.split(':');
+    let parsed = match (parts.next(), parts.next(), parts.next()) {
+        (Some(w), Some(h), None) => w
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .zip(h.trim().parse::<f64>().ok()),
+        _ => None,
+    };
+    match parsed {
+        Some((rw, rh)) if rw.is_finite() && rh.is_finite() && rw > 0.0 && rh > 0.0 => (rw, rh),
+        _ => (16.0, 9.0),
+    }
+}
+
 /// Width/height from a target megapixel budget and aspect ratio, snapped to
 /// multiples of 32 (the H3 width/height widget step). Replaces the official
 /// workflow's ResolutionSelector custom node. Unknown ratios fall back to
 /// 16:9.
 pub fn compute_h3_dimensions(aspect_ratio: &str, megapixels: f64) -> (u32, u32) {
-    let (rw, rh) = match aspect_ratio {
-        "9:16" => (9.0, 16.0),
-        "1:1" => (1.0, 1.0),
-        "4:3" => (4.0, 3.0),
-        "3:4" => (3.0, 4.0),
-        _ => (16.0, 9.0),
-    };
+    let (rw, rh) = parse_aspect_ratio(aspect_ratio);
     let pixels = megapixels.max(0.05) * 1_000_000.0;
     let height = (pixels * rh / rw).sqrt();
     let width = height * rw / rh;
@@ -575,6 +589,21 @@ mod tests {
         assert_eq!(compute_h3_dimensions("16:9", 0.6), (1024, 576));
         // Unknown ratios fall back to 16:9.
         assert_eq!(compute_h3_dimensions("bogus", 0.4), (832, 480));
+    }
+
+    #[test]
+    fn dimensions_accept_literal_pixel_ratios() {
+        // "Match image" sends the frame's own dimensions instead of a preset;
+        // an exactly-16:9 image must land on the same result as the preset.
+        assert_eq!(
+            compute_h3_dimensions("1920:1080", 0.4),
+            compute_h3_dimensions("16:9", 0.4)
+        );
+        assert_eq!(compute_h3_dimensions("1000:1000", 0.4), (640, 640));
+        // Degenerate pairs fall back rather than dividing by zero.
+        assert_eq!(compute_h3_dimensions("1920:0", 0.4), (832, 480));
+        assert_eq!(compute_h3_dimensions("-16:9", 0.4), (832, 480));
+        assert_eq!(compute_h3_dimensions("16:9:1", 0.4), (832, 480));
     }
 
     #[test]

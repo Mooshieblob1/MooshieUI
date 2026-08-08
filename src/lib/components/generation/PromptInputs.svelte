@@ -148,7 +148,7 @@
           variant: generation.videoVariant,
           frames: generation.videoFrameLength,
           hasFirstFrame: !!generation.videoFirstFrame,
-          hasLastFrame: !!generation.videoLastFrame,
+          hasLastFrame: !!generation.videoEffectiveLastFrame,
           referenceImageCount: generation.videoRefImageFilenames.length,
         }),
       );

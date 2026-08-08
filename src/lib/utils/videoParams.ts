@@ -50,6 +50,21 @@ export function computeH3FrameLength(seconds: number): number {
 }
 
 /**
+ * `W:H` -> numerator/denominator. Accepts any positive pair, not just the five
+ * presets, so an uploaded frame's own pixel dimensions ("1920:1080") describe a
+ * ratio as well as a label does. Anything unparseable falls back to 16:9.
+ * Mirrors `parse_aspect_ratio` in `templates/video.rs`.
+ */
+function parseAspectRatio(aspectRatio: string): [number, number] {
+  const parts = aspectRatio.split(":");
+  if (parts.length !== 2) return [16, 9];
+  const rw = Number(parts[0]);
+  const rh = Number(parts[1]);
+  if (!Number.isFinite(rw) || !Number.isFinite(rh) || rw <= 0 || rh <= 0) return [16, 9];
+  return [rw, rh];
+}
+
+/**
  * Width/height for a megapixel budget and aspect ratio, snapped to multiples of
  * 32 (the H3 width/height widget step). Mirrors `compute_h3_dimensions`;
  * unknown ratios fall back to 16:9.
@@ -58,21 +73,7 @@ export function computeH3Dimensions(
   aspectRatio: string,
   megapixels: number,
 ): { width: number; height: number } {
-  let rw = 16;
-  let rh = 9;
-  if (aspectRatio === "9:16") {
-    rw = 9;
-    rh = 16;
-  } else if (aspectRatio === "1:1") {
-    rw = 1;
-    rh = 1;
-  } else if (aspectRatio === "4:3") {
-    rw = 4;
-    rh = 3;
-  } else if (aspectRatio === "3:4") {
-    rw = 3;
-    rh = 4;
-  }
+  const [rw, rh] = parseAspectRatio(aspectRatio);
   const pixels = Math.max(0.05, megapixels) * 1_000_000;
   const height = Math.sqrt((pixels * rh) / rw);
   const width = (height * rw) / rh;

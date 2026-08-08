@@ -520,9 +520,20 @@ class GenerationStore {
   /** fl2va first/last frame slots (ComfyUI input filenames); both optional. */
   videoFirstFrame = $state<string | null>(null);
   videoLastFrame = $state<string | null>(null);
+  /** True pixel dimensions of the uploaded frames as `"W:H"`, recorded at upload
+   *  time so the `"auto"` aspect ratio can reproduce the source framing. The
+   *  upload is downscaled uniformly, so the ratio survives even though the
+   *  numbers are the original image's. */
+  videoFirstFrameAspect = $state<string | null>(null);
+  videoLastFrameAspect = $state<string | null>(null);
+  /** Submit the first frame as the last frame too, so the clip ends where it
+   *  started. Kept separate from `videoLastFrame` rather than overwriting it, so
+   *  a separately uploaded last frame survives toggling this off again. */
+  videoFirstFrameAsLast = $state(false);
   /** ref2va reference image slots (ComfyUI input filenames); at most 9, holes allowed. */
   videoRefImages = $state<(string | null)[]>(Array(H3_MAX_REF_IMAGES).fill(null));
-  /** RIFE 2x frame interpolation. No installer exists yet, so this stays false. */
+  /** RIFE 2x frame interpolation. Only ever true once the lazy install has put
+   *  the pack and its checkpoint on disk. */
   videoRifeEnabled = $state(false);
   videoDiffusionModel = $state<string | null>(null);
   videoClipModel = $state<string | null>(null);
@@ -534,9 +545,29 @@ class GenerationStore {
     return computeH3FrameLength(this.videoDurationSeconds);
   }
 
+  /** `"W:H"` of the frame the clip should be framed after, or null when there is
+   *  nothing to match. Only fl2va sends frames, so ref2va never matches. */
+  get videoFrameAspect(): string | null {
+    if (this.videoVariant !== "fl2va") return null;
+    return this.videoFirstFrameAspect ?? this.videoLastFrameAspect;
+  }
+
+  /** The ratio actually sent to the backend: `"auto"` becomes the uploaded
+   *  frame's own `"W:H"`, or 16:9 when there is no frame to match. */
+  get resolvedVideoAspectRatio(): string {
+    if (this.videoAspectRatio !== "auto") return this.videoAspectRatio;
+    return this.videoFrameAspect ?? "16:9";
+  }
+
   /** Width/height the backend will derive from the current ratio and megapixels. */
   get videoDimensions(): { width: number; height: number } {
-    return computeH3Dimensions(this.videoAspectRatio, this.videoMegapixels);
+    return computeH3Dimensions(this.resolvedVideoAspectRatio, this.videoMegapixels);
+  }
+
+  /** Filename actually submitted as the fl2va last frame, honouring the
+   *  "use the first frame as the last frame" toggle. */
+  get videoEffectiveLastFrame(): string | null {
+    return this.videoFirstFrameAsLast ? this.videoFirstFrame : this.videoLastFrame;
   }
 
   /** Non-empty ref2va reference filenames, in slot order. */
@@ -1757,6 +1788,12 @@ class GenerationStore {
         if (saved.videoAspectRatio !== undefined) this.videoAspectRatio = saved.videoAspectRatio;
         if (saved.videoFirstFrame !== undefined) this.videoFirstFrame = saved.videoFirstFrame;
         if (saved.videoLastFrame !== undefined) this.videoLastFrame = saved.videoLastFrame;
+        if (saved.videoFirstFrameAspect !== undefined)
+          this.videoFirstFrameAspect = saved.videoFirstFrameAspect;
+        if (saved.videoLastFrameAspect !== undefined)
+          this.videoLastFrameAspect = saved.videoLastFrameAspect;
+        if (saved.videoFirstFrameAsLast !== undefined)
+          this.videoFirstFrameAsLast = saved.videoFirstFrameAsLast;
         if (Array.isArray(saved.videoRefImages)) {
           const slots = saved.videoRefImages
             .slice(0, H3_MAX_REF_IMAGES)
@@ -1970,6 +2007,9 @@ class GenerationStore {
         videoAspectRatio: this.videoAspectRatio,
         videoFirstFrame: this.videoFirstFrame,
         videoLastFrame: this.videoLastFrame,
+        videoFirstFrameAspect: this.videoFirstFrameAspect,
+        videoLastFrameAspect: this.videoLastFrameAspect,
+        videoFirstFrameAsLast: this.videoFirstFrameAsLast,
         videoRefImages: this.videoRefImages,
         videoRifeEnabled: this.videoRifeEnabled,
         videoDiffusionModel: this.videoDiffusionModel,
@@ -2085,6 +2125,9 @@ class GenerationStore {
       videoAspectRatio: this.videoAspectRatio,
       videoFirstFrame: this.videoFirstFrame,
       videoLastFrame: this.videoLastFrame,
+      videoFirstFrameAspect: this.videoFirstFrameAspect,
+      videoLastFrameAspect: this.videoLastFrameAspect,
+      videoFirstFrameAsLast: this.videoFirstFrameAsLast,
       videoRefImages: this.videoRefImages,
       videoRifeEnabled: this.videoRifeEnabled,
       videoDiffusionModel: this.videoDiffusionModel,
@@ -2466,11 +2509,13 @@ class GenerationStore {
       video_variant: this.videoVariant,
       video_duration_seconds: this.videoDurationSeconds,
       video_megapixels: this.videoMegapixels,
-      video_aspect_ratio: this.videoAspectRatio,
+      // "auto" is UI-only: resolve it to the uploaded frame's own W:H so the
+      // backend always receives a numeric ratio it can parse.
+      video_aspect_ratio: this.resolvedVideoAspectRatio,
       // fl2va's frame slots are optional (no frames = text-to-video), so a
       // stale ref2va-only state must not leak first/last frames and vice versa.
       video_first_frame: this.videoVariant === "fl2va" ? this.videoFirstFrame : null,
-      video_last_frame: this.videoVariant === "fl2va" ? this.videoLastFrame : null,
+      video_last_frame: this.videoVariant === "fl2va" ? this.videoEffectiveLastFrame : null,
       video_ref_images: this.videoVariant === "ref2va" ? this.videoRefImageFilenames : [],
       video_rife_enabled: this.videoRifeEnabled,
       video_diffusion_model: this.videoDiffusionModel,

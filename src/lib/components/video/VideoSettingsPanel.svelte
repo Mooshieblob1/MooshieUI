@@ -3,10 +3,10 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { models } from "../../stores/models.svelte.js";
   import {
     checkNodeAvailable,
     detectLlmHardware,
-    getModels,
     installRife,
     isRifeInstalled,
     readClipboardImageSafe,
@@ -40,6 +40,9 @@
     label: string;
     filename: string | null;
     assign: (value: string | null) => void;
+    /** Present on the fl2va frame slots only: records the uploaded image's own
+     *  `"W:H"` so the "match image" aspect ratio has something to match. */
+    assignAspect?: (value: string | null) => void;
   }
 
   const variants: { id: VideoVariant; labelKey: string; descKey: string }[] = [
@@ -52,9 +55,15 @@
   /** ComfyUI class the pack registers. The space is part of the name. */
   const RIFE_NODE_CLASS = "RIFE VFI";
 
-  let diffusionModels = $state<string[]>([]);
-  let clipModels = $state<string[]>([]);
-  let vaeModels = $state<string[]>([]);
+  /**
+   * Read straight off the shared store rather than fetching once on mount: the
+   * lazy RIFE install restarts ComfyUI, and a local one-shot copy would still be
+   * holding the pre-restart lists (or an empty one) afterwards. `App.svelte`
+   * refreshes the store on every connection / server-ready event.
+   */
+  const diffusionModels = $derived(models.diffusionModels);
+  const clipModels = $derived(models.textEncoders);
+  const vaeModels = $derived(models.vaes);
   let detectedVramGb = $state<number | null>(null);
 
   /**
@@ -93,13 +102,22 @@
             label: locale.t("generation.video.first_frame"),
             filename: generation.videoFirstFrame,
             assign: (value) => (generation.videoFirstFrame = value),
+            assignAspect: (value) => (generation.videoFirstFrameAspect = value),
           },
-          {
-            key: "last",
-            label: locale.t("generation.video.last_frame"),
-            filename: generation.videoLastFrame,
-            assign: (value) => (generation.videoLastFrame = value),
-          },
+          // Hidden rather than overwritten while the first frame doubles as the
+          // last one, so a separately uploaded last frame comes back on untick.
+          ...(generation.videoFirstFrameAsLast
+            ? []
+            : [
+                {
+                  key: "last",
+                  label: locale.t("generation.video.last_frame"),
+                  filename: generation.videoLastFrame,
+                  assign: (value: string | null) => (generation.videoLastFrame = value),
+                  assignAspect: (value: string | null) =>
+                    (generation.videoLastFrameAspect = value),
+                },
+              ]),
         ]
       : Array.from({ length: visibleRefSlots }, (_, index) => ({
           key: `ref${index}`,
@@ -129,7 +147,7 @@
   );
 
   onMount(() => {
-    void loadModelLists();
+    if (models.diffusionModels.length === 0 && !models.loading) void models.refresh();
     void loadHardware();
     void loadRifeState();
     const unlisten = ipcListen("install:progress", (event: any) => {
@@ -142,17 +160,6 @@
       void unlisten.then((fn) => fn());
     };
   });
-
-  async function loadModelLists() {
-    const [diffusion, clip, vae] = await Promise.all([
-      getModels("diffusion_models").catch(() => [] as string[]),
-      getModels("text_encoders").catch(() => [] as string[]),
-      getModels("vae").catch(() => [] as string[]),
-    ]);
-    diffusionModels = diffusion;
-    clipModels = clip;
-    vaeModels = vae;
-  }
 
   async function loadHardware() {
     try {
@@ -170,6 +177,11 @@
     } catch {
       rifeInstalled = null;
     }
+  }
+
+  function toggleFirstFrameAsLast(event: Event) {
+    generation.videoFirstFrameAsLast = (event.currentTarget as HTMLInputElement).checked;
+    generation.saveSettings();
   }
 
   /**
@@ -246,6 +258,9 @@
       rifeInstallError = String(e);
       rifeInstalled = await isRifeInstalled().catch(() => false);
     } finally {
+      // The restart invalidates whatever the store cached, whether or not the
+      // install itself succeeded. `refresh()` swallows its own errors.
+      await models.refresh();
       rifeInstalling = false;
       rifeInstallStep = "";
       rifeInstallMessage = "";
@@ -279,14 +294,23 @@
     previews = { ...previews, [key]: url };
   }
 
-  /** Decode and downscale to keep multi-megapixel drops off the wire. */
-  async function prepareImage(file: File, maxDimension = 1536): Promise<File> {
+  /**
+   * Decode and downscale to keep multi-megapixel drops off the wire, reporting
+   * the source image's own pixel size as `"W:H"`. The downscale is uniform, so
+   * that string still describes the frame's shape and is what the "match image"
+   * aspect ratio matches. `null` when the image could not be decoded.
+   */
+  async function prepareImage(
+    file: File,
+    maxDimension = 1536,
+  ): Promise<{ file: File; aspect: string | null }> {
     const bitmap = await createImageBitmap(file).catch(() => null);
-    if (!bitmap) return file;
+    if (!bitmap) return { file, aspect: null };
+    const aspect = `${bitmap.width}:${bitmap.height}`;
     const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
     if (scale >= 1) {
       bitmap.close();
-      return file;
+      return { file, aspect };
     }
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(bitmap.width * scale);
@@ -294,15 +318,18 @@
     const ctx = canvas.getContext("2d");
     if (!ctx) {
       bitmap.close();
-      return file;
+      return { file, aspect };
     }
     ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     bitmap.close();
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob((b) => resolve(b), "image/png"),
     );
-    if (!blob) return file;
-    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".png", { type: "image/png" });
+    if (!blob) return { file, aspect };
+    return {
+      file: new File([blob], file.name.replace(/\.[^.]+$/, "") + ".png", { type: "image/png" }),
+      aspect,
+    };
   }
 
   function findSlot(key: string): FrameSlot | undefined {
@@ -314,7 +341,7 @@
     const slot = findSlot(key);
     if (!slot) return;
     uploadError = null;
-    const prepared = await prepareImage(file);
+    const { file: prepared, aspect } = await prepareImage(file);
     setPreview(key, URL.createObjectURL(prepared));
     uploadingSlot = key;
     try {
@@ -322,12 +349,17 @@
       const bytes = Array.from(new Uint8Array(buffer));
       const result = await uploadImageBytes(bytes, prepared.name);
       slot.assign(result.name);
+      slot.assignAspect?.(aspect);
+      // A frame the user just supplied is a strong statement about the framing
+      // they want, so match it. They can still pick a fixed ratio afterwards.
+      if (slot.assignAspect && aspect) generation.videoAspectRatio = "auto";
       generation.saveSettings();
     } catch (e) {
       console.error("Failed to upload video frame:", e);
       uploadError = String(e);
       setPreview(key, null);
       slot.assign(null);
+      slot.assignAspect?.(null);
     } finally {
       uploadingSlot = null;
     }
@@ -335,12 +367,17 @@
 
   function clearSlot(key: string) {
     setPreview(key, null);
-    findSlot(key)?.assign(null);
+    const slot = findSlot(key);
+    slot?.assign(null);
+    slot?.assignAspect?.(null);
     generation.saveSettings();
   }
 
   function setVariant(variant: VideoVariant) {
     generation.videoVariant = variant;
+    // ref2va sends no first/last frame, so there is nothing left to match.
+    if (variant !== "fl2va" && generation.videoAspectRatio === "auto")
+      generation.videoAspectRatio = "16:9";
     generation.saveSettings();
   }
 </script>
@@ -424,6 +461,9 @@
         }}
         class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
       >
+        {#if generation.videoVariant === "fl2va"}
+          <option value="auto">{locale.t("generation.video.aspect_ratio_auto")}</option>
+        {/if}
         {#each H3_ASPECT_RATIOS as ratio (ratio)}
           <option value={ratio}>{ratio}</option>
         {/each}
@@ -455,6 +495,15 @@
       height: dimensions.height,
     })}
   </p>
+  {#if generation.videoAspectRatio === "auto"}
+    <p class="text-[11px] text-neutral-500 -mt-1">
+      {generation.videoFrameAspect
+        ? locale.t("generation.video.aspect_ratio_auto_hint", {
+            source: generation.videoFrameAspect.replace(":", " x "),
+          })
+        : locale.t("generation.video.aspect_ratio_auto_empty")}
+    </p>
+  {/if}
 
   <!-- VRAM warning -->
   {#if vramWarning}
@@ -581,6 +630,30 @@
 
     {#if uploadError}
       <p class="text-[11px] text-red-400">{uploadError}</p>
+    {/if}
+
+    {#if generation.videoVariant === "fl2va"}
+      <div class="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id="video-first-frame-as-last"
+          checked={generation.videoFirstFrameAsLast}
+          class="w-4 h-4 accent-indigo-500 rounded"
+          onchange={toggleFirstFrameAsLast}
+        />
+        <label for="video-first-frame-as-last" class="text-xs text-neutral-400">
+          {locale.t("generation.video.first_frame_as_last")}<InfoTip
+            text={locale.t("generation.video.first_frame_as_last_tip")}
+          />
+        </label>
+      </div>
+      {#if generation.videoFirstFrameAsLast}
+        <p class="text-[11px] {generation.videoFirstFrame ? 'text-neutral-500' : 'text-amber-300'}">
+          {generation.videoFirstFrame
+            ? locale.t("generation.video.first_frame_as_last_hint")
+            : locale.t("generation.video.first_frame_as_last_needs_first")}
+        </p>
+      {/if}
     {/if}
   </div>
 

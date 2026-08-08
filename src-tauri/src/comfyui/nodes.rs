@@ -66,7 +66,7 @@ const REQUIRED_CONTROLNET_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCus
 
 // RIFE 2x frame interpolation for video generation. Installed lazily from the
 // video settings panel rather than at startup: the pack is only useful in video
-// mode, and its checkpoint is a separate ~60 MB download.
+// mode, and its checkpoint is a separate ~20 MB download.
 const RIFE_PACKAGE_DIR: &str = "ComfyUI-Frame-Interpolation";
 
 const RIFE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
@@ -84,12 +84,29 @@ const RIFE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage 
 /// H3 output to 48 fps.
 pub const RIFE_CKPT_FILENAME: &str = "rife49.pth";
 
-/// First entry of the pack's own `BASE_MODEL_DOWNLOAD_URLS`, i.e. where the
-/// node itself would fetch the checkpoint from on first use. Downloading it
-/// up front keeps the install inside the app's progress UI instead of stalling
+/// Where to fetch the checkpoint from, tried in order. Downloading it up front
+/// keeps the install inside the app's progress UI instead of stalling
 /// mid-generation with no feedback.
-pub const RIFE_CKPT_URL: &str =
-    "https://github.com/styler00dollar/VSGAN-tensorrt-docker/releases/download/models/rife49.pth";
+///
+/// These mirror the pack's own `BASE_MODEL_DOWNLOAD_URLS` plus its
+/// `CKPT_FALLBACK_URLS` table. The pack's first-choice base
+/// (styler00dollar/VSGAN-tensorrt-docker) now returns 404 for every checkpoint,
+/// which is why that table exists at all, so a single hardcoded URL is not
+/// survivable here either. Every mirror below serves a byte-identical
+/// 21,345,274-byte file.
+pub const RIFE_CKPT_URLS: &[&str] = &[
+    "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation/releases/download/models/rife49.pth",
+    "https://huggingface.co/marduk191/rife/resolve/main/rife49.pth",
+    "https://huggingface.co/MachineDelusions/RIFE/resolve/main/rife49.pth",
+    "https://huggingface.co/Isi99999/Frame_Interpolation_Models/resolve/main/rife49.pth",
+    "https://huggingface.co/hfmaster/models-moved/resolve/main/rife/rife49.pth",
+];
+
+/// Smallest plausible size for the checkpoint. A mirror that has been replaced
+/// by an HTML error page or an LFS pointer still answers 200, so size is the
+/// cheap guard against renaming junk into place and failing cryptically at
+/// generation time instead.
+const RIFE_CKPT_MIN_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Substring present in [`format_missing_mooshie_nodes_error`] output.
 pub const MISSING_MOOSHIE_NODES_MARKER: &str = "has not loaded required MooshieUI custom nodes";
@@ -514,9 +531,18 @@ pub fn is_rife_installed(comfyui_path: &str) -> bool {
         return false;
     }
 
+    rife_ckpt_has_checkpoint(comfyui_path)
+}
+
+/// Whether a plausible RIFE checkpoint sits on disk. Size-checked rather than
+/// merely present so a truncated file left by an older build cannot report the
+/// install as ready and then fail at generation time.
+fn rife_ckpt_has_checkpoint(comfyui_path: &str) -> bool {
     rife_ckpt_dir(comfyui_path)
         .join(RIFE_CKPT_FILENAME)
-        .is_file()
+        .metadata()
+        .map(|m| m.is_file() && m.len() >= RIFE_CKPT_MIN_BYTES)
+        .unwrap_or(false)
 }
 
 /// Install the frame-interpolation pack that provides `RIFE VFI`.
@@ -603,14 +629,12 @@ pub async fn install_rife(
 
     let ckpt_dir = rife_ckpt_dir(comfyui_path);
     let ckpt_path = ckpt_dir.join(RIFE_CKPT_FILENAME);
-    if ckpt_path
-        .metadata()
-        .map(|m| m.is_file() && m.len() > 0)
-        .unwrap_or(false)
-    {
+    if rife_ckpt_has_checkpoint(comfyui_path) {
         on_progress("done", "RIFE frame interpolation is ready", true);
         return Ok(());
     }
+    // A short file is a leftover from a failed download, not an install.
+    let _ = std::fs::remove_file(&ckpt_path);
 
     std::fs::create_dir_all(&ckpt_dir).map_err(|e| {
         format!(
@@ -631,28 +655,67 @@ pub async fn install_rife(
     Ok(())
 }
 
-/// Stream the RIFE checkpoint to a `.part` file, then rename into place so an
-/// interrupted download never leaves a truncated checkpoint that
-/// [`is_rife_installed`] would report as ready.
+/// Download the RIFE checkpoint, falling back through [`RIFE_CKPT_URLS`] until
+/// one mirror delivers it. Mirrors go stale independently (the pack's own
+/// first choice already has), so a failure only surfaces once every mirror has
+/// been tried, and the reported error names each one that failed.
 async fn download_rife_checkpoint(
     http_client: &reqwest::Client,
+    dest: &Path,
+    on_progress: &(dyn Fn(&str, &str, bool) + Send + Sync),
+) -> Result<(), String> {
+    let mut failures: Vec<String> = Vec::new();
+
+    for (index, url) in RIFE_CKPT_URLS.iter().enumerate() {
+        if index > 0 {
+            on_progress(
+                "download",
+                &format!(
+                    "Retrying {} from mirror {} of {}...",
+                    RIFE_CKPT_FILENAME,
+                    index + 1,
+                    RIFE_CKPT_URLS.len()
+                ),
+                false,
+            );
+        }
+
+        match download_rife_checkpoint_from(http_client, url, dest, on_progress).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                log::warn!("RIFE checkpoint mirror {} failed: {}", url, e);
+                failures.push(format!("{}: {}", url, e));
+            }
+        }
+    }
+
+    Err(format!(
+        "Failed to download {} from any of {} mirrors.\n{}",
+        RIFE_CKPT_FILENAME,
+        RIFE_CKPT_URLS.len(),
+        failures.join("\n")
+    ))
+}
+
+/// Stream the RIFE checkpoint from one URL to a `.part` file, then rename it
+/// into place so an interrupted download never leaves a truncated checkpoint
+/// that [`is_rife_installed`] would report as ready.
+async fn download_rife_checkpoint_from(
+    http_client: &reqwest::Client,
+    url: &str,
     dest: &Path,
     on_progress: &(dyn Fn(&str, &str, bool) + Send + Sync),
 ) -> Result<(), String> {
     use std::io::Write;
 
     let mut response = http_client
-        .get(RIFE_CKPT_URL)
+        .get(url)
         .send()
         .await
-        .map_err(|e| format!("Failed to download {}: {}", RIFE_CKPT_FILENAME, e))?;
+        .map_err(|e| e.to_string())?;
 
     if !response.status().is_success() {
-        return Err(format!(
-            "Failed to download {}: HTTP {}",
-            RIFE_CKPT_FILENAME,
-            response.status()
-        ));
+        return Err(format!("HTTP {}", response.status()));
     }
 
     let total = response.content_length().unwrap_or(0);
@@ -670,7 +733,7 @@ async fn download_rife_checkpoint(
             Err(e) => {
                 drop(file);
                 let _ = std::fs::remove_file(&partial);
-                return Err(format!("Download of {} failed: {}", RIFE_CKPT_FILENAME, e));
+                return Err(format!("transfer failed: {}", e));
             }
         };
 
@@ -696,9 +759,21 @@ async fn download_rife_checkpoint(
         }
     }
 
-    file.flush()
-        .map_err(|e| format!("Failed to flush '{}': {}", partial.display(), e))?;
+    let flushed = file.flush();
     drop(file);
+    if let Err(e) = flushed {
+        let _ = std::fs::remove_file(&partial);
+        return Err(format!("Failed to flush '{}': {}", partial.display(), e));
+    }
+
+    if downloaded < RIFE_CKPT_MIN_BYTES {
+        let _ = std::fs::remove_file(&partial);
+        return Err(format!(
+            "served only {} bytes, expected at least {} MB",
+            downloaded,
+            RIFE_CKPT_MIN_BYTES >> 20
+        ));
+    }
 
     std::fs::rename(&partial, dest).map_err(|e| {
         let _ = std::fs::remove_file(&partial);
