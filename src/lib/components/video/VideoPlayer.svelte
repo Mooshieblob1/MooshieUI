@@ -382,14 +382,14 @@
 
           <!-- Scrubber: a transparent native range over a painted div stack, so
                keyboard and screen-reader behaviour come for free. -->
-          <div class="relative flex-1 h-3 flex items-center">
-            <div class="absolute inset-x-0 h-1 rounded-full bg-neutral-600"></div>
+          <div class="relative flex-1 h-6 flex items-center">
+            <div class="absolute inset-x-0 h-2 rounded-full bg-neutral-600"></div>
             <div
-              class="absolute left-0 h-1 rounded-full bg-neutral-500"
+              class="absolute left-0 h-2 rounded-full bg-neutral-500"
               style="width: {bufferedPct}%"
             ></div>
             <div
-              class="absolute left-0 h-1 rounded-full"
+              class="absolute left-0 h-2 rounded-full"
               style="width: {progressPct}%; background: var(--theme-accent-500)"
             ></div>
             <input
@@ -408,10 +408,10 @@
               aria-label={locale.t("video.player.scrubber")}
               class="absolute inset-0 w-full appearance-none bg-transparent cursor-pointer
                      [&::-webkit-slider-thumb]:appearance-none
-                     [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3
+                     [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4
                      [&::-webkit-slider-thumb]:rounded-full
                      [&::-webkit-slider-thumb]:bg-white
-                     [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:w-3
+                     [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4
                      [&::-moz-range-thumb]:rounded-full
                      [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-white"
             />

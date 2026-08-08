@@ -325,8 +325,8 @@
 
 {#snippet track(id: TrackId, items: AnySegment[])}
   <div class="flex items-stretch gap-2">
-    <span class="w-24 shrink-0 pt-2 text-[11px] text-neutral-500">{locale.t(trackLabelKeys[id])}</span>
-    <div class="relative h-11 rounded-md bg-neutral-800/40" style="width: {stripWidth}px">
+    <span class="w-24 shrink-0 pt-3 text-[11px] text-neutral-500">{locale.t(trackLabelKeys[id])}</span>
+    <div class="relative h-16 rounded-md bg-neutral-800/40" style="width: {stripWidth}px">
       {#each items as segment (segment.id)}
         {@const active = selected?.track === id && selected?.id === segment.id}
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -334,7 +334,7 @@
           role="button"
           tabindex="0"
           aria-label={locale.t(trackLabelKeys[id])}
-          class="absolute top-1 bottom-1 rounded border px-1.5 py-1 overflow-hidden cursor-grab select-none touch-none transition-colors {active
+          class="absolute top-1.5 bottom-1.5 rounded border px-1.5 py-1.5 overflow-hidden cursor-grab select-none touch-none transition-colors {active
             ? 'border-indigo-400 bg-indigo-500/25'
             : 'border-neutral-600 bg-neutral-700/60 hover:border-neutral-500'}"
           style="left: {Math.round(segment.start * PX_PER_FRAME)}px; width: {Math.max(
@@ -347,7 +347,7 @@
           onpointercancel={endDrag}
           onkeydown={(e) => nudge(e, id, segment)}
         >
-          <span class="block text-[10px] leading-tight text-neutral-200 truncate pointer-events-none">
+          <span class="block text-[11px] leading-snug text-neutral-200 truncate pointer-events-none">
             {#if id === "shots"}
               {(segment as TimelineSegment).prompt.trim() ||
                 segment.fileName ||
@@ -356,7 +356,7 @@
               {segment.fileName || locale.t("video_timeline.no_file")}
             {/if}
           </span>
-          <span class="block text-[10px] leading-tight text-neutral-400 pointer-events-none">
+          <span class="block text-[11px] leading-snug text-neutral-400 pointer-events-none">
             {locale.t("video_timeline.segment_span", {
               start: seconds(segment.start),
               length: seconds(segment.length),
@@ -364,7 +364,7 @@
           </span>
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
-            class="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize bg-neutral-500/50 hover:bg-indigo-400"
+            class="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-neutral-500/50 hover:bg-indigo-400"
             onpointerdown={(e) => beginDrag(e, id, segment, "resize")}
             onpointermove={moveDrag}
             onpointerup={endDrag}
@@ -451,14 +451,14 @@
 
   <!-- Strip -->
   <div class="overflow-x-auto pb-2 mb-4">
-    <div class="min-w-max space-y-1.5">
+    <div class="min-w-max space-y-2">
       <!-- Ruler -->
       <div class="flex items-end gap-2">
         <span class="w-24 shrink-0"></span>
-        <div class="relative h-4" style="width: {stripWidth}px">
+        <div class="relative h-5" style="width: {stripWidth}px">
           {#each Array.from({ length: Math.ceil(stripFrames / H3_FPS) + 1 }, (_, i) => i) as tick (tick)}
             <span
-              class="absolute top-0 text-[9px] text-neutral-600 border-l border-neutral-700 pl-0.5"
+              class="absolute top-0 text-[10px] text-neutral-500 border-l border-neutral-700 pl-0.5"
               style="left: {Math.round(tick * H3_FPS * PX_PER_FRAME)}px">{tick}</span
             >
           {/each}
