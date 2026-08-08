@@ -184,6 +184,132 @@ fn read_qt_comment(bytes: &[u8]) -> Option<String> {
     Some(String::from_utf8_lossy(text).into_owned())
 }
 
+/// The raw TIFF blob from an AVIF `Exif` item.
+///
+/// AVIF stores metadata as a HEIF item: `meta/iinf` names it, `meta/iloc` says
+/// where its bytes are. Only construction method 0 (an offset into the file) is
+/// handled, which is what libavif and therefore Pillow write.
+pub(super) fn read_avif_exif(bytes: &[u8]) -> Option<Vec<u8>> {
+    let meta = find_path(bytes, &[b"meta"])?.get(4..)?;
+    let item_id = exif_item_id(find_path(meta, &[b"iinf"])?)?;
+    let (offset, length) = item_extent(find_path(meta, &[b"iloc"])?, item_id)?;
+
+    if length == 0 || length > MAX_PAYLOAD {
+        return None;
+    }
+    let payload = bytes.get(offset..offset.checked_add(length)?)?;
+
+    // The item payload is a 4-byte tiff_header_offset followed by the TIFF
+    // stream, but writers disagree about whether the offset is included. Find
+    // the byte-order mark near the front instead of trusting the count.
+    let head = payload.get(..payload.len().min(16))?;
+    let start = head
+        .windows(2)
+        .position(|w| w == b"II" || w == b"MM")
+        .unwrap_or(0);
+    Some(payload.get(start..)?.to_vec())
+}
+
+/// The item ID of the entry in `iinf` whose type is `Exif`.
+fn exif_item_id(iinf: &[u8]) -> Option<u32> {
+    let version = *iinf.first()?;
+    // entry_count is 16-bit in version 0 and 32-bit from version 1.
+    let body_start = if version == 0 { 6 } else { 8 };
+    let entries = iinf.get(body_start..)?;
+
+    for b in boxes(entries) {
+        if b.kind != *b"infe" {
+            continue;
+        }
+        let body = entries.get(b.body..b.end)?;
+        let infe_version = *body.first()?;
+        // infe v2 uses a 16-bit item ID, v3 a 32-bit one. v0/v1 predate the
+        // item_type field entirely and never carry Exif.
+        let (id, type_at) = match infe_version {
+            2 => (
+                u16::from_be_bytes([*body.get(4)?, *body.get(5)?]) as u32,
+                8usize,
+            ),
+            3 => (u32_at(body, 4)?, 10usize),
+            _ => continue,
+        };
+        if body.get(type_at..type_at + 4)? == b"Exif" {
+            return Some(id);
+        }
+    }
+    None
+}
+
+/// The (offset, length) of the first extent of `item_id` in an `iloc` table.
+fn item_extent(iloc: &[u8], item_id: u32) -> Option<(usize, usize)> {
+    let version = *iloc.first()?;
+    let sizes = *iloc.get(4)?;
+    let offset_size = (sizes >> 4) as usize;
+    let length_size = (sizes & 0x0f) as usize;
+    let packed = *iloc.get(5)?;
+    let base_offset_size = (packed >> 4) as usize;
+    let index_size = if version == 1 || version == 2 {
+        (packed & 0x0f) as usize
+    } else {
+        0
+    };
+
+    let mut off = 6usize;
+    let count = if version < 2 {
+        let c = u16::from_be_bytes([*iloc.get(off)?, *iloc.get(off + 1)?]) as u32;
+        off += 2;
+        c
+    } else {
+        let c = u32_at(iloc, off)?;
+        off += 4;
+        c
+    };
+
+    // A field width other than 0, 4 or 8 is legal in the spec but never
+    // produced by any encoder we write for; refuse rather than guess.
+    let read_int = |slice: &[u8], at: usize, width: usize| -> Option<u64> {
+        match width {
+            0 => Some(0),
+            4 => u32_at(slice, at).map(u64::from),
+            8 => u64_at(slice, at),
+            _ => None,
+        }
+    };
+
+    for _ in 0..count.min(MAX_SIBLINGS as u32) {
+        let id = if version < 2 {
+            let v = u16::from_be_bytes([*iloc.get(off)?, *iloc.get(off + 1)?]) as u32;
+            off += 2;
+            v
+        } else {
+            let v = u32_at(iloc, off)?;
+            off += 4;
+            v
+        };
+        if version == 1 || version == 2 {
+            off += 2; // construction_method
+        }
+        off += 2; // data_reference_index
+        let base = read_int(iloc, off, base_offset_size)?;
+        off += base_offset_size;
+        let extents = u16::from_be_bytes([*iloc.get(off)?, *iloc.get(off + 1)?]);
+        off += 2;
+
+        for e in 0..extents {
+            off += index_size;
+            let extent_offset = read_int(iloc, off, offset_size)?;
+            off += offset_size;
+            let extent_length = read_int(iloc, off, length_size)?;
+            off += length_size;
+            if id == item_id && e == 0 {
+                let start = base.checked_add(extent_offset)?;
+                return Some((start.try_into().ok()?, extent_length.try_into().ok()?));
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,5 +532,87 @@ mod tests {
         buf.extend_from_slice(&moov_with_mdta_comment(&huge));
 
         assert!(read_udta_comment(&buf).is_none());
+    }
+
+    /// A minimal AVIF: `ftyp`, a `meta` declaring one Exif item, and an `mdat`
+    /// holding the TIFF blob the item's `iloc` extent points at.
+    fn avif_with_exif(tiff: &[u8]) -> Vec<u8> {
+        // The Exif item payload is a 4-byte tiff_header_offset then the TIFF.
+        let mut item_payload = 0u32.to_be_bytes().to_vec();
+        item_payload.extend_from_slice(tiff);
+
+        // infe v2: version(1) flags(3) item_ID(u16) protection(u16) type(4) name
+        let mut infe_body = vec![2u8, 0, 0, 0];
+        infe_body.extend_from_slice(&1u16.to_be_bytes()); // item_ID 1
+        infe_body.extend_from_slice(&0u16.to_be_bytes());
+        infe_body.extend_from_slice(b"Exif");
+        infe_body.push(0); // empty item name
+        let infe = bx(b"infe", &infe_body);
+
+        let mut iinf_body = vec![0u8, 0, 0, 0]; // version 0, flags
+        iinf_body.extend_from_slice(&1u16.to_be_bytes()); // entry_count
+        iinf_body.extend_from_slice(&infe);
+        let iinf = bx(b"iinf", &iinf_body);
+
+        // iloc v1, offset_size 4, length_size 4, base_offset_size 0, index 0
+        let mut iloc_body = vec![1u8, 0, 0, 0];
+        iloc_body.push(0x44); // offset_size 4 | length_size 4
+        iloc_body.push(0x00); // base_offset_size 0 | index_size 0
+        iloc_body.extend_from_slice(&1u16.to_be_bytes()); // item_count
+        iloc_body.extend_from_slice(&1u16.to_be_bytes()); // item_ID 1
+        iloc_body.extend_from_slice(&0u16.to_be_bytes()); // construction_method 0
+        iloc_body.extend_from_slice(&0u16.to_be_bytes()); // data_reference_index
+        iloc_body.extend_from_slice(&1u16.to_be_bytes()); // extent_count
+        let offset_placeholder = iloc_body.len();
+        iloc_body.extend_from_slice(&0u32.to_be_bytes()); // extent_offset, patched
+        iloc_body.extend_from_slice(&(item_payload.len() as u32).to_be_bytes());
+
+        let mut meta_body = vec![0u8; 4]; // meta FullBox preamble
+        meta_body.extend_from_slice(&iinf);
+        let iloc_at_in_meta = meta_body.len();
+        meta_body.extend_from_slice(&bx(b"iloc", &iloc_body));
+
+        let head = ftyp(b"avif");
+        let meta = bx(b"meta", &meta_body);
+        // mdat payload starts 8 bytes into the mdat box.
+        let extent_offset = (head.len() + meta.len() + 8) as u32;
+
+        let mut out = head;
+        let mut meta = meta;
+        // 8 for the meta header + 4 for its FullBox preamble is already folded
+        // into iloc_at_in_meta, which is relative to meta_body.
+        let patch = 8 + iloc_at_in_meta + 8 + offset_placeholder;
+        meta[patch..patch + 4].copy_from_slice(&extent_offset.to_be_bytes());
+        out.extend_from_slice(&meta);
+        out.extend_from_slice(&bx(b"mdat", &item_payload));
+        out
+    }
+
+    #[test]
+    fn reads_an_avif_exif_item() {
+        let tiff = b"II\x2a\x00\x08\x00\x00\x00 exif body";
+        let buf = avif_with_exif(tiff);
+
+        assert_eq!(read_avif_exif(&buf).as_deref(), Some(&tiff[..]));
+    }
+
+    #[test]
+    fn returns_none_when_an_avif_has_no_exif_item() {
+        let mut buf = ftyp(b"avif");
+        let mut meta_body = vec![0u8; 4];
+        meta_body.extend_from_slice(&bx(b"iinf", &[0u8, 0, 0, 0, 0, 0]));
+        buf.extend_from_slice(&bx(b"meta", &meta_body));
+
+        assert!(read_avif_exif(&buf).is_none());
+    }
+
+    #[test]
+    fn returns_none_when_an_extent_points_past_the_file() {
+        let tiff = b"II\x2a\x00\x08\x00\x00\x00";
+        let mut buf = avif_with_exif(tiff);
+        // Truncate the mdat away; the extent now points past the end.
+        buf.truncate(buf.len() - 4);
+
+        assert!(read_avif_exif(&buf).is_none());
     }
 }
