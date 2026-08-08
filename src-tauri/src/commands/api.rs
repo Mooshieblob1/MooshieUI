@@ -1351,6 +1351,8 @@ pub fn save_to_gallery_inner(
                 }
             }
             crate::metadata::ImageFormat::Mp4 => bytes.to_vec(),
+            crate::metadata::ImageFormat::Avif => bytes.to_vec(),
+            crate::metadata::ImageFormat::Gif => bytes.to_vec(),
             crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {
