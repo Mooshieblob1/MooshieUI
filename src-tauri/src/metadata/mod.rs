@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::io::{Cursor, Read as _, Write as _};
 
+mod isobmff;
+
 /// How to embed metadata into a PNG image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MetadataMode {
