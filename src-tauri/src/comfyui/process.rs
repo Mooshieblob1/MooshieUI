@@ -90,6 +90,167 @@ fn has_blackwell_gpu() -> bool {
     }
 }
 
+/// Fraction of card VRAM above which pinning a whole diffusion model resident
+/// does more harm than good.
+const HIGHVRAM_HEADROOM_FRACTION: f64 = 0.9;
+
+/// How many directory levels deep to look for an H3 diffusion model. Enough for
+/// a `diffusion_models/<vendor>/<file>` layout without walking a whole drive.
+const H3_SCAN_DEPTH: u32 = 3;
+
+/// Largest total VRAM across installed NVIDIA GPUs, in bytes. `None` when
+/// nvidia-smi is absent or unreadable (AMD, Apple, headless CI).
+fn detect_max_vram_bytes() -> Option<u64> {
+    let output = std_command_no_window("nvidia-smi")
+        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let max_mib = stdout
+        .lines()
+        .filter_map(|line| line.trim().parse::<u64>().ok())
+        .max()?;
+    if max_mib == 0 {
+        None
+    } else {
+        Some(max_mib * 1024 * 1024)
+    }
+}
+
+/// Walk `dir` up to `depth` levels, keeping the largest MiniMax H3 weight file found.
+fn scan_h3_dits(dir: &std::path::Path, depth: u32, best_bytes: &mut u64, best_name: &mut String) {
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            scan_h3_dits(&entry.path(), depth - 1, best_bytes, best_name);
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let lower = name.to_lowercase();
+        if !lower.ends_with(".safetensors") && !lower.ends_with(".sft") && !lower.ends_with(".gguf")
+        {
+            continue;
+        }
+        if !crate::templates::video::H3_DIFFUSION_MARKERS
+            .iter()
+            .any(|marker| lower.contains(marker))
+        {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.len() > *best_bytes {
+            *best_bytes = meta.len();
+            *best_name = name;
+        }
+    }
+}
+
+/// Filename and size of the largest MiniMax H3 diffusion model installed, across
+/// the primary ComfyUI models directory and every configured extra model path.
+fn largest_h3_dit(config: &AppConfig) -> Option<(String, u64)> {
+    let mut best_bytes = 0u64;
+    let mut best_name = String::new();
+
+    if !config.comfyui_path.is_empty() {
+        let primary = std::path::Path::new(&config.comfyui_path)
+            .join("models")
+            .join("diffusion_models");
+        scan_h3_dits(&primary, H3_SCAN_DEPTH, &mut best_bytes, &mut best_name);
+    }
+
+    if let Some(ref extra) = config.extra_model_paths {
+        let subdirs = crate::commands::api::category_subdirs("diffusion_models");
+        for dir in extra.lines().map(str::trim).filter(|d| !d.is_empty()) {
+            let base = crate::commands::api::resolve_extra_model_root(std::path::Path::new(dir));
+            for subdir in subdirs {
+                scan_h3_dits(
+                    &base.join(subdir),
+                    H3_SCAN_DEPTH,
+                    &mut best_bytes,
+                    &mut best_name,
+                );
+            }
+            // Flat directory: weights sit directly in the root, no category subdir.
+            scan_h3_dits(&base, 1, &mut best_bytes, &mut best_name);
+        }
+    }
+
+    if best_bytes == 0 {
+        None
+    } else {
+        Some((best_name, best_bytes))
+    }
+}
+
+/// An installed H3 model too large for `--highvram` to be survivable on this card.
+struct HighVramConflict {
+    model: String,
+    model_bytes: u64,
+    vram_bytes: u64,
+}
+
+/// Whether `--highvram` would starve a MiniMax H3 pass of activation headroom.
+///
+/// `--highvram` force-loads a model instead of staging it dynamically, so a DiT
+/// that nearly fills the card leaves nothing for activations and every sampler
+/// step spills over PCIe. Measured on a 12 GB RTX 5070 with the 12.5 GB NVFP4
+/// DiT: 176 s/it under `--highvram` against 4.2 s/it with dynamic loading, and
+/// no out-of-memory error to explain the difference.
+///
+/// `None` whenever VRAM cannot be read or no H3 model is installed — this only
+/// ever drops the flag on evidence, never on a guess.
+fn h3_highvram_conflict(config: &AppConfig) -> Option<HighVramConflict> {
+    let vram_bytes = detect_max_vram_bytes()?;
+    let (model, model_bytes) = largest_h3_dit(config)?;
+    if (model_bytes as f64) > (vram_bytes as f64) * HIGHVRAM_HEADROOM_FRACTION {
+        Some(HighVramConflict {
+            model,
+            model_bytes,
+            vram_bytes,
+        })
+    } else {
+        None
+    }
+}
+
+/// Add `--highvram`, unless an installed H3 model makes it a 40x slowdown.
+/// Self-heal in the same shape as the attention-backend fallback below: drop the
+/// flag and log why, rather than letting a config setting silently cost an hour
+/// per clip.
+fn apply_highvram_flag(cmd: &mut tokio::process::Command, config: &AppConfig) {
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+    match h3_highvram_conflict(config) {
+        Some(conflict) => {
+            log::warn!(
+                "vram_mode='high' but the installed MiniMax H3 model '{}' ({:.1} GB) fills \
+                 {:.0}% of this GPU's {:.1} GB of VRAM; --highvram would pin it resident with \
+                 no room for activations (measured ~40x slower per step, with no out-of-memory \
+                 error). Launching ComfyUI without --highvram.",
+                conflict.model,
+                conflict.model_bytes as f64 / GB,
+                100.0 * conflict.model_bytes as f64 / conflict.vram_bytes as f64,
+                conflict.vram_bytes as f64 / GB,
+            );
+        }
+        None => {
+            cmd.arg("--highvram");
+        }
+    }
+}
+
 /// Returns true if the directory has at least one known model-category subdirectory.
 /// If false, the directory is flat and needs per-category classification instead.
 fn is_structured_model_dir(path: &std::path::Path) -> bool {
@@ -591,7 +752,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     // VRAM management flag
     match config.vram_mode.as_str() {
         "high" => {
-            cmd.arg("--highvram");
+            apply_highvram_flag(&mut cmd, &config);
         }
         "low" => {
             cmd.arg("--lowvram");
@@ -1371,7 +1532,7 @@ pub async fn start_worker_process(
         .unwrap_or(config.vram_mode.as_str());
     match vram_mode {
         "high" => {
-            cmd.arg("--highvram");
+            apply_highvram_flag(&mut cmd, &config);
         }
         "low" => {
             cmd.arg("--lowvram");
