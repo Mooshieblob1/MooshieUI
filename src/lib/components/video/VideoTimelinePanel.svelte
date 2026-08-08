@@ -450,7 +450,7 @@
   {/if}
 
   <!-- Strip -->
-  <div class="overflow-x-auto pb-2 mb-4">
+  <div class="shrink-0 overflow-x-auto overflow-y-hidden pb-2 mb-4">
     <div class="min-w-max space-y-2">
       <!-- Ruler -->
       <div class="flex items-end gap-2">
