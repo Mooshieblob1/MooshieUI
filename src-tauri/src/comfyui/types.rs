@@ -266,6 +266,16 @@ pub struct GenerationParams {
     /// is the authority on the schema - Rust only forwards it.
     #[serde(default)]
     pub video_timeline_data: Option<String>,
+    /// Drives the Director's `use_custom_motion` widget: true when the timeline
+    /// has at least one motion clip. A widget rather than a `timeline_data` key,
+    /// so it travels separately.
+    #[serde(default)]
+    pub video_timeline_custom_motion: bool,
+    /// Drives the Director's `use_custom_audio` widget. Also decides whether the
+    /// Director's `combined_audio` output replaces H3's jointly-generated
+    /// stereo track — with no audio segments that output is digital silence.
+    #[serde(default)]
+    pub video_timeline_custom_audio: bool,
     /// Optional ControlNet parameters
     #[serde(default)]
     pub controlnet: Option<ControlNetParam>,

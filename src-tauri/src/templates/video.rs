@@ -156,7 +156,130 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
     );
     next_id += 1;
 
-    let h3_id = if params.video_variant == "ref2va" {
+    // A non-empty `video_timeline_data` routes the graph through the vendored
+    // `MooshieH3Director` instead of the plain native H3 node: same model, same
+    // sampler, but the conditioning and latent come from a compiled timeline.
+    let timeline_data = params
+        .video_timeline_data
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let is_ref2va = params.video_variant == "ref2va";
+
+    let h3_id = if let Some(timeline) = timeline_data {
+        let mut inputs = serde_json::Map::new();
+        inputs.insert("clip".to_string(), json!([clip_id.as_str(), 0]));
+        inputs.insert("vae".to_string(), json!([vae_id.as_str(), 0]));
+        inputs.insert("audio_vae".to_string(), json!([audio_vae_id.as_str(), 0]));
+        // `model` and `model_ref2va` are lazy inputs and the node evaluates only
+        // the one matching `reference_mode`. Wiring exactly the matching socket
+        // keeps ComfyUI from loading ~42 GB of DiT twice; the other stays
+        // `_UNCONNECTED`, which `check_lazy_status` accepts without a warning.
+        inputs.insert(
+            if is_ref2va { "model_ref2va" } else { "model" }.to_string(),
+            json!([model_source_id.as_str(), 0]),
+        );
+        inputs.insert("timeline_data".to_string(), json!(timeline));
+        // `global_prompt` is `force_input`, so it cannot carry a widget value.
+        // The node falls back to `timeline_data["global_prompt"]`, which is where
+        // the frontend puts the composed positive prompt.
+        //
+        // The seconds widgets are inert: `resolve_window` reads `start_frame` and
+        // `duration_frames` (or the unconnected `start`/`end`/`duration` sockets)
+        // and nothing else. They are emitted consistently anyway so the numbers
+        // agree for anyone who opens the graph in ComfyUI.
+        let duration_frames = ((params.video_duration_seconds * 24.0).round() as i64).max(5);
+        inputs.insert("start_second".to_string(), json!(0.0));
+        inputs.insert(
+            "end_second".to_string(),
+            json!(params.video_duration_seconds),
+        );
+        inputs.insert(
+            "duration_seconds".to_string(),
+            json!(params.video_duration_seconds),
+        );
+        inputs.insert("start_frame".to_string(), json!(0));
+        inputs.insert("end_frame".to_string(), json!(duration_frames));
+        inputs.insert("duration_frames".to_string(), json!(duration_frames));
+        inputs.insert("frame_rate".to_string(), json!(24.0));
+        inputs.insert("display_mode".to_string(), json!("seconds"));
+        // Declared but never read by `execute` — they mirror editor state for the
+        // node's own JS panel, which MooshieUI does not vendor. Still required
+        // inputs, so ComfyUI rejects the prompt outright when they are missing.
+        inputs.insert("local_prompts".to_string(), json!(""));
+        inputs.insert("segment_lengths".to_string(), json!(""));
+        inputs.insert("guide_strength".to_string(), json!(""));
+        // Canvas: hand the node the same dimensions the native path computes so
+        // the aspect/megapixel picker still decides the output size. Without
+        // these it would size the canvas off the first timeline image.
+        inputs.insert("custom_width".to_string(), json!(width));
+        inputs.insert("custom_height".to_string(), json!(height));
+        inputs.insert("divisible_by".to_string(), json!(32));
+        inputs.insert("resize_method".to_string(), json!("crop"));
+        inputs.insert("img_compression".to_string(), json!(0));
+        inputs.insert("ref_image_size".to_string(), json!("match"));
+        inputs.insert("shift_video".to_string(), json!(12.0));
+        inputs.insert("shift_audio".to_string(), json!(3.0));
+        inputs.insert("inpaint_audio".to_string(), json!(true));
+        inputs.insert("override_audio".to_string(), json!(false));
+        inputs.insert(
+            "use_custom_motion".to_string(),
+            json!(params.video_timeline_custom_motion),
+        );
+        inputs.insert(
+            "use_custom_audio".to_string(),
+            json!(params.video_timeline_custom_audio),
+        );
+        // Unlike the native ref2va node, `ref_images` is one batched IMAGE rather
+        // than nine Autogrow slots, so the reference uploads are chained through
+        // `ImageBatch`. The node counts `ref_images.shape[0]` and only reads them
+        // at all when `reference_mode` is on.
+        if is_ref2va {
+            let mut batch_id: Option<String> = None;
+            for filename in params
+                .video_ref_images
+                .iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .take(9)
+            {
+                let load_id = next_id.to_string();
+                workflow.insert(
+                    load_id.clone(),
+                    json!({ "class_type": "LoadImage", "inputs": { "image": filename } }),
+                );
+                next_id += 1;
+                batch_id = Some(match batch_id {
+                    None => load_id,
+                    Some(previous) => {
+                        let id = next_id.to_string();
+                        workflow.insert(
+                            id.clone(),
+                            json!({
+                                "class_type": "ImageBatch",
+                                "inputs": {
+                                    "image1": [previous.as_str(), 0],
+                                    "image2": [load_id.as_str(), 0]
+                                }
+                            }),
+                        );
+                        next_id += 1;
+                        id
+                    }
+                });
+            }
+            if let Some(id) = batch_id {
+                inputs.insert("ref_images".to_string(), json!([id.as_str(), 0]));
+            }
+        }
+        let id = next_id.to_string();
+        workflow.insert(
+            id.clone(),
+            json!({ "class_type": "MooshieH3Director", "inputs": inputs }),
+        );
+        next_id += 1;
+        id
+    } else if is_ref2va {
         let mut inputs = serde_json::Map::new();
         inputs.insert("clip".to_string(), json!([clip_id.as_str(), 0]));
         inputs.insert("vae".to_string(), json!([vae_id.as_str(), 0]));
@@ -232,6 +355,18 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
         id
     };
 
+    // The Director re-emits the MODEL it selected on output 0 and shifts
+    // conditioning/latent one slot down the list, so every downstream consumer
+    // hangs off it. Taking MODEL from the loader instead would bypass the lazy
+    // `model`/`model_ref2va` evaluation entirely.
+    let uses_director = timeline_data.is_some();
+    let model_link = if uses_director {
+        json!([h3_id.as_str(), 0])
+    } else {
+        json!([model_source_id.as_str(), 0])
+    };
+    let (conditioning_slot, latent_slot) = if uses_director { (1, 2) } else { (0, 1) };
+
     let noise_id = next_id.to_string();
     workflow.insert(
         noise_id.clone(),
@@ -270,7 +405,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
         json!({
             "class_type": "BasicScheduler",
             "inputs": {
-                "model": [model_source_id.as_str(), 0],
+                "model": model_link.clone(),
                 "scheduler": "simple",
                 "steps": steps,
                 "denoise": 1.0
@@ -285,8 +420,8 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
         json!({
             "class_type": "BasicGuider",
             "inputs": {
-                "model": [model_source_id.as_str(), 0],
-                "conditioning": [h3_id.as_str(), 0]
+                "model": model_link,
+                "conditioning": [h3_id.as_str(), conditioning_slot]
             }
         }),
     );
@@ -302,7 +437,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
                 "guider": [guider_id.as_str(), 0],
                 "sampler": [sampler_select_id.as_str(), 0],
                 "sigmas": [scheduler_id.as_str(), 0],
-                "latent_image": [h3_id.as_str(), 1]
+                "latent_image": [h3_id.as_str(), latent_slot]
             }
         }),
     );
@@ -321,18 +456,27 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
     );
     next_id += 1;
 
-    let audio_decode_id = next_id.to_string();
-    workflow.insert(
-        audio_decode_id.clone(),
-        json!({
-            "class_type": "VAEDecodeAudio",
-            "inputs": {
-                "samples": [sampler_id.as_str(), 0],
-                "vae": [audio_vae_id.as_str(), 0]
-            }
-        }),
-    );
-    next_id += 1;
+    // The Director's `combined_audio` (output 3) is the timeline's own audio bed.
+    // With no audio segments it is digital silence, not a passthrough, so it may
+    // only replace H3's jointly-generated stereo when the timeline actually
+    // carries audio. Otherwise the native decode stays in the graph.
+    let audio_link = if uses_director && params.video_timeline_custom_audio {
+        json!([h3_id.as_str(), 3])
+    } else {
+        let audio_decode_id = next_id.to_string();
+        workflow.insert(
+            audio_decode_id.clone(),
+            json!({
+                "class_type": "VAEDecodeAudio",
+                "inputs": {
+                    "samples": [sampler_id.as_str(), 0],
+                    "vae": [audio_vae_id.as_str(), 0]
+                }
+            }),
+        );
+        next_id += 1;
+        json!([audio_decode_id.as_str(), 0])
+    };
 
     // RIFE 2x frame interpolation: doubles H3's native 24 fps to 48 without
     // changing the clip's duration, so `CreateVideo.fps` has to double too.
@@ -372,7 +516,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
             "class_type": "CreateVideo",
             "inputs": {
                 "images": [frames_source_id.as_str(), 0],
-                "audio": [audio_decode_id.as_str(), 0],
+                "audio": audio_link,
                 "fps": fps
             }
         }),
@@ -707,6 +851,239 @@ mod tests {
         let workflow = build(&params, 1);
 
         assert_eq!(nodes_of_class(&workflow, "MiniMaxH3TurboLoRA").len(), 1);
+        let rife_id = node_id_of_class(&workflow, "RIFE VFI");
+        let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
+        assert_eq!(create_video["inputs"]["images"], json!([rife_id, 0]));
+        assert_eq!(create_video["inputs"]["fps"], json!(48.0));
+    }
+
+    /// Minimal compiled timeline. `build` only checks that the string is
+    /// non-blank and passes it through verbatim — the node parses it, not us.
+    const TIMELINE_JSON: &str =
+        r#"{"global_prompt":"a red fox","segments":[],"reference_mode":"OFF"}"#;
+
+    fn director_params(variant: &str) -> GenerationParams {
+        let mut params = video_params(variant);
+        params.video_timeline_data = Some(TIMELINE_JSON.to_string());
+        params
+    }
+
+    #[test]
+    fn timeline_routes_the_graph_through_the_director() {
+        let workflow = build(&director_params("fl2va"), 1);
+
+        assert_eq!(nodes_of_class(&workflow, "MooshieH3Director").len(), 1);
+        assert!(nodes_of_class(&workflow, "MiniMaxH3ImageToVideo").is_empty());
+        assert!(nodes_of_class(&workflow, "MiniMaxH3ReferenceToVideo").is_empty());
+
+        let director_id = node_id_of_class(&workflow, "MooshieH3Director");
+        let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
+        assert_eq!(director["inputs"]["timeline_data"], json!(TIMELINE_JSON));
+        // The canvas still comes from the aspect/megapixel picker, not from the
+        // first timeline image.
+        assert_eq!(director["inputs"]["custom_width"], json!(832));
+        assert_eq!(director["inputs"]["custom_height"], json!(480));
+        assert_eq!(director["inputs"]["divisible_by"], json!(32));
+
+        // Every non-optional input has to be present or ComfyUI rejects the
+        // prompt during validation, including the three the node declares but
+        // never reads.
+        for key in [
+            "clip",
+            "vae",
+            "audio_vae",
+            "start_second",
+            "end_second",
+            "duration_seconds",
+            "start_frame",
+            "end_frame",
+            "duration_frames",
+            "frame_rate",
+            "display_mode",
+            "local_prompts",
+            "segment_lengths",
+            "guide_strength",
+            "resize_method",
+            "img_compression",
+            "ref_image_size",
+            "shift_video",
+            "shift_audio",
+            "inpaint_audio",
+            "override_audio",
+            "use_custom_motion",
+            "use_custom_audio",
+        ] {
+            assert!(director["inputs"].get(key).is_some(), "missing input {key}");
+        }
+        // `global_prompt` is `force_input`, so a widget value would be rejected;
+        // the node reads it out of `timeline_data` instead.
+        assert!(director["inputs"].get("global_prompt").is_none());
+
+        // MODEL comes off the Director's own output 0, and conditioning/latent
+        // sit one slot further down than on the native nodes.
+        let scheduler = nodes_of_class(&workflow, "BasicScheduler")[0];
+        let guider = nodes_of_class(&workflow, "BasicGuider")[0];
+        let sampler = nodes_of_class(&workflow, "SamplerCustomAdvanced")[0];
+        assert_eq!(scheduler["inputs"]["model"], json!([director_id, 0]));
+        assert_eq!(guider["inputs"]["model"], json!([director_id, 0]));
+        assert_eq!(guider["inputs"]["conditioning"], json!([director_id, 1]));
+        assert_eq!(sampler["inputs"]["latent_image"], json!([director_id, 2]));
+    }
+
+    #[test]
+    fn a_blank_timeline_keeps_the_native_path() {
+        for timeline in [None, Some(String::new()), Some("   ".to_string())] {
+            let mut params = video_params("fl2va");
+            params.video_timeline_data = timeline.clone();
+            let workflow = build(&params, 1);
+            assert!(
+                nodes_of_class(&workflow, "MooshieH3Director").is_empty(),
+                "director spliced in for {timeline:?}"
+            );
+            assert_eq!(nodes_of_class(&workflow, "MiniMaxH3ImageToVideo").len(), 1);
+        }
+    }
+
+    #[test]
+    fn director_wires_exactly_one_model_socket_per_variant() {
+        // Both MODEL inputs are lazy and only the one matching `reference_mode`
+        // is evaluated. Wiring both would load ~42 GB of DiT twice.
+        let workflow = build(&director_params("fl2va"), 1);
+        let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
+        assert!(director["inputs"]["model"].is_array());
+        assert!(director["inputs"].get("model_ref2va").is_none());
+
+        let mut params = director_params("ref2va");
+        params.video_ref_images = vec!["a.png".to_string()];
+        let workflow = build(&params, 1);
+        let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
+        assert!(director["inputs"]["model_ref2va"].is_array());
+        assert!(director["inputs"].get("model").is_none());
+    }
+
+    #[test]
+    fn director_batches_reference_images_into_one_input() {
+        // `ref_images` on the Director is a single batched IMAGE, not the native
+        // node's nine Autogrow slots, so the uploads chain through `ImageBatch`.
+        let mut params = director_params("ref2va");
+        params.video_ref_images = vec![
+            "a.png".to_string(),
+            "b.png".to_string(),
+            "  ".to_string(),
+            "c.png".to_string(),
+        ];
+        let workflow = build(&params, 1);
+
+        assert_eq!(nodes_of_class(&workflow, "LoadImage").len(), 3);
+        assert_eq!(nodes_of_class(&workflow, "ImageBatch").len(), 2);
+        let batch_id = {
+            let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
+            director["inputs"]["ref_images"][0]
+                .as_str()
+                .expect("ref_images points at a node")
+                .to_string()
+        };
+        // The Director reads the LAST batch in the chain, which is the only one
+        // nothing else consumes.
+        let last_batch = &workflow[&batch_id];
+        assert_eq!(last_batch["class_type"], json!("ImageBatch"));
+
+        // One image needs no batching at all.
+        let mut params = director_params("ref2va");
+        params.video_ref_images = vec!["only.png".to_string()];
+        let workflow = build(&params, 1);
+        assert!(nodes_of_class(&workflow, "ImageBatch").is_empty());
+        let load_id = node_id_of_class(&workflow, "LoadImage");
+        let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
+        assert_eq!(director["inputs"]["ref_images"], json!([load_id, 0]));
+
+        // fl2va never reads references, so it never uploads them either.
+        let workflow = build(&director_params("fl2va"), 1);
+        assert!(nodes_of_class(&workflow, "LoadImage").is_empty());
+        let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
+        assert!(director["inputs"].get("ref_images").is_none());
+    }
+
+    #[test]
+    fn director_audio_replaces_the_decode_only_when_the_timeline_has_audio() {
+        // With no audio segments the Director's `combined_audio` is digital
+        // silence rather than a passthrough, so the native decode has to stay.
+        let workflow = build(&director_params("fl2va"), 1);
+        let decode_id = node_id_of_class(&workflow, "VAEDecodeAudio");
+        let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
+        assert_eq!(create_video["inputs"]["audio"], json!([decode_id, 0]));
+
+        let mut params = director_params("fl2va");
+        params.video_timeline_custom_audio = true;
+        let workflow = build(&params, 1);
+        assert!(nodes_of_class(&workflow, "VAEDecodeAudio").is_empty());
+        let director_id = node_id_of_class(&workflow, "MooshieH3Director");
+        let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
+        assert_eq!(create_video["inputs"]["audio"], json!([director_id, 3]));
+    }
+
+    #[test]
+    fn director_motion_and_audio_widgets_track_the_compiled_timeline() {
+        let mut params = director_params("fl2va");
+        params.video_timeline_custom_motion = true;
+        params.video_timeline_custom_audio = true;
+        let workflow = build(&params, 1);
+        let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
+        assert_eq!(director["inputs"]["use_custom_motion"], json!(true));
+        assert_eq!(director["inputs"]["use_custom_audio"], json!(true));
+
+        let workflow = build(&director_params("fl2va"), 1);
+        let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
+        assert_eq!(director["inputs"]["use_custom_motion"], json!(false));
+        assert_eq!(director["inputs"]["use_custom_audio"], json!(false));
+    }
+
+    #[test]
+    fn director_window_resolves_to_the_native_frame_length() {
+        // `resolve_window` reads `start_frame`/`duration_frames` only, then the
+        // planner snaps the count onto the 17n+5 grid. The result has to match
+        // what the native path would have asked for.
+        fn align(mut frames: i64) -> i64 {
+            while frames % 17 != 5 {
+                frames += 1;
+            }
+            frames
+        }
+        for tenths in 10..=150 {
+            let seconds = tenths as f64 / 10.0;
+            let mut params = director_params("fl2va");
+            params.video_duration_seconds = seconds;
+            let workflow = build(&params, 1);
+            let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
+            assert_eq!(director["inputs"]["start_frame"], json!(0));
+            assert_eq!(director["inputs"]["frame_rate"], json!(24.0));
+            let frames = director["inputs"]["duration_frames"]
+                .as_i64()
+                .expect("duration_frames is an integer");
+            assert_eq!(
+                align(frames),
+                i64::from(compute_h3_frame_length(seconds)),
+                "director window disagrees with the native length at {seconds} s"
+            );
+        }
+    }
+
+    #[test]
+    fn director_still_composes_with_turbo_and_rife() {
+        let mut params = director_params("fl2va");
+        params.video_turbo_enabled = true;
+        params.video_rife_enabled = true;
+        let workflow = build(&params, 1);
+
+        // The adapter feeds the Director, and the Director still owns MODEL
+        // downstream — taking it from the LoRA would skip the lazy evaluation.
+        let lora_id = node_id_of_class(&workflow, "MiniMaxH3TurboLoRA");
+        let director_id = node_id_of_class(&workflow, "MooshieH3Director");
+        let director = nodes_of_class(&workflow, "MooshieH3Director")[0];
+        assert_eq!(director["inputs"]["model"], json!([lora_id, 0]));
+        let scheduler = nodes_of_class(&workflow, "BasicScheduler")[0];
+        assert_eq!(scheduler["inputs"]["model"], json!([director_id, 0]));
+
         let rife_id = node_id_of_class(&workflow, "RIFE VFI");
         let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
         assert_eq!(create_video["inputs"]["images"], json!([rife_id, 0]));

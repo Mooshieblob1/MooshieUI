@@ -121,7 +121,15 @@ class VideoTimelineStore {
 
   constructor() {
     this.loadSettings();
-    registerTimelineCompiler((globalPrompt) => this.compileTimelineData(globalPrompt));
+    registerTimelineCompiler((globalPrompt) => {
+      const data = this.compileTimelineData(globalPrompt);
+      if (data === null) return null;
+      return {
+        data,
+        useCustomMotion: this.useCustomMotion,
+        useCustomAudio: this.useCustomAudio,
+      };
+    });
   }
 
   /** True once the timeline carries something the node could actually render. */

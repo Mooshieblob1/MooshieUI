@@ -12,8 +12,19 @@
  * the compiler is always registered before the first generation.
  */
 
-/** Compiles the current timeline into the node's `timeline_data` JSON string. */
-export type TimelineCompiler = (globalPrompt: string) => string | null;
+/**
+ * Everything the Director node needs from the timeline. `data` is the
+ * `timeline_data` JSON; the two flags are node *widgets* rather than keys
+ * inside that JSON, so they have to travel alongside it.
+ */
+export interface CompiledTimeline {
+  data: string;
+  useCustomMotion: boolean;
+  useCustomAudio: boolean;
+}
+
+/** Compiles the current timeline into the node's inputs. */
+export type TimelineCompiler = (globalPrompt: string) => CompiledTimeline | null;
 
 let _compile: TimelineCompiler | null = null;
 
@@ -23,7 +34,7 @@ export function registerTimelineCompiler(compile: TimelineCompiler): void {
 }
 
 /**
- * Returns the compiled `timeline_data` JSON, or `null` when the timeline is
+ * Returns the compiled Director inputs, or `null` when the timeline is
  * disabled, empty, or the store has not loaded yet (image-only sessions never
  * import it). A `null` return means "fall back to the native H3 template".
  *
@@ -31,6 +42,6 @@ export function registerTimelineCompiler(compile: TimelineCompiler): void {
  *   `global_prompt` fallback (its socket is `force_input`, so the value has to
  *   travel inside `timeline_data`).
  */
-export function compiledTimelineData(globalPrompt: string): string | null {
+export function compileTimeline(globalPrompt: string): CompiledTimeline | null {
   return _compile?.(globalPrompt) ?? null;
 }

@@ -1,6 +1,6 @@
 import { ipcStore } from "../utils/ipc.js";
 import { triggerSync } from "../utils/syncTrigger.js";
-import { compiledTimelineData } from "../utils/timelineProvider.js";
+import { compileTimeline } from "../utils/timelineProvider.js";
 import {
   buildRegionalContextPrompt,
   mergeRegionalPromptText,
@@ -2426,6 +2426,12 @@ class GenerationStore {
         )
       : [];
 
+    // Compiled H3 Director timeline, or null when the timeline is off or empty
+    // - the backend then builds the plain native H3 graph. Routed through a
+    // registration seam so this hub store never imports the feature store
+    // (see `utils/timelineProvider.ts`).
+    const timeline = isVideo ? compileTimeline(translatedPositiveBase) : null;
+
     const params: GenerationParams = {
       mode: this.mode,
       positive_prompt: translatedPositiveBase,
@@ -2546,11 +2552,10 @@ class GenerationStore {
       video_clip_model: this.videoClipModel,
       video_vae_model: this.videoVaeModel,
       video_audio_vae_model: this.videoAudioVaeModel,
-      // Compiled H3 Director timeline, or null when the timeline is off or
-      // empty - the backend then builds the plain native H3 graph. Routed
-      // through a registration seam so this hub store never imports the
-      // feature store (see `utils/timelineProvider.ts`).
-      video_timeline_data: isVideo ? compiledTimelineData(translatedPositiveBase) : null,
+      video_timeline_data: timeline?.data ?? null,
+      // Node widgets rather than `timeline_data` keys, so they travel beside it.
+      video_timeline_custom_motion: timeline?.useCustomMotion ?? false,
+      video_timeline_custom_audio: timeline?.useCustomAudio ?? false,
     };
 
     if (options.overrides) {

@@ -222,9 +222,13 @@ export interface GenerationParams {
   video_audio_vae_model?: string | null;
   /**
    * Compiled H3 Director `timeline_data` JSON, or null to build the plain
-   * native H3 graph. Produced by `videoTimeline.compileTimelineData()`.
+   * native H3 graph. Produced by `compileTimeline()` in `timelineProvider.ts`.
    */
   video_timeline_data?: string | null;
+  /** Director `use_custom_motion` widget: the timeline has motion clips. */
+  video_timeline_custom_motion?: boolean;
+  /** Director `use_custom_audio` widget: the timeline has audio cues. */
+  video_timeline_custom_audio?: boolean;
 }
 
 export interface OutputImage {

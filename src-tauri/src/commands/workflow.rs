@@ -41,6 +41,23 @@ pub async fn generate(
         )?;
     }
 
+    // The MiniMax H3 Director pack is verified here rather than at startup: it is
+    // video-only and needs ComfyUI >= 0.30, so an older or external server can be
+    // perfectly healthy for image generation without it. Checking on the timeline
+    // path alone keeps every other generation free of the round trip, and turns
+    // what would otherwise be a ComfyUI prompt-validation error into an
+    // actionable message.
+    if params
+        .video_timeline_data
+        .as_deref()
+        .is_some_and(|data| !data.trim().is_empty())
+    {
+        let base_url = { state.config.read().await.server_url.clone() };
+        crate::comfyui::nodes::verify_required_h3_director_nodes(&state.http_client, &base_url)
+            .await
+            .map_err(AppError::InvalidWorkflow)?;
+    }
+
     let mut params = params;
     // Misplaced model: the file lives in a folder that doesn't match what it
     // actually is (e.g. a Flux unet dropped into models/checkpoints/). ComfyUI's
