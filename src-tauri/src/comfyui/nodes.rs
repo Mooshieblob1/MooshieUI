@@ -1497,4 +1497,29 @@ mod tests {
             "  TCP    127.0.0.1:8188         127.0.0.1:52132        ESTABLISHED     4242";
         assert_eq!(parse_netstat_listening_pid(line_est, 8188), None);
     }
+
+    /// `templates/video.rs` sends a `metadata_json` input to `MooshieSaveVideo`.
+    /// ComfyUI rejects a prompt that sets an input the node does not declare, so
+    /// the two files have to agree and this is the only place that can check it.
+    #[test]
+    fn bundled_save_video_node_declares_metadata_json() {
+        let start = MOOSHIE_NODES_INIT
+            .find("class MooshieSaveVideo:")
+            .expect("MooshieSaveVideo is bundled");
+        let body = &MOOSHIE_NODES_INIT[start..];
+        let end = body[1..]
+            .find("\nclass ")
+            .map(|i| i + 1)
+            .unwrap_or(body.len());
+        let class_source = &body[..end];
+
+        assert!(
+            class_source.contains("\"metadata_json\": (\"STRING\""),
+            "MooshieSaveVideo must declare a metadata_json STRING input"
+        );
+        assert!(
+            class_source.contains("metadata_json=\"\""),
+            "save_video must default metadata_json so an older caller still works"
+        );
+    }
 }
