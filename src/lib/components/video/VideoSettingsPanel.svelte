@@ -6,6 +6,7 @@
   import {
     checkNodeAvailable,
     detectLlmHardware,
+    getConfig,
     getModels,
     installRife,
     isRifeInstalled,
@@ -24,6 +25,7 @@
     H3_MIN_DURATION_SECONDS,
     estimateH3ModelGb,
     estimateH3VramGb,
+    isH3HighVramHarmful,
   } from "../../utils/videoParams.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import type { VideoAspectRatio, VideoVariant } from "../../types/index.js";
@@ -56,6 +58,8 @@
   let clipModels = $state<string[]>([]);
   let vaeModels = $state<string[]>([]);
   let detectedVramGb = $state<number | null>(null);
+  /** `config.vram_mode`; "high" maps to ComfyUI's `--highvram`. `null` until read. */
+  let vramMode = $state<string | null>(null);
 
   /**
    * `null` until the disk check answers. The frame-interpolation pack is a
@@ -113,15 +117,21 @@
         })),
   );
 
+  const modelGb = $derived(estimateH3ModelGb(generation.videoDiffusionModel));
   const requiredVramGb = $derived(
-    estimateH3VramGb(
-      dimensions.width,
-      dimensions.height,
-      generation.videoFrameLength,
-      estimateH3ModelGb(generation.videoDiffusionModel),
-    ),
+    estimateH3VramGb(dimensions.width, dimensions.height, generation.videoFrameLength, modelGb),
   );
   const vramWarning = $derived(detectedVramGb !== null && requiredVramGb > detectedVramGb);
+
+  /**
+   * VRAM Mode "high" force-loads the whole DiT instead of staging it, which on a
+   * card this model barely fits leaves nothing for activations and drags every
+   * sampler step over PCIe. It never raises an out-of-memory error, so without
+   * this banner the only symptom is a generation that takes an hour.
+   */
+  const highVramWarning = $derived(
+    vramMode === "high" && isH3HighVramHarmful(modelGb, detectedVramGb),
+  );
 
   /** Coarse stage weights - the install has no single measurable total. */
   const rifeInstallPercent = $derived(
@@ -161,6 +171,11 @@
       detectedVramGb = maxVramMb > 0 ? maxVramMb / 1024 : null;
     } catch {
       detectedVramGb = null;
+    }
+    try {
+      vramMode = (await getConfig()).vram_mode;
+    } catch {
+      vramMode = null;
     }
   }
 
@@ -479,6 +494,34 @@
         {locale.t("generation.video.vram_warning", {
           detected: (detectedVramGb ?? 0).toFixed(1),
           required: requiredVramGb.toFixed(1),
+        })}
+      </span>
+    </div>
+  {/if}
+
+  <!-- VRAM Mode "high" warning - red, because this is a measured certainty rather than a risk -->
+  {#if highVramWarning}
+    <div
+      class="flex items-start gap-2 rounded-lg border border-red-600/60 bg-red-900/25 px-3 py-2 text-xs text-red-200"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        class="w-4 h-4 shrink-0 mt-px"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>
+      <span>
+        {locale.t("generation.video.highvram_warning", {
+          model: modelGb.toFixed(1),
+          detected: (detectedVramGb ?? 0).toFixed(1),
         })}
       </span>
     </div>

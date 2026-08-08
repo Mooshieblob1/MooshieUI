@@ -666,6 +666,8 @@ const pt: Record<string, string> = {
   "generation.video.megapixels_tip": "Total de pixels por quadro. A largura e a altura vêm daqui e da proporção, ajustadas para múltiplos de 32. Orçamentos maiores exigem muito mais VRAM.",
   "generation.video.resolution": "Resolução de saída: {width} x {height}",
   "generation.video.vram_warning": "Sua GPU tem {detected} GB de VRAM e esta configuração precisa de cerca de {required} GB. A geração pode ficar muito lenta ou falhar por falta de memória. Reduza a duração ou o orçamento de pixels.",
+  "generation.video.highvram_warning":
+    "O Modo VRAM está em alto, o que mantém todo o modelo de {model} GB fixo nos seus {detected} GB de VRAM e não deixa espaço para o resto do processo. A geração de vídeo fica cerca de 40 vezes mais lenta, sem nenhum erro que explique isso. Defina o Modo VRAM como normal em Configurações > Desempenho.",
   "generation.video.frames": "Quadros",
   "generation.video.frames_tip": "Ambos os campos são opcionais. Deixe vazios para texto para vídeo, defina só o primeiro quadro para imagem para vídeo, ou defina os dois para interpolar entre eles.",
   "generation.video.first_frame": "Primeiro quadro",

@@ -687,6 +687,8 @@ const de: Record<string, string> = {
   "generation.video.megapixels_tip": "Gesamtpixel pro Bild. Breite und Höhe ergeben sich daraus und aus dem Seitenverhältnis, gerundet auf Vielfache von 32. Höhere Budgets brauchen deutlich mehr VRAM.",
   "generation.video.resolution": "Ausgabeauflösung: {width} x {height}",
   "generation.video.vram_warning": "Deine GPU hat {detected} GB VRAM, diese Konfiguration benötigt etwa {required} GB. Die Generierung kann sehr langsam sein oder mit Speichermangel fehlschlagen. Reduziere die Dauer oder das Pixelbudget.",
+  "generation.video.highvram_warning":
+    "Der VRAM-Modus steht auf hoch. Dadurch bleibt das gesamte {model} GB große Modell in deinen {detected} GB VRAM geladen und es bleibt kein Platz für den Rest des Durchlaufs. Die Videogenerierung läuft dann etwa 40-mal langsamer, ohne dass eine Fehlermeldung erscheint. Stelle den VRAM-Modus unter Einstellungen > Leistung auf normal.",
   "generation.video.frames": "Bilder",
   "generation.video.frames_tip": "Beide Felder sind optional. Leer lassen für reines Text-zu-Video, nur das erste Bild setzen für Bild-zu-Video, oder beide setzen, um dazwischen zu interpolieren.",
   "generation.video.first_frame": "Erstes Bild",

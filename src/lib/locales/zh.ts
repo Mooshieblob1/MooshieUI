@@ -666,6 +666,8 @@ const zh: Record<string, string> = {
   "generation.video.megapixels_tip": "每帧的总像素数。宽高由该值和宽高比推导，并对齐到 32 的倍数。预算越高，显存占用越大。",
   "generation.video.resolution": "输出分辨率：{width} x {height}",
   "generation.video.vram_warning": "你的显卡有 {detected} GB 显存，而此设置约需 {required} GB。生成可能非常慢或因显存不足失败。请降低时长或像素预算。",
+  "generation.video.highvram_warning":
+    "显存模式设为“高”，会把整个 {model} GB 的模型常驻在你的 {detected} GB 显存中，不给其余流程留下余量。此时视频生成会慢约 40 倍，而且不会报任何错误。请在 设置 > 性能 中把显存模式改为“正常”。",
   "generation.video.frames": "帧",
   "generation.video.frames_tip": "两个槽位都是可选的。都留空即为文生视频，只设置首帧即为图生视频，两者都设置则在其间插值。",
   "generation.video.first_frame": "首帧",

@@ -757,6 +757,8 @@ const pl: Record<string, string> = {
   "generation.video.megapixels_tip": "Łączna liczba pikseli na klatkę. Szerokość i wysokość wynikają z tej wartości i proporcji, zaokrąglone do wielokrotności 32. Wyższy budżet wymaga znacznie więcej VRAM.",
   "generation.video.resolution": "Rozdzielczość wyjściowa: {width} x {height}",
   "generation.video.vram_warning": "Twój GPU ma {detected} GB VRAM, a ta konfiguracja potrzebuje około {required} GB. Generowanie może być bardzo wolne lub zakończyć się brakiem pamięci. Zmniejsz czas trwania albo budżet pikseli.",
+  "generation.video.highvram_warning":
+    "Tryb VRAM jest ustawiony na wysoki, więc cały model o rozmiarze {model} GB pozostaje na stałe w Twoich {detected} GB VRAM i nie zostaje miejsca na resztę przebiegu. Generowanie wideo staje się wtedy około 40 razy wolniejsze, bez żadnego błędu, który by to wyjaśniał. Ustaw Tryb VRAM na normalny w Ustawieniach > Wydajność.",
   "generation.video.frames": "Klatki",
   "generation.video.frames_tip": "Oba pola są opcjonalne. Zostaw puste dla tekstu na wideo, ustaw tylko pierwszą klatkę dla obrazu na wideo albo obie, aby interpolować między nimi.",
   "generation.video.first_frame": "Pierwsza klatka",

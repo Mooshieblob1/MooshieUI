@@ -666,6 +666,8 @@ const ko: Record<string, string> = {
   "generation.video.megapixels_tip": "프레임당 총 픽셀 수입니다. 너비와 높이는 이 값과 화면 비율에서 계산되어 32의 배수로 맞춰집니다. 값이 클수록 VRAM이 훨씬 많이 필요합니다.",
   "generation.video.resolution": "출력 해상도: {width} x {height}",
   "generation.video.vram_warning": "GPU의 VRAM은 {detected} GB인데 이 설정에는 약 {required} GB가 필요합니다. 생성이 매우 느리거나 메모리 부족으로 실패할 수 있습니다. 길이나 픽셀 예산을 줄이세요.",
+  "generation.video.highvram_warning":
+    "VRAM 모드가 높음으로 설정되어 있어 {model} GB 모델 전체가 {detected} GB VRAM에 상주하고 나머지 처리에 쓸 여유가 남지 않습니다. 이 상태에서는 동영상 생성이 약 40배 느려지지만 오류는 표시되지 않습니다. 설정 > 성능에서 VRAM 모드를 보통으로 바꾸세요.",
   "generation.video.frames": "프레임",
   "generation.video.frames_tip": "두 칸 모두 선택 사항입니다. 비워 두면 텍스트에서 동영상, 첫 프레임만 지정하면 이미지에서 동영상, 둘 다 지정하면 그 사이를 보간합니다.",
   "generation.video.first_frame": "첫 프레임",

@@ -681,6 +681,8 @@ const ja: Record<string, string> = {
   "generation.video.megapixels_tip": "1フレームあたりの総ピクセル数です。幅と高さはこの値とアスペクト比から求められ、32の倍数に丸められます。値を大きくすると VRAM を大幅に消費します。",
   "generation.video.resolution": "出力解像度: {width} x {height}",
   "generation.video.vram_warning": "GPU の VRAM は {detected} GB ですが、この設定には約 {required} GB が必要です。生成が非常に遅くなるか、メモリ不足で失敗する可能性があります。長さかピクセル量を下げてください。",
+  "generation.video.highvram_warning":
+    "VRAMモードが「高」になっているため、{model} GB のモデル全体が {detected} GB の VRAM に常駐し、処理の残りに使える余裕がなくなります。この状態では動画生成が約 40 倍遅くなりますが、エラーは表示されません。設定 > パフォーマンスで VRAMモードを「標準」に変更してください。",
   "generation.video.frames": "フレーム",
   "generation.video.frames_tip": "どちらの枠も任意です。空のままならテキストから動画、最初のフレームだけ設定すれば画像から動画、両方設定するとその間を補間します。",
   "generation.video.first_frame": "最初のフレーム",

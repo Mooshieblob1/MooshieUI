@@ -666,6 +666,8 @@ const zhTw: Record<string, string> = {
   "generation.video.megapixels_tip": "每格的總像素數。寬高由此值與長寬比推導，並對齊到 32 的倍數。預算越高，顯示記憶體用量越大。",
   "generation.video.resolution": "輸出解析度：{width} x {height}",
   "generation.video.vram_warning": "你的顯示卡有 {detected} GB 顯示記憶體，而此設定約需 {required} GB。生成可能非常慢或因記憶體不足失敗。請降低長度或像素預算。",
+  "generation.video.highvram_warning":
+    "顯存模式設為「高」，會把整個 {model} GB 的模型常駐在你的 {detected} GB 顯示記憶體中，不留餘裕給其餘流程。此時影片生成會慢約 40 倍，而且不會出現任何錯誤。請在 設定 > 效能 中把顯存模式改為「正常」。",
   "generation.video.frames": "影格",
   "generation.video.frames_tip": "兩個欄位都是選填。都留空即為文字轉影片，只設定首格即為圖像轉影片，兩者都設定則在其間內插。",
   "generation.video.first_frame": "首格",

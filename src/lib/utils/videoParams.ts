@@ -95,6 +95,29 @@ export function estimateH3ModelGb(filename: string | null | undefined): number {
 }
 
 /**
+ * Fraction of card VRAM above which pinning the whole DiT resident is harmful.
+ * ComfyUI's `--highvram` (VRAM Mode "high") force-loads the model instead of
+ * staging it dynamically, so a DiT this close to the card's capacity leaves no
+ * headroom for activations and the pass spills to host memory over PCIe.
+ * Measured on a 12 GB RTX 5070 with the 12.5 GB NVFP4 DiT: 176 s/it under
+ * `--highvram` against 4.2 s/it with dynamic loading, and no out-of-memory
+ * error to explain the difference.
+ */
+const H3_HIGHVRAM_HEADROOM_FRACTION = 0.9;
+
+/**
+ * Whether VRAM Mode "high" would starve an H3 pass of activation headroom.
+ * `false` when VRAM is unknown — a warning nobody can act on is just noise.
+ */
+export function isH3HighVramHarmful(
+  modelGb: number,
+  detectedVramGb: number | null,
+): boolean {
+  if (detectedVramGb === null || detectedVramGb <= 0) return false;
+  return modelGb > detectedVramGb * H3_HIGHVRAM_HEADROOM_FRACTION;
+}
+
+/**
  * Rough VRAM ceiling for a given pixel/frame budget. Measured envelope: a
  * 124-frame 1344x768 generation fits in 24 GB while 362 frames at the same size
  * OOMs, so budget scales with pixels x frames on top of the resident model.

@@ -681,6 +681,8 @@ const fr: Record<string, string> = {
   "generation.video.megapixels_tip": "Pixels totaux par image. La largeur et la hauteur en découlent avec le format d'image, arrondies à des multiples de 32. Un budget élevé demande beaucoup plus de VRAM.",
   "generation.video.resolution": "Résolution de sortie : {width} x {height}",
   "generation.video.vram_warning": "Votre GPU dispose de {detected} Go de VRAM et cette configuration en demande environ {required} Go. La génération peut être très lente ou échouer par manque de mémoire. Réduisez la durée ou le budget de pixels.",
+  "generation.video.highvram_warning":
+    "Le Mode VRAM est réglé sur élevé, ce qui garde tout le modèle de {model} Go chargé dans vos {detected} Go de VRAM et ne laisse plus de place pour le reste du traitement. La génération vidéo devient alors environ 40 fois plus lente, sans aucune erreur pour l'expliquer. Réglez le Mode VRAM sur normal dans Paramètres > Performances.",
   "generation.video.frames": "Images",
   "generation.video.frames_tip": "Les deux emplacements sont facultatifs. Laissez-les vides pour du texte vers vidéo, définissez seulement la première image pour de l'image vers vidéo, ou les deux pour interpoler entre elles.",
   "generation.video.first_frame": "Première image",

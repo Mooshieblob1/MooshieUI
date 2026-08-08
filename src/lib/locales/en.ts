@@ -758,6 +758,8 @@ const en: Record<string, string> = {
   "generation.video.megapixels_tip": "Total pixels per frame. Width and height are derived from this and the aspect ratio, snapped to multiples of 32. Higher budgets need much more VRAM.",
   "generation.video.resolution": "Output resolution: {width} x {height}",
   "generation.video.vram_warning": "Your GPU has {detected} GB of VRAM and this setup needs about {required} GB. Generation may be very slow or fail with out of memory. Lower the duration or the pixel budget.",
+  "generation.video.highvram_warning":
+    "VRAM Mode is set to high, which pins the whole {model} GB model in your {detected} GB of VRAM and leaves no room for the rest of the pass. Video generation then runs roughly 40 times slower, with no error to explain it. Set VRAM Mode to normal in Settings > Performance.",
   "generation.video.frames": "Frames",
   "generation.video.frames_tip": "Both slots are optional. Leave them empty for plain text to video, set only the first frame for image to video, or set both to interpolate between them.",
   "generation.video.first_frame": "First Frame",
