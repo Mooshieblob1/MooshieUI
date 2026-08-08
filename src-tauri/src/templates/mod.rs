@@ -3,6 +3,7 @@ pub mod facefix;
 pub mod image_edit;
 pub mod img2img;
 pub mod inpainting;
+pub mod rife;
 pub mod segment_detail;
 pub mod style_transfer;
 pub mod txt2img;
