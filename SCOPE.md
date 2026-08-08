@@ -6,10 +6,14 @@ open an issue with the feature template and ask.
 
 ## What MooshieUI is
 
-- A desktop (Tauri) and browser front-end for running local image generation
-  through ComfyUI, focused on a fast, friendly, single-user experience.
+- A desktop (Tauri) and browser front-end for running local image and video
+  generation through ComfyUI, focused on a fast, friendly, single-user
+  experience.
 - A polished UI over generation workflows: prompt building, generation
   settings, gallery management, model hub, and related in-app tooling.
+- Video generation on the same footing as images: shot planning through the
+  timeline director, playback, frame interpolation, and clip export. The
+  timeline is a shot list that feeds a ComfyUI graph, not a node editor.
 - Cross-platform (Windows, macOS, Linux) and dual-mode (native desktop app and
   an embedded browser server), sharing one codebase.
 - Localized (i18n across all supported locales) and accessible (a11y).
@@ -23,6 +27,9 @@ open an issue with the feature template and ask.
 - Not a model training or dataset-management tool.
 - Not a general-purpose image editor beyond the specific in-app editing features
   already shipped.
+- Not a video editor or non-linear editing suite. Clips are planned before
+  generation and exported afterwards; MooshieUI does not cut, composite, or
+  grade footage.
 - Not a plugin marketplace or arbitrary third-party extension host.
 
 ## How scope is enforced

@@ -18,7 +18,11 @@ cargo check --manifest-path src-tauri/Cargo.toml   # Rust compile check
 cargo fmt && cargo clippy    # Rust format/lint (run in src-tauri/)
 ```
 
-**No test framework exists** — no vitest/jest on the frontend, no `#[test]` modules in Rust. Validation is `npm run build` + `cargo check` (see the `pre-commit-check` skill).
+**No frontend test framework** — no vitest/jest. Rust *does* have tests: ~126 `#[test]` fns across 12 `#[cfg(test)]` modules, covering pure logic only (`templates/video.rs`, `commands/video_export.rs`, `commands/api.rs`, `prompt_assistant/*`, `comfyui/nodes.rs`, ...). Run them with `cargo test --manifest-path src-tauri/Cargo.toml`.
+
+One test is known-red on main: `jxl::tests::roundtrip_2x2_rgba8` asserts a byte-exact round-trip, but `encode_rgba8_lossless` is `LossyConfig::new(1.0)` (visually lossless, not mathematically lossless), so it fails by ~8/255 on a 2x2 image. Treat `cargo test` as "no *new* failures" until that test is corrected.
+
+Validation is `npm run build` + `cargo check` + `cargo test` (see the `pre-commit-check` skill).
 
 ## Skills
 

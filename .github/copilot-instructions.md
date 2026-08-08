@@ -31,7 +31,7 @@ cargo fmt                # Format Rust code (run inside src-tauri/)
 cargo clippy             # Lint Rust code (run inside src-tauri/)
 ```
 
-> **No test framework exists yet.** There are no test scripts, no vitest/jest, no Rust test modules.
+> **No frontend test framework.** There are no test scripts and no vitest/jest. Rust does have tests: ~126 `#[test]` fns in `#[cfg(test)]` modules over pure logic, run with `cargo test --manifest-path src-tauri/Cargo.toml`. `jxl::tests::roundtrip_2x2_rgba8` is known-red on main, so the gate is "no new failures".
 
 ## Architecture
 
