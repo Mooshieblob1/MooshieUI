@@ -134,6 +134,42 @@ pub fn read_gif_metadata(bytes: &[u8]) -> Result<Option<HashMap<String, String>>
     Ok(gif::read_comment(bytes).and_then(|t| parse_swarmui_json(t.trim())))
 }
 
+/// Copy an mp4 or avif file's container-native metadata into a top-level Adobe
+/// XMP `uuid` box, rewriting the file in place. Returns whether anything was
+/// written.
+///
+/// This is the second half of the two-carrier split: Python writes the
+/// container-native copy because it holds the frames, and this mirrors it so
+/// the payload also lives somewhere Discord's `moov/udta` scrubber does not
+/// reach. Reading the payload back out rather than passing it in is what keeps
+/// generation parameters from having to thread through the websocket layer.
+///
+/// Best-effort throughout. Every failure is a `false`, never an error: a video
+/// with no `uuid` mirror is still a perfectly good video.
+pub fn mirror_uuid_sidecar(path: &std::path::Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    let json = match detect_format(&bytes) {
+        ImageFormat::Mp4 => isobmff::read_udta_comment(&bytes),
+        ImageFormat::Avif => isobmff::read_avif_exif(&bytes)
+            .as_deref()
+            .and_then(read_exif_user_comment),
+        _ => None,
+    };
+    let Some(json) = json else {
+        return false;
+    };
+    // Already mirrored, by us or by an earlier pass over the same file.
+    if isobmff::read_uuid_xmp(&bytes).as_deref() == Some(json.as_str()) {
+        return false;
+    }
+    let Some(out) = isobmff::append_uuid_xmp(&bytes, &json) else {
+        return false;
+    };
+    std::fs::write(path, out).is_ok()
+}
+
 /// Format-aware dispatcher: embeds metadata into PNG, JXL, or WebP bytes and
 /// returns the result in the **same** container format, so callers exporting or
 /// copying raw bytes never have to transcode just to attach metadata.
@@ -1731,6 +1767,86 @@ mod tests {
             embed_image_metadata(&iso_ftyp(b"avif"), &params, MetadataMode::TextChunk).is_err()
         );
         assert!(embed_image_metadata(b"GIF89a......", &params, MetadataMode::TextChunk).is_err());
+    }
+
+    #[test]
+    fn mirrors_an_mp4_udta_comment_into_a_uuid_box() {
+        let json = format_swarmui_json(&test_params());
+
+        // moov/udta/meta with one mdta key named `comment`, the shape
+        // `save_to(metadata={"comment": ...})` produces.
+        let name = b"comment";
+        let mut entry = ((8 + name.len()) as u32).to_be_bytes().to_vec();
+        entry.extend_from_slice(b"mdta");
+        entry.extend_from_slice(name);
+        let mut keys_body = vec![0u8; 4];
+        keys_body.extend_from_slice(&1u32.to_be_bytes());
+        keys_body.extend_from_slice(&entry);
+        let mut data_body = 1u32.to_be_bytes().to_vec();
+        data_body.extend_from_slice(&0u32.to_be_bytes());
+        data_body.extend_from_slice(json.as_bytes());
+        let ilst = iso_box(
+            b"ilst",
+            &iso_box(&1u32.to_be_bytes(), &iso_box(b"data", &data_body)),
+        );
+        let mut meta_body = vec![0u8; 4];
+        meta_body.extend_from_slice(&iso_box(b"keys", &keys_body));
+        meta_body.extend_from_slice(&ilst);
+
+        let mut mp4 = iso_ftyp(b"isom");
+        mp4.extend_from_slice(&iso_box(
+            b"moov",
+            &iso_box(b"udta", &iso_box(b"meta", &meta_body)),
+        ));
+        mp4.extend_from_slice(&iso_box(b"mdat", b"frames"));
+
+        let dir = std::env::temp_dir().join("mooshie_uuid_mirror_mp4");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("clip.mp4");
+        std::fs::write(&path, &mp4).unwrap();
+
+        assert!(mirror_uuid_sidecar(&path));
+
+        let after = std::fs::read(&path).unwrap();
+        assert_eq!(&after[..mp4.len()], &mp4[..], "no existing byte moved");
+        assert_params_match(&read_image_metadata(&after).unwrap().unwrap());
+        // The mirror is what a Discord round trip leaves behind, so it has to
+        // read on its own with the udta subtree gone.
+        assert_eq!(
+            crate::metadata::isobmff::read_uuid_xmp(&after).as_deref(),
+            Some(json.as_str())
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn mirroring_a_file_with_no_metadata_is_a_no_op() {
+        let mut mp4 = iso_ftyp(b"isom");
+        mp4.extend_from_slice(&iso_box(b"moov", b"index"));
+
+        let dir = std::env::temp_dir().join("mooshie_uuid_mirror_bare");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("clip.mp4");
+        std::fs::write(&path, &mp4).unwrap();
+
+        assert!(!mirror_uuid_sidecar(&path));
+        assert_eq!(std::fs::read(&path).unwrap(), mp4, "file untouched");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn mirroring_a_missing_or_unsupported_file_returns_false() {
+        let missing = std::env::temp_dir().join("mooshie_no_such_clip.mp4");
+        assert!(!mirror_uuid_sidecar(&missing));
+
+        let dir = std::env::temp_dir().join("mooshie_uuid_mirror_png");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("not-a-video.png");
+        std::fs::write(&path, b"\x89PNG\r\n\x1a\nrest").unwrap();
+        assert!(!mirror_uuid_sidecar(&path));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// ASCII/Latin-1 payloads must keep using `tEXt`, which is the chunk
