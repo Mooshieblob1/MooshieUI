@@ -1435,6 +1435,38 @@ async fn object_info_has_node_class(
     }
 }
 
+/// Whether `/object_info/{node_class}` declares `input_name` in either its
+/// required or optional section.
+///
+/// Returns false on any error rather than propagating one. The only caller uses
+/// this to decide whether to set an optional input, and a probe that cannot
+/// reach the server should degrade to omitting it, not to a failed generation.
+pub async fn node_declares_input(
+    http_client: &reqwest::Client,
+    base_url: &str,
+    node_class: &str,
+    input_name: &str,
+) -> bool {
+    let base_url = base_url.trim_end_matches('/');
+    let url = format!("{}/object_info/{}", base_url, node_class);
+    let Ok(response) = http_client.get(&url).send().await else {
+        return false;
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+    let Ok(value) = response.json::<serde_json::Value>().await else {
+        return false;
+    };
+    let Some(input) = value.get(node_class).and_then(|n| n.get("input")) else {
+        return false;
+    };
+    ["required", "optional"]
+        .iter()
+        .filter_map(|section| input.get(section))
+        .any(|section| section.get(input_name).is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
