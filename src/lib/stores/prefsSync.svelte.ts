@@ -25,6 +25,9 @@ import { accessibility } from "./accessibility.svelte.js";
 import { locale } from "./locale.svelte.js";
 import { autocomplete } from "./autocomplete.svelte.js";
 import { notes } from "./notes.svelte.js";
+// Also the load-bearing import that registers the timeline compiler with
+// `utils/timelineProvider.ts` before the first generation.
+import { videoTimeline } from "./videoTimeline.svelte.js";
 
 class PrefsSyncStore {
   private _syncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -48,6 +51,7 @@ class PrefsSyncStore {
       autocomplete: autocomplete.collectPrefs(),
       accessibility: accessibility.collectPrefs(),
       notes: notes.collectPrefs(),
+      video_timeline: videoTimeline.collectPrefs(),
       locale: locale.current,
     };
   }
@@ -83,6 +87,9 @@ class PrefsSyncStore {
     }
     if (prefs.notes) {
       notes.applyServerPrefs(prefs.notes);
+    }
+    if (prefs.video_timeline) {
+      videoTimeline.applyServerPrefs(prefs.video_timeline);
     }
     if (typeof prefs.locale === "string") {
       locale.applyServerPrefs(prefs.locale);

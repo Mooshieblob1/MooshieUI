@@ -220,6 +220,11 @@ export interface GenerationParams {
   video_clip_model?: string | null;
   video_vae_model?: string | null;
   video_audio_vae_model?: string | null;
+  /**
+   * Compiled H3 Director `timeline_data` JSON, or null to build the plain
+   * native H3 graph. Produced by `videoTimeline.compileTimelineData()`.
+   */
+  video_timeline_data?: string | null;
 }
 
 export interface OutputImage {

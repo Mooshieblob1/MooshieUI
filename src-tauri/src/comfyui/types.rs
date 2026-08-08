@@ -260,6 +260,12 @@ pub struct GenerationParams {
     pub video_vae_model: Option<String>,
     #[serde(default)]
     pub video_audio_vae_model: Option<String>,
+    /// Compiled H3 Director `timeline_data` JSON. `None` (or an empty string)
+    /// selects the plain native H3 graph; anything else routes the video build
+    /// through `MooshieH3Director`. Kept as an opaque string because the node
+    /// is the authority on the schema - Rust only forwards it.
+    #[serde(default)]
+    pub video_timeline_data: Option<String>,
     /// Optional ControlNet parameters
     #[serde(default)]
     pub controlnet: Option<ControlNetParam>,

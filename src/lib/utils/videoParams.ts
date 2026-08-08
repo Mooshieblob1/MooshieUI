@@ -33,6 +33,21 @@ export const H3_ASPECT_RATIOS: readonly VideoAspectRatio[] = [
 export const H3_MAX_REF_IMAGES = 9;
 
 /**
+ * Timeline (H3 Director) budgets, mirroring the constants at the top of
+ * `comfyui-nodes/minimax_director/minimax_plan.py`. The node validates these
+ * server-side and aborts the run; enforcing them client-side turns a failed
+ * generation into a disabled button.
+ */
+export const H3_MAX_REF_VIDEOS = 3;
+export const H3_MAX_REF_AUDIOS = 3;
+/** `substitute_char_tags` only swaps `@character1`-`@character3`. */
+export const H3_MAX_TIMELINE_CHARACTERS = 3;
+/** Each reference clip must be 2-15 s, and all of them together at most 15 s. */
+export const H3_REF_VIDEO_MIN_SECONDS = 2;
+export const H3_REF_VIDEO_MAX_SECONDS = 15;
+export const H3_REF_VIDEO_TOTAL_SECONDS = 15;
+
+/**
  * Turbo LoRA step bounds, mirroring `H3_TURBO_MIN_STEPS`/`H3_TURBO_MAX_STEPS`
  * in `templates/video.rs`. Below 4 the distilled model has no schedule left to
  * work with; above 8 it stops improving and starts over-sharpening. The

@@ -1,5 +1,6 @@
 import { ipcStore } from "../utils/ipc.js";
 import { triggerSync } from "../utils/syncTrigger.js";
+import { compiledTimelineData } from "../utils/timelineProvider.js";
 import {
   buildRegionalContextPrompt,
   mergeRegionalPromptText,
@@ -2545,6 +2546,11 @@ class GenerationStore {
       video_clip_model: this.videoClipModel,
       video_vae_model: this.videoVaeModel,
       video_audio_vae_model: this.videoAudioVaeModel,
+      // Compiled H3 Director timeline, or null when the timeline is off or
+      // empty - the backend then builds the plain native H3 graph. Routed
+      // through a registration seam so this hub store never imports the
+      // feature store (see `utils/timelineProvider.ts`).
+      video_timeline_data: isVideo ? compiledTimelineData(translatedPositiveBase) : null,
     };
 
     if (options.overrides) {

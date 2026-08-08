@@ -23,6 +23,7 @@ export interface UserPrefsData {
   autocomplete?: unknown;
   accessibility?: unknown;
   notes?: unknown;
+  video_timeline?: unknown;
   locale?: string;
   updated_at?: string;
 }

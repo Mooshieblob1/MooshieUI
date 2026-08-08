@@ -41,6 +41,8 @@ pub struct UserPrefs {
     pub accessibility: Option<serde_json::Value>,
     /// Freeform user notes (bottom panel Notes tab).
     pub notes: Option<serde_json::Value>,
+    /// H3 Director timeline (bottom panel Timeline tab, video mode).
+    pub video_timeline: Option<serde_json::Value>,
     /// UI locale string (e.g. `"en"`, `"ja"`).
     pub locale: Option<serde_json::Value>,
     /// ISO 8601 timestamp of the last update (set by the server, not the client).
