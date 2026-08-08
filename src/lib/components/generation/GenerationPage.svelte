@@ -16,6 +16,8 @@
   import StyleTransferSettings from "./StyleTransferSettings.svelte";
   import ImageEditSettings from "./ImageEditSettings.svelte";
   import VideoSettingsPanel from "../video/VideoSettingsPanel.svelte";
+  import H3PromptGuidePanel from "../video/H3PromptGuidePanel.svelte";
+  import { h3Guide } from "../../stores/h3Guide.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
   import ProgressBar from "../progress/ProgressBar.svelte";
@@ -2251,6 +2253,15 @@
               <PreviewImage />
             </div>
           </div>
+
+          <!-- The H3 guide covers the preview rather than the screen, on purpose:
+               it is read while writing the prompt, so the side panels must stay
+               lit and clickable. Padding mirrors this container's own. -->
+          {#if h3Guide.open && generation.mode === "video"}
+            <div class="absolute inset-0 z-20 p-6 {mobileFriendly ? 'pt-20' : ''}">
+              <H3PromptGuidePanel onClose={() => h3Guide.hide()} />
+            </div>
+          {/if}
         </div>
       </div>
     {/if}

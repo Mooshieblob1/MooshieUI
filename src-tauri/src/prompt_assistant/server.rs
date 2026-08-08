@@ -450,6 +450,13 @@ async fn send_external_chat(
 /// `https://api.openai.com/v1`); `/chat/completions` is appended. Base URLs
 /// entered without the `/v1` segment are retried at `/v1/chat/completions` on
 /// 404. Bearer auth is added when `api_key` is non-empty.
+///
+/// With an `image`, the user turn becomes a content-block array carrying a
+/// `data:` URI alongside the text. Endpoints that ignore images still see the
+/// text block, so the worst case is a text-only answer rather than an error.
+// One argument over the lint's threshold, and the caller already passes them
+// individually; a struct would only move the same fields somewhere else.
+#[allow(clippy::too_many_arguments)]
 pub async fn chat_external(
     client: &reqwest::Client,
     base_url: &str,
@@ -458,12 +465,25 @@ pub async fn chat_external(
     system: &str,
     user: &str,
     max_tokens: u32,
+    image: Option<&super::vision::VisionImage>,
 ) -> Result<String, AppError> {
+    let user_content = match image {
+        Some(img) => json!([
+            { "type": "text", "text": user },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": format!("data:{};base64,{}", img.media_type, img.base64)
+                }
+            }
+        ]),
+        None => json!(user),
+    };
     let body = json!({
         "model": model,
         "messages": [
             { "role": "system", "content": system },
-            { "role": "user", "content": user }
+            { "role": "user", "content": user_content }
         ],
         "temperature": 0.7,
         "max_tokens": max_tokens,
@@ -539,6 +559,11 @@ async fn error_detail(resp: reqwest::Response) -> String {
 /// `x-api-key` header rather than a bearer token, `anthropic-version` is
 /// mandatory, the system prompt is a top-level field instead of a message, and
 /// the answer arrives as a list of content blocks.
+///
+/// An `image` leads the user turn, which is what Anthropic recommends: the
+/// model reads the picture before the instruction that refers to it.
+// One argument over the lint's threshold; see `chat_external`.
+#[allow(clippy::too_many_arguments)]
 pub async fn chat_anthropic(
     client: &reqwest::Client,
     base_url: &str,
@@ -547,18 +572,33 @@ pub async fn chat_anthropic(
     system: &str,
     user: &str,
     max_tokens: u32,
+    image: Option<&super::vision::VisionImage>,
 ) -> Result<String, AppError> {
     if api_key.trim().is_empty() {
         return Err(AppError::LlmError(
             "Anthropic requires an API key. Add one in Settings > Prompt Assistant.".into(),
         ));
     }
+    let user_content = match image {
+        Some(img) => json!([
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": img.media_type,
+                    "data": img.base64
+                }
+            },
+            { "type": "text", "text": user }
+        ]),
+        None => json!(user),
+    };
     let body = json!({
         "model": model,
         "max_tokens": max_tokens,
         "system": system,
         "temperature": 0.7,
-        "messages": [ { "role": "user", "content": user } ]
+        "messages": [ { "role": "user", "content": user_content } ]
     });
     let resp = client
         .post(anthropic_url(base_url, "messages"))
@@ -610,11 +650,15 @@ pub async fn chat_provider(
     system: &str,
     user: &str,
     max_tokens: u32,
+    image: Option<&super::vision::VisionImage>,
 ) -> Result<String, AppError> {
     let base = super::providers::effective_base_url(provider_id, base_url);
     match super::providers::wire_for(provider_id) {
         super::providers::Wire::Anthropic => {
-            chat_anthropic(client, &base, api_key, model, system, user, max_tokens).await
+            chat_anthropic(
+                client, &base, api_key, model, system, user, max_tokens, image,
+            )
+            .await
         }
         super::providers::Wire::OpenAiCompatible => {
             if base.is_empty() {
@@ -623,7 +667,10 @@ pub async fn chat_provider(
                         .into(),
                 ));
             }
-            chat_external(client, &base, api_key, model, system, user, max_tokens).await
+            chat_external(
+                client, &base, api_key, model, system, user, max_tokens, image,
+            )
+            .await
         }
     }
 }
@@ -691,6 +738,38 @@ pub async fn list_models(
         .unwrap_or_default();
     ids.sort();
     ids.dedup();
+    // Ollama serves this list with no modality information, so a text-only model
+    // looks exactly like a VLM here. Its own API does know, and every job the
+    // prompt assistant does can involve an image, so narrow the picker to models
+    // that can actually see one. Keep the full list when the probe finds nothing:
+    // an empty picker reads as a broken request, and the field is free text, so a
+    // user who wants a text-only model can still type its id.
+    if !anthropic {
+        if let Some(vision) = super::vision::ollama_vision_models(client, &base).await {
+            let kept: Vec<String> = ids
+                .iter()
+                .filter(|id| {
+                    vision
+                        .iter()
+                        .any(|name| super::vision::model_id_matches(id, name))
+                })
+                .cloned()
+                .collect();
+            if kept.is_empty() {
+                log::info!(
+                    "[prompt-assistant] Ollama reported no vision-capable models; \
+                     keeping the unfiltered list"
+                );
+            } else {
+                log::info!(
+                    "[prompt-assistant] Ollama: {} of {} models are vision-capable",
+                    kept.len(),
+                    ids.len()
+                );
+                return Ok(kept);
+            }
+        }
+    }
     Ok(ids)
 }
 

@@ -254,6 +254,76 @@ function booleanOrDefault(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
+/**
+ * Which prompt the UI is editing.
+ *
+ * Only the image/video boundary splits, not every mode: H3 is prompted in prose
+ * and the image models in danbooru tags, so carrying one across is never what
+ * anyone meant. Within the image side people move a prompt between txt2img,
+ * img2img and inpainting constantly, so those keep sharing one bucket.
+ */
+type PromptBucketId = "image" | "video";
+
+/** Everything that swaps together when crossing the image/video boundary. */
+interface PromptBucket {
+  positivePrompt: string;
+  negativePrompt: string;
+  extraPositiveBoxes: ExtraPromptBox[];
+  extraNegativeBoxes: ExtraPromptBox[];
+}
+
+type PromptBuckets = Record<PromptBucketId, PromptBucket>;
+
+function newBoxId(): string {
+  return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function sanitizePromptBoxes(raw: unknown): ExtraPromptBox[] {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((b: unknown) => !!b && typeof b === "object")
+    .map((b: any) => ({
+      id: typeof b.id === "string" && b.id ? b.id : newBoxId(),
+      name: typeof b.name === "string" ? b.name : "",
+      content: typeof b.content === "string" ? b.content : "",
+    }));
+}
+
+function promptBucketFor(mode: GenerationMode): PromptBucketId {
+  return mode === "video" ? "video" : "image";
+}
+
+function emptyPromptBucket(): PromptBucket {
+  return {
+    positivePrompt: "",
+    negativePrompt: "",
+    extraPositiveBoxes: [],
+    extraNegativeBoxes: [],
+  };
+}
+
+function createDefaultPromptBuckets(): PromptBuckets {
+  return { image: emptyPromptBucket(), video: emptyPromptBucket() };
+}
+
+function normalizePromptBuckets(value: unknown): PromptBuckets {
+  const normalized = createDefaultPromptBuckets();
+  if (!value || typeof value !== "object") return normalized;
+
+  const raw = value as Record<string, Partial<PromptBucket> | undefined>;
+  for (const id of ["image", "video"] as PromptBucketId[]) {
+    const bucket = raw[id];
+    if (!bucket || typeof bucket !== "object") continue;
+    normalized[id] = {
+      positivePrompt: typeof bucket.positivePrompt === "string" ? bucket.positivePrompt : "",
+      negativePrompt: typeof bucket.negativePrompt === "string" ? bucket.negativePrompt : "",
+      extraPositiveBoxes: sanitizePromptBoxes(bucket.extraPositiveBoxes),
+      extraNegativeBoxes: sanitizePromptBoxes(bucket.extraNegativeBoxes),
+    };
+  }
+
+  return normalized;
+}
+
 function normalizeModeToggles(value: unknown): ModeToggleStates {
   const normalized = createDefaultModeToggles();
   if (!value || typeof value !== "object") return normalized;
@@ -391,6 +461,12 @@ class GenerationStore {
   negativePrompt = $state("");
   extraPositiveBoxes = $state<ExtraPromptBox[]>([]);
   extraNegativeBoxes = $state<ExtraPromptBox[]>([]);
+  /**
+   * The prompt bucket that is *not* currently being edited, parked here until
+   * the user switches back. The live fields above are always the active bucket,
+   * so everything that reads or writes a prompt keeps doing so unchanged.
+   */
+  promptBuckets = $state<PromptBuckets>(createDefaultPromptBuckets());
   checkpoint = $state("");
   vae = $state("");
   loras = $state<LoraEntry[]>([]);
@@ -684,8 +760,40 @@ class GenerationStore {
       ...this.modeToggles,
       [this._mode]: this.readModeToggleState(),
     };
+
+    const from = promptBucketFor(this._mode);
+    const to = promptBucketFor(mode);
+    if (from !== to) {
+      this.promptBuckets = { ...this.promptBuckets, [from]: this.readPromptBucket() };
+      this.applyPromptBucket(this.promptBuckets[to] ?? emptyPromptBucket());
+    }
+
     this._mode = mode;
     this.applyModeToggleState(this.modeToggles[mode] ?? defaultModeToggleState());
+  }
+
+  readPromptBucket(): PromptBucket {
+    return {
+      positivePrompt: this.positivePrompt,
+      negativePrompt: this.negativePrompt,
+      extraPositiveBoxes: this.extraPositiveBoxes,
+      extraNegativeBoxes: this.extraNegativeBoxes,
+    };
+  }
+
+  applyPromptBucket(bucket: PromptBucket): void {
+    this.positivePrompt = bucket.positivePrompt;
+    this.negativePrompt = bucket.negativePrompt;
+    this.extraPositiveBoxes = bucket.extraPositiveBoxes;
+    this.extraNegativeBoxes = bucket.extraNegativeBoxes;
+  }
+
+  /** Buckets with the live fields folded back into the active side, for persisting. */
+  promptBucketsWithCurrent(): PromptBuckets {
+    return {
+      ...this.promptBuckets,
+      [promptBucketFor(this._mode)]: this.readPromptBucket(),
+    };
   }
 
   readModeToggleState(): ModeToggleState {
@@ -864,8 +972,16 @@ class GenerationStore {
     return this.modelTurboVariant !== "none";
   }
 
-  /** True when the selected model family ignores negative prompts. */
+  /**
+   * True when the selected model ignores negative prompts.
+   *
+   * Video is unconditional here rather than family-keyed: the H3 workflow guides
+   * with `BasicGuider`, which has one conditioning input and no negative branch
+   * at all, so nothing typed in that box could reach ComfyUI whatever checkpoint
+   * the image side happens to have loaded.
+   */
   get disablesNegativePrompt(): boolean {
+    if (this.mode === "video") return true;
     return [
       "flux1d",
       "flux1s",
@@ -1309,13 +1425,16 @@ class GenerationStore {
     const entry = this.promptHistory.find((item) => item.id === id);
     if (!entry) return;
 
+    // Mode first: crossing the image/video boundary swaps the prompt buckets, so
+    // writing the prompt before the switch would park it in the bucket we are
+    // leaving and then overwrite it with the one we arrive in.
+    this.mode = entry.mode;
     this.positivePrompt = entry.positivePrompt;
     this.negativePrompt = entry.negativePrompt;
     // The stored prompt already includes any extra-box content (concatenated at
     // save time), so clear the boxes to avoid duplicating it back on top.
     this.extraPositiveBoxes = [];
     this.extraNegativeBoxes = [];
-    this.mode = entry.mode;
     this.stylePreset = entry.stylePreset;
 
     this.promptHistory = [
@@ -1327,7 +1446,7 @@ class GenerationStore {
   }
 
   private newBoxId(): string {
-    return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return newBoxId();
   }
 
   addPositiveBox() {
@@ -1732,21 +1851,17 @@ class GenerationStore {
         if (saved.batchSize) this.batchSize = saved.batchSize;
         if (saved.denoise !== undefined) this.denoise = saved.denoise;
         if (saved.differentialDiffusion !== undefined) this.differentialDiffusion = saved.differentialDiffusion;
+        // The parked bucket. The active one is loaded from the flat fields below,
+        // which also carries a pre-split store forward: its single prompt lands
+        // on whichever side the saved mode was on, and the other starts empty.
+        if (saved.promptBuckets) this.promptBuckets = normalizePromptBuckets(saved.promptBuckets);
         if (saved.positivePrompt) this.positivePrompt = saved.positivePrompt;
         if (saved.negativePrompt) this.negativePrompt = saved.negativePrompt;
-        const sanitizeBoxes = (raw: unknown): ExtraPromptBox[] =>
-          (Array.isArray(raw) ? raw : [])
-            .filter((b: unknown) => !!b && typeof b === "object")
-            .map((b: any) => ({
-              id: typeof b.id === "string" && b.id ? b.id : (crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`),
-              name: typeof b.name === "string" ? b.name : "",
-              content: typeof b.content === "string" ? b.content : "",
-            }));
         if (Array.isArray(saved.extraPositiveBoxes)) {
-          this.extraPositiveBoxes = sanitizeBoxes(saved.extraPositiveBoxes);
+          this.extraPositiveBoxes = sanitizePromptBoxes(saved.extraPositiveBoxes);
         }
         if (Array.isArray(saved.extraNegativeBoxes)) {
-          this.extraNegativeBoxes = sanitizeBoxes(saved.extraNegativeBoxes);
+          this.extraNegativeBoxes = sanitizePromptBoxes(saved.extraNegativeBoxes);
         }
         if (Array.isArray(saved.loras)) {
           this.loras = saved.loras.map((l: any) => ({
@@ -1940,6 +2055,9 @@ class GenerationStore {
       await ipcStore.set(STORE_KEY, {
         mode: this.mode,
         modeToggles,
+        promptBuckets: this.promptBucketsWithCurrent(),
+        // The active bucket is also written flat, both for older builds reading
+        // this store and as the load-time source for the live fields.
         positivePrompt: this.positivePrompt,
         negativePrompt: this.negativePrompt,
         extraPositiveBoxes: this.extraPositiveBoxes,
@@ -2060,6 +2178,7 @@ class GenerationStore {
     return {
       mode: this.mode,
       modeToggles,
+      promptBuckets: this.promptBucketsWithCurrent(),
       positivePrompt: this.positivePrompt,
       negativePrompt: this.negativePrompt,
       extraPositiveBoxes: this.extraPositiveBoxes,
@@ -2290,8 +2409,13 @@ class GenerationStore {
       positivePrompt = this.mergeTagPrompts(positivePrompt, preset.append);
     }
 
-    // Auto-apply quality tags for supported model families
-    if (this.autoQualityTags) {
+    // Auto-apply quality tags for supported model families.
+    //
+    // Skipped in video mode: the family getters read `modelFamily`, which comes
+    // from the image checkpoint and stays selected while video is active, so
+    // without this guard H3 prose picks up `masterpiece, best quality` and
+    // friends from whatever SDXL model happens to be loaded.
+    if (!isVideo && this.autoQualityTags) {
       // Anima models (positive before, negative after)
       if (this.isAnima) {
         positivePrompt = this.mergeTagPrompts(this.customAnimaPositiveQuality, positivePrompt);
@@ -2324,7 +2448,7 @@ class GenerationStore {
       this.upscaleEnabled &&
       !this.upscaleFastRefine &&
       (this.upscaleTiling || this.useSplitModel);
-    if (upscaleUsesTiling && this.autoQualityTags) {
+    if (!isVideo && upscaleUsesTiling && this.autoQualityTags) {
       if (this.isAnima) {
         upscalePositivePrompt = this.customAnimaPositiveQuality;
         upscaleNegativePrompt = this.customAnimaNegativeQuality;

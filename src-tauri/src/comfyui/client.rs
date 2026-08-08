@@ -800,4 +800,35 @@ impl AppState {
         }
         Ok(resp.bytes().await?.to_vec())
     }
+
+    /// Read back an image the app previously uploaded via `/upload/image`.
+    ///
+    /// Uploaded frames only ever exist as a filename on this side; ComfyUI's
+    /// input directory is the one place the bytes still live, which is what
+    /// makes the frame recoverable after a reload.
+    pub async fn get_input_image_bytes(
+        &self,
+        filename: &str,
+        subfolder: &str,
+    ) -> Result<Vec<u8>, AppError> {
+        // Uploaded names come from user files and routinely carry spaces and
+        // other characters that need escaping in a query string.
+        let encode = |s: &str| {
+            percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string()
+        };
+        let url = format!(
+            "{}/view?filename={}&subfolder={}&type=input",
+            self.base_url().await,
+            encode(filename),
+            encode(subfolder)
+        );
+        let resp = self.http_client.get(&url).send().await?;
+        if !resp.status().is_success() {
+            return Err(AppError::ApiError {
+                status: resp.status().as_u16(),
+                message: "Failed to fetch input image".to_string(),
+            });
+        }
+        Ok(resp.bytes().await?.to_vec())
+    }
 }

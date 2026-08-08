@@ -118,6 +118,7 @@ const SHARED_SYNTAX_RULES = `Shot and timing syntax:
 - Every shot opens with "[Shot N]". Shot 1 carries no timestamp. Later shots begin "[Shot 2] At 00:03.500, the camera cuts to ...", with strictly increasing cut times that all fall inside the video duration.
 - Ordinary cut verbs: "the camera cuts to", "the shot cuts to", "the shot transitions to", "the shot changes to", "the shot switches to". Use a cross-dissolve, fade or wipe only if the user asked for one.
 - A cut must introduce new information. If only the distance or the angle changes slightly, use camera motion instead of a cut.
+- A cut discards the visual context established before it. A style stated only in [Shot 1] does not survive into [Shot 2]. Every shot after the first restates the style in its opening clause, after the timestamp and before the cut verb: "[Shot 2] At 00:03.500, still live-action cinematic, the camera cuts to the empty platform edge." Restate the lighting and colour palette alongside it whenever they carry the look.
 
 Camera motion is written as natural English inside the shot, never as trailing labels:
 - Motion type: Zoom In / Zoom Out, Push In / Pull Out, Pan Left / Pan Right, Truck Left / Truck Right, Tilt Up / Tilt Down, Pedestal Up / Pedestal Down, Arc Shot, Tracking Shot, Static Shot, Shake Slightly / Shake Strongly, POV, Roll Clockwise / Roll Counterclockwise.
@@ -141,7 +142,7 @@ const AUDIO_FIELD_RULES = `overall_soundscape: one continuous paragraph of 1 to 
 
 non_diegetic_music: 1 to 3 English sentences describing background music only the audience hears. Describe instrumentation, speed, rhythm and dynamic changes. Do not use abstract mood words and do not explain the music's emotional function. Singing, on-set instruments, and music from a radio, TV or phone are diegetic and belong in the description above, not here. Write N/A when there is none.`;
 
-function baseSystemPrompt(ctx: H3PromptContext): string {
+function baseSystemPrompt(ctx: H3PromptContext, frameNote: string): string {
   const instruction = h3InstructionLine(ctx);
   const keyframeRules = h3KeyframeRules(ctx.taskType);
   const header =
@@ -167,9 +168,9 @@ overall_soundscape: ...
 
 non_diegetic_music: ...
 
-integrated_multimodal_description carries the whole audiovisual timeline in playback order: composition, subject appearance and position, environment, lighting, actions, state changes, camera movement, and the sound occurring at that moment. State the visual style immediately AFTER "[Shot 1]" and before anything else, for example "[Shot 1] Live-action, cinematic, a medium-wide shot frames ...". Common styles: Cinematic, live-action, 2D-animated, 3D CG, claymation, watercolor, vintage film.
+integrated_multimodal_description carries the whole audiovisual timeline in playback order: composition, subject appearance and position, environment, lighting, actions, state changes, camera movement, and the sound occurring at that moment. State the visual style immediately AFTER "[Shot 1]" and before anything else, for example "[Shot 1] Live-action, cinematic, a medium-wide shot frames ...". Restate that same style at the head of every later shot: a cut does not carry it forward, so the shot rules below require it again each time. Common styles: Cinematic, live-action, 2D-animated, 3D CG, claymation, watercolor, vintage film.
 
-${keyframeRules}${SHARED_SYNTAX_RULES}
+${keyframeRules}${frameNote}${SHARED_SYNTAX_RULES}
 
 ${AUDIO_FIELD_RULES}
 
@@ -234,7 +235,7 @@ Newly added actions, backgrounds or plot events are not losses of reference fide
 detailed_description: the main body, normally 350 to 500 English words even when the video is a single shot. State the visual style in one or two sentences BEFORE "[Shot 1]", not after it:
 The target video is in a cinematic, literary style with soft lighting and a slightly desaturated color palette.
 [Shot 1] The scene opens in a crowded urban street ...
-Then describe every shot explicitly and in playback order: composition, subject appearance and position, environment, lighting, actions, state changes, camera movement, the sound at that moment, and where referenced content takes effect. Never reduce this to a plot summary or a list of reference relationships. Anchor frames with phrasings such as "the shot begins from <Picture 1>", "the shot's keyframe corresponds to <Picture 2>", "the shot ends on <Picture 3>". When a referenced subject speaks, keep BOTH labels: <Subject 2> (S1) turns toward the woman and says, <d>[English] Last summer, I went to my grandfather's house.</d>. Assign each (Sx) once, in the order vocal events actually occur. Write [unclear] for spans you cannot make out; never guess. Standardize dialogue punctuation to , . ? ! and end every line with . ? or ! before </d>.
+Then describe every shot explicitly and in playback order: composition, subject appearance and position, environment, lighting, actions, state changes, camera movement, the sound at that moment, and where referenced content takes effect. Never reduce this to a plot summary or a list of reference relationships. Anchor frames with phrasings such as "the shot begins from <Picture 1>", "the shot's keyframe corresponds to <Picture 2>", "the shot ends on <Picture 3>". Every shot after the first must also name where it starts from, so the cut does not drop the referenced look: "the shot begins from <Picture 2>", or where no picture fits, "the shot continues the appearance of <Subject 1>". When a referenced subject speaks, keep BOTH labels: <Subject 2> (S1) turns toward the woman and says, <d>[English] Last summer, I went to my grandfather's house.</d>. Assign each (Sx) once, in the order vocal events actually occur. Write [unclear] for spans you cannot make out; never guess. Standardize dialogue punctuation to , . ? ! and end every line with . ? or ! before </d>.
 
 ${SHARED_SYNTAX_RULES}
 
@@ -245,12 +246,42 @@ Write all six sections in English. The only text that keeps its original languag
 }
 
 /**
+ * Extra rules for a rewrite that carries the first frame as a real image.
+ *
+ * A vision model handed an attachment with no framing describes it: "a
+ * photograph shows a woman at a window". That is a caption, not an H3 prompt,
+ * and it misreads what the frame is for. This says what the image means and
+ * how far its authority reaches - it decides how things look, the user's text
+ * still decides what happens.
+ *
+ * Only I2VA and FL2VA condition on a first frame. Every other task type gets
+ * `""`, so a first frame left over from an earlier setup cannot describe
+ * itself into an unrelated rewrite.
+ */
+export function h3FirstFrameNote(taskType: H3TaskType): string {
+  if (taskType !== "i2va" && taskType !== "fl2va") return "";
+  // Bracketed for I2VA, bare for FL2VA, matching the labels the two forms use
+  // elsewhere in this file.
+  const label = taskType === "i2va" ? "<Picture 1>" : "Picture 1";
+  return `An image is attached to this request. It IS ${label}, the video's first frame - not a separate photograph, not a mood board. Look at it and write the opening of [Shot 1] from what is actually there: who or what is in frame, their appearance and clothing, their pose and position, the setting, the lighting, the shot size and the camera angle. Describe that content as the video's opening state; never call it an image, a photo, a picture or a reference in your output.
+
+Where the attached frame and the user's text disagree about how something looks, the frame wins. What happens after the opening is still the user's to decide. Do not invent details the frame does not show and the user did not ask for.
+
+`;
+}
+
+/**
  * The system prompt for a rewrite, chosen by task type and stamped with the
  * runtime facts. Pass the result to `callExternalLlm()` as the system turn and
  * the user's prose as the user turn.
+ *
+ * Set `hasFirstFrameImage` only when the frame really is travelling with the
+ * request. Promising the model an attachment it cannot see is worse than
+ * saying nothing: it will describe a frame it is imagining.
  */
-export function h3RewriteSystemPrompt(ctx: H3PromptContext): string {
-  return h3FormatOf(ctx.taskType) === "ref" ? refSystemPrompt(ctx) : baseSystemPrompt(ctx);
+export function h3RewriteSystemPrompt(ctx: H3PromptContext, hasFirstFrameImage = false): string {
+  if (h3FormatOf(ctx.taskType) === "ref") return refSystemPrompt(ctx);
+  return baseSystemPrompt(ctx, hasFirstFrameImage ? h3FirstFrameNote(ctx.taskType) : "");
 }
 
 /**
@@ -289,7 +320,7 @@ ${retention}
 detailed_description:
 The target video is in a <style> style with <lighting> and <color palette>.
 [Shot 1] <composition, subject position, environment, lighting>. <Subject 1> <action>. The camera <motion type> with <amplitude> at <speed>. <what is audible now>.
-[Shot 2] At 00:0X.XXX, the shot cuts to <new information>. <continued action through to ${ctx.durationSeconds} seconds>.
+[Shot 2] At 00:0X.XXX, still <the same style>, the shot cuts to <new information>, continuing the appearance of <Subject 1>. <continued action through to ${ctx.durationSeconds} seconds>.
 
 overall_soundscape:
 <ambience, physical action sounds, non-verbal human sounds. No dialogue, no music.>
@@ -302,7 +333,7 @@ non_diegetic_music:
   const instruction = h3InstructionLine(ctx);
   const head = instruction === null ? "" : `${instruction}\n\n`;
   return `${head}integrated_multimodal_description: [Shot 1] <style, for example Live-action, cinematic>, <composition, subject appearance and position, environment, lighting>. <action and state changes>. The camera <motion type> with <amplitude> at <speed>. <the character description> (S1) says: <d>[English] <exact spoken words>.</d>
-[Shot 2] At 00:0X.XXX, the camera cuts to <new information>. <action continuing through to ${ctx.durationSeconds} seconds>.
+[Shot 2] At 00:0X.XXX, still <the same style>, the camera cuts to <new information>. <action continuing through to ${ctx.durationSeconds} seconds>.
 
 overall_soundscape: <ambience, physical action sounds, non-verbal human sounds. No dialogue, no music.>
 
@@ -360,6 +391,12 @@ export interface H3RewriteResult {
   ok: boolean;
   /** The rule still violated when `ok` is false. */
   rule: string | null;
+  /**
+   * Whether the prompt asked for a Live2D-style idle loop, which swaps in a
+   * stricter contract. Surfaced so the caller can say so: a rewrite that quietly
+   * discards the motion the user described would otherwise read as a bug.
+   */
+  idle: boolean;
 }
 
 const OK: H3ValidationResult = { ok: true, rule: null };

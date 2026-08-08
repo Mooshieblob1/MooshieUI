@@ -16,6 +16,10 @@
 
   let { id, name, content, index, side }: Props = $props();
 
+  // Extra boxes are concatenated into the same prompt the main box feeds, so
+  // they get the same treatment: no danbooru tag assistance on H3 prose.
+  const isVideoMode = $derived(generation.mode === "video");
+
   // svelte-ignore state_referenced_locally
   // Intentional: seed the local editing copy from the prop's initial value.
   // Later prop changes are adopted by the $effect below.
@@ -114,5 +118,6 @@
     rows={3}
     minHeight="min-h-16"
     storageKey={`mooshieui.promptHeight.extra.${side}.${id}`}
+    tagAssist={!isVideoMode}
   />
 </div>
