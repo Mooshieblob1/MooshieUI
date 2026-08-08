@@ -30,7 +30,7 @@ cargo fmt                    # Rust format (run in src-tauri/)
 cargo clippy                 # Rust lint (run in src-tauri/)
 ```
 
-**No frontend test framework.** No vitest/jest. Rust does have tests: ~126 `#[test]` fns in `#[cfg(test)]` modules over pure logic. Run `cargo test --manifest-path src-tauri/Cargo.toml`. One test is known-red on main (`jxl::tests::roundtrip_2x2_rgba8`), so the gate is "no new failures".
+**No frontend test framework.** No vitest/jest. Rust does have tests: ~128 `#[test]` fns in `#[cfg(test)]` modules over pure logic. Run `cargo test --manifest-path src-tauri/Cargo.toml`. The suite is green; treat any failure as a real regression.
 
 ## Non-Negotiable Behavioral Rules
 

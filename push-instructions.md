@@ -44,7 +44,7 @@ This enables `.githooks/pre-commit` (Unicode steganography, tampered git dates, 
 
 ## 3. Validate before you open a PR
 
-There is no frontend test suite (no Vitest/Jest). Rust has ~126 `#[test]` fns covering pure logic. Run the checks that match your changes:
+There is no frontend test suite (no Vitest/Jest). Rust has ~128 `#[test]` fns covering pure logic. Run the checks that match your changes:
 
 | If you changed… | Run |
 |-----------------|-----|
@@ -54,7 +54,7 @@ There is no frontend test suite (no Vitest/Jest). Rust has ~126 `#[test]` fns co
 | Rust formatting | `cd src-tauri && cargo fmt --check` |
 | Locale files (`src/lib/locales/*.ts`) | Ensure every locale has the same keys and `{placeholders}` as `en.ts` |
 
-One test is known-red on main: `jxl::tests::roundtrip_2x2_rgba8` asserts a byte-exact round-trip, but the encoder is distance 1.0 (visually lossless, not mathematically lossless). Until that is corrected, the gate is "no new failures", not a clean run.
+The Rust suite is green on `main`. If `cargo test` fails, treat it as a regression from your change, not a known issue.
 
 ### Conventions (high-signal)
 
