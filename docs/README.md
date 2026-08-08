@@ -6,6 +6,7 @@ Project docs that are not release notes or AI workflow prompts.
 |----------|---------|
 | [BOT_REVIEW_TRIAGE.md](BOT_REVIEW_TRIAGE.md) | Triage notes for automated PR review comments |
 | [FEATURE_RESEARCH.md](FEATURE_RESEARCH.md) | Feature research shortlist (local/offline-first) |
+| [METADATA_CARRIERS.md](METADATA_CARRIERS.md) | Where generation metadata lives per output format, and what survives |
 | [superpowers/plans/](superpowers/plans/) | Implementation plans (superpowers workflow) |
 | [superpowers/specs/](superpowers/specs/) | Design specs paired with plans |
 

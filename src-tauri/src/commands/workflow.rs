@@ -100,7 +100,24 @@ pub async fn generate(
         params.seed
     };
 
-    let workflow = templates::build_workflow(&params, seed);
+    // Probed rather than assumed: a remote or hosted ComfyUI is not installed by
+    // `ensure_mooshie_nodes()`, so its node file can predate `metadata_json`, and
+    // setting an input a node does not declare fails prompt validation. This
+    // mirrors the H3 Director check above, which is the same shape of problem.
+    let video_metadata_supported = if params.mode == "video" {
+        let base_url = state.base_url().await;
+        crate::comfyui::nodes::node_declares_input(
+            &state.http_client,
+            &base_url,
+            "MooshieSaveVideo",
+            "metadata_json",
+        )
+        .await
+    } else {
+        false
+    };
+
+    let workflow = templates::build_workflow(&params, seed, video_metadata_supported);
     crate::comfyui::process::mark_legacy_worker_idle(state.inner()).await;
     log::info!(
         "generate: output_format={}, output_bit_depth={}, mode={}, architecture={}, positive_regions={}",

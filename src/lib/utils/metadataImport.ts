@@ -253,7 +253,9 @@ async function fileToPngBytes(file: File): Promise<number[]> {
 
 function isImageFile(file: File): boolean {
   if (file.type && file.type.startsWith("image/")) return true;
-  return /\.(png|jpe?g|webp|bmp|gif)$/i.test(file.name);
+  // mp4 and avif carry generation parameters too, and neither reports an
+  // image/* MIME type: mp4 is video/mp4 and avif is often reported as empty.
+  return /\.(png|jpe?g|webp|bmp|gif|mp4|avif)$/i.test(file.name);
 }
 
 /** Extract image file from a DragEvent's dataTransfer. */

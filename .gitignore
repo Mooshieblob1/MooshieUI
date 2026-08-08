@@ -60,6 +60,9 @@ FINAL.md
 # Superpowers working docs (brainstorming specs + implementation plans)
 docs/superpowers/
 
+# Superpowers subagent-driven execution scratch (ledger, briefs, review packages)
+.superpowers/
+
 temp_png_meta.ps1
 temp_png_chunks.ps1
 .github/instructions/mooshieui-pichan-support.instructions.md

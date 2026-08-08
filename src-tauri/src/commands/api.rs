@@ -1351,6 +1351,8 @@ pub fn save_to_gallery_inner(
                 }
             }
             crate::metadata::ImageFormat::Mp4 => bytes.to_vec(),
+            crate::metadata::ImageFormat::Avif => bytes.to_vec(),
+            crate::metadata::ImageFormat::Gif => bytes.to_vec(),
             crate::metadata::ImageFormat::Unknown => bytes.to_vec(),
         }
     } else {
@@ -1426,6 +1428,13 @@ pub fn save_video_to_gallery(
     }
     let dest_video = gallery_dir.join(&video_filename);
     move_gallery_file(video_path, &dest_video)?;
+    // Mirror the mp4's own metadata into a top-level uuid box. Best-effort: the
+    // node writes the container-native copy and this only adds the sidecar that
+    // survives a chat-client upload, so a failure is worth a log line and
+    // nothing more.
+    if crate::metadata::mirror_uuid_sidecar(&dest_video) {
+        log::debug!("[video] mirrored metadata into a uuid box for {video_filename}");
+    }
 
     let video_stem = video_filename.trim_end_matches(".mp4").to_string();
     let mut poster_filename = None;
