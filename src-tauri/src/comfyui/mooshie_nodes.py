@@ -780,7 +780,13 @@ class MooshieSaveVideo:
                 poster_kwargs["exif"] = exif.tobytes()
             except Exception:
                 pass
-        poster.save(poster_path, **poster_kwargs)
+        try:
+            poster.save(poster_path, **poster_kwargs)
+        except Exception:
+            # Same degradation as the mp4 path above: drop the metadata and
+            # save the poster anyway rather than killing the prompt.
+            poster_kwargs.pop("exif", None)
+            poster.save(poster_path, **poster_kwargs)
 
         payload = json.dumps(
             {
