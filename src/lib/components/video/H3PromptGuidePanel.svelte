@@ -80,7 +80,7 @@
     SECTION_MUSIC,
   ];
 
-  /** The four syntax rules that break a prompt most often when they are missed. */
+  /** The five syntax rules that break a prompt most often when they are missed. */
   const RULES = [
     {
       titleKey: "generation.video.h3_guide.rule_shots_title",
