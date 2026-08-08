@@ -686,7 +686,7 @@ const zhTw: Record<string, string> = {
   "generation.video.ref_slot": "參考 {index}",
   "generation.video.ref_required": "請至少加入一張參考圖像。",
   "generation.video.rife": "補幀",
-  "generation.video.rife_tip": "為每兩個算圖幀之間產生一個中間幀，在不改變片段長度的情況下把幀率加倍。每次生成會多花一點時間。",
+  "generation.video.rife_tip": "在取樣後產生中間幀，使播放更流暢，同時不改變片段長度。",
   "generation.video.rife_on_hint": "輸出以 {fps} fps 播放。",
   "generation.video.rife_off_hint": "輸出以模型原生的 {fps} fps 播放。",
   "generation.video.rife_install_hint": "開啟後會安裝補幀節點與一個 20 MB 的檢查點，然後重新啟動 ComfyUI。",
@@ -698,6 +698,19 @@ const zhTw: Record<string, string> = {
   "generation.video.rife_install_failed_start": "ComfyUI 重新啟動失敗。",
   "generation.video.rife_install_not_loaded": "ComfyUI 已重新啟動，但補幀節點沒有載入。請查看 ComfyUI 記錄。",
   "generation.video.rife_install_failed": "無法安裝補幀: {error}",
+  "generation.video.rife_multiplier": "插幀倍數",
+  "generation.video.rife_multiplier_tip":
+    "RIFE 為每個原始幀建立的幀數。倍數越高越流暢，但相應地消耗更多記憶體和時間。",
+  "generation.video.rife_advanced": "進階",
+  "generation.video.rife_scale": "光流解析度",
+  "generation.video.rife_scale_tip":
+    "運動估計的執行解析度。0.5 可將 RIFE 所需記憶體減半，適合大尺寸幀；2.0 對非常快速的動作有幫助。",
+  "generation.video.rife_fast_mode": "快速模式",
+  "generation.video.rife_fast_mode_tip":
+    "跳過細化步驟，速度更快，但邊緣處的運動會略微變軟。",
+  "generation.video.rife_ensemble": "集成模式",
+  "generation.video.rife_ensemble_tip":
+    "對前向和後向運動估計取平均值。結果更穩定，但速度略慢。",
   "generation.video.turbo": "Turbo LoRA",
   "generation.video.turbo_tip": "蒸餾轉接器，用 4 到 8 步取代 20 步取樣，速度約快五倍。運動效果接近完整模型，最細微的細節會略為變柔。",
   "generation.video.turbo_on_hint": "以 {steps} 步取樣，速度約快五倍。",

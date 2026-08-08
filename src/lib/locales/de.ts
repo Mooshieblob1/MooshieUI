@@ -707,7 +707,7 @@ const de: Record<string, string> = {
   "generation.video.ref_slot": "Referenz {index}",
   "generation.video.ref_required": "Füge mindestens ein Referenzbild hinzu.",
   "generation.video.rife": "Frame-Interpolation",
-  "generation.video.rife_tip": "Erzeugt für jedes Paar gerenderter Frames ein Zwischenbild und verdoppelt so die Bildrate, ohne die Länge des Clips zu ändern. Verlängert jede Generierung etwas.",
+  "generation.video.rife_tip": "Erzeugt Zwischenbilder nach dem Sampling, sodass die Wiedergabe flüssiger wirkt, ohne die Länge des Clips zu ändern.",
   "generation.video.rife_on_hint": "Die Ausgabe läuft mit {fps} fps.",
   "generation.video.rife_off_hint": "Die Ausgabe läuft mit den nativen {fps} fps des Modells.",
   "generation.video.rife_install_hint": "Beim Aktivieren werden die Interpolations-Nodes und ein 20-MB-Checkpoint installiert und ComfyUI neu gestartet.",
@@ -719,6 +719,19 @@ const de: Record<string, string> = {
   "generation.video.rife_install_failed_start": "ComfyUI konnte nicht neu gestartet werden.",
   "generation.video.rife_install_not_loaded": "ComfyUI wurde neu gestartet, aber die Interpolations-Nodes wurden nicht geladen. Prüfe das ComfyUI-Log.",
   "generation.video.rife_install_failed": "Frame-Interpolation konnte nicht installiert werden: {error}",
+  "generation.video.rife_multiplier": "Interpolation",
+  "generation.video.rife_multiplier_tip":
+    "Wie viele Bilder RIFE pro Originalbild erzeugt. Höher ist flüssiger und kostet entsprechend mehr Speicher und Zeit.",
+  "generation.video.rife_advanced": "Erweitert",
+  "generation.video.rife_scale": "Bewegungsskala",
+  "generation.video.rife_scale_tip":
+    "Auflösung der Bewegungsschätzung. 0.5 halbiert den Speicherbedarf und eignet sich für große Bilder, 2.0 hilft bei sehr schneller Bewegung.",
+  "generation.video.rife_fast_mode": "Schnellmodus",
+  "generation.video.rife_fast_mode_tip":
+    "Überspringt einen Verfeinerungsdurchgang. Schneller, mit etwas weicheren Kanten in der Bewegung.",
+  "generation.video.rife_ensemble": "Ensemble",
+  "generation.video.rife_ensemble_tip":
+    "Mittelt eine Vorwärts- und eine Rückwärtsschätzung. Ruhigeres Ergebnis, etwas langsamer.",
   "generation.video.turbo": "Turbo-LoRA",
   "generation.video.turbo_tip": "Ein destillierter Adapter, der in 4 bis 8 Schritten statt in 20 sampelt, etwa fünfmal schneller. Die Bewegung bleibt nah am vollen Modell; feinste Details werden etwas weicher.",
   "generation.video.turbo_on_hint": "Sampling in {steps} Schritten, etwa fünfmal schneller.",

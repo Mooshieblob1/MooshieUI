@@ -778,7 +778,7 @@ const en: Record<string, string> = {
   "generation.video.ref_slot": "Reference {index}",
   "generation.video.ref_required": "Add at least one reference image.",
   "generation.video.rife": "Frame Interpolation",
-  "generation.video.rife_tip": "Generates an in between frame for every pair of rendered frames, doubling the frame rate without changing the length of the clip. Adds a little time to each generation.",
+  "generation.video.rife_tip": "Generates in-between frames after sampling, so playback looks smoother without changing the clip's length.",
   "generation.video.rife_on_hint": "Output plays back at {fps} fps.",
   "generation.video.rife_off_hint": "Output plays back at the model's native {fps} fps.",
   "generation.video.rife_install_hint": "Turning this on installs the frame interpolation nodes and a 20 MB checkpoint, then restarts ComfyUI.",
@@ -790,6 +790,19 @@ const en: Record<string, string> = {
   "generation.video.rife_install_failed_start": "ComfyUI failed to restart.",
   "generation.video.rife_install_not_loaded": "ComfyUI restarted but the interpolation nodes did not load. Check the ComfyUI log.",
   "generation.video.rife_install_failed": "Frame interpolation could not be installed: {error}",
+  "generation.video.rife_multiplier": "Interpolation",
+  "generation.video.rife_multiplier_tip":
+    "How many frames RIFE creates for each original frame. Higher is smoother and costs proportionally more memory and time.",
+  "generation.video.rife_advanced": "Advanced",
+  "generation.video.rife_scale": "Flow scale",
+  "generation.video.rife_scale_tip":
+    "Resolution the motion estimate runs at. 0.5 halves the memory RIFE needs and suits large frames, 2.0 can help very fast motion.",
+  "generation.video.rife_fast_mode": "Fast mode",
+  "generation.video.rife_fast_mode_tip":
+    "Skips a refinement pass. Faster, with slightly softer motion around edges.",
+  "generation.video.rife_ensemble": "Ensemble",
+  "generation.video.rife_ensemble_tip":
+    "Averages a forward and a backward motion estimate. Steadier results, a little slower.",
   "generation.video.turbo": "Turbo LoRA",
   "generation.video.turbo_tip": "A distilled adapter that samples in 4 to 8 steps instead of 20, around five times faster. Motion stays close to the full model; the finest detail softens a little.",
   "generation.video.turbo_on_hint": "Sampling in {steps} steps, around five times faster.",

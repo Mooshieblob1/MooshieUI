@@ -686,7 +686,7 @@ const zh: Record<string, string> = {
   "generation.video.ref_slot": "参考 {index}",
   "generation.video.ref_required": "请至少添加一张参考图像。",
   "generation.video.rife": "补帧",
-  "generation.video.rife_tip": "为每两个渲染帧之间生成一个中间帧，在不改变片段时长的前提下把帧率翻倍。每次生成会稍微多花一点时间。",
+  "generation.video.rife_tip": "在采样后生成中间帧，使播放更流畅，同时不改变片段时长。",
   "generation.video.rife_on_hint": "输出以 {fps} fps 播放。",
   "generation.video.rife_off_hint": "输出以模型原生的 {fps} fps 播放。",
   "generation.video.rife_install_hint": "开启后会安装补帧节点和一个 20 MB 的检查点，然后重启 ComfyUI。",
@@ -698,6 +698,19 @@ const zh: Record<string, string> = {
   "generation.video.rife_install_failed_start": "ComfyUI 重启失败。",
   "generation.video.rife_install_not_loaded": "ComfyUI 已重启，但补帧节点没有加载。请查看 ComfyUI 日志。",
   "generation.video.rife_install_failed": "无法安装补帧: {error}",
+  "generation.video.rife_multiplier": "插帧倍数",
+  "generation.video.rife_multiplier_tip":
+    "RIFE 为每个原始帧创建的帧数。倍数越高越流畅，但相应地消耗更多内存和时间。",
+  "generation.video.rife_advanced": "高级",
+  "generation.video.rife_scale": "光流分辨率",
+  "generation.video.rife_scale_tip":
+    "运动估计的运行分辨率。0.5 可将 RIFE 所需内存减半，适合大尺寸帧；2.0 对非常快速的动作有帮助。",
+  "generation.video.rife_fast_mode": "快速模式",
+  "generation.video.rife_fast_mode_tip":
+    "跳过细化步骤，速度更快，但边缘处的运动会略微变软。",
+  "generation.video.rife_ensemble": "集成模式",
+  "generation.video.rife_ensemble_tip":
+    "对前向和后向运动估计取平均值。结果更稳定，但速度略慢。",
   "generation.video.turbo": "Turbo LoRA",
   "generation.video.turbo_tip": "蒸馏适配器，用 4 到 8 步代替 20 步采样，速度约快五倍。运动效果接近完整模型，最细微的细节会略微变柔。",
   "generation.video.turbo_on_hint": "以 {steps} 步采样，速度约快五倍。",

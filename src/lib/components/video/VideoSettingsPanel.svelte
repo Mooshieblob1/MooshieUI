@@ -51,6 +51,7 @@
     h3TierForDiffusionModel,
   } from "../../utils/h3Models.js";
   import type { H3ModelCategory, H3ModelFile, H3TierId } from "../../utils/h3Models.js";
+  import { RIFE_MULTIPLIERS, RIFE_SCALE_FACTORS, interpolatedFps } from "../../utils/rife.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import type { VideoAspectRatio, VideoVariant } from "../../types/index.js";
   import EditableValue from "../ui/EditableValue.svelte";
@@ -1141,11 +1142,95 @@
       </label>
     </div>
 
-    <p class="text-[11px] text-neutral-500">
-      {generation.videoRifeEnabled
-        ? locale.t("generation.video.rife_on_hint", { fps: H3_FPS * 2 })
-        : locale.t("generation.video.rife_off_hint", { fps: H3_FPS })}
-    </p>
+    {#if generation.videoRifeEnabled}
+      <p class="text-[11px] text-neutral-500">
+        {locale.t("generation.video.rife_on_hint", {
+          fps: String(interpolatedFps(24, generation.videoRifeMultiplier)),
+        })}
+      </p>
+
+      <div class="mt-2 flex items-center gap-2">
+        <span class="text-xs text-neutral-400" title={locale.t("generation.video.rife_multiplier_tip")}>
+          {locale.t("generation.video.rife_multiplier")}
+        </span>
+        <div class="flex rounded-lg overflow-hidden border border-neutral-700">
+          {#each RIFE_MULTIPLIERS as factor (factor)}
+            <button
+              type="button"
+              class="px-2 py-1 text-xs"
+              class:bg-neutral-700={generation.videoRifeMultiplier === factor}
+              class:text-neutral-100={generation.videoRifeMultiplier === factor}
+              class:text-neutral-400={generation.videoRifeMultiplier !== factor}
+              onclick={() => {
+                generation.videoRifeMultiplier = factor;
+                generation.saveSettings();
+              }}
+            >
+              {factor}x
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <details class="mt-2">
+        <summary class="text-xs text-neutral-400 cursor-pointer select-none">
+          {locale.t("generation.video.rife_advanced")}
+        </summary>
+        <div class="mt-2 flex flex-col gap-2 pl-1">
+          <label class="flex items-center gap-2 text-xs text-neutral-400">
+            <span title={locale.t("generation.video.rife_scale_tip")}>
+              {locale.t("generation.video.rife_scale")}
+            </span>
+            <select
+              class="bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-neutral-100"
+              value={generation.videoRifeScaleFactor}
+              onchange={(e) => {
+                generation.videoRifeScaleFactor = Number(e.currentTarget.value);
+                generation.saveSettings();
+              }}
+            >
+              {#each RIFE_SCALE_FACTORS as scale (scale)}
+                <option value={scale}>{scale}</option>
+              {/each}
+            </select>
+          </label>
+
+          <label class="flex items-center gap-2 text-xs text-neutral-400">
+            <input
+              type="checkbox"
+              class="accent-[var(--theme-accent-500)]"
+              checked={generation.videoRifeFastMode}
+              onchange={(e) => {
+                generation.videoRifeFastMode = e.currentTarget.checked;
+                generation.saveSettings();
+              }}
+            />
+            <span title={locale.t("generation.video.rife_fast_mode_tip")}>
+              {locale.t("generation.video.rife_fast_mode")}
+            </span>
+          </label>
+
+          <label class="flex items-center gap-2 text-xs text-neutral-400">
+            <input
+              type="checkbox"
+              class="accent-[var(--theme-accent-500)]"
+              checked={generation.videoRifeEnsemble}
+              onchange={(e) => {
+                generation.videoRifeEnsemble = e.currentTarget.checked;
+                generation.saveSettings();
+              }}
+            />
+            <span title={locale.t("generation.video.rife_ensemble_tip")}>
+              {locale.t("generation.video.rife_ensemble")}
+            </span>
+          </label>
+        </div>
+      </details>
+    {:else}
+      <p class="text-[11px] text-neutral-500">
+        {locale.t("generation.video.rife_off_hint", { fps: H3_FPS })}
+      </p>
+    {/if}
 
     {#if rifeInstalled === false && !rifeInstalling && !generation.videoRifeEnabled}
       <p class="text-[11px] text-neutral-500">{locale.t("generation.video.rife_install_hint")}</p>

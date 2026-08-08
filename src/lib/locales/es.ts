@@ -733,7 +733,7 @@ const es: Record<string, string> = {
   "generation.video.ref_slot": "Referencia {index}",
   "generation.video.ref_required": "Añade al menos una imagen de referencia.",
   "generation.video.rife": "Interpolación de fotogramas",
-  "generation.video.rife_tip": "Genera un fotograma intermedio por cada par de fotogramas renderizados, duplicando la tasa de fotogramas sin cambiar la duración del clip. Añade algo de tiempo a cada generación.",
+  "generation.video.rife_tip": "Genera fotogramas intermedios tras el muestreo, para que la reproducción sea más fluida sin cambiar la duración del clip.",
   "generation.video.rife_on_hint": "La salida se reproduce a {fps} fps.",
   "generation.video.rife_off_hint": "La salida se reproduce a los {fps} fps nativos del modelo.",
   "generation.video.rife_install_hint": "Al activarlo se instalan los nodos de interpolación y un checkpoint de 20 MB, y se reinicia ComfyUI.",
@@ -745,6 +745,19 @@ const es: Record<string, string> = {
   "generation.video.rife_install_failed_start": "ComfyUI no pudo reiniciarse.",
   "generation.video.rife_install_not_loaded": "ComfyUI se reinició pero los nodos de interpolación no se cargaron. Revisa el registro de ComfyUI.",
   "generation.video.rife_install_failed": "No se pudo instalar la interpolación de fotogramas: {error}",
+  "generation.video.rife_multiplier": "Interpolación",
+  "generation.video.rife_multiplier_tip":
+    "Cuántos fotogramas crea RIFE por cada fotograma original. Más alto es más fluido y cuesta proporcionalmente más memoria y tiempo.",
+  "generation.video.rife_advanced": "Avanzado",
+  "generation.video.rife_scale": "Escala de flujo",
+  "generation.video.rife_scale_tip":
+    "Resolución en la que se calcula el movimiento. 0.5 reduce a la mitad la memoria que necesita RIFE y es ideal para fotogramas grandes, 2.0 puede ayudar con movimiento muy rápido.",
+  "generation.video.rife_fast_mode": "Modo rápido",
+  "generation.video.rife_fast_mode_tip":
+    "Omite un paso de refinado. Más rápido, con un movimiento ligeramente más suave en los bordes.",
+  "generation.video.rife_ensemble": "Conjunto",
+  "generation.video.rife_ensemble_tip":
+    "Promedia una estimación de movimiento hacia adelante y hacia atrás. Resultados más estables, un poco más lentos.",
   "generation.video.turbo": "LoRA Turbo",
   "generation.video.turbo_tip": "Un adaptador destilado que muestrea en 4 a 8 pasos en lugar de 20, unas cinco veces más rápido. El movimiento se mantiene cerca del modelo completo; el detalle más fino se suaviza un poco.",
   "generation.video.turbo_on_hint": "Muestreo en {steps} pasos, unas cinco veces más rápido.",
