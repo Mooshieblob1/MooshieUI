@@ -36,8 +36,12 @@ pub struct InterpolateVideoResponse {
 ///    ADS suffixes ("foo.mp4:stream"), and anything whose file_name does not
 ///    round-trip to the original string.
 /// 5. Must end with ".mp4" -- only video clips can be interpolated.
-/// 6. `is_listable_gallery_file` -- the name must be a gallery entry, not an
-///    internal sidecar or other file type.
+/// 6. `is_listable_gallery_file` -- deliberately redundant today. Step 5
+///    already requires ".mp4", which that function accepts, so this can never
+///    reject anything. It is kept so the set of names this command will touch
+///    stays tied to the same gallery-membership rule the listing API uses: if
+///    that rule ever narrows (new sidecar convention, a format retired), this
+///    follows automatically instead of silently drifting.
 /// 7. Canonicalize both the joined path and the gallery root, then assert the
 ///    joined path is under the root -- symlinks and Windows drive-letter quirks
 ///    are resolved before comparison, so neither can escape the gallery.
@@ -69,6 +73,8 @@ pub(crate) fn resolve_gallery_video(dir: &Path, filename: &str) -> Result<PathBu
     if !name.to_ascii_lowercase().ends_with(".mp4") {
         return Err(AppError::Other("Only mp4 clips can be interpolated".into()));
     }
+    // Unreachable given the .mp4 check above; kept so this command and the
+    // gallery listing agree on what counts as a gallery entry.  See step 6.
     if !crate::commands::api::is_listable_gallery_file(name) {
         return Err(AppError::Other("Not a gallery file".into()));
     }
