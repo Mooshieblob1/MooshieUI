@@ -33,6 +33,17 @@ export const H3_ASPECT_RATIOS: readonly VideoAspectRatio[] = [
 export const H3_MAX_REF_IMAGES = 9;
 
 /**
+ * Turbo LoRA step bounds, mirroring `H3_TURBO_MIN_STEPS`/`H3_TURBO_MAX_STEPS`
+ * in `templates/video.rs`. Below 4 the distilled model has no schedule left to
+ * work with; above 8 it stops improving and starts over-sharpening. The
+ * undistilled base model uses `H3_DEFAULT_STEPS` instead.
+ */
+export const H3_TURBO_MIN_STEPS = 4;
+export const H3_TURBO_MAX_STEPS = 8;
+export const H3_TURBO_DEFAULT_STEPS = 6;
+export const H3_DEFAULT_STEPS = 20;
+
+/**
  * Lowercase filename substrings identifying MiniMax H3 weights, mirroring
  * `H3_DIFFUSION_MARKERS` in `templates/video.rs`. Used to filter the diffusion
  * dropdown and to warn before the backend rejects the submission.

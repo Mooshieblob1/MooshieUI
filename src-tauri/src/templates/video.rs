@@ -15,6 +15,14 @@ use crate::comfyui::types::GenerationParams;
 /// filter dropdown lists.
 pub const H3_DIFFUSION_MARKERS: [&str; 2] = ["minimax", "h3"];
 
+/// Sampling steps for the undistilled base model.
+pub const H3_DEFAULT_STEPS: u32 = 20;
+
+/// Step bounds for the Turbo LoRA. Below 4 the distilled model has no schedule
+/// left to work with; above 8 it stops improving and starts over-sharpening.
+pub const H3_TURBO_MIN_STEPS: u32 = 4;
+pub const H3_TURBO_MAX_STEPS: u32 = 8;
+
 /// MiniMax H3 emits 24 fps and only accepts frame counts on the 17n+5 grid
 /// (widget: min 5, max 3600, step 17). Snaps the requested duration UP to
 /// the next valid count, clamped to the largest on-grid value <= 3600.
@@ -82,6 +90,38 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
         }),
     );
     next_id += 1;
+
+    // MiniMax-H3 Turbo LoRA (optional): a distilled adapter that collapses
+    // sampling to 4-8 steps. It sits between the DiT and both MODEL consumers
+    // (`BasicScheduler` and `BasicGuider`) — re-pointing only one of them would
+    // schedule sigmas for a model the guider never sees.
+    let model_source_id = if params.video_turbo_enabled {
+        let lora_id = next_id.to_string();
+        workflow.insert(
+            lora_id.clone(),
+            json!({
+                "class_type": "MiniMaxH3TurboLoRA",
+                "inputs": {
+                    "model": [unet_id.as_str(), 0],
+                    "lora_name": params
+                        .video_turbo_lora
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or(crate::comfyui::nodes::H3_TURBO_LORA_FILENAME),
+                    "strength": 1.0,
+                    // false = bypass: the adapter is applied at run time instead of
+                    // being merged into the base weights. Sharper, at a higher peak
+                    // VRAM cost; merging only pays off on cards that cannot hold both.
+                    "low_vram": false
+                }
+            }),
+        );
+        next_id += 1;
+        lora_id
+    } else {
+        unet_id.clone()
+    };
 
     let clip_id = next_id.to_string();
     workflow.insert(
@@ -199,15 +239,30 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
     );
     next_id += 1;
 
+    // The Turbo pack ships its own SAMPLER: it applies the distilled model's
+    // sigma shift (12.0 video / 3.0 audio) internally, so it replaces
+    // `KSamplerSelect` outright rather than wrapping it.
     let sampler_select_id = next_id.to_string();
     workflow.insert(
         sampler_select_id.clone(),
-        json!({
-            "class_type": "KSamplerSelect",
-            "inputs": { "sampler_name": "res_multistep" }
-        }),
+        if params.video_turbo_enabled {
+            json!({ "class_type": "MiniMaxH3TurboSampler", "inputs": {} })
+        } else {
+            json!({
+                "class_type": "KSamplerSelect",
+                "inputs": { "sampler_name": "res_multistep" }
+            })
+        },
     );
     next_id += 1;
+
+    let steps = if params.video_turbo_enabled {
+        params
+            .video_turbo_steps
+            .clamp(H3_TURBO_MIN_STEPS, H3_TURBO_MAX_STEPS)
+    } else {
+        H3_DEFAULT_STEPS
+    };
 
     let scheduler_id = next_id.to_string();
     workflow.insert(
@@ -215,9 +270,9 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
         json!({
             "class_type": "BasicScheduler",
             "inputs": {
-                "model": [unet_id.as_str(), 0],
+                "model": [model_source_id.as_str(), 0],
                 "scheduler": "simple",
-                "steps": 20,
+                "steps": steps,
                 "denoise": 1.0
             }
         }),
@@ -230,7 +285,7 @@ pub fn build(params: &GenerationParams, seed: i64) -> Value {
         json!({
             "class_type": "BasicGuider",
             "inputs": {
-                "model": [unet_id.as_str(), 0],
+                "model": [model_source_id.as_str(), 0],
                 "conditioning": [h3_id.as_str(), 0]
             }
         }),
@@ -552,6 +607,110 @@ mod tests {
         // audio VAE at its own rate.
         assert!(create_video["inputs"]["audio"].is_array());
         assert_eq!(nodes_of_class(&workflow, "MooshieSaveVideo").len(), 1);
+    }
+
+    #[test]
+    fn turbo_disabled_leaves_the_base_sampling_path_alone() {
+        let workflow = build(&video_params("fl2va"), 1);
+        assert!(nodes_of_class(&workflow, "MiniMaxH3TurboLoRA").is_empty());
+        assert!(nodes_of_class(&workflow, "MiniMaxH3TurboSampler").is_empty());
+
+        let unet_id = node_id_of_class(&workflow, "UNETLoader");
+        let scheduler = nodes_of_class(&workflow, "BasicScheduler")[0];
+        let guider = nodes_of_class(&workflow, "BasicGuider")[0];
+        assert_eq!(scheduler["inputs"]["model"], json!([unet_id, 0]));
+        assert_eq!(guider["inputs"]["model"], json!([unet_id, 0]));
+        assert_eq!(scheduler["inputs"]["steps"], json!(H3_DEFAULT_STEPS));
+    }
+
+    #[test]
+    fn turbo_enabled_inserts_the_lora_and_swaps_the_sampler() {
+        let mut params = video_params("fl2va");
+        params.video_turbo_enabled = true;
+        params.video_turbo_steps = 6;
+        let workflow = build(&params, 1);
+
+        assert_eq!(nodes_of_class(&workflow, "MiniMaxH3TurboLoRA").len(), 1);
+        assert_eq!(nodes_of_class(&workflow, "MiniMaxH3TurboSampler").len(), 1);
+        // The turbo sampler applies the distilled sigma shift itself, so the
+        // stock sampler node is replaced rather than wrapped.
+        assert!(nodes_of_class(&workflow, "KSamplerSelect").is_empty());
+
+        let unet_id = node_id_of_class(&workflow, "UNETLoader");
+        let lora = nodes_of_class(&workflow, "MiniMaxH3TurboLoRA")[0];
+        assert_eq!(lora["inputs"]["model"], json!([unet_id, 0]));
+        assert_eq!(
+            lora["inputs"]["lora_name"],
+            json!(crate::comfyui::nodes::H3_TURBO_LORA_FILENAME)
+        );
+        assert_eq!(lora["inputs"]["strength"], json!(1.0));
+        assert_eq!(lora["inputs"]["low_vram"], json!(false));
+
+        // Both MODEL consumers must move to the adapter: scheduling sigmas for
+        // the base model while guiding the distilled one produces noise.
+        let lora_id = node_id_of_class(&workflow, "MiniMaxH3TurboLoRA");
+        let scheduler = nodes_of_class(&workflow, "BasicScheduler")[0];
+        let guider = nodes_of_class(&workflow, "BasicGuider")[0];
+        assert_eq!(scheduler["inputs"]["model"], json!([lora_id, 0]));
+        assert_eq!(guider["inputs"]["model"], json!([lora_id, 0]));
+        assert_eq!(scheduler["inputs"]["steps"], json!(6));
+
+        let sampler_id = node_id_of_class(&workflow, "MiniMaxH3TurboSampler");
+        let sampler = nodes_of_class(&workflow, "SamplerCustomAdvanced")[0];
+        assert_eq!(sampler["inputs"]["sampler"], json!([sampler_id, 0]));
+    }
+
+    #[test]
+    fn turbo_steps_are_clamped_to_the_distilled_range() {
+        for (requested, expected) in [(0, H3_TURBO_MIN_STEPS), (99, H3_TURBO_MAX_STEPS), (4, 4)] {
+            let mut params = video_params("fl2va");
+            params.video_turbo_enabled = true;
+            params.video_turbo_steps = requested;
+            let workflow = build(&params, 1);
+            let scheduler = nodes_of_class(&workflow, "BasicScheduler")[0];
+            assert_eq!(
+                scheduler["inputs"]["steps"],
+                json!(expected),
+                "steps {requested} should clamp to {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn turbo_honours_an_explicit_adapter_filename() {
+        let mut params = video_params("fl2va");
+        params.video_turbo_enabled = true;
+        params.video_turbo_lora = Some("  minimax_h3_turbo_4step_ema.safetensors  ".to_string());
+        let workflow = build(&params, 1);
+        let lora = nodes_of_class(&workflow, "MiniMaxH3TurboLoRA")[0];
+        assert_eq!(
+            lora["inputs"]["lora_name"],
+            json!("minimax_h3_turbo_4step_ema.safetensors")
+        );
+
+        // A blank override is a cleared dropdown, not a request for a nameless
+        // adapter — it falls back to the recommended checkpoint.
+        params.video_turbo_lora = Some("   ".to_string());
+        let workflow = build(&params, 1);
+        let lora = nodes_of_class(&workflow, "MiniMaxH3TurboLoRA")[0];
+        assert_eq!(
+            lora["inputs"]["lora_name"],
+            json!(crate::comfyui::nodes::H3_TURBO_LORA_FILENAME)
+        );
+    }
+
+    #[test]
+    fn turbo_composes_with_rife_interpolation() {
+        let mut params = video_params("fl2va");
+        params.video_turbo_enabled = true;
+        params.video_rife_enabled = true;
+        let workflow = build(&params, 1);
+
+        assert_eq!(nodes_of_class(&workflow, "MiniMaxH3TurboLoRA").len(), 1);
+        let rife_id = node_id_of_class(&workflow, "RIFE VFI");
+        let create_video = nodes_of_class(&workflow, "CreateVideo")[0];
+        assert_eq!(create_video["inputs"]["images"], json!([rife_id, 0]));
+        assert_eq!(create_video["inputs"]["fps"], json!(48.0));
     }
 
     #[test]

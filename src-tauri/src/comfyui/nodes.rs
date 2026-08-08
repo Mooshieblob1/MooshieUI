@@ -108,6 +108,33 @@ pub const RIFE_CKPT_URLS: &[&str] = &[
 /// generation time instead.
 const RIFE_CKPT_MIN_BYTES: u64 = 16 * 1024 * 1024;
 
+// MiniMax-H3 Turbo LoRA nodes, installed lazily from the video settings panel
+// for the same reason as RIFE. The adapter file itself is not downloaded here:
+// it lives in `models/loras/` and goes through the regular model downloader, so
+// it gets the same per-file progress UI as the rest of the H3 stack.
+const H3_TURBO_PACKAGE_DIR: &str = "ComfyUI-MiniMax-H3-Turbo";
+
+const H3_TURBO_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
+    name: H3_TURBO_PACKAGE_DIR,
+    git_url: "https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo.git",
+    verify_nodes: &["MiniMaxH3TurboLoRA", "MiniMaxH3TurboSampler"],
+    // The pack ships no requirements file at all — it imports torch and comfy's
+    // own modules only, so the clone is the entire install.
+    // `ensure_custom_node_package` skips the pip stage when the file is absent.
+    requirements_file: "requirements.txt",
+}];
+
+/// Turbo adapter filename, as served by `larryvrh/MiniMax-H3-Turbo-Lora`.
+///
+/// The repo publishes several checkpoints; v4/step600 EMA is the maintainer's
+/// recommended one and the only one the app offers. Consumed by
+/// `templates::video` as the default `lora_name`.
+pub const H3_TURBO_LORA_FILENAME: &str = "minimax_h3_turbo_v4_step600_ema.safetensors";
+
+/// Where the frontend downloads [`H3_TURBO_LORA_FILENAME`] from.
+pub const H3_TURBO_LORA_URL: &str =
+    "https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora/resolve/main/minimax_h3_turbo_v4_step600_ema.safetensors";
+
 /// Substring present in [`format_missing_mooshie_nodes_error`] output.
 pub const MISSING_MOOSHIE_NODES_MARKER: &str = "has not loaded required MooshieUI custom nodes";
 
@@ -784,6 +811,82 @@ async fn download_rife_checkpoint_from(
         )
     })?;
 
+    Ok(())
+}
+
+/// Whether the MiniMax-H3 Turbo node pack is present.
+///
+/// Unlike [`is_rife_installed`] this deliberately does not look for the
+/// `.mooshieui-requirements.sha256` stamp: that file is written by
+/// `install_requirements_if_needed`, which never runs for a pack that ships no
+/// requirements file, so requiring it would report every successful install as
+/// incomplete. The adapter file is not checked here either — it lives in
+/// `models/loras/` and the frontend sees it in the shared model list.
+pub fn is_h3_turbo_installed(comfyui_path: &str) -> bool {
+    if comfyui_path.trim().is_empty() {
+        return false;
+    }
+
+    Path::new(comfyui_path)
+        .join("custom_nodes")
+        .join(H3_TURBO_PACKAGE_DIR)
+        .join("__init__.py")
+        .is_file()
+}
+
+/// Clone the MiniMax-H3 Turbo node pack into `custom_nodes/`, on demand.
+pub async fn ensure_required_h3_turbo_nodes(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+) -> Result<(), String> {
+    let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
+    std::fs::create_dir_all(&custom_nodes).map_err(|e| {
+        format!(
+            "Failed to create ComfyUI custom_nodes directory at '{}': {}",
+            custom_nodes.display(),
+            e
+        )
+    })?;
+
+    for package in H3_TURBO_PACKAGES {
+        ensure_custom_node_package(
+            &custom_nodes,
+            venv_path,
+            network_proxy,
+            pip_index_url,
+            *package,
+        )
+        .await
+        .map_err(|e| format!("{}: {}", package.name, e))?;
+    }
+
+    log::info!("Ensured MiniMax-H3 Turbo custom node package");
+    Ok(())
+}
+
+/// Install the MiniMax-H3 Turbo node pack.
+///
+/// Only the node pack: the ~744 MB adapter goes to `models/loras/` through the
+/// regular model downloader so it shares the per-file progress UI with the rest
+/// of the H3 stack. `on_progress(step, message, done)` keeps the desktop command
+/// and the browser-mode handler reporting identically from one implementation.
+pub async fn install_h3_turbo(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+    on_progress: &(dyn Fn(&str, &str, bool) + Send + Sync),
+) -> Result<(), String> {
+    if comfyui_path.trim().is_empty() {
+        return Err("ComfyUI path is not configured".to_string());
+    }
+
+    on_progress("clone", "Installing MiniMax-H3 Turbo nodes...", false);
+    ensure_required_h3_turbo_nodes(comfyui_path, venv_path, network_proxy, pip_index_url).await?;
+
+    on_progress("done", "MiniMax-H3 Turbo nodes are ready", true);
     Ok(())
 }
 

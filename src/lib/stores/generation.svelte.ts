@@ -18,9 +18,13 @@ import {
   toTurboModelVariant,
 } from "../utils/modelFamily.js";
 import { readModelSpec, type ModelSpec } from "../utils/api.js";
+import { H3_TURBO_LORA } from "../utils/h3Models.js";
 import {
   H3_DIFFUSION_MARKERS,
   H3_MAX_REF_IMAGES,
+  H3_TURBO_DEFAULT_STEPS,
+  H3_TURBO_MAX_STEPS,
+  H3_TURBO_MIN_STEPS,
   computeH3Dimensions,
   computeH3FrameLength,
 } from "../utils/videoParams.js";
@@ -535,6 +539,11 @@ class GenerationStore {
   /** RIFE 2x frame interpolation. Only ever true once the lazy install has put
    *  the pack and its checkpoint on disk. */
   videoRifeEnabled = $state(false);
+  /** MiniMax-H3 Turbo LoRA: distilled few-step sampling. Only ever true once the
+   *  lazy install has put the node pack and the adapter on disk. */
+  videoTurboEnabled = $state(false);
+  /** Sampling steps while Turbo is on; clamped to 4..8 by the backend too. */
+  videoTurboSteps = $state(H3_TURBO_DEFAULT_STEPS);
   videoDiffusionModel = $state<string | null>(null);
   videoClipModel = $state<string | null>(null);
   videoVaeModel = $state<string | null>(null);
@@ -1802,6 +1811,13 @@ class GenerationStore {
           this.videoRefImages = slots;
         }
         if (saved.videoRifeEnabled !== undefined) this.videoRifeEnabled = saved.videoRifeEnabled;
+        if (saved.videoTurboEnabled !== undefined)
+          this.videoTurboEnabled = saved.videoTurboEnabled;
+        if (saved.videoTurboSteps !== undefined)
+          this.videoTurboSteps = Math.min(
+            H3_TURBO_MAX_STEPS,
+            Math.max(H3_TURBO_MIN_STEPS, Math.round(saved.videoTurboSteps)),
+          );
         if (saved.videoDiffusionModel !== undefined)
           this.videoDiffusionModel = saved.videoDiffusionModel;
         if (saved.videoClipModel !== undefined) this.videoClipModel = saved.videoClipModel;
@@ -2012,6 +2028,8 @@ class GenerationStore {
         videoFirstFrameAsLast: this.videoFirstFrameAsLast,
         videoRefImages: this.videoRefImages,
         videoRifeEnabled: this.videoRifeEnabled,
+        videoTurboEnabled: this.videoTurboEnabled,
+        videoTurboSteps: this.videoTurboSteps,
         videoDiffusionModel: this.videoDiffusionModel,
         videoClipModel: this.videoClipModel,
         videoVaeModel: this.videoVaeModel,
@@ -2130,6 +2148,8 @@ class GenerationStore {
       videoFirstFrameAsLast: this.videoFirstFrameAsLast,
       videoRefImages: this.videoRefImages,
       videoRifeEnabled: this.videoRifeEnabled,
+      videoTurboEnabled: this.videoTurboEnabled,
+      videoTurboSteps: this.videoTurboSteps,
       videoDiffusionModel: this.videoDiffusionModel,
       videoClipModel: this.videoClipModel,
       videoVaeModel: this.videoVaeModel,
@@ -2518,6 +2538,9 @@ class GenerationStore {
       video_last_frame: this.videoVariant === "fl2va" ? this.videoEffectiveLastFrame : null,
       video_ref_images: this.videoVariant === "ref2va" ? this.videoRefImageFilenames : [],
       video_rife_enabled: this.videoRifeEnabled,
+      video_turbo_enabled: this.videoTurboEnabled,
+      video_turbo_steps: this.videoTurboSteps,
+      video_turbo_lora: this.videoTurboEnabled ? H3_TURBO_LORA.filename : null,
       video_diffusion_model: this.videoDiffusionModel,
       video_clip_model: this.videoClipModel,
       video_vae_model: this.videoVaeModel,

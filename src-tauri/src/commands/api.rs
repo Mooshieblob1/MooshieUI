@@ -2594,6 +2594,61 @@ pub async fn install_rife(app: AppHandle, state: State<'_, Arc<AppState>>) -> Re
     result.map_err(AppError::Other)
 }
 
+/// Whether the MiniMax-H3 Turbo node pack is present. The adapter file itself
+/// is a regular LoRA download, so the panel checks the model list for it.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn is_h3_turbo_installed(state: State<'_, Arc<AppState>>) -> Result<bool, AppError> {
+    let comfyui_path = state.config.read().await.comfyui_path.clone();
+    Ok(crate::comfyui::nodes::is_h3_turbo_installed(&comfyui_path))
+}
+
+/// Install the MiniMax-H3 Turbo node pack, driven by the video settings panel
+/// the first time the user ticks the Turbo LoRA. Emits `install:progress`
+/// events with the same shape as `install_custom_node`.
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn install_h3_turbo(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), AppError> {
+    let (comfyui_path, venv_path, network_proxy, pip_index_url) = {
+        let config = state.config.read().await;
+        (
+            config.comfyui_path.clone(),
+            config.venv_path.clone(),
+            config.network_proxy.clone(),
+            config.pip_index_url.clone(),
+        )
+    };
+
+    let emit_progress = |step: &str, message: &str, done: bool| {
+        let _ = app.emit(
+            "install:progress",
+            serde_json::json!({
+                "node_name": "ComfyUI-MiniMax-H3-Turbo",
+                "step": step,
+                "message": message,
+                "done": done,
+            }),
+        );
+    };
+
+    let result = crate::comfyui::nodes::install_h3_turbo(
+        &comfyui_path,
+        &venv_path,
+        network_proxy.as_deref(),
+        pip_index_url.as_deref(),
+        &emit_progress,
+    )
+    .await;
+
+    if let Err(e) = &result {
+        emit_progress("error", e, true);
+    }
+    result.map_err(AppError::Other)
+}
+
 /// Install a custom node from a git repository into ComfyUI's custom_nodes directory.
 /// Emits `install:progress` events with { node_name, step, message, done } for live progress.
 #[cfg(feature = "desktop")]

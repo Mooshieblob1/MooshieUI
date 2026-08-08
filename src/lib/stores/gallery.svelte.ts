@@ -1574,9 +1574,12 @@ class GalleryStore {
    * Delete every image generated during this session — removes each from disk
    * (and the persistent gallery), revokes its blob URL, and clears the session
    * list. Mirrors deleteImage() applied to all session images at once.
+   *
+   * Pass `only` to restrict the sweep to a subset — video mode uses it so
+   * "Delete all" clears the session's videos without touching its images.
    */
-  async deleteAllSessionImages() {
-    const targets = new Set(this.sessionImages);
+  async deleteAllSessionImages(only?: (image: OutputImage) => boolean) {
+    const targets = new Set(only ? this.sessionImages.filter(only) : this.sessionImages);
     if (targets.size === 0) return;
 
     const nextAssignments = { ...this.boardAssignments };

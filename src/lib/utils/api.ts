@@ -782,6 +782,19 @@ export async function installRife(): Promise<void> {
   return ipcInvoke("install_rife", {});
 }
 
+/**
+ * Is the MiniMax-H3 Turbo node pack on disk? Only the pack: the adapter is a
+ * regular LoRA download, so the panel checks `models.loras` for that half.
+ */
+export async function isH3TurboInstalled(): Promise<boolean> {
+  return ipcInvoke("is_h3_turbo_installed", {});
+}
+
+/** Clone the MiniMax-H3 Turbo node pack. Reports through `install:progress`. */
+export async function installH3Turbo(): Promise<void> {
+  return ipcInvoke("install_h3_turbo", {});
+}
+
 export async function installPipPackage(packageName: string): Promise<void> {
   return ipcInvoke("install_pip_package", { package: packageName });
 }

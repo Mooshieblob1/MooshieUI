@@ -240,6 +240,18 @@ pub struct GenerationParams {
     pub video_ref_images: Vec<String>,
     #[serde(default)]
     pub video_rife_enabled: bool,
+    /// MiniMax-H3 Turbo LoRA — distilled few-step sampling (4-8 steps instead
+    /// of 20). Requires the `ComfyUI-MiniMax-H3-Turbo` custom node pack.
+    #[serde(default)]
+    pub video_turbo_enabled: bool,
+    /// Sampling steps used when the Turbo LoRA is on (clamped to 4..=8 by the
+    /// video validation arm). Ignored when `video_turbo_enabled` is false.
+    #[serde(default = "default_video_turbo_steps")]
+    pub video_turbo_steps: u32,
+    /// Turbo LoRA filename inside `models/loras/`. Defaults to the recommended
+    /// checkpoint when the client omits it.
+    #[serde(default)]
+    pub video_turbo_lora: Option<String>,
     #[serde(default)]
     pub video_diffusion_model: Option<String>,
     #[serde(default)]
@@ -397,6 +409,10 @@ fn default_video_megapixels() -> f64 {
 
 fn default_video_aspect_ratio() -> String {
     "16:9".to_string()
+}
+
+fn default_video_turbo_steps() -> u32 {
+    6
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

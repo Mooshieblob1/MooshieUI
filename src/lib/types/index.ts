@@ -210,6 +210,12 @@ export interface GenerationParams {
   /** ref2va reference images (ComfyUI input filenames), at most 9. */
   video_ref_images?: string[];
   video_rife_enabled?: boolean;
+  /** MiniMax-H3 Turbo LoRA (distilled few-step sampling). */
+  video_turbo_enabled?: boolean;
+  /** Sampling steps while Turbo is on; the backend clamps to 4..8. */
+  video_turbo_steps?: number;
+  /** Turbo adapter filename inside `models/loras/`. */
+  video_turbo_lora?: string | null;
   video_diffusion_model?: string | null;
   video_clip_model?: string | null;
   video_vae_model?: string | null;

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
-  import { gallery } from "../../stores/gallery.svelte.js";
+  import { gallery, isVideoImage } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
@@ -38,26 +38,38 @@
   const TAB_KEY = "mooshieui.bottomPanel.activeTab.v1";
 
   const showCheckpointsTab = $derived(models.checkpoints.length > 10 || generation.devMode);
+  const isVideoMode = $derived(generation.mode === "video");
 
   let activeTab = $state<TabId>(
     (typeof window !== "undefined" && (localStorage.getItem(TAB_KEY) as TabId | null)) || "loras"
   );
-
-  // If the checkpoints tab disappears (count dropped), fall back to loras
-  $effect(() => {
-    if (activeTab === "checkpoints" && !showCheckpointsTab) {
-      activeTab = "loras";
-    }
-  });
 
   $effect(() => {
     try { localStorage.setItem(TAB_KEY, activeTab); } catch {}
   });
 
   const allTabs: TabId[] = ["loras", "checkpoints", "images", "prompts", "artists", "styles", "schedule", "compare", "notes"];
+  // Video mode keeps only the tabs that mean something for H3: session output,
+  // prompt history and notes. LoRAs and checkpoints do not apply to the H3
+  // stack, and artists / artist styles / scheduling / compare are all booru-tag
+  // or image-grid features with no video equivalent.
+  const videoTabs: TabId[] = ["images", "prompts", "notes"];
   const visibleTabs = $derived(
-    showCheckpointsTab ? allTabs : allTabs.filter((t) => t !== "checkpoints")
+    isVideoMode
+      ? videoTabs
+      : showCheckpointsTab
+        ? allTabs
+        : allTabs.filter((t) => t !== "checkpoints")
   );
+
+  // Snap to a valid tab whenever the visible set shrinks out from under the
+  // selection (mode switch, or the checkpoints count dropping below the
+  // threshold).
+  $effect(() => {
+    if (!visibleTabs.includes(activeTab)) {
+      activeTab = visibleTabs[0];
+    }
+  });
   const tabLabelKeys: Record<TabId, string> = {
     loras: "bottom_panel.tab.loras",
     checkpoints: "bottom_panel.tab.checkpoints",
@@ -69,6 +81,12 @@
     schedule: "bottom_panel.tab.schedule",
     notes: "bottom_panel.tab.notes",
   };
+
+  /** The session-output tab is labelled "Videos" in video mode. */
+  function tabLabelKey(tab: TabId): string {
+    if (tab === "images" && isVideoMode) return "bottom_panel.tab.videos";
+    return tabLabelKeys[tab];
+  }
 
   // Prompt history
   const sortedPromptHistory = $derived(
@@ -92,7 +110,12 @@
   const activeLoraCount = $derived(
     generation.loras.filter((l) => l.enabled && l.name).length
   );
-  const sessionImageCount = $derived(gallery.sessionImages.length);
+  // Video mode shows only this session's videos, so the "Videos" tab never
+  // lists images left over from an earlier image-mode run.
+  const sessionOutputs = $derived(
+    isVideoMode ? gallery.sessionImages.filter(isVideoImage) : gallery.sessionImages
+  );
+  const sessionImageCount = $derived(sessionOutputs.length);
   const favoriteCount = $derived(
     generation.promptHistory.filter((p) => p.favorite).length
   );
@@ -102,8 +125,8 @@
 
   const filteredSessionImages = $derived.by(() => {
     const q = imageSearch.toLowerCase().trim();
-    if (!q) return gallery.sessionImages;
-    return gallery.sessionImages.filter((img) =>
+    if (!q) return sessionOutputs;
+    return sessionOutputs.filter((img) =>
       img.filename.toLowerCase().includes(q)
     );
   });
@@ -323,12 +346,17 @@
   }
 
   function confirmDeleteAllSessionImages() {
-    const count = gallery.sessionImages.length;
+    const count = sessionOutputs.length;
     if (count === 0) return;
-    if (!confirm(locale.t('bottom_panel.delete_all_confirm', { count: String(count) }))) return;
+    const confirmKey = isVideoMode
+      ? 'bottom_panel.delete_all_videos_confirm'
+      : 'bottom_panel.delete_all_confirm';
+    if (!confirm(locale.t(confirmKey, { count: String(count) }))) return;
     hoveredImage = null;
     actionBarPos = null;
-    void gallery.deleteAllSessionImages();
+    // In video mode the sweep is scoped to videos so any images generated
+    // earlier in the same session survive.
+    void gallery.deleteAllSessionImages(isVideoMode ? isVideoImage : undefined);
   }
 
   function actionBarOut(node: Element, { duration = 260 } = {}) {
@@ -377,6 +405,8 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         {:else if tab === "checkpoints"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+        {:else if tab === "images" && isVideoMode}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>
         {:else if tab === "images"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
         {:else if tab === "prompts"}
@@ -392,7 +422,7 @@
         {:else if tab === "notes"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
         {/if}
-        {locale.t(tabLabelKeys[tab])}
+        {locale.t(tabLabelKey(tab))}
         {#if tab === "loras" && activeLoraCount > 0}
           <span class="text-[9px] px-1 py-0 rounded-full bg-indigo-600/30 text-indigo-400 tabular-nums">{activeLoraCount}</span>
         {:else if tab === "images" && sessionImageCount > 0}
@@ -431,9 +461,9 @@
         </div>
       {/if}
       <!-- Session History -->
-      {#if gallery.sessionImages.length === 0}
+      {#if sessionOutputs.length === 0}
         <div class="flex items-center justify-center h-full text-neutral-500 text-xs">
-          <p>{locale.t('bottom_panel.no_images')}</p>
+          <p>{locale.t(isVideoMode ? 'bottom_panel.no_videos' : 'bottom_panel.no_images')}</p>
         </div>
       {:else}
         <div class="flex flex-col h-full">
@@ -441,7 +471,7 @@
             <input
               type="text"
               bind:value={imageSearch}
-              placeholder={locale.t('bottom_panel.image_search_placeholder')}
+              placeholder={locale.t(isVideoMode ? 'bottom_panel.video_search_placeholder' : 'bottom_panel.image_search_placeholder')}
               class="flex-1 bg-neutral-800 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors"
             />
             <div use:scrollCapture>
@@ -466,7 +496,7 @@
           </div>
           {#if filteredSessionImages.length === 0}
             <div class="flex items-center justify-center flex-1 text-neutral-500 text-xs">
-              <p>{locale.t('bottom_panel.no_image_results')}</p>
+              <p>{locale.t(isVideoMode ? 'bottom_panel.no_video_results' : 'bottom_panel.no_image_results')}</p>
             </div>
           {:else}
             <div class="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] px-2 py-2">
@@ -481,6 +511,7 @@
                 >
                   <button
                     class="absolute inset-0 w-full h-full"
+                    title={isVideoImage(image) ? locale.t("gallery.play_video") : image.filename}
                     onclick={() => gallery.openLightbox(image)}
                   >
                     <img
@@ -489,6 +520,15 @@
                       class="w-full h-full object-cover"
                     />
                   </button>
+                  {#if isVideoImage(image)}
+                    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div class="w-8 h-8 rounded-full bg-black/60 flex items-center justify-center">
+                        <svg class="w-4 h-4 text-white translate-x-px" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                          <path d="M8 5v14l11-7z" />
+                        </svg>
+                      </div>
+                    </div>
+                  {/if}
                   {#if hoveredImage === image && image.generationTimeMs != null}
                     <div
                       class="absolute top-1.5 left-1.5 flex items-center gap-1 bg-black/65 text-white text-[10px] font-medium px-1.5 py-0.5 rounded backdrop-blur-sm pointer-events-none"
@@ -702,6 +742,9 @@
 
 {#if hoveredImage && actionBarPos}
   {@const image = hoveredImage}
+  <!-- Refine / img2img / inpaint / copy operate on still frames only, so they
+       are hidden for video outputs; Save As and Delete work for both. -->
+  {@const isVideo = isVideoImage(image)}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="fixed z-[9999] flex justify-center pointer-events-auto animate-[actionBarBounce_0.35s_ease-out]"
@@ -711,7 +754,9 @@
     out:actionBarOut
   >
     <div class="flex items-center gap-0.5 px-1.5 py-1 rounded-lg bg-neutral-900/95 border border-neutral-700/80 shadow-lg shadow-black/40 backdrop-blur-sm">
-      {#if !image.is_upscaled}
+      {#if isVideo}
+        <!-- no still-image actions -->
+      {:else if !image.is_upscaled}
         <button
           class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
           title={locale.t('bottom_panel.upscale')}
@@ -742,29 +787,33 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
         </button>
       {/if}
-      <button
-        class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
-        title={locale.t('bottom_panel.inpaint')}
-        onclick={() => oninpaint(image)}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-      </button>
-      <div class="w-px h-4 bg-neutral-700/60"></div>
+      {#if !isVideo}
+        <button
+          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
+          title={locale.t('bottom_panel.inpaint')}
+          onclick={() => oninpaint(image)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+        </button>
+        <div class="w-px h-4 bg-neutral-700/60"></div>
+      {/if}
       <button
         class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors disabled:opacity-50 disabled:pointer-events-none"
-        title={locale.t('bottom_panel.save_as')}
+        title={locale.t(isVideo ? 'gallery.save_video_as' : 'bottom_panel.save_as')}
         disabled={gallery.saving}
         onclick={() => gallery.saveImageAs(image)}
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       </button>
-      <button
-        class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
-        title={locale.t('bottom_panel.copy')}
-        onclick={() => gallery.copyToClipboard(image)}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-      </button>
+      {#if !isVideo}
+        <button
+          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
+          title={locale.t('bottom_panel.copy')}
+          onclick={() => gallery.copyToClipboard(image)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+      {/if}
       <div class="w-px h-4 bg-neutral-700/60"></div>
       <button
         class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-red-600/80 text-neutral-400 hover:text-red-200 transition-colors"
