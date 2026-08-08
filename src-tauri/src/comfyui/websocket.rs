@@ -82,9 +82,9 @@ async fn process_output_image(data: &[u8]) -> Option<ProcessedOutputImage> {
             let is_16 = depth == 16;
             let result = tokio::task::spawn_blocking(move || {
                 let jxl = if is_16 {
-                    crate::jxl::encode_rgba16_lossless(&pixels, w, h)
+                    crate::jxl::encode_rgba16_visually_lossless(&pixels, w, h)
                 } else {
-                    crate::jxl::encode_rgba8_lossless(&pixels, w, h)
+                    crate::jxl::encode_rgba8_visually_lossless(&pixels, w, h)
                 };
                 let (display, display_fmt): (Option<Vec<u8>>, &'static str) =
                     match crate::jxl::encode_rgba8_webp_from_raw(&pixels, w, h, is_16) {

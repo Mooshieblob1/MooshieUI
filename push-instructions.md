@@ -44,14 +44,17 @@ This enables `.githooks/pre-commit` (Unicode steganography, tampered git dates, 
 
 ## 3. Validate before you open a PR
 
-There is no automated test suite (no Vitest/Jest, no Rust `#[test]`). Run the checks that match your changes:
+There is no frontend test suite (no Vitest/Jest). Rust has ~128 `#[test]` fns covering pure logic. Run the checks that match your changes:
 
 | If you changed… | Run |
 |-----------------|-----|
 | Svelte, stores, TypeScript, `package.json` | `npm run build` (expect `✓ built in` at the end) |
 | Rust (`src-tauri/`) | `cargo check --manifest-path src-tauri/Cargo.toml` |
+| Rust logic with test coverage | `cargo test --manifest-path src-tauri/Cargo.toml` (see note below) |
 | Rust formatting | `cd src-tauri && cargo fmt --check` |
 | Locale files (`src/lib/locales/*.ts`) | Ensure every locale has the same keys and `{placeholders}` as `en.ts` |
+
+The Rust suite is green on `main`. If `cargo test` fails, treat it as a regression from your change, not a known issue.
 
 ### Conventions (high-signal)
 
