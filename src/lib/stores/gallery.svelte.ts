@@ -963,9 +963,19 @@ class GalleryStore {
   private _metadataHydrationPromise: Promise<void> | null = null;
 
   /**
-   * Walk the gallery and lazily read PNG metadata for any image that doesn't
-   * have it yet.  Runs in small batches with yields so the UI stays smooth.
-   * Safe to call more than once — the second caller awaits the first run.
+   * Gallery filenames that returned no metadata. Without this, anything the
+   * backend can't find metadata for stays in `pending` forever and is re-read
+   * in full on every gallery load — cheap for a stray PNG, expensive for a
+   * multi-megabyte clip saved before videos carried metadata at all.
+   * Session-scoped: metadata is written at save time, so a file that has none
+   * now will not grow any while the app is running.
+   */
+  private _metadataMisses = new Set<string>();
+
+  /**
+   * Walk the gallery and lazily read embedded metadata for any entry that
+   * doesn't have it yet.  Runs in small batches with yields so the UI stays
+   * smooth. Safe to call more than once — the second caller awaits the first run.
    */
   async hydrateMetadataInBackground(): Promise<void> {
     if (this._metadataHydrationPromise) return this._metadataHydrationPromise;
@@ -979,14 +989,30 @@ class GalleryStore {
   }
 
   private async _runMetadataHydration(): Promise<void> {
-    const BATCH = 12;
     // Capture object references (not indices) so that later insertions into
     // this.images cannot cause us to skip or mis-target images.
-    const pending = this.images.filter((img) => img && !img.metadata && img.gallery_filename && !isVideoImage(img));
-    console.debug(`[artist] Hydrating metadata for ${pending.length} / ${this.images.length} images`);
+    const pending = this.images.filter(
+      (img) =>
+        img && !img.metadata && img.gallery_filename && !this._metadataMisses.has(img.gallery_filename),
+    );
+    // Videos go last and in smaller batches: the backend reads the whole file
+    // to find the metadata box, so a batch of clips moves far more bytes than
+    // a batch of stills. Images first means artist badges appear promptly
+    // instead of queueing behind the expensive reads.
+    const stills = pending.filter((img) => !isVideoImage(img));
+    const videos = pending.filter((img) => isVideoImage(img));
+    console.debug(
+      `[artist] Hydrating metadata for ${stills.length} images + ${videos.length} videos / ${this.images.length} entries`,
+    );
+    const hydrated = (await this._hydrateBatched(stills, 12)) + (await this._hydrateBatched(videos, 3));
+    console.debug(`[artist] Hydration complete: ${hydrated} entries loaded`);
+  }
+
+  /** Read metadata for `pending` in slices of `batch`, yielding between them. Returns the hydrated count. */
+  private async _hydrateBatched(pending: OutputImage[], batch: number): Promise<number> {
     let hydrated = 0;
-    for (let b = 0; b < pending.length; b += BATCH) {
-      const slice = pending.slice(b, b + BATCH);
+    for (let b = 0; b < pending.length; b += batch) {
+      const slice = pending.slice(b, b + batch);
       await Promise.all(
         slice.map(async (img) => {
           if (!img || img.metadata || !img.gallery_filename) return;
@@ -994,6 +1020,7 @@ class GalleryStore {
             const meta = await readImageMetadata(img.gallery_filename);
             if (!meta) {
               console.debug(`[artist] readImageMetadata returned null for ${img.gallery_filename}`);
+              this._metadataMisses.add(img.gallery_filename);
               return;
             }
             if (!img.metadata) {
@@ -1003,15 +1030,16 @@ class GalleryStore {
               hydrated++;
             }
           } catch (e) {
-            // Non-fatal — just means this image won't get artist badges.
+            // Non-fatal — just means this entry won't get artist badges.
             console.debug("[artist] Metadata hydration failed for", img.gallery_filename, e);
+            this._metadataMisses.add(img.gallery_filename);
           }
         }),
       );
       // Yield to keep the UI responsive between batches
       await new Promise((r) => setTimeout(r, 0));
     }
-    console.debug(`[artist] Hydration complete: ${hydrated} images loaded`);
+    return hydrated;
   }
 
   /** Load full-resolution image data on demand. Returns the blob URL. */
