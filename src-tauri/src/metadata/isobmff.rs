@@ -310,6 +310,98 @@ fn item_extent(iloc: &[u8], item_id: u32) -> Option<(usize, usize)> {
     None
 }
 
+/// Adobe's XMP identifier for a top-level `uuid` box, BE7ACFCB-97A9-42E8-9C71-999491E3AFAC.
+///
+/// This box sits beside `moov` rather than inside it, which is the whole point:
+/// decoders skip unknown top-level boxes, and Discord's mp4 scrubber walks
+/// `moov/udta` and neutralises every child it finds there without ever looking
+/// at the top level.
+const XMP_UUID: [u8; 16] = [
+    0xBE, 0x7A, 0xCF, 0xCB, 0x97, 0xA9, 0x42, 0xE8, 0x9C, 0x71, 0x99, 0x94, 0x91, 0xE3, 0xAF,
+    0xAC,
+];
+
+const XMP_OPEN: &str = "<mooshie:parameters>";
+const XMP_CLOSE: &str = "</mooshie:parameters>";
+
+/// Wrap `json` in the smallest XMP packet exiftool will still recognise.
+fn xmp_packet(json: &str) -> String {
+    let escaped = json
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    format!(
+        "<?xpacket begin=\"\u{feff}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\
+<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+<rdf:Description rdf:about=\"\" xmlns:mooshie=\"http://mooshieui.local/ns/1.0/\">\
+{XMP_OPEN}{escaped}{XMP_CLOSE}\
+</rdf:Description></rdf:RDF></x:xmpmeta>\
+<?xpacket end=\"w\"?>"
+    )
+}
+
+/// The JSON payload from a top-level Adobe XMP `uuid` box.
+pub(super) fn read_uuid_xmp(bytes: &[u8]) -> Option<String> {
+    let found = boxes(bytes).into_iter().find(|b| {
+        b.kind == *b"uuid" && bytes.get(b.body..b.body + 16) == Some(&XMP_UUID[..])
+    })?;
+    let packet = bytes.get(found.body + 16..found.end)?;
+    if packet.len() > MAX_PAYLOAD {
+        return None;
+    }
+    let text = String::from_utf8_lossy(packet);
+    let start = text.find(XMP_OPEN)? + XMP_OPEN.len();
+    let end = text.get(start..)?.find(XMP_CLOSE)? + start;
+    Some(
+        text.get(start..end)?
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&"),
+    )
+}
+
+/// Append an Adobe XMP `uuid` box carrying `json` after every existing
+/// top-level box. Returns `None` when `bytes` is not walkable ISOBMFF.
+///
+/// Appending at the very end moves no existing byte, so `stco` and `co64`
+/// sample offsets stay valid no matter where `moov` sits relative to `mdat`.
+///
+/// An existing Adobe `uuid` box that is already last is ours from a previous
+/// pass and gets truncated away first, so re-running never stacks copies. One
+/// that sits earlier in the file belongs to a third-party tool: it is left
+/// alone, and since `read_uuid_xmp` takes the first match, their copy keeps
+/// winning. That is the same canonical-first rule the container-native reader
+/// follows.
+pub(super) fn append_uuid_xmp(bytes: &[u8], json: &str) -> Option<Vec<u8>> {
+    let found = boxes(bytes);
+    // A real ISOBMFF file starts with `ftyp` and the walk covers all of it.
+    let last = found.last()?;
+    if found.first()?.kind != *b"ftyp" || last.end != bytes.len() {
+        return None;
+    }
+
+    let keep = if last.kind == *b"uuid"
+        && bytes.get(last.body..last.body + 16) == Some(&XMP_UUID[..])
+    {
+        last.start
+    } else {
+        bytes.len()
+    };
+
+    let packet = xmp_packet(json);
+    let body_len = 16 + packet.len();
+    let size = u32::try_from(8 + body_len).ok()?;
+
+    let mut out = Vec::with_capacity(keep + 8 + body_len);
+    out.extend_from_slice(bytes.get(..keep)?);
+    out.extend_from_slice(&size.to_be_bytes());
+    out.extend_from_slice(b"uuid");
+    out.extend_from_slice(&XMP_UUID);
+    out.extend_from_slice(packet.as_bytes());
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -614,5 +706,65 @@ mod tests {
         buf.truncate(buf.len() - 4);
 
         assert!(read_avif_exif(&buf).is_none());
+    }
+
+    #[test]
+    fn appends_a_uuid_box_without_moving_a_byte() {
+        let mut original = ftyp(b"isom");
+        original.extend_from_slice(&bx(b"mdat", b"frames"));
+        original.extend_from_slice(&bx(b"moov", b"index"));
+
+        let out = append_uuid_xmp(&original, "{\"seed\":\"7\"}").unwrap();
+
+        assert_eq!(&out[..original.len()], &original[..]);
+        let kinds: Vec<[u8; 4]> = boxes(&out).iter().map(|b| b.kind).collect();
+        assert_eq!(kinds, vec![*b"ftyp", *b"mdat", *b"moov", *b"uuid"]);
+    }
+
+    #[test]
+    fn recovers_the_payload_it_appended() {
+        let mut buf = ftyp(b"isom");
+        buf.extend_from_slice(&bx(b"moov", b"index"));
+
+        let json = "{\"prompt\":\"a <fox> & a \\\"hound\\\"\",\"note\":\"テスト\"}";
+        let out = append_uuid_xmp(&buf, json).unwrap();
+
+        assert_eq!(read_uuid_xmp(&out).as_deref(), Some(json));
+    }
+
+    #[test]
+    fn replaces_its_own_trailing_uuid_rather_than_stacking() {
+        let mut buf = ftyp(b"isom");
+        buf.extend_from_slice(&bx(b"moov", b"index"));
+
+        let once = append_uuid_xmp(&buf, "{\"seed\":\"1\"}").unwrap();
+        let twice = append_uuid_xmp(&once, "{\"seed\":\"2\"}").unwrap();
+
+        assert_eq!(boxes(&twice).iter().filter(|b| b.kind == *b"uuid").count(), 1);
+        assert_eq!(read_uuid_xmp(&twice).as_deref(), Some("{\"seed\":\"2\"}"));
+    }
+
+    #[test]
+    fn refuses_to_append_to_non_isobmff() {
+        assert!(append_uuid_xmp(b"\x89PNG\r\n\x1a\nnot a box", "{}").is_none());
+        assert!(append_uuid_xmp(b"", "{}").is_none());
+    }
+
+    #[test]
+    fn returns_none_when_there_is_no_uuid_box() {
+        let mut buf = ftyp(b"isom");
+        buf.extend_from_slice(&bx(b"moov", b"index"));
+
+        assert!(read_uuid_xmp(&buf).is_none());
+    }
+
+    #[test]
+    fn ignores_a_uuid_box_with_a_foreign_identifier() {
+        let mut buf = ftyp(b"isom");
+        let mut body = [0x11u8; 16].to_vec();
+        body.extend_from_slice(b"<x>not ours</x>");
+        buf.extend_from_slice(&bx(b"uuid", &body));
+
+        assert!(read_uuid_xmp(&buf).is_none());
     }
 }
