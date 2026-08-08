@@ -167,7 +167,22 @@ pub fn mirror_uuid_sidecar(path: &std::path::Path) -> bool {
     let Some(out) = isobmff::append_uuid_xmp(&bytes, &json) else {
         return false;
     };
-    std::fs::write(path, out).is_ok()
+    // Swap rather than overwrite: `fs::write` truncates the video before it
+    // writes a byte, so an interrupted write would leave the gallery holding a
+    // ruined file. The temp name is derived from the target so it lands in the
+    // same directory, which keeps the rename on one volume and atomic.
+    let mut tmp = path.as_os_str().to_os_string();
+    tmp.push(".uuidtmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    if std::fs::write(&tmp, out).is_err() {
+        std::fs::remove_file(&tmp).ok();
+        return false;
+    }
+    if std::fs::rename(&tmp, path).is_err() {
+        std::fs::remove_file(&tmp).ok();
+        return false;
+    }
+    true
 }
 
 /// Format-aware dispatcher: embeds metadata into PNG, JXL, or WebP bytes and
