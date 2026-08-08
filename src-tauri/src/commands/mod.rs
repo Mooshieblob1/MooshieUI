@@ -8,6 +8,7 @@ pub mod prompt_assistant;
 #[cfg(feature = "desktop")]
 pub mod server;
 pub mod video_export;
+pub mod video_interpolate;
 #[cfg(feature = "desktop")]
 pub mod websocket;
 #[cfg(feature = "desktop")]
