@@ -11,6 +11,7 @@
 <script lang="ts">
   import { locale } from "../../stores/locale.svelte.js";
   import VideoExportPopover from "./VideoExportPopover.svelte";
+  import VideoInterpolatePopover from "./VideoInterpolatePopover.svelte";
 
   interface Props {
     /** Range-serving gallery URL. */
@@ -58,6 +59,7 @@
   let measureGen = 0;
 
   let exportOpen = $state(false);
+  let interpolateOpen = $state(false);
   let videoWidth = $state(0);
   let videoHeight = $state(0);
 
@@ -529,24 +531,45 @@
               </span>
             {/if}
             {#if filename}
-              <div class="relative ml-auto">
-                <button
-                  class="px-2 py-1 rounded-lg text-xs text-neutral-100"
-                  class:bg-neutral-700={exportOpen}
-                  onclick={() => (exportOpen = !exportOpen)}
-                >
-                  {locale.t("video.export.open")}
-                </button>
-                {#if exportOpen}
-                  <VideoExportPopover
-                    {filename}
-                    sourceFps={fps}
-                    sourceWidth={videoWidth}
-                    sourceHeight={videoHeight}
-                    frameCount={clipFrames}
-                    onClose={() => (exportOpen = false)}
-                  />
-                {/if}
+              <div class="ml-auto flex items-center gap-1">
+                <div class="relative">
+                  <button
+                    class="px-2 py-1 rounded-lg text-xs text-neutral-100"
+                    class:bg-neutral-700={interpolateOpen}
+                    onclick={() => (interpolateOpen = !interpolateOpen)}
+                  >
+                    {locale.t("video.interpolate.open")}
+                  </button>
+                  {#if interpolateOpen}
+                    <VideoInterpolatePopover
+                      {filename}
+                      sourceFps={fps}
+                      sourceWidth={videoWidth}
+                      sourceHeight={videoHeight}
+                      frameCount={clipFrames}
+                      onClose={() => (interpolateOpen = false)}
+                    />
+                  {/if}
+                </div>
+                <div class="relative">
+                  <button
+                    class="px-2 py-1 rounded-lg text-xs text-neutral-100"
+                    class:bg-neutral-700={exportOpen}
+                    onclick={() => (exportOpen = !exportOpen)}
+                  >
+                    {locale.t("video.export.open")}
+                  </button>
+                  {#if exportOpen}
+                    <VideoExportPopover
+                      {filename}
+                      sourceFps={fps}
+                      sourceWidth={videoWidth}
+                      sourceHeight={videoHeight}
+                      frameCount={clipFrames}
+                      onClose={() => (exportOpen = false)}
+                    />
+                  {/if}
+                </div>
               </div>
             {/if}
           </div>
