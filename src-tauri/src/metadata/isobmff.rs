@@ -317,8 +317,7 @@ fn item_extent(iloc: &[u8], item_id: u32) -> Option<(usize, usize)> {
 /// `moov/udta` and neutralises every child it finds there without ever looking
 /// at the top level.
 const XMP_UUID: [u8; 16] = [
-    0xBE, 0x7A, 0xCF, 0xCB, 0x97, 0xA9, 0x42, 0xE8, 0x9C, 0x71, 0x99, 0x94, 0x91, 0xE3, 0xAF,
-    0xAC,
+    0xBE, 0x7A, 0xCF, 0xCB, 0x97, 0xA9, 0x42, 0xE8, 0x9C, 0x71, 0x99, 0x94, 0x91, 0xE3, 0xAF, 0xAC,
 ];
 
 const XMP_OPEN: &str = "<mooshie:parameters>";
@@ -343,9 +342,9 @@ fn xmp_packet(json: &str) -> String {
 
 /// The JSON payload from a top-level Adobe XMP `uuid` box.
 pub(super) fn read_uuid_xmp(bytes: &[u8]) -> Option<String> {
-    let found = boxes(bytes).into_iter().find(|b| {
-        b.kind == *b"uuid" && bytes.get(b.body..b.body + 16) == Some(&XMP_UUID[..])
-    })?;
+    let found = boxes(bytes)
+        .into_iter()
+        .find(|b| b.kind == *b"uuid" && bytes.get(b.body..b.body + 16) == Some(&XMP_UUID[..]))?;
     let packet = bytes.get(found.body + 16..found.end)?;
     if packet.len() > MAX_PAYLOAD {
         return None;
@@ -381,13 +380,12 @@ pub(super) fn append_uuid_xmp(bytes: &[u8], json: &str) -> Option<Vec<u8>> {
         return None;
     }
 
-    let keep = if last.kind == *b"uuid"
-        && bytes.get(last.body..last.body + 16) == Some(&XMP_UUID[..])
-    {
-        last.start
-    } else {
-        bytes.len()
-    };
+    let keep =
+        if last.kind == *b"uuid" && bytes.get(last.body..last.body + 16) == Some(&XMP_UUID[..]) {
+            last.start
+        } else {
+            bytes.len()
+        };
 
     let packet = xmp_packet(json);
     let body_len = 16 + packet.len();
@@ -740,7 +738,10 @@ mod tests {
         let once = append_uuid_xmp(&buf, "{\"seed\":\"1\"}").unwrap();
         let twice = append_uuid_xmp(&once, "{\"seed\":\"2\"}").unwrap();
 
-        assert_eq!(boxes(&twice).iter().filter(|b| b.kind == *b"uuid").count(), 1);
+        assert_eq!(
+            boxes(&twice).iter().filter(|b| b.kind == *b"uuid").count(),
+            1
+        );
         assert_eq!(read_uuid_xmp(&twice).as_deref(), Some("{\"seed\":\"2\"}"));
     }
 
