@@ -6,6 +6,13 @@
  * these values synchronously as the user drags a slider, and an IPC round-trip
  * per frame of interaction is not viable. Each function names its Rust
  * counterpart. Change one, change the other.
+ *
+ * Drift here is contained but not harmless. `run_export` re-derives dimensions,
+ * extension, audio gating and CRF from the raw request, so a wrong value in
+ * those only mislabels the popover. The fps math is the one the encoder acts on
+ * directly, so Rust snaps the incoming rate through its own `snap_fps` as a
+ * backstop - a correct value passes through untouched, a drifted one is
+ * corrected and logged.
  */
 
 /** Rust: `MIN_OFFERED_FPS` */

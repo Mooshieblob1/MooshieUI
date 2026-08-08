@@ -827,7 +827,7 @@ mod tests {
             let mut params = video_params("fl2va");
             params.video_rife_enabled = true;
             params.video_rife_multiplier = multiplier;
-            let workflow = build(&params, 1);
+            let workflow = build(&params, 1, false);
 
             let rife = nodes_of_class(&workflow, "RIFE VFI")[0];
             assert_eq!(rife["inputs"]["multiplier"], json!(multiplier));
@@ -843,7 +843,7 @@ mod tests {
         params.video_rife_scale_factor = 0.5;
         params.video_rife_fast_mode = false;
         params.video_rife_ensemble = false;
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
 
         let rife = nodes_of_class(&workflow, "RIFE VFI")[0];
         assert_eq!(rife["inputs"]["scale_factor"], json!(0.5));
@@ -856,7 +856,7 @@ mod tests {
         let mut params = video_params("fl2va");
         params.video_rife_enabled = true;
         params.video_rife_multiplier = 32;
-        let workflow = build(&params, 1);
+        let workflow = build(&params, 1, false);
 
         let rife = nodes_of_class(&workflow, "RIFE VFI")[0];
         assert_eq!(rife["inputs"]["multiplier"], json!(4));

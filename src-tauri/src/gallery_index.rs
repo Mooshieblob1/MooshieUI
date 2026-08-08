@@ -392,6 +392,22 @@ pub fn video_dimensions(path: &str) -> Option<(u32, u32)> {
     .filter(|(w, h)| *w > 0 && *h > 0)
 }
 
+/// Source frame rate for one indexed video, by gallery path.
+///
+/// `None` when the row is unknown, predates the `fps` column, or stored a rate
+/// the encoder never reported. Callers treat that as "unverifiable" rather than
+/// substituting a default, because a wrong assumed rate is worse than no check.
+pub fn video_fps(path: &str) -> Option<f64> {
+    let guard = conn().lock().ok()?;
+    let c = guard.as_ref()?;
+    c.query_row("SELECT fps FROM images WHERE path = ?1", [path], |row| {
+        row.get::<_, Option<f64>>(0)
+    })
+    .ok()
+    .flatten()
+    .filter(|v| *v > 0.0)
+}
+
 /// One query for the whole video table, keyed by gallery path.
 ///
 /// This is the first **reader** on the index. The gallery listing needs a

@@ -370,6 +370,27 @@ pub(crate) async fn run_export(
         (width & !1, 0)
     };
 
+    // Every other mirrored function is re-derived from the raw request below,
+    // so a drifted `videoExport.ts` only mislabels the popover. `fps` was the
+    // exception: the picker chooses it and it reached the encoder verbatim, and
+    // a rate that does not divide the source resamples on an uneven cadence and
+    // visibly judders. Snapping it here makes Rust authoritative for the fps
+    // math too. A correct request passes through untouched.
+    let fps = match source_fps(source) {
+        Some(src_fps) => {
+            let snapped = snap_fps(fps, src_fps);
+            if snapped != fps {
+                log::warn!(
+                    "[export] {fps} fps does not divide the {src_fps} fps source; encoding at {snapped}"
+                );
+            }
+            snapped
+        }
+        // Nothing to check against - no indexed rate for this clip. Let the
+        // request through rather than guessing at a source rate.
+        None => fps,
+    };
+
     let dir = export_temp_dir();
     std::fs::create_dir_all(&dir)?;
     let stem = source
@@ -513,6 +534,14 @@ fn emit_progress(app: Option<&tauri::AppHandle>, state: &AppState, payload: &ser
 fn source_dimensions(source: &Path) -> (u32, u32) {
     let path_str = source.to_string_lossy().to_string();
     crate::gallery_index::video_dimensions(&path_str).unwrap_or((0, 0))
+}
+
+/// Source frame rate from the gallery index, rounded to whole frames. `None`
+/// when the row is unknown or carries no rate, in which case the requested fps
+/// is not second-guessed.
+fn source_fps(source: &Path) -> Option<u32> {
+    let path_str = source.to_string_lossy().to_string();
+    crate::gallery_index::video_fps(&path_str).map(|f| f.round() as u32)
 }
 
 #[cfg(feature = "desktop")]
@@ -707,6 +736,24 @@ mod tests {
         assert_eq!(snap_fps(60, 24), 24);
         // A target below everything offered lands on the lowest offered.
         assert_eq!(snap_fps(2, 24), 6);
+    }
+
+    #[test]
+    fn snapping_an_already_offered_rate_is_a_no_op() {
+        // `run_export` runs every incoming rate through `snap_fps` so a drifted
+        // `videoExport.ts` cannot hand the encoder a non-divisor. That guard is
+        // only safe if it leaves a correct request completely alone.
+        for src in [8u32, 12, 16, 24, 30, 48, 60] {
+            for offered in offered_fps(src) {
+                assert_eq!(snap_fps(offered, src), offered, "src={src} rate={offered}");
+            }
+        }
+        // A drifted mirror gets corrected downward, never upward.
+        assert_eq!(snap_fps(16, 24), 12);
+        assert_eq!(snap_fps(30, 24), 24);
+        // A missing or zero rate lands on the floor rather than reaching the
+        // encoder as 0.
+        assert_eq!(snap_fps(0, 24), MIN_OFFERED_FPS);
     }
 
     #[test]
