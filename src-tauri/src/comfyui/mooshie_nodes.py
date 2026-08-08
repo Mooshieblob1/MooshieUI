@@ -939,6 +939,8 @@ class MooshieLoadVideoPath:
                     for frame in container.decode(stream):
                         for resampled in resampler.resample(frame):
                             chunks.append(resampled.to_ndarray())
+                    for resampled in resampler.resample(None):
+                        chunks.append(resampled.to_ndarray())
         except Exception as exc:
             # A broken audio track must not lose the user's interpolated video.
             print(f"[MooshieLoadVideoPath] audio decode failed ({exc}), using silence")
