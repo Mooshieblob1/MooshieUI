@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { generation } from "../../stores/generation.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -51,8 +51,14 @@
     h3TierForDiffusionModel,
   } from "../../utils/h3Models.js";
   import type { H3ModelCategory, H3ModelFile, H3TierId } from "../../utils/h3Models.js";
+  import { buildH3Context } from "../../utils/h3Prompt.js";
+  import { h3IdleTemplate } from "../../utils/h3Idle.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
-  import type { VideoAspectRatio, VideoVariant } from "../../types/index.js";
+  import type {
+    VideoAspectRatio,
+    VideoMotionStyle,
+    VideoVariant,
+  } from "../../types/index.js";
   import EditableValue from "../ui/EditableValue.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
 
@@ -74,6 +80,11 @@
   const variants: { id: VideoVariant; labelKey: string; descKey: string }[] = [
     { id: "fl2va", labelKey: "generation.video.variant_fl2va", descKey: "generation.video.variant_fl2va_desc" },
     { id: "ref2va", labelKey: "generation.video.variant_ref2va", descKey: "generation.video.variant_ref2va_desc" },
+  ];
+
+  const motionStyles: { id: VideoMotionStyle; labelKey: string; descKey: string }[] = [
+    { id: "free", labelKey: "generation.video.motion_free", descKey: "generation.video.motion_free_desc" },
+    { id: "live2d_idle", labelKey: "generation.video.motion_idle", descKey: "generation.video.motion_idle_desc" },
   ];
 
   /** Matches the `node_name` the Rust installer stamps on `install:progress`. */
@@ -769,6 +780,50 @@
     generation.saveSettings();
   }
 
+  /**
+   * Live2D idle mode is a prompt-shaping setting and nothing more: it never
+   * touches duration, aspect ratio or the frame slots, because H3 has no
+   * motion-amplitude input and the user asked for the setting to stay in its
+   * lane. The one thing it offers is a ready-made prompt.
+   */
+  const idleCtx = $derived(
+    buildH3Context({
+      variant: generation.videoVariant,
+      frames: generation.videoFrameLength,
+      hasFirstFrame: !!generation.videoFirstFrame,
+      hasLastFrame: !!generation.videoEffectiveLastFrame,
+      referenceImageCount: generation.videoRefImageFilenames.length,
+    }),
+  );
+
+  /** "confirm" is armed by a first click that would overwrite existing prompt
+   *  text; "filled" is the brief acknowledgement after writing. */
+  let fillState = $state<"ready" | "confirm" | "filled">("ready");
+  let fillTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function armFillState(next: "confirm" | "filled", ms: number) {
+    fillState = next;
+    if (fillTimer) clearTimeout(fillTimer);
+    fillTimer = setTimeout(() => (fillState = "ready"), ms);
+  }
+
+  function fillIdlePrompt() {
+    // This panel has no access to the prompt box's undo snapshot, so a
+    // second click is the only thing standing between a written prompt and
+    // the template replacing it.
+    if (generation.positivePrompt.trim() && fillState !== "confirm") {
+      armFillState("confirm", 5000);
+      return;
+    }
+    generation.positivePrompt = h3IdleTemplate(idleCtx);
+    generation.saveSettings();
+    armFillState("filled", 2000);
+  }
+
+  onDestroy(() => {
+    if (fillTimer) clearTimeout(fillTimer);
+  });
+
   function setVariant(variant: VideoVariant) {
     generation.videoVariant = variant;
     // ref2va sends no first/last frame, so there is nothing left to match.
@@ -802,6 +857,54 @@
         </button>
       {/each}
     </div>
+  </div>
+
+  <!-- Motion style -->
+  <div>
+    <span class="block text-xs text-neutral-400 mb-1.5">
+      {locale.t("generation.video.motion_style")}
+      <InfoTip text={locale.t("generation.video.motion_style_tip")} />
+    </span>
+    <div class="grid grid-cols-2 gap-2">
+      {#each motionStyles as style (style.id)}
+        <button
+          type="button"
+          class="rounded-lg border px-3 py-2 text-left transition-colors {generation.videoMotionStyle ===
+          style.id
+            ? 'border-indigo-500 bg-indigo-500/10'
+            : 'border-neutral-700 bg-neutral-800/40 hover:border-neutral-600'}"
+          onclick={() => {
+            generation.videoMotionStyle = style.id;
+            generation.saveSettings();
+          }}
+        >
+          <span class="block text-xs font-medium text-neutral-100">{locale.t(style.labelKey)}</span>
+          <span class="block text-[11px] leading-tight text-neutral-500 mt-0.5">
+            {locale.t(style.descKey)}
+          </span>
+        </button>
+      {/each}
+    </div>
+    {#if generation.videoMotionStyle === "live2d_idle"}
+      <div class="mt-2 rounded-lg border border-neutral-800 bg-neutral-950/60 p-2 space-y-1.5">
+        <p class="text-[11px] leading-relaxed text-neutral-400">
+          {locale.t("generation.video.idle_fill_hint")}
+        </p>
+        <button
+          type="button"
+          class="rounded-lg border px-2 py-1 text-[11px] transition-colors {fillState === 'confirm'
+            ? 'border-amber-500 text-amber-300 hover:bg-amber-500/10'
+            : 'border-neutral-600 text-neutral-300 hover:bg-neutral-800'}"
+          onclick={fillIdlePrompt}
+        >
+          {fillState === "confirm"
+            ? locale.t("generation.video.idle_fill_confirm")
+            : fillState === "filled"
+              ? locale.t("generation.video.idle_filled")
+              : locale.t("generation.video.idle_fill")}
+        </button>
+      </div>
+    {/if}
   </div>
 
   <!-- Duration -->

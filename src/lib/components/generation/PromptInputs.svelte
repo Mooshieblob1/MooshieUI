@@ -100,6 +100,7 @@
   // own trained section format, not danbooru tags, so the button is separate
   // rather than a branch inside `runEnhance`.
   const isVideoMode = $derived(generation.mode === "video");
+  const isIdleMotion = $derived(isVideoMode && generation.videoMotionStyle === "live2d_idle");
 
   async function onEnhanceClick() {
     if (!promptAssistant.isAvailable) {
@@ -151,6 +152,7 @@
           hasLastFrame: !!generation.videoEffectiveLastFrame,
           referenceImageCount: generation.videoRefImageFilenames.length,
         }),
+        generation.videoMotionStyle === "live2d_idle",
       );
       if (!result.text) {
         gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
@@ -343,7 +345,9 @@
           class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
           disabled={promptAssistant.isGenerating || !generation.positivePrompt?.trim()}
           title={isVideoMode
-            ? locale.t("prompt_assistant.enhance_h3_tooltip")
+            ? isIdleMotion
+              ? locale.t("prompt_assistant.enhance_h3_idle_tooltip")
+              : locale.t("prompt_assistant.enhance_h3_tooltip")
             : locale.t("prompt_assistant.enhance_tooltip")}
           onclick={isVideoMode ? onEnhanceH3Click : onEnhanceClick}
         >

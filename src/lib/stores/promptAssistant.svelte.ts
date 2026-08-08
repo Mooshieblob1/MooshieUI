@@ -24,6 +24,10 @@ import {
   validateH3Response,
 } from "../utils/h3Prompt.js";
 import type { H3PromptContext, H3RewriteResult } from "../utils/h3Prompt.js";
+import {
+  h3IdleRewriteSystemPrompt,
+  validateH3IdleResponse,
+} from "../utils/h3Idle.js";
 import type {
   LlmHardware,
   LlmCatalogEntry,
@@ -264,15 +268,19 @@ class PromptAssistantStore {
   async enhanceForH3(
     prompt: string,
     ctx: H3PromptContext,
+    idle = false,
   ): Promise<H3RewriteResult> {
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
-        const system = h3RewriteSystemPrompt(ctx);
+        const system = idle
+          ? h3IdleRewriteSystemPrompt(ctx)
+          : h3RewriteSystemPrompt(ctx);
+        const validate = idle ? validateH3IdleResponse : validateH3Response;
         const first = (
           await callExternalLlm(system, prompt, H3_MAX_TOKENS)
         ).trim();
-        const check = validateH3Response(first, ctx);
+        const check = validate(first, ctx);
         if (check.ok || !check.rule) {
           return { text: first, ok: check.ok, rule: check.rule };
         }
@@ -283,7 +291,7 @@ class PromptAssistantStore {
             H3_MAX_TOKENS,
           )
         ).trim();
-        const recheck = validateH3Response(second, ctx);
+        const recheck = validate(second, ctx);
         if (recheck.ok) return { text: second, ok: true, rule: null };
         // Prefer whichever attempt produced something; the second can come back
         // empty when the model gives up on the correction.

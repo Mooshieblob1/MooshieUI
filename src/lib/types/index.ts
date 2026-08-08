@@ -102,6 +102,15 @@ export type VideoVariant = "fl2va" | "ref2va";
  */
 export type VideoAspectRatio = "auto" | "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 
+/**
+ * How much motion the prompt should ask for. UI-only and frontend-only: it
+ * shapes the H3 prompt text (template, rewrite system prompt, guide) and is
+ * never sent to Rust, because H3 has no motion-amplitude input — the prompt is
+ * the only lever. `live2d_idle` holds the reference pose and adds Live2D-style
+ * micro-motion (blink, breath, hair, cloth, ambient) with a fixed camera.
+ */
+export type VideoMotionStyle = "free" | "live2d_idle";
+
 export interface GenerationParams {
   mode: GenerationMode;
   positive_prompt: string;

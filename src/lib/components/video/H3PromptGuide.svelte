@@ -8,6 +8,7 @@
     h3InstructionLine,
     h3ManualTemplate,
   } from "../../utils/h3Prompt.js";
+  import { h3IdleTemplate } from "../../utils/h3Idle.js";
   import { H3_FPS } from "../../utils/videoParams.js";
 
   /**
@@ -46,6 +47,16 @@
     "generation.video.h3_guide.rule_text",
   ];
 
+  /** Idle mode contradicts two of the general rules (one shot only, camera
+   *  locked off), so it replaces the list rather than appending to it. */
+  const IDLE_RULE_KEYS = [
+    "generation.video.h3_guide.idle_rule_pose",
+    "generation.video.h3_guide.idle_rule_blink",
+    "generation.video.h3_guide.idle_rule_flow",
+    "generation.video.h3_guide.idle_rule_camera",
+    "generation.video.h3_guide.idle_rule_forbidden",
+  ];
+
   let open = $state(false);
   let copied = $state(false);
   let copyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -62,10 +73,13 @@
   const isRef = $derived(h3FormatOf(ctx.taskType) === "ref");
   const sections = $derived(isRef ? REF_SECTIONS : BASE_SECTIONS);
   const instruction = $derived(h3InstructionLine(ctx));
+  const isIdle = $derived(generation.videoMotionStyle === "live2d_idle");
+  const rules = $derived(isIdle ? IDLE_RULE_KEYS : RULE_KEYS);
+  const template = $derived(isIdle ? h3IdleTemplate(ctx) : h3ManualTemplate(ctx));
 
   async function copyTemplate() {
     try {
-      await navigator.clipboard.writeText(h3ManualTemplate(ctx));
+      await navigator.clipboard.writeText(template);
       copied = true;
       if (copyTimer) clearTimeout(copyTimer);
       copyTimer = setTimeout(() => (copied = false), 2000);
@@ -90,7 +104,9 @@
 
   {#if open}
     <p class="text-[11px] leading-relaxed text-neutral-400">
-      {locale.t("generation.video.h3_guide.intro")}
+      {locale.t(
+        isIdle ? "generation.video.h3_guide.idle_intro" : "generation.video.h3_guide.intro",
+      )}
     </p>
     <p class="text-[11px] text-neutral-500">
       {locale.t("generation.video.h3_guide.applies", {
@@ -124,10 +140,14 @@
 
     <div class="space-y-1">
       <p class="text-[10px] font-medium text-neutral-300">
-        {locale.t("generation.video.h3_guide.rules_title")}
+        {locale.t(
+          isIdle
+            ? "generation.video.h3_guide.idle_rules_title"
+            : "generation.video.h3_guide.rules_title",
+        )}
       </p>
       <ul class="space-y-1 pl-3">
-        {#each RULE_KEYS as key (key)}
+        {#each rules as key (key)}
           <li class="list-disc text-[11px] leading-relaxed text-neutral-400">{locale.t(key)}</li>
         {/each}
       </ul>
@@ -135,9 +155,13 @@
 
     <div class="space-y-1">
       <p class="text-[10px] font-medium text-neutral-300">
-        {locale.t("generation.video.h3_guide.template_title")}
+        {locale.t(
+          isIdle
+            ? "generation.video.h3_guide.idle_template_title"
+            : "generation.video.h3_guide.template_title",
+        )}
       </p>
-      <pre class="max-h-56 overflow-auto rounded border border-neutral-800 bg-neutral-950/60 p-2 font-mono text-[10px] leading-relaxed text-neutral-300">{h3ManualTemplate(ctx)}</pre>
+      <pre class="max-h-56 overflow-auto rounded border border-neutral-800 bg-neutral-950/60 p-2 font-mono text-[10px] leading-relaxed text-neutral-300">{template}</pre>
       <button
         class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800"
         onclick={copyTemplate}
