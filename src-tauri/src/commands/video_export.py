@@ -124,12 +124,35 @@ def exif_blob(text):
 
     Same carrier the Rust WebP writer and MooshieSaveVideo's poster use, so one
     reader handles stills, posters, and animated exports alike.
+
+    Returns None if this Pillow build cannot produce one, so the caller saves
+    without metadata rather than failing the export.
     """
     from PIL import Image
 
-    exif = Image.Exif()
-    exif[0x8769] = {0x9286: b"UNICODE\x00" + text.encode("utf-16-be")}
-    return exif.tobytes()
+    try:
+        exif = Image.Exif()
+        exif[0x8769] = {0x9286: b"UNICODE\x00" + text.encode("utf-16-be")}
+        return exif.tobytes()
+    except Exception:  # noqa: BLE001 - metadata is best-effort everywhere here
+        return None
+
+
+def save_best_effort(img, out_path, kwargs, metadata_key):
+    """Save, retrying without the metadata kwarg if Pillow rejects it.
+
+    Whether a build's GIF, WebP or AVIF plugin accepts a tag kwarg is a property
+    of the build, not of the export, so a rejection must cost the metadata and
+    nothing else. Only the metadata key is dropped on the retry, and a failure
+    with any other cause still raises.
+    """
+    try:
+        img.save(out_path, **kwargs)
+    except Exception:  # noqa: BLE001 - an export without metadata beats no export
+        if metadata_key not in kwargs:
+            raise
+        kwargs.pop(metadata_key, None)
+        img.save(out_path, **kwargs)
 
 
 def encode_gif(frames, out_path, fps, colors, loop_count, metadata_json=""):
@@ -144,20 +167,18 @@ def encode_gif(frames, out_path, fps, colors, loop_count, metadata_json=""):
         )
         if i % 8 == 0:
             emit({"stage": "encode", "done": i, "total": len(frames)})
-    extra = {}
+    kwargs = {
+        "save_all": True,
+        "append_images": imgs[1:],
+        "duration": max(20, round(1000.0 / fps)),
+        "loop": loop_count,
+        "disposal": 2,
+        "optimize": False,
+    }
     if metadata_json:
         # GIF's Comment Extension, which Pillow splits into 255-byte sub-blocks.
-        extra["comment"] = metadata_json.encode("utf-8")
-    imgs[0].save(
-        out_path,
-        save_all=True,
-        append_images=imgs[1:],
-        duration=max(20, round(1000.0 / fps)),
-        loop=loop_count,
-        disposal=2,
-        optimize=False,
-        **extra,
-    )
+        kwargs["comment"] = metadata_json.encode("utf-8")
+    save_best_effort(imgs[0], out_path, kwargs, "comment")
 
 
 def encode_webp(frames, out_path, fps, quality, loop_count, metadata_json=""):
@@ -166,20 +187,20 @@ def encode_webp(frames, out_path, fps, quality, loop_count, metadata_json=""):
         imgs.append(Image.fromarray(fr))
         if i % 8 == 0:
             emit({"stage": "encode", "done": i, "total": len(frames)})
-    extra = {}
+    kwargs = {
+        "format": "WEBP",
+        "save_all": True,
+        "append_images": imgs[1:],
+        "duration": max(20, round(1000.0 / fps)),
+        "loop": loop_count,
+        "quality": max(0, min(100, quality)),
+        "method": 4,
+    }
     if metadata_json:
-        extra["exif"] = exif_blob(metadata_json)
-    imgs[0].save(
-        out_path,
-        format="WEBP",
-        save_all=True,
-        append_images=imgs[1:],
-        duration=max(20, round(1000.0 / fps)),
-        loop=loop_count,
-        quality=max(0, min(100, quality)),
-        method=4,
-        **extra,
-    )
+        blob = exif_blob(metadata_json)
+        if blob:
+            kwargs["exif"] = blob
+    save_best_effort(imgs[0], out_path, kwargs, "exif")
 
 
 def encode_avif(frames, out_path, fps, quality, loop_count, metadata_json=""):
@@ -188,26 +209,26 @@ def encode_avif(frames, out_path, fps, quality, loop_count, metadata_json=""):
         imgs.append(Image.fromarray(fr))
         if i % 8 == 0:
             emit({"stage": "encode", "done": i, "total": len(frames)})
-    extra = {}
-    if metadata_json:
-        extra["exif"] = exif_blob(metadata_json)
-    imgs[0].save(
-        out_path,
-        format="AVIF",
-        save_all=True,
-        append_images=imgs[1:],
-        duration=max(20, round(1000.0 / fps)),
+    kwargs = {
+        "format": "AVIF",
+        "save_all": True,
+        "append_images": imgs[1:],
+        "duration": max(20, round(1000.0 / fps)),
         # Accepted but not honoured: animated AVIF loops continuously regardless,
         # and Pillow reads the value back as None. Passed for symmetry with WEBP.
-        loop=loop_count,
+        "loop": loop_count,
         # AV1 quality, not the libwebp scale - the presets send lower numbers.
-        quality=max(0, min(100, quality)),
+        "quality": max(0, min(100, quality)),
         # Measured on this project's venv at 640x368 x 124 frames: speed 8 encodes
         # in 1.0 s versus 3.8 s at speed 6, for 0.26 MB versus 0.24 MB. Not worth
         # the wait.
-        speed=8,
-        **extra,
-    )
+        "speed": 8,
+    }
+    if metadata_json:
+        blob = exif_blob(metadata_json)
+        if blob:
+            kwargs["exif"] = blob
+    save_best_effort(imgs[0], out_path, kwargs, "exif")
 
 
 def add_audio_copy_stream(out, in_stream):
