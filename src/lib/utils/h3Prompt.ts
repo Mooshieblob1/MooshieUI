@@ -141,7 +141,7 @@ const AUDIO_FIELD_RULES = `overall_soundscape: one continuous paragraph of 1 to 
 
 non_diegetic_music: 1 to 3 English sentences describing background music only the audience hears. Describe instrumentation, speed, rhythm and dynamic changes. Do not use abstract mood words and do not explain the music's emotional function. Singing, on-set instruments, and music from a radio, TV or phone are diegetic and belong in the description above, not here. Write N/A when there is none.`;
 
-function baseSystemPrompt(ctx: H3PromptContext): string {
+function baseSystemPrompt(ctx: H3PromptContext, frameNote: string): string {
   const instruction = h3InstructionLine(ctx);
   const keyframeRules = h3KeyframeRules(ctx.taskType);
   const header =
@@ -169,7 +169,7 @@ non_diegetic_music: ...
 
 integrated_multimodal_description carries the whole audiovisual timeline in playback order: composition, subject appearance and position, environment, lighting, actions, state changes, camera movement, and the sound occurring at that moment. State the visual style immediately AFTER "[Shot 1]" and before anything else, for example "[Shot 1] Live-action, cinematic, a medium-wide shot frames ...". Common styles: Cinematic, live-action, 2D-animated, 3D CG, claymation, watercolor, vintage film.
 
-${keyframeRules}${SHARED_SYNTAX_RULES}
+${keyframeRules}${frameNote}${SHARED_SYNTAX_RULES}
 
 ${AUDIO_FIELD_RULES}
 
@@ -245,12 +245,42 @@ Write all six sections in English. The only text that keeps its original languag
 }
 
 /**
+ * Extra rules for a rewrite that carries the first frame as a real image.
+ *
+ * A vision model handed an attachment with no framing describes it: "a
+ * photograph shows a woman at a window". That is a caption, not an H3 prompt,
+ * and it misreads what the frame is for. This says what the image means and
+ * how far its authority reaches - it decides how things look, the user's text
+ * still decides what happens.
+ *
+ * Only I2VA and FL2VA condition on a first frame. Every other task type gets
+ * `""`, so a first frame left over from an earlier setup cannot describe
+ * itself into an unrelated rewrite.
+ */
+export function h3FirstFrameNote(taskType: H3TaskType): string {
+  if (taskType !== "i2va" && taskType !== "fl2va") return "";
+  // Bracketed for I2VA, bare for FL2VA, matching the labels the two forms use
+  // elsewhere in this file.
+  const label = taskType === "i2va" ? "<Picture 1>" : "Picture 1";
+  return `An image is attached to this request. It IS ${label}, the video's first frame - not a separate photograph, not a mood board. Look at it and write the opening of [Shot 1] from what is actually there: who or what is in frame, their appearance and clothing, their pose and position, the setting, the lighting, the shot size and the camera angle. Describe that content as the video's opening state; never call it an image, a photo, a picture or a reference in your output.
+
+Where the attached frame and the user's text disagree about how something looks, the frame wins. What happens after the opening is still the user's to decide. Do not invent details the frame does not show and the user did not ask for.
+
+`;
+}
+
+/**
  * The system prompt for a rewrite, chosen by task type and stamped with the
  * runtime facts. Pass the result to `callExternalLlm()` as the system turn and
  * the user's prose as the user turn.
+ *
+ * Set `hasFirstFrameImage` only when the frame really is travelling with the
+ * request. Promising the model an attachment it cannot see is worse than
+ * saying nothing: it will describe a frame it is imagining.
  */
-export function h3RewriteSystemPrompt(ctx: H3PromptContext): string {
-  return h3FormatOf(ctx.taskType) === "ref" ? refSystemPrompt(ctx) : baseSystemPrompt(ctx);
+export function h3RewriteSystemPrompt(ctx: H3PromptContext, hasFirstFrameImage = false): string {
+  if (h3FormatOf(ctx.taskType) === "ref") return refSystemPrompt(ctx);
+  return baseSystemPrompt(ctx, hasFirstFrameImage ? h3FirstFrameNote(ctx.taskType) : "");
 }
 
 /**
@@ -360,6 +390,12 @@ export interface H3RewriteResult {
   ok: boolean;
   /** The rule still violated when `ok` is false. */
   rule: string | null;
+  /**
+   * Whether the prompt asked for a Live2D-style idle loop, which swaps in a
+   * stricter contract. Surfaced so the caller can say so: a rewrite that quietly
+   * discards the motion the user described would otherwise read as a bug.
+   */
+  idle: boolean;
 }
 
 const OK: H3ValidationResult = { ok: true, rule: null };

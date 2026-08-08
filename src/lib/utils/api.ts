@@ -1161,13 +1161,24 @@ export async function connectLlmOauth(provider: string): Promise<LlmProviderStat
  * provider when one is set up, otherwise the bundled local model. Used by the
  * H3 prompt rewrite, which needs its own system prompt instead of the booru
  * grounding enhance/compose apply.
+ *
+ * `imageFilename` names a frame already uploaded to ComfyUI's input folder.
+ * Rust fetches, downscales, and inlines it, so the caller passes the name it
+ * already has rather than shipping megabytes of base64 across the IPC boundary.
+ * A model that cannot see one still answers from the text.
  */
 export async function callExternalLlm(
   system: string,
   prompt: string,
   maxTokens?: number,
+  imageFilename?: string | null,
 ): Promise<string> {
-  return runPromptAssistant("call_external_llm", { system, prompt, maxTokens });
+  return runPromptAssistant("call_external_llm", {
+    system,
+    prompt,
+    maxTokens,
+    imageFilename: imageFilename || undefined,
+  });
 }
 
 export async function readClipboardImage(): Promise<number[]> {

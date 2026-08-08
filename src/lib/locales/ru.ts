@@ -2569,6 +2569,7 @@ const ru: Record<string, string> = {
   "prompt_assistant.enhance_h3": "Улучшить для H3",
   "prompt_assistant.enhance_h3_tooltip": "Переписать промпт в формат разделов, который ожидает H3",
   "prompt_assistant.h3_format_warning": "Переписанный промпт не полностью соответствует формату H3: {rule} Сверьтесь с руководством под полем промпта.",
+  "prompt_assistant.h3_idle_applied": "Обнаружен режим Live2D idle. Переписанный промпт сохраняет позу с изображения и добавляет только дыхание, моргание, развевающиеся волосы и тихую атмосферу.",
   "prompt_assistant.compose_tooltip": "Составить промпт из описания",
   "prompt_assistant.undo": "Отменить",
   "prompt_assistant.loading_model": "Загрузка модели…",

@@ -4860,6 +4860,14 @@ async fn dispatch_command(
                 .map(|v| v as u32)
                 .unwrap_or(1024)
                 .clamp(64, 4096);
+            // Resolved before the SSE hand-off so a browser client sees the same
+            // vision behaviour as the desktop app, including the silent fallback
+            // to a text-only turn when the frame cannot be read.
+            let image = crate::prompt_assistant::vision::load_input_frame(
+                &state,
+                args["imageFilename"].as_str().map(str::to_string),
+            )
+            .await;
 
             match args["requestId"].as_str() {
                 // Same SSE hand-off as enhance/compose: a long rewrite would
@@ -4870,31 +4878,40 @@ async fn dispatch_command(
                     let owner = username.map(|s| s.to_string());
                     let state = state.clone();
                     tokio::spawn(async move {
-                        let (event, payload) =
-                            match chat_any_headless(&state, &system, &prompt, max_tokens).await {
-                                Ok(text) => (
-                                    "llm:result",
-                                    serde_json::json!({
-                                        "request_id": request_id,
-                                        "result": text,
-                                        "_target_user": owner,
-                                    }),
-                                ),
-                                Err(e) => (
-                                    "llm:error",
-                                    serde_json::json!({
-                                        "request_id": request_id,
-                                        "error": e,
-                                        "_target_user": owner,
-                                    }),
-                                ),
-                            };
+                        let (event, payload) = match chat_any_headless(
+                            &state,
+                            &system,
+                            &prompt,
+                            max_tokens,
+                            image.as_ref(),
+                        )
+                        .await
+                        {
+                            Ok(text) => (
+                                "llm:result",
+                                serde_json::json!({
+                                    "request_id": request_id,
+                                    "result": text,
+                                    "_target_user": owner,
+                                }),
+                            ),
+                            Err(e) => (
+                                "llm:error",
+                                serde_json::json!({
+                                    "request_id": request_id,
+                                    "error": e,
+                                    "_target_user": owner,
+                                }),
+                            ),
+                        };
                         state.broadcast(event, payload);
                     });
                     Ok(serde_json::json!({ "queued": true }))
                 }
                 None => {
-                    let text = chat_any_headless(&state, &system, &prompt, max_tokens).await?;
+                    let text =
+                        chat_any_headless(&state, &system, &prompt, max_tokens, image.as_ref())
+                            .await?;
                     Ok(serde_json::Value::String(text))
                 }
             }
@@ -5133,12 +5150,16 @@ async fn run_interrogation_headless(
 /// Stage updates go out over SSE instead of a Tauri emit, and there is no
 /// download-progress callback because the browser model-download path has its
 /// own dispatch arm.
+///
+/// `image` only reaches the external path; the bundled llama-server runs
+/// text-only models and answers from the prompt alone.
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub async fn chat_any_headless(
     state: &Arc<AppState>,
     system: &str,
     user: &str,
     max_tokens: u32,
+    image: Option<&crate::prompt_assistant::vision::VisionImage>,
 ) -> Result<String, String> {
     use crate::prompt_assistant::hardware;
 
@@ -5166,9 +5187,17 @@ pub async fn chat_any_headless(
             system,
             user,
             max_tokens,
+            image,
         )
         .await
         .map_err(|e| e.to_string());
+    }
+
+    if image.is_some() {
+        log::info!(
+            "[prompt-assistant] the bundled local model has no vision; \
+             answering from the prompt text alone"
+        );
     }
 
     // Fall back to whatever model is already on disk when config.json carries no
@@ -5264,7 +5293,7 @@ pub async fn run_prompt_assistant_headless(
         Some("detailed") => 384,
         _ => 192,
     };
-    let raw = chat_any_headless(state, &system, input, max_tokens).await?;
+    let raw = chat_any_headless(state, &system, input, max_tokens, None).await?;
     let cleaned = grounding::repair(&raw, tag_only);
     // Enhance is additive: keep every user tag and don't let the model swap a
     // pinned attribute. No-op for Compose. The desktop path runs this too;

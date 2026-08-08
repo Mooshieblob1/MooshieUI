@@ -4,6 +4,7 @@ pub mod hardware;
 pub mod oauth;
 pub mod providers;
 pub mod server;
+pub mod vision;
 
 use std::path::PathBuf;
 use std::sync::Arc;

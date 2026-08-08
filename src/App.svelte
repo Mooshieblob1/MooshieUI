@@ -1507,6 +1507,13 @@
         return;
       }
 
+      // Mode before the prompts: image and video keep separate prompt buckets, so
+      // switching modes swaps what is in the prompt boxes. Writing the prompt first
+      // would park it in the bucket we are leaving and then overwrite it.
+      if (metadata.mode === "txt2img" || metadata.mode === "img2img" || metadata.mode === "inpainting") {
+        generation.mode = metadata.mode;
+      }
+
       if (metadata.positive_prompt !== undefined) generation.positivePrompt = metadata.positive_prompt;
       if (metadata.negative_prompt !== undefined) generation.negativePrompt = metadata.negative_prompt;
       if (metadata.steps !== undefined) generation.steps = Number(metadata.steps) || generation.steps;

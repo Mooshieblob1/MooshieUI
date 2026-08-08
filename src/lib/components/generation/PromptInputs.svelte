@@ -37,13 +37,20 @@
     try { localStorage.setItem(COMBINED_KEY, val); } catch {}
   });
 
+  // H3 reads prose in its own trained section format, not danbooru tags, and it
+  // has no regional conditioning to steer. So video mode drops the whole
+  // tag-shaped toolbar - quality tags, the region editor, compose, autocomplete -
+  // rather than leaving affordances that misfire or do nothing.
+  const isVideoMode = $derived(generation.mode === "video");
+
   const hasPositiveSchedule = $derived(hasSchedulingTags(generation.positivePrompt));
   const regionalPromptingSupported = $derived(generation.supportsRegionalPrompting);
   const hasRegionalPrompting = $derived(
     hasRegionalTags(generation.positivePrompt) || generation.regionalPrompts.length > 0,
   );
   const qualityTagsSupported = $derived(
-    generation.autoQualityTags &&
+    !isVideoMode &&
+      generation.autoQualityTags &&
       (generation.isAnima || generation.isIllustrious || generation.isPony || generation.isNanosaur),
   );
   const hasNegativeSchedule = $derived(hasSchedulingTags(generation.negativePrompt));
@@ -96,11 +103,6 @@
   let undoTimer: ReturnType<typeof setTimeout> | null = null;
   let _pendingAction = $state<"enhance" | "enhance_h3" | "compose" | null>(null);
 
-  // Video prompts go through a different rewrite entirely: H3 wants prose in its
-  // own trained section format, not danbooru tags, so the button is separate
-  // rather than a branch inside `runEnhance`.
-  const isVideoMode = $derived(generation.mode === "video");
-
   async function onEnhanceClick() {
     if (!promptAssistant.isAvailable) {
       _pendingAction = "enhance";
@@ -151,6 +153,7 @@
           hasLastFrame: !!generation.videoEffectiveLastFrame,
           referenceImageCount: generation.videoRefImageFilenames.length,
         }),
+        generation.videoFirstFrame,
       );
       if (!result.text) {
         gallery.showToast(locale.t("prompt_assistant.couldnt_enhance"), "error");
@@ -171,6 +174,12 @@
           "warning",
           { durationMs: 12000 },
         );
+      } else if (result.idle) {
+        // Idle mode is invisible until it fires, which is the point. Saying so
+        // once is what keeps "the pose never changes" from reading as a failure.
+        gallery.showToast(locale.t("prompt_assistant.h3_idle_applied"), "info", {
+          durationMs: 8000,
+        });
       }
     } catch (e) {
       console.error("H3 prompt rewrite failed:", e);
@@ -356,14 +365,18 @@
             ? locale.t("prompt_assistant.enhance_h3")
             : locale.t("prompt_assistant.enhance")}
         </button>
-        <button
-          class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-          disabled={promptAssistant.isGenerating}
-          title={locale.t("prompt_assistant.compose_tooltip")}
-          onclick={onComposeClick}
-        >
-          ✍ {locale.t("prompt_assistant.compose")}
-        </button>
+        {#if !isVideoMode}
+          <!-- Compose builds a tag list from a description. Nothing downstream of
+               it fits H3, which wants the prose the user already wrote. -->
+          <button
+            class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+            disabled={promptAssistant.isGenerating}
+            title={locale.t("prompt_assistant.compose_tooltip")}
+            onclick={onComposeClick}
+          >
+            ✍ {locale.t("prompt_assistant.compose")}
+          </button>
+        {/if}
         {#if showUndo}
           <button
             class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-indigo-400 hover:bg-neutral-800"
@@ -377,23 +390,25 @@
         {/if}
       </div>
       <div class="flex items-center gap-1.5">
-        <button
-          type="button"
-          disabled={!regionalPromptingSupported}
-          onclick={() => {
-            if (!regionalPromptingSupported) {
-              gallery.showToast(locale.t("generation.regional.unsupported"), "warning");
-              return;
-            }
-            onOpenRegionalPrompt?.();
-          }}
-          class="rounded-lg border px-2 py-0.5 text-[10px] transition-colors disabled:cursor-not-allowed {regionalPromptingSupported
-            ? 'border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-indigo-500 hover:text-indigo-200'
-            : 'border-neutral-800 bg-neutral-950 text-neutral-500'}"
-          title={!regionalPromptingSupported ? locale.t("generation.regional.unsupported") : undefined}
-        >
-          {locale.t("generation.regional.button", { count: String(generation.regionalPrompts.length) })}
-        </button>
+        {#if !isVideoMode}
+          <button
+            type="button"
+            disabled={!regionalPromptingSupported}
+            onclick={() => {
+              if (!regionalPromptingSupported) {
+                gallery.showToast(locale.t("generation.regional.unsupported"), "warning");
+                return;
+              }
+              onOpenRegionalPrompt?.();
+            }}
+            class="rounded-lg border px-2 py-0.5 text-[10px] transition-colors disabled:cursor-not-allowed {regionalPromptingSupported
+              ? 'border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-indigo-500 hover:text-indigo-200'
+              : 'border-neutral-800 bg-neutral-950 text-neutral-500'}"
+            title={!regionalPromptingSupported ? locale.t("generation.regional.unsupported") : undefined}
+          >
+            {locale.t("generation.regional.button", { count: String(generation.regionalPrompts.length) })}
+          </button>
+        {/if}
         {@render combineToggle()}
       </div>
     </div>
@@ -406,8 +421,9 @@
       rows={4}
       minHeight="min-h-25"
       storageKey="mooshieui.promptHeight.positive"
+      tagAssist={!isVideoMode}
     />
-    {#if hasRegionalPrompting && !regionalPromptingSupported}
+    {#if !isVideoMode && hasRegionalPrompting && !regionalPromptingSupported}
       <p class="mt-1 text-[10px] text-amber-300">
         {locale.t("generation.regional.unsupported")}
       </p>
@@ -442,6 +458,7 @@
       rows={3}
       minHeight="min-h-18"
       storageKey="mooshieui.promptHeight.negative"
+      tagAssist={!isVideoMode}
     />
     <ExtraPromptBoxList side="negative" />
   </div>

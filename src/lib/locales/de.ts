@@ -2572,6 +2572,7 @@ const de: Record<string, string> = {
   "prompt_assistant.enhance_h3": "Für H3 optimieren",
   "prompt_assistant.enhance_h3_tooltip": "Den Prompt in das Abschnittsformat umschreiben, das H3 erwartet",
   "prompt_assistant.h3_format_warning": "Die Umschreibung entspricht dem H3-Format nicht vollständig: {rule} Vergleiche sie mit der Anleitung unter dem Prompt.",
+  "prompt_assistant.h3_idle_applied": "Live2D-Idle erkannt. Die Umschreibung behält die Pose aus deinem Bild bei und ergänzt nur Atmen, Blinzeln, wehendes Haar und ruhige Umgebung.",
   "prompt_assistant.compose_tooltip": "Prompt aus einer Beschreibung verfassen",
   "prompt_assistant.undo": "Rückgängig",
   "prompt_assistant.loading_model": "Modell wird geladen…",

@@ -2569,6 +2569,7 @@ const ko: Record<string, string> = {
   "prompt_assistant.enhance_h3": "H3용으로 향상",
   "prompt_assistant.enhance_h3_tooltip": "프롬프트를 H3가 기대하는 섹션 형식으로 다시 씁니다",
   "prompt_assistant.h3_format_warning": "다시 쓴 결과가 H3 형식을 완전히 지키지 못했습니다: {rule} 프롬프트 아래 가이드와 비교해 보세요.",
+  "prompt_assistant.h3_idle_applied": "Live2D 아이들을 감지했습니다. 재작성은 이미지의 포즈를 유지하고 호흡, 눈 깜박임, 흩날리는 머리카락, 조용한 분위기만 추가합니다.",
   "prompt_assistant.compose_tooltip": "설명으로 프롬프트 작성",
   "prompt_assistant.undo": "실행 취소",
   "prompt_assistant.loading_model": "모델 로딩 중…",

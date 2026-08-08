@@ -109,12 +109,17 @@ pub async fn unload_llm(state: State<'_, Arc<AppState>>) -> Result<(), AppError>
 /// Every caller that just needs an answer goes through here, so a feature built
 /// on the external providers keeps working for users who only have a local
 /// model installed.
+///
+/// `image` only reaches the external path. The bundled llama-server runs
+/// text-only models, so it drops the image and answers from the prompt alone
+/// rather than failing.
 async fn chat_any(
     app: &AppHandle,
     state: &State<'_, Arc<AppState>>,
     system: &str,
     user: &str,
     max_tokens: u32,
+    image: Option<&crate::prompt_assistant::vision::VisionImage>,
 ) -> Result<String, AppError> {
     let (model_id, idle_secs, ext_enabled, provider, ext_base, ext_key, ext_model) = {
         let cfg = state.config.read().await;
@@ -140,8 +145,16 @@ async fn chat_any(
             system,
             user,
             max_tokens,
+            image,
         )
         .await;
+    }
+
+    if image.is_some() {
+        log::info!(
+            "[prompt-assistant] the bundled local model has no vision; \
+             answering from the prompt text alone"
+        );
     }
 
     let model_id =
@@ -225,7 +238,7 @@ async fn run_generation(
         _ => 192,
     };
 
-    let raw = chat_any(app, state, &system, input, max_tokens).await?;
+    let raw = chat_any(app, state, &system, input, max_tokens, None).await?;
     let cleaned = grounding::repair(&raw, tag_only);
     // Enhance is additive: keep every user tag (named characters included) and don't
     // let the model switch a pinned attribute (a 1boy on a 1girl prompt, red hair on a
@@ -341,6 +354,14 @@ pub async fn connect_llm_oauth(
 /// assistant; that is no more privileged than `enhance_prompt`, which already
 /// spends the same key on client-supplied text, and `max_tokens` is clamped so
 /// a bad caller cannot run up an unbounded bill.
+///
+/// `image_filename` names an image already uploaded to ComfyUI's input folder
+/// (a video first frame, say). The client passes the filename rather than the
+/// bytes: the bytes are the one thing it does not keep - an upload leaves only a
+/// name behind - and routing multiple megabytes of base64 back through IPC to
+/// send it straight out again would be pointless. Anything that goes wrong while
+/// fetching or encoding it degrades to a text-only turn, because a rewrite
+/// written from the prompt alone beats an error dialog.
 #[tauri::command]
 pub async fn call_external_llm(
     app: AppHandle,
@@ -348,7 +369,9 @@ pub async fn call_external_llm(
     system: String,
     prompt: String,
     max_tokens: Option<u32>,
+    image_filename: Option<String>,
 ) -> Result<String, AppError> {
     let max_tokens = max_tokens.unwrap_or(1024).clamp(64, 4096);
-    chat_any(&app, &state, &system, &prompt, max_tokens).await
+    let image = crate::prompt_assistant::vision::load_input_frame(&state, image_filename).await;
+    chat_any(&app, &state, &system, &prompt, max_tokens, image.as_ref()).await
 }

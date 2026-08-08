@@ -2595,6 +2595,7 @@ const fr: Record<string, string> = {
   "prompt_assistant.enhance_h3": "Optimiser pour H3",
   "prompt_assistant.enhance_h3_tooltip": "Réécrire le prompt au format en sections attendu par H3",
   "prompt_assistant.h3_format_warning": "La réécriture ne respecte pas entièrement le format H3 : {rule} Comparez-la au guide sous le prompt.",
+  "prompt_assistant.h3_idle_applied": "Live2D idle détecté. La réécriture conserve la pose de votre image et n'ajoute que la respiration, les clignements, les cheveux qui bougent et une ambiance calme.",
   "prompt_assistant.compose_tooltip": "Composer un prompt à partir d'une description",
   "prompt_assistant.undo": "Annuler",
   "prompt_assistant.loading_model": "Chargement du modèle…",

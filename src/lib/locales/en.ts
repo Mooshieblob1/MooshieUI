@@ -2613,6 +2613,7 @@ const en: Record<string, string> = {
   "prompt_assistant.enhance_h3": "Enhance for H3",
   "prompt_assistant.enhance_h3_tooltip": "Rewrite the prompt into the section format H3 expects",
   "prompt_assistant.h3_format_warning": "The rewrite does not fully match the H3 format: {rule} Compare it with the guide below the prompt.",
+  "prompt_assistant.h3_idle_applied": "Live2D idle detected. The rewrite holds the pose from your image and adds only breathing, blinking, drifting hair and quiet ambience.",
   "prompt_assistant.compose_tooltip": "Compose a prompt from a description",
   "prompt_assistant.undo": "Undo",
   "prompt_assistant.loading_model": "Loading model…",

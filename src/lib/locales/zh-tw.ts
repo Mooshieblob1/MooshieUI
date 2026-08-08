@@ -2569,6 +2569,7 @@ const zhTw: Record<string, string> = {
   "prompt_assistant.enhance_h3": "針對 H3 最佳化",
   "prompt_assistant.enhance_h3_tooltip": "把提示詞改寫成 H3 期望的分段格式",
   "prompt_assistant.h3_format_warning": "改寫結果未完全符合 H3 格式：{rule} 請對照提示詞下方的說明檢查。",
+  "prompt_assistant.h3_idle_applied": "已偵測到 Live2D 待機。改寫會保持圖片中的姿勢，只加入呼吸、眨眼、飄動的頭髮與安靜的環境音。",
   "prompt_assistant.compose_tooltip": "根據描述撰寫提示詞",
   "prompt_assistant.undo": "復原",
   "prompt_assistant.loading_model": "載入模型中…",

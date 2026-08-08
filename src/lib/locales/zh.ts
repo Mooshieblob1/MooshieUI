@@ -2570,6 +2570,7 @@ const zh: Record<string, string> = {
   "prompt_assistant.enhance_h3": "针对 H3 优化",
   "prompt_assistant.enhance_h3_tooltip": "把提示词改写成 H3 期望的分段格式",
   "prompt_assistant.h3_format_warning": "改写结果未完全符合 H3 格式：{rule} 请对照提示词下方的说明检查。",
+  "prompt_assistant.h3_idle_applied": "已检测到 Live2D 待机。改写会保持图片中的姿势，只添加呼吸、眨眼、飘动的头发和安静的环境音。",
   "prompt_assistant.compose_tooltip": "根据描述撰写提示词",
   "prompt_assistant.undo": "撤销",
   "prompt_assistant.loading_model": "加载模型中…",

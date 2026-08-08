@@ -2594,6 +2594,7 @@ const ja: Record<string, string> = {
   "prompt_assistant.enhance_h3": "H3 用に強化",
   "prompt_assistant.enhance_h3_tooltip": "プロンプトを H3 が想定するセクション形式に書き換えます",
   "prompt_assistant.h3_format_warning": "書き換え結果が H3 の形式を完全には満たしていません: {rule} プロンプト下のガイドと見比べてください。",
+  "prompt_assistant.h3_idle_applied": "Live2D アイドルを検出しました。書き換えは画像のポーズを保ち、呼吸、まばたき、なびく髪、静かな環境音だけを加えます。",
   "prompt_assistant.compose_tooltip": "説明からプロンプトを作成",
   "prompt_assistant.undo": "元に戻す",
   "prompt_assistant.loading_model": "モデル読み込み中…",

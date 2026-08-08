@@ -31,9 +31,24 @@
     rows?: number;
     minHeight?: string;
     storageKey?: string;
+    /**
+     * Danbooru tag assistance: the completion dropdown, the unknown-tag
+     * spellcheck underline, and the clickable-tag overlay. One flag rather than
+     * three, because all three read the same tag index and are wrong in exactly
+     * the same places — a prose prompt (H3 video) is not made of tags, so
+     * completing, underlining and linking them all misfire together.
+     */
+    tagAssist?: boolean;
   }
 
-  let { value = $bindable(), placeholder = "", rows = 4, minHeight = "min-h-25", storageKey }: Props = $props();
+  let {
+    value = $bindable(),
+    placeholder = "",
+    rows = 4,
+    minHeight = "min-h-25",
+    storageKey,
+    tagAssist = true,
+  }: Props = $props();
 
   // Restored height is applied as inline style (set in $effect on mount).
   let resizeStyle = $state("");
@@ -196,9 +211,14 @@
   }
 
   function updateSuggestions() {
+    if (!tagAssist) {
+      showSuggestions = false;
+      suggestions = [];
+      return;
+    }
     const result = getCurrentTagFragment();
     const pos = textareaEl?.selectionStart ?? 0;
-    
+
     if (!result || pos < result.trimmedStart) {
       showSuggestions = false;
       suggestions = [];
@@ -523,9 +543,11 @@
   // Reactive: render highlighted HTML for the backdrop overlay
   const highlightedHtml = $derived(showBackdrop ? renderHighlightedPrompt(value, promptPresets.slugs) : "");
   const clickableSegments = $derived(
-    autocomplete.clickableOverlayEnabled ? getPromptClickableSegments(value) : [],
+    tagAssist && autocomplete.clickableOverlayEnabled ? getPromptClickableSegments(value) : [],
   );
-  const showClickableOverlay = $derived(autocomplete.clickableOverlayEnabled && clickableSegments.length > 0);
+  const showClickableOverlay = $derived(
+    tagAssist && autocomplete.clickableOverlayEnabled && clickableSegments.length > 0,
+  );
 
   /** One painted box. Coordinates are relative to the mirror's border box, unscrolled. */
   interface HighlightRect {
@@ -544,12 +566,12 @@
   // Exclude the token under the caret only when there's no active selection.
   const spellcheckCaret = $derived(selectionStart === selectionEnd ? selectionStart : -1);
   const spellcheckRanges = $derived(
-    autocomplete.spellcheckEnabled
+    tagAssist && autocomplete.spellcheckEnabled
       ? getUnknownTagRanges(value, (n) => autocomplete.isKnownTag(n), spellcheckCaret)
       : [],
   );
   const showSpellcheckOverlay = $derived(
-    autocomplete.spellcheckEnabled && spellcheckRanges.length > 0,
+    tagAssist && autocomplete.spellcheckEnabled && spellcheckRanges.length > 0,
   );
   const spellcheckPieces = $derived(
     showSpellcheckOverlay ? buildSpellcheckPieces(value.length, spellcheckRanges) : [],
@@ -701,7 +723,7 @@
    * point before `contextmenu` fires, so hit-test the caret against unknown pieces.
    */
   function handleTextareaContextMenu(event: MouseEvent) {
-    if (!textareaEl || !autocomplete.spellcheckEnabled) return;
+    if (!textareaEl || !tagAssist || !autocomplete.spellcheckEnabled) return;
     const caret = textareaEl.selectionStart;
     const piece = spellcheckPieces.find(
       (p) => p.unknown && p.name !== null && caret >= p.start && caret <= p.end,

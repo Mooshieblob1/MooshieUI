@@ -24,6 +24,22 @@ import {
   validateH3Response,
 } from "../utils/h3Prompt.js";
 import type { H3PromptContext, H3RewriteResult } from "../utils/h3Prompt.js";
+import {
+  detectH3IdleIntent,
+  h3IdleRewriteSystemPrompt,
+  h3IdleUserPrompt,
+  validateH3IdleResponse,
+} from "../utils/h3Idle.js";
+import {
+  H3_SKILL_MAX_TOKENS,
+  h3SkillAuthoringSystem,
+  h3SkillAuthoringUser,
+  h3SkillKey,
+  h3SystemWithSkill,
+  loadH3Skill,
+  sanitizeH3Skill,
+  saveH3Skill,
+} from "../utils/h3Skill.js";
 import type {
   LlmHardware,
   LlmCatalogEntry,
@@ -250,47 +266,122 @@ class PromptAssistantStore {
   }
 
   /**
+   * Which model an H3 skill was authored by, so one user's notes cannot leak
+   * across a provider or model switch. `"local"` covers the bundled
+   * llama-server, whose active model is the only thing that distinguishes it.
+   */
+  private get llmBackendId(): string {
+    const p = this.provider;
+    if (p?.enabled) return `${p.provider}/${p.model || "default"}`;
+    return `local/${this.status?.active_model ?? this.status?.installed_models[0] ?? "default"}`;
+  }
+
+  /**
+   * The current model's own notes on how to write an H3 prompt, authored once
+   * per backend and cached from then on.
+   *
+   * One extra round trip the first time a given model is asked for a given
+   * shape of the job, and none after that. Every failure returns `null` and the
+   * rewrite proceeds on the format spec alone, which is what every rewrite did
+   * before this existed. A model that answers with something unusable has that
+   * recorded too, so it is not asked again on every prompt.
+   */
+  private async ensureH3Skill(
+    ctx: H3PromptContext,
+    hasImage: boolean,
+  ): Promise<string | null> {
+    const key = h3SkillKey(this.llmBackendId, ctx, hasImage);
+    const cached = loadH3Skill(key);
+    if (cached !== null) return cached || null;
+    try {
+      const skill = sanitizeH3Skill(
+        await callExternalLlm(
+          h3SkillAuthoringSystem(),
+          h3SkillAuthoringUser(ctx, hasImage),
+          H3_SKILL_MAX_TOKENS,
+        ),
+      );
+      // Cached even when empty: that is a verdict on this model, not a miss.
+      // A thrown error is not, so it deliberately skips this line.
+      saveH3Skill(key, skill);
+      return skill || null;
+    } catch (e) {
+      console.warn("[promptAssistant] H3 skill authoring failed", e);
+      return null;
+    }
+  }
+
+  /**
    * Rewrite prose into MiniMax H3's trained prompt format.
    *
    * Deliberately bypasses `enhance()`: that path is danbooru-tag machinery
    * (candidate retrieval, tag repair, reconciliation) and would mangle H3 prose.
    * This sends the format's own system prompt straight through instead.
    *
+   * `firstFrameFilename` is the frame uploaded to ComfyUI's input folder. When
+   * the task type actually conditions on it and the model can see it, the
+   * rewrite is written from the frame rather than from the user's text alone -
+   * which is the difference between a description of this video and a
+   * description of a video like it. The gate lives here rather than at the call
+   * site so a frame left over from an earlier setup cannot follow the user into
+   * a task that ignores it.
+   *
    * Small local models miss the format on the first try often enough to be the
    * normal case, so a failed check buys exactly one retry that quotes the
    * violated rule back. A second failure still returns the text, flagged, so the
    * caller can show it beside the manual template rather than claim success.
+   *
+   * A prompt that asks for a Live2D-style idle loop swaps in a stricter contract
+   * on both ends - extra rules in the system turn, extra checks on the way back.
+   * The trigger is the user's own wording, so nothing about this mode exists
+   * until somebody asks for it by name.
    */
   async enhanceForH3(
     prompt: string,
     ctx: H3PromptContext,
+    firstFrameFilename?: string | null,
   ): Promise<H3RewriteResult> {
+    const usesFirstFrame =
+      ctx.taskType === "i2va" || ctx.taskType === "fl2va";
+    const image = (usesFirstFrame && firstFrameFilename) || null;
+    const idle = detectH3IdleIntent(prompt);
+    const validate = idle ? validateH3IdleResponse : validateH3Response;
+
     this.isGenerating = true;
     try {
       return await this.withStageListener(async () => {
-        const system = h3RewriteSystemPrompt(ctx);
+        const skill = await this.ensureH3Skill(ctx, !!image);
+        const system = h3SystemWithSkill(
+          idle
+            ? h3IdleRewriteSystemPrompt(ctx, !!image)
+            : h3RewriteSystemPrompt(ctx, !!image),
+          skill,
+        );
+        const user = idle ? h3IdleUserPrompt(prompt, ctx) : prompt;
         const first = (
-          await callExternalLlm(system, prompt, H3_MAX_TOKENS)
+          await callExternalLlm(system, user, H3_MAX_TOKENS, image)
         ).trim();
-        const check = validateH3Response(first, ctx);
+        const check = validate(first, ctx);
         if (check.ok || !check.rule) {
-          return { text: first, ok: check.ok, rule: check.rule };
+          return { text: first, ok: check.ok, rule: check.rule, idle };
         }
         const second = (
           await callExternalLlm(
             system,
             h3RetryInstruction(check.rule, first),
             H3_MAX_TOKENS,
+            image,
           )
         ).trim();
-        const recheck = validateH3Response(second, ctx);
-        if (recheck.ok) return { text: second, ok: true, rule: null };
+        const recheck = validate(second, ctx);
+        if (recheck.ok) return { text: second, ok: true, rule: null, idle };
         // Prefer whichever attempt produced something; the second can come back
         // empty when the model gives up on the correction.
         return {
           text: second || first,
           ok: false,
           rule: recheck.rule ?? check.rule,
+          idle,
         };
       });
     } finally {

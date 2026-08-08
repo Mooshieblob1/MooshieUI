@@ -2612,6 +2612,7 @@ const pl: Record<string, string> = {
   "prompt_assistant.enhance_h3": "Ulepsz pod H3",
   "prompt_assistant.enhance_h3_tooltip": "Przepisz prompt na format sekcji, którego oczekuje H3",
   "prompt_assistant.h3_format_warning": "Przepisany prompt nie w pełni pasuje do formatu H3: {rule} Porównaj go z przewodnikiem pod promptem.",
+  "prompt_assistant.h3_idle_applied": "Wykryto Live2D idle. Przepisany opis zachowuje pozę z obrazu i dodaje tylko oddech, mruganie, poruszające się włosy i spokojne tło.",
   "prompt_assistant.compose_tooltip": "Utwórz Prompt na podstawie opisu",
   "prompt_assistant.undo": "Cofnij",
   "prompt_assistant.loading_model": "Ładowanie modelu...",

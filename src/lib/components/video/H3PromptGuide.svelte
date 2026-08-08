@@ -1,19 +1,18 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
+  import { h3Guide } from "../../stores/h3Guide.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { buildH3Context } from "../../utils/h3Prompt.js";
-  import H3PromptGuideModal from "./H3PromptGuideModal.svelte";
 
   /**
    * Entry point for the H3 prompting guide. The guide itself used to expand in
    * place under the prompt box, which turned the panel into a column of prose
-   * nobody read; it now lives in a dialog and this is just the door to it.
+   * nobody read; it now renders over the preview column so the prompt stays
+   * reachable while it is open, and this is just the door to it.
    *
    * The button still shows the live task type, because which of the two H3
    * formats applies is the one thing worth knowing without opening anything.
    */
-
-  let showModal = $state(false);
 
   const taskType = $derived(
     buildH3Context({
@@ -27,8 +26,11 @@
 </script>
 
 <button
-  class="flex w-full items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900/50 px-2.5 py-2 text-left text-xs text-neutral-300 transition-colors hover:border-neutral-700 hover:bg-neutral-800/50"
-  onclick={() => (showModal = true)}
+  class="flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-xs transition-colors {h3Guide.open
+    ? 'border-[var(--theme-accent-600)] bg-neutral-800/60 text-neutral-100'
+    : 'border-neutral-800 bg-neutral-900/50 text-neutral-300 hover:border-neutral-700 hover:bg-neutral-800/50'}"
+  onclick={() => h3Guide.toggle()}
+  aria-expanded={h3Guide.open}
 >
   <svg
     class="h-3.5 w-3.5 shrink-0 text-neutral-500"
@@ -49,10 +51,6 @@
     {taskType.toUpperCase()}
   </span>
   <span class="shrink-0 text-[10px] text-neutral-500">
-    {locale.t("generation.video.h3_guide.open")}
+    {locale.t(h3Guide.open ? "common.close" : "generation.video.h3_guide.open")}
   </span>
 </button>
-
-{#if showModal}
-  <H3PromptGuideModal onClose={() => (showModal = false)} />
-{/if}
