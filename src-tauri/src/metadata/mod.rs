@@ -185,6 +185,14 @@ pub fn mirror_uuid_sidecar(path: &std::path::Path) -> bool {
     true
 }
 
+/// Append a `uuid` XMP box to ISOBMFF bytes. Test-only: production code reaches
+/// the same writer through `mirror_uuid_sidecar`, which reads the payload out of
+/// the file rather than taking it from a caller.
+#[cfg(test)]
+pub fn embed_uuid_for_test(bytes: &[u8], json: &str) -> Vec<u8> {
+    isobmff::append_uuid_xmp(bytes, json).expect("test fixture is walkable ISOBMFF")
+}
+
 /// Format-aware dispatcher: embeds metadata into PNG, JXL, or WebP bytes and
 /// returns the result in the **same** container format, so callers exporting or
 /// copying raw bytes never have to transcode just to attach metadata.
