@@ -158,6 +158,7 @@ pub const MISSING_H3_DIRECTOR_NODES_MARKER: &str =
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveImage",
     "MooshieSaveVideo",
+    "MooshieLoadVideoPath",
     "MooshieFaceDetailer",
     "MooshieSegmentDetailer",
     "MooshieSoftGuidance",
