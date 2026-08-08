@@ -1,6 +1,6 @@
 import { generation } from "./generation.svelte.js";
 import { triggerSync } from "../utils/syncTrigger.js";
-import { registerTimelineCompiler } from "../utils/timelineProvider.js";
+import { registerTimelineActivity, registerTimelineCompiler } from "../utils/timelineProvider.js";
 import {
   H3_FPS,
   H3_MAX_REF_AUDIOS,
@@ -130,6 +130,7 @@ class VideoTimelineStore {
         useCustomAudio: this.useCustomAudio,
       };
     });
+    registerTimelineActivity(() => this.enabled && this.hasContent);
   }
 
   /** True once the timeline carries something the node could actually render. */

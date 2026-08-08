@@ -79,12 +79,19 @@ pub fn validate_generation_params(params: &GenerationParams) -> Result<(), Strin
             ));
         }
         if params.video_variant == "ref2va" {
+            // The Director builds its own reference set from the timeline (shot
+            // stills and cast photos), so the settings panel's slots are only
+            // mandatory when the timeline is not driving the graph.
+            let timeline_drives = params
+                .video_timeline_data
+                .as_deref()
+                .is_some_and(|data| !data.trim().is_empty());
             let ref_count = params
                 .video_ref_images
                 .iter()
                 .filter(|s| !s.trim().is_empty())
                 .count();
-            if ref_count == 0 {
+            if ref_count == 0 && !timeline_drives {
                 return Err(
                     "Reference-to-video needs at least one reference image — please upload one before generating.".into(),
                 );

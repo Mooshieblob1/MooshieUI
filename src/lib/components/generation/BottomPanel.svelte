@@ -18,6 +18,8 @@
   import CompareGrid from "./CompareGrid.svelte";
   import StyleManager from "./StyleManager.svelte";
   import ScheduleBuilder from "./ScheduleBuilder.svelte";
+  import VideoTimelinePanel from "../video/VideoTimelinePanel.svelte";
+  import { videoTimeline } from "../../stores/videoTimeline.svelte.js";
   import { styles as stylesStore } from "../../stores/styles.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { notes } from "../../stores/notes.svelte.js";
@@ -33,7 +35,7 @@
 
   let { onupscale, oninpaint, onrefine, oncontextmenu }: Props = $props();
 
-  type TabId = "loras" | "checkpoints" | "images" | "prompts" | "compare" | "artists" | "styles" | "schedule" | "notes";
+  type TabId = "loras" | "checkpoints" | "images" | "prompts" | "compare" | "artists" | "styles" | "schedule" | "timeline" | "notes";
 
   const TAB_KEY = "mooshieui.bottomPanel.activeTab.v1";
 
@@ -53,7 +55,7 @@
   // prompt history and notes. LoRAs and checkpoints do not apply to the H3
   // stack, and artists / artist styles / scheduling / compare are all booru-tag
   // or image-grid features with no video equivalent.
-  const videoTabs: TabId[] = ["images", "prompts", "notes"];
+  const videoTabs: TabId[] = ["images", "prompts", "timeline", "notes"];
   const visibleTabs = $derived(
     isVideoMode
       ? videoTabs
@@ -79,6 +81,7 @@
     artists: "bottom_panel.tab.artists",
     styles: "bottom_panel.tab.styles",
     schedule: "bottom_panel.tab.schedule",
+    timeline: "bottom_panel.tab.timeline",
     notes: "bottom_panel.tab.notes",
   };
 
@@ -419,6 +422,8 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15 9 22 9.5 16.5 14.5 18.5 22 12 18 5.5 22 7.5 14.5 2 9.5 9 9 12 2"/></svg>
         {:else if tab === "schedule"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        {:else if tab === "timeline"}
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="14" height="5" rx="1"/><rect x="6" y="15" width="14" height="5" rx="1"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
         {:else if tab === "notes"}
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
         {/if}
@@ -433,6 +438,8 @@
           <span class="text-[9px] px-1 py-0 rounded-full bg-red-500/30 text-red-400 tabular-nums">{artistFavourites.count}</span>
         {:else if tab === "compare" && compare.enabled}
           <span class="text-[9px] px-1 py-0 rounded-full bg-indigo-600/30 text-indigo-400 tabular-nums">{compare.cellCount}</span>
+        {:else if tab === "timeline" && videoTimeline.enabled && videoTimeline.segments.length > 0}
+          <span class="text-[9px] px-1 py-0 rounded-full bg-indigo-600/30 text-indigo-400 tabular-nums">{videoTimeline.segments.length}</span>
         {:else if tab === "styles" && (stylesStore.activeStyles.length > 0 || promptPresets.activeEntries.length > 0)}
           <span class="text-[9px] px-1 py-0 rounded-full bg-indigo-600/30 text-indigo-400 tabular-nums">{stylesStore.activeStyles.length + promptPresets.activeEntries.length}</span>
         {/if}
@@ -626,6 +633,8 @@
       <StyleManager />
     {:else if activeTab === "schedule"}
       <ScheduleBuilder />
+    {:else if activeTab === "timeline"}
+      <VideoTimelinePanel />
     {:else if activeTab === "artists"}
       {#if artistFavourites.count === 0}
         <div class="flex items-center justify-center h-full text-neutral-500 text-xs px-4 text-center">

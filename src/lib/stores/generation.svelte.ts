@@ -1,6 +1,6 @@
 import { ipcStore } from "../utils/ipc.js";
 import { triggerSync } from "../utils/syncTrigger.js";
-import { compileTimeline } from "../utils/timelineProvider.js";
+import { compileTimeline, isTimelineActive } from "../utils/timelineProvider.js";
 import {
   buildRegionalContextPrompt,
   mergeRegionalPromptText,
@@ -615,7 +615,15 @@ class GenerationStore {
     if (!this.videoModelsReady) return false;
     if (!this.videoDiffusionModelLooksLikeH3) return false;
     if (!this.videoDiffusionModelMatchesVariant) return false;
-    if (this.videoVariant === "ref2va" && this.videoRefImageFilenames.length === 0) return false;
+    // The timeline supplies its own references (shot stills, cast photos), so
+    // the settings panel's slots are only mandatory when it is not driving.
+    if (
+      this.videoVariant === "ref2va" &&
+      this.videoRefImageFilenames.length === 0 &&
+      !isTimelineActive()
+    ) {
+      return false;
+    }
     return true;
   }
 

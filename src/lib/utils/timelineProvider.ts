@@ -45,3 +45,29 @@ export function registerTimelineCompiler(compile: TimelineCompiler): void {
 export function compileTimeline(globalPrompt: string): CompiledTimeline | null {
   return _compile?.(globalPrompt) ?? null;
 }
+
+/**
+ * Reports whether the timeline will drive the graph, i.e. whether
+ * `compileTimeline()` would return a payload for the current state.
+ */
+export type TimelineActivityReader = () => boolean;
+
+let _isActive: TimelineActivityReader | null = null;
+
+/** Called by the video timeline store on module load. */
+export function registerTimelineActivity(read: TimelineActivityReader): void {
+  _isActive = read;
+}
+
+/**
+ * Whether the Director node is about to take over the graph. `generation`
+ * uses this to relax the ref2va "needs a reference image" rule: the timeline
+ * supplies its own references (shot stills and cast photos), so the settings
+ * panel's nine slots stop being mandatory once it is driving.
+ *
+ * Reading this inside a `$derived`/`get` stays reactive because the registered
+ * reader synchronously touches the timeline store's `$state` fields.
+ */
+export function isTimelineActive(): boolean {
+  return _isActive?.() ?? false;
+}

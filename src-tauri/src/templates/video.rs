@@ -1212,6 +1212,22 @@ mod tests {
     }
 
     #[test]
+    fn validate_accepts_ref2va_without_references_when_timeline_drives() {
+        // The Director derives its reference set from the timeline's shot
+        // stills and cast photos, so the settings panel's slots are optional.
+        let params = director_params("ref2va");
+        assert!(crate::templates::validate_generation_params(&params).is_ok());
+    }
+
+    #[test]
+    fn validate_still_caps_ref2va_references_with_a_timeline() {
+        let mut params = director_params("ref2va");
+        params.video_ref_images = (0..10).map(|i| format!("ref{i}.png")).collect();
+        let err = crate::templates::validate_generation_params(&params).unwrap_err();
+        assert!(err.contains("at most 9"), "unexpected error: {err}");
+    }
+
+    #[test]
     fn validate_video_ignores_stale_image_mode_flags() {
         // Mode switches can leave image-only toggles set; they must not
         // block video generation (the video arm early-returns).
