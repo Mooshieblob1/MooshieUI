@@ -668,7 +668,10 @@ const ko: Record<string, string> = {
   "generation.video.megapixels": "픽셀 예산",
   "generation.video.megapixels_tip": "프레임당 총 픽셀 수입니다. 너비와 높이는 이 값과 화면 비율에서 계산되어 32의 배수로 맞춰집니다. 값이 클수록 VRAM이 훨씬 많이 필요합니다.",
   "generation.video.resolution": "출력 해상도: {width} x {height}",
-  "generation.video.vram_warning": "GPU의 VRAM은 {detected} GB인데 이 설정에는 약 {required} GB가 필요합니다. 생성이 매우 느리거나 메모리 부족으로 실패할 수 있습니다. 길이나 픽셀 예산을 줄이세요.",
+  "generation.video.vram_warning": "GPU의 VRAM은 {detected} GB이고 데스크톱이 쓰는 몫을 빼면 약 {usable} GB를 쓸 수 있는데, 이 설정에는 약 {required} GB가 필요합니다. 생성이 매우 느리거나 메모리 부족으로 실패할 수 있습니다. 길이나 픽셀 예산을 줄이세요.",
+  "generation.video.vram_warning_tight": "이 설정은 {detected} GB GPU에서 쓸 수 있는 약 {usable} GB 중 약 {required} GB를 필요로 합니다. 들어가기는 하지만 여유가 거의 없어 생성이 크게 느려질 수 있습니다.",
+  "generation.video.vram_nvfp4_emulated": "이 NVFP4 모델은 여기서 메모리를 더 씁니다. FP4 가속에는 Blackwell(RTX 50 시리즈) GPU가 필요해서 실행 중에 가중치가 확장됩니다.",
+  "generation.video.vram_suggest": "대신 {megapixels} MP 사용",
   "generation.video.highvram_warning":
     "VRAM 모드가 높음으로 설정되어 있어 {model} GB 모델 전체가 {detected} GB VRAM에 상주하고 나머지 처리에 쓸 여유가 남지 않습니다. 이 상태에서는 동영상 생성이 약 40배 느려지지만 오류는 표시되지 않습니다. 설정 > 성능에서 VRAM 모드를 보통으로 바꾸세요.",
   "generation.video.frames": "프레임",

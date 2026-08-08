@@ -346,11 +346,27 @@
     </div>
   {/if}
 
+  <!-- Disclosure. The chevron is an inline SVG that rotates rather than two
+       glyphs swapped by state: entities inside a {} expression are not decoded
+       by Svelte, so the character forms rendered as literal "&#x25B8;" text. -->
   <button
-    class="text-[11px] text-neutral-400 hover:text-neutral-200 text-left"
+    class="self-start flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700 hover:text-neutral-100 transition-colors"
+    aria-expanded={advanced}
     onclick={() => (advanced = !advanced)}
   >
-    {advanced ? "&#x25BE;" : "&#x25B8;"} {locale.t("video.export.advanced")}
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      class="w-3 h-3 shrink-0 transition-transform {advanced ? 'rotate-90' : ''}"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+    {locale.t("video.export.advanced")}
   </button>
 
   {#if advanced}

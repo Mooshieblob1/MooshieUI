@@ -26,6 +26,7 @@ import {
   H3_TURBO_DEFAULT_STEPS,
   H3_TURBO_MAX_STEPS,
   H3_TURBO_MIN_STEPS,
+  clampH3Megapixels,
   computeH3Dimensions,
   computeH3FrameLength,
 } from "../utils/videoParams.js";
@@ -1802,7 +1803,10 @@ class GenerationStore {
           this.videoVariant = saved.videoVariant;
         if (saved.videoDurationSeconds !== undefined)
           this.videoDurationSeconds = saved.videoDurationSeconds;
-        if (saved.videoMegapixels !== undefined) this.videoMegapixels = saved.videoMegapixels;
+        // Clamped rather than taken as-is: settings written before the pixel
+        // budget became a slider can hold values off the current range/step.
+        if (saved.videoMegapixels !== undefined)
+          this.videoMegapixels = clampH3Megapixels(saved.videoMegapixels);
         if (saved.videoAspectRatio !== undefined) this.videoAspectRatio = saved.videoAspectRatio;
         if (saved.videoFirstFrame !== undefined) this.videoFirstFrame = saved.videoFirstFrame;
         if (saved.videoLastFrame !== undefined) this.videoLastFrame = saved.videoLastFrame;

@@ -759,7 +759,10 @@ const pl: Record<string, string> = {
   "generation.video.megapixels": "Budżet pikseli",
   "generation.video.megapixels_tip": "Łączna liczba pikseli na klatkę. Szerokość i wysokość wynikają z tej wartości i proporcji, zaokrąglone do wielokrotności 32. Wyższy budżet wymaga znacznie więcej VRAM.",
   "generation.video.resolution": "Rozdzielczość wyjściowa: {width} x {height}",
-  "generation.video.vram_warning": "Twój GPU ma {detected} GB VRAM, a ta konfiguracja potrzebuje około {required} GB. Generowanie może być bardzo wolne lub zakończyć się brakiem pamięci. Zmniejsz czas trwania albo budżet pikseli.",
+  "generation.video.vram_warning": "Twój GPU ma {detected} GB VRAM, z czego po odliczeniu tego, co zajmuje pulpit, użyteczne jest około {usable} GB, a ta konfiguracja potrzebuje około {required} GB. Generowanie może być bardzo wolne lub zakończyć się brakiem pamięci. Zmniejsz czas trwania albo budżet pikseli.",
+  "generation.video.vram_warning_tight": "Ta konfiguracja potrzebuje około {required} GB z mniej więcej {usable} GB użytecznych na twoim GPU o {detected} GB. Powinno się zmieścić, ale niemal bez zapasu, więc generowanie może mocno zwolnić.",
+  "generation.video.vram_nvfp4_emulated": "Ten model NVFP4 zajmuje tu dodatkową pamięć: przyspieszenie FP4 wymaga GPU Blackwell (seria RTX 50), więc wagi są poszerzane w trakcie działania.",
+  "generation.video.vram_suggest": "Użyj zamiast tego {megapixels} MP",
   "generation.video.highvram_warning":
     "Tryb VRAM jest ustawiony na wysoki, więc cały model o rozmiarze {model} GB pozostaje na stałe w Twoich {detected} GB VRAM i nie zostaje miejsca na resztę przebiegu. Generowanie wideo staje się wtedy około 40 razy wolniejsze, bez żadnego błędu, który by to wyjaśniał. Ustaw Tryb VRAM na normalny w Ustawieniach > Wydajność.",
   "generation.video.frames": "Klatki",

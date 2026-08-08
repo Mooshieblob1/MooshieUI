@@ -668,7 +668,10 @@ const zhTw: Record<string, string> = {
   "generation.video.megapixels": "像素預算",
   "generation.video.megapixels_tip": "每格的總像素數。寬高由此值與長寬比推導，並對齊到 32 的倍數。預算越高，顯示記憶體用量越大。",
   "generation.video.resolution": "輸出解析度：{width} x {height}",
-  "generation.video.vram_warning": "你的顯示卡有 {detected} GB 顯示記憶體，而此設定約需 {required} GB。生成可能非常慢或因記憶體不足失敗。請降低長度或像素預算。",
+  "generation.video.vram_warning": "你的顯示卡有 {detected} GB 顯示記憶體，扣掉桌面佔用後約 {usable} GB 可用，而此設定約需 {required} GB。生成可能非常慢或因記憶體不足失敗。請降低長度或像素預算。",
+  "generation.video.vram_warning_tight": "此設定約需 {required} GB，而你的 {detected} GB 顯示卡大約只有 {usable} GB 可用。應該放得下，但幾乎沒有餘裕，生成可能會明顯變慢。",
+  "generation.video.vram_nvfp4_emulated": "NVFP4 模型在這裡還會額外佔用記憶體：FP4 加速需要 Blackwell（RTX 50 系列）顯示卡，因此執行時權重會被展寬。",
+  "generation.video.vram_suggest": "改用 {megapixels} MP",
   "generation.video.highvram_warning":
     "顯存模式設為「高」，會把整個 {model} GB 的模型常駐在你的 {detected} GB 顯示記憶體中，不留餘裕給其餘流程。此時影片生成會慢約 40 倍，而且不會出現任何錯誤。請在 設定 > 效能 中把顯存模式改為「正常」。",
   "generation.video.frames": "影格",

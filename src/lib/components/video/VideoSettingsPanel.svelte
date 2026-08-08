@@ -25,14 +25,22 @@
     H3_DEFAULT_STEPS,
     H3_FPS,
     H3_MAX_DURATION_SECONDS,
+    H3_BLACKWELL_COMPUTE_CAPABILITY,
+    H3_MAX_MEGAPIXELS,
     H3_MAX_REF_IMAGES,
-    H3_MEGAPIXEL_OPTIONS,
+    H3_MEGAPIXEL_STEP,
     H3_MIN_DURATION_SECONDS,
+    H3_MIN_MEGAPIXELS,
     H3_TURBO_MAX_STEPS,
     H3_TURBO_MIN_STEPS,
+    assessH3Vram,
+    clampH3Megapixels,
     estimateH3ModelGb,
     estimateH3VramGb,
+    h3UsableVramGb,
     isH3HighVramHarmful,
+    isH3Nvfp4Emulated,
+    suggestH3Megapixels,
   } from "../../utils/videoParams.js";
   import {
     H3_DEFAULT_TIER,
@@ -77,8 +85,6 @@
   const TURBO_PACKAGE_NAME = "ComfyUI-MiniMax-H3-Turbo";
   const TURBO_NODE_CLASS = "MiniMaxH3TurboSampler";
 
-  /** Blackwell. Below this the NVFP4 kernels fall back to a slow emulation path. */
-  const NVFP4_COMPUTE_CAPABILITY = 12.0;
 
   /** One row in the download progress list, mirroring `ModelSelector`. */
   interface DlEntry {
@@ -219,7 +225,7 @@
   const tierUnderpowered = $derived(
     selectedTier === "nvfp4" &&
       computeCapability !== null &&
-      computeCapability < NVFP4_COMPUTE_CAPABILITY,
+      computeCapability < H3_BLACKWELL_COMPUTE_CAPABILITY,
   );
 
   const turboLoraName = $derived(installedName(H3_TURBO_LORA));
@@ -227,10 +233,53 @@
   const turboReady = $derived(turboInstalled === true && turboLoraName !== null);
 
   const modelGb = $derived(estimateH3ModelGb(generation.videoDiffusionModel));
-  const requiredVramGb = $derived(
-    estimateH3VramGb(dimensions.width, dimensions.height, generation.videoFrameLength, modelGb),
+  /**
+   * An NVFP4 DiT on a pre-Blackwell card pays a transient-memory penalty the
+   * file size does not show, so the same settings need a bigger card there.
+   */
+  const nvfp4Emulated = $derived(
+    isH3Nvfp4Emulated(generation.videoDiffusionModel, computeCapability),
   );
-  const vramWarning = $derived(detectedVramGb !== null && requiredVramGb > detectedVramGb);
+  const vramOptions = $derived({ nvfp4Emulated });
+  /**
+   * Compared against usable VRAM, not the sticker capacity: the desktop holds a
+   * slice of every card, and on a small one that slice decides whether a pass
+   * fits. `null` while the hardware probe has not answered.
+   */
+  const usableVramGb = $derived(h3UsableVramGb(detectedVramGb));
+  const requiredVramGb = $derived(
+    estimateH3VramGb(
+      dimensions.width,
+      dimensions.height,
+      generation.videoFrameLength,
+      modelGb,
+      vramOptions,
+    ),
+  );
+  const vramVerdict = $derived(assessH3Vram(requiredVramGb, usableVramGb));
+  /**
+   * The pixel budget that would fit comfortably, offered only when it is not
+   * the one already selected - repeating the current value back reads as a
+   * broken suggestion rather than a reassurance.
+   */
+  const suggestedMegapixels = $derived(
+    suggestH3Megapixels(
+      generation.resolvedVideoAspectRatio,
+      generation.videoFrameLength,
+      modelGb,
+      usableVramGb,
+      vramOptions,
+    ),
+  );
+  const showSuggestion = $derived(
+    suggestedMegapixels !== null && suggestedMegapixels !== generation.videoMegapixels,
+  );
+  /** Written out rather than toggled per class so the /25 tints survive. */
+  const vramBannerClass = $derived(
+    vramVerdict === "over"
+      ? "border-red-600/60 bg-red-900/25 text-red-200"
+      : "border-amber-600/60 bg-amber-900/25 text-amber-200",
+  );
 
   /**
    * VRAM Mode "high" force-loads the whole DiT instead of staging it, which on a
@@ -391,7 +440,7 @@
       const files = [tier.diffusion.fl2va, tier.diffusion.ref2va];
       if (files.some((file) => installedName(file) !== null)) return tier.id;
     }
-    if (computeCapability !== null && computeCapability >= NVFP4_COMPUTE_CAPABILITY) {
+    if (computeCapability !== null && computeCapability >= H3_BLACKWELL_COMPUTE_CAPABILITY) {
       return "nvfp4";
     }
     return H3_DEFAULT_TIER;
@@ -793,48 +842,60 @@
   </div>
 
   <!-- Geometry -->
-  <div class="grid grid-cols-2 gap-3">
-    <div>
-      <label class="block text-xs text-neutral-400 mb-1" for="video-aspect-ratio">
-        {locale.t("generation.video.aspect_ratio")}
-      </label>
-      <select
-        id="video-aspect-ratio"
-        value={generation.videoAspectRatio}
-        onchange={(e) => {
-          generation.videoAspectRatio = (e.currentTarget as HTMLSelectElement)
-            .value as VideoAspectRatio;
-          generation.saveSettings();
-        }}
-        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
-      >
-        {#if generation.videoVariant === "fl2va"}
-          <option value="auto">{locale.t("generation.video.aspect_ratio_auto")}</option>
-        {/if}
-        {#each H3_ASPECT_RATIOS as ratio (ratio)}
-          <option value={ratio}>{ratio}</option>
-        {/each}
-      </select>
-    </div>
-    <div>
-      <label class="block text-xs text-neutral-400 mb-1" for="video-megapixels">
+  <div>
+    <label class="block text-xs text-neutral-400 mb-1" for="video-aspect-ratio">
+      {locale.t("generation.video.aspect_ratio")}
+    </label>
+    <select
+      id="video-aspect-ratio"
+      value={generation.videoAspectRatio}
+      onchange={(e) => {
+        generation.videoAspectRatio = (e.currentTarget as HTMLSelectElement)
+          .value as VideoAspectRatio;
+        generation.saveSettings();
+      }}
+      class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+    >
+      {#if generation.videoVariant === "fl2va"}
+        <option value="auto">{locale.t("generation.video.aspect_ratio_auto")}</option>
+      {/if}
+      {#each H3_ASPECT_RATIOS as ratio (ratio)}
+        <option value={ratio}>{ratio}</option>
+      {/each}
+    </select>
+  </div>
+
+  <!-- Pixel budget. A slider rather than a preset list: every 0.1 MP step is a
+       different resolution once snapped to 32, and the budget a given card can
+       carry sits wherever the VRAM assessment below puts it. -->
+  <div use:scrollCapture>
+    <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+      <span>
         {locale.t("generation.video.megapixels")}
         <InfoTip text={locale.t("generation.video.megapixels_tip")} />
-      </label>
-      <select
-        id="video-megapixels"
+      </span>
+      <EditableValue
         value={generation.videoMegapixels}
-        onchange={(e) => {
-          generation.videoMegapixels = Number((e.currentTarget as HTMLSelectElement).value);
+        min={H3_MIN_MEGAPIXELS}
+        max={H3_MAX_MEGAPIXELS}
+        step={H3_MEGAPIXEL_STEP}
+        decimals={1}
+        suffix=" MP"
+        onchange={(v) => {
+          generation.videoMegapixels = clampH3Megapixels(v);
           generation.saveSettings();
         }}
-        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
-      >
-        {#each H3_MEGAPIXEL_OPTIONS as option (option)}
-          <option value={option}>{option} MP</option>
-        {/each}
-      </select>
-    </div>
+      />
+    </label>
+    <input
+      type="range"
+      bind:value={generation.videoMegapixels}
+      onchange={() => generation.saveSettings()}
+      min={H3_MIN_MEGAPIXELS}
+      max={H3_MAX_MEGAPIXELS}
+      step={H3_MEGAPIXEL_STEP}
+      class="w-full accent-indigo-500"
+    />
   </div>
   <p class="text-[11px] text-neutral-500 -mt-1">
     {locale.t("generation.video.resolution", {
@@ -852,11 +913,12 @@
     </p>
   {/if}
 
-  <!-- VRAM warning -->
-  {#if vramWarning}
-    <div
-      class="flex items-start gap-2 rounded-lg border border-amber-600/60 bg-amber-900/25 px-3 py-2 text-xs text-amber-200"
-    >
+  <!-- VRAM assessment. Two severities off one estimate: amber when the pass
+       fits with no headroom left (slow, because weights start moving over
+       PCIe), red when it does not fit at all. Never blocks generation - the
+       estimate is a model, and the user's card is the authority. -->
+  {#if vramVerdict === "tight" || vramVerdict === "over"}
+    <div class="flex items-start gap-2 rounded-lg border px-3 py-2 text-xs {vramBannerClass}">
       <svg
         xmlns="http://www.w3.org/2000/svg"
         class="w-4 h-4 shrink-0 mt-px"
@@ -871,12 +933,36 @@
         <line x1="12" y1="9" x2="12" y2="13" />
         <line x1="12" y1="17" x2="12.01" y2="17" />
       </svg>
-      <span>
-        {locale.t("generation.video.vram_warning", {
-          detected: (detectedVramGb ?? 0).toFixed(1),
-          required: requiredVramGb.toFixed(1),
-        })}
-      </span>
+      <div class="flex flex-col gap-1">
+        <span>
+          {locale.t(
+            vramVerdict === "over"
+              ? "generation.video.vram_warning"
+              : "generation.video.vram_warning_tight",
+            {
+              detected: (detectedVramGb ?? 0).toFixed(1),
+              usable: (usableVramGb ?? 0).toFixed(1),
+              required: requiredVramGb.toFixed(1),
+            },
+          )}
+        </span>
+        {#if nvfp4Emulated}
+          <span>{locale.t("generation.video.vram_nvfp4_emulated")}</span>
+        {/if}
+        {#if showSuggestion}
+          <button
+            class="self-start underline underline-offset-2 hover:no-underline"
+            onclick={() => {
+              generation.videoMegapixels = suggestedMegapixels ?? generation.videoMegapixels;
+              generation.saveSettings();
+            }}
+          >
+            {locale.t("generation.video.vram_suggest", {
+              megapixels: (suggestedMegapixels ?? 0).toFixed(1),
+            })}
+          </button>
+        {/if}
+      </div>
     </div>
   {/if}
 

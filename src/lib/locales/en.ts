@@ -760,7 +760,10 @@ const en: Record<string, string> = {
   "generation.video.megapixels": "Pixel Budget",
   "generation.video.megapixels_tip": "Total pixels per frame. Width and height are derived from this and the aspect ratio, snapped to multiples of 32. Higher budgets need much more VRAM.",
   "generation.video.resolution": "Output resolution: {width} x {height}",
-  "generation.video.vram_warning": "Your GPU has {detected} GB of VRAM and this setup needs about {required} GB. Generation may be very slow or fail with out of memory. Lower the duration or the pixel budget.",
+  "generation.video.vram_warning": "Your GPU has {detected} GB of VRAM, about {usable} GB of it usable once the desktop takes its share, and this setup needs about {required} GB. Generation may be very slow or fail with out of memory. Lower the duration or the pixel budget.",
+  "generation.video.vram_warning_tight": "This setup needs about {required} GB of the roughly {usable} GB usable on your {detected} GB GPU. It should fit, but with almost no headroom, so generation may slow down a lot.",
+  "generation.video.vram_nvfp4_emulated": "This NVFP4 model also costs extra memory here: FP4 acceleration needs a Blackwell (RTX 50-series) GPU, so the weights are widened while it runs.",
+  "generation.video.vram_suggest": "Use {megapixels} MP instead",
   "generation.video.highvram_warning":
     "VRAM Mode is set to high, which pins the whole {model} GB model in your {detected} GB of VRAM and leaves no room for the rest of the pass. Video generation then runs roughly 40 times slower, with no error to explain it. Set VRAM Mode to normal in Settings > Performance.",
   "generation.video.frames": "Frames",

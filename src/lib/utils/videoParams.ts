@@ -18,8 +18,27 @@ const H3_MAX_FRAMES = 3592;
 export const H3_MIN_DURATION_SECONDS = 1;
 export const H3_MAX_DURATION_SECONDS = 15;
 
-/** Megapixel budgets offered in the panel. */
-export const H3_MEGAPIXEL_OPTIONS = [0.4, 0.6, 1.0] as const;
+/**
+ * Pixel-budget slider bounds. A continuous 0.1 MP step rather than a handful of
+ * presets: the snap-to-32 rule means most neighbouring steps land on genuinely
+ * different resolutions, and the VRAM headroom a given card has is not a value
+ * three presets can hit. The ceiling is a practical one, not a model limit -
+ * beyond 2 MP the activation budget outgrows every consumer card.
+ */
+export const H3_MIN_MEGAPIXELS = 0.1;
+export const H3_MAX_MEGAPIXELS = 2.0;
+export const H3_MEGAPIXEL_STEP = 0.1;
+
+/** Nearest tenth, so 0.1-step arithmetic does not leak 0.30000000000000004. */
+function roundToStep(megapixels: number): number {
+  return Math.round(megapixels * 10) / 10;
+}
+
+/** Snaps a stored or typed budget onto the slider's range and step. */
+export function clampH3Megapixels(megapixels: number): number {
+  if (!Number.isFinite(megapixels)) return H3_MIN_MEGAPIXELS;
+  return roundToStep(Math.min(H3_MAX_MEGAPIXELS, Math.max(H3_MIN_MEGAPIXELS, megapixels)));
+}
 
 export const H3_ASPECT_RATIOS: readonly VideoAspectRatio[] = [
   "16:9",
@@ -155,9 +174,99 @@ export function estimateH3VramGb(
   height: number,
   frames: number,
   modelGb: number,
+  options?: { nvfp4Emulated?: boolean },
 ): number {
   const megapixelFrames = ((width * height) / 1_000_000) * frames;
   // ~11.9 GB resident for the pruned NVFP4 DiT at 128 MP-frames leaves roughly
   // 0.045 GB per MP-frame of activation/latent headroom.
-  return modelGb + megapixelFrames * 0.045;
+  const perMegapixelFrame = 0.045 * (options?.nvfp4Emulated ? H3_NVFP4_EMULATION_PENALTY : 1);
+  return modelGb + megapixelFrames * perMegapixelFrame;
+}
+
+/** Blackwell. Below this the NVFP4 kernels fall back to a slow emulation path. */
+export const H3_BLACKWELL_COMPUTE_CAPABILITY = 12.0;
+
+/** Whether the selected DiT is one of the NVFP4 quants. */
+export function isH3Nvfp4Model(filename: string | null | undefined): boolean {
+  return (filename ?? "").toLowerCase().includes("nvfp4");
+}
+
+/**
+ * True when an NVFP4 DiT is about to run on a pre-Blackwell card. The FP4
+ * tensor-core path does not exist there, so the weights are widened on the fly
+ * during the pass - the file on disk is still small, but the transient cost per
+ * frame is not. `false` when the compute capability probe failed: guessing a
+ * penalty from no information would only misplace the warning.
+ */
+export function isH3Nvfp4Emulated(
+  filename: string | null | undefined,
+  computeCapability: number | null,
+): boolean {
+  if (computeCapability === null) return false;
+  return isH3Nvfp4Model(filename) && computeCapability < H3_BLACKWELL_COMPUTE_CAPABILITY;
+}
+
+/** Extra activation headroom the widening path costs, per MP-frame. */
+const H3_NVFP4_EMULATION_PENALTY = 1.35;
+
+/**
+ * VRAM the desktop, the driver and this app's own surfaces hold that a
+ * generation never gets. Modelled as a fraction with a ceiling rather than a
+ * flat number: the compositor costs about the same on a 24 GB card as on an
+ * 8 GB one, so a flat reserve would be a rounding error on the big card and a
+ * third of the useful memory on the small one.
+ */
+const H3_VRAM_SYSTEM_RESERVE_FRACTION = 0.08;
+const H3_VRAM_SYSTEM_RESERVE_MAX_GB = 1.5;
+
+/** Card VRAM minus the desktop reserve; `null` when the probe found no GPU. */
+export function h3UsableVramGb(detectedVramGb: number | null): number | null {
+  if (detectedVramGb === null || detectedVramGb <= 0) return null;
+  const reserve = Math.min(
+    H3_VRAM_SYSTEM_RESERVE_MAX_GB,
+    detectedVramGb * H3_VRAM_SYSTEM_RESERVE_FRACTION,
+  );
+  return Math.max(0, detectedVramGb - reserve);
+}
+
+/**
+ * `"tight"` once the estimate is within this fraction of usable VRAM. A pass
+ * that only just fits does not fail - it starts swapping weights over PCIe
+ * between steps, which is slow enough to look like a hang.
+ */
+const H3_VRAM_TIGHT_FRACTION = 0.85;
+
+export type H3VramVerdict = "unknown" | "fits" | "tight" | "over";
+
+/** Where a required budget lands against the usable VRAM of the card. */
+export function assessH3Vram(requiredGb: number, usableGb: number | null): H3VramVerdict {
+  if (usableGb === null) return "unknown";
+  if (requiredGb > usableGb) return "over";
+  if (requiredGb > usableGb * H3_VRAM_TIGHT_FRACTION) return "tight";
+  return "fits";
+}
+
+/**
+ * Largest 0.1-step pixel budget that still lands on `"fits"` for this card,
+ * duration and model, or `null` when nothing in range does (a DiT too big for
+ * the card cannot be rescued by shrinking frames). Drives the "try N MP"
+ * suggestion, so it walks the whole range rather than only downwards - a user
+ * on a 32 GB card should be told they have room to spare, not only when to cut.
+ */
+export function suggestH3Megapixels(
+  aspectRatio: string,
+  frames: number,
+  modelGb: number,
+  usableGb: number | null,
+  options?: { nvfp4Emulated?: boolean },
+): number | null {
+  if (usableGb === null) return null;
+  const steps = Math.round(H3_MAX_MEGAPIXELS / H3_MEGAPIXEL_STEP);
+  for (let step = steps; step >= 1; step--) {
+    const megapixels = roundToStep(step * H3_MEGAPIXEL_STEP);
+    const { width, height } = computeH3Dimensions(aspectRatio, megapixels);
+    const required = estimateH3VramGb(width, height, frames, modelGb, options);
+    if (assessH3Vram(required, usableGb) === "fits") return megapixels;
+  }
+  return null;
 }

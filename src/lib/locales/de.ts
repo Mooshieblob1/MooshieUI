@@ -689,7 +689,10 @@ const de: Record<string, string> = {
   "generation.video.megapixels": "Pixelbudget",
   "generation.video.megapixels_tip": "Gesamtpixel pro Bild. Breite und Höhe ergeben sich daraus und aus dem Seitenverhältnis, gerundet auf Vielfache von 32. Höhere Budgets brauchen deutlich mehr VRAM.",
   "generation.video.resolution": "Ausgabeauflösung: {width} x {height}",
-  "generation.video.vram_warning": "Deine GPU hat {detected} GB VRAM, diese Konfiguration benötigt etwa {required} GB. Die Generierung kann sehr langsam sein oder mit Speichermangel fehlschlagen. Reduziere die Dauer oder das Pixelbudget.",
+  "generation.video.vram_warning": "Deine GPU hat {detected} GB VRAM, davon etwa {usable} GB nutzbar, nachdem der Desktop seinen Anteil nimmt, und diese Konfiguration benötigt etwa {required} GB. Die Generierung kann sehr langsam sein oder mit Speichermangel fehlschlagen. Reduziere die Dauer oder das Pixelbudget.",
+  "generation.video.vram_warning_tight": "Diese Konfiguration benötigt etwa {required} GB der rund {usable} GB, die auf deiner {detected}-GB-GPU nutzbar sind. Es sollte passen, aber fast ohne Reserve, daher kann die Generierung deutlich langsamer werden.",
+  "generation.video.vram_nvfp4_emulated": "Dieses NVFP4-Modell kostet hier zusätzlichen Speicher: FP4-Beschleunigung braucht eine Blackwell-GPU (RTX 50-Serie), daher werden die Gewichte zur Laufzeit verbreitert.",
+  "generation.video.vram_suggest": "Stattdessen {megapixels} MP verwenden",
   "generation.video.highvram_warning":
     "Der VRAM-Modus steht auf hoch. Dadurch bleibt das gesamte {model} GB große Modell in deinen {detected} GB VRAM geladen und es bleibt kein Platz für den Rest des Durchlaufs. Die Videogenerierung läuft dann etwa 40-mal langsamer, ohne dass eine Fehlermeldung erscheint. Stelle den VRAM-Modus unter Einstellungen > Leistung auf normal.",
   "generation.video.frames": "Bilder",

@@ -668,7 +668,10 @@ const it: Record<string, string> = {
   "generation.video.megapixels": "Budget di pixel",
   "generation.video.megapixels_tip": "Pixel totali per fotogramma. Larghezza e altezza derivano da questo valore e dalle proporzioni, arrotondate a multipli di 32. Budget più alti richiedono molta più VRAM.",
   "generation.video.resolution": "Risoluzione di uscita: {width} x {height}",
-  "generation.video.vram_warning": "La tua GPU ha {detected} GB di VRAM e questa configurazione ne richiede circa {required} GB. La generazione può essere molto lenta o fallire per memoria esaurita. Riduci la durata o il budget di pixel.",
+  "generation.video.vram_warning": "La tua GPU ha {detected} GB di VRAM, di cui circa {usable} GB restano utilizzabili dopo la quota del desktop, e questa configurazione ne richiede circa {required} GB. La generazione può essere molto lenta o fallire per memoria esaurita. Riduci la durata o il budget di pixel.",
+  "generation.video.vram_warning_tight": "Questa configurazione richiede circa {required} GB dei circa {usable} GB utilizzabili sulla tua GPU da {detected} GB. Dovrebbe entrare, ma quasi senza margine, quindi la generazione può rallentare parecchio.",
+  "generation.video.vram_nvfp4_emulated": "Questo modello NVFP4 costa anche memoria extra qui: l'accelerazione FP4 richiede una GPU Blackwell (serie RTX 50), quindi i pesi vengono allargati durante l'esecuzione.",
+  "generation.video.vram_suggest": "Usa invece {megapixels} MP",
   "generation.video.highvram_warning":
     "La Modalità VRAM è impostata su alta, quindi l'intero modello da {model} GB resta bloccato nei tuoi {detected} GB di VRAM e non lascia spazio al resto dell'elaborazione. La generazione video diventa circa 40 volte più lenta, senza alcun errore che lo spieghi. Imposta la Modalità VRAM su normale in Impostazioni > Prestazioni.",
   "generation.video.frames": "Fotogrammi",

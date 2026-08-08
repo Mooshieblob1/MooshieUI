@@ -683,7 +683,10 @@ const ja: Record<string, string> = {
   "generation.video.megapixels": "ピクセル量",
   "generation.video.megapixels_tip": "1フレームあたりの総ピクセル数です。幅と高さはこの値とアスペクト比から求められ、32の倍数に丸められます。値を大きくすると VRAM を大幅に消費します。",
   "generation.video.resolution": "出力解像度: {width} x {height}",
-  "generation.video.vram_warning": "GPU の VRAM は {detected} GB ですが、この設定には約 {required} GB が必要です。生成が非常に遅くなるか、メモリ不足で失敗する可能性があります。長さかピクセル量を下げてください。",
+  "generation.video.vram_warning": "GPU の VRAM は {detected} GB で、デスクトップが使う分を除くと実際に使えるのは約 {usable} GB ですが、この設定には約 {required} GB が必要です。生成が非常に遅くなるか、メモリ不足で失敗する可能性があります。長さかピクセル量を下げてください。",
+  "generation.video.vram_warning_tight": "この設定は、{detected} GB の GPU で使える約 {usable} GB のうち約 {required} GB を必要とします。収まるはずですが余裕がほとんどないため、生成が大幅に遅くなる可能性があります。",
+  "generation.video.vram_nvfp4_emulated": "この NVFP4 モデルは、ここではさらにメモリを消費します。FP4 の高速化には Blackwell（RTX 50 シリーズ）GPU が必要なため、実行中に重みが拡張されます。",
+  "generation.video.vram_suggest": "代わりに {megapixels} MP を使う",
   "generation.video.highvram_warning":
     "VRAMモードが「高」になっているため、{model} GB のモデル全体が {detected} GB の VRAM に常駐し、処理の残りに使える余裕がなくなります。この状態では動画生成が約 40 倍遅くなりますが、エラーは表示されません。設定 > パフォーマンスで VRAMモードを「標準」に変更してください。",
   "generation.video.frames": "フレーム",
