@@ -118,6 +118,7 @@ const SHARED_SYNTAX_RULES = `Shot and timing syntax:
 - Every shot opens with "[Shot N]". Shot 1 carries no timestamp. Later shots begin "[Shot 2] At 00:03.500, the camera cuts to ...", with strictly increasing cut times that all fall inside the video duration.
 - Ordinary cut verbs: "the camera cuts to", "the shot cuts to", "the shot transitions to", "the shot changes to", "the shot switches to". Use a cross-dissolve, fade or wipe only if the user asked for one.
 - A cut must introduce new information. If only the distance or the angle changes slightly, use camera motion instead of a cut.
+- A cut discards the visual context established before it. A style stated only in [Shot 1] does not survive into [Shot 2]. Every shot after the first restates the style in its opening clause, after the timestamp and before the cut verb: "[Shot 2] At 00:03.500, still live-action cinematic, the camera cuts to the empty platform edge." Restate the lighting and colour palette alongside it whenever they carry the look.
 
 Camera motion is written as natural English inside the shot, never as trailing labels:
 - Motion type: Zoom In / Zoom Out, Push In / Pull Out, Pan Left / Pan Right, Truck Left / Truck Right, Tilt Up / Tilt Down, Pedestal Up / Pedestal Down, Arc Shot, Tracking Shot, Static Shot, Shake Slightly / Shake Strongly, POV, Roll Clockwise / Roll Counterclockwise.
@@ -167,7 +168,7 @@ overall_soundscape: ...
 
 non_diegetic_music: ...
 
-integrated_multimodal_description carries the whole audiovisual timeline in playback order: composition, subject appearance and position, environment, lighting, actions, state changes, camera movement, and the sound occurring at that moment. State the visual style immediately AFTER "[Shot 1]" and before anything else, for example "[Shot 1] Live-action, cinematic, a medium-wide shot frames ...". Common styles: Cinematic, live-action, 2D-animated, 3D CG, claymation, watercolor, vintage film.
+integrated_multimodal_description carries the whole audiovisual timeline in playback order: composition, subject appearance and position, environment, lighting, actions, state changes, camera movement, and the sound occurring at that moment. State the visual style immediately AFTER "[Shot 1]" and before anything else, for example "[Shot 1] Live-action, cinematic, a medium-wide shot frames ...". Restate that same style at the head of every later shot: a cut does not carry it forward, so the shot rules below require it again each time. Common styles: Cinematic, live-action, 2D-animated, 3D CG, claymation, watercolor, vintage film.
 
 ${keyframeRules}${frameNote}${SHARED_SYNTAX_RULES}
 
@@ -234,7 +235,7 @@ Newly added actions, backgrounds or plot events are not losses of reference fide
 detailed_description: the main body, normally 350 to 500 English words even when the video is a single shot. State the visual style in one or two sentences BEFORE "[Shot 1]", not after it:
 The target video is in a cinematic, literary style with soft lighting and a slightly desaturated color palette.
 [Shot 1] The scene opens in a crowded urban street ...
-Then describe every shot explicitly and in playback order: composition, subject appearance and position, environment, lighting, actions, state changes, camera movement, the sound at that moment, and where referenced content takes effect. Never reduce this to a plot summary or a list of reference relationships. Anchor frames with phrasings such as "the shot begins from <Picture 1>", "the shot's keyframe corresponds to <Picture 2>", "the shot ends on <Picture 3>". When a referenced subject speaks, keep BOTH labels: <Subject 2> (S1) turns toward the woman and says, <d>[English] Last summer, I went to my grandfather's house.</d>. Assign each (Sx) once, in the order vocal events actually occur. Write [unclear] for spans you cannot make out; never guess. Standardize dialogue punctuation to , . ? ! and end every line with . ? or ! before </d>.
+Then describe every shot explicitly and in playback order: composition, subject appearance and position, environment, lighting, actions, state changes, camera movement, the sound at that moment, and where referenced content takes effect. Never reduce this to a plot summary or a list of reference relationships. Anchor frames with phrasings such as "the shot begins from <Picture 1>", "the shot's keyframe corresponds to <Picture 2>", "the shot ends on <Picture 3>". Every shot after the first must also name where it starts from, so the cut does not drop the referenced look: "the shot begins from <Picture 2>", or where no picture fits, "the shot continues the appearance of <Subject 1>". When a referenced subject speaks, keep BOTH labels: <Subject 2> (S1) turns toward the woman and says, <d>[English] Last summer, I went to my grandfather's house.</d>. Assign each (Sx) once, in the order vocal events actually occur. Write [unclear] for spans you cannot make out; never guess. Standardize dialogue punctuation to , . ? ! and end every line with . ? or ! before </d>.
 
 ${SHARED_SYNTAX_RULES}
 
@@ -319,7 +320,7 @@ ${retention}
 detailed_description:
 The target video is in a <style> style with <lighting> and <color palette>.
 [Shot 1] <composition, subject position, environment, lighting>. <Subject 1> <action>. The camera <motion type> with <amplitude> at <speed>. <what is audible now>.
-[Shot 2] At 00:0X.XXX, the shot cuts to <new information>. <continued action through to ${ctx.durationSeconds} seconds>.
+[Shot 2] At 00:0X.XXX, still <the same style>, the shot cuts to <new information>, continuing the appearance of <Subject 1>. <continued action through to ${ctx.durationSeconds} seconds>.
 
 overall_soundscape:
 <ambience, physical action sounds, non-verbal human sounds. No dialogue, no music.>
@@ -332,7 +333,7 @@ non_diegetic_music:
   const instruction = h3InstructionLine(ctx);
   const head = instruction === null ? "" : `${instruction}\n\n`;
   return `${head}integrated_multimodal_description: [Shot 1] <style, for example Live-action, cinematic>, <composition, subject appearance and position, environment, lighting>. <action and state changes>. The camera <motion type> with <amplitude> at <speed>. <the character description> (S1) says: <d>[English] <exact spoken words>.</d>
-[Shot 2] At 00:0X.XXX, the camera cuts to <new information>. <action continuing through to ${ctx.durationSeconds} seconds>.
+[Shot 2] At 00:0X.XXX, still <the same style>, the camera cuts to <new information>. <action continuing through to ${ctx.durationSeconds} seconds>.
 
 overall_soundscape: <ambience, physical action sounds, non-verbal human sounds. No dialogue, no music.>
 
