@@ -18,7 +18,11 @@ cargo check --manifest-path src-tauri/Cargo.toml   # Rust compile check
 cargo fmt && cargo clippy    # Rust format/lint (run in src-tauri/)
 ```
 
-**No test framework exists** — no vitest/jest on the frontend, no `#[test]` modules in Rust. Validation is `npm run build` + `cargo check` (see the `pre-commit-check` skill).
+**No frontend test framework** — no vitest/jest. Rust *does* have tests: ~128 `#[test]` fns across 16 `#[cfg(test)]` modules, covering pure logic only (`templates/video.rs`, `commands/video_export.rs`, `commands/api.rs`, `prompt_assistant/*`, `comfyui/nodes.rs`, ...). Run them with `cargo test --manifest-path src-tauri/Cargo.toml`.
+
+The suite is green — treat any failure as a real regression.
+
+Validation is `npm run build` + `cargo check` + `cargo test` (see the `pre-commit-check` skill).
 
 ## Skills
 

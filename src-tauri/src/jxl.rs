@@ -44,7 +44,14 @@ fn is_codestream(bytes: &[u8]) -> bool {
 }
 
 /// Encode an 8-bit RGBA image as a visually-lossless JXL (distance 1.0).
-pub fn encode_rgba8_lossless(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, AppError> {
+///
+/// Visually lossless, **not** mathematically lossless: decoded pixels come back
+/// close to the originals, not byte-identical. Do not rely on byte equality.
+pub fn encode_rgba8_visually_lossless(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, AppError> {
     use jxl_encoder::{LossyConfig, PixelLayout};
     LossyConfig::new(1.0)
         .encode(rgba, width, height, PixelLayout::Rgba8)
@@ -52,7 +59,14 @@ pub fn encode_rgba8_lossless(rgba: &[u8], width: u32, height: u32) -> Result<Vec
 }
 
 /// Encode a 16-bit RGBA image (native-endian `u16` pairs) as a visually-lossless JXL (distance 1.0).
-pub fn encode_rgba16_lossless(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, AppError> {
+///
+/// Visually lossless, **not** mathematically lossless: decoded pixels come back
+/// close to the originals, not byte-identical. Do not rely on byte equality.
+pub fn encode_rgba16_visually_lossless(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, AppError> {
     use jxl_encoder::{LossyConfig, PixelLayout};
     // jxl-encoder expects &[u8] with native-endian u16 pairs — same layout Python sends
     LossyConfig::new(1.0)
@@ -172,7 +186,7 @@ pub fn read_xmp_box(jxl: &[u8]) -> Option<String> {
 
 /// Return a JXL container with the given XMP string embedded in an `xml ` box.
 ///
-/// Accepts either a naked codestream (from `encode_*_lossless`) or an existing
+/// Accepts either a naked codestream (from `encode_*_visually_lossless`) or an existing
 /// container. In the container case, any existing `xml ` boxes are replaced
 /// with the new one; all other boxes are preserved in original order, and the
 /// `xml ` box is placed before the codestream (`jxlc`/`jxlp`) box.
@@ -343,30 +357,94 @@ pub fn encode_rgba8_webp_from_raw(
 mod tests {
     use super::*;
 
+    /// Build a `width` x `height` RGBA8 smooth gradient — a stand-in for the
+    /// kind of image the gallery actually stores.
+    fn gradient_rgba8(width: u32, height: u32) -> Vec<u8> {
+        let mut px = Vec::with_capacity((width * height * 4) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                px.push((x * 4) as u8);
+                px.push((y * 4) as u8);
+                px.push(((x + y) * 2) as u8);
+                px.push(255);
+            }
+        }
+        px
+    }
+
+    /// Max and mean absolute per-byte difference between two equal-length buffers.
+    fn abs_error(a: &[u8], b: &[u8]) -> (u32, f64) {
+        assert_eq!(a.len(), b.len(), "buffers must be the same length");
+        let max = a
+            .iter()
+            .zip(b)
+            .map(|(&x, &y)| x.abs_diff(y) as u32)
+            .max()
+            .unwrap_or(0);
+        let mean = a
+            .iter()
+            .zip(b)
+            .map(|(&x, &y)| x.abs_diff(y) as f64)
+            .sum::<f64>()
+            / a.len() as f64;
+        (max, mean)
+    }
+
     #[test]
-    fn roundtrip_2x2_rgba8() {
+    fn roundtrip_2x2_preserves_shape_and_alpha() {
         let rgba = [
             255, 0, 0, 255, //
             0, 255, 0, 255, //
             0, 0, 255, 255, //
             255, 255, 255, 128, //
         ];
-        let encoded = encode_rgba8_lossless(&rgba, 2, 2).expect("encode");
+        let encoded = encode_rgba8_visually_lossless(&rgba, 2, 2).expect("encode");
         let decoded = decode_to_rgba8(&encoded).expect("decode");
         assert_eq!(decoded.width, 2);
         assert_eq!(decoded.height, 2);
         assert_eq!(decoded.rgba.len(), 16);
-        // Lossless round-trip: RGB channels should match exactly.
-        // Alpha round-trip through float is also exact for 8-bit values.
-        for (i, (&a, &b)) in rgba.iter().zip(decoded.rgba.iter()).enumerate() {
-            assert!(a.abs_diff(b) <= 1, "pixel {} mismatch: {} vs {}", i, a, b);
+        // Alpha survives the float pipeline exactly for 8-bit values.
+        for i in (3..16).step_by(4) {
+            assert_eq!(rgba[i], decoded.rgba[i], "alpha at byte {} changed", i);
         }
+        // Colour is deliberately not asserted here. A 2x2 of saturated primaries
+        // gives the encoder no spatial context, so a distance-1.0 encode can move
+        // a channel by ~96/255. Fidelity is pinned on realistic images below.
+    }
+
+    #[test]
+    fn roundtrip_gradient_stays_within_visually_lossless_envelope() {
+        let (w, h) = (64, 64);
+        let rgba = gradient_rgba8(w, h);
+        let encoded = encode_rgba8_visually_lossless(&rgba, w, h).expect("encode");
+        let decoded = decode_to_rgba8(&encoded).expect("decode");
+        assert_eq!(decoded.width, w);
+        assert_eq!(decoded.height, h);
+        assert_eq!(decoded.rgba.len(), rgba.len());
+
+        let (max, mean) = abs_error(&rgba, &decoded.rgba);
+        // Observed on jxl-encoder at distance 1.0: max 17, mean 0.553. These are
+        // envelopes, not exact expectations — tighten only if the encoder improves.
+        assert!(mean < 2.0, "mean abs error {mean:.3} exceeds envelope");
+        assert!(max <= 32, "max abs error {max} exceeds envelope");
+    }
+
+    #[test]
+    fn roundtrip_flat_image_is_effectively_exact() {
+        let (w, h) = (64, 64);
+        let rgba = vec![128u8; (w * h * 4) as usize];
+        let encoded = encode_rgba8_visually_lossless(&rgba, w, h).expect("encode");
+        let decoded = decode_to_rgba8(&encoded).expect("decode");
+
+        let (max, _) = abs_error(&rgba, &decoded.rgba);
+        // A constant image has nothing to lose: distance 1.0 reproduces it exactly.
+        assert!(max <= 1, "flat image drifted by {max}");
     }
 
     #[test]
     fn xmp_box_roundtrip() {
         let rgba = [10u8; 16];
-        let encoded = encode_rgba8_lossless(&rgba, 2, 2).expect("encode");
+        let encoded = encode_rgba8_visually_lossless(&rgba, 2, 2).expect("encode");
         let xmp = r#"{"sui_image_params":"{\"prompt\":\"test\"}"}"#;
         let wrapped = wrap_with_xmp(&encoded, xmp).expect("wrap");
         assert!(is_container(&wrapped), "wrapped output must be container");
@@ -401,7 +479,7 @@ mod tests {
     #[test]
     fn xmp_replace_existing() {
         let rgba = [10u8; 16];
-        let encoded = encode_rgba8_lossless(&rgba, 2, 2).expect("encode");
+        let encoded = encode_rgba8_visually_lossless(&rgba, 2, 2).expect("encode");
         let first = wrap_with_xmp(&encoded, "first").expect("wrap1");
         let second = wrap_with_xmp(&first, "second").expect("wrap2");
         assert_eq!(read_xmp_box(&second).as_deref(), Some("second"));
