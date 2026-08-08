@@ -151,6 +151,10 @@ pub const MISSING_GGUF_NODES_MARKER: &str = "Required GGUF custom nodes failed t
 /// Substring present in [`verify_required_rife_nodes`] error output.
 pub const MISSING_RIFE_NODES_MARKER: &str = "Required RIFE custom nodes failed to load";
 
+/// Substring present in [`verify_required_h3_director_nodes`] error output.
+pub const MISSING_H3_DIRECTOR_NODES_MARKER: &str =
+    "Required MiniMax H3 Director custom nodes failed to load";
+
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveImage",
     "MooshieSaveVideo",
@@ -187,6 +191,36 @@ const NANOSAUR_MODEL_PY: &str = include_str!("../../../comfyui-nodes/nanosaur_su
 const NANOSAUR_TEXT_ENCODER_PY: &str =
     include_str!("../../../comfyui-nodes/nanosaur_support/text_encoder.py");
 const NANOSAUR_VAE_PY: &str = include_str!("../../../comfyui-nodes/nanosaur_support/vae.py");
+
+// ── MiniMax H3 Director package (video mode) ─────────────────────────────────
+// Vendored from ComfyUI-MiniMaxH3-Director v0.1.5 (GPL-3.0); see
+// comfyui-nodes/minimax_director/LICENSE. Node classes are namespaced Mooshie* so
+// this copy coexists with the upstream pack if a user also installs it.
+//
+// Deliberately NOT in REQUIRED_MOOSHIE_NODE_CLASSES: that list gates every
+// generation, including image mode, and these nodes need ComfyUI >= 0.30's
+// comfy_extras/nodes_minimax_h3. A remote or older ComfyUI would otherwise fail
+// image generation over a video-only node. Video mode calls
+// verify_required_h3_director_nodes() instead.
+const MINIMAX_DIRECTOR_INIT_PY: &str =
+    include_str!("../../../comfyui-nodes/minimax_director/__init__.py");
+const MINIMAX_DIRECTOR_CORE_PY: &str =
+    include_str!("../../../comfyui-nodes/minimax_director/minimax_core.py");
+const MINIMAX_DIRECTOR_PLAN_PY: &str =
+    include_str!("../../../comfyui-nodes/minimax_director/minimax_plan.py");
+const MINIMAX_DIRECTOR_MEDIA_PY: &str =
+    include_str!("../../../comfyui-nodes/minimax_director/minimax_media.py");
+const MINIMAX_DIRECTOR_NODE_PY: &str =
+    include_str!("../../../comfyui-nodes/minimax_director/minimax_director.py");
+const MINIMAX_DIRECTOR_RETAKE_PY: &str =
+    include_str!("../../../comfyui-nodes/minimax_director/minimax_retake.py");
+/// GPL-3.0 requires the licence text travel with the source, so it is deployed
+/// alongside the modules rather than left behind in the app bundle.
+const MINIMAX_DIRECTOR_LICENSE: &str =
+    include_str!("../../../comfyui-nodes/minimax_director/LICENSE");
+
+/// Node classes provided by the vendored MiniMax H3 Director package.
+const REQUIRED_H3_DIRECTOR_NODE_CLASSES: &[&str] = &["MooshieH3Director", "MooshieH3RetakeStitch"];
 
 /// Ensure all bundled MooshieUI custom nodes exist in ComfyUI's custom_nodes directory.
 /// Always overwrites to keep in sync with the app version.
@@ -291,6 +325,38 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         std::fs::write(&path, content).map_err(|e| {
             format!(
                 "Failed to write nanosaur_support/{} at '{}': {}",
+                name,
+                path.display(),
+                e
+            )
+        })?;
+    }
+
+    // ── MiniMax H3 Director package (video mode timeline) ────────────────────
+    // A package rather than a flat file: the modules import each other relatively
+    // (`from . import minimax_plan as plan`).
+    let director_dir = custom_nodes.join("minimax_director");
+    std::fs::create_dir_all(&director_dir).map_err(|e| {
+        format!(
+            "Failed to create minimax_director directory at '{}': {}",
+            director_dir.display(),
+            e
+        )
+    })?;
+
+    for (name, content) in [
+        ("__init__.py", MINIMAX_DIRECTOR_INIT_PY),
+        ("minimax_core.py", MINIMAX_DIRECTOR_CORE_PY),
+        ("minimax_plan.py", MINIMAX_DIRECTOR_PLAN_PY),
+        ("minimax_media.py", MINIMAX_DIRECTOR_MEDIA_PY),
+        ("minimax_director.py", MINIMAX_DIRECTOR_NODE_PY),
+        ("minimax_retake.py", MINIMAX_DIRECTOR_RETAKE_PY),
+        ("LICENSE", MINIMAX_DIRECTOR_LICENSE),
+    ] {
+        let path = director_dir.join(name);
+        std::fs::write(&path, content).map_err(|e| {
+            format!(
+                "Failed to write minimax_director/{} at '{}': {}",
                 name,
                 path.display(),
                 e
@@ -940,6 +1006,41 @@ pub async fn verify_required_style_transfer_nodes(
     Err(format!(
         "{}: {}. Check the ComfyUI log for custom-node import errors.",
         MISSING_STYLE_TRANSFER_NODES_MARKER,
+        missing.join(", ")
+    ))
+}
+
+/// Verify ComfyUI loaded the vendored MiniMax H3 Director node classes.
+///
+/// Video-mode only. The package needs ComfyUI >= 0.30 (it delegates to
+/// `comfy_extras/nodes_minimax_h3`), so an older or external server can be
+/// perfectly healthy for image generation while missing these.
+pub async fn verify_required_h3_director_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+) -> Result<(), String> {
+    let mut missing = Vec::new();
+
+    for attempt in 0..5 {
+        missing.clear();
+        for node_class in REQUIRED_H3_DIRECTOR_NODE_CLASSES {
+            if !object_info_has_node_class(http_client, base_url, node_class).await? {
+                missing.push((*node_class).to_string());
+            }
+        }
+        if missing.is_empty() {
+            log::info!("Verified MiniMax H3 Director custom node classes");
+            return Ok(());
+        }
+
+        if attempt < 4 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    Err(format!(
+        "{}: {}. MooshieUI deploys these on start; fully stop ComfyUI/python.exe and start MooshieUI again so they load. They require ComfyUI 0.30 or newer.",
+        MISSING_H3_DIRECTOR_NODES_MARKER,
         missing.join(", ")
     ))
 }

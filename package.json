@@ -1,7 +1,7 @@
 {
   "name": "comfyui-desktop",
   "private": true,
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "version": "1.9.2",
   "type": "module",
   "scripts": {
