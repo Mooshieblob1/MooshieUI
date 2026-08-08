@@ -85,7 +85,12 @@
     {
       titleKey: "generation.video.h3_guide.rule_shots_title",
       descKey: "generation.video.h3_guide.rule_shots",
-      example: `[Shot 2] At 00:03.500, the camera cuts to the empty platform edge.`,
+      example: `[Shot 2] At 00:03.500, still live-action cinematic, the camera cuts to the empty platform edge.`,
+    },
+    {
+      titleKey: "generation.video.h3_guide.rule_style_title",
+      descKey: "generation.video.h3_guide.rule_style",
+      example: `[Shot 2] At 00:02.800, still 2D-animated with flat cel shading, the shot cuts to the rooftop.`,
     },
     {
       titleKey: "generation.video.h3_guide.rule_camera_title",
@@ -143,14 +148,14 @@
         },
         {
           field: "retention_analysis",
-          body: `<Subject 1> (appears in [Shot 1]): fully_preserved - coat pattern, chest blaze, torn ear and eye colour stay identical to the reference.
-<Subject 2> (appears in [Shot 1]): partially_preserved - shape and carving stay, the cushion may catch different light.`,
+          body: `<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - coat pattern, chest blaze, torn ear and eye colour stay identical to the reference.
+<Subject 2> (appears in [Shot 1], [Shot 2]): partially_preserved - shape and carving stay, the cushion may catch different light.`,
         },
         {
           field: "detailed_description",
           body: `The target video is in a live-action documentary style with warm afternoon daylight and a muted amber palette.
 [Shot 1] A low, wide view of a study, the chair centred against a bookshelf, dust turning in a shaft of window light. <Subject 1> steps into frame from the right, front paws first, and tests the cushion of <Subject 2>. The camera arcs right with small amplitude at slow speed.
-[Shot 2] At 00:02.800, the shot cuts to a close-up of the cushion. The cat circles once, folds its legs and settles, tail curling last, holding still through to ${end} seconds.`,
+[Shot 2] At 00:02.800, still live-action documentary with warm afternoon daylight, the shot cuts to a close-up of the cushion, beginning from <Picture 2>. The cat circles once, folds its legs and settles, tail curling last, holding still through to ${end} seconds.`,
         },
         {
           field: "overall_soundscape",
@@ -166,7 +171,7 @@
       {
         field: "integrated_multimodal_description",
         body: `[Shot 1] Live-action, cinematic. A woman in a grey raincoat stands under a station awning, framed chest-height in a medium close-up, rain sheeting behind her under cool blue streetlight. She turns her head toward the platform and tightens her grip on a paper ticket. The camera pushes in with small amplitude at slow speed. The young woman with a quiet, breathy voice (S1) says: <d>[English] I get off at the next station.</d>
-[Shot 2] At 00:03.500, the camera cuts to the empty platform edge, the yellow line glossy with rain. Her footsteps enter from the left and stop at the line as the train's headlight grows through the downpour, holding through to ${end} seconds.`,
+[Shot 2] At 00:03.500, still live-action cinematic under the same cool blue streetlight, the camera cuts to the empty platform edge, the yellow line glossy with rain. Her footsteps enter from the left and stop at the line as the train's headlight grows through the downpour, holding through to ${end} seconds.`,
       },
       {
         field: "overall_soundscape",
