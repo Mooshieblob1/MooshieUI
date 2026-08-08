@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onMount } from "svelte";
   import { generation } from "../../stores/generation.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
@@ -51,14 +51,8 @@
     h3TierForDiffusionModel,
   } from "../../utils/h3Models.js";
   import type { H3ModelCategory, H3ModelFile, H3TierId } from "../../utils/h3Models.js";
-  import { buildH3Context } from "../../utils/h3Prompt.js";
-  import { h3IdleTemplate } from "../../utils/h3Idle.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
-  import type {
-    VideoAspectRatio,
-    VideoMotionStyle,
-    VideoVariant,
-  } from "../../types/index.js";
+  import type { VideoAspectRatio, VideoVariant } from "../../types/index.js";
   import EditableValue from "../ui/EditableValue.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
 
@@ -80,11 +74,6 @@
   const variants: { id: VideoVariant; labelKey: string; descKey: string }[] = [
     { id: "fl2va", labelKey: "generation.video.variant_fl2va", descKey: "generation.video.variant_fl2va_desc" },
     { id: "ref2va", labelKey: "generation.video.variant_ref2va", descKey: "generation.video.variant_ref2va_desc" },
-  ];
-
-  const motionStyles: { id: VideoMotionStyle; labelKey: string; descKey: string }[] = [
-    { id: "free", labelKey: "generation.video.motion_free", descKey: "generation.video.motion_free_desc" },
-    { id: "live2d_idle", labelKey: "generation.video.motion_idle", descKey: "generation.video.motion_idle_desc" },
   ];
 
   /** Matches the `node_name` the Rust installer stamps on `install:progress`. */
@@ -285,11 +274,16 @@
   const showSuggestion = $derived(
     suggestedMegapixels !== null && suggestedMegapixels !== generation.videoMegapixels,
   );
-  /** Written out rather than toggled per class so the /25 tints survive. */
+  /**
+   * Written out rather than toggled per class so the /20 tints survive. Both
+   * tiers are advisory, not alarms: the estimate is a rough one, generation is
+   * never blocked, and a red banner over a setup that would have worked fine
+   * costs more trust than it saves.
+   */
   const vramBannerClass = $derived(
     vramVerdict === "over"
-      ? "border-red-600/60 bg-red-900/25 text-red-200"
-      : "border-amber-600/60 bg-amber-900/25 text-amber-200",
+      ? "border-amber-600/50 bg-amber-900/20 text-amber-200"
+      : "border-sky-700/50 bg-sky-900/20 text-sky-200",
   );
 
   /**
@@ -780,50 +774,6 @@
     generation.saveSettings();
   }
 
-  /**
-   * Live2D idle mode is a prompt-shaping setting and nothing more: it never
-   * touches duration, aspect ratio or the frame slots, because H3 has no
-   * motion-amplitude input and the user asked for the setting to stay in its
-   * lane. The one thing it offers is a ready-made prompt.
-   */
-  const idleCtx = $derived(
-    buildH3Context({
-      variant: generation.videoVariant,
-      frames: generation.videoFrameLength,
-      hasFirstFrame: !!generation.videoFirstFrame,
-      hasLastFrame: !!generation.videoEffectiveLastFrame,
-      referenceImageCount: generation.videoRefImageFilenames.length,
-    }),
-  );
-
-  /** "confirm" is armed by a first click that would overwrite existing prompt
-   *  text; "filled" is the brief acknowledgement after writing. */
-  let fillState = $state<"ready" | "confirm" | "filled">("ready");
-  let fillTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function armFillState(next: "confirm" | "filled", ms: number) {
-    fillState = next;
-    if (fillTimer) clearTimeout(fillTimer);
-    fillTimer = setTimeout(() => (fillState = "ready"), ms);
-  }
-
-  function fillIdlePrompt() {
-    // This panel has no access to the prompt box's undo snapshot, so a
-    // second click is the only thing standing between a written prompt and
-    // the template replacing it.
-    if (generation.positivePrompt.trim() && fillState !== "confirm") {
-      armFillState("confirm", 5000);
-      return;
-    }
-    generation.positivePrompt = h3IdleTemplate(idleCtx);
-    generation.saveSettings();
-    armFillState("filled", 2000);
-  }
-
-  onDestroy(() => {
-    if (fillTimer) clearTimeout(fillTimer);
-  });
-
   function setVariant(variant: VideoVariant) {
     generation.videoVariant = variant;
     // ref2va sends no first/last frame, so there is nothing left to match.
@@ -857,54 +807,6 @@
         </button>
       {/each}
     </div>
-  </div>
-
-  <!-- Motion style -->
-  <div>
-    <span class="block text-xs text-neutral-400 mb-1.5">
-      {locale.t("generation.video.motion_style")}
-      <InfoTip text={locale.t("generation.video.motion_style_tip")} />
-    </span>
-    <div class="grid grid-cols-2 gap-2">
-      {#each motionStyles as style (style.id)}
-        <button
-          type="button"
-          class="rounded-lg border px-3 py-2 text-left transition-colors {generation.videoMotionStyle ===
-          style.id
-            ? 'border-indigo-500 bg-indigo-500/10'
-            : 'border-neutral-700 bg-neutral-800/40 hover:border-neutral-600'}"
-          onclick={() => {
-            generation.videoMotionStyle = style.id;
-            generation.saveSettings();
-          }}
-        >
-          <span class="block text-xs font-medium text-neutral-100">{locale.t(style.labelKey)}</span>
-          <span class="block text-[11px] leading-tight text-neutral-500 mt-0.5">
-            {locale.t(style.descKey)}
-          </span>
-        </button>
-      {/each}
-    </div>
-    {#if generation.videoMotionStyle === "live2d_idle"}
-      <div class="mt-2 rounded-lg border border-neutral-800 bg-neutral-950/60 p-2 space-y-1.5">
-        <p class="text-[11px] leading-relaxed text-neutral-400">
-          {locale.t("generation.video.idle_fill_hint")}
-        </p>
-        <button
-          type="button"
-          class="rounded-lg border px-2 py-1 text-[11px] transition-colors {fillState === 'confirm'
-            ? 'border-amber-500 text-amber-300 hover:bg-amber-500/10'
-            : 'border-neutral-600 text-neutral-300 hover:bg-neutral-800'}"
-          onclick={fillIdlePrompt}
-        >
-          {fillState === "confirm"
-            ? locale.t("generation.video.idle_fill_confirm")
-            : fillState === "filled"
-              ? locale.t("generation.video.idle_filled")
-              : locale.t("generation.video.idle_fill")}
-        </button>
-      </div>
-    {/if}
   </div>
 
   <!-- Duration -->
@@ -1016,10 +918,11 @@
     </p>
   {/if}
 
-  <!-- VRAM assessment. Two severities off one estimate: amber when the pass
-       fits with no headroom left (slow, because weights start moving over
-       PCIe), red when it does not fit at all. Never blocks generation - the
-       estimate is a model, and the user's card is the authority. -->
+  <!-- VRAM assessment. Two tiers off one estimate: sky when the pass fits with
+       little headroom left (slower, because weights start moving over PCIe),
+       amber when it likely does not fit. Both are advice, not warnings - the
+       estimate is a model, the user's card is the authority, and generation is
+       never blocked either way. -->
   {#if vramVerdict === "tight" || vramVerdict === "over"}
     <div class="flex items-start gap-2 rounded-lg border px-3 py-2 text-xs {vramBannerClass}">
       <svg
@@ -1032,9 +935,9 @@
         stroke-linecap="round"
         stroke-linejoin="round"
       >
-        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
-        <line x1="12" y1="9" x2="12" y2="13" />
-        <line x1="12" y1="17" x2="12.01" y2="17" />
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="16" x2="12" y2="12" />
+        <line x1="12" y1="8" x2="12.01" y2="8" />
       </svg>
       <div class="flex flex-col gap-1">
         <span>
@@ -1069,10 +972,11 @@
     </div>
   {/if}
 
-  <!-- VRAM Mode "high" warning - red, because this is a measured certainty rather than a risk -->
+  <!-- VRAM Mode "high" note - amber rather than red: the slowdown is measured,
+       but it is a setting the user can undo in one click, not a failure -->
   {#if highVramWarning}
     <div
-      class="flex items-start gap-2 rounded-lg border border-red-600/60 bg-red-900/25 px-3 py-2 text-xs text-red-200"
+      class="flex items-start gap-2 rounded-lg border border-amber-600/50 bg-amber-900/20 px-3 py-2 text-xs text-amber-200"
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -1085,8 +989,8 @@
         stroke-linejoin="round"
       >
         <circle cx="12" cy="12" r="10" />
-        <line x1="12" y1="8" x2="12" y2="12" />
-        <line x1="12" y1="16" x2="12.01" y2="16" />
+        <line x1="12" y1="16" x2="12" y2="12" />
+        <line x1="12" y1="8" x2="12.01" y2="8" />
       </svg>
       <span>
         {locale.t("generation.video.highvram_warning", {

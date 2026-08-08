@@ -1,175 +1,58 @@
 <script lang="ts">
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
-  import { gallery } from "../../stores/gallery.svelte.js";
-  import {
-    buildH3Context,
-    h3FormatOf,
-    h3InstructionLine,
-    h3ManualTemplate,
-  } from "../../utils/h3Prompt.js";
-  import { h3IdleTemplate } from "../../utils/h3Idle.js";
-  import { H3_FPS } from "../../utils/videoParams.js";
+  import { buildH3Context } from "../../utils/h3Prompt.js";
+  import H3PromptGuideModal from "./H3PromptGuideModal.svelte";
 
   /**
-   * The in-app half of H3 prompting: what the model expects, annotated, plus a
-   * skeleton to fill in by hand. It mirrors whatever the video panel is set to
-   * right now, so the labelled example is the one that would actually be sent
-   * (reference mode has six sections and states the style before `[Shot 1]`;
-   * every other task type has three fields and states it after).
+   * Entry point for the H3 prompting guide. The guide itself used to expand in
+   * place under the prompt box, which turned the panel into a column of prose
+   * nobody read; it now lives in a dialog and this is just the door to it.
+   *
+   * The button still shows the live task type, because which of the two H3
+   * formats applies is the one thing worth knowing without opening anything.
    */
 
-  /** One annotated field: the literal name H3 reads, and what belongs in it. */
-  interface GuideSection {
-    field: string;
-    descKey: string;
-  }
+  let showModal = $state(false);
 
-  const BASE_SECTIONS: GuideSection[] = [
-    { field: "integrated_multimodal_description", descKey: "generation.video.h3_guide.section_integrated" },
-    { field: "overall_soundscape", descKey: "generation.video.h3_guide.section_soundscape" },
-    { field: "non_diegetic_music", descKey: "generation.video.h3_guide.section_music" },
-  ];
-
-  const REF_SECTIONS: GuideSection[] = [
-    { field: "subject_definitions", descKey: "generation.video.h3_guide.section_subjects" },
-    { field: "summary", descKey: "generation.video.h3_guide.section_summary" },
-    { field: "retention_analysis", descKey: "generation.video.h3_guide.section_retention" },
-    { field: "detailed_description", descKey: "generation.video.h3_guide.section_detailed" },
-    { field: "overall_soundscape", descKey: "generation.video.h3_guide.section_soundscape" },
-    { field: "non_diegetic_music", descKey: "generation.video.h3_guide.section_music" },
-  ];
-
-  const RULE_KEYS = [
-    "generation.video.h3_guide.rule_shots",
-    "generation.video.h3_guide.rule_camera",
-    "generation.video.h3_guide.rule_dialogue",
-    "generation.video.h3_guide.rule_text",
-  ];
-
-  /** Idle mode contradicts two of the general rules (one shot only, camera
-   *  locked off), so it replaces the list rather than appending to it. */
-  const IDLE_RULE_KEYS = [
-    "generation.video.h3_guide.idle_rule_pose",
-    "generation.video.h3_guide.idle_rule_blink",
-    "generation.video.h3_guide.idle_rule_flow",
-    "generation.video.h3_guide.idle_rule_camera",
-    "generation.video.h3_guide.idle_rule_forbidden",
-  ];
-
-  let open = $state(false);
-  let copied = $state(false);
-  let copyTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const ctx = $derived(
+  const taskType = $derived(
     buildH3Context({
       variant: generation.videoVariant,
       frames: generation.videoFrameLength,
       hasFirstFrame: !!generation.videoFirstFrame,
       hasLastFrame: !!generation.videoEffectiveLastFrame,
       referenceImageCount: generation.videoRefImageFilenames.length,
-    }),
+    }).taskType,
   );
-  const isRef = $derived(h3FormatOf(ctx.taskType) === "ref");
-  const sections = $derived(isRef ? REF_SECTIONS : BASE_SECTIONS);
-  const instruction = $derived(h3InstructionLine(ctx));
-  const isIdle = $derived(generation.videoMotionStyle === "live2d_idle");
-  const rules = $derived(isIdle ? IDLE_RULE_KEYS : RULE_KEYS);
-  const template = $derived(isIdle ? h3IdleTemplate(ctx) : h3ManualTemplate(ctx));
-
-  async function copyTemplate() {
-    try {
-      await navigator.clipboard.writeText(template);
-      copied = true;
-      if (copyTimer) clearTimeout(copyTimer);
-      copyTimer = setTimeout(() => (copied = false), 2000);
-    } catch (e) {
-      console.error("H3 template copy failed:", e);
-      gallery.showToast(locale.t("generation.video.h3_guide.copy_failed"), "error");
-    }
-  }
 </script>
 
-<div class="rounded-lg border border-neutral-800 bg-neutral-900/50 p-2.5 space-y-2">
-  <button
-    class="w-full text-left flex items-center justify-between text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
-    onclick={() => (open = !open)}
-    title={open
-      ? locale.t("common.collapse", { section: locale.t("generation.video.h3_guide.title") })
-      : locale.t("common.expand", { section: locale.t("generation.video.h3_guide.title") })}
+<button
+  class="flex w-full items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900/50 px-2.5 py-2 text-left text-xs text-neutral-300 transition-colors hover:border-neutral-700 hover:bg-neutral-800/50"
+  onclick={() => (showModal = true)}
+>
+  <svg
+    class="h-3.5 w-3.5 shrink-0 text-neutral-500"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    viewBox="0 0 24 24"
+    aria-hidden="true"
   >
-    <span>{locale.t("generation.video.h3_guide.title")}</span>
-    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {open ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-  </button>
+    <path
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+    />
+  </svg>
+  <span class="min-w-0 flex-1 truncate">{locale.t("generation.video.h3_guide.title")}</span>
+  <span class="shrink-0 rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-indigo-300">
+    {taskType.toUpperCase()}
+  </span>
+  <span class="shrink-0 text-[10px] text-neutral-500">
+    {locale.t("generation.video.h3_guide.open")}
+  </span>
+</button>
 
-  {#if open}
-    <p class="text-[11px] leading-relaxed text-neutral-400">
-      {locale.t(
-        isIdle ? "generation.video.h3_guide.idle_intro" : "generation.video.h3_guide.intro",
-      )}
-    </p>
-    <p class="text-[11px] text-neutral-500">
-      {locale.t("generation.video.h3_guide.applies", {
-        task: ctx.taskType.toUpperCase(),
-        frames: String(ctx.frames),
-        fps: String(H3_FPS),
-        seconds: ctx.durationSeconds,
-      })}
-    </p>
-
-    {#if instruction}
-      <div class="rounded border border-neutral-800 bg-neutral-950/60 p-2 space-y-1">
-        <p class="text-[10px] font-medium text-indigo-300">
-          {locale.t("generation.video.h3_guide.instruction_line")}
-        </p>
-        <p class="text-[11px] text-neutral-400">
-          {locale.t("generation.video.h3_guide.section_instruction")}
-        </p>
-        <pre class="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-neutral-300">{instruction}</pre>
-      </div>
-    {/if}
-
-    <div class="space-y-1.5">
-      {#each sections as section (section.field)}
-        <div class="rounded border border-neutral-800 bg-neutral-950/60 p-2 space-y-0.5">
-          <p class="font-mono text-[10px] text-indigo-300">{section.field}:</p>
-          <p class="text-[11px] leading-relaxed text-neutral-400">{locale.t(section.descKey)}</p>
-        </div>
-      {/each}
-    </div>
-
-    <div class="space-y-1">
-      <p class="text-[10px] font-medium text-neutral-300">
-        {locale.t(
-          isIdle
-            ? "generation.video.h3_guide.idle_rules_title"
-            : "generation.video.h3_guide.rules_title",
-        )}
-      </p>
-      <ul class="space-y-1 pl-3">
-        {#each rules as key (key)}
-          <li class="list-disc text-[11px] leading-relaxed text-neutral-400">{locale.t(key)}</li>
-        {/each}
-      </ul>
-    </div>
-
-    <div class="space-y-1">
-      <p class="text-[10px] font-medium text-neutral-300">
-        {locale.t(
-          isIdle
-            ? "generation.video.h3_guide.idle_template_title"
-            : "generation.video.h3_guide.template_title",
-        )}
-      </p>
-      <pre class="max-h-56 overflow-auto rounded border border-neutral-800 bg-neutral-950/60 p-2 font-mono text-[10px] leading-relaxed text-neutral-300">{template}</pre>
-      <button
-        class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800"
-        onclick={copyTemplate}
-      >
-        {copied
-          ? locale.t("generation.video.h3_guide.copied")
-          : locale.t("generation.video.h3_guide.copy_template")}
-      </button>
-    </div>
-  {/if}
-</div>
+{#if showModal}
+  <H3PromptGuideModal onClose={() => (showModal = false)} />
+{/if}

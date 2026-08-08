@@ -39,7 +39,6 @@ import type {
   RegionalPromptSelection,
   RegionalPromptStrategy,
   VideoAspectRatio,
-  VideoMotionStyle,
   VideoVariant,
 } from "../types/index.js";
 import { models } from "./models.svelte.js";
@@ -524,10 +523,6 @@ class GenerationStore {
   /** Pixel budget the backend turns into width/height together with the aspect ratio. */
   videoMegapixels = $state(0.4);
   videoAspectRatio = $state<VideoAspectRatio>("16:9");
-  /** Shapes the H3 prompt text only (template, rewrite system prompt, guide).
-   *  Deliberately absent from `toParams()`: H3 takes no motion-amplitude input,
-   *  so the prompt is the only lever, and the backend has nothing to do with it. */
-  videoMotionStyle = $state<VideoMotionStyle>("free");
   /** fl2va first/last frame slots (ComfyUI input filenames); both optional. */
   videoFirstFrame = $state<string | null>(null);
   videoLastFrame = $state<string | null>(null);
@@ -1813,8 +1808,6 @@ class GenerationStore {
         if (saved.videoMegapixels !== undefined)
           this.videoMegapixels = clampH3Megapixels(saved.videoMegapixels);
         if (saved.videoAspectRatio !== undefined) this.videoAspectRatio = saved.videoAspectRatio;
-        if (saved.videoMotionStyle === "free" || saved.videoMotionStyle === "live2d_idle")
-          this.videoMotionStyle = saved.videoMotionStyle;
         if (saved.videoFirstFrame !== undefined) this.videoFirstFrame = saved.videoFirstFrame;
         if (saved.videoLastFrame !== undefined) this.videoLastFrame = saved.videoLastFrame;
         if (saved.videoFirstFrameAspect !== undefined)
@@ -2041,7 +2034,6 @@ class GenerationStore {
         videoDurationSeconds: this.videoDurationSeconds,
         videoMegapixels: this.videoMegapixels,
         videoAspectRatio: this.videoAspectRatio,
-        videoMotionStyle: this.videoMotionStyle,
         videoFirstFrame: this.videoFirstFrame,
         videoLastFrame: this.videoLastFrame,
         videoFirstFrameAspect: this.videoFirstFrameAspect,
@@ -2162,7 +2154,6 @@ class GenerationStore {
       videoDurationSeconds: this.videoDurationSeconds,
       videoMegapixels: this.videoMegapixels,
       videoAspectRatio: this.videoAspectRatio,
-      videoMotionStyle: this.videoMotionStyle,
       videoFirstFrame: this.videoFirstFrame,
       videoLastFrame: this.videoLastFrame,
       videoFirstFrameAspect: this.videoFirstFrameAspect,
