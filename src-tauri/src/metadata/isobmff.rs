@@ -124,6 +124,66 @@ pub(super) fn is_avif(bytes: &[u8]) -> bool {
         .any(|(i, tag)| i != 1 && (tag == b"avif" || tag == b"avis"))
 }
 
+/// The `comment` value from `moov/udta`, whichever of the two spellings the
+/// muxer used.
+///
+/// Order matters only in that mdta is what our own writer produces. The
+/// QuickTime atom is the fallback because a plain `ffmpeg -c copy` without
+/// `-movflags use_metadata_tags` rewrites a standard comment into that form.
+pub(super) fn read_udta_comment(bytes: &[u8]) -> Option<String> {
+    read_mdta_comment(bytes).or_else(|| read_qt_comment(bytes))
+}
+
+/// `moov/udta/meta` holds a `keys` table of key names and an `ilst` of values
+/// whose four-character box "type" is the 1-based index into that table.
+fn read_mdta_comment(bytes: &[u8]) -> Option<String> {
+    let keys = find_path(bytes, &[b"moov", b"udta", b"meta", b"keys"])?;
+    let index = mdta_key_index(keys, b"comment")?;
+    let ilst = find_path(bytes, &[b"moov", b"udta", b"meta", b"ilst"])?;
+
+    let wanted = index.to_be_bytes();
+    let item = boxes(ilst).into_iter().find(|b| b.kind == wanted)?;
+    let item_body = ilst.get(item.body..item.end)?;
+
+    let data = boxes(item_body).into_iter().find(|b| b.kind == *b"data")?;
+    // data payload: 4 bytes type indicator, 4 bytes locale, then the value.
+    let value = item_body.get(data.body + 8..data.end)?;
+    if value.len() > MAX_PAYLOAD {
+        return None;
+    }
+    Some(String::from_utf8_lossy(value).into_owned())
+}
+
+/// 1-based index of `name` in a `keys` table, or `None` if it is absent.
+fn mdta_key_index(keys: &[u8], name: &[u8]) -> Option<u32> {
+    // keys payload: 4 bytes version/flags, 4 bytes entry count, then entries of
+    // (4 byte size, 4 byte namespace, key name).
+    let count = u32_at(keys, 4)?.min(MAX_SIBLINGS as u32);
+    let mut off = 8usize;
+    for i in 0..count {
+        let size = u32_at(keys, off)? as usize;
+        if size < 8 || off + size > keys.len() {
+            return None;
+        }
+        if keys.get(off + 8..off + size)? == name {
+            return Some(i + 1);
+        }
+        off += size;
+    }
+    None
+}
+
+/// A bare `(c)cmt` atom directly under `udta`: 2 bytes length, 2 bytes
+/// language, then the text.
+fn read_qt_comment(bytes: &[u8]) -> Option<String> {
+    let cmt = find_path(bytes, &[b"moov", b"udta", b"\xa9cmt"])?;
+    let text = cmt.get(4..)?;
+    if text.is_empty() || text.len() > MAX_PAYLOAD || text.iter().all(|&b| b == 0) {
+        return None;
+    }
+    Some(String::from_utf8_lossy(text).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,5 +312,99 @@ mod tests {
         body.extend_from_slice(b"mif1");
         body.extend_from_slice(b"avif");
         assert!(is_avif(&bx(b"ftyp", &body)));
+    }
+
+    /// A `moov/udta/meta` subtree holding one mdta key named `comment`.
+    /// This is the shape ffmpeg writes under `-movflags use_metadata_tags`.
+    fn moov_with_mdta_comment(text: &str) -> Vec<u8> {
+        let name = b"comment";
+        let mut entry = ((8 + name.len()) as u32).to_be_bytes().to_vec();
+        entry.extend_from_slice(b"mdta");
+        entry.extend_from_slice(name);
+
+        let mut keys_body = vec![0u8; 4]; // version + flags
+        keys_body.extend_from_slice(&1u32.to_be_bytes()); // entry_count
+        keys_body.extend_from_slice(&entry);
+        let keys = bx(b"keys", &keys_body);
+
+        let mut data_body = 1u32.to_be_bytes().to_vec(); // type indicator: UTF-8
+        data_body.extend_from_slice(&0u32.to_be_bytes()); // locale
+        data_body.extend_from_slice(text.as_bytes());
+        // An ilst child's four-character "type" is the 1-based key index.
+        let item = bx(&1u32.to_be_bytes(), &bx(b"data", &data_body));
+        let ilst = bx(b"ilst", &item);
+
+        let mut meta_body = vec![0u8; 4];
+        meta_body.extend_from_slice(&keys);
+        meta_body.extend_from_slice(&ilst);
+        bx(b"moov", &bx(b"udta", &bx(b"meta", &meta_body)))
+    }
+
+    /// A `moov/udta` holding a bare QuickTime (c)cmt atom, which is what ffmpeg
+    /// writes for a standard comment when `use_metadata_tags` is not set.
+    fn moov_with_qt_comment(text: &str) -> Vec<u8> {
+        let mut body = (text.len() as u16).to_be_bytes().to_vec();
+        body.extend_from_slice(&0u16.to_be_bytes()); // language
+        body.extend_from_slice(text.as_bytes());
+        bx(b"moov", &bx(b"udta", &bx(b"\xa9cmt", &body)))
+    }
+
+    #[test]
+    fn reads_an_mdta_comment() {
+        let mut buf = ftyp(b"isom");
+        buf.extend_from_slice(&moov_with_mdta_comment("{\"a\":\"テスト\"}"));
+        buf.extend_from_slice(&bx(b"mdat", b"frames"));
+
+        assert_eq!(
+            read_udta_comment(&buf).as_deref(),
+            Some("{\"a\":\"テスト\"}")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_a_quicktime_comment_atom() {
+        let mut buf = ftyp(b"isom");
+        buf.extend_from_slice(&moov_with_qt_comment("{\"b\":1}"));
+
+        assert_eq!(read_udta_comment(&buf).as_deref(), Some("{\"b\":1}"));
+    }
+
+    #[test]
+    fn returns_none_when_there_is_no_comment() {
+        let mut buf = ftyp(b"isom");
+        buf.extend_from_slice(&bx(b"moov", &bx(b"udta", b"")));
+        buf.extend_from_slice(&bx(b"mdat", b"frames"));
+
+        assert!(read_udta_comment(&buf).is_none());
+    }
+
+    #[test]
+    fn returns_none_for_a_discord_scrubbed_udta() {
+        // Discord renames every child of udta to `skip` and zeroes the payload
+        // in place, preserving the file size and every byte offset.
+        let mut buf = ftyp(b"isom");
+        let mut scrubbed = moov_with_mdta_comment("{\"a\":1}");
+        // Rename the `meta` child of `udta` to `skip` and zero what follows.
+        let needle = b"meta";
+        let at = scrubbed
+            .windows(4)
+            .position(|w| w == needle)
+            .expect("fixture contains a meta box");
+        scrubbed[at..at + 4].copy_from_slice(b"skip");
+        for byte in scrubbed[at + 4..].iter_mut() {
+            *byte = 0;
+        }
+        buf.extend_from_slice(&scrubbed);
+
+        assert!(read_udta_comment(&buf).is_none());
+    }
+
+    #[test]
+    fn refuses_a_comment_larger_than_the_payload_cap() {
+        let huge = "x".repeat(MAX_PAYLOAD + 1);
+        let mut buf = ftyp(b"isom");
+        buf.extend_from_slice(&moov_with_mdta_comment(&huge));
+
+        assert!(read_udta_comment(&buf).is_none());
     }
 }
