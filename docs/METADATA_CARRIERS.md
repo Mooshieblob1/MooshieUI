@@ -18,7 +18,14 @@ it.
 
 The uuid box uses Adobe's XMP identifier BE7ACFCB-97A9-42E8-9C71-999491E3AFAC
 and is appended after every existing top-level box, so it moves no existing
-byte and sample offsets stay valid.
+byte and sample offsets stay valid. mp4 and avif are both ISOBMFF, so exports
+in either format get the box; webp and gif have no equivalent and keep only
+their container-native carrier.
+
+Verified on the export probes: animated webp carries the payload as UTF-16BE
+in an EXIF chunk, avif carries it in an Exif item, an exported avif carries
+both that Exif item and a top-level uuid box, and gif carries UTF-8 in a
+Comment Extension at the head of the file.
 
 ## What survives
 
@@ -30,8 +37,12 @@ characters, quotes, and braces.
 | MP4 moov/udta/meta "comment" | survives | survives | box renamed to skip, payload zeroed |
 | MP4 moov/udta (c)cmt | survives | survives | box renamed to skip, payload zeroed |
 | MP4 top-level uuid XMP | dropped | dropped | survives byte-identical |
-| WebP EXIF chunk | n/a | n/a | chunk deleted |
+| WebP EXIF chunk (still) | n/a | n/a | chunk deleted |
 | PNG iTXt chunk | n/a | n/a | chunk deleted |
+| Animated WebP EXIF chunk | n/a | n/a | not measured |
+| AVIF Exif item | n/a | n/a | not measured |
+| AVIF top-level uuid XMP | n/a | n/a | not measured |
+| GIF Comment Extension | n/a | n/a | not measured |
 
 The two mp4 carriers are exactly complementary, which is why both are written.
 
@@ -45,8 +56,26 @@ Discord re-download gets nothing. Pixels came back byte-identical on both test
 images, so stealth-LSB is the only image carrier that still works through
 Discord.
 
-Discord durability for animated WebP, animated AVIF, and GIF is not yet
-measured.
+## Open measurement
+
+Discord durability for animated WebP, AVIF and GIF is still open. Nothing in
+the design depends on the answer, because these are export formats the user
+chooses deliberately rather than the default gallery output, but the table
+above stays honest about it until someone runs the round trip.
+
+To close it, upload one probe of each format to Discord, download each back,
+and check whether the payload marker still appears in the bytes. The still
+WebP and PNG rows were measured exactly this way.
+
+What the existing rows suggest, as inference rather than measurement:
+
+- Animated WebP uses the same RIFF EXIF chunk as a still WebP, and Discord
+  deletes that chunk on stills, so expect it to be deleted here too.
+- AVIF is ISOBMFF like mp4. If Discord runs the same udta-style scrub, the
+  Exif item is at risk and the top-level uuid box should survive, which is
+  the mp4 result. If Discord instead re-encodes AVIF as it does for some
+  image types, both are lost.
+- GIF has no precedent in the table at all.
 
 ## Reader dispatch order
 
