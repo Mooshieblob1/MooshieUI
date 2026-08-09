@@ -4,6 +4,7 @@ import type {
   ArtistManifest,
   ArtistSearchHit,
   ArtistShard,
+  NoPreviewEntry,
   SearchOptions,
 } from "./types.js";
 import { rankingPostCount } from "./counts.js";
@@ -24,6 +25,7 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
   let manifestAt = 0;
   const shardPromises = new Map<string, Promise<ArtistShard>>();
   let searchPromise: Promise<ArtistSearchHit[]> | null = null;
+  let noPreviewPromise: Promise<ArtistSearchHit[]> | null = null;
   /** slug → shard bucket (populated from search index once loaded). */
   const slugToBucket = new Map<string, string>();
   /** raw tag (lowercased) → slug. */
@@ -115,6 +117,42 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
     return searchPromise;
   }
 
+  async function loadNoPreviewHits(): Promise<ArtistSearchHit[]> {
+    if (noPreviewPromise) return noPreviewPromise;
+    noPreviewPromise = (async () => {
+      const [manifest, indexed] = await Promise.all([loadManifest(), loadSearchIndex()]);
+      const path = manifest.noPreviewIndex?.path ?? "no-preview.json";
+      const raw = await fetchJson<NoPreviewEntry[]>(baseDir() + path);
+      // Self-heal against drift: if a tag gained an image since the
+      // no-preview list was built, the real entry wins and the stale
+      // placeholder is dropped.
+      const known = new Set(indexed.map((h) => h.slug));
+      const out: ArtistSearchHit[] = [];
+      for (const e of raw) {
+        if (!e?.slug || known.has(e.slug)) continue;
+        const hit: ArtistSearchHit = {
+          slug: e.slug,
+          tag: e.tag,
+          imageId: "",
+          postCount: e.postCount ?? 0,
+          shard: bucketForSlug(e.slug),
+          hasImage: false,
+          variantCount: 0,
+        };
+        if (e.belowThreshold) hit.belowThreshold = true;
+        out.push(hit);
+      }
+      return out;
+    })().catch((err) => {
+      // Not an error path: index releases before the no-preview list simply
+      // 404 here. Cache the empty result so a missing file is not re-fetched
+      // on every keystroke; `invalidate()` is the only retry.
+      console.warn("artist-gallery: no-preview index unavailable", err);
+      return [];
+    });
+    return noPreviewPromise;
+  }
+
   async function getArtistDirect(slugOrTag: string): Promise<ArtistEntry | null> {
     if (!slugOrTag) return null;
     const trimmed = slugOrTag.trim();
@@ -155,9 +193,13 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
   async function search(query: string, opts: SearchOptions = {}): Promise<ArtistSearchHit[]> {
     const q = normalizeQuery(query);
     if (!q) return [];
-    const hits = await loadSearchIndex();
     const limit = Math.max(1, Math.min(100, opts.limit ?? 25));
     const requireImage = opts.requireImage ?? true;
+    // Image-bearing entries always come first in the pool, so a caller that
+    // wants both still ranks real previews ahead of placeholders. When only
+    // images are wanted, skip the extra fetch entirely.
+    const indexed = await loadSearchIndex();
+    const hits = requireImage ? indexed : [...indexed, ...(await loadNoPreviewHits())];
 
     const prefix: ArtistSearchHit[] = [];
     const contains: ArtistSearchHit[] = [];
@@ -181,6 +223,7 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
     manifestAt = 0;
     shardPromises.clear();
     searchPromise = null;
+    noPreviewPromise = null;
     slugToBucket.clear();
     tagToSlug.clear();
   }
@@ -192,6 +235,7 @@ export function createArtistGalleryClient(opts: ClientOptions): ArtistGalleryCli
     getArtist,
     getArtistDirect,
     loadSearchIndex,
+    loadNoPreviewHits,
     search,
     invalidate,
   };

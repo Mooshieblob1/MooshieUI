@@ -57,6 +57,8 @@ export interface ArtistManifest {
   artistsWithImage: number;
   shards: ArtistManifestShardMeta[];
   searchIndex: { path: string; entries: number };
+  /** Present only on index releases that ship the no-preview fallback list. */
+  noPreviewIndex?: { path: string; entries: number };
   generatedAt: string;
 }
 
@@ -81,6 +83,19 @@ export interface ArtistSearchHit {
   images?: ArtistImage[];
 }
 
+/**
+ * A raw row of `no-preview.json`: an artist the model knows that the image
+ * set never covered. The client synthesises an `ArtistSearchHit` from this
+ * with `hasImage: false`.
+ */
+export interface NoPreviewEntry {
+  tag: string;
+  slug: string;
+  postCount: number;
+  belowThreshold?: boolean;
+  aliases?: string[];
+}
+
 export interface SearchOptions {
   limit?: number;
   /** Only return entries where `hasImage === true`. Default: true. */
@@ -96,6 +111,11 @@ export interface ArtistGalleryClient {
   /** Resolve only by direct shard lookup. Does not load the large search index fallback. */
   getArtistDirect(slugOrTag: string): Promise<ArtistEntry | null>;
   loadSearchIndex(): Promise<ArtistSearchHit[]>;
+  /**
+   * Artists with no CDN image, as synthesised hits (`hasImage: false`).
+   * Resolves to `[]` when the release predates the no-preview index.
+   */
+  loadNoPreviewHits(): Promise<ArtistSearchHit[]>;
   /** Prefix + contains + alias ranking mirrors src/lib/stores/autocomplete.svelte.ts. */
   search(query: string, opts?: SearchOptions): Promise<ArtistSearchHit[]>;
   /** Clear all in-memory caches (next call will re-fetch). */
