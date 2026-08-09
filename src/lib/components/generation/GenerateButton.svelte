@@ -25,6 +25,7 @@
   import { checkStyleTransferNodesReady } from "../../utils/styleTransferNodes.js";
   import { classifyGenerationError } from "../../utils/generationErrors.js";
   import { parseSegmentDetailPrompt, yoloTargetFilename } from "../../utils/promptSegmentDetail.js";
+  import { requestGeneration, trackGeneration, submitGeneration } from "../../utils/generationSubmit.js";
 
   interface Props {
     canvasEditorRef?: { getRasterComposite: () => HTMLCanvasElement | null; getMaskCanvas: () => HTMLCanvasElement | null };
@@ -55,24 +56,6 @@
     }
     return locale.t("generation.generate_tip");
   });
-
-  async function requestGeneration(params: GenerationParams) {
-    const result = await generate(params);
-    params.seed = result.seed;
-    return result;
-  }
-
-  function trackGeneration(params: GenerationParams, result: Awaited<ReturnType<typeof requestGeneration>>): string {
-    progress.enqueue(result.prompt_id, params.upscale_enabled, params.mode, params);
-    if (result.queue_position != null && result.queue_total != null) {
-      progress.updateQueuePosition(result.prompt_id, result.queue_position, result.queue_total);
-    }
-    return result.prompt_id;
-  }
-
-  async function submitGeneration(params: GenerationParams): Promise<string> {
-    return trackGeneration(params, await requestGeneration(params));
-  }
 
   async function ensureFacefixPythonDependency() {
     if (isBrowserMode) return;
