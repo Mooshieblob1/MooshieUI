@@ -50,6 +50,11 @@ export class ArtistGalleryStore {
 
   showOnlyFavourites = $state(false);
   favouriteCategoryFilter = $state<"all" | "__uncat" | string>("all");
+  /**
+   * Show artists the model knows that have no CDN preview yet (issue #527).
+   * On by default: hiding them is what made them unfindable in the first place.
+   */
+  includeNoPreview = $state(true);
 
   /** Active lightbox entry, if any. */
   lightboxEntry = $state<ArtistEntry | null>(null);
@@ -74,10 +79,12 @@ export class ArtistGalleryStore {
 
   private static readonly GLOBAL_VARIANT_KEY = "artist-gallery-global-variant";
   private static readonly VARIANT_OVERRIDES_KEY = "artist-gallery-variant-overrides";
+  private static readonly INCLUDE_NO_PREVIEW_KEY = "artist-gallery-include-no-preview";
 
   constructor(manifestUrl: string) {
     this.client = createArtistGalleryClient({ manifestUrl, fetchImpl: cdnFetch });
     this.loadVariants();
+    this.loadIncludeNoPreview();
   }
 
   private loadVariants(): void {
@@ -110,6 +117,24 @@ export class ArtistGalleryStore {
         ArtistGalleryStore.VARIANT_OVERRIDES_KEY,
         JSON.stringify(this.variantOverrides),
       );
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private loadIncludeNoPreview(): void {
+    try {
+      const raw = localStorage.getItem(ArtistGalleryStore.INCLUDE_NO_PREVIEW_KEY);
+      if (raw !== null) this.includeNoPreview = raw === "true";
+    } catch {
+      /* localStorage unavailable; the default (on) is fine */
+    }
+  }
+
+  setIncludeNoPreview(value: boolean): void {
+    this.includeNoPreview = value;
+    try {
+      localStorage.setItem(ArtistGalleryStore.INCLUDE_NO_PREVIEW_KEY, String(value));
     } catch {
       /* ignore */
     }
@@ -183,7 +208,10 @@ export class ArtistGalleryStore {
     }
     this.searchLoading = true;
     try {
-      const hits = await this.client.search(text, { limit: 50 });
+      const hits = await this.client.search(text, {
+        limit: 50,
+        requireImage: !this.includeNoPreview,
+      });
       if (seq === this.searchSeq) {
         this.results = hits;
       }
