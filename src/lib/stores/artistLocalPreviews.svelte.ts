@@ -113,6 +113,17 @@ class ArtistLocalPreviewsStore {
     this.clearRunning(slug, variant);
   }
 
+  /**
+   * Cancel all in-flight previews at once (queue cleared, execution error with
+   * no prompt_id). Drains `pending` and clears every `running` entry.
+   */
+  failAll(): void {
+    for (const { slug, variant } of this.pending.values()) {
+      this.clearRunning(slug, variant);
+    }
+    this.pending.clear();
+  }
+
   private clearRunning(slug: string, variant: ArtistPreviewVariant): void {
     const key = runKey(slug, variant);
     if (!(key in this.running)) return;

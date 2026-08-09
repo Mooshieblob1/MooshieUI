@@ -2471,6 +2471,7 @@
         // Admin/mod cleared the queue — cancel all pending state on this client
         promptLastActivity.clear();
         progress.cancelAll();
+        artistLocalPreviews.failAll();
         compare.clearGridBatch();
       }),
       ipcListen("comfyui:preview", async (event: any) => {
@@ -2826,6 +2827,8 @@
           pendingOutputFetches.delete(data.prompt_id);
           promptLastActivity.delete(data.prompt_id);
           progress.removePrompt(data.prompt_id);
+          const errPreviewTarget = artistLocalPreviews.resolve(data.prompt_id);
+          if (errPreviewTarget) artistLocalPreviews.fail(errPreviewTarget.slug, errPreviewTarget.variant);
           compare.clearGridBatch();
         } else {
           // No prompt_id — clear everything
@@ -2833,6 +2836,7 @@
           pendingOutputFetches.clear();
           promptLastActivity.clear();
           progress.cancelAll();
+          artistLocalPreviews.failAll();
           compare.clearGridBatch();
         }
       }),
