@@ -61,7 +61,19 @@
     readClipboardImageSafe,
     saveModelSidecarThumbnail,
     installCustomNode,
+    loadGalleryImageDisplay,
   } from "./lib/utils/api.js";
+  import {
+    ARTIST_PREVIEW_RECIPE,
+    artistPreviewPrompt,
+    missingRecipeModels,
+  } from "./lib/artist-gallery/previewRecipe.js";
+  import type {
+    ArtistPreviewStatus,
+    ArtistPreviewVariant,
+  } from "./lib/artist-gallery/previewRecipe.js";
+  import { artistLocalPreviews } from "./lib/stores/artistLocalPreviews.svelte.js";
+  import { submitGeneration } from "./lib/utils/generationSubmit.js";
   import InterrogateQuickModal from "./lib/components/generation/InterrogateQuickModal.svelte";
   import {
     fetchModelPreviewImageBytes,
@@ -687,6 +699,51 @@
   let photopeaOpen = $state(false);
   let photopeaImage = $state<OutputImage | null>(null);
 
+  /** `slug::pN` -> object URL for a locally generated preview. */
+  let artistPreviewSrcs = $state<Record<string, string>>({});
+  /** Non-reactive guard so the effect below does not re-trigger on its own writes. */
+  const artistPreviewRequested = new Set<string>();
+
+  // A store reacting to another store's state belongs here, not as an
+  // imperative call between stores.
+  $effect(() => {
+    for (const [slug, slot] of Object.entries(artistLocalPreviews.previews)) {
+      for (const variant of [1, 2] as const) {
+        const filename = variant === 1 ? slot.p1 : slot.p2;
+        if (!filename) continue;
+        // Keyed by filename too, so a re-generated preview re-decodes.
+        const guard = `${slug}::p${variant}::${filename}`;
+        if (artistPreviewRequested.has(guard)) continue;
+        artistPreviewRequested.add(guard);
+        void loadGalleryImageDisplay(filename)
+          .then((bytes) => {
+            const blob = new Blob([new Uint8Array(bytes)], { type: "image/webp" });
+            artistPreviewSrcs = {
+              ...artistPreviewSrcs,
+              [`${slug}::p${variant}`]: URL.createObjectURL(blob),
+            };
+          })
+          .catch(() => {
+            // The file is gone (deleted from the gallery). Drop the mapping so
+            // the card falls back to its Generate button.
+            artistLocalPreviews.forget(slug, variant);
+          });
+      }
+    }
+  });
+
+  function artistPreviewStatus(
+    slug: string,
+    variant: ArtistPreviewVariant,
+  ): ArtistPreviewStatus {
+    if (artistLocalPreviews.isRunning(slug, variant)) return { state: "running" };
+    const src = artistPreviewSrcs[`${slug}::p${variant}`];
+    if (src) return { state: "ready", src };
+    const missing = missingRecipeModels(models);
+    if (missing.length > 0) return { state: "unavailable", missing };
+    return { state: "idle" };
+  }
+
   async function editInPhotopea(image: OutputImage) {
     const filename = await gallery.resolveGalleryFilename(image);
     if (!filename) {
@@ -833,6 +890,93 @@
     characterInsert.request(character);
     if (!characterInsert.pending) {
       currentPage = "generate";
+    }
+  }
+
+  function buildArtistPreviewParams(tag: string, variant: ArtistPreviewVariant): GenerationParams {
+    const r = ARTIST_PREVIEW_RECIPE;
+    // Start from the user's current settings so backend-only fields (output
+    // format, bit depth, ...) stay valid, then pin every field that can change
+    // the image.
+    //
+    // TRADE-OFF: a generation field added in future inherits the user's
+    // current value unless it is added below. If a new field can change the
+    // image, pin it here.
+    return {
+      ...generation.toParams(),
+      mode: "txt2img",
+      positive_prompt: artistPreviewPrompt(tag, variant),
+      negative_prompt: r.negativePrompt,
+      positive_segments: [],
+      negative_segments: [],
+      detail_segments: [],
+      positive_regions: undefined,
+      use_split_model: true,
+      diffusion_model: r.unet,
+      clip_model: r.textEncoder,
+      clip_type: r.clipType,
+      vae: r.vae,
+      checkpoint: "",
+      model_source_category: null,
+      model_architecture: r.architecture,
+      is_sdxl_like: false,
+      is_vpred_model: false,
+      sampler_name: r.sampler,
+      scheduler: r.scheduler,
+      steps: r.steps,
+      cfg: r.cfg,
+      denoise: r.denoise,
+      seed: r.seed,
+      width: r.width,
+      height: r.height,
+      batch_size: 1,
+      loras: [],
+      controlnet: null,
+      upscale_enabled: false,
+      save_pre_upscale_image: false,
+      facefix_enabled: false,
+      smart_guidance: false,
+      differential_diffusion: false,
+      refine_only: false,
+      input_image: null,
+      mask_image: null,
+      grow_mask_by: null,
+      style_transfer_enabled: false,
+      style_reference_image: null,
+      edit_reference_images: [],
+    };
+  }
+
+  async function handleArtistGeneratePreview(
+    slug: string,
+    tag: string,
+    variant: ArtistPreviewVariant,
+  ) {
+    if (artistLocalPreviews.isRunning(slug, variant)) return;
+    const missing = missingRecipeModels(models);
+    if (missing.length > 0) {
+      gallery.showToast(
+        locale.t("artist_gallery.generate_preview_missing", { models: missing.join(", ") }),
+        "error",
+      );
+      return;
+    }
+    try {
+      const promptId = await submitGeneration(buildArtistPreviewParams(tag, variant));
+      artistLocalPreviews.attach(promptId, slug, variant);
+      gallery.showToast(locale.t("artist_gallery.preview_queued", { tag }), "info");
+    } catch (err) {
+      artistLocalPreviews.fail(slug, variant);
+      // Same classification GenerateButton uses: turn a raw submission failure
+      // (stale model cache, OOM, missing node) into actionable text, falling
+      // back to the raw message when nothing matched.
+      const message = err instanceof Error ? err.message : String(err);
+      const classified = classifyGenerationError(message);
+      const detail =
+        classified.messageKey === "generation.toast.failed"
+          ? message
+          : locale.t(classified.messageKey, classified.params);
+      gallery.showToast(locale.t("artist_gallery.preview_failed", { error: detail }), "error");
     }
   }
 
@@ -1770,6 +1914,35 @@
     console.log("[finalizeOutputImages] images:", newImages.length, "blob[0].type:", blobs[0]?.type, "blob[0].size:", blobs[0]?.size, "filename[0]:", newImages[0]?.filename);
     gallery.persistImages(newImages, metadata, blobs, generation.metadataMode, tempFilenames);
     showGenerationDoneToast(newImages);
+
+    // Route a finished artist-preview generation back to its placeholder card.
+    // Must run before the style-thumbnail block below, which returns early.
+    const previewTarget = artistLocalPreviews.resolve(promptId);
+    if (previewTarget) {
+      const firstImage = newImages[0];
+      if (!firstImage) {
+        artistLocalPreviews.fail(previewTarget.slug, previewTarget.variant);
+      } else {
+        const persistPromise = gallery.getPersistPromise(firstImage);
+        if (persistPromise) {
+          void persistPromise
+            .then((galleryFilename) => {
+              if (galleryFilename) {
+                artistLocalPreviews.record(
+                  previewTarget.slug,
+                  previewTarget.variant,
+                  galleryFilename,
+                );
+              } else {
+                artistLocalPreviews.fail(previewTarget.slug, previewTarget.variant);
+              }
+            })
+            .catch(() => artistLocalPreviews.fail(previewTarget.slug, previewTarget.variant));
+        } else {
+          artistLocalPreviews.fail(previewTarget.slug, previewTarget.variant);
+        }
+      }
+    }
 
     // If a style was just applied to the prompt and it doesn't have a thumbnail yet,
     // automatically assign this generation's primary image to it.
@@ -3393,6 +3566,8 @@
         manifestUrl={connection.artistGalleryManifestUrl}
         oninsertTag={handleArtistTagInsert}
         oninsertCharacter={handleCharacterInsert}
+        ongeneratePreview={handleArtistGeneratePreview}
+        previewStatus={artistPreviewStatus}
       />
     {:else if currentPage === "settings"}
       <SettingsPage {userRole} />
