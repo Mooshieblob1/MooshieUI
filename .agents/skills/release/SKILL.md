@@ -127,6 +127,8 @@ Prepend to **both** `RELEASE_NOTES.md` and `CHANGELOG.md`:
 
 ```powershell
 cargo check --manifest-path src-tauri/Cargo.toml
+cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features server
+cargo test --manifest-path src-tauri/Cargo.toml
 npm run build
 ```
 

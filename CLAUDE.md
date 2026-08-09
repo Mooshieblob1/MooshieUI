@@ -14,15 +14,18 @@ npm install                  # Frontend dependencies
 npm run tauri dev            # Full dev (Tauri + Vite hot-reload on port 1420, strict)
 npm run tauri build          # Production binary
 npm run build                # Frontend-only build (used as a pre-commit gate)
-cargo check --manifest-path src-tauri/Cargo.toml   # Rust compile check
+cargo check --manifest-path src-tauri/Cargo.toml   # Rust compile check (desktop features)
+cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features server   # server binary
 cargo fmt && cargo clippy    # Rust format/lint (run in src-tauri/)
 ```
+
+**Two Rust builds, one crate.** `default = ["desktop"]` links `tauri`; the server binary (`--no-default-features --features server`, built by CI's `build-server` job) does **not**. Anything referencing `tauri` outside a `#[cfg(feature = "desktop")]` gate compiles fine locally and breaks the release. Modules gated whole in `commands/mod.rs` can `use tauri::*` freely; modules that compile in both builds (`api.rs`, `video_export.rs`, `video_interpolate.rs`, `webserver.rs`) need per-item gates — including on function *parameters* and the matching call-site arguments (see `run_export`, `connect_websocket_for_worker_inner`).
 
 **No frontend test framework** — no vitest/jest. Rust *does* have tests: ~128 `#[test]` fns across 16 `#[cfg(test)]` modules, covering pure logic only (`templates/video.rs`, `commands/video_export.rs`, `commands/api.rs`, `prompt_assistant/*`, `comfyui/nodes.rs`, ...). Run them with `cargo test --manifest-path src-tauri/Cargo.toml`.
 
 The suite is green — treat any failure as a real regression.
 
-Validation is `npm run build` + `cargo check` + `cargo test` (see the `pre-commit-check` skill).
+Validation is `npm run build` + `cargo check` (both feature sets) + `cargo test` (see the `pre-commit-check` skill).
 
 ## Skills
 

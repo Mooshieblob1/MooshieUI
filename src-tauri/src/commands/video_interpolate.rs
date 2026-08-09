@@ -5,8 +5,10 @@
 //! halves live here as free functions.
 
 use std::path::{Path, PathBuf};
+#[cfg(feature = "desktop")]
 use std::sync::Arc;
 
+#[cfg(feature = "desktop")]
 use tauri::State;
 
 use crate::error::AppError;

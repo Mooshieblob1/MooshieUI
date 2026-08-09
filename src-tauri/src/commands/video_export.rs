@@ -172,7 +172,9 @@ use crate::error::AppError;
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+#[cfg(feature = "desktop")]
 use std::sync::Arc;
+#[cfg(feature = "desktop")]
 use tauri::{Emitter, State};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -339,10 +341,11 @@ fn source_metadata_json(source: &Path) -> String {
 }
 
 /// Shared by the Tauri command and the browser-mode dispatch arm. `app` is
-/// `None` in browser mode, where progress goes out over SSE only.
+/// `None` in browser mode, where progress goes out over SSE only, and absent
+/// entirely from the server build, which has no Tauri to emit to.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_export(
-    app: Option<&tauri::AppHandle>,
+    #[cfg(feature = "desktop")] app: Option<&tauri::AppHandle>,
     state: &AppState,
     source: &Path,
     format: &str,
@@ -484,7 +487,12 @@ pub(crate) async fn run_export(
         if let Some(d) = msg.get("seam_delta").and_then(|v| v.as_f64()) {
             seam_delta_val = d as f32;
         }
-        emit_progress(app, state, &msg);
+        emit_progress(
+            #[cfg(feature = "desktop")]
+            app,
+            state,
+            &msg,
+        );
     }
 
     let status = child.wait().await?;
@@ -522,7 +530,12 @@ pub(crate) async fn run_export(
     Ok(result)
 }
 
-fn emit_progress(app: Option<&tauri::AppHandle>, state: &AppState, payload: &serde_json::Value) {
+fn emit_progress(
+    #[cfg(feature = "desktop")] app: Option<&tauri::AppHandle>,
+    state: &AppState,
+    payload: &serde_json::Value,
+) {
+    #[cfg(feature = "desktop")]
     if let Some(app) = app {
         let _ = app.emit("export:progress", payload.clone());
     }
@@ -573,6 +586,7 @@ pub async fn export_video_animation(
     let source = dir.join(&name);
 
     run_export(
+        #[cfg(feature = "desktop")]
         Some(&app),
         state.inner(),
         &source,

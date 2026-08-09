@@ -28,6 +28,7 @@ If empty → report "Nothing to check" and stop.
 |------|------|---------|
 | Frontend | svelte / store / ts / package.json changed | `npm run build` — PASS if output ends with `✓ built in` |
 | Rust compile | rust / rust-deps / config changed | `cargo check --manifest-path src-tauri/Cargo.toml` |
+| Rust server build | rust / rust-deps / config changed | `cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features server` — the server binary does not link `tauri`, so the desktop check above cannot catch a `tauri` reference that escaped a `#[cfg(feature = "desktop")]` gate |
 | Rust fmt | any `.rs` changed | `cd src-tauri; cargo fmt --check` — only **blocking** if diffs overlap **your** changed lines |
 
 If a build gate fails → report full error and **STOP** (skip convention audit).

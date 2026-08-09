@@ -4950,6 +4950,7 @@ async fn dispatch_command(
             // Browser callers get their own gallery directory, not the root one.
             let dir = user_gallery_dir(username).ok_or("Gallery unavailable")?;
             let result = crate::commands::video_export::run_export(
+                #[cfg(feature = "desktop")]
                 None,
                 &state,
                 &dir.join(&name),
