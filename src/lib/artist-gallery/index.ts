@@ -12,3 +12,9 @@ export { default as ArtistGalleryPage } from "./components/ArtistGalleryPage.sve
 export { default as ArtistCard } from "./components/ArtistCard.svelte";
 export { default as ArtistLightbox } from "./components/ArtistLightbox.svelte";
 export { default as ArtistHoverPreview } from "./components/ArtistHoverPreview.svelte";
+export {
+  ARTIST_PREVIEW_RECIPE,
+  artistPreviewPrompt,
+  missingRecipeModels,
+} from "./previewRecipe.js";
+export type { ArtistPreviewStatus, ArtistPreviewVariant } from "./previewRecipe.js";

@@ -14,6 +14,7 @@
   import { generation } from "../../stores/generation.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { detectArtistsInPrompt } from "../detection.js";
+  import { ARTIST_PREVIEW_RECIPE } from "../previewRecipe.js";
 
   type ExplorerTab = "artists" | "characters";
 
@@ -1087,9 +1088,9 @@
           <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.model_stack')}</h3>
           <table class="w-full">
             <tbody>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.unet')}</td><td class="text-neutral-200">anima-base-v1.0.safetensors</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.text_encoder')}</td><td class="text-neutral-200">qwen_3_06b_base.safetensors (wan)</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.vae')}</td><td class="text-neutral-200">qwen_image_vae.safetensors</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.unet')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.unet}</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.text_encoder')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.textEncoder} ({ARTIST_PREVIEW_RECIPE.clipType})</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.vae')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.vae}</td></tr>
             </tbody>
           </table>
         </section>
@@ -1097,13 +1098,13 @@
           <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.sampler_section')}</h3>
           <table class="w-full">
             <tbody>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.sampler')}</td><td class="text-neutral-200">er_sde</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.scheduler')}</td><td class="text-neutral-200">sgm_uniform</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.steps')}</td><td class="text-neutral-200">25</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.cfg_scale')}</td><td class="text-neutral-200">4.0</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.denoise')}</td><td class="text-neutral-200">1.0</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.seed')}</td><td class="text-neutral-200">7243057331061028000</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.resolution')}</td><td class="text-neutral-200">896 × 1152</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.sampler')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.sampler}</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.scheduler')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.scheduler}</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.steps')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.steps}</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.cfg_scale')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.cfg.toFixed(1)}</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.denoise')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.denoise.toFixed(1)}</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.seed')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.seed}</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.resolution')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.width} × {ARTIST_PREVIEW_RECIPE.height}</td></tr>
             </tbody>
           </table>
         </section>
@@ -1111,23 +1112,27 @@
           <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.output')}</h3>
           <table class="w-full">
             <tbody>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.output')}</td><td class="text-neutral-200">AVIF</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.delivered_size')}</td><td class="text-neutral-200">720 × 926</td></tr>
-              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.quality')}</td><td class="text-neutral-200">80 (4:2:0)</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.output')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.delivery.format}</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.delivered_size')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.delivery.width} × {ARTIST_PREVIEW_RECIPE.delivery.height}</td></tr>
+              <tr><td class="py-0.5 pr-4 text-neutral-500">{locale.t('artist_gallery.gen_params.quality')}</td><td class="text-neutral-200">{ARTIST_PREVIEW_RECIPE.delivery.quality}</td></tr>
             </tbody>
           </table>
         </section>
         <section>
           <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.positive_1')}</h3>
-          <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200"><span class="text-red-400">&#123;artist_tag&#125;</span>, year 2025, newest, masterpiece, best quality, score_9, score_8, highres, safe, 1girl, hatsune miku, straight-on, cowboy shot, school, serafuku, fence, long sleeves, outdoors, hamburger, eating, blue sky, plant</p>
+          {#each [ARTIST_PREVIEW_RECIPE.positivePrompts[0].split('{artist_tag}')] as p1}
+            <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200">{p1[0]}<span class="text-red-400">&#123;artist_tag&#125;</span>{p1[1]}</p>
+          {/each}
         </section>
         <section>
           <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.positive_2')}</h3>
-          <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200"><span class="text-red-400">&#123;artist_tag&#125;</span>, year 2025, newest, masterpiece, best quality, score_9, score_8, highres, safe, 1girl, solo, umbrella, standing, holding umbrella, mouse girl, mouse ears, mouse tail, raincoat, yellow raincoat, rubber boots, yellow footwear, street, rain, raining, cowboy shot, black hair, long hair, blunt bangs, blunt ends, blue eyes, straight-on</p>
+          {#each [ARTIST_PREVIEW_RECIPE.positivePrompts[1].split('{artist_tag}')] as p2}
+            <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200">{p2[0]}<span class="text-red-400">&#123;artist_tag&#125;</span>{p2[1]}</p>
+          {/each}
         </section>
         <section>
           <h3 class="mb-1 font-medium text-neutral-300">{locale.t('artist_gallery.gen_params.negative')}</h3>
-          <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200">worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, sensitive, nsfw, explicit</p>
+          <p class="rounded bg-neutral-800 px-2 py-1.5 font-mono leading-relaxed text-neutral-200">{ARTIST_PREVIEW_RECIPE.negativePrompt}</p>
         </section>
       </div>
     </div>
