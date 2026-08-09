@@ -15,6 +15,7 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { detectArtistsInPrompt } from "../detection.js";
   import { ARTIST_PREVIEW_RECIPE } from "../previewRecipe.js";
+  import type { ArtistPreviewStatus, ArtistPreviewVariant } from "../previewRecipe.js";
 
   type ExplorerTab = "artists" | "characters";
 
@@ -26,9 +27,13 @@
     oninsertTag?: (tag: string) => void;
     /** Insert character tags into the positive prompt (opens chooser modal). */
     oninsertCharacter?: (character: AnimadexCharacter) => void;
+    /** Kick off a local generation of the CDN recipe for this artist. */
+    ongeneratePreview?: (slug: string, tag: string, variant: ArtistPreviewVariant) => void;
+    /** Current local-preview state for a card. Omitted means no Generate button. */
+    previewStatus?: (slug: string, variant: ArtistPreviewVariant) => ArtistPreviewStatus;
   }
 
-  let { manifestUrl, initialTab = "artists", oninsertTag, oninsertCharacter }: Props = $props();
+  let { manifestUrl, initialTab = "artists", oninsertTag, oninsertCharacter, ongeneratePreview, previewStatus }: Props = $props();
 
   let explorerTab = $state<ExplorerTab>("artists");
   let lastInitialTab = $state<ExplorerTab>("artists");
@@ -211,8 +216,27 @@
     return Math.max(1, hit.variantCount ?? hit.images?.length ?? 1);
   }
 
+  /** Highest local variant that exists or is being generated (0 = none). */
+  function localPreviewCount(hit: ArtistSearchHit): number {
+    if (!previewStatus) return 0;
+    let n = 0;
+    for (const v of [1, 2] as const) {
+      const st = previewStatus(hit.slug, v);
+      if (st.state === "ready" || st.state === "running") n = v;
+    }
+    return n;
+  }
+
   function variantCountOf(hit: ArtistSearchHit): number {
-    return cdnVariantCountOf(hit);
+    if (hit.hasImage) return cdnVariantCountOf(hit);
+    // Once a placeholder has a local variant 1, offer the flip so the second
+    // recipe prompt is reachable.
+    return localPreviewCount(hit) >= 1 ? 2 : 1;
+  }
+
+  /** Variant a placeholder's Generate button targets, clamped to what it offers. */
+  function previewVariantOf(hit: ArtistSearchHit): ArtistPreviewVariant {
+    return Math.min(store.resolveVariant(hit.slug), variantCountOf(hit)) >= 2 ? 2 : 1;
   }
 
   /** True when ANY entry in the dataset exposes >= 2 variants. */
@@ -250,7 +274,11 @@
   }
 
   function thumbUrl(hit: ArtistSearchHit): string {
-    if (!store.manifest || !hit.hasImage) return "";
+    if (!hit.hasImage) {
+      // No CDN image: a locally generated preview is the only candidate.
+      return previewStatus?.(hit.slug, previewVariantOf(hit))?.src ?? "";
+    }
+    if (!store.manifest) return "";
     const count = variantCountOf(hit);
     const variant = Math.min(store.resolveVariant(hit.slug), count);
     const imageId = imageIdForVariant(hit, variant);
@@ -885,6 +913,25 @@
                   decoding="auto"
                   class="h-full w-full object-cover"
                 />
+              {:else if !hit.hasImage && previewStatus}
+                {@const pv = previewVariantOf(hit)}
+                {@const st = previewStatus(hit.slug, pv)}
+                <div class="flex h-full w-full flex-col items-center justify-center gap-2 p-2 text-center">
+                  <span class="text-xs text-neutral-500">{locale.t('artist_gallery.no_preview')}</span>
+                  <button
+                    type="button"
+                    class="rounded border border-neutral-700 bg-neutral-900/90 px-2 py-1 text-[10px] text-neutral-200 transition-colors hover:border-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={st.state !== 'idle'}
+                    onclick={(e) => { e.stopPropagation(); ongeneratePreview?.(hit.slug, hit.tag, pv); }}
+                    title={st.state === 'unavailable'
+                      ? locale.t('artist_gallery.generate_preview_missing', { models: (st.missing ?? []).join(', ') })
+                      : locale.t('artist_gallery.generate_preview_title')}
+                  >
+                    {st.state === 'running'
+                      ? locale.t('artist_gallery.generate_preview_running')
+                      : locale.t('artist_gallery.generate_preview_btn')}
+                  </button>
+                </div>
               {:else}
                 <div class="flex h-full w-full items-center justify-center text-xs text-neutral-500">
                   {locale.t('artist_gallery.no_preview')}

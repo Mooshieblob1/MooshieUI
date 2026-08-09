@@ -2632,6 +2632,12 @@ const zh: Record<string, string> = {
   "artist_gallery.variant_n": "图片 {n}",
 
   "artist_gallery.flip_variant_aria": "切换图片变体",
+  "artist_gallery.generate_preview_btn": "⚡ 生成",
+  "artist_gallery.generate_preview_running": "生成中…",
+  "artist_gallery.generate_preview_title": "使用与 CDN 预览图相同的参数在本地生成此预览图",
+  "artist_gallery.generate_preview_missing": "缺少模型：{models}",
+  "artist_gallery.preview_queued": "已将 {tag} 的预览图加入队列",
+  "artist_gallery.preview_failed": "预览图生成失败：{error}",
 
   "artist_gallery.lightbox.flip": "⇄ 图片 {n}",
 

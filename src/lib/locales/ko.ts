@@ -2631,6 +2631,12 @@ const ko: Record<string, string> = {
   "artist_gallery.variant_n": "이미지 {n}",
 
   "artist_gallery.flip_variant_aria": "이미지 변형 전환",
+  "artist_gallery.generate_preview_btn": "⚡ 생성",
+  "artist_gallery.generate_preview_running": "생성 중…",
+  "artist_gallery.generate_preview_title": "CDN 미리보기와 동일한 매개변수로 이 미리보기를 로컬에서 생성합니다",
+  "artist_gallery.generate_preview_missing": "누락된 모델: {models}",
+  "artist_gallery.preview_queued": "{tag} 미리보기를 대기열에 추가했습니다",
+  "artist_gallery.preview_failed": "미리보기 생성 실패: {error}",
 
   "artist_gallery.lightbox.flip": "⇄ 이미지 {n}",
 

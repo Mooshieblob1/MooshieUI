@@ -2660,6 +2660,12 @@ const es: Record<string, string> = {
   "artist_gallery.variant_n": "Imagen {n}",
 
   "artist_gallery.flip_variant_aria": "Cambiar variante de imagen",
+  "artist_gallery.generate_preview_btn": "⚡ Generar",
+  "artist_gallery.generate_preview_running": "Generando…",
+  "artist_gallery.generate_preview_title": "Generar esta vista previa localmente con los mismos parámetros que las vistas previas de la CDN",
+  "artist_gallery.generate_preview_missing": "Modelos faltantes: {models}",
+  "artist_gallery.preview_queued": "Vista previa en cola para {tag}",
+  "artist_gallery.preview_failed": "Error al generar la vista previa: {error}",
 
   "artist_gallery.lightbox.flip": "⇄ Imagen {n}",
 

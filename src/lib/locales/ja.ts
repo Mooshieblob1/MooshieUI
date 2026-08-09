@@ -2656,6 +2656,12 @@ const ja: Record<string, string> = {
   "artist_gallery.variant_n": "画像{n}",
 
   "artist_gallery.flip_variant_aria": "画像バリエーションを切り替え",
+  "artist_gallery.generate_preview_btn": "⚡ 生成",
+  "artist_gallery.generate_preview_running": "生成中…",
+  "artist_gallery.generate_preview_title": "CDN プレビューと同じパラメータでこのプレビューをローカル生成します",
+  "artist_gallery.generate_preview_missing": "不足しているモデル: {models}",
+  "artist_gallery.preview_queued": "{tag} のプレビューをキューに追加しました",
+  "artist_gallery.preview_failed": "プレビューの生成に失敗しました: {error}",
 
   "artist_gallery.lightbox.flip": "⇄ 画像{n}",
 

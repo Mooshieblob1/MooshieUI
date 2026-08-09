@@ -2631,6 +2631,12 @@ const zhTw: Record<string, string> = {
   "artist_gallery.variant_n": "圖片 {n}",
 
   "artist_gallery.flip_variant_aria": "切換圖片變體",
+  "artist_gallery.generate_preview_btn": "⚡ 產生",
+  "artist_gallery.generate_preview_running": "產生中…",
+  "artist_gallery.generate_preview_title": "使用與 CDN 預覽圖相同的參數在本機產生此預覽圖",
+  "artist_gallery.generate_preview_missing": "缺少模型：{models}",
+  "artist_gallery.preview_queued": "已將 {tag} 的預覽圖加入佇列",
+  "artist_gallery.preview_failed": "預覽圖產生失敗：{error}",
 
   "artist_gallery.lightbox.flip": "⇄ 圖片 {n}",
 

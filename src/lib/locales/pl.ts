@@ -1993,6 +1993,12 @@ const pl: Record<string, string> = {
   "artist_gallery.variant_label": "Wariant",
   "artist_gallery.variant_n": "Obraz {n}",
   "artist_gallery.flip_variant_aria": "Przełącz wariant obrazu",
+  "artist_gallery.generate_preview_btn": "⚡ Generuj",
+  "artist_gallery.generate_preview_running": "Generowanie…",
+  "artist_gallery.generate_preview_title": "Wygeneruj ten podgląd lokalnie z tymi samymi parametrami co podglądy w CDN",
+  "artist_gallery.generate_preview_missing": "Brakujące modele: {models}",
+  "artist_gallery.preview_queued": "Podgląd dla {tag} dodany do kolejki",
+  "artist_gallery.preview_failed": "Generowanie podglądu nie powiodło się: {error}",
 
   // Gen params modal
   "artist_gallery.gen_params.title": "Parametry generowania podglądu",

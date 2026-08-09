@@ -2632,6 +2632,12 @@ const pt: Record<string, string> = {
   "artist_gallery.variant_n": "Imagem {n}",
 
   "artist_gallery.flip_variant_aria": "Alternar variante de imagem",
+  "artist_gallery.generate_preview_btn": "⚡ Gerar",
+  "artist_gallery.generate_preview_running": "A gerar…",
+  "artist_gallery.generate_preview_title": "Gerar esta pré-visualização localmente com os mesmos parâmetros das pré-visualizações da CDN",
+  "artist_gallery.generate_preview_missing": "Modelos em falta: {models}",
+  "artist_gallery.preview_queued": "Pré-visualização em fila para {tag}",
+  "artist_gallery.preview_failed": "Falha ao gerar a pré-visualização: {error}",
 
   "artist_gallery.lightbox.flip": "⇄ Imagem {n}",
 
