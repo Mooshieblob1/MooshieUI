@@ -1880,6 +1880,8 @@ const es: Record<string, string> = {
   "artist_gallery.size_label": "Tamaño:",
   "artist_gallery.favourites_btn": "Favoritos",
   "artist_gallery.favourites_title": "Alternar filtro de favoritos",
+  "artist_gallery.include_no_preview_btn": "Sin vista previa",
+  "artist_gallery.include_no_preview_title": "Mostrar artistas que el modelo conoce pero que aún no tienen vista previa en la CDN",
   "artist_gallery.manage_btn": "⚙ Gestionar",
   "artist_gallery.manage_title": "Gestionar categorías, importar/exportar favoritos",
   "artist_gallery.category_label": "Categoría:",

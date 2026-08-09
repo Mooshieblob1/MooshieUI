@@ -1818,6 +1818,8 @@ const ko: Record<string, string> = {
   "artist_gallery.size_label": "크기:",
   "artist_gallery.favourites_btn": "즐겨찾기",
   "artist_gallery.favourites_title": "즐겨찾기 필터 토글",
+  "artist_gallery.include_no_preview_btn": "미리보기 없음",
+  "artist_gallery.include_no_preview_title": "모델이 알고 있지만 아직 CDN 미리보기가 없는 작가 표시",
   "artist_gallery.manage_btn": "⚙ 관리",
   "artist_gallery.manage_title": "카테고리 관리, 즐겨찾기 가져오기/보내기",
   "artist_gallery.category_label": "카테고리:",

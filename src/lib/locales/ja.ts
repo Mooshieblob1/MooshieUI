@@ -1843,6 +1843,8 @@ const ja: Record<string, string> = {
   "artist_gallery.size_label": "サイズ:",
   "artist_gallery.favourites_btn": "お気に入り",
   "artist_gallery.favourites_title": "お気に入りフィルターの切り替え",
+  "artist_gallery.include_no_preview_btn": "プレビューなし",
+  "artist_gallery.include_no_preview_title": "モデルが認識しているが CDN プレビューがまだないアーティストを表示",
   "artist_gallery.manage_btn": "⚙ 管理",
   "artist_gallery.manage_title": "カテゴリの管理、お気に入りのインポート/エクスポート",
   "artist_gallery.category_label": "カテゴリ:",

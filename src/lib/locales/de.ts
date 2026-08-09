@@ -1838,6 +1838,8 @@ const de: Record<string, string> = {
   "artist_gallery.size_label": "Größe:",
   "artist_gallery.favourites_btn": "Favoriten",
   "artist_gallery.favourites_title": "Favoritenfilter ein-/ausblenden",
+  "artist_gallery.include_no_preview_btn": "Ohne Vorschau",
+  "artist_gallery.include_no_preview_title": "Künstler anzeigen, die das Modell kennt, für die es aber noch keine CDN-Vorschau gibt",
   "artist_gallery.manage_btn": "⚙ Verwalten",
   "artist_gallery.manage_title": "Kategorien verwalten, Favoriten importieren/exportieren",
   "artist_gallery.category_label": "Kategorie:",

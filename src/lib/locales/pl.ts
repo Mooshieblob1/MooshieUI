@@ -1954,6 +1954,8 @@ const pl: Record<string, string> = {
   "artist_gallery.size_label": "Rozmiar:",
   "artist_gallery.favourites_btn": "Ulubione",
   "artist_gallery.favourites_title": "Przełącz filtr ulubionych",
+  "artist_gallery.include_no_preview_btn": "Bez podglądu",
+  "artist_gallery.include_no_preview_title": "Pokaż artystów znanych modelowi, którzy nie mają jeszcze podglądu w CDN",
   "artist_gallery.manage_btn": "⚙ Zarządzaj",
   "artist_gallery.manage_title": "Zarządzaj kategoriami, importuj/eksportuj ulubione",
   "artist_gallery.category_label": "Kategoria:",

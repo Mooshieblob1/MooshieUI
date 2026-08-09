@@ -1818,6 +1818,8 @@ const zhTw: Record<string, string> = {
   "artist_gallery.size_label": "大小：",
   "artist_gallery.favourites_btn": "收藏",
   "artist_gallery.favourites_title": "切換收藏篩選",
+  "artist_gallery.include_no_preview_btn": "無預覽",
+  "artist_gallery.include_no_preview_title": "顯示模型認識但 CDN 尚無預覽圖的繪師",
   "artist_gallery.manage_btn": "⚙ 管理",
   "artist_gallery.manage_title": "管理分類，匯入/匯出收藏",
   "artist_gallery.category_label": "分類：",

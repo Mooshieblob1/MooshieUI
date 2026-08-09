@@ -1859,6 +1859,8 @@ const zh: Record<string, string> = {
   "artist_gallery.size_label": "大小：",
   "artist_gallery.favourites_btn": "收藏",
   "artist_gallery.favourites_title": "切换收藏筛选",
+  "artist_gallery.include_no_preview_btn": "无预览",
+  "artist_gallery.include_no_preview_title": "显示模型认识但 CDN 尚无预览图的画师",
   "artist_gallery.manage_btn": "⚙ 管理",
   "artist_gallery.manage_title": "管理分类，导入/导出收藏",
   "artist_gallery.category_label": "分类：",

@@ -1956,6 +1956,8 @@ const en: Record<string, string> = {
   "artist_gallery.size_label": "Size:",
   "artist_gallery.favourites_btn": "Favourites",
   "artist_gallery.favourites_title": "Toggle favourites filter",
+  "artist_gallery.include_no_preview_btn": "No-preview",
+  "artist_gallery.include_no_preview_title": "Show artists the model knows that have no CDN preview yet",
   "artist_gallery.manage_btn": "⚙ Manage",
   "artist_gallery.manage_title": "Manage categories, import/export favourites",
   "artist_gallery.category_label": "Category:",

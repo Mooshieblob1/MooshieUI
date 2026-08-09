@@ -1818,6 +1818,8 @@ const ru: Record<string, string> = {
   "artist_gallery.size_label": "Размер:",
   "artist_gallery.favourites_btn": "Избранное",
   "artist_gallery.favourites_title": "Переключить фильтр избранного",
+  "artist_gallery.include_no_preview_btn": "Без превью",
+  "artist_gallery.include_no_preview_title": "Показывать художников, известных модели, но пока без превью в CDN",
   "artist_gallery.manage_btn": "⚙ Управление",
   "artist_gallery.manage_title": "Управление категориями, импорт/экспорт избранного",
   "artist_gallery.category_label": "Категория:",

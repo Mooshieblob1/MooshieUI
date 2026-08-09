@@ -100,7 +100,13 @@
         store.allEntriesLoading = true;
         store.allEntriesError = null;
         try {
-          const entries = await store.client.loadSearchIndex();
+          const [indexed, gap] = await Promise.all([
+            store.client.loadSearchIndex(),
+            store.client.loadNoPreviewHits(),
+          ]);
+          // Image-bearing entries first: `uniquenessJitter` is positional, and
+          // the sort below relies on nothing beyond `hasImage`.
+          const entries = [...indexed, ...gap];
           store.allEntries = entries;
           if (store.uniquenessJitter.length !== entries.length) {
             store.uniquenessJitter = generateJitter(entries.length);
@@ -199,16 +205,20 @@
   // ---------------------------------------------------------------------------
   let globalVariant = $derived(store.globalVariant);
 
-  /** Variant count for a hit; defaults to 1 on v1 data. */
-  function variantCountOf(hit: ArtistSearchHit): number {
+  /** Variants the CDN ships for this artist. Cheap; safe to call over allEntries. */
+  function cdnVariantCountOf(hit: ArtistSearchHit): number {
     return Math.max(1, hit.variantCount ?? hit.images?.length ?? 1);
   }
 
+  function variantCountOf(hit: ArtistSearchHit): number {
+    return cdnVariantCountOf(hit);
+  }
+
   /** True when ANY entry in the dataset exposes >= 2 variants. */
-  const hasVariants = $derived.by(() => allEntries.some((e) => variantCountOf(e) >= 2));
+  const hasVariants = $derived.by(() => allEntries.some((e) => cdnVariantCountOf(e) >= 2));
   /** Largest variant count across the dataset (drives the toolbar toggle). */
   const maxVariants = $derived.by(() =>
-    allEntries.reduce((m, e) => Math.max(m, variantCountOf(e)), 1),
+    allEntries.reduce((m, e) => Math.max(m, cdnVariantCountOf(e)), 1),
   );
 
   function setGlobalVariant(value: number) {
@@ -324,6 +334,18 @@
     });
   }
 
+  function setIncludeNoPreview(val: boolean) {
+    store.setIncludeNoPreview(val);
+    store.currentPage = 1;
+    animKey++;
+    // Re-run any active search so the typeahead results respect the new filter.
+    void store.setQuery(store.query);
+    requestAnimationFrame(() => {
+      scrollContainer?.scrollTo({ top: 0, behavior: "instant" });
+      scrollContainer?.dispatchEvent(new Event("scroll"));
+    });
+  }
+
   function setFavouriteCategoryFilter(value: "all" | "__uncat" | string) {
     store.favouriteCategoryFilter = value;
     store.currentPage = 1;
@@ -427,10 +449,23 @@
   const sortedEntries = $derived.by(() => {
     if (sortField === "uniqueness") {
       const jitter = uniquenessJitter;
-      return [...allEntries]
-        .map((e, i) => ({ e, score: baseUniqueness(rankingPostCount(e)) * (jitter[i] ?? 1) }))
-        .sort((a, b) => b.score - a.score)
-        .map((x) => x.e);
+      const scored: { e: ArtistSearchHit; score: number }[] = [];
+      const placeholders: ArtistSearchHit[] = [];
+      allEntries.forEach((e, i) => {
+        if (e.hasImage) {
+          scored.push({ e, score: baseUniqueness(rankingPostCount(e)) * (jitter[i] ?? 1) });
+        } else {
+          placeholders.push(e);
+        }
+      });
+      scored.sort((a, b) => b.score - a.score);
+      // A card with no image has nothing to look unique about, so placeholders
+      // trail the scored set in plain post-count order instead of being
+      // jittered into the middle of it.
+      placeholders.sort(
+        (a, b) => rankingPostCount(b) - rankingPostCount(a) || a.slug.localeCompare(b.slug),
+      );
+      return [...scored.map((x) => x.e), ...placeholders];
     }
     const dir = sortDir === "asc" ? 1 : -1;
     return [...allEntries].sort((a, b) =>
@@ -449,9 +484,10 @@
     return fav.categoryId === favouriteCategoryFilter;
   }
 
-  const filteredEntries = $derived.by(() =>
-    showOnlyFavourites ? sortedEntries.filter(matchesFavouriteFilter) : sortedEntries,
-  );
+  const filteredEntries = $derived.by(() => {
+    const base = store.includeNoPreview ? sortedEntries : sortedEntries.filter((e) => e.hasImage);
+    return showOnlyFavourites ? base.filter(matchesFavouriteFilter) : base;
+  });
   const totalPages = $derived(Math.max(1, Math.ceil(filteredEntries.length / pageSize)));
   const safePage = $derived(Math.min(currentPage, totalPages));
   const pageEntries = $derived(
@@ -683,6 +719,15 @@
             {/each}
           </div>
         {/if}
+
+        <button
+          type="button"
+          class="rounded-lg border px-2 py-1 text-xs transition-colors {store.includeNoPreview ? 'border-indigo-500 bg-indigo-950/50 text-indigo-300' : 'border-neutral-800 bg-neutral-900/50 text-neutral-400 hover:text-neutral-200'}"
+          onclick={() => setIncludeNoPreview(!store.includeNoPreview)}
+          title={locale.t('artist_gallery.include_no_preview_title')}
+        >
+          {store.includeNoPreview ? '◉' : '○'} {locale.t('artist_gallery.include_no_preview_btn')}
+        </button>
 
         <button
           type="button"

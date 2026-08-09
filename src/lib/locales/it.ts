@@ -1818,6 +1818,8 @@ const it: Record<string, string> = {
   "artist_gallery.size_label": "Dimensione:",
   "artist_gallery.favourites_btn": "Preferiti",
   "artist_gallery.favourites_title": "Attiva/disattiva filtro preferiti",
+  "artist_gallery.include_no_preview_btn": "Senza anteprima",
+  "artist_gallery.include_no_preview_title": "Mostra gli artisti noti al modello che non hanno ancora un'anteprima CDN",
   "artist_gallery.manage_btn": "⚙ Gestisci",
   "artist_gallery.manage_title": "Gestisci categorie, importa/esporta preferiti",
   "artist_gallery.category_label": "Categoria:",
