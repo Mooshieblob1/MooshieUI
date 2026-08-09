@@ -1,3 +1,33 @@
+## What's New in v2.0.0
+
+MooshieUI generates video. That is the whole reason this is a 2.0 and not another point release: everything below is new surface area rather than a change to how images work, and image generation is untouched.
+
+### New features
+- **Video generation**: a new Video mode next to Image, running the MiniMax H3 stack end to end. Write a prompt, pick a length and a shape, and the result lands in the same gallery as everything else, plays inline in the grid and the lightbox, and keeps its generation parameters like an image does. Three ways to start a clip: Workflow for straight text to video, First / Last Frame to hand it the opening and closing image and let it fill the middle, and Reference Images to condition on up to nine pictures at once. Everything the mode needs (diffusion model, text encoder and both VAEs) is downloaded on demand, and a quality tier picker chooses between NVFP4 at 12.5 GB for Blackwell cards, int8 or fp8 at 21 GB, and full bf16 at 40 GB.
+- **A player built for looking at clips**: generated video gets a real player rather than a bare HTML5 element. Scrub frame by frame, loop, step with the arrow keys, and read the current frame number against the total. The scrubber and the timeline are sized to be usable with a mouse rather than pixel-hunted.
+- **Export to something you can actually post**: any clip exports to AVIF, WebP, GIF or MP4 from a popover that estimates the file size before you commit to it. AVIF is roughly a quarter of the WebP byte count at comparable quality, WebP is the one chat apps animate inline, GIF is there for the places that still want it, and MP4 is the only format that keeps the clip's audio. Presets cover smooth, balanced and maximum, and the advanced controls expose frame rate, width, quality and loop handling. Loop modes include trimming the duplicate seam frame, crossfading the ends together, and ping-pong. A Discord or Nitro size target flags an export that will not fit before you upload it.
+- **Frame interpolation**: RIFE doubles, triples or quadruples the frame count of a clip, turning 16 fps into something that reads as smooth motion without generating more frames from the model. It can run as part of generation or after the fact on a clip already in the gallery, so an existing result can be smoothed without regenerating it. Advanced knobs cover flow scale, fast mode and ensemble. Turning it on installs the nodes and a 20 MB checkpoint and restarts ComfyUI, which the UI says up front rather than after the click.
+- **Turbo LoRA**: a distilled adapter that samples in 4 to 8 steps instead of 20, around five times faster, with motion that stays close to the full model and only the finest detail softening. The step count is adjustable, and the panel says what the current setting costs in speed and quality rather than leaving it to guesswork.
+- **A shot-list timeline**: H3 understands multi-shot prompts, so the video panel has a timeline that lets you build one shot at a time instead of hand-writing timestamps into a text box. Each shot carries its own description, and the panel routes the whole list through the H3 Director node so the model reads it as the structured format it was trained on. The timeline strip collapses when you want the space back.
+- **An H3 prompt guide built into the app**: H3 was trained on prompts written as labelled sections, not free prose, and a prompt written the wrong way produces noticeably worse video. A guide panel lays out the structure, the rules that matter most (timestamps, style across cuts, camera moves, dialogue, on-screen text), a full worked example and a copyable template, all reflecting your current frame count, frame rate and task type rather than a generic sample.
+- **Multi-provider prompt assistant**: the prompt assistant can now talk to more than one backend, so writing an H3 prompt with model help does not depend on a single provider being available. It also accepts an image as input, so a picture can inform the prompt it writes.
+- **Pixel budget slider**: video resolution is set as a pixel budget rather than a width and a height, in 0.1 megapixel steps, and the aspect ratio can be matched to an input image instead of chosen from a list. The panel warns when the current budget, length and model tier will not fit in the available VRAM, before the generation starts rather than after it fails.
+- **Metadata in exported video**: exported mp4, avif, webp and gif files carry their generation parameters, so a clip shared out of the app and pulled back in still knows what made it. Clips already in the gallery from earlier builds get their metadata backfilled.
+
+### Fixes
+- **Frame rate is enforced on the backend**: the export popover computes its frame rate options in the frontend so the numbers update as you drag a slider, mirroring the same logic in Rust. If the two ever drifted, an export could be encoded at a rate that does not divide the source, which resamples on an uneven cadence and visibly judders with nothing to indicate anything went wrong. Rust now snaps the incoming rate against the source before encoding, so a correct request passes through untouched and a wrong one is corrected and logged.
+- **Video generation works with `--highvram`**: the flag caused video generation to fail rather than use the extra memory it was asking for.
+- **Input frame aspect ratio is respected**: a first or last frame image whose shape did not match the requested output was handled inconsistently, and the RIFE install path had its own set of failures on top of that.
+
+### Maintenance
+- **ComfyUI pin moves to v0.30.2**, which is where the H3 video nodes live.
+- The H3 Director custom nodes are vendored into the app rather than fetched, so video generation does not depend on a third-party repository staying available.
+- The Rust test suite grew to 187 tests. One gap worth noting: `cargo check` does not compile test blocks, so a broken test build could pass both the local gate and CI. Validation now runs `cargo test` as well.
+- SCOPE.md covers video generation, so contributors have a written answer on what belongs in the app.
+- Routine dependency updates.
+
+---
+
 ## What's New in v1.9.2
 
 ### Fixes
