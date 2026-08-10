@@ -13,7 +13,7 @@
   import { connection } from "./lib/stores/connection.svelte.js";
   import { startup } from "./lib/stores/startup.svelte.js";
   import { progress } from "./lib/stores/progress.svelte.js";
-  import { gallery } from "./lib/stores/gallery.svelte.js";
+  import { gallery, isVideoImage } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
   import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage, getComfyuiVersion, type ComfyUiVersionInfo } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
@@ -1130,11 +1130,15 @@
       { label: locale.t("gallery.img2img"), action: () => img2imgImage(image) },
       { label: locale.t("gallery.inpaint"), action: () => inpaintImage(image) },
       ...(!image.is_upscaled ? [{ label: locale.t("gallery.upscale"), action: () => upscaleImage(image) }] : []),
-      { label: locale.t("gallery.make_video"), action: () => makeVideoFromImage(image) },
-      {
-        label: locale.t("gallery.add_video_reference"),
-        action: () => addImageAsVideoReference(image),
-      },
+      ...(!isVideoImage(image)
+        ? [
+            { label: locale.t("gallery.make_video"), action: () => makeVideoFromImage(image) },
+            {
+              label: locale.t("gallery.add_video_reference"),
+              action: () => addImageAsVideoReference(image),
+            },
+          ]
+        : []),
       { label: "", action: () => {}, separator: true },
       { label: comparePinLabel(image), action: () => gallery.toggleComparePin(image) },
       { label: "", action: () => {}, separator: true },
