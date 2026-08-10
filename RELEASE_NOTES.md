@@ -1,3 +1,11 @@
+## What's New in v2.0.4
+
+### Fixes and maintenance
+- **AppImage env leakage still reached some spawned processes**: v2.0.3 stripped the AppImage's bundled `LD_LIBRARY_PATH`/`LD_PRELOAD` from custom-node `git`/`pip`/`uv` calls, but the rest of the setup wizard (venv creation and repair, `nvidia-smi`/`rocm-smi` GPU probes), the video export subprocess, and the prompt assistant's local `llama-server` process still inherited it. Every process the app spawns on Linux now goes through the same AppImage-safe path.
+- **Gallery picker could lag on open with a large gallery**: "Make video" and "Add reference" mounted every image in the grid at once, which stalled on galleries with thousands of images. It now renders a bounded window and loads more as you scroll, and thumbnails no longer eagerly start downloading before they scroll into view.
+
+---
+
 ## What's New in v2.0.3
 
 ### Fixes and maintenance

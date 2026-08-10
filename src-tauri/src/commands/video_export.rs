@@ -283,15 +283,11 @@ pub(crate) async fn probe_export_inner(state: &AppState) -> ExportCapability {
             }
         }
     };
-    let mut cmd = tokio::process::Command::new(&python);
+    let mut cmd = crate::comfyui::process::tokio_command_no_window(&python);
     cmd.arg("-c")
         .arg(PROBE_SCRIPT)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
     match cmd.output().await {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
@@ -428,16 +424,12 @@ pub(crate) async fn run_export(
         "metadata_json": source_metadata_json(source),
     });
 
-    let mut cmd = tokio::process::Command::new(&python);
+    let mut cmd = crate::comfyui::process::tokio_command_no_window(&python);
     cmd.arg("-")
         .arg(job.to_string())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
     let mut child = cmd
         .spawn()
         .map_err(|e| AppError::Other(format!("Could not start Python: {e}")))?;

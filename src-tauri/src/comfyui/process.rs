@@ -37,6 +37,8 @@ pub(crate) fn parse_netstat_listening_pid(line: &str, port: u16) -> Option<u32> 
 }
 
 /// `std::process::Command` that does not flash a console window on Windows.
+///
+/// On Linux, also strips AppImage env leakage — see [`tokio_command_no_window`].
 pub(crate) fn std_command_no_window(program: &str) -> std::process::Command {
     let mut cmd = std::process::Command::new(program);
     #[cfg(windows)]
@@ -44,6 +46,8 @@ pub(crate) fn std_command_no_window(program: &str) -> std::process::Command {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
+    #[cfg(target_os = "linux")]
+    strip_appimage_env_std(&mut cmd);
     cmd
 }
 
@@ -76,23 +80,48 @@ pub(crate) fn tokio_command_no_window(
 /// environment. See [`tokio_command_no_window`] for why this matters.
 #[cfg(target_os = "linux")]
 pub(crate) fn strip_appimage_env(cmd: &mut tokio::process::Command) {
-    if std::env::var("APPIMAGE").is_err() {
+    let Some(filtered_path) = appimage_env_overrides() else {
         return;
-    }
+    };
     cmd.env_remove("LD_LIBRARY_PATH");
     cmd.env_remove("LD_PRELOAD");
     cmd.env_remove("PYTHONHOME");
     cmd.env_remove("PYTHONPATH");
     cmd.env_remove("PYTHONDONTWRITEBYTECODE");
     cmd.env_remove("GDK_BACKEND");
-    // Preserve the real PATH but remove AppImage-internal paths
-    if let Ok(path) = std::env::var("PATH") {
-        let filtered: Vec<&str> = path
-            .split(':')
-            .filter(|p| !p.contains("/tmp/.mount_"))
-            .collect();
-        cmd.env("PATH", filtered.join(":"));
+    cmd.env("PATH", filtered_path);
+}
+
+/// [`strip_appimage_env`] twin for `std::process::Command` — used by blocking
+/// spawns like `nvidia-smi`/`rocm-smi` probes.
+#[cfg(target_os = "linux")]
+fn strip_appimage_env_std(cmd: &mut std::process::Command) {
+    let Some(filtered_path) = appimage_env_overrides() else {
+        return;
+    };
+    cmd.env_remove("LD_LIBRARY_PATH");
+    cmd.env_remove("LD_PRELOAD");
+    cmd.env_remove("PYTHONHOME");
+    cmd.env_remove("PYTHONPATH");
+    cmd.env_remove("PYTHONDONTWRITEBYTECODE");
+    cmd.env_remove("GDK_BACKEND");
+    cmd.env("PATH", filtered_path);
+}
+
+/// `None` when not running under an AppImage; otherwise the current `PATH`
+/// with AppImage-internal mount entries filtered out.
+#[cfg(target_os = "linux")]
+fn appimage_env_overrides() -> Option<String> {
+    if std::env::var("APPIMAGE").is_err() {
+        return None;
     }
+    let path = std::env::var("PATH").unwrap_or_default();
+    Some(
+        path.split(':')
+            .filter(|p| !p.contains("/tmp/.mount_"))
+            .collect::<Vec<_>>()
+            .join(":"),
+    )
 }
 
 /// Detect whether the system has a Blackwell (compute capability 12.x) NVIDIA GPU.
@@ -725,18 +754,12 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
                         let python_dir_str = python_dir.to_string_lossy().to_string();
                         let venv_str = config.venv_path.clone();
                         let uv_str = uv.to_string_lossy().to_string();
-                        let mut repair = tokio::process::Command::new(&uv_str);
+                        let mut repair = tokio_command_no_window(&uv_str);
                         repair
                             .args(["venv", &venv_str, "--python", "3.11", "--allow-existing"])
                             .env("UV_PYTHON_INSTALL_DIR", &python_dir_str)
                             .stdout(std::process::Stdio::null())
                             .stderr(std::process::Stdio::null());
-                        #[cfg(target_os = "windows")]
-                        {
-                            #[allow(unused_imports)]
-                            use std::os::windows::process::CommandExt;
-                            repair.creation_flags(0x08000000); // CREATE_NO_WINDOW
-                        }
                         match repair.status().await {
                             Ok(s) if s.success() => {
                                 log::info!("Venv repair succeeded");

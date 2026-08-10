@@ -154,9 +154,19 @@ fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Comman
     cmd.creation_flags(0x08000000) // CREATE_NO_WINDOW
 }
 
-#[cfg(not(target_os = "windows"))]
+// On Linux, spawned setup tooling (`uv`, the venv's `python`, `nvidia-smi`, ...)
+// must not inherit the AppImage's bundled `LD_LIBRARY_PATH`/`LD_PRELOAD` — see
+// `crate::comfyui::process::strip_appimage_env` for why that breaks symbol
+// resolution against the system's native libraries.
+#[cfg(target_os = "linux")]
 fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
-    cmd // no-op on non-Windows
+    crate::comfyui::process::strip_appimage_env(cmd);
+    cmd
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
+    cmd // no-op on macOS
 }
 
 /// Run a command with hidden window, capturing stdout/stderr and streaming

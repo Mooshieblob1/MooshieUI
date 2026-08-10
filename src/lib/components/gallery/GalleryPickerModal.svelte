@@ -21,17 +21,34 @@
   let tab = $state<"session" | "gallery">("session");
   let search = $state("");
   let picked = $state<OutputImage[]>([]);
+  let renderLimit = $state(60);
 
   // Videos cannot be a frame or a reference, so they never reach the grid.
   const sessionStills = $derived(gallery.sessionImages.filter((image) => !isVideoImage(image)));
   const galleryStills = $derived(gallery.images.filter((image) => !isVideoImage(image)));
 
-  const visible = $derived.by(() => {
+  const filtered = $derived.by(() => {
     const source = tab === "session" ? sessionStills : galleryStills;
     const query = search.toLowerCase().trim();
     if (!query) return source;
     return source.filter((image) => image.filename.toLowerCase().includes(query));
   });
+
+  // Only mount a bounded window of grid cells at a time — a full gallery can
+  // be thousands of images, and rendering every <img> at once on open is what
+  // caused the lag spike.
+  const visible = $derived(filtered.slice(0, renderLimit));
+
+  function loadMore(node: HTMLElement) {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) renderLimit += 60;
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(node);
+    return { destroy() { observer.disconnect(); } };
+  }
 
   // Reset on each opening only. The body is untracked so a gallery refresh
   // mid-selection cannot wipe what the user has already ticked.
@@ -41,7 +58,14 @@
       tab = gallery.sessionImages.some((image) => !isVideoImage(image)) ? "session" : "gallery";
       search = "";
       picked = [];
+      renderLimit = 60;
     });
+  });
+
+  $effect(() => {
+    void tab;
+    void search;
+    renderLimit = 60;
   });
 
   function isPicked(image: OutputImage): boolean {
@@ -72,6 +96,16 @@
     event.stopPropagation();
     onclose();
   }
+
+  /** Teleport element to document.body so it escapes overflow/transform containers (mobile panel slide). */
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      },
+    };
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -80,6 +114,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
+    use:portal
     class="fixed inset-0 z-[10000] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
     onclick={onclose}
   >
@@ -130,7 +165,7 @@
       </div>
 
       <div class="flex-1 min-h-0 overflow-y-auto p-3">
-        {#if visible.length === 0}
+        {#if filtered.length === 0}
           <p class="py-8 text-center text-xs text-neutral-500">
             {locale.t("gallery.picker.empty")}
           </p>
@@ -165,6 +200,9 @@
               </button>
             {/each}
           </div>
+          {#if renderLimit < filtered.length}
+            <div use:loadMore class="h-4 w-full"></div>
+          {/if}
         {/if}
       </div>
 
