@@ -51,9 +51,11 @@
   import type { H3ModelCategory, H3ModelFile, H3TierId } from "../../utils/h3Models.js";
   import { RIFE_MULTIPLIERS, RIFE_SCALE_FACTORS, interpolatedFps } from "../../utils/rife.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
-  import type { VideoAspectRatio, VideoVariant } from "../../types/index.js";
+  import type { OutputImage, VideoAspectRatio, VideoVariant } from "../../types/index.js";
   import EditableValue from "../ui/EditableValue.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
+  import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
+  import { uploadForVideo, videoReferenceSlotsFree } from "../../utils/galleryActions.js";
 
   /**
    * One upload target. `fl2va` exposes two (first frame / last frame), `ref2va`
@@ -128,6 +130,10 @@
   let pasteSlot = $state<string | null>(null);
   let uploadError = $state<string | null>(null);
   let dropZone = $state<HTMLElement | null>(null);
+  /** Frame slot key the single-pick modal is currently targeting, or null. */
+  let pickerSlot = $state<string | null>(null);
+  let refPickerOpen = $state(false);
+  const refSlotsFree = $derived(videoReferenceSlotsFree());
 
   const dimensions = $derived(generation.videoDimensions);
 
@@ -695,6 +701,57 @@
     }
   }
 
+  /**
+   * Put a gallery image into a frame slot. Deliberately mirrors `uploadToSlot`
+   * so the preview thumbnail, aspect match, spinner and error surface behave
+   * identically to a dragged file. `setPreview` takes ownership of the object
+   * URL and revokes whatever it replaces.
+   */
+  async function assignFromGallery(key: string, image: OutputImage) {
+    const slot = findSlot(key);
+    if (!slot) return;
+    uploadError = null;
+    uploadingSlot = key;
+    try {
+      const { name, aspect, previewUrl } = await uploadForVideo(image, "video_frame.png");
+      setPreview(key, previewUrl);
+      slot.assign(name);
+      slot.assignAspect?.(aspect);
+      if (slot.assignAspect && aspect) generation.videoAspectRatio = "auto";
+      generation.saveSettings();
+    } catch (e) {
+      uploadError = String(e);
+      setPreview(key, null);
+    } finally {
+      uploadingSlot = null;
+    }
+  }
+
+  /** Fill the free reference slots in order from a multi-pick. */
+  async function assignRefsFromGallery(images: OutputImage[]) {
+    uploadError = null;
+    for (const image of images) {
+      const index = generation.videoRefImages.findIndex((slot) => !slot);
+      if (index === -1) break;
+      const key = `ref${index}`;
+      uploadingSlot = key;
+      try {
+        const { name, previewUrl } = await uploadForVideo(image, "video_reference.png");
+        setPreview(key, previewUrl);
+        generation.videoRefImages = generation.videoRefImages.map((current, i) =>
+          i === index ? name : current,
+        );
+      } catch (e) {
+        uploadError = String(e);
+        setPreview(key, null);
+        break;
+      } finally {
+        uploadingSlot = null;
+      }
+    }
+    generation.saveSettings();
+  }
+
   function clearSlot(key: string) {
     setPreview(key, null);
     const slot = findSlot(key);
@@ -947,6 +1004,16 @@
       <p class="text-[11px] text-amber-300">{locale.t("generation.video.ref_required")}</p>
     {/if}
 
+    {#if generation.videoVariant === "ref2va" && refSlotsFree > 0}
+      <button
+        type="button"
+        class="w-full px-3 py-1.5 rounded-lg border border-neutral-700 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
+        onclick={() => (refPickerOpen = true)}
+      >
+        {locale.t("generation.video.choose_from_gallery")}
+      </button>
+    {/if}
+
     <div class="grid grid-cols-2 gap-2">
       {#each slots as slot (slot.key)}
         {@const preview = previews[slot.key]}
@@ -1009,6 +1076,16 @@
                     }}
                   />
                 </label>
+                <button
+                  type="button"
+                  class="text-indigo-400 hover:text-indigo-300 ml-1"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    pickerSlot = slot.key;
+                  }}
+                >
+                  {locale.t("generation.video.choose_from_gallery")}
+                </button>
               </p>
             {/if}
             {#if uploadingSlot === slot.key}
@@ -1413,6 +1490,28 @@
     {/if}
   </div>
 </div>
+
+<GalleryPickerModal
+  open={pickerSlot !== null}
+  title={locale.t("generation.video.pick_for_slot", {
+    slot: findSlot(pickerSlot ?? "")?.label ?? "",
+  })}
+  onselect={(images) => {
+    const key = pickerSlot;
+    const image = images[0];
+    if (key && image) void assignFromGallery(key, image);
+  }}
+  onclose={() => (pickerSlot = null)}
+/>
+
+<GalleryPickerModal
+  open={refPickerOpen}
+  multiple
+  max={refSlotsFree}
+  title={locale.t("generation.video.pick_refs_title")}
+  onselect={(images) => void assignRefsFromGallery(images)}
+  onclose={() => (refPickerOpen = false)}
+/>
 
 {#snippet downloadRows()}
   <div class="space-y-1.5">
