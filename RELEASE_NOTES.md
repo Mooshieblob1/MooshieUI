@@ -1,3 +1,16 @@
+## What's New in v2.0.1
+
+### New features
+- **Pick video frames straight from the gallery**: "Make video" and "Add reference" now show up on the lightbox, the session hover bar, and the context menu for any still image, opening a gallery picker instead of requiring a file upload. A failed pick leaves whatever frame or reference was already set alone rather than clearing it.
+- **Model Stack shows the whole H3 tier**: the Models view now lists every file a tier can use, both DiT variants included, with a per-file download row, instead of only the variant currently selected.
+
+### Fixes
+- **Video first/last frame distortion**: a first or last frame image whose aspect ratio didn't match the output canvas is now pre-cropped to the canvas before generation, instead of being squashed or stretched to fit.
+- **Artist gallery: tags with no CDN preview are visible again**: 7,415 artist tags that exist in the vocabulary but never got a CDN preview image (15 percent of the total) were invisible in the style explorer. They now show as placeholder cards behind an opt-in toggle, with a "generate this preview yourself" action that renders the same recipe the CDN previews use, locally.
+- **Server build**: `video_export.rs` and `video_interpolate.rs` referenced `tauri` outside a `desktop`-feature gate, which broke the server-only binary build and skipped publishing it in v2.0.0's release CI. Fixed, and `cargo check --no-default-features --features server` is now a blocking gate in the pre-commit and release checks so it can't happen again silently.
+
+---
+
 ## What's New in v2.0.0
 
 MooshieUI generates video. That is the whole reason this is a 2.0 and not another point release: everything below is new surface area rather than a change to how images work, and image generation is untouched.
