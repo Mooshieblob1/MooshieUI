@@ -1,3 +1,11 @@
+## What's New in v2.0.2
+
+### Fixes
+- **Video generation now has a seed control**: video mode shared the same seed as image generation but had no way to see or change it, so a seed pinned earlier (metadata import, "Use Last Seed", or just a saved session) silently stuck to every video afterwards. Video settings now has the same seed field, "Rng" toggle and "Last" button as image generation.
+- **Regenerating a video with unchanged settings could silently do nothing**: the video save node had no cache-bypass, so when every input matched the previous run (guaranteed by the seed bug above, or whenever a seed is pinned on purpose), ComfyUI's execution cache skipped the whole pipeline and the app was left showing the previous clip instead of a new one.
+
+---
+
 ## What's New in v2.0.1
 
 ### New features

@@ -801,6 +801,14 @@ class MooshieSaveVideo:
         PromptServer.instance.send_sync(MOOSHIE_VIDEO_EVENT_TYPE, payload)
         return {"ui": {"images": []}}
 
+    @classmethod
+    def IS_CHANGED(cls, video, filename_prefix="mooshie_video", metadata_json=""):
+        # Always re-execute — output nodes should never be cached. Without this,
+        # a regenerate with identical inputs (e.g. a pinned seed) cache-hits the
+        # whole upstream chain: save_video() never runs, no new file or event is
+        # produced, and the UI is left showing the previous video.
+        return float("nan")
+
 
 _MODEL_EXTENSIONS = (".safetensors", ".sft", ".ckpt", ".pt", ".pth", ".bin")
 

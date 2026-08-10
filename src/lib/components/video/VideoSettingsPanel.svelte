@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { generation } from "../../stores/generation.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
+  import { progress } from "../../stores/progress.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import {
@@ -136,6 +137,7 @@
   const refSlotsFree = $derived(videoReferenceSlotsFree());
 
   const dimensions = $derived(generation.videoDimensions);
+  let randomSeed = $derived(generation.seed === "-1");
 
   /** Highest filled reference slot, so the list grows one empty slot at a time. */
   const visibleRefSlots = $derived(
@@ -908,6 +910,55 @@
         : locale.t("generation.video.aspect_ratio_auto_empty")}
     </p>
   {/if}
+
+  <!-- Seed. Video shares `generation.seed` with image generation, but had no
+       control here to see or reset it, so a fixed seed picked up elsewhere
+       (typed in, "Use Last", a PNG metadata import) silently stuck to every
+       video generated afterwards with no way to tell why (#minimal repro: any
+       non "-1" value in the store never surfaces in this panel). -->
+  <div>
+    <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+      <span>{locale.t('generation.sampler.seed')}<InfoTip text={locale.t('generation.sampler.seed_tip')} /></span>
+      <div class="flex items-center gap-1">
+        {#if progress.lastCompletedSeed != null}
+          <button
+            class="text-[10px] px-1.5 py-0.5 rounded bg-neutral-700 text-neutral-300 hover:bg-neutral-600 transition-colors"
+            onclick={() => {
+              generation.seed = progress.lastCompletedSeed!;
+              generation.saveSettings();
+            }}
+            title={locale.t('generation.sampler.seed_use_last_tip')}
+          >
+            {locale.t('generation.sampler.seed_use_last')}
+          </button>
+        {/if}
+        <button
+          class="text-[10px] px-1.5 py-0.5 rounded {randomSeed
+            ? 'bg-indigo-600 text-white'
+            : 'bg-neutral-700 text-neutral-300'} transition-colors"
+          onclick={() => {
+            generation.seed = randomSeed ? (progress.lastCompletedSeed ?? "0") : "-1";
+            generation.saveSettings();
+          }}
+        >
+          {locale.t('generation.sampler.seed_random')}
+        </button>
+      </div>
+    </label>
+    <input
+      type="text"
+      inputmode="numeric"
+      value={randomSeed ? '' : generation.seed}
+      placeholder={locale.t('generation.sampler.random_display')}
+      oninput={(e) => {
+        const digits = e.currentTarget.value.replace(/\D/g, '');
+        if (e.currentTarget.value !== digits) e.currentTarget.value = digits;
+        generation.seed = digits === '' ? "-1" : digits;
+        generation.saveSettings();
+      }}
+      class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+    />
+  </div>
 
   <!-- VRAM assessment. Two tiers off one estimate: sky when the pass fits with
        little headroom left (slower, because weights start moving over PCIe),
