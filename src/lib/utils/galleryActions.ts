@@ -180,22 +180,73 @@ export async function uploadImageUrlForGenerationInput(
   return response.name;
 }
 
-/** Send image to txt2img/img2img tab as the input image. Caller switches tab. */
-export async function sendImageToImg2Img(image: OutputImage): Promise<void> {
-  const name = await uploadOutputImageForGenerationInput(image, "img2img_input.png");
-  generation.inputImage = name;
-  generation.mode = "img2img";
-  generation.refineOnly = false;
-  gallery.closeLightbox();
+/**
+ * Upload a gallery/session image as a ComfyUI input, reporting its own "W:H"
+ * and an object URL for the slot thumbnail.
+ *
+ * The aspect string mirrors what a dragged file produces in the video panel, so
+ * callers can set `videoAspectRatio = "auto"` and have the canvas match the
+ * image the user picked. A decode failure is not fatal: the upload still
+ * happens and the aspect comes back null.
+ *
+ * `previewUrl` belongs to the caller. The video panel hands it to `setPreview`,
+ * which owns revoking it; callers that show no preview must revoke it directly.
+ */
+export async function uploadForVideo(
+  image: OutputImage,
+  fallback: string,
+): Promise<{ name: string; aspect: string | null; previewUrl: string }> {
+  const { bytes, filename } = await loadOutputImageForGenerationInput(image, fallback);
+  const blob = new Blob([new Uint8Array(bytes)], { type: mimeForFilename(filename) });
+  let aspect: string | null = null;
+  try {
+    const bitmap = await createImageBitmap(blob);
+    aspect = `${bitmap.width}:${bitmap.height}`;
+    bitmap.close();
+  } catch (e) {
+    console.warn("Could not read frame dimensions; leaving the aspect ratio alone:", e);
+  }
+  const response = await uploadImageBytes(bytes, filename);
+  return { name: response.name, aspect, previewUrl: URL.createObjectURL(blob) };
 }
 
-/** Re-use image as upscale input. Refine-only: the upscale chain runs directly
- *  on the image without a base img2img sampling pass. */
-export async function sendImageToUpscale(image: OutputImage): Promise<void> {
-  const name = await uploadOutputImageForGenerationInput(image, "refine_input.png");
-  generation.inputImage = name;
-  generation.mode = "img2img";
-  generation.upscaleEnabled = true;
-  generation.refineOnly = true;
-  gallery.closeLightbox();
+/** Best-effort image type for a preview blob, so the thumbnail renders. */
+function mimeForFilename(filename: string): string {
+  const ext = filename.toLowerCase().split(".").pop() ?? "";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "webp") return "image/webp";
+  return "image/png";
+}
+
+/** Load `image` as the first frame and switch to video mode. */
+export async function sendImageToVideoFrame(image: OutputImage): Promise<void> {
+  const { name, aspect, previewUrl } = await uploadForVideo(image, "video_first_frame.png");
+  // The panel re-reads the slot from the store, so this caller shows no preview.
+  URL.revokeObjectURL(previewUrl);
+  generation.videoVariant = "fl2va";
+  generation.videoFirstFrame = name;
+  generation.videoFirstFrameAspect = aspect;
+  if (aspect) generation.videoAspectRatio = "auto";
+  generation.mode = "video";
+  generation.saveSettings();
+}
+
+/** Reference slots still free in `videoRefImages`. */
+export function videoReferenceSlotsFree(): number {
+  return generation.videoRefImages.filter((slot) => !slot).length;
+}
+
+/** Append `image` to the reference list. Returns the 1-based slot it landed in. */
+export async function addImageToVideoReference(image: OutputImage): Promise<number> {
+  const index = generation.videoRefImages.findIndex((slot) => !slot);
+  if (index === -1) throw new Error("video-refs-full");
+  const { name, previewUrl } = await uploadForVideo(image, "video_reference.png");
+  URL.revokeObjectURL(previewUrl);
+  generation.videoVariant = "ref2va";
+  generation.videoRefImages = generation.videoRefImages.map((current, i) =>
+    i === index ? name : current,
+  );
+  generation.mode = "video";
+  generation.saveSettings();
+  return index + 1;
 }
