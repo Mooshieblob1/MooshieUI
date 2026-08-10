@@ -16,7 +16,8 @@
   import { gallery } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
   import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage, getComfyuiVersion, type ComfyUiVersionInfo } from "./lib/utils/api.js";
-  import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput } from "./lib/utils/galleryActions.js";
+  import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
+  import { H3_MAX_REF_IMAGES } from "./lib/utils/videoParams.js";
   import { prepareOutputImageForEditMode } from "./lib/utils/editImagePreparation.js";
   import { shouldSuppressRegionalChainGallerySave, clearRegionalChainGallerySuppress } from "./lib/utils/regionalChainGallery.js";
   import { generation } from "./lib/stores/generation.svelte.js";
@@ -419,6 +420,40 @@
       gallery.showToast(locale.t("gallery.toast.loaded_upscale"), "success");
     } catch (e) {
       console.error("Failed to set up upscale:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
+    }
+  }
+
+  async function makeVideoFromImage(image: OutputImage) {
+    try {
+      await sendImageToVideoFrame(image);
+      currentPage = "generate";
+      gallery.closeLightbox();
+      gallery.showToast(locale.t("gallery.toast.loaded_video_frame"), "success");
+    } catch (e) {
+      console.error("Failed to load image as a video frame:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
+    }
+  }
+
+  async function addImageAsVideoReference(image: OutputImage) {
+    if (videoReferenceSlotsFree() === 0) {
+      gallery.showToast(
+        locale.t("gallery.toast.video_refs_full", { count: H3_MAX_REF_IMAGES }),
+        "error",
+      );
+      return;
+    }
+    try {
+      const slot = await addImageToVideoReference(image);
+      currentPage = "generate";
+      gallery.closeLightbox();
+      gallery.showToast(
+        locale.t("gallery.toast.loaded_video_reference", { index: slot }),
+        "success",
+      );
+    } catch (e) {
+      console.error("Failed to add image as a video reference:", e);
       gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
     }
   }
@@ -1095,6 +1130,11 @@
       { label: locale.t("gallery.img2img"), action: () => img2imgImage(image) },
       { label: locale.t("gallery.inpaint"), action: () => inpaintImage(image) },
       ...(!image.is_upscaled ? [{ label: locale.t("gallery.upscale"), action: () => upscaleImage(image) }] : []),
+      { label: locale.t("gallery.make_video"), action: () => makeVideoFromImage(image) },
+      {
+        label: locale.t("gallery.add_video_reference"),
+        action: () => addImageAsVideoReference(image),
+      },
       { label: "", action: () => {}, separator: true },
       { label: comparePinLabel(image), action: () => gallery.toggleComparePin(image) },
       { label: "", action: () => {}, separator: true },
@@ -3740,6 +3780,20 @@
             <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
           </button>
         {/if}
+        <button
+          title={locale.t("gallery.make_video")}
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => gallery.selectedImage && makeVideoFromImage(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>
+        </button>
+        <button
+          title={locale.t("gallery.add_video_reference")}
+          class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => gallery.selectedImage && addImageAsVideoReference(gallery.selectedImage)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        </button>
         <button
           title={locale.t("gallery.remix")}
           class="flex items-center justify-center w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-neutral-100 transition-colors"
