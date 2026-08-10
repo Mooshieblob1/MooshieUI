@@ -1,5 +1,13 @@
 # Changelog
 
+## What's New in v2.0.3
+
+### Fixes and maintenance
+- **Custom node installs could fail on the Linux AppImage build**: the bundled AppImage runtime leaks its own `LD_LIBRARY_PATH` and `LD_PRELOAD` into every child process, so `git clone` for a required custom node could link against the AppImage's bundled `libssl`/`libpcre2` instead of the system ones and abort with a version mismatch. Node installs now strip the AppImage-specific environment before spawning `git`, `pip`, and `uv`.
+- **Wrong Wayland library picked up on Fedora-based distros (Nobara, RHEL, etc.)**: the search order for the bundled Wayland compatibility library checked `/usr/lib/` before `/usr/lib64/`, which is backwards on Fedora-family systems where `/usr/lib/` holds 32-bit compat stubs. That could preload a 32-bit library into a 64-bit process and produce a "wrong ELF class" failure. The search now checks the 64-bit path first.
+
+---
+
 ## What's New in v2.0.2
 
 ### Fixes

@@ -53,15 +53,17 @@ fn fix_wayland_appimage_env() {
 
     // Search common library paths for the versioned libwayland-client.
     // Arch/CachyOS uses /usr/lib/, Debian/Ubuntu uses the multiarch path,
-    // Fedora/RHEL uses /usr/lib64/.
+    // Fedora/RHEL/Nobara uses /usr/lib64/ for the real 64-bit libs and
+    // /usr/lib/ for 32-bit multilib compat stubs — check /usr/lib64/ first
+    // so Fedora-family systems don't pick up a wrong-ELF-class 32-bit lib.
     let search_paths = [
-        "/usr/lib/libwayland-client.so.0",
-        "/usr/lib/x86_64-linux-gnu/libwayland-client.so.0",
         "/usr/lib64/libwayland-client.so.0",
+        "/usr/lib/x86_64-linux-gnu/libwayland-client.so.0",
+        "/usr/lib/libwayland-client.so.0",
         // Unversioned fallback
-        "/usr/lib/libwayland-client.so",
-        "/usr/lib/x86_64-linux-gnu/libwayland-client.so",
         "/usr/lib64/libwayland-client.so",
+        "/usr/lib/x86_64-linux-gnu/libwayland-client.so",
+        "/usr/lib/libwayland-client.so",
     ];
 
     let wayland_lib = match search_paths

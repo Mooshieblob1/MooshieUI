@@ -48,6 +48,13 @@ pub(crate) fn std_command_no_window(program: &str) -> std::process::Command {
 }
 
 /// `tokio::process::Command` that does not flash a console window on Windows.
+///
+/// On Linux, when running inside an AppImage, also strips the AppImage's
+/// bundled `LD_LIBRARY_PATH`/`LD_PRELOAD` (and the AppImage-internal `PATH`
+/// entries) so spawned tools like `git`, `pip`, and `uv` link against the
+/// system's native libraries instead of the bundle's — a mismatch otherwise
+/// breaks `git clone` (`git-remote-https` fails to resolve `libssl`/`libcurl`
+/// symbols) for every custom-node install.
 pub(crate) fn tokio_command_no_window(
     program: impl AsRef<std::ffi::OsStr>,
 ) -> tokio::process::Command {
@@ -60,7 +67,32 @@ pub(crate) fn tokio_command_no_window(
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
+    #[cfg(target_os = "linux")]
+    strip_appimage_env(&mut cmd);
     cmd
+}
+
+/// Remove AppImage-bundled library/env leakage from a child process's
+/// environment. See [`tokio_command_no_window`] for why this matters.
+#[cfg(target_os = "linux")]
+pub(crate) fn strip_appimage_env(cmd: &mut tokio::process::Command) {
+    if std::env::var("APPIMAGE").is_err() {
+        return;
+    }
+    cmd.env_remove("LD_LIBRARY_PATH");
+    cmd.env_remove("LD_PRELOAD");
+    cmd.env_remove("PYTHONHOME");
+    cmd.env_remove("PYTHONPATH");
+    cmd.env_remove("PYTHONDONTWRITEBYTECODE");
+    cmd.env_remove("GDK_BACKEND");
+    // Preserve the real PATH but remove AppImage-internal paths
+    if let Ok(path) = std::env::var("PATH") {
+        let filtered: Vec<&str> = path
+            .split(':')
+            .filter(|p| !p.contains("/tmp/.mount_"))
+            .collect();
+        cmd.env("PATH", filtered.join(":"));
+    }
 }
 
 /// Detect whether the system has a Blackwell (compute capability 12.x) NVIDIA GPU.
@@ -1015,24 +1047,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     // can interfere with Python/PyTorch. Clear them for the child process so it
     // uses the system's native libraries (CUDA, ROCm, etc.).
     #[cfg(target_os = "linux")]
-    {
-        if std::env::var("APPIMAGE").is_ok() {
-            cmd.env_remove("LD_LIBRARY_PATH");
-            cmd.env_remove("LD_PRELOAD");
-            cmd.env_remove("PYTHONHOME");
-            cmd.env_remove("PYTHONPATH");
-            cmd.env_remove("PYTHONDONTWRITEBYTECODE");
-            cmd.env_remove("GDK_BACKEND");
-            // Preserve the real PATH but remove AppImage-internal paths
-            if let Ok(path) = std::env::var("PATH") {
-                let filtered: Vec<&str> = path
-                    .split(':')
-                    .filter(|p| !p.contains("/tmp/.mount_"))
-                    .collect();
-                cmd.env("PATH", filtered.join(":"));
-            }
-        }
-    }
+    strip_appimage_env(&mut cmd);
 
     // Hide the console window on Windows so ComfyUI doesn't pop up a terminal
     #[cfg(target_os = "windows")]
@@ -1604,23 +1619,7 @@ pub async fn start_worker_process(
 
     // AppImage cleanup on Linux
     #[cfg(target_os = "linux")]
-    {
-        if std::env::var("APPIMAGE").is_ok() {
-            cmd.env_remove("LD_LIBRARY_PATH");
-            cmd.env_remove("LD_PRELOAD");
-            cmd.env_remove("PYTHONHOME");
-            cmd.env_remove("PYTHONPATH");
-            cmd.env_remove("PYTHONDONTWRITEBYTECODE");
-            cmd.env_remove("GDK_BACKEND");
-            if let Ok(path) = std::env::var("PATH") {
-                let filtered: Vec<&str> = path
-                    .split(':')
-                    .filter(|p| !p.contains("/tmp/.mount_"))
-                    .collect();
-                cmd.env("PATH", filtered.join(":"));
-            }
-        }
-    }
+    strip_appimage_env(&mut cmd);
 
     #[cfg(target_os = "windows")]
     {
