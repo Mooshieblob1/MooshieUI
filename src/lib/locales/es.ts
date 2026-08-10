@@ -2912,5 +2912,31 @@ const es: Record<string, string> = {
 
   "generation.video.stack_download_one": "Descargar",
 
+  "gallery.make_video": "Crear vídeo",
+
+  "gallery.add_video_reference": "Añadir como referencia de vídeo",
+
+  "gallery.toast.loaded_video_frame": "Imagen cargada como primer fotograma del vídeo",
+
+  "gallery.toast.loaded_video_reference": "Imagen añadida como referencia {index}",
+
+  "gallery.toast.video_refs_full": "Los {count} espacios de referencia ya están llenos",
+
+  "gallery.picker.session": "Sesión",
+
+  "gallery.picker.gallery": "Galería",
+
+  "gallery.picker.search": "Buscar por nombre de archivo",
+
+  "gallery.picker.empty": "No hay imágenes para elegir",
+
+  "gallery.picker.add": "Añadir {count}",
+
+  "generation.video.choose_from_gallery": "Elegir de la galería",
+
+  "generation.video.pick_for_slot": "Elige una imagen para {slot}",
+
+  "generation.video.pick_refs_title": "Elegir imágenes de referencia",
+
 };
 export default es;

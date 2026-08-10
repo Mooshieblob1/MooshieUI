@@ -2884,5 +2884,31 @@ const pt: Record<string, string> = {
 
   "generation.video.stack_download_one": "Baixar",
 
+  "gallery.make_video": "Criar vídeo",
+
+  "gallery.add_video_reference": "Adicionar como referência de vídeo",
+
+  "gallery.toast.loaded_video_frame": "Imagem carregada como primeiro quadro do vídeo",
+
+  "gallery.toast.loaded_video_reference": "Imagem adicionada como referência {index}",
+
+  "gallery.toast.video_refs_full": "Todos os {count} slots de referência já estão cheios",
+
+  "gallery.picker.session": "Sessão",
+
+  "gallery.picker.gallery": "Galeria",
+
+  "gallery.picker.search": "Buscar por nome de arquivo",
+
+  "gallery.picker.empty": "Nenhuma imagem para escolher",
+
+  "gallery.picker.add": "Adicionar {count}",
+
+  "generation.video.choose_from_gallery": "Escolher da galeria",
+
+  "generation.video.pick_for_slot": "Escolha uma imagem para {slot}",
+
+  "generation.video.pick_refs_title": "Escolher imagens de referência",
+
 };
 export default pt;

@@ -2883,5 +2883,31 @@ const ru: Record<string, string> = {
 
   "generation.video.stack_download_one": "Загрузить",
 
+  "gallery.make_video": "Создать видео",
+
+  "gallery.add_video_reference": "Добавить как референс видео",
+
+  "gallery.toast.loaded_video_frame": "Изображение загружено как первый кадр видео",
+
+  "gallery.toast.loaded_video_reference": "Изображение добавлено как референс {index}",
+
+  "gallery.toast.video_refs_full": "Все {count} слотов референсов уже заняты",
+
+  "gallery.picker.session": "Сеанс",
+
+  "gallery.picker.gallery": "Галерея",
+
+  "gallery.picker.search": "Поиск по имени файла",
+
+  "gallery.picker.empty": "Нет изображений для выбора",
+
+  "gallery.picker.add": "Добавить {count}",
+
+  "generation.video.choose_from_gallery": "Выбрать из галереи",
+
+  "generation.video.pick_for_slot": "Выбрать изображение для {slot}",
+
+  "generation.video.pick_refs_title": "Выбрать референсные изображения",
+
 };
 export default ru;

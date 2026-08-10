@@ -2821,5 +2821,31 @@ const en: Record<string, string> = {
 
   "generation.video.stack_download_one": "Download",
 
+  "gallery.make_video": "Make video",
+
+  "gallery.add_video_reference": "Add as video reference",
+
+  "gallery.toast.loaded_video_frame": "Image loaded as the first video frame",
+
+  "gallery.toast.loaded_video_reference": "Image added as reference {index}",
+
+  "gallery.toast.video_refs_full": "All {count} reference slots are already full",
+
+  "gallery.picker.session": "Session",
+
+  "gallery.picker.gallery": "Gallery",
+
+  "gallery.picker.search": "Search by filename",
+
+  "gallery.picker.empty": "No images to choose from",
+
+  "gallery.picker.add": "Add {count}",
+
+  "generation.video.choose_from_gallery": "Choose from gallery",
+
+  "generation.video.pick_for_slot": "Choose an image for {slot}",
+
+  "generation.video.pick_refs_title": "Choose reference images",
+
 };
 export default en;

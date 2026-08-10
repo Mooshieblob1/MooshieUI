@@ -2883,5 +2883,31 @@ const it: Record<string, string> = {
 
   "generation.video.stack_download_one": "Scarica",
 
+  "gallery.make_video": "Crea video",
+
+  "gallery.add_video_reference": "Aggiungi come riferimento video",
+
+  "gallery.toast.loaded_video_frame": "Immagine caricata come primo fotogramma del video",
+
+  "gallery.toast.loaded_video_reference": "Immagine aggiunta come riferimento {index}",
+
+  "gallery.toast.video_refs_full": "Tutti i {count} slot di riferimento sono già occupati",
+
+  "gallery.picker.session": "Sessione",
+
+  "gallery.picker.gallery": "Galleria",
+
+  "gallery.picker.search": "Cerca per nome file",
+
+  "gallery.picker.empty": "Nessuna immagine da scegliere",
+
+  "gallery.picker.add": "Aggiungi {count}",
+
+  "generation.video.choose_from_gallery": "Scegli dalla galleria",
+
+  "generation.video.pick_for_slot": "Scegli un'immagine per {slot}",
+
+  "generation.video.pick_refs_title": "Scegli le immagini di riferimento",
+
 };
 export default it;

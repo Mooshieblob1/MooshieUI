@@ -2908,5 +2908,31 @@ const ja: Record<string, string> = {
 
   "generation.video.stack_download_one": "ダウンロード",
 
+  "gallery.make_video": "動画を作成",
+
+  "gallery.add_video_reference": "動画参照として追加",
+
+  "gallery.toast.loaded_video_frame": "画像を最初の動画フレームとして読み込みました",
+
+  "gallery.toast.loaded_video_reference": "画像を参照 {index} として追加しました",
+
+  "gallery.toast.video_refs_full": "{count} つの参照スロットはすべて埋まっています",
+
+  "gallery.picker.session": "セッション",
+
+  "gallery.picker.gallery": "ギャラリー",
+
+  "gallery.picker.search": "ファイル名で検索",
+
+  "gallery.picker.empty": "選択できる画像がありません",
+
+  "gallery.picker.add": "{count} 件追加",
+
+  "generation.video.choose_from_gallery": "ギャラリーから選択",
+
+  "generation.video.pick_for_slot": "{slot} の画像を選択",
+
+  "generation.video.pick_refs_title": "参照画像を選択",
+
 };
 export default ja;

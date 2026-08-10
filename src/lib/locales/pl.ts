@@ -2922,5 +2922,31 @@ const pl: Record<string, string> = {
 
   "generation.video.stack_download_one": "Pobierz",
 
+  "gallery.make_video": "Utwórz wideo",
+
+  "gallery.add_video_reference": "Dodaj jako referencję wideo",
+
+  "gallery.toast.loaded_video_frame": "Obraz załadowany jako pierwsza klatka wideo",
+
+  "gallery.toast.loaded_video_reference": "Obraz dodany jako referencja {index}",
+
+  "gallery.toast.video_refs_full": "Wszystkie {count} slotów referencji są już zajęte",
+
+  "gallery.picker.session": "Sesja",
+
+  "gallery.picker.gallery": "Galeria",
+
+  "gallery.picker.search": "Szukaj według nazwy pliku",
+
+  "gallery.picker.empty": "Brak obrazów do wyboru",
+
+  "gallery.picker.add": "Dodaj {count}",
+
+  "generation.video.choose_from_gallery": "Wybierz z galerii",
+
+  "generation.video.pick_for_slot": "Wybierz obraz dla {slot}",
+
+  "generation.video.pick_refs_title": "Wybierz obrazy referencyjne",
+
 };
 export default pl;

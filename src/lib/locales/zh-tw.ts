@@ -2883,5 +2883,31 @@ const zhTw: Record<string, string> = {
 
   "generation.video.stack_download_one": "下載",
 
+  "gallery.make_video": "製作影片",
+
+  "gallery.add_video_reference": "新增為影片參考",
+
+  "gallery.toast.loaded_video_frame": "圖像已載入為第一個影片格",
+
+  "gallery.toast.loaded_video_reference": "圖像已新增為參考 {index}",
+
+  "gallery.toast.video_refs_full": "{count} 個參考槽位已全部填滿",
+
+  "gallery.picker.session": "工作階段",
+
+  "gallery.picker.gallery": "圖庫",
+
+  "gallery.picker.search": "依檔案名稱搜尋",
+
+  "gallery.picker.empty": "沒有可選擇的圖像",
+
+  "gallery.picker.add": "新增 {count}",
+
+  "generation.video.choose_from_gallery": "從圖庫選擇",
+
+  "generation.video.pick_for_slot": "為 {slot} 選擇圖像",
+
+  "generation.video.pick_refs_title": "選擇參考圖像",
+
 };
 export default zhTw;

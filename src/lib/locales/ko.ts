@@ -2883,5 +2883,31 @@ const ko: Record<string, string> = {
 
   "generation.video.stack_download_one": "내려받기",
 
+  "gallery.make_video": "동영상 만들기",
+
+  "gallery.add_video_reference": "동영상 참조로 추가",
+
+  "gallery.toast.loaded_video_frame": "이미지를 첫 번째 동영상 프레임으로 불렀습니다",
+
+  "gallery.toast.loaded_video_reference": "이미지를 참조 {index}로 추가했습니다",
+
+  "gallery.toast.video_refs_full": "참조 슬롯 {count}개가 이미 모두 채워져 있습니다",
+
+  "gallery.picker.session": "세션",
+
+  "gallery.picker.gallery": "갤러리",
+
+  "gallery.picker.search": "파일 이름으로 검색",
+
+  "gallery.picker.empty": "선택할 이미지가 없습니다",
+
+  "gallery.picker.add": "{count}개 추가",
+
+  "generation.video.choose_from_gallery": "갤러리에서 선택",
+
+  "generation.video.pick_for_slot": "{slot}에 쓸 이미지 선택",
+
+  "generation.video.pick_refs_title": "참조 이미지 선택",
+
 };
 export default ko;

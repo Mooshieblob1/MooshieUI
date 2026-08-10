@@ -2884,5 +2884,31 @@ const zh: Record<string, string> = {
 
   "generation.video.stack_download_one": "下载",
 
+  "gallery.make_video": "制作视频",
+
+  "gallery.add_video_reference": "添加为视频参考",
+
+  "gallery.toast.loaded_video_frame": "图像已作为第一个视频帧加载",
+
+  "gallery.toast.loaded_video_reference": "图像已添加为参考 {index}",
+
+  "gallery.toast.video_refs_full": "{count} 个参考槽位均已占满",
+
+  "gallery.picker.session": "会话",
+
+  "gallery.picker.gallery": "图库",
+
+  "gallery.picker.search": "按文件名搜索",
+
+  "gallery.picker.empty": "没有可选择的图像",
+
+  "gallery.picker.add": "添加 {count}",
+
+  "generation.video.choose_from_gallery": "从图库选择",
+
+  "generation.video.pick_for_slot": "为 {slot} 选择图像",
+
+  "generation.video.pick_refs_title": "选择参考图像",
+
 };
 export default zh;
