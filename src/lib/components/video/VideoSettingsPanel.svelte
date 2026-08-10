@@ -706,6 +706,11 @@
    * so the preview thumbnail, aspect match, spinner and error surface behave
    * identically to a dragged file. `setPreview` takes ownership of the object
    * URL and revokes whatever it replaces.
+   *
+   * The catch is the one place it diverges: `uploadToSlot` previews the local
+   * file optimistically before uploading, so it has to undo that on failure.
+   * Here nothing is written until the upload succeeds, so a failed pick must
+   * leave whatever the slot already held alone.
    */
   async function assignFromGallery(key: string, image: OutputImage) {
     const slot = findSlot(key);
@@ -720,8 +725,8 @@
       if (slot.assignAspect && aspect) generation.videoAspectRatio = "auto";
       generation.saveSettings();
     } catch (e) {
+      console.error("Failed to assign gallery image to video frame:", e);
       uploadError = String(e);
-      setPreview(key, null);
     } finally {
       uploadingSlot = null;
     }
@@ -742,8 +747,8 @@
           i === index ? name : current,
         );
       } catch (e) {
+        console.error("Failed to assign gallery image to video reference:", e);
         uploadError = String(e);
-        setPreview(key, null);
         break;
       } finally {
         uploadingSlot = null;
