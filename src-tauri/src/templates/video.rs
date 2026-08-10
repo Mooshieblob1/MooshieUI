@@ -421,7 +421,33 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
                 json!({ "class_type": "LoadImage", "inputs": { "image": filename } }),
             );
             next_id += 1;
-            inputs.insert(key.to_string(), json!([load_id.as_str(), 0]));
+            // The H3 node resizes the frames itself, but asymmetrically: the
+            // first frame is the geometry anchor and gets a plain stretch onto
+            // the canvas (crop "disabled"), the last frame a cover-crop. The
+            // canvas aspect is the requested one rounded to a multiple of 32
+            // per axis, so it never matches the source exactly — even the "auto"
+            // ratio lands a few percent off — and the anchor comes out visibly
+            // squashed. Worse, one image in both slots then enters as two
+            // different geometries and the clip morphs between them.
+            //
+            // Cropping to the canvas here makes the node's own resize a no-op
+            // for both slots: same framing in, same framing out.
+            let crop_id = next_id.to_string();
+            workflow.insert(
+                crop_id.clone(),
+                json!({
+                    "class_type": "ImageScale",
+                    "inputs": {
+                        "image": [load_id.as_str(), 0],
+                        "width": width,
+                        "height": height,
+                        "upscale_method": "lanczos",
+                        "crop": "center"
+                    }
+                }),
+            );
+            next_id += 1;
+            inputs.insert(key.to_string(), json!([crop_id.as_str(), 0]));
         }
         let id = next_id.to_string();
         workflow.insert(
@@ -722,6 +748,49 @@ mod tests {
         let h3 = nodes_of_class(&workflow, "MiniMaxH3ImageToVideo")[0];
         assert!(h3["inputs"]["first_frame"].is_array());
         assert!(h3["inputs"]["last_frame"].is_array());
+    }
+
+    /// `MiniMaxH3ImageToVideo` resizes `first_frame` with crop "disabled" — a
+    /// plain stretch onto a canvas whose aspect is only ever the requested one
+    /// rounded to a multiple of 32 — while `last_frame` gets a cover-crop. Both
+    /// frames have to arrive already at the canvas size so neither is distorted
+    /// and the same image in both slots yields the same geometry.
+    #[test]
+    fn fl2va_crops_frames_to_the_canvas_before_the_h3_node() {
+        let mut params = video_params("fl2va");
+        params.video_first_frame = Some("first.png".to_string());
+        params.video_last_frame = Some("last.png".to_string());
+        let workflow = build(&params, 1, false);
+
+        let scales = nodes_of_class(&workflow, "ImageScale");
+        assert_eq!(scales.len(), 2, "one crop per supplied frame");
+        for scale in &scales {
+            assert_eq!(scale["inputs"]["width"], json!(832));
+            assert_eq!(scale["inputs"]["height"], json!(480));
+            assert_eq!(scale["inputs"]["crop"], json!("center"));
+            assert!(scale["inputs"]["image"].is_array());
+        }
+
+        // The H3 node must read the crops, not the raw LoadImage outputs.
+        let load_ids: Vec<String> = workflow
+            .as_object()
+            .expect("workflow is an object")
+            .iter()
+            .filter(|(_, node)| node["class_type"] == "LoadImage")
+            .map(|(id, _)| id.clone())
+            .collect();
+        let h3 = nodes_of_class(&workflow, "MiniMaxH3ImageToVideo")[0];
+        for key in ["first_frame", "last_frame"] {
+            let source = h3["inputs"][key][0]
+                .as_str()
+                .expect("frame input is a link")
+                .to_string();
+            assert!(
+                !load_ids.contains(&source),
+                "{key} is wired straight to LoadImage"
+            );
+            assert_eq!(workflow[&source]["class_type"], json!("ImageScale"));
+        }
     }
 
     #[test]
