@@ -25,6 +25,12 @@
   import { notes } from "../../stores/notes.svelte.js";
   import type { OutputImage } from "../../types/index.js";
   import { detectArtistsInPrompt } from "../../artist-gallery/detection.js";
+  import {
+    sendImageToVideoFrame,
+    addImageToVideoReference,
+    videoReferenceSlotsFree,
+  } from "../../utils/galleryActions.js";
+  import { H3_MAX_REF_IMAGES } from "../../utils/videoParams.js";
 
   interface Props {
     onupscale: (image: OutputImage) => void;
@@ -346,6 +352,36 @@
       return;
     }
     hoveredImage = remaining[idx];
+  }
+
+  async function makeVideoFromImage(image: OutputImage) {
+    try {
+      await sendImageToVideoFrame(image);
+      gallery.showToast(locale.t("gallery.toast.loaded_video_frame"), "success");
+    } catch (e) {
+      console.error("Failed to load image as a video frame:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
+    }
+  }
+
+  async function addImageAsVideoReference(image: OutputImage) {
+    if (videoReferenceSlotsFree() === 0) {
+      gallery.showToast(
+        locale.t("gallery.toast.video_refs_full", { count: H3_MAX_REF_IMAGES }),
+        "error",
+      );
+      return;
+    }
+    try {
+      const slot = await addImageToVideoReference(image);
+      gallery.showToast(
+        locale.t("gallery.toast.loaded_video_reference", { index: slot }),
+        "success",
+      );
+    } catch (e) {
+      console.error("Failed to add image as a video reference:", e);
+      gallery.showToast(locale.t("gallery.toast.failed_load"), "error");
+    }
   }
 
   function confirmDeleteAllSessionImages() {
@@ -803,6 +839,20 @@
           onclick={() => oninpaint(image)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+        </button>
+        <button
+          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
+          title={locale.t('gallery.make_video')}
+          onclick={() => makeVideoFromImage(image)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>
+        </button>
+        <button
+          class="w-6 h-6 flex items-center justify-center rounded-md hover:bg-neutral-700/80 text-neutral-300 hover:text-white transition-colors"
+          title={locale.t('gallery.add_video_reference')}
+          onclick={() => addImageAsVideoReference(image)}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
         </button>
         <div class="w-px h-4 bg-neutral-700/60"></div>
       {/if}
