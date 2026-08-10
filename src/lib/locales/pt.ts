@@ -725,14 +725,14 @@ const pt: Record<string, string> = {
   "generation.video.turbo_install_not_loaded": "O ComfyUI reiniciou, mas os nós do sampler Turbo não carregaram. Verifique o log do ComfyUI.",
   "generation.video.turbo_install_failed": "Não foi possível instalar o LoRA Turbo: {error}",
   "generation.video.models": "Modelos",
-  "generation.video.models_tip": "O modo vídeo usa a pilha MiniMax H3. Escolha um nível de qualidade e o MooshieUI seleciona o modelo de difusão, o codificador de texto e os dois VAE correspondentes, baixando o que estiver faltando.",
+  "generation.video.models_tip": "O modo vídeo usa a pilha MiniMax H3. Escolha um nível de qualidade e o MooshieUI lista todos os arquivos que usa, incluindo um modelo de difusão separado para cada modo, e baixa o que estiver faltando.",
   "generation.video.stack.nvfp4": "NVFP4 - 12,5 GB, só Blackwell",
   "generation.video.stack.int8": "int8 - 21 GB, recomendado",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB, precisão total",
-  "generation.video.stack_ready": "Os quatro arquivos de modelo estão instalados.",
-  "generation.video.stack_missing": "Faltam {count} de 4 arquivos de modelo, {size} para baixar.",
-  "generation.video.stack_download": "Baixar os arquivos que faltam ({size})",
+  "generation.video.stack_ready": "Todos os arquivos de modelo estão instalados.",
+  "generation.video.stack_missing": "Faltam {count} de {total} arquivos de modelo, {size} para baixar.",
+  "generation.video.stack_download": "Baixar todos os que faltam ({count} arquivos, {size})",
   "generation.video.stack_downloading": "Baixando",
   "generation.video.stack_download_failed": "O download falhou: {error}",
   "generation.video.stack_requires_blackwell": "O NVFP4 precisa de uma placa Blackwell (série RTX 50). Em placas mais antigas ele cai para um caminho bem mais lento.",
@@ -2867,6 +2867,22 @@ const pt: Record<string, string> = {
   "errors.report.opening": "Abrindo...",
 
   "errors.report.copied_hint": "Diagnóstico copiado para a área de transferência. Cole-o no corpo da issue.",
+
+  "generation.video.role_fl2va": "Modelo de primeiro/último quadro",
+
+  "generation.video.role_ref2va": "Modelo de referência",
+
+  "generation.video.role_text_encoder": "Codificador de texto",
+
+  "generation.video.role_video_vae": "VAE de vídeo",
+
+  "generation.video.role_audio_vae": "VAE de áudio",
+
+  "generation.video.role_in_use": "em uso",
+
+  "generation.video.stack_file_installed": "Instalado",
+
+  "generation.video.stack_download_one": "Baixar",
 
 };
 export default pt;

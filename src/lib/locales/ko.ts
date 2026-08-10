@@ -725,14 +725,14 @@ const ko: Record<string, string> = {
   "generation.video.turbo_install_not_loaded": "ComfyUI는 다시 시작했지만 Turbo 샘플러 노드가 로드되지 않았습니다. ComfyUI 로그를 확인하세요.",
   "generation.video.turbo_install_failed": "Turbo LoRA를 설치하지 못했습니다: {error}",
   "generation.video.models": "모델",
-  "generation.video.models_tip": "동영상 모드는 MiniMax H3 스택을 사용합니다. 품질 등급을 고르면 MooshieUI가 알맞은 디퓨전 모델, 텍스트 인코더, 두 개의 VAE를 자동으로 선택하고 없는 파일을 내려받습니다.",
+  "generation.video.models_tip": "동영상 모드는 MiniMax H3 스택을 사용합니다. 품질 등급을 고르면 MooshieUI가 사용하는 모든 파일을 나열하고, 각 모드의 개별 디퓨전 모델을 포함해 없는 파일을 내려받습니다.",
   "generation.video.stack.nvfp4": "NVFP4 - 12.5 GB, Blackwell 전용",
   "generation.video.stack.int8": "int8 - 21 GB, 권장",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB, 전체 정밀도",
-  "generation.video.stack_ready": "네 개의 모델 파일이 모두 설치되어 있습니다.",
-  "generation.video.stack_missing": "모델 파일 4개 중 {count}개가 없습니다. 내려받을 용량은 {size}입니다.",
-  "generation.video.stack_download": "없는 파일 내려받기 ({size})",
+  "generation.video.stack_ready": "모든 모델 파일이 설치되어 있습니다.",
+  "generation.video.stack_missing": "모델 파일 {total}개 중 {count}개가 없습니다. 내려받을 용량은 {size}입니다.",
+  "generation.video.stack_download": "없는 파일 모두 내려받기 ({count}개, {size})",
   "generation.video.stack_downloading": "내려받는 중",
   "generation.video.stack_download_failed": "내려받기에 실패했습니다: {error}",
   "generation.video.stack_requires_blackwell": "NVFP4에는 Blackwell 카드(RTX 50 시리즈)가 필요합니다. 이전 카드에서는 훨씬 느린 경로로 동작합니다.",
@@ -2866,6 +2866,22 @@ const ko: Record<string, string> = {
   "errors.report.opening": "열리는 중...",
 
   "errors.report.copied_hint": "진단 정보가 클립보드에 복사되었습니다. 이슈 본문에 붙여넣으세요.",
+
+  "generation.video.role_fl2va": "첫 번째/마지막 프레임 모델",
+
+  "generation.video.role_ref2va": "참조 모델",
+
+  "generation.video.role_text_encoder": "텍스트 인코더",
+
+  "generation.video.role_video_vae": "비디오 VAE",
+
+  "generation.video.role_audio_vae": "오디오 VAE",
+
+  "generation.video.role_in_use": "사용 중",
+
+  "generation.video.stack_file_installed": "설치됨",
+
+  "generation.video.stack_download_one": "내려받기",
 
 };
 export default ko;

@@ -740,14 +740,14 @@ const ja: Record<string, string> = {
   "generation.video.turbo_install_not_loaded": "ComfyUI は再起動しましたが、Turbo サンプラー ノードが読み込まれませんでした。ComfyUI のログを確認してください。",
   "generation.video.turbo_install_failed": "Turbo LoRA をインストールできませんでした: {error}",
   "generation.video.models": "モデル",
-  "generation.video.models_tip": "動画モードは MiniMax H3 スタックを使用します。品質ティアを選ぶと、MooshieUI が対応する拡散モデル、テキストエンコーダー、2つの VAE を自動選択し、不足分をダウンロードします。",
+  "generation.video.models_tip": "動画モードは MiniMax H3 スタックを使用します。品質ティアを選ぶと、MooshieUI が使用するすべてのファイルを一覧表示し、各モードごとに個別の拡散モデルを含め、不足分をダウンロードします。",
   "generation.video.stack.nvfp4": "NVFP4 - 12.5 GB、Blackwell のみ",
   "generation.video.stack.int8": "int8 - 21 GB、推奨",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB、フル精度",
-  "generation.video.stack_ready": "4つのモデルファイルはすべてインストール済みです。",
-  "generation.video.stack_missing": "4つのモデルファイルのうち {count} 個が不足しています。ダウンロード量は {size} です。",
-  "generation.video.stack_download": "不足しているファイルをダウンロード ({size})",
+  "generation.video.stack_ready": "すべてのモデルファイルがインストール済みです。",
+  "generation.video.stack_missing": "{total} 個のモデルファイルのうち {count} 個が不足しています。ダウンロード量は {size} です。",
+  "generation.video.stack_download": "不足しているすべてをダウンロード ({count} 個のファイル、{size})",
   "generation.video.stack_downloading": "ダウンロード中",
   "generation.video.stack_download_failed": "ダウンロードに失敗しました: {error}",
   "generation.video.stack_requires_blackwell": "NVFP4 には Blackwell 世代のカード (RTX 50 シリーズ) が必要です。それ以前のカードでは大幅に遅い処理経路になります。",
@@ -2891,6 +2891,22 @@ const ja: Record<string, string> = {
   "errors.report.opening": "開いています...",
 
   "errors.report.copied_hint": "診断情報がクリップボードにコピーされました。Issue の本文に貼り付けてください。",
+
+  "generation.video.role_fl2va": "最初/最後のフレームモデル",
+
+  "generation.video.role_ref2va": "参照モデル",
+
+  "generation.video.role_text_encoder": "テキストエンコーダー",
+
+  "generation.video.role_video_vae": "ビデオ VAE",
+
+  "generation.video.role_audio_vae": "オーディオ VAE",
+
+  "generation.video.role_in_use": "使用中",
+
+  "generation.video.stack_file_installed": "インストール済み",
+
+  "generation.video.stack_download_one": "ダウンロード",
 
 };
 export default ja;

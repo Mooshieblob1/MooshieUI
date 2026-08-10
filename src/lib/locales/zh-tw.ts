@@ -725,14 +725,14 @@ const zhTw: Record<string, string> = {
   "generation.video.turbo_install_not_loaded": "ComfyUI 已重新啟動，但 Turbo 取樣器節點沒有載入。請查看 ComfyUI 記錄。",
   "generation.video.turbo_install_failed": "無法安裝 Turbo LoRA: {error}",
   "generation.video.models": "模型",
-  "generation.video.models_tip": "影片模式使用 MiniMax H3 模型組。選擇一個品質層級，MooshieUI 會自動選好對應的擴散模型、文字編碼器與兩個 VAE，並下載缺少的檔案。",
+  "generation.video.models_tip": "影片模式使用 MiniMax H3 模型組。選擇一個品質層級，MooshieUI 會列出所有需要的檔案，包括每種模式各自的擴散模型，並下載缺少的檔案。",
   "generation.video.stack.nvfp4": "NVFP4 - 12.5 GB，僅限 Blackwell",
   "generation.video.stack.int8": "int8 - 21 GB，建議",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB，完整精度",
-  "generation.video.stack_ready": "四個模型檔案都已安裝。",
-  "generation.video.stack_missing": "四個模型檔案中缺少 {count} 個，需下載 {size}。",
-  "generation.video.stack_download": "下載缺少的檔案 ({size})",
+  "generation.video.stack_ready": "所有模型檔案均已安裝。",
+  "generation.video.stack_missing": "{total} 個模型檔案中缺少 {count} 個，需下載 {size}。",
+  "generation.video.stack_download": "下載全部缺少的檔案（{count} 個檔案，{size}）",
   "generation.video.stack_downloading": "正在下載",
   "generation.video.stack_download_failed": "下載失敗: {error}",
   "generation.video.stack_requires_blackwell": "NVFP4 需要 Blackwell 顯示卡 (RTX 50 系列)。在較舊的顯示卡上會退回到慢得多的路徑。",
@@ -2866,6 +2866,22 @@ const zhTw: Record<string, string> = {
   "errors.report.opening": "正在開啟...",
 
   "errors.report.copied_hint": "診斷資訊已複製到剪貼板。請貼上至問題內容中。",
+
+  "generation.video.role_fl2va": "首/末幀模型",
+
+  "generation.video.role_ref2va": "參考模型",
+
+  "generation.video.role_text_encoder": "文字編碼器",
+
+  "generation.video.role_video_vae": "影片 VAE",
+
+  "generation.video.role_audio_vae": "音訊 VAE",
+
+  "generation.video.role_in_use": "使用中",
+
+  "generation.video.stack_file_installed": "已安裝",
+
+  "generation.video.stack_download_one": "下載",
 
 };
 export default zhTw;

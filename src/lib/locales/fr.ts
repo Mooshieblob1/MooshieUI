@@ -740,14 +740,14 @@ const fr: Record<string, string> = {
   "generation.video.turbo_install_not_loaded": "ComfyUI a redémarré mais les nodes du sampler Turbo ne se sont pas chargés. Consultez le journal de ComfyUI.",
   "generation.video.turbo_install_failed": "Le LoRA Turbo n'a pas pu être installé : {error}",
   "generation.video.models": "Modèles",
-  "generation.video.models_tip": "Le mode vidéo utilise la pile MiniMax H3. Choisissez un niveau de qualité et MooshieUI sélectionne le modèle de diffusion, l'encodeur de texte et les deux VAE correspondants, en téléchargeant ce qui manque.",
+  "generation.video.models_tip": "Le mode vidéo utilise la pile MiniMax H3. Choisissez un niveau de qualité et MooshieUI liste tous les fichiers utilisés, y compris un modèle de diffusion distinct pour chaque mode, et télécharge ce qui manque.",
   "generation.video.stack.nvfp4": "NVFP4 - 12,5 Go, Blackwell uniquement",
   "generation.video.stack.int8": "int8 - 21 Go, recommandé",
   "generation.video.stack.fp8": "fp8 - 21 Go",
   "generation.video.stack.bf16": "bf16 - 40 Go, pleine précision",
-  "generation.video.stack_ready": "Les quatre fichiers de modèle sont installés.",
-  "generation.video.stack_missing": "{count} des 4 fichiers de modèle manquent, {size} à télécharger.",
-  "generation.video.stack_download": "Télécharger les fichiers manquants ({size})",
+  "generation.video.stack_ready": "Tous les fichiers de modèle sont installés.",
+  "generation.video.stack_missing": "{count} des {total} fichiers de modèle manquent, {size} à télécharger.",
+  "generation.video.stack_download": "Tout télécharger ({count} fichiers, {size})",
   "generation.video.stack_downloading": "Téléchargement",
   "generation.video.stack_download_failed": "Le téléchargement a échoué : {error}",
   "generation.video.stack_requires_blackwell": "NVFP4 nécessite une carte Blackwell (série RTX 50). Sur des cartes plus anciennes, il bascule sur un chemin bien plus lent.",
@@ -2892,6 +2892,22 @@ const fr: Record<string, string> = {
   "errors.report.opening": "Ouverture...",
 
   "errors.report.copied_hint": "Diagnostics copiés dans le presse-papiers. Collez-les dans le corps du problème.",
+
+  "generation.video.role_fl2va": "Modèle premier/dernier cadre",
+
+  "generation.video.role_ref2va": "Modèle de référence",
+
+  "generation.video.role_text_encoder": "Encodeur de texte",
+
+  "generation.video.role_video_vae": "VAE vidéo",
+
+  "generation.video.role_audio_vae": "VAE audio",
+
+  "generation.video.role_in_use": "en cours d'utilisation",
+
+  "generation.video.stack_file_installed": "Installé",
+
+  "generation.video.stack_download_one": "Télécharger",
 
 };
 export default fr;

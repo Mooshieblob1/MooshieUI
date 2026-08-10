@@ -190,6 +190,44 @@ export function h3StackFiles(stack: H3Stack): H3ModelFile[] {
   return [stack.diffusion, stack.textEncoder, stack.videoVae, stack.audioVae];
 }
 
+export type H3Role = "fl2va" | "ref2va" | "textEncoder" | "videoVae" | "audioVae";
+
+export interface H3StackEntry {
+  role: H3Role;
+  /** Locale key for the row's role label. */
+  labelKey: string;
+  file: H3ModelFile;
+}
+
+/**
+ * Every file a tier can use, both DiT variants included, in download order.
+ * `h3Stack()` stays variant-scoped and keeps driving what the generation store
+ * considers ready; this is the full picture the Models UI lists.
+ */
+export function h3TierFiles(id: H3TierId): H3StackEntry[] {
+  const tier = h3Tier(id);
+  if (!tier) return [];
+  return [
+    {
+      role: "fl2va",
+      labelKey: "generation.video.role_fl2va",
+      file: tier.diffusion.fl2va,
+    },
+    {
+      role: "ref2va",
+      labelKey: "generation.video.role_ref2va",
+      file: tier.diffusion.ref2va,
+    },
+    {
+      role: "textEncoder",
+      labelKey: "generation.video.role_text_encoder",
+      file: H3_TEXT_ENCODER,
+    },
+    { role: "videoVae", labelKey: "generation.video.role_video_vae", file: H3_VIDEO_VAE },
+    { role: "audioVae", labelKey: "generation.video.role_audio_vae", file: H3_AUDIO_VAE },
+  ];
+}
+
 /**
  * Which tier a DiT filename belongs to, or null when it is not a stack file we
  * know. Order matters: the int8-over-NVFP4 mixed builds carry both markers, and

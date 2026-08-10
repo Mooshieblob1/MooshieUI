@@ -772,14 +772,14 @@ const es: Record<string, string> = {
   "generation.video.turbo_install_not_loaded": "ComfyUI se reinició pero los nodos del muestreador Turbo no se cargaron. Revisa el registro de ComfyUI.",
   "generation.video.turbo_install_failed": "No se pudo instalar el LoRA Turbo: {error}",
   "generation.video.models": "Modelos",
-  "generation.video.models_tip": "El modo vídeo usa el stack MiniMax H3. Elige un nivel de calidad y MooshieUI selecciona el modelo de difusión, el codificador de texto y los dos VAE correspondientes, descargando lo que falte.",
+  "generation.video.models_tip": "El modo vídeo usa el stack MiniMax H3. Elige un nivel de calidad y MooshieUI lista todos los archivos que usa, incluyendo un modelo de difusión independiente para cada modo, y descarga lo que falte.",
   "generation.video.stack.nvfp4": "NVFP4 - 12,5 GB, solo Blackwell",
   "generation.video.stack.int8": "int8 - 21 GB, recomendado",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB, precisión completa",
-  "generation.video.stack_ready": "Los cuatro archivos de modelo están instalados.",
-  "generation.video.stack_missing": "Faltan {count} de 4 archivos de modelo, {size} por descargar.",
-  "generation.video.stack_download": "Descargar los archivos que faltan ({size})",
+  "generation.video.stack_ready": "Todos los archivos de modelo están instalados.",
+  "generation.video.stack_missing": "Faltan {count} de {total} archivos de modelo, {size} por descargar.",
+  "generation.video.stack_download": "Descargar todos los que faltan ({count} archivos, {size})",
   "generation.video.stack_downloading": "Descargando",
   "generation.video.stack_download_failed": "La descarga falló: {error}",
   "generation.video.stack_requires_blackwell": "NVFP4 necesita una tarjeta Blackwell (serie RTX 50). En tarjetas más antiguas recurre a una ruta mucho más lenta.",
@@ -2895,6 +2895,22 @@ const es: Record<string, string> = {
   "errors.report.opening": "Abriendo...",
 
   "errors.report.copied_hint": "Diagnósticos copiados al portapapeles. Pégalos en el cuerpo del issue.",
+
+  "generation.video.role_fl2va": "Modelo de primer/último fotograma",
+
+  "generation.video.role_ref2va": "Modelo de referencia",
+
+  "generation.video.role_text_encoder": "Codificador de texto",
+
+  "generation.video.role_video_vae": "VAE de vídeo",
+
+  "generation.video.role_audio_vae": "VAE de audio",
+
+  "generation.video.role_in_use": "en uso",
+
+  "generation.video.stack_file_installed": "Instalado",
+
+  "generation.video.stack_download_one": "Descargar",
 
 };
 export default es;

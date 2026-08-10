@@ -746,14 +746,14 @@ const de: Record<string, string> = {
   "generation.video.turbo_install_not_loaded": "ComfyUI wurde neu gestartet, aber die Turbo-Sampler-Nodes wurden nicht geladen. Prüfe das ComfyUI-Log.",
   "generation.video.turbo_install_failed": "Die Turbo-LoRA konnte nicht installiert werden: {error}",
   "generation.video.models": "Modelle",
-  "generation.video.models_tip": "Der Videomodus nutzt den MiniMax-H3-Stack. Wähle eine Qualitätsstufe, und MooshieUI wählt das passende Diffusionsmodell, den Text-Encoder und beide VAEs aus und lädt fehlende Dateien herunter.",
+  "generation.video.models_tip": "Der Videomodus nutzt den MiniMax-H3-Stack. Wähle eine Qualitätsstufe, und MooshieUI listet alle verwendeten Dateien auf, einschließlich eines eigenen Diffusionsmodells für jeden Modus, und lädt fehlende Dateien herunter.",
   "generation.video.stack.nvfp4": "NVFP4 - 12,5 GB, nur Blackwell",
   "generation.video.stack.int8": "int8 - 21 GB, empfohlen",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB, volle Präzision",
-  "generation.video.stack_ready": "Alle vier Modelldateien sind installiert.",
-  "generation.video.stack_missing": "{count} von 4 Modelldateien fehlen, {size} zum Herunterladen.",
-  "generation.video.stack_download": "Fehlende Dateien herunterladen ({size})",
+  "generation.video.stack_ready": "Alle Modelldateien sind installiert.",
+  "generation.video.stack_missing": "{count} von {total} Modelldateien fehlen, {size} zum Herunterladen.",
+  "generation.video.stack_download": "Alle fehlenden herunterladen ({count} Dateien, {size})",
   "generation.video.stack_downloading": "Wird heruntergeladen",
   "generation.video.stack_download_failed": "Der Download ist fehlgeschlagen: {error}",
   "generation.video.stack_requires_blackwell": "NVFP4 benötigt eine Blackwell-Karte (RTX-50-Serie). Auf älteren Karten fällt es auf einen deutlich langsameren Pfad zurück.",
@@ -2868,6 +2868,22 @@ const de: Record<string, string> = {
   "errors.report.opening": "Wird geöffnet...",
 
   "errors.report.copied_hint": "Diagnose in die Zwischenablage kopiert. Füge sie in den Issue-Text ein.",
+
+  "generation.video.role_fl2va": "Erstes-/Letztes-Bild-Modell",
+
+  "generation.video.role_ref2va": "Referenzmodell",
+
+  "generation.video.role_text_encoder": "Text-Encoder",
+
+  "generation.video.role_video_vae": "Video-VAE",
+
+  "generation.video.role_audio_vae": "Audio-VAE",
+
+  "generation.video.role_in_use": "in Verwendung",
+
+  "generation.video.stack_file_installed": "Installiert",
+
+  "generation.video.stack_download_one": "Herunterladen",
 
 };
 export default de;

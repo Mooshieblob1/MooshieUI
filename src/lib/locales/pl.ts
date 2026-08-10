@@ -816,14 +816,14 @@ const pl: Record<string, string> = {
   "generation.video.turbo_install_not_loaded": "ComfyUI zrestartował się, ale węzły samplera Turbo nie zostały wczytane. Sprawdź dziennik ComfyUI.",
   "generation.video.turbo_install_failed": "Nie udało się zainstalować LoRA Turbo: {error}",
   "generation.video.models": "Modele",
-  "generation.video.models_tip": "Tryb wideo korzysta ze stosu MiniMax H3. Wybierz poziom jakości, a MooshieUI dobierze pasujący model dyfuzyjny, koder tekstu i oba VAE oraz pobierze brakujące pliki.",
+  "generation.video.models_tip": "Tryb wideo korzysta ze stosu MiniMax H3. Wybierz poziom jakości, a MooshieUI wyświetli listę wszystkich używanych plików, w tym osobnego modelu dyfuzyjnego dla każdego trybu, i pobierze brakujące.",
   "generation.video.stack.nvfp4": "NVFP4 - 12,5 GB, tylko Blackwell",
   "generation.video.stack.int8": "int8 - 21 GB, zalecane",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB, pełna precyzja",
-  "generation.video.stack_ready": "Wszystkie cztery pliki modeli są zainstalowane.",
-  "generation.video.stack_missing": "Brakuje {count} z 4 plików modeli, {size} do pobrania.",
-  "generation.video.stack_download": "Pobierz brakujące pliki ({size})",
+  "generation.video.stack_ready": "Wszystkie pliki modeli są zainstalowane.",
+  "generation.video.stack_missing": "Brakuje {count} z {total} plików modeli, {size} do pobrania.",
+  "generation.video.stack_download": "Pobierz wszystkie brakujące ({count} plików, {size})",
   "generation.video.stack_downloading": "Pobieranie",
   "generation.video.stack_download_failed": "Pobieranie nie powiodło się: {error}",
   "generation.video.stack_requires_blackwell": "NVFP4 wymaga karty Blackwell (seria RTX 50). Na starszych kartach działa znacznie wolniejszą ścieżką.",
@@ -2905,6 +2905,22 @@ const pl: Record<string, string> = {
   "errors.report.opening": "Otwieranie...",
 
   "errors.report.copied_hint": "Diagnostyka skopiowana do schowka. Wklej ją do treści zgłoszenia.",
+
+  "generation.video.role_fl2va": "Model pierwszej/ostatniej klatki",
+
+  "generation.video.role_ref2va": "Model referencyjny",
+
+  "generation.video.role_text_encoder": "Koder tekstu",
+
+  "generation.video.role_video_vae": "Video VAE",
+
+  "generation.video.role_audio_vae": "Audio VAE",
+
+  "generation.video.role_in_use": "używany",
+
+  "generation.video.stack_file_installed": "Zainstalowany",
+
+  "generation.video.stack_download_one": "Pobierz",
 
 };
 export default pl;

@@ -817,14 +817,14 @@ const en: Record<string, string> = {
   "generation.video.turbo_install_not_loaded": "ComfyUI restarted but the Turbo sampler nodes did not load. Check the ComfyUI log.",
   "generation.video.turbo_install_failed": "The Turbo LoRA could not be installed: {error}",
   "generation.video.models": "Models",
-  "generation.video.models_tip": "Video mode runs the MiniMax H3 stack. Pick a quality tier and MooshieUI selects the matching diffusion model, text encoder and both VAEs, downloading whatever is missing.",
+  "generation.video.models_tip": "Video mode runs the MiniMax H3 stack. Pick a quality tier and MooshieUI lists every file it uses, including a separate diffusion model for each mode, and downloads whatever is missing.",
   "generation.video.stack.nvfp4": "NVFP4 - 12.5 GB, Blackwell only",
   "generation.video.stack.int8": "int8 - 21 GB, recommended",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB, full precision",
-  "generation.video.stack_ready": "All four model files are installed.",
-  "generation.video.stack_missing": "Missing {count} of 4 model files, {size} to download.",
-  "generation.video.stack_download": "Download the missing files ({size})",
+  "generation.video.stack_ready": "All model files are installed.",
+  "generation.video.stack_missing": "Missing {count} of {total} model files, {size} to download.",
+  "generation.video.stack_download": "Download all missing ({count} files, {size})",
   "generation.video.stack_downloading": "Downloading",
   "generation.video.stack_download_failed": "The download failed: {error}",
   "generation.video.stack_requires_blackwell": "NVFP4 needs a Blackwell card (RTX 50 series). On older cards it falls back to a much slower path.",
@@ -2805,5 +2805,21 @@ const en: Record<string, string> = {
   "errors.report.submit": "Open issue",
   "errors.report.opening": "Opening...",
   "errors.report.copied_hint": "Diagnostics copied to clipboard. Paste them into the issue body.",
+  "generation.video.role_fl2va": "First / last frame model",
+
+  "generation.video.role_ref2va": "Reference model",
+
+  "generation.video.role_text_encoder": "Text encoder",
+
+  "generation.video.role_video_vae": "Video VAE",
+
+  "generation.video.role_audio_vae": "Audio VAE",
+
+  "generation.video.role_in_use": "in use",
+
+  "generation.video.stack_file_installed": "Installed",
+
+  "generation.video.stack_download_one": "Download",
+
 };
 export default en;

@@ -725,14 +725,14 @@ const it: Record<string, string> = {
   "generation.video.turbo_install_not_loaded": "ComfyUI è stato riavviato ma i nodi del sampler Turbo non si sono caricati. Controlla il log di ComfyUI.",
   "generation.video.turbo_install_failed": "Impossibile installare il LoRA Turbo: {error}",
   "generation.video.models": "Modelli",
-  "generation.video.models_tip": "La modalità video usa lo stack MiniMax H3. Scegli un livello di qualità e MooshieUI seleziona il modello di diffusione, il codificatore di testo e i due VAE corrispondenti, scaricando ciò che manca.",
+  "generation.video.models_tip": "La modalità video usa lo stack MiniMax H3. Scegli un livello di qualità e MooshieUI elenca tutti i file che usa, incluso un modello di diffusione separato per ogni modalità, e scarica ciò che manca.",
   "generation.video.stack.nvfp4": "NVFP4 - 12,5 GB, solo Blackwell",
   "generation.video.stack.int8": "int8 - 21 GB, consigliato",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB, precisione piena",
-  "generation.video.stack_ready": "Tutti e quattro i file di modello sono installati.",
-  "generation.video.stack_missing": "Mancano {count} di 4 file di modello, {size} da scaricare.",
-  "generation.video.stack_download": "Scarica i file mancanti ({size})",
+  "generation.video.stack_ready": "Tutti i file di modello sono installati.",
+  "generation.video.stack_missing": "Mancano {count} di {total} file di modello, {size} da scaricare.",
+  "generation.video.stack_download": "Scarica tutti i mancanti ({count} file, {size})",
   "generation.video.stack_downloading": "Download in corso",
   "generation.video.stack_download_failed": "Il download non è riuscito: {error}",
   "generation.video.stack_requires_blackwell": "NVFP4 richiede una scheda Blackwell (serie RTX 50). Su schede più vecchie ricade su un percorso molto più lento.",
@@ -2866,6 +2866,22 @@ const it: Record<string, string> = {
   "errors.report.opening": "Apertura in corso...",
 
   "errors.report.copied_hint": "Diagnostica copiata negli appunti. Incollala nel corpo della segnalazione.",
+
+  "generation.video.role_fl2va": "Modello primo/ultimo fotogramma",
+
+  "generation.video.role_ref2va": "Modello di riferimento",
+
+  "generation.video.role_text_encoder": "Codificatore di testo",
+
+  "generation.video.role_video_vae": "VAE video",
+
+  "generation.video.role_audio_vae": "VAE audio",
+
+  "generation.video.role_in_use": "in uso",
+
+  "generation.video.stack_file_installed": "Installato",
+
+  "generation.video.stack_download_one": "Scarica",
 
 };
 export default it;

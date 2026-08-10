@@ -725,14 +725,14 @@ const ru: Record<string, string> = {
   "generation.video.turbo_install_not_loaded": "ComfyUI перезапустился, но узлы сэмплера Turbo не загрузились. Проверьте журнал ComfyUI.",
   "generation.video.turbo_install_failed": "Не удалось установить Turbo LoRA: {error}",
   "generation.video.models": "Модели",
-  "generation.video.models_tip": "Режим видео использует набор MiniMax H3. Выберите уровень качества, и MooshieUI подберёт подходящую диффузионную модель, текстовый энкодер и оба VAE, загрузив недостающие файлы.",
+  "generation.video.models_tip": "Режим видео использует набор MiniMax H3. Выберите уровень качества, и MooshieUI перечислит все используемые файлы, включая отдельную диффузионную модель для каждого режима, загрузив недостающие.",
   "generation.video.stack.nvfp4": "NVFP4 - 12,5 ГБ, только Blackwell",
   "generation.video.stack.int8": "int8 - 21 ГБ, рекомендуется",
   "generation.video.stack.fp8": "fp8 - 21 ГБ",
   "generation.video.stack.bf16": "bf16 - 40 ГБ, полная точность",
-  "generation.video.stack_ready": "Все четыре файла моделей установлены.",
-  "generation.video.stack_missing": "Не хватает {count} из 4 файлов моделей, к загрузке {size}.",
-  "generation.video.stack_download": "Загрузить недостающие файлы ({size})",
+  "generation.video.stack_ready": "Все файлы моделей установлены.",
+  "generation.video.stack_missing": "Не хватает {count} из {total} файлов моделей, к загрузке {size}.",
+  "generation.video.stack_download": "Загрузить все недостающие ({count} файла, {size})",
   "generation.video.stack_downloading": "Загрузка",
   "generation.video.stack_download_failed": "Загрузка не удалась: {error}",
   "generation.video.stack_requires_blackwell": "Для NVFP4 нужна карта Blackwell (серия RTX 50). На более старых картах используется значительно более медленный путь.",
@@ -2866,6 +2866,22 @@ const ru: Record<string, string> = {
   "errors.report.opening": "Открытие...",
 
   "errors.report.copied_hint": "Диагностика скопирована в буфер обмена. Вставьте её в тело тикета.",
+
+  "generation.video.role_fl2va": "Модель первого/последнего кадра",
+
+  "generation.video.role_ref2va": "Ссылочная модель",
+
+  "generation.video.role_text_encoder": "Текстовый энкодер",
+
+  "generation.video.role_video_vae": "Видео VAE",
+
+  "generation.video.role_audio_vae": "Аудио VAE",
+
+  "generation.video.role_in_use": "используется",
+
+  "generation.video.stack_file_installed": "Установлено",
+
+  "generation.video.stack_download_one": "Загрузить",
 
 };
 export default ru;
