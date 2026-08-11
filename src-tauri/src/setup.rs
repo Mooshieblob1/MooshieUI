@@ -1523,6 +1523,33 @@ async fn step_install_attention_backend(
     }
 }
 
+/// Max VRAM in MB reported under a `/sys/class/drm`-shaped root, across all
+/// `card*/device` entries. Checks `mem_info_vram_total` (i915, and AMD's
+/// `amdgpu`) first, falling back to `tile0/vram0/total_bytes` (Intel's newer
+/// `xe` driver, default for Battlemage and increasingly used for Alchemist).
+/// No vendor filtering -- both paths only exist for dedicated VRAM in
+/// practice, matching the pre-existing (also unfiltered) behavior here.
+// Only called from the #[cfg(target_os = "linux")] block; tests exercise it
+// cross-platform, so the function is ungated but unused on non-Linux.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_vram_from_drm_root(root: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return 0;
+    };
+    let mut max_vram: u64 = 0;
+    for entry in entries.flatten() {
+        let device_dir = entry.path().join("device");
+        let bytes = std::fs::read_to_string(device_dir.join("mem_info_vram_total"))
+            .ok()
+            .or_else(|| std::fs::read_to_string(device_dir.join("tile0/vram0/total_bytes")).ok())
+            .and_then(|s| s.trim().parse::<u64>().ok());
+        if let Some(bytes) = bytes {
+            max_vram = max_vram.max(bytes / (1024 * 1024));
+        }
+    }
+    max_vram
+}
+
 /// Detect total GPU VRAM in megabytes. Returns 0 if detection fails.
 async fn detect_vram_mb() -> u64 {
     // NVIDIA: nvidia-smi reports MiB
@@ -1545,24 +1572,13 @@ async fn detect_vram_mb() -> u64 {
         }
     }
 
-    // AMD: sysfs exposes VRAM in bytes (Linux only)
+    // AMD (mem_info_vram_total) and Intel Arc (i915: mem_info_vram_total,
+    // xe: tile0/vram0/total_bytes) both expose VRAM via sysfs (Linux only).
     #[cfg(target_os = "linux")]
     {
-        if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
-            let mut max_vram: u64 = 0;
-            for entry in entries.flatten() {
-                let path = entry.path().join("device/mem_info_vram_total");
-                if path.exists() {
-                    if let Ok(val) = std::fs::read_to_string(&path) {
-                        if let Ok(bytes) = val.trim().parse::<u64>() {
-                            max_vram = max_vram.max(bytes / (1024 * 1024));
-                        }
-                    }
-                }
-            }
-            if max_vram > 0 {
-                return max_vram;
-            }
+        let max_vram = parse_vram_from_drm_root(std::path::Path::new("/sys/class/drm"));
+        if max_vram > 0 {
+            return max_vram;
         }
     }
 
@@ -2553,4 +2569,83 @@ pub async fn update_comfyui(
         target_ref: COMFYUI_REF.to_string(),
         method,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_vram_from_drm_root;
+    use std::fs;
+
+    fn unique_temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mooshieui-test-{}-{}",
+            name,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn parses_i915_mem_info_vram_total_path() {
+        let root = unique_temp_dir("i915");
+        let device_dir = root.join("card0").join("device");
+        fs::create_dir_all(&device_dir).unwrap();
+        fs::write(device_dir.join("mem_info_vram_total"), "17179869184").unwrap(); // 16 GiB
+        assert_eq!(parse_vram_from_drm_root(&root), 16384);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn parses_xe_tile0_vram0_total_bytes_path_when_mem_info_absent() {
+        let root = unique_temp_dir("xe");
+        let device_dir = root.join("card0").join("device");
+        let tile_dir = device_dir.join("tile0").join("vram0");
+        fs::create_dir_all(&tile_dir).unwrap();
+        fs::write(tile_dir.join("total_bytes"), "17179869184").unwrap(); // 16 GiB
+        assert_eq!(parse_vram_from_drm_root(&root), 16384);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn prefers_mem_info_vram_total_when_both_paths_present() {
+        let root = unique_temp_dir("both");
+        let device_dir = root.join("card0").join("device");
+        let tile_dir = device_dir.join("tile0").join("vram0");
+        fs::create_dir_all(&tile_dir).unwrap();
+        fs::write(device_dir.join("mem_info_vram_total"), "8589934592").unwrap(); // 8 GiB
+        fs::write(tile_dir.join("total_bytes"), "17179869184").unwrap(); // 16 GiB
+        assert_eq!(parse_vram_from_drm_root(&root), 8192);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn takes_max_across_multiple_cards() {
+        let root = unique_temp_dir("multi");
+        let card0 = root.join("card0").join("device");
+        let card1 = root.join("card1").join("device");
+        fs::create_dir_all(&card0).unwrap();
+        fs::create_dir_all(&card1).unwrap();
+        fs::write(card0.join("mem_info_vram_total"), "8589934592").unwrap(); // 8 GiB
+        fs::write(card1.join("mem_info_vram_total"), "17179869184").unwrap(); // 16 GiB
+        assert_eq!(parse_vram_from_drm_root(&root), 16384);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn returns_zero_when_no_vram_files_present() {
+        let root = unique_temp_dir("empty");
+        fs::create_dir_all(root.join("card0").join("device")).unwrap();
+        assert_eq!(parse_vram_from_drm_root(&root), 0);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn returns_zero_when_root_does_not_exist() {
+        let root = std::env::temp_dir().join("mooshieui-test-nonexistent-drm-root");
+        assert_eq!(parse_vram_from_drm_root(&root), 0);
+    }
 }
