@@ -78,12 +78,36 @@ jobs:
         run: cargo install cargo-audit --locked && cd src-tauri && cargo audit
         continue-on-error: true
 
-      - name: Build Tauri app (Linux)
+      # Built as three separate `tauri build` invocations (one process per format)
+      # instead of one `--target ... ` call with `targets: "all"`. Tauri's bundler
+      # binary-patches a __TAURI_BUNDLE_TYPE marker into the compiled binary per
+      # package type (deb/rpm/appimage) so the updater plugin on the user's machine
+      # knows which installer to run; when all three formats are built in a single
+      # process/job (as before), that patch/restore cycle shares mutable on-disk
+      # state across formats. Isolating each build to its own process — mirroring
+      # how the Windows job already isolates to `--bundles nsis` — removes that
+      # shared state entirely. AppImage is built first since it's the only format
+      # our updater manifest (latest.json) actually distributes.
+      - name: Build Tauri app (Linux, AppImage)
         if: runner.os != 'Windows'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --target ${{ matrix.target }}
+        run: npx tauri build --target ${{ matrix.target }} --bundles appimage
+
+      - name: Build Tauri app (Linux, deb)
+        if: runner.os != 'Windows'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --target ${{ matrix.target }} --bundles deb
+
+      - name: Build Tauri app (Linux, rpm)
+        if: runner.os != 'Windows'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --target ${{ matrix.target }} --bundles rpm
 
       - name: Build Tauri app (Windows, NSIS only)
         if: runner.os == 'Windows'

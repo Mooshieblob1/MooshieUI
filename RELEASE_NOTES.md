@@ -1,3 +1,11 @@
+## What's New in v2.0.5
+
+### Fixes and maintenance
+- **Video generation could fail with a raw ComfyUI error instead of an actionable one**: the pre-flight check for required MiniMax H3 nodes only ran when a timeline drove the graph (the vendored Director pack). The native, non-timeline video path (image-to-video and reference-to-video) had no equivalent check, so a ComfyUI install missing that node, or older than 0.30, surfaced a raw prompt-validation error. Both video paths are now checked before submission, on the desktop app and the LAN web server alike.
+- **Linux release builds now build AppImage, deb, and rpm as separate steps**: isolates Tauri's per-format binary patching to its own process for each package type, matching how the Windows build already isolates to NSIS only.
+
+---
+
 ## What's New in v2.0.4
 
 ### Fixes and maintenance

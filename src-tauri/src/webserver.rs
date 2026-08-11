@@ -2805,6 +2805,18 @@ async fn dispatch_command(
                 )
                 .map_err(|e| e.to_string())?;
             }
+            // Mirrors the same check in the Tauri `generate` command: catches a
+            // missing MiniMax H3 node before submission instead of surfacing
+            // ComfyUI's raw `missing_node_type` prompt-validation error.
+            if params.mode == "video" {
+                let base_url = state.base_url().await;
+                crate::comfyui::nodes::verify_required_h3_nodes_for_generation(
+                    &state.http_client,
+                    &base_url,
+                    &params,
+                )
+                .await?;
+            }
             let seed = if params.seed < 0 {
                 (rand::random::<u64>() >> 1) as i64
             } else {

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use super::process::tokio_command_no_window;
+use super::types::GenerationParams;
 
 #[derive(Clone, Copy)]
 struct RequiredCustomNodePackage {
@@ -154,6 +155,9 @@ pub const MISSING_RIFE_NODES_MARKER: &str = "Required RIFE custom nodes failed t
 /// Substring present in [`verify_required_h3_director_nodes`] error output.
 pub const MISSING_H3_DIRECTOR_NODES_MARKER: &str =
     "Required MiniMax H3 Director custom nodes failed to load";
+
+/// Substring present in [`verify_required_h3_native_nodes`] error output.
+pub const MISSING_H3_NATIVE_NODES_MARKER: &str = "Required MiniMax H3 video node failed to load";
 
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveImage",
@@ -1046,6 +1050,76 @@ pub async fn verify_required_h3_director_nodes(
     ))
 }
 
+/// Native ComfyUI-core node class the non-timeline video path builds into the
+/// workflow for a given `video_variant` (see `templates::video::build`).
+fn required_h3_native_node_class(video_variant: &str) -> &'static str {
+    if video_variant == "fl2va" {
+        "MiniMaxH3ImageToVideo"
+    } else {
+        "MiniMaxH3ReferenceToVideo"
+    }
+}
+
+/// Verify ComfyUI exposes the native MiniMax H3 node the non-timeline video
+/// path depends on for `video_variant`.
+///
+/// Unlike [`verify_required_h3_director_nodes`], this class ships inside
+/// ComfyUI core itself (`comfy_extras/nodes_minimax_h3`, ComfyUI >= 0.30), not
+/// a package MooshieUI deploys — so a missing class here means the fix is
+/// updating ComfyUI, not restarting it.
+pub async fn verify_required_h3_native_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+    video_variant: &str,
+) -> Result<(), String> {
+    let node_class = required_h3_native_node_class(video_variant);
+
+    for attempt in 0..5 {
+        if object_info_has_node_class(http_client, base_url, node_class).await? {
+            log::info!("Verified required MiniMax H3 video node class ({node_class})");
+            return Ok(());
+        }
+        if attempt < 4 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    Err(format!(
+        "{}: {}. This node ships inside ComfyUI itself (it is not a MooshieUI custom node), and requires ComfyUI 0.30 or newer. Open Settings and run \"Update ComfyUI\", then try again.",
+        MISSING_H3_NATIVE_NODES_MARKER, node_class
+    ))
+}
+
+/// Verify the MiniMax H3 video node(s) a `generate` call actually needs are
+/// loaded, before the workflow is submitted to ComfyUI.
+///
+/// A no-op outside video mode. Video mode branches into either the vendored
+/// Director package (when a timeline drives the graph) or ComfyUI's native H3
+/// node for the selected variant — same 0.30-or-newer requirement either way,
+/// just two different sources for the class. Both the Tauri `generate`
+/// command and the LAN web server `generate` route call this so neither can
+/// drift out of sync with what `templates::video::build` actually emits.
+pub async fn verify_required_h3_nodes_for_generation(
+    http_client: &reqwest::Client,
+    base_url: &str,
+    params: &GenerationParams,
+) -> Result<(), String> {
+    if params.mode != "video" {
+        return Ok(());
+    }
+
+    let timeline_drives = params
+        .video_timeline_data
+        .as_deref()
+        .is_some_and(|data| !data.trim().is_empty());
+
+    if timeline_drives {
+        verify_required_h3_director_nodes(http_client, base_url).await
+    } else {
+        verify_required_h3_native_nodes(http_client, base_url, &params.video_variant).await
+    }
+}
+
 /// Verify that ComfyUI loaded the MooshieUI custom node classes required by
 /// every generated workflow. If ComfyUI was already running when nodes were
 /// deployed to disk, the files exist but /object_info will still be missing
@@ -1490,6 +1564,26 @@ mod tests {
         assert_eq!(payload["kind"], "missing_mooshie_nodes");
         assert_eq!(payload["port"], 8188);
         assert!(payload["missing_nodes"].as_array().unwrap().len() == 1);
+    }
+
+    #[test]
+    fn native_h3_node_class_matches_video_variant() {
+        assert_eq!(
+            required_h3_native_node_class("fl2va"),
+            "MiniMaxH3ImageToVideo"
+        );
+        assert_eq!(
+            required_h3_native_node_class("ref2va"),
+            "MiniMaxH3ReferenceToVideo"
+        );
+        // Any other/unknown variant falls back to the ref2va node, matching
+        // `templates::video::build`'s `else` branch (guarded upstream by
+        // `validate_generation_params`, which rejects anything but the two
+        // known variants before this is ever reached).
+        assert_eq!(
+            required_h3_native_node_class("unknown"),
+            "MiniMaxH3ReferenceToVideo"
+        );
     }
 
     #[test]
