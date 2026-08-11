@@ -1,6 +1,7 @@
 pub mod catalog;
 pub mod grounding;
 pub mod hardware;
+pub mod local_llm;
 pub mod oauth;
 pub mod providers;
 pub mod server;

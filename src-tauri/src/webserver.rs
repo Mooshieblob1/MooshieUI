@@ -5224,6 +5224,7 @@ pub async fn chat_any_headless(
     };
 
     if ext_enabled {
+        crate::prompt_assistant::local_llm::wake_local_server(&state.http_client, &ext_base).await;
         state.broadcast("llm:stage", serde_json::json!("generating"));
         return crate::prompt_assistant::server::chat_provider(
             &state.http_client,
