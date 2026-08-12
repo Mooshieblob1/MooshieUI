@@ -1,5 +1,14 @@
 # Changelog
 
+## What's New in v2.0.6
+
+### Fixes and maintenance
+- **Intel Arc GPUs on the newer `xe` kernel driver reported 0 VRAM**: Battlemage/B-series Arc GPUs default to the `xe` driver on Linux, which VRAM detection didn't account for, so it silently corrupted hardware-tier recommendations. Detection now covers both the legacy `i915` and newer `xe` drivers.
+- **Intel SYCL/DPC++ kernels recompiled from scratch on every ComfyUI XPU launch**: `SYCL_CACHE_PERSISTENT` defaults to off, so kernel cache persistence wasn't actually enabled for Intel Arc workers. It's now set explicitly, cutting repeat startup time.
+- **Enhance, Compose, and prompt rewrite could hang on a stopped local LLM server**: if the configured Ollama or LM Studio endpoint wasn't running, requests would just fail instead of trying to start it. The app now makes a best-effort attempt to wake the server (`ollama list` / `lms server start`, 20s timeout) before giving up, skipped automatically if the endpoint is already up or not local.
+
+---
+
 ## What's New in v2.0.5
 
 ### Fixes and maintenance
