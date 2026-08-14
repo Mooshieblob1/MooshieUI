@@ -236,7 +236,7 @@ export function resolveAuto(seamDelta: number): "trim" | "none" {
 
 /** Rust: `over_size_limit` */
 export function overSizeLimit(bytes: number, target: SizeTarget): boolean {
-  if (target === "discord") return bytes > 10 * 1024 * 1024;
+  if (target === "discord") return bytes > 20 * 1024 * 1024;
   if (target === "nitro") return bytes > 500 * 1024 * 1024;
   return false;
 }

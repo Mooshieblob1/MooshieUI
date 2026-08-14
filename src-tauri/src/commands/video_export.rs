@@ -162,7 +162,7 @@ pub fn supports_audio(format: &str, loop_mode: &str) -> bool {
 /// An unrecognised or absent target never produces a hint.
 pub fn over_size_limit(bytes: u64, target: &str) -> bool {
     match target {
-        "discord" => bytes > 10 * 1024 * 1024,
+        "discord" => bytes > 20 * 1024 * 1024,
         "nitro" => bytes > 500 * 1024 * 1024,
         _ => false,
     }
@@ -812,10 +812,10 @@ mod tests {
 
     #[test]
     fn size_limits_follow_the_platform_table() {
-        let ten_mb = 10 * 1024 * 1024;
-        assert!(!over_size_limit(ten_mb, "discord"));
-        assert!(over_size_limit(ten_mb + 1, "discord"));
-        assert!(!over_size_limit(ten_mb + 1, "nitro"));
+        let twenty_mb = 20 * 1024 * 1024;
+        assert!(!over_size_limit(twenty_mb, "discord"));
+        assert!(over_size_limit(twenty_mb + 1, "discord"));
+        assert!(!over_size_limit(twenty_mb + 1, "nitro"));
         assert!(over_size_limit(500 * 1024 * 1024 + 1, "nitro"));
         // No target selected means no hint, ever.
         assert!(!over_size_limit(u64::MAX, "none"));
