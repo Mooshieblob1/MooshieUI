@@ -162,6 +162,11 @@ function translateNaiWeightSyntax(prompt: string): string {
  * Guard: bareword rewrite only fires when the base (token minus the trailing
  * +/- run) contains an ASCII letter, so emoticon tags like +_+ and bare ++ / 1+
  * are left untouched. Blend/swap operators are intentionally not handled.
+ *
+ * Escape: a backslash directly before a trailing +/- run keeps it a literal
+ * character instead of emphasis — e.g. a crossover tag "nero (bride)\+astolfo"
+ * or a character name "La\+ darkness" whose name is not emphasis syntax. The
+ * escaping backslash is stripped from the output either way.
  */
 function translateInvokeAiWeightSyntax(prompt: string): string {
   const emphasisWeight = (marks: string): string => {
@@ -176,23 +181,32 @@ function translateInvokeAiWeightSyntax(prompt: string): string {
   );
 
   // 2. Group emphasis: (group)+++ / (group)--- -> (group:W). Innermost-first.
+  // An escaped run is left untouched here (returned byte-for-byte) so the loop
+  // still converges; the escaping backslash is stripped once, after the loop,
+  // so the now-literal +/- doesn't get re-matched and wrongly converted on a
+  // later pass.
   let prev: string;
   do {
     prev = prompt;
     prompt = prompt.replace(
-      /\(([^()]+)\)(\++|-+)/g,
-      (_m, inner, marks) => `(${inner}:${emphasisWeight(marks)})`,
+      /\(([^()]+)\)(\\(?:\++|-+)|\++|-+)/g,
+      (_m, inner, marks) => {
+        if (marks[0] === "\\") return `(${inner})${marks}`;
+        return `(${inner}:${emphasisWeight(marks)})`;
+      },
     );
   } while (prompt !== prev);
+  prompt = prompt.replace(/\)\\(\++|-+)/g, ")$1");
 
   // 3. Bareword emphasis: tokenize on delimiters, rewrite word+ / word- when the
   // base has a letter. Delimiters: whitespace , ( ) { }
   prompt = prompt.replace(/[^\s,(){}]+/g, (token) => {
-    const m = token.match(/^(.*?)(\++|-+)$/);
+    const m = token.match(/^(.*?)(\\?)(\++|-+)$/);
     if (!m) return token;
-    const base = m[1];
+    const [, base, esc, marks] = m;
+    if (esc) return base + marks;
     if (!/[a-zA-Z]/.test(base)) return token;
-    return `(${base}:${emphasisWeight(m[2])})`;
+    return `(${base}:${emphasisWeight(marks)})`;
   });
 
   return prompt;
