@@ -1,3 +1,16 @@
+## What's New in v2.0.7
+
+### New features
+- **TeaCache for Anima**: Anima generation now has the same TeaCache speedup already available for video. It skips the model's forward pass on steps where little changed since the last one, reusing the cached output instead. Small risk of softer detail, off by default. Toggle it under sampler settings when an Anima checkpoint is selected.
+- **TeaCache for MiniMax H3 video**: video generation gets a TeaCache toggle for the MiniMax H3 pipeline, installing the required nodes and restarting ComfyUI on first use, matching the existing image TeaCache install flow.
+
+### Fixes and maintenance
+- **Looping video export used a flat 4-frame crossfade regardless of clip length**: a short loop got the same blend window as a long one, which could look like a visible jump-cut on short clips or an unnecessarily long fade on longer ones. The default crossfade now scales with clip length (roughly 8% of the frame count, clamped to a sane range) instead of a fixed 4 frames.
+- **Discord's free-tier attachment limit was checked against the old 10 MB cap**: Discord raised the free upload limit to 20 MB; exported videos under that were being incorrectly flagged as over the limit. Corrected to 20 MB. ([#588](https://github.com/Mooshieblob1/MooshieUI/pull/588))
+- **Prompt names containing `+` or `-` could collide with InvokeAI-style emphasis syntax**: a saved prompt name like `cat+dog` could be misread as emphasis weighting. Backslash-escaped `\+`/`\-` in prompt names are now preserved instead of being treated as emphasis markers. ([#589](https://github.com/Mooshieblob1/MooshieUI/pull/589))
+
+---
+
 ## What's New in v2.0.6
 
 ### Fixes and maintenance

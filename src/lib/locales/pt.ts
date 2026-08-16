@@ -564,6 +564,9 @@ const pt: Record<string, string> = {
   "generation.sampler.metadata_upgraded": "16-bit ativo — Stealth Alpha atualizado para Ambos.",
   "generation.sampler.anima_recommended": "Configurações Recomendadas para Anima",
   "generation.sampler.anima_hint": "30 passos, CFG 4, sampler er_sde (do guia do modelo Anima).",
+  "generation.sampler.anima_rdbt_toggle": "LoRA RDBT-Anima",
+  "generation.sampler.anima_rdbt_tip": "Baixa e aplica a LoRA comunitária RDBT-Anima com destilação de orientação (~92MB, espelho não oficial). Acelera a geração eliminando a necessidade de CFG.",
+  "generation.sampler.anima_rdbt_downloading": "Baixando LoRA RDBT-Anima…",
   "generation.sampler.sih_recommended": "Configurações Recomendadas para SIH",
   "generation.sampler.sih_hint": "Sem configurações públicas do modelo SIH; usando padrões do projeto: 20 passos, CFG 1.4, euler_cfg_pp, sgm_uniform.",
   "generation.sampler.juice_recommended": "Configurações Recomendadas para Juice",
@@ -724,6 +727,13 @@ const pt: Record<string, string> = {
   "generation.video.turbo_install_verifying": "Verificando se os nós foram carregados",
   "generation.video.turbo_install_not_loaded": "O ComfyUI reiniciou, mas os nós do sampler Turbo não carregaram. Verifique o log do ComfyUI.",
   "generation.video.turbo_install_failed": "Não foi possível instalar o LoRA Turbo: {error}",
+  "generation.video.teacache": "TeaCache",
+  "generation.video.teacache_tip": "Ignora a passagem direta do modelo nas etapas em que a saída mudou pouco em relação à anterior, reutilizando o resultado em cache. Mais rápido, com um pequeno risco de movimento mais suave; combina com o Turbo.",
+  "generation.video.teacache_install_hint": "Ativar esta opção instala os nós do TeaCache e, em seguida, reinicia o ComfyUI.",
+  "generation.video.teacache_install_starting": "Instalando os nós do TeaCache",
+  "generation.video.teacache_install_verifying": "Verificando se os nós foram carregados",
+  "generation.video.teacache_install_not_loaded": "O ComfyUI reiniciou, mas os nós do TeaCache não foram carregados. Verifique o log do ComfyUI.",
+  "generation.video.teacache_install_failed": "Não foi possível instalar o TeaCache: {error}",
   "generation.video.models": "Modelos",
   "generation.video.models_tip": "O modo vídeo usa a pilha MiniMax H3. Escolha um nível de qualidade e o MooshieUI lista todos os arquivos que usa, incluindo um modelo de difusão separado para cada modo, e baixa o que estiver faltando.",
   "generation.video.stack.nvfp4": "NVFP4 - 12,5 GB, só Blackwell",
@@ -1947,6 +1957,8 @@ const pt: Record<string, string> = {
   "generation.prompts.negative_disabled_for_model": "ignorado por este modelo",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
+  "generation.sampler.anima_teacache_label": "TeaCache",
+  "generation.sampler.anima_teacache_tip": "Acelera a geração no Anima reutilizando a saída anterior do modelo em etapas com pouca alteração, pulando o passe direto. Pequeno risco de detalhes mais suaves; desativado por padrão.",
 
 
 

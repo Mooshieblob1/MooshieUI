@@ -577,6 +577,9 @@ const ja: Record<string, string> = {
   "generation.sampler.metadata_upgraded": "16ビット有効 — ステルスアルファは「両方」にアップグレードされました。",
   "generation.sampler.anima_recommended": "Anima推奨設定",
   "generation.sampler.anima_hint": "30ステップ、CFG 4、サンプラー er_sde（Animaモデルカードのガイダンスより）。",
+  "generation.sampler.anima_rdbt_toggle": "RDBT-Anima LoRA",
+  "generation.sampler.anima_rdbt_tip": "コミュニティ製のRDBT-Anima ガイダンス蒸留LoRAをダウンロードして適用します(約92MB、非公式ミラー)。CFGが不要になり生成が高速化します。",
+  "generation.sampler.anima_rdbt_downloading": "RDBT-Anima LoRAをダウンロード中…",
   "generation.sampler.sih_recommended": "SIH推奨設定",
   "generation.sampler.sih_hint": "公開SIHモデルカード設定なし。プロジェクトデフォルト使用：20ステップ、CFG 1.4、euler_cfg_pp、sgm_uniform。",
   "generation.sampler.juice_recommended": "Juice推奨設定",
@@ -739,6 +742,13 @@ const ja: Record<string, string> = {
   "generation.video.turbo_install_verifying": "ノードが読み込まれたか確認しています",
   "generation.video.turbo_install_not_loaded": "ComfyUI は再起動しましたが、Turbo サンプラー ノードが読み込まれませんでした。ComfyUI のログを確認してください。",
   "generation.video.turbo_install_failed": "Turbo LoRA をインストールできませんでした: {error}",
+  "generation.video.teacache": "TeaCache",
+  "generation.video.teacache_tip": "前のステップと出力がほとんど変わらないステップではモデルの順伝播をスキップし、キャッシュされた結果を再利用します。高速化されますが、動きがわずかに滑らかになるリスクがあります。Turbo と併用可能です。",
+  "generation.video.teacache_install_hint": "オンにすると TeaCache ノードをインストールし、ComfyUI を再起動します。",
+  "generation.video.teacache_install_starting": "TeaCache ノードをインストールしています",
+  "generation.video.teacache_install_verifying": "ノードの読み込みを確認しています",
+  "generation.video.teacache_install_not_loaded": "ComfyUI は再起動しましたが、TeaCache ノードが読み込まれませんでした。ComfyUI のログを確認してください。",
+  "generation.video.teacache_install_failed": "TeaCache をインストールできませんでした: {error}",
   "generation.video.models": "モデル",
   "generation.video.models_tip": "動画モードは MiniMax H3 スタックを使用します。品質ティアを選ぶと、MooshieUI が使用するすべてのファイルを一覧表示し、各モードごとに個別の拡散モデルを含め、不足分をダウンロードします。",
   "generation.video.stack.nvfp4": "NVFP4 - 12.5 GB、Blackwell のみ",
@@ -1971,6 +1981,8 @@ const ja: Record<string, string> = {
   "generation.prompts.negative_disabled_for_model": "このモデルでは無視されます",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
+  "generation.sampler.anima_teacache_label": "TeaCache",
+  "generation.sampler.anima_teacache_tip": "変化がほとんどないステップでモデルの前回の出力を再利用し、フォワードパスをスキップすることで Anima の生成を高速化します。ディテールがわずかに柔らかくなるリスクがあります。デフォルトではオフです。",
 
 
 

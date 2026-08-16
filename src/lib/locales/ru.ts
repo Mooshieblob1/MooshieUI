@@ -564,6 +564,9 @@ const ru: Record<string, string> = {
   "generation.sampler.metadata_upgraded": "16-бит активен — Стелс Альфа обновлён до Оба.",
   "generation.sampler.anima_recommended": "Рекомендуемые настройки Anima",
   "generation.sampler.anima_hint": "30 шагов, CFG 4, сэмплер er_sde (из инструкции к модели Anima).",
+  "generation.sampler.anima_rdbt_toggle": "LoRA RDBT-Anima",
+  "generation.sampler.anima_rdbt_tip": "Загружает и применяет созданную сообществом LoRA RDBT-Anima с дистилляцией guidance (~92 МБ, неофициальное зеркало). Ускоряет генерацию, устраняя необходимость в CFG.",
+  "generation.sampler.anima_rdbt_downloading": "Загрузка LoRA RDBT-Anima…",
   "generation.sampler.sih_recommended": "Рекомендуемые настройки SIH",
   "generation.sampler.sih_hint": "Публичных настроек модели SIH не найдено; используются стандартные проекта: 20 шагов, CFG 1.4, euler_cfg_pp, sgm_uniform.",
   "generation.sampler.juice_recommended": "Рекомендуемые настройки Juice",
@@ -724,6 +727,13 @@ const ru: Record<string, string> = {
   "generation.video.turbo_install_verifying": "Проверка загрузки узлов",
   "generation.video.turbo_install_not_loaded": "ComfyUI перезапустился, но узлы сэмплера Turbo не загрузились. Проверьте журнал ComfyUI.",
   "generation.video.turbo_install_failed": "Не удалось установить Turbo LoRA: {error}",
+  "generation.video.teacache": "TeaCache",
+  "generation.video.teacache_tip": "Пропускает прямой проход модели на шагах, где результат почти не изменился по сравнению с предыдущим, повторно используя кешированный результат. Быстрее, с небольшим риском более плавного движения; сочетается с Turbo.",
+  "generation.video.teacache_install_hint": "При включении этой опции будут установлены узлы TeaCache, после чего ComfyUI перезапустится.",
+  "generation.video.teacache_install_starting": "Установка узлов TeaCache",
+  "generation.video.teacache_install_verifying": "Проверка загрузки узлов",
+  "generation.video.teacache_install_not_loaded": "ComfyUI перезапущен, но узлы TeaCache не загрузились. Проверьте журнал ComfyUI.",
+  "generation.video.teacache_install_failed": "Не удалось установить TeaCache: {error}",
   "generation.video.models": "Модели",
   "generation.video.models_tip": "Режим видео использует набор MiniMax H3. Выберите уровень качества, и MooshieUI перечислит все используемые файлы, включая отдельную диффузионную модель для каждого режима, загрузив недостающие.",
   "generation.video.stack.nvfp4": "NVFP4 - 12,5 ГБ, только Blackwell",
@@ -1946,6 +1956,8 @@ const ru: Record<string, string> = {
   "generation.prompts.negative_disabled_for_model": "не используется этой моделью",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
+  "generation.sampler.anima_teacache_label": "TeaCache",
+  "generation.sampler.anima_teacache_tip": "Ускоряет генерацию в Anima за счёт повторного использования предыдущего результата модели на шагах с малыми изменениями, пропуская прямой проход. Небольшой риск более мягкой детализации; по умолчанию отключено.",
 
 
 

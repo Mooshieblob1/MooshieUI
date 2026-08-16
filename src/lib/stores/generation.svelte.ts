@@ -569,6 +569,10 @@ class GenerationStore {
   styleTransferPmiAlpha = $state(0.5);
   styleTransferMegapixels = $state(1.05);
   styleTransferBlocks = $state("0-999");
+  /** Anima TeaCache: reuses the previous step's DiT output while the
+   *  accumulated input delta stays under threshold. MooshieUI-authored node,
+   *  always available (no lazy install, unlike video's H3 TeaCache). */
+  animaTeacacheEnabled = $state(false);
   facefixEnabled = $state(false);
   facefixDetector = $state<string | null>(null);
   facefixDenoise = $state(0.4);
@@ -642,6 +646,10 @@ class GenerationStore {
   videoTurboEnabled = $state(false);
   /** Sampling steps while Turbo is on; clamped to 4..8 by the backend too. */
   videoTurboSteps = $state(H3_TURBO_DEFAULT_STEPS);
+  /** TeaCache: reuses the previous step's model output while the accumulated
+   *  input delta stays under threshold. Only ever true once the lazy install
+   *  has put the node pack on disk. */
+  videoTeacacheEnabled = $state(false);
   videoDiffusionModel = $state<string | null>(null);
   videoClipModel = $state<string | null>(null);
   videoVaeModel = $state<string | null>(null);
@@ -1967,6 +1975,8 @@ class GenerationStore {
         if (saved.videoRifeEnsemble !== undefined) this.videoRifeEnsemble = saved.videoRifeEnsemble;
         if (saved.videoTurboEnabled !== undefined)
           this.videoTurboEnabled = saved.videoTurboEnabled;
+        if (saved.videoTeacacheEnabled !== undefined)
+          this.videoTeacacheEnabled = saved.videoTeacacheEnabled;
         if (saved.videoTurboSteps !== undefined)
           this.videoTurboSteps = Math.min(
             H3_TURBO_MAX_STEPS,
@@ -1989,6 +1999,8 @@ class GenerationStore {
         if (saved.styleTransferPmiAlpha !== undefined) this.styleTransferPmiAlpha = saved.styleTransferPmiAlpha;
         if (saved.styleTransferMegapixels !== undefined) this.styleTransferMegapixels = saved.styleTransferMegapixels;
         if (saved.styleTransferBlocks !== undefined) this.styleTransferBlocks = saved.styleTransferBlocks;
+        if (saved.animaTeacacheEnabled !== undefined)
+          this.animaTeacacheEnabled = saved.animaTeacacheEnabled;
         if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
         if (saved.facefixDetector !== undefined) this.facefixDetector = saved.facefixDetector;
         if (saved.facefixDenoise !== undefined) this.facefixDenoise = saved.facefixDenoise;
@@ -2148,6 +2160,7 @@ class GenerationStore {
         styleTransferPmiAlpha: this.styleTransferPmiAlpha,
         styleTransferMegapixels: this.styleTransferMegapixels,
         styleTransferBlocks: this.styleTransferBlocks,
+        animaTeacacheEnabled: this.animaTeacacheEnabled,
         facefixEnabled: this.facefixEnabled,
         facefixDetector: this.facefixDetector,
         facefixDenoise: this.facefixDenoise,
@@ -2191,6 +2204,7 @@ class GenerationStore {
         videoRifeEnsemble: this.videoRifeEnsemble,
         videoTurboEnabled: this.videoTurboEnabled,
         videoTurboSteps: this.videoTurboSteps,
+        videoTeacacheEnabled: this.videoTeacacheEnabled,
         videoDiffusionModel: this.videoDiffusionModel,
         videoClipModel: this.videoClipModel,
         videoVaeModel: this.videoVaeModel,
@@ -2273,6 +2287,7 @@ class GenerationStore {
       styleTransferPmiAlpha: this.styleTransferPmiAlpha,
       styleTransferMegapixels: this.styleTransferMegapixels,
       styleTransferBlocks: this.styleTransferBlocks,
+      animaTeacacheEnabled: this.animaTeacacheEnabled,
       facefixEnabled: this.facefixEnabled,
       facefixDetector: this.facefixDetector,
       facefixDenoise: this.facefixDenoise,
@@ -2316,6 +2331,7 @@ class GenerationStore {
       videoRifeEnsemble: this.videoRifeEnsemble,
       videoTurboEnabled: this.videoTurboEnabled,
       videoTurboSteps: this.videoTurboSteps,
+      videoTeacacheEnabled: this.videoTeacacheEnabled,
       videoDiffusionModel: this.videoDiffusionModel,
       videoClipModel: this.videoClipModel,
       videoVaeModel: this.videoVaeModel,
@@ -2702,6 +2718,7 @@ class GenerationStore {
       style_transfer_pmi_alpha: this.styleTransferPmiAlpha,
       style_transfer_megapixels: this.styleTransferMegapixels,
       style_transfer_blocks: this.styleTransferBlocks,
+      anima_teacache_enabled: this.animaTeacacheEnabled,
       edit_reference_images: this.editReferenceImages.filter((v): v is string => !!v),
       video_variant: this.videoVariant,
       video_duration_seconds: this.videoDurationSeconds,
@@ -2722,6 +2739,7 @@ class GenerationStore {
       video_turbo_enabled: this.videoTurboEnabled,
       video_turbo_steps: this.videoTurboSteps,
       video_turbo_lora: this.videoTurboEnabled ? H3_TURBO_LORA.filename : null,
+      video_teacache_enabled: this.videoTeacacheEnabled,
       video_diffusion_model: this.videoDiffusionModel,
       video_clip_model: this.videoClipModel,
       video_vae_model: this.videoVaeModel,

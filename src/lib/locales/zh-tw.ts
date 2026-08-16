@@ -564,6 +564,9 @@ const zhTw: Record<string, string> = {
   "generation.sampler.metadata_upgraded": "16 位元已啟用 — 隱寫 alpha 已升級為「全部」。",
   "generation.sampler.anima_recommended": "Anima 建議設定",
   "generation.sampler.anima_hint": "30 步，CFG 4，取樣器 er_sde（Anima 模型卡指南）。",
+  "generation.sampler.anima_rdbt_toggle": "RDBT-Anima LoRA",
+  "generation.sampler.anima_rdbt_tip": "下載並套用社群製作的 RDBT-Anima 引導蒸餾 LoRA（約 92MB，非官方鏡像）。透過移除 CFG 需求加快生成速度。",
+  "generation.sampler.anima_rdbt_downloading": "正在下載 RDBT-Anima LoRA…",
   "generation.sampler.sih_recommended": "SIH 建議設定",
   "generation.sampler.sih_hint": "無公開 SIH 模型卡設定。使用專案預設值：20 步，CFG 1.4，euler_cfg_pp，sgm_uniform。",
   "generation.sampler.juice_recommended": "Juice 建議設定",
@@ -724,6 +727,13 @@ const zhTw: Record<string, string> = {
   "generation.video.turbo_install_verifying": "正在確認節點已載入",
   "generation.video.turbo_install_not_loaded": "ComfyUI 已重新啟動，但 Turbo 取樣器節點沒有載入。請查看 ComfyUI 記錄。",
   "generation.video.turbo_install_failed": "無法安裝 Turbo LoRA: {error}",
+  "generation.video.teacache": "TeaCache",
+  "generation.video.teacache_tip": "在輸出與前一步幾乎沒有變化的步驟中跳過模型的前向計算，改為重複使用快取的結果。速度更快，但有輕微的動作變得較不清晰的風險；可與 Turbo 疊加使用。",
+  "generation.video.teacache_install_hint": "開啟此選項會安裝 TeaCache 節點，然後重新啟動 ComfyUI。",
+  "generation.video.teacache_install_starting": "正在安裝 TeaCache 節點",
+  "generation.video.teacache_install_verifying": "正在驗證節點是否已載入",
+  "generation.video.teacache_install_not_loaded": "ComfyUI 已重新啟動，但 TeaCache 節點未能載入。請檢查 ComfyUI 的紀錄。",
+  "generation.video.teacache_install_failed": "無法安裝 TeaCache: {error}",
   "generation.video.models": "模型",
   "generation.video.models_tip": "影片模式使用 MiniMax H3 模型組。選擇一個品質層級，MooshieUI 會列出所有需要的檔案，包括每種模式各自的擴散模型，並下載缺少的檔案。",
   "generation.video.stack.nvfp4": "NVFP4 - 12.5 GB，僅限 Blackwell",
@@ -1946,6 +1956,8 @@ const zhTw: Record<string, string> = {
   "generation.prompts.negative_disabled_for_model": "此模型會忽略",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
+  "generation.sampler.anima_teacache_label": "TeaCache",
+  "generation.sampler.anima_teacache_tip": "透過在幾乎沒有變化的步驟中重複使用模型的上一次輸出、跳過前向運算來加速 Anima 生成。存在細節略微變軟的小風險；預設關閉。",
 
 
 

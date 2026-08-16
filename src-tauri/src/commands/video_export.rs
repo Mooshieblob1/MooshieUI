@@ -11,8 +11,24 @@ pub const MIN_OFFERED_FPS: u32 = 6;
 /// `auto` loop mode trims the duplicate frame below this measured seam delta.
 pub const AUTO_SEAM_THRESHOLD: f32 = 2.0;
 
-/// Default crossfade length, in frames.
-pub const DEFAULT_CROSSFADE_FRAMES: u32 = 4;
+/// Default crossfade length for a clip of `f` frames.
+///
+/// Proportional to the clip (~8%) rather than a flat constant: a short clip
+/// does not lose a disproportionate slice of itself to the crossfade, while a
+/// long one still gets a perceptible blend. Clamped to the slider's 1-16
+/// range, and never exceeds what `crossfade_available` allows for `f` (0 when
+/// no crossfade fits at all).
+///
+/// Mirrored by `defaultCrossfadeFrames` in `src/lib/utils/videoExport.ts`.
+pub fn default_crossfade_frames(f: u32) -> u32 {
+    // Largest n for which crossfade_available(f, n) holds, i.e. f > 3n.
+    let max_n = f.saturating_sub(1) / 3;
+    if max_n == 0 {
+        return 0;
+    }
+    let proportional = ((f as f64) * 0.08).round() as u32;
+    proportional.clamp(1, max_n.min(16))
+}
 
 /// Every integer divisor of `n`, largest first.
 pub fn divisors(n: u32) -> Vec<u32> {
@@ -799,6 +815,32 @@ mod tests {
         assert!(!crossfade_available(12, 4));
         assert!(!crossfade_available(4, 4));
         assert!(!crossfade_available(124, 0));
+    }
+
+    #[test]
+    fn default_crossfade_scales_with_clip_length() {
+        // A short clip (e.g. a 1s@24fps generation) keeps the crossfade small
+        // rather than losing a sixth of itself to a flat 4-frame default.
+        assert_eq!(default_crossfade_frames(24), 2);
+        // Long clips get a proportionally bigger, still-clamped blend.
+        assert_eq!(default_crossfade_frames(124), 10);
+        assert_eq!(default_crossfade_frames(1000), 16);
+        // Too short to crossfade at all: no n keeps crossfade_available true.
+        assert_eq!(default_crossfade_frames(3), 0);
+        assert_eq!(default_crossfade_frames(0), 0);
+    }
+
+    #[test]
+    fn default_crossfade_is_always_available_when_nonzero() {
+        for f in [4, 5, 6, 7, 12, 13, 24, 48, 124, 500, 5000] {
+            let n = default_crossfade_frames(f);
+            if n > 0 {
+                assert!(
+                    crossfade_available(f, n),
+                    "default_crossfade_frames({f}) = {n} is not itself available"
+                );
+            }
+        }
     }
 
     #[test]

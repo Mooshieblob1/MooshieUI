@@ -585,6 +585,9 @@ const de: Record<string, string> = {
   "generation.sampler.metadata_upgraded": "16-Bit aktiv — Stealth Alpha wurde auf 'Beides' hochgestuft.",
   "generation.sampler.anima_recommended": "Empfohlene Anima-Einstellungen",
   "generation.sampler.anima_hint": "30 Schritte, CFG 4, Sampler er_sde (Anima-Modellkarten-Anleitung).",
+  "generation.sampler.anima_rdbt_toggle": "RDBT-Anima LoRA",
+  "generation.sampler.anima_rdbt_tip": "Lädt die von der Community erstellte RDBT-Anima Guidance-Distilled-LoRA herunter und wendet sie an (~92MB, inoffizieller Mirror). Beschleunigt die Generierung, da kein CFG mehr nötig ist.",
+  "generation.sampler.anima_rdbt_downloading": "RDBT-Anima LoRA wird heruntergeladen…",
   "generation.sampler.sih_recommended": "Empfohlene SIH-Einstellungen",
   "generation.sampler.sih_hint": "Keine öffentlichen SIH-Modellkarteneinstellungen. Projekt-Standardwerte: 20 Schritte, CFG 1.4, euler_cfg_pp, sgm_uniform.",
   "generation.sampler.juice_recommended": "Empfohlene Juice-Einstellungen",
@@ -745,6 +748,13 @@ const de: Record<string, string> = {
   "generation.video.turbo_install_verifying": "Laden der Nodes wird überprüft",
   "generation.video.turbo_install_not_loaded": "ComfyUI wurde neu gestartet, aber die Turbo-Sampler-Nodes wurden nicht geladen. Prüfe das ComfyUI-Log.",
   "generation.video.turbo_install_failed": "Die Turbo-LoRA konnte nicht installiert werden: {error}",
+  "generation.video.teacache": "TeaCache",
+  "generation.video.teacache_tip": "Überspringt den Forward-Pass des Modells bei Schritten, deren Ausgabe sich kaum vom vorherigen unterscheidet, und verwendet stattdessen das zwischengespeicherte Ergebnis. Schneller, mit einem geringen Risiko weicherer Bewegung; kombinierbar mit Turbo.",
+  "generation.video.teacache_install_hint": "Wird diese Option aktiviert, werden die TeaCache-Knoten installiert und ComfyUI anschließend neu gestartet.",
+  "generation.video.teacache_install_starting": "TeaCache-Knoten werden installiert",
+  "generation.video.teacache_install_verifying": "Laden der Knoten wird überprüft",
+  "generation.video.teacache_install_not_loaded": "ComfyUI wurde neu gestartet, aber die TeaCache-Knoten wurden nicht geladen. Prüfe das ComfyUI-Protokoll.",
+  "generation.video.teacache_install_failed": "TeaCache konnte nicht installiert werden: {error}",
   "generation.video.models": "Modelle",
   "generation.video.models_tip": "Der Videomodus nutzt den MiniMax-H3-Stack. Wähle eine Qualitätsstufe, und MooshieUI listet alle verwendeten Dateien auf, einschließlich eines eigenen Diffusionsmodells für jeden Modus, und lädt fehlende Dateien herunter.",
   "generation.video.stack.nvfp4": "NVFP4 - 12,5 GB, nur Blackwell",
@@ -1968,6 +1978,8 @@ const de: Record<string, string> = {
   "generation.prompts.negative_disabled_for_model": "von diesem Modell ignoriert",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
+  "generation.sampler.anima_teacache_label": "TeaCache",
+  "generation.sampler.anima_teacache_tip": "Beschleunigt die Anima-Generierung, indem die vorherige Ausgabe des Modells bei Schritten mit geringer Änderung wiederverwendet und der Forward-Pass übersprungen wird. Geringes Risiko weicherer Details; standardmäßig deaktiviert.",
 
 
 

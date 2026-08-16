@@ -11,7 +11,9 @@
     downloadModel,
     getComputeCapability,
     getConfig,
+    installH3Teacache,
     installH3Turbo,
+    isH3TeacacheInstalled,
     isH3TurboInstalled,
     readClipboardImageSafe,
     uploadImageBytes,
@@ -82,6 +84,10 @@
   const TURBO_PACKAGE_NAME = "ComfyUI-MiniMax-H3-Turbo";
   const TURBO_NODE_CLASS = "MiniMaxH3TurboSampler";
 
+  /** Same contract for the TeaCache pack: `node_name` on `install:progress`. */
+  const TEACACHE_PACKAGE_NAME = "ComfyUI-MiniMaxH3-TeaCache";
+  const TEACACHE_NODE_CLASS = "MiniMaxH3TeaCache";
+
 
   /** One row in the download progress list, mirroring `ModelSelector`. */
   interface DlEntry {
@@ -124,6 +130,13 @@
   let turboInstallStep = $state("");
   let turboInstallMessage = $state("");
   let turboInstallError = $state<string | null>(null);
+
+  /** Same lazy-install shape as Turbo, minus the LoRA half - the pack alone is the install. */
+  let teacacheInstalled = $state<boolean | null>(null);
+  let teacacheInstalling = $state(false);
+  let teacacheInstallStep = $state("");
+  let teacacheInstallMessage = $state("");
+  let teacacheInstallError = $state<string | null>(null);
 
   let previews = $state<Record<string, string | null>>({});
   let uploadingSlot = $state<string | null>(null);
@@ -226,6 +239,8 @@
   const turboLoraName = $derived(installedName(H3_TURBO_LORA));
   /** Both halves have to be present before the workflow can reference them. */
   const turboReady = $derived(turboInstalled === true && turboLoraName !== null);
+  /** No adapter file for TeaCache - the node pack alone gates the toggle. */
+  const teacacheReady = $derived(teacacheInstalled === true);
 
   const modelGb = $derived(estimateH3ModelGb(generation.videoDiffusionModel));
   /**
@@ -295,6 +310,10 @@
   const turboInstallPercent = $derived(
     { clone: 25, done: 40, lora: 55, restart: 80, verify: 95 }[turboInstallStep] ?? 10,
   );
+  /** No LoRA-download stage here, so the weights compress to three steps. */
+  const teacacheInstallPercent = $derived(
+    { clone: 30, restart: 65, verify: 90 }[teacacheInstallStep] ?? 10,
+  );
 
   function dlPercent(entry: DlEntry): number {
     return entry.total > 0 ? Math.round((entry.downloaded / entry.total) * 100) : 0;
@@ -306,11 +325,15 @@
     rifeInstall.listen();
     void rifeInstall.refresh();
     void loadTurboState();
+    void loadTeacacheState();
     const unlistenInstall = ipcListen("install:progress", (event: any) => {
       const data = event.payload as { node_name: string; step: string; message: string };
       if (data.node_name === TURBO_PACKAGE_NAME) {
         turboInstallStep = data.step;
         turboInstallMessage = data.message;
+      } else if (data.node_name === TEACACHE_PACKAGE_NAME) {
+        teacacheInstallStep = data.step;
+        teacacheInstallMessage = data.message;
       }
     });
     // Other download sources (setup wizard, ModelSelector) share this event, so
@@ -367,6 +390,14 @@
       turboInstalled = await isH3TurboInstalled();
     } catch {
       turboInstalled = null;
+    }
+  }
+
+  async function loadTeacacheState() {
+    try {
+      teacacheInstalled = await isH3TeacacheInstalled();
+    } catch {
+      teacacheInstalled = null;
     }
   }
 
@@ -595,6 +626,61 @@
       turboInstalling = false;
       turboInstallStep = "";
       turboInstallMessage = "";
+    }
+  }
+
+  /** Same contract as `toggleTurbo`: the store flag only turns on once usable. */
+  function toggleTeacache(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const next = input.checked;
+    teacacheInstallError = null;
+    if (!next) {
+      generation.videoTeacacheEnabled = false;
+      generation.saveSettings();
+    } else if (teacacheReady) {
+      generation.videoTeacacheEnabled = true;
+      generation.saveSettings();
+    } else {
+      void installTeacache();
+    }
+    input.checked = generation.videoTeacacheEnabled;
+  }
+
+  /**
+   * Simpler than `installTurbo`: no adapter file to fetch and no model list to
+   * refresh afterwards - cloning the pack and restarting ComfyUI is the whole job.
+   */
+  async function installTeacache() {
+    teacacheInstalling = true;
+    teacacheInstallError = null;
+    try {
+      teacacheInstallStep = "clone";
+      teacacheInstallMessage = locale.t("generation.video.teacache_install_starting");
+      await installH3Teacache();
+
+      teacacheInstallStep = "restart";
+      teacacheInstallMessage = locale.t("generation.video.turbo_install_restarting");
+      connection.connected = false;
+      await restartComfyuiAndWait(
+        locale.t("generation.video.rife_install_timeout"),
+        locale.t("generation.video.rife_install_failed_start"),
+      );
+
+      teacacheInstallStep = "verify";
+      teacacheInstallMessage = locale.t("generation.video.teacache_install_verifying");
+      const available = await checkNodeAvailable(TEACACHE_NODE_CLASS).catch(() => false);
+      if (!available) throw new Error(locale.t("generation.video.teacache_install_not_loaded"));
+
+      teacacheInstalled = true;
+      generation.videoTeacacheEnabled = true;
+      generation.saveSettings();
+    } catch (e) {
+      teacacheInstallError = String(e);
+      teacacheInstalled = await isH3TeacacheInstalled().catch(() => false);
+    } finally {
+      teacacheInstalling = false;
+      teacacheInstallStep = "";
+      teacacheInstallMessage = "";
     }
   }
 
@@ -1434,6 +1520,65 @@
     {#if turboInstallError}
       <p class="text-[11px] text-red-400">
         {locale.t("generation.video.turbo_install_failed", { error: turboInstallError })}
+      </p>
+    {/if}
+  </div>
+
+  <!-- TeaCache -->
+  <div class="space-y-2">
+    <div class="flex items-center gap-2">
+      <input
+        type="checkbox"
+        id="video-teacache-enabled"
+        checked={generation.videoTeacacheEnabled}
+        disabled={teacacheInstalling}
+        class="w-4 h-4 accent-indigo-500 rounded disabled:opacity-50"
+        onchange={toggleTeacache}
+      />
+      <label for="video-teacache-enabled" class="text-xs text-neutral-400">
+        {locale.t("generation.video.teacache")}<InfoTip
+          text={locale.t("generation.video.teacache_tip")}
+        />
+      </label>
+    </div>
+
+    {#if !teacacheReady && !teacacheInstalling && !generation.videoTeacacheEnabled}
+      <p class="text-[11px] text-neutral-500">
+        {locale.t("generation.video.teacache_install_hint")}
+      </p>
+    {/if}
+
+    {#if teacacheInstalling}
+      <div class="rounded-lg border border-amber-600/60 bg-amber-900/25 px-3 py-2 space-y-1.5">
+        <div class="flex items-center gap-2 text-xs text-amber-200">
+          <div
+            class="w-3.5 h-3.5 border-2 border-amber-300 border-t-transparent rounded-full animate-spin shrink-0"
+          ></div>
+          <span>
+            {#if teacacheInstallStep === "restart"}
+              {locale.t("generation.video.turbo_install_restarting")}
+            {:else if teacacheInstallStep === "verify"}
+              {locale.t("generation.video.teacache_install_verifying")}
+            {:else}
+              {locale.t("generation.video.teacache_install_starting")}
+            {/if}
+          </span>
+        </div>
+        {#if teacacheInstallMessage}
+          <p class="text-[10px] font-mono text-amber-300/80 break-all">{teacacheInstallMessage}</p>
+        {/if}
+        <div class="h-1 rounded-full bg-amber-950/60 overflow-hidden">
+          <div
+            class="h-full bg-amber-400 transition-all duration-300"
+            style="width: {teacacheInstallPercent}%"
+          ></div>
+        </div>
+      </div>
+    {/if}
+
+    {#if teacacheInstallError}
+      <p class="text-[11px] text-red-400">
+        {locale.t("generation.video.teacache_install_failed", { error: teacacheInstallError })}
       </p>
     {/if}
   </div>
