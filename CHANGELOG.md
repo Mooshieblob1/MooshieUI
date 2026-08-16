@@ -1,5 +1,17 @@
 # Changelog
 
+## What's New in v2.0.9
+
+### New features
+- **Generation time is now tracked for video, not just images**: the video output pipeline never recorded how long a generation took, so videos never showed a duration anywhere in the UI. Video prompts now get the same timing capture images already had.
+- **"Show Generation Time" checkbox in the gallery**: a new toggle in the gallery toolbar displays how long each image or video took to generate directly on the grid and details view, instead of only on hover in the bottom panel.
+- **Generation time shown in the lightbox**: opening an image or video in the lightbox now shows its generation time alongside the rest of its metadata.
+
+### Fixes and maintenance
+- **The "Videos generated this session" gallery tab wasn't populating**: newly generated videos never got added to the in-memory session gallery list, so the tab stayed empty even right after generating a video.
+
+---
+
 ## What's New in v2.0.8
 
 ### Fixes and maintenance

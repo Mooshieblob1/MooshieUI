@@ -1596,6 +1596,8 @@ const pl: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "Automatycznie przypisuj obrazy do tablic na podstawie wykrytych tagów artystów w ich promptach",
   "gallery.sort_by_artist_done": "Posortowano {sorted} obraz(y) do {boards} tablicy/tablic artystów",
   "gallery.sort_by_artist_none": "Nie wykryto tagów artystów w galerii",
+  "gallery.show_generation_time": "Pokaż czas generowania",
+  "gallery.generation_time": "Czas generowania",
   "gallery.artist_detected": "Wykryto tag artysty: {tag}",
   "gallery.col_preview": "Podgląd",
   "gallery.col_name": "Nazwa",

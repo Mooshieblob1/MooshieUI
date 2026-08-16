@@ -1367,6 +1367,8 @@ const de: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "Bilder automatisch Boards zuordnen basierend auf erkannten Künstler-Tags in ihren Prompts",
   "gallery.sort_by_artist_done": "{sorted} Bild(er) in {boards} Künstler-Board(s) sortiert",
   "gallery.sort_by_artist_none": "Keine Künstler-Tags in deiner Galerie erkannt",
+  "gallery.show_generation_time": "Generierungszeit anzeigen",
+  "gallery.generation_time": "Generierungszeit",
   "gallery.artist_detected": "Künstler-Tag erkannt: {tag}",
   "gallery.col_preview": "Vorschau",
   "gallery.col_name": "Name",

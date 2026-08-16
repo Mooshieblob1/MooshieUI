@@ -1346,6 +1346,8 @@ const ko: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "프롬프트에서 감지된 아티스트 태그를 기준으로 이미지를 보드에 자동 할당합니다",
   "gallery.sort_by_artist_done": "{sorted}개의 이미지를 {boards}개의 아티스트 보드로 정렬했습니다",
   "gallery.sort_by_artist_none": "갤러리에서 아티스트 태그를 찾을 수 없습니다",
+  "gallery.show_generation_time": "생성 시간 표시",
+  "gallery.generation_time": "생성 시간",
   "gallery.artist_detected": "아티스트 태그 감지됨: {tag}",
   "gallery.col_preview": "미리보기",
   "gallery.col_name": "이름",

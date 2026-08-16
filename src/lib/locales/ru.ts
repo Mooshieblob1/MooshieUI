@@ -1346,6 +1346,8 @@ const ru: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "Автоматически распределять изображения по доскам на основе обнаруженных тегов художников в их промптах",
   "gallery.sort_by_artist_done": "Отсортировано {sorted} изображений в {boards} досок художников",
   "gallery.sort_by_artist_none": "Теги художников в галерее не найдены",
+  "gallery.show_generation_time": "Показывать время генерации",
+  "gallery.generation_time": "Время генерации",
   "gallery.artist_detected": "Обнаружен тег художника: {tag}",
   "gallery.col_preview": "Превью",
   "gallery.col_name": "Имя",

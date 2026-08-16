@@ -1368,6 +1368,8 @@ const fr: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "Attribuer automatiquement les images à des tableaux selon les tags d'artiste détectés dans leurs prompts",
   "gallery.sort_by_artist_done": "{sorted} image(s) triée(s) dans {boards} tableau(x) d'artiste",
   "gallery.sort_by_artist_none": "Aucun tag d'artiste détecté dans votre galerie",
+  "gallery.show_generation_time": "Afficher le temps de génération",
+  "gallery.generation_time": "Temps de génération",
   "gallery.artist_detected": "Tag d'artiste détecté : {tag}",
   "gallery.col_preview": "Aperçu",
   "gallery.col_name": "Nom",

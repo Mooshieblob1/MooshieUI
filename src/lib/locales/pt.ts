@@ -1346,6 +1346,8 @@ const pt: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "Atribuir imagens automaticamente a quadros com base nas tags de artista detectadas em seus prompts",
   "gallery.sort_by_artist_done": "{sorted} imagem(ns) ordenada(s) em {boards} quadro(s) de artista",
   "gallery.sort_by_artist_none": "Nenhuma tag de artista detectada na sua galeria",
+  "gallery.show_generation_time": "Mostrar tempo de geração",
+  "gallery.generation_time": "Tempo de geração",
   "gallery.artist_detected": "Tag de artista detectada: {tag}",
   "gallery.col_preview": "Prévia",
   "gallery.col_name": "Nome",

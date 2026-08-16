@@ -1346,6 +1346,8 @@ const zh: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "根据提示词中检测到的画师标签自动将图片分配到看板",
   "gallery.sort_by_artist_done": "已将 {sorted} 张图片排序到 {boards} 个画师看板",
   "gallery.sort_by_artist_none": "您的图库中未检测到任何画师标签",
+  "gallery.show_generation_time": "显示生成时间",
+  "gallery.generation_time": "生成时间",
   "gallery.artist_detected": "检测到画师标签：{tag}",
   "gallery.col_preview": "预览",
   "gallery.col_name": "名称",

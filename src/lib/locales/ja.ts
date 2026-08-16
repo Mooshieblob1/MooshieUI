@@ -1368,6 +1368,8 @@ const ja: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "プロンプトから検出されたアーティストタグに基づいて画像を自動でボードに振り分けます",
   "gallery.sort_by_artist_done": "{sorted} 枚の画像を {boards} 個のアーティストボードに整理しました",
   "gallery.sort_by_artist_none": "ギャラリーからアーティストタグが見つかりませんでした",
+  "gallery.show_generation_time": "生成時間を表示",
+  "gallery.generation_time": "生成時間",
   "gallery.artist_detected": "アーティストタグを検出: {tag}",
   "gallery.col_preview": "プレビュー",
   "gallery.col_name": "名前",

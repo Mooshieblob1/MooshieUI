@@ -1598,6 +1598,8 @@ const en: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "Auto-assign images to boards based on detected artist tags in their prompts",
   "gallery.sort_by_artist_done": "Sorted {sorted} image(s) into {boards} artist board(s)",
   "gallery.sort_by_artist_none": "No artist tags detected in your gallery",
+  "gallery.show_generation_time": "Show Generation Time",
+  "gallery.generation_time": "Generation Time",
   "gallery.artist_detected": "Artist tag detected: {tag}",
   "gallery.col_preview": "Preview",
   "gallery.col_name": "Name",

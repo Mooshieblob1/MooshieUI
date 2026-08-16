@@ -1346,6 +1346,8 @@ const it: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "Assegna automaticamente le immagini alle bacheche in base ai tag artista rilevati nei prompt",
   "gallery.sort_by_artist_done": "{sorted} immagine/i ordinate in {boards} bacheca/e artista",
   "gallery.sort_by_artist_none": "Nessun tag artista rilevato nella tua galleria",
+  "gallery.show_generation_time": "Mostra tempo di generazione",
+  "gallery.generation_time": "Tempo di generazione",
   "gallery.artist_detected": "Tag artista rilevato: {tag}",
   "gallery.col_preview": "Anteprima",
   "gallery.col_name": "Nome",

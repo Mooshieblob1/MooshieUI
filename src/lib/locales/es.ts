@@ -1405,6 +1405,8 @@ const es: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "Asignar automáticamente imágenes a tableros según las etiquetas de artista detectadas en sus prompts",
   "gallery.sort_by_artist_done": "{sorted} imagen(es) ordenadas en {boards} tablero(s) de artista",
   "gallery.sort_by_artist_none": "No se detectaron etiquetas de artista en tu galería",
+  "gallery.show_generation_time": "Mostrar tiempo de generación",
+  "gallery.generation_time": "Tiempo de generación",
   "gallery.artist_detected": "Etiqueta de artista detectada: {tag}",
   "gallery.col_preview": "Vista previa",
   "gallery.col_name": "Nombre",
