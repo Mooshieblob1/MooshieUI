@@ -192,6 +192,7 @@
             disabled={rdbtDownloading}
             role="switch"
             aria-checked={rdbtEnabled}
+            aria-label={locale.t('generation.sampler.anima_rdbt_toggle')}
           >
             <span
               class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform {rdbtEnabled
