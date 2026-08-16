@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v2.0.8
+
+### Fixes and maintenance
+- **Model downloads (e.g. the RDBT-Anima LoRA) could freeze mid-transfer with no error**: a connection that stalled after the server stopped sending bytes without closing the socket would hang forever, since the shared HTTP client had no read timeout, leaving the download progress bar stuck indefinitely. Chunk reads now time out after 30 seconds of silence, cleaning up the partial file and surfacing a clear error so the download can be retried.
+
+---
+
 ## What's New in v2.0.7
 
 ### New features
