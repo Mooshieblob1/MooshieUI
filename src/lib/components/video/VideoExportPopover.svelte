@@ -24,7 +24,7 @@
     estimateBytes,
     formatBytes,
     overSizeLimit,
-    DEFAULT_CROSSFADE_FRAMES,
+    defaultCrossfadeFrames,
     type ExportFormat,
     type LoopMode,
     type SizeTarget,
@@ -53,7 +53,10 @@
   let quality = $state(63);
   let loopCount = $state(0);
   let loopMode = $state<LoopMode>("auto");
-  let crossfadeFrames = $state(DEFAULT_CROSSFADE_FRAMES);
+  // Proportional to this clip's own length rather than a flat constant - see
+  // defaultCrossfadeFrames - so a short clip does not lose a disproportionate
+  // slice of itself to the crossfade.
+  let crossfadeFrames = $state(defaultCrossfadeFrames(frameCount));
   let sizeTarget = $state<SizeTarget>("discord");
   // MP4 is the only format that can carry the clip's audio, and H3 always writes
   // one, so the default is to keep it. `audioOn` folds in the cases where the

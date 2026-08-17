@@ -19,8 +19,22 @@
 export const MIN_OFFERED_FPS = 6;
 /** Rust: `AUTO_SEAM_THRESHOLD` */
 export const AUTO_SEAM_THRESHOLD = 2.0;
-/** Rust: `DEFAULT_CROSSFADE_FRAMES` */
-export const DEFAULT_CROSSFADE_FRAMES = 4;
+/**
+ * Rust: `default_crossfade_frames`
+ *
+ * Default crossfade length for a clip of `f` frames, proportional (~8%)
+ * rather than a flat constant: a short clip does not lose a disproportionate
+ * slice of itself to the crossfade, while a long one still gets a
+ * perceptible blend. Clamped to the slider's 1-16 range, and never exceeds
+ * what `crossfadeAvailable` allows for `f` (0 when no crossfade fits at all).
+ */
+export function defaultCrossfadeFrames(f: number): number {
+  // Largest n for which crossfadeAvailable(f, n) holds, i.e. f > 3n.
+  const maxN = Math.floor(Math.max(0, f - 1) / 3);
+  if (maxN === 0) return 0;
+  const proportional = Math.round(f * 0.08);
+  return Math.min(Math.max(proportional, 1), Math.min(maxN, 16));
+}
 
 export type ExportFormat = "avif" | "webp" | "gif" | "mp4";
 export type LoopMode = "auto" | "none" | "trim" | "crossfade" | "pingpong";
@@ -236,7 +250,7 @@ export function resolveAuto(seamDelta: number): "trim" | "none" {
 
 /** Rust: `over_size_limit` */
 export function overSizeLimit(bytes: number, target: SizeTarget): boolean {
-  if (target === "discord") return bytes > 10 * 1024 * 1024;
+  if (target === "discord") return bytes > 20 * 1024 * 1024;
   if (target === "nitro") return bytes > 500 * 1024 * 1024;
   return false;
 }

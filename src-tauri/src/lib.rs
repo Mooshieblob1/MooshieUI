@@ -536,6 +536,8 @@ pub fn run() {
             commands::api::install_rife,
             commands::api::is_h3_turbo_installed,
             commands::api::install_h3_turbo,
+            commands::api::is_h3_teacache_installed,
+            commands::api::install_h3_teacache,
             commands::api::install_pip_package,
             commands::api::check_python_import,
             commands::websocket::connect_ws,

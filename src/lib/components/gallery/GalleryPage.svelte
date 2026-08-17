@@ -9,6 +9,7 @@
   import { uploadOutputImageForGenerationInput } from "../../utils/galleryActions.js";
   import { prepareOutputImageForEditMode } from "../../utils/editImagePreparation.js";
   import { uploadImageBytes } from "../../utils/api.js";
+  import { formatGenerationTime } from "../../utils/localeFormat.js";
   import type { OutputImage } from "../../types/index.js";
 
   interface Props {
@@ -393,6 +394,15 @@
             <button onclick={() => (galleryView = "details")} class="px-3 py-1.5 text-xs rounded border transition-colors {galleryView === 'details' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-neutral-700 text-neutral-300 hover:border-neutral-500'}">{locale.t("gallery.detailed_view")}</button>
             <button onclick={rescanGalleryMetadata} class="px-3 py-1.5 text-xs rounded border transition-colors border-amber-700/70 text-amber-300 hover:border-amber-500 hover:text-amber-200">{locale.t("gallery.rescan_metadata")}</button>
             <button onclick={sortGalleryByArtist} disabled={gallery.autoSorting} class="px-3 py-1.5 text-xs rounded border transition-colors border-indigo-700/70 text-indigo-300 hover:border-indigo-500 hover:text-indigo-200 disabled:opacity-50">{gallery.autoSorting ? locale.t("gallery.sort_by_artist_running") : locale.t("gallery.sort_by_artist")}</button>
+            <label class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-neutral-700 text-neutral-300 cursor-pointer hover:border-neutral-500">
+              <input
+                type="checkbox"
+                class="accent-indigo-500"
+                checked={gallery.showGenerationTime}
+                onchange={(e) => gallery.setShowGenerationTime((e.target as HTMLInputElement).checked)}
+              />
+              {locale.t("gallery.show_generation_time")}
+            </label>
           </div>
         </div>
       </div>
@@ -413,7 +423,12 @@
                     <img use:lazyThumbnail={{ image, size: thumbSize }} alt={image.filename} class="w-full h-full object-cover" />
                   </button>
                   <div class="text-sm text-neutral-200 truncate" title={image.filename}>{image.filename}</div>
-                  <div class="text-xs text-neutral-400">{formatDate(image.generated_at_ms)}</div>
+                  <div class="text-xs text-neutral-400">
+                    {formatDate(image.generated_at_ms)}
+                    {#if gallery.showGenerationTime && image.generationTimeMs != null}
+                      <span class="text-amber-300/80">· {formatGenerationTime(image.generationTimeMs, locale.current)}</span>
+                    {/if}
+                  </div>
                   <div class="text-xs text-neutral-400">{formatBytes(image.file_size_bytes)}</div>
                   <div class="flex flex-wrap gap-1">
                     <select class="px-2 py-1 text-[11px] rounded bg-neutral-800 border border-neutral-700 text-neutral-200" value={boardLabel(image)} onchange={(e) => assignBoard(image, (e.target as HTMLSelectElement).value)}>
@@ -464,6 +479,11 @@
                         {formatDuration(image.duration_seconds)}
                       </div>
                     {/if}
+                  {/if}
+                  {#if gallery.showGenerationTime && image.generationTimeMs != null}
+                    <div class="absolute {isVideoImage(image) && image.duration_seconds != null ? 'top-7' : 'top-1'} right-1 px-1.5 py-0.5 rounded bg-black/70 text-amber-300 text-[10px] font-mono pointer-events-none">
+                      {formatGenerationTime(image.generationTimeMs, locale.current)}
+                    </div>
                   {/if}
                   <div class="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-[10px] text-neutral-200 pointer-events-none">{boardLabel(image)}</div>
                   {#if generation.manualSaveMode && !image.gallery_filename}

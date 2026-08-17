@@ -14,7 +14,7 @@ use std::path::Path;
 /// whatever `master` happened to be at install time. The scheduled
 /// `comfyui-compat` workflow opens a bot PR bumping this constant once the
 /// custom-node smoke test passes against a newer ComfyUI release.
-pub const COMFYUI_REF: &str = "v0.30.2";
+pub const COMFYUI_REF: &str = "v0.31.0";
 
 /// Read the installed ComfyUI version from its `comfyui_version.py` file
 /// (`__version__ = "0.26.0"`). Returns `None` if the file is missing or

@@ -470,10 +470,11 @@
     }
   }
 
-  function addTriggerWord(word: string) {
+  function addTriggerWord(loraName: string, word: string) {
     const current = generation.positivePrompt.trim();
     if (current.includes(word)) return;
     generation.positivePrompt = current ? `${current}, ${word}` : word;
+    generation.recordInsertedLoraWord(loraName, word);
     generation.saveSettings();
   }
 
@@ -828,7 +829,7 @@
                   {#each info.civitai_trigger_words as word}
                     <button
                       class="px-1.5 py-0.5 text-[10px] rounded bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/20 hover:border-indigo-400/50 transition-colors"
-                      onclick={(e) => { e.stopPropagation(); addTriggerWord(word); }}
+                      onclick={(e) => { e.stopPropagation(); addTriggerWord(loraName, word); }}
                       title={locale.t('lora.add_to_prompt', { word })}
                     >
                       {word}
@@ -838,7 +839,7 @@
                   {#each info.modelspec_trigger_phrase.split(",").map((s) => s.trim()).filter(Boolean) as word}
                     <button
                       class="px-1.5 py-0.5 text-[10px] rounded bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/20 hover:border-indigo-400/50 transition-colors"
-                      onclick={(e) => { e.stopPropagation(); addTriggerWord(word); }}
+                      onclick={(e) => { e.stopPropagation(); addTriggerWord(loraName, word); }}
                       title={locale.t('lora.add_to_prompt', { word })}
                     >
                       {word}

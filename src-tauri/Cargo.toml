@@ -1,6 +1,6 @@
 [package]
 name = "comfyui-desktop"
-version = "2.0.5"
+version = "2.1.1"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 default-run = "comfyui-desktop"
@@ -54,7 +54,7 @@ thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
 rand = "0.10"
-base64 = "0.22"
+base64 = "0.23"
 dirs = "6"
 sha2 = "0.10"
 argon2 = { version = "0.5", features = ["std"] }

@@ -136,6 +136,22 @@ pub const H3_TURBO_LORA_FILENAME: &str = "minimax_h3_turbo_v4_step600_ema.safete
 pub const H3_TURBO_LORA_URL: &str =
     "https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora/resolve/main/minimax_h3_turbo_v4_step600_ema.safetensors";
 
+// MiniMax-H3 TeaCache, installed lazily from the video settings panel for the
+// same reason as Turbo: opt-in, video-only, and no reason to clone it at every
+// startup for users who never touch the toggle.
+const H3_TEACACHE_PACKAGE_DIR: &str = "ComfyUI-MiniMaxH3-TeaCache";
+
+const H3_TEACACHE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
+    name: H3_TEACACHE_PACKAGE_DIR,
+    git_url: "https://github.com/Icyoung/ComfyUI-MiniMaxH3-TeaCache.git",
+    verify_nodes: &["MiniMaxH3TeaCache"],
+    // The pack's pyproject.toml declares no dependencies beyond ComfyUI itself
+    // (pure torch, already provided by the host), and it ships no
+    // requirements.txt at all — the clone is the entire install.
+    // `ensure_custom_node_package` skips the pip stage when the file is absent.
+    requirements_file: "requirements.txt",
+}];
+
 /// Substring present in [`format_missing_mooshie_nodes_error`] output.
 pub const MISSING_MOOSHIE_NODES_MARKER: &str = "has not loaded required MooshieUI custom nodes";
 
@@ -171,6 +187,7 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieDiffusionLoaderPath",
     "NanoSaurLoader",
     "ApplyTiledDiffusion",
+    "MooshieAnimaTeaCache",
 ];
 
 const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
@@ -182,6 +199,7 @@ const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
 const MOOSHIE_NODES_REQUIREMENTS: &str = "ultralytics==8.4.75\n";
 const TILED_DIFFUSION_PY: &str = include_str!("../../../comfyui-nodes/nodes_tiled_diffusion.py");
 const GUIDANCE_PY: &str = include_str!("../../../comfyui-nodes/nodes_guidance.py");
+const ANIMA_TEACACHE_PY: &str = include_str!("../../../comfyui-nodes/nodes_anima_teacache.py");
 /// Combined flat file: nodes.py content + NODE_CLASS_MAPPINGS.
 /// Deployed as a single top-level file to avoid the circular import that occurs when a
 /// package named `nodes.py` tries to `import nodes` (ComfyUI's own nodes.py) while
@@ -281,6 +299,16 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         format!(
             "Failed to write nodes_guidance.py at '{}': {}",
             guidance_path.display(),
+            e
+        )
+    })?;
+
+    // ── Anima TeaCache (step-caching for the Anima/Cosmos-Predict2 DiT) ──────
+    let anima_teacache_path = custom_nodes.join("nodes_anima_teacache.py");
+    std::fs::write(&anima_teacache_path, ANIMA_TEACACHE_PY).map_err(|e| {
+        format!(
+            "Failed to write nodes_anima_teacache.py at '{}': {}",
+            anima_teacache_path.display(),
             e
         )
     })?;
@@ -958,6 +986,77 @@ pub async fn install_h3_turbo(
     ensure_required_h3_turbo_nodes(comfyui_path, venv_path, network_proxy, pip_index_url).await?;
 
     on_progress("done", "MiniMax-H3 Turbo nodes are ready", true);
+    Ok(())
+}
+
+/// Whether the MiniMax-H3 TeaCache node pack is present.
+///
+/// Same rationale as [`is_h3_turbo_installed`]: no requirements stamp file to
+/// check because the pack installs no requirements, so directory presence is
+/// the only signal available up front.
+pub fn is_h3_teacache_installed(comfyui_path: &str) -> bool {
+    if comfyui_path.trim().is_empty() {
+        return false;
+    }
+
+    Path::new(comfyui_path)
+        .join("custom_nodes")
+        .join(H3_TEACACHE_PACKAGE_DIR)
+        .join("__init__.py")
+        .is_file()
+}
+
+/// Clone the MiniMax-H3 TeaCache node pack into `custom_nodes/`, on demand.
+pub async fn ensure_required_h3_teacache_nodes(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+) -> Result<(), String> {
+    let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
+    std::fs::create_dir_all(&custom_nodes).map_err(|e| {
+        format!(
+            "Failed to create ComfyUI custom_nodes directory at '{}': {}",
+            custom_nodes.display(),
+            e
+        )
+    })?;
+
+    for package in H3_TEACACHE_PACKAGES {
+        ensure_custom_node_package(
+            &custom_nodes,
+            venv_path,
+            network_proxy,
+            pip_index_url,
+            *package,
+        )
+        .await
+        .map_err(|e| format!("{}: {}", package.name, e))?;
+    }
+
+    log::info!("Ensured MiniMax-H3 TeaCache custom node package");
+    Ok(())
+}
+
+/// Install the MiniMax-H3 TeaCache node pack, driven by the video settings
+/// panel the first time the user enables the toggle. Emits `install:progress`
+/// events with the same shape as `install_custom_node`.
+pub async fn install_h3_teacache(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+    on_progress: &(dyn Fn(&str, &str, bool) + Send + Sync),
+) -> Result<(), String> {
+    if comfyui_path.trim().is_empty() {
+        return Err("ComfyUI path is not configured".to_string());
+    }
+
+    on_progress("clone", "Installing MiniMax-H3 TeaCache nodes...", false);
+    ensure_required_h3_teacache_nodes(comfyui_path, venv_path, network_proxy, pip_index_url)
+        .await?;
+
+    on_progress("done", "MiniMax-H3 TeaCache nodes are ready", true);
     Ok(())
 }
 
