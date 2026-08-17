@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { generation } from "../../stores/generation.svelte.js";
   import { connection } from "../../stores/connection.svelte.js";
+  import { progress } from "../../stores/progress.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import {
@@ -10,7 +11,9 @@
     downloadModel,
     getComputeCapability,
     getConfig,
+    installH3Teacache,
     installH3Turbo,
+    isH3TeacacheInstalled,
     isH3TurboInstalled,
     readClipboardImageSafe,
     uploadImageBytes,
@@ -45,15 +48,17 @@
     H3_TIERS,
     H3_TURBO_LORA,
     h3Stack,
-    h3StackFiles,
+    h3TierFiles,
     h3TierForDiffusionModel,
   } from "../../utils/h3Models.js";
   import type { H3ModelCategory, H3ModelFile, H3TierId } from "../../utils/h3Models.js";
   import { RIFE_MULTIPLIERS, RIFE_SCALE_FACTORS, interpolatedFps } from "../../utils/rife.js";
   import { scrollCapture } from "../../utils/scrollCapture.js";
-  import type { VideoAspectRatio, VideoVariant } from "../../types/index.js";
+  import type { OutputImage, VideoAspectRatio, VideoVariant } from "../../types/index.js";
   import EditableValue from "../ui/EditableValue.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
+  import GalleryPickerModal from "../gallery/GalleryPickerModal.svelte";
+  import { uploadForVideo, videoReferenceSlotsFree } from "../../utils/galleryActions.js";
 
   /**
    * One upload target. `fl2va` exposes two (first frame / last frame), `ref2va`
@@ -78,6 +83,10 @@
   /** Same contract for the Turbo pack: `node_name` on `install:progress`. */
   const TURBO_PACKAGE_NAME = "ComfyUI-MiniMax-H3-Turbo";
   const TURBO_NODE_CLASS = "MiniMaxH3TurboSampler";
+
+  /** Same contract for the TeaCache pack: `node_name` on `install:progress`. */
+  const TEACACHE_PACKAGE_NAME = "ComfyUI-MiniMaxH3-TeaCache";
+  const TEACACHE_NODE_CLASS = "MiniMaxH3TeaCache";
 
 
   /** One row in the download progress list, mirroring `ModelSelector`. */
@@ -108,6 +117,8 @@
   /** One-shot latch so the auto-resolve only overrides the user's pick once. */
   let tierResolved = $state(false);
   let downloadingStack = $state(false);
+  /** Filename of the single file a per-row button is currently fetching. */
+  let downloadingFile = $state<string | null>(null);
   let stackError = $state<string | null>(null);
 
   let dlEntries = $state<Record<string, DlEntry>>({});
@@ -120,14 +131,26 @@
   let turboInstallMessage = $state("");
   let turboInstallError = $state<string | null>(null);
 
+  /** Same lazy-install shape as Turbo, minus the LoRA half - the pack alone is the install. */
+  let teacacheInstalled = $state<boolean | null>(null);
+  let teacacheInstalling = $state(false);
+  let teacacheInstallStep = $state("");
+  let teacacheInstallMessage = $state("");
+  let teacacheInstallError = $state<string | null>(null);
+
   let previews = $state<Record<string, string | null>>({});
   let uploadingSlot = $state<string | null>(null);
   let dropSlot = $state<string | null>(null);
   let pasteSlot = $state<string | null>(null);
   let uploadError = $state<string | null>(null);
   let dropZone = $state<HTMLElement | null>(null);
+  /** Frame slot key the single-pick modal is currently targeting, or null. */
+  let pickerSlot = $state<string | null>(null);
+  let refPickerOpen = $state(false);
+  const refSlotsFree = $derived(videoReferenceSlotsFree());
 
   const dimensions = $derived(generation.videoDimensions);
+  let randomSeed = $derived(generation.seed === "-1");
 
   /** Highest filled reference slot, so the list grows one empty slot at a time. */
   const visibleRefSlots = $derived(
@@ -199,10 +222,12 @@
   }
 
   const stack = $derived(h3Stack(selectedTier, generation.videoVariant));
-  const stackFiles = $derived(stack ? h3StackFiles(stack) : []);
-  const missingStackFiles = $derived(stackFiles.filter((file) => installedName(file) === null));
-  const stackDownloadBytes = $derived(
-    missingStackFiles.reduce((total, file) => total + file.sizeBytes, 0),
+  const tierFiles = $derived(h3TierFiles(selectedTier));
+  const missingTierFiles = $derived(
+    tierFiles.filter((entry) => installedName(entry.file) === null).map((entry) => entry.file),
+  );
+  const tierDownloadBytes = $derived(
+    missingTierFiles.reduce((total, file) => total + file.sizeBytes, 0),
   );
   /** NVFP4 runs anywhere but is only worth picking on Blackwell. */
   const tierUnderpowered = $derived(
@@ -214,6 +239,8 @@
   const turboLoraName = $derived(installedName(H3_TURBO_LORA));
   /** Both halves have to be present before the workflow can reference them. */
   const turboReady = $derived(turboInstalled === true && turboLoraName !== null);
+  /** No adapter file for TeaCache - the node pack alone gates the toggle. */
+  const teacacheReady = $derived(teacacheInstalled === true);
 
   const modelGb = $derived(estimateH3ModelGb(generation.videoDiffusionModel));
   /**
@@ -283,6 +310,10 @@
   const turboInstallPercent = $derived(
     { clone: 25, done: 40, lora: 55, restart: 80, verify: 95 }[turboInstallStep] ?? 10,
   );
+  /** No LoRA-download stage here, so the weights compress to three steps. */
+  const teacacheInstallPercent = $derived(
+    { clone: 30, restart: 65, verify: 90 }[teacacheInstallStep] ?? 10,
+  );
 
   function dlPercent(entry: DlEntry): number {
     return entry.total > 0 ? Math.round((entry.downloaded / entry.total) * 100) : 0;
@@ -294,11 +325,15 @@
     rifeInstall.listen();
     void rifeInstall.refresh();
     void loadTurboState();
+    void loadTeacacheState();
     const unlistenInstall = ipcListen("install:progress", (event: any) => {
       const data = event.payload as { node_name: string; step: string; message: string };
       if (data.node_name === TURBO_PACKAGE_NAME) {
         turboInstallStep = data.step;
         turboInstallMessage = data.message;
+      } else if (data.node_name === TEACACHE_PACKAGE_NAME) {
+        teacacheInstallStep = data.step;
+        teacacheInstallMessage = data.message;
       }
     });
     // Other download sources (setup wizard, ModelSelector) share this event, so
@@ -355,6 +390,14 @@
       turboInstalled = await isH3TurboInstalled();
     } catch {
       turboInstalled = null;
+    }
+  }
+
+  async function loadTeacacheState() {
+    try {
+      teacacheInstalled = await isH3TeacacheInstalled();
+    } catch {
+      teacacheInstalled = null;
     }
   }
 
@@ -458,16 +501,31 @@
   }
 
   async function downloadStack() {
-    if (downloadingStack || missingStackFiles.length === 0) return;
+    if (downloadingStack || missingTierFiles.length === 0) return;
     downloadingStack = true;
     stackError = null;
     try {
-      await runDownloads(missingStackFiles);
+      await runDownloads(missingTierFiles);
       applyStack();
     } catch (e) {
       stackError = String(e);
     } finally {
       downloadingStack = false;
+    }
+  }
+
+  /** Fetch one row's file. Same plumbing as the bulk button, one entry deep. */
+  async function downloadOne(file: H3ModelFile) {
+    if (downloadingStack || downloadingFile) return;
+    downloadingFile = file.filename;
+    stackError = null;
+    try {
+      await runDownloads([file]);
+      applyStack();
+    } catch (e) {
+      stackError = String(e);
+    } finally {
+      downloadingFile = null;
     }
   }
 
@@ -568,6 +626,61 @@
       turboInstalling = false;
       turboInstallStep = "";
       turboInstallMessage = "";
+    }
+  }
+
+  /** Same contract as `toggleTurbo`: the store flag only turns on once usable. */
+  function toggleTeacache(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const next = input.checked;
+    teacacheInstallError = null;
+    if (!next) {
+      generation.videoTeacacheEnabled = false;
+      generation.saveSettings();
+    } else if (teacacheReady) {
+      generation.videoTeacacheEnabled = true;
+      generation.saveSettings();
+    } else {
+      void installTeacache();
+    }
+    input.checked = generation.videoTeacacheEnabled;
+  }
+
+  /**
+   * Simpler than `installTurbo`: no adapter file to fetch and no model list to
+   * refresh afterwards - cloning the pack and restarting ComfyUI is the whole job.
+   */
+  async function installTeacache() {
+    teacacheInstalling = true;
+    teacacheInstallError = null;
+    try {
+      teacacheInstallStep = "clone";
+      teacacheInstallMessage = locale.t("generation.video.teacache_install_starting");
+      await installH3Teacache();
+
+      teacacheInstallStep = "restart";
+      teacacheInstallMessage = locale.t("generation.video.turbo_install_restarting");
+      connection.connected = false;
+      await restartComfyuiAndWait(
+        locale.t("generation.video.rife_install_timeout"),
+        locale.t("generation.video.rife_install_failed_start"),
+      );
+
+      teacacheInstallStep = "verify";
+      teacacheInstallMessage = locale.t("generation.video.teacache_install_verifying");
+      const available = await checkNodeAvailable(TEACACHE_NODE_CLASS).catch(() => false);
+      if (!available) throw new Error(locale.t("generation.video.teacache_install_not_loaded"));
+
+      teacacheInstalled = true;
+      generation.videoTeacacheEnabled = true;
+      generation.saveSettings();
+    } catch (e) {
+      teacacheInstallError = String(e);
+      teacacheInstalled = await isH3TeacacheInstalled().catch(() => false);
+    } finally {
+      teacacheInstalling = false;
+      teacacheInstallStep = "";
+      teacacheInstallMessage = "";
     }
   }
 
@@ -674,6 +787,62 @@
     } finally {
       uploadingSlot = null;
     }
+  }
+
+  /**
+   * Put a gallery image into a frame slot. Deliberately mirrors `uploadToSlot`
+   * so the preview thumbnail, aspect match, spinner and error surface behave
+   * identically to a dragged file. `setPreview` takes ownership of the object
+   * URL and revokes whatever it replaces.
+   *
+   * The catch is the one place it diverges: `uploadToSlot` previews the local
+   * file optimistically before uploading, so it has to undo that on failure.
+   * Here nothing is written until the upload succeeds, so a failed pick must
+   * leave whatever the slot already held alone.
+   */
+  async function assignFromGallery(key: string, image: OutputImage) {
+    const slot = findSlot(key);
+    if (!slot) return;
+    uploadError = null;
+    uploadingSlot = key;
+    try {
+      const { name, aspect, previewUrl } = await uploadForVideo(image, "video_frame.png");
+      setPreview(key, previewUrl);
+      slot.assign(name);
+      slot.assignAspect?.(aspect);
+      if (slot.assignAspect && aspect) generation.videoAspectRatio = "auto";
+      generation.saveSettings();
+    } catch (e) {
+      console.error("Failed to assign gallery image to video frame:", e);
+      uploadError = String(e);
+    } finally {
+      uploadingSlot = null;
+    }
+  }
+
+  /** Fill the free reference slots in order from a multi-pick. */
+  async function assignRefsFromGallery(images: OutputImage[]) {
+    uploadError = null;
+    for (const image of images) {
+      const index = generation.videoRefImages.findIndex((slot) => !slot);
+      if (index === -1) break;
+      const key = `ref${index}`;
+      uploadingSlot = key;
+      try {
+        const { name, previewUrl } = await uploadForVideo(image, "video_reference.png");
+        setPreview(key, previewUrl);
+        generation.videoRefImages = generation.videoRefImages.map((current, i) =>
+          i === index ? name : current,
+        );
+      } catch (e) {
+        console.error("Failed to assign gallery image to video reference:", e);
+        uploadError = String(e);
+        break;
+      } finally {
+        uploadingSlot = null;
+      }
+    }
+    generation.saveSettings();
   }
 
   function clearSlot(key: string) {
@@ -828,6 +997,55 @@
     </p>
   {/if}
 
+  <!-- Seed. Video shares `generation.seed` with image generation, but had no
+       control here to see or reset it, so a fixed seed picked up elsewhere
+       (typed in, "Use Last", a PNG metadata import) silently stuck to every
+       video generated afterwards with no way to tell why (#minimal repro: any
+       non "-1" value in the store never surfaces in this panel). -->
+  <div>
+    <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
+      <span>{locale.t('generation.sampler.seed')}<InfoTip text={locale.t('generation.sampler.seed_tip')} /></span>
+      <div class="flex items-center gap-1">
+        {#if progress.lastCompletedSeed != null}
+          <button
+            class="text-[10px] px-1.5 py-0.5 rounded bg-neutral-700 text-neutral-300 hover:bg-neutral-600 transition-colors"
+            onclick={() => {
+              generation.seed = progress.lastCompletedSeed!;
+              generation.saveSettings();
+            }}
+            title={locale.t('generation.sampler.seed_use_last_tip')}
+          >
+            {locale.t('generation.sampler.seed_use_last')}
+          </button>
+        {/if}
+        <button
+          class="text-[10px] px-1.5 py-0.5 rounded {randomSeed
+            ? 'bg-indigo-600 text-white'
+            : 'bg-neutral-700 text-neutral-300'} transition-colors"
+          onclick={() => {
+            generation.seed = randomSeed ? (progress.lastCompletedSeed ?? "0") : "-1";
+            generation.saveSettings();
+          }}
+        >
+          {locale.t('generation.sampler.seed_random')}
+        </button>
+      </div>
+    </label>
+    <input
+      type="text"
+      inputmode="numeric"
+      value={randomSeed ? '' : generation.seed}
+      placeholder={locale.t('generation.sampler.random_display')}
+      oninput={(e) => {
+        const digits = e.currentTarget.value.replace(/\D/g, '');
+        if (e.currentTarget.value !== digits) e.currentTarget.value = digits;
+        generation.seed = digits === '' ? "-1" : digits;
+        generation.saveSettings();
+      }}
+      class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+    />
+  </div>
+
   <!-- VRAM assessment. Two tiers off one estimate: sky when the pass fits with
        little headroom left (slower, because weights start moving over PCIe),
        amber when it likely does not fit. Both are advice, not warnings - the
@@ -928,6 +1146,16 @@
       <p class="text-[11px] text-amber-300">{locale.t("generation.video.ref_required")}</p>
     {/if}
 
+    {#if generation.videoVariant === "ref2va" && refSlotsFree > 0}
+      <button
+        type="button"
+        class="w-full px-3 py-1.5 rounded-lg border border-neutral-700 text-[11px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 transition-colors"
+        onclick={() => (refPickerOpen = true)}
+      >
+        {locale.t("generation.video.choose_from_gallery")}
+      </button>
+    {/if}
+
     <div class="grid grid-cols-2 gap-2">
       {#each slots as slot (slot.key)}
         {@const preview = previews[slot.key]}
@@ -990,6 +1218,16 @@
                     }}
                   />
                 </label>
+                <button
+                  type="button"
+                  class="text-indigo-400 hover:text-indigo-300 ml-1"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    pickerSlot = slot.key;
+                  }}
+                >
+                  {locale.t("generation.video.choose_from_gallery")}
+                </button>
               </p>
             {/if}
             {#if uploadingSlot === slot.key}
@@ -1286,6 +1524,65 @@
     {/if}
   </div>
 
+  <!-- TeaCache -->
+  <div class="space-y-2">
+    <div class="flex items-center gap-2">
+      <input
+        type="checkbox"
+        id="video-teacache-enabled"
+        checked={generation.videoTeacacheEnabled}
+        disabled={teacacheInstalling}
+        class="w-4 h-4 accent-indigo-500 rounded disabled:opacity-50"
+        onchange={toggleTeacache}
+      />
+      <label for="video-teacache-enabled" class="text-xs text-neutral-400">
+        {locale.t("generation.video.teacache")}<InfoTip
+          text={locale.t("generation.video.teacache_tip")}
+        />
+      </label>
+    </div>
+
+    {#if !teacacheReady && !teacacheInstalling && !generation.videoTeacacheEnabled}
+      <p class="text-[11px] text-neutral-500">
+        {locale.t("generation.video.teacache_install_hint")}
+      </p>
+    {/if}
+
+    {#if teacacheInstalling}
+      <div class="rounded-lg border border-amber-600/60 bg-amber-900/25 px-3 py-2 space-y-1.5">
+        <div class="flex items-center gap-2 text-xs text-amber-200">
+          <div
+            class="w-3.5 h-3.5 border-2 border-amber-300 border-t-transparent rounded-full animate-spin shrink-0"
+          ></div>
+          <span>
+            {#if teacacheInstallStep === "restart"}
+              {locale.t("generation.video.turbo_install_restarting")}
+            {:else if teacacheInstallStep === "verify"}
+              {locale.t("generation.video.teacache_install_verifying")}
+            {:else}
+              {locale.t("generation.video.teacache_install_starting")}
+            {/if}
+          </span>
+        </div>
+        {#if teacacheInstallMessage}
+          <p class="text-[10px] font-mono text-amber-300/80 break-all">{teacacheInstallMessage}</p>
+        {/if}
+        <div class="h-1 rounded-full bg-amber-950/60 overflow-hidden">
+          <div
+            class="h-full bg-amber-400 transition-all duration-300"
+            style="width: {teacacheInstallPercent}%"
+          ></div>
+        </div>
+      </div>
+    {/if}
+
+    {#if teacacheInstallError}
+      <p class="text-[11px] text-red-400">
+        {locale.t("generation.video.teacache_install_failed", { error: teacacheInstallError })}
+      </p>
+    {/if}
+  </div>
+
   <!-- Models -->
   <div class="space-y-2 pt-1 border-t border-neutral-800">
     <span class="block text-xs text-neutral-400 pt-2">
@@ -1310,30 +1607,80 @@
       </p>
     {/if}
 
-    {#if missingStackFiles.length === 0}
+    <div class="space-y-1">
+      {#each tierFiles as entry (entry.file.filename)}
+        {@const installed = installedName(entry.file) !== null}
+        <div class="flex items-center gap-2 text-[11px]">
+          <div class="min-w-0 flex-1">
+            <p class="text-neutral-300 truncate">
+              {locale.t(entry.labelKey)}
+              {#if entry.role === generation.videoVariant}
+                <span class="text-indigo-400">({locale.t("generation.video.role_in_use")})</span>
+              {/if}
+            </p>
+            <p class="text-neutral-500 truncate" title={entry.file.filename}>
+              {entry.file.filename}
+            </p>
+          </div>
+          <span class="shrink-0 font-mono text-neutral-500">
+            {locale.formatBytes(entry.file.sizeBytes)}
+          </span>
+          {#if installed}
+            <svg
+              class="w-3.5 h-3.5 shrink-0 text-emerald-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-label={locale.t("generation.video.stack_file_installed")}
+              role="img"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="3"
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          {:else}
+            <button
+              type="button"
+              onclick={() => downloadOne(entry.file)}
+              disabled={downloadingStack || downloadingFile !== null || turboInstalling}
+              class="shrink-0 px-2 py-1 rounded border border-neutral-700 text-neutral-300 hover:border-indigo-500 hover:text-indigo-300 disabled:opacity-50 disabled:hover:border-neutral-700 disabled:hover:text-neutral-300 transition-colors"
+            >
+              {locale.t("generation.video.stack_download_one")}
+            </button>
+          {/if}
+        </div>
+      {/each}
+    </div>
+
+    {#if missingTierFiles.length === 0}
       <p class="text-[11px] text-neutral-500">{locale.t("generation.video.stack_ready")}</p>
     {:else}
       <p class="text-[11px] text-amber-300">
         {locale.t("generation.video.stack_missing", {
-          count: missingStackFiles.length,
-          size: locale.formatBytes(stackDownloadBytes),
+          count: missingTierFiles.length,
+          total: tierFiles.length,
+          size: locale.formatBytes(tierDownloadBytes),
         })}
       </p>
       <button
         type="button"
         onclick={downloadStack}
-        disabled={downloadingStack || turboInstalling}
+        disabled={downloadingStack || downloadingFile !== null || turboInstalling}
         class="w-full px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 text-sm text-white transition-colors"
       >
         {downloadingStack
           ? locale.t("generation.video.stack_downloading")
           : locale.t("generation.video.stack_download", {
-              size: locale.formatBytes(stackDownloadBytes),
+              count: missingTierFiles.length,
+              size: locale.formatBytes(tierDownloadBytes),
             })}
       </button>
     {/if}
 
-    {#if downloadingStack && dlOrder.length > 0}
+    {#if (downloadingStack || downloadingFile !== null) && dlOrder.length > 0}
       {@render downloadRows()}
     {/if}
 
@@ -1344,6 +1691,28 @@
     {/if}
   </div>
 </div>
+
+<GalleryPickerModal
+  open={pickerSlot !== null}
+  title={locale.t("generation.video.pick_for_slot", {
+    slot: findSlot(pickerSlot ?? "")?.label ?? "",
+  })}
+  onselect={(images) => {
+    const key = pickerSlot;
+    const image = images[0];
+    if (key && image) void assignFromGallery(key, image);
+  }}
+  onclose={() => (pickerSlot = null)}
+/>
+
+<GalleryPickerModal
+  open={refPickerOpen}
+  multiple
+  max={refSlotsFree}
+  title={locale.t("generation.video.pick_refs_title")}
+  onselect={(images) => void assignRefsFromGallery(images)}
+  onclose={() => (refPickerOpen = false)}
+/>
 
 {#snippet downloadRows()}
   <div class="space-y-1.5">

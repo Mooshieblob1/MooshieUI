@@ -564,6 +564,9 @@ const ru: Record<string, string> = {
   "generation.sampler.metadata_upgraded": "16-бит активен — Стелс Альфа обновлён до Оба.",
   "generation.sampler.anima_recommended": "Рекомендуемые настройки Anima",
   "generation.sampler.anima_hint": "30 шагов, CFG 4, сэмплер er_sde (из инструкции к модели Anima).",
+  "generation.sampler.anima_rdbt_toggle": "LoRA RDBT-Anima",
+  "generation.sampler.anima_rdbt_tip": "Загружает и применяет созданную сообществом LoRA RDBT-Anima с дистилляцией guidance (~92 МБ, неофициальное зеркало). Ускоряет генерацию, устраняя необходимость в CFG.",
+  "generation.sampler.anima_rdbt_downloading": "Загрузка LoRA RDBT-Anima…",
   "generation.sampler.sih_recommended": "Рекомендуемые настройки SIH",
   "generation.sampler.sih_hint": "Публичных настроек модели SIH не найдено; используются стандартные проекта: 20 шагов, CFG 1.4, euler_cfg_pp, sgm_uniform.",
   "generation.sampler.juice_recommended": "Рекомендуемые настройки Juice",
@@ -724,15 +727,22 @@ const ru: Record<string, string> = {
   "generation.video.turbo_install_verifying": "Проверка загрузки узлов",
   "generation.video.turbo_install_not_loaded": "ComfyUI перезапустился, но узлы сэмплера Turbo не загрузились. Проверьте журнал ComfyUI.",
   "generation.video.turbo_install_failed": "Не удалось установить Turbo LoRA: {error}",
+  "generation.video.teacache": "TeaCache",
+  "generation.video.teacache_tip": "Пропускает прямой проход модели на шагах, где результат почти не изменился по сравнению с предыдущим, повторно используя кешированный результат. Быстрее, с небольшим риском более плавного движения; сочетается с Turbo.",
+  "generation.video.teacache_install_hint": "При включении этой опции будут установлены узлы TeaCache, после чего ComfyUI перезапустится.",
+  "generation.video.teacache_install_starting": "Установка узлов TeaCache",
+  "generation.video.teacache_install_verifying": "Проверка загрузки узлов",
+  "generation.video.teacache_install_not_loaded": "ComfyUI перезапущен, но узлы TeaCache не загрузились. Проверьте журнал ComfyUI.",
+  "generation.video.teacache_install_failed": "Не удалось установить TeaCache: {error}",
   "generation.video.models": "Модели",
-  "generation.video.models_tip": "Режим видео использует набор MiniMax H3. Выберите уровень качества, и MooshieUI подберёт подходящую диффузионную модель, текстовый энкодер и оба VAE, загрузив недостающие файлы.",
+  "generation.video.models_tip": "Режим видео использует набор MiniMax H3. Выберите уровень качества, и MooshieUI перечислит все используемые файлы, включая отдельную диффузионную модель для каждого режима, загрузив недостающие.",
   "generation.video.stack.nvfp4": "NVFP4 - 12,5 ГБ, только Blackwell",
   "generation.video.stack.int8": "int8 - 21 ГБ, рекомендуется",
   "generation.video.stack.fp8": "fp8 - 21 ГБ",
   "generation.video.stack.bf16": "bf16 - 40 ГБ, полная точность",
-  "generation.video.stack_ready": "Все четыре файла моделей установлены.",
-  "generation.video.stack_missing": "Не хватает {count} из 4 файлов моделей, к загрузке {size}.",
-  "generation.video.stack_download": "Загрузить недостающие файлы ({size})",
+  "generation.video.stack_ready": "Все файлы моделей установлены.",
+  "generation.video.stack_missing": "Не хватает {count} из {total} файлов моделей, к загрузке {size}.",
+  "generation.video.stack_download": "Загрузить все недостающие ({count} файла, {size})",
   "generation.video.stack_downloading": "Загрузка",
   "generation.video.stack_download_failed": "Загрузка не удалась: {error}",
   "generation.video.stack_requires_blackwell": "Для NVFP4 нужна карта Blackwell (серия RTX 50). На более старых картах используется значительно более медленный путь.",
@@ -1238,7 +1248,7 @@ const ru: Record<string, string> = {
   "video.export.size_actual": "{size}",
   "video.export.frames": "{count} frames",
   "video.export.target_platform": "Size limit",
-  "video.export.target_discord": "Discord (free) 10 MB",
+  "video.export.target_discord": "Discord (free) 20 MB",
   "video.export.target_nitro": "Discord Nitro 500 MB",
   "video.export.target_none": "No limit",
   "video.export.over_limit": "Over the {target} limit. Try the next preset down.",
@@ -1336,6 +1346,8 @@ const ru: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "Автоматически распределять изображения по доскам на основе обнаруженных тегов художников в их промптах",
   "gallery.sort_by_artist_done": "Отсортировано {sorted} изображений в {boards} досок художников",
   "gallery.sort_by_artist_none": "Теги художников в галерее не найдены",
+  "gallery.show_generation_time": "Показывать время генерации",
+  "gallery.generation_time": "Время генерации",
   "gallery.artist_detected": "Обнаружен тег художника: {tag}",
   "gallery.col_preview": "Превью",
   "gallery.col_name": "Имя",
@@ -1946,6 +1958,8 @@ const ru: Record<string, string> = {
   "generation.prompts.negative_disabled_for_model": "не используется этой моделью",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
+  "generation.sampler.anima_teacache_label": "TeaCache",
+  "generation.sampler.anima_teacache_tip": "Ускоряет генерацию в Anima за счёт повторного использования предыдущего результата модели на шагах с малыми изменениями, пропуская прямой проход. Небольшой риск более мягкой детализации; по умолчанию отключено.",
 
 
 
@@ -2866,6 +2880,48 @@ const ru: Record<string, string> = {
   "errors.report.opening": "Открытие...",
 
   "errors.report.copied_hint": "Диагностика скопирована в буфер обмена. Вставьте её в тело тикета.",
+
+  "generation.video.role_fl2va": "Модель первого/последнего кадра",
+
+  "generation.video.role_ref2va": "Ссылочная модель",
+
+  "generation.video.role_text_encoder": "Текстовый энкодер",
+
+  "generation.video.role_video_vae": "Видео VAE",
+
+  "generation.video.role_audio_vae": "Аудио VAE",
+
+  "generation.video.role_in_use": "используется",
+
+  "generation.video.stack_file_installed": "Установлено",
+
+  "generation.video.stack_download_one": "Загрузить",
+
+  "gallery.make_video": "Создать видео",
+
+  "gallery.add_video_reference": "Добавить как референс видео",
+
+  "gallery.toast.loaded_video_frame": "Изображение загружено как первый кадр видео",
+
+  "gallery.toast.loaded_video_reference": "Изображение добавлено как референс {index}",
+
+  "gallery.toast.video_refs_full": "Все {count} слотов референсов уже заняты",
+
+  "gallery.picker.session": "Сеанс",
+
+  "gallery.picker.gallery": "Галерея",
+
+  "gallery.picker.search": "Поиск по имени файла",
+
+  "gallery.picker.empty": "Нет изображений для выбора",
+
+  "gallery.picker.add": "Добавить {count}",
+
+  "generation.video.choose_from_gallery": "Выбрать из галереи",
+
+  "generation.video.pick_for_slot": "Выбрать изображение для {slot}",
+
+  "generation.video.pick_refs_title": "Выбрать референсные изображения",
 
 };
 export default ru;

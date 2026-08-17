@@ -254,6 +254,7 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "install_custom_node",
     "install_rife",
     "install_h3_turbo",
+    "install_h3_teacache",
     "import_image_directory",
     "open_directory",
     "move_installation",
@@ -2805,6 +2806,18 @@ async fn dispatch_command(
                 )
                 .map_err(|e| e.to_string())?;
             }
+            // Mirrors the same check in the Tauri `generate` command: catches a
+            // missing MiniMax H3 node before submission instead of surfacing
+            // ComfyUI's raw `missing_node_type` prompt-validation error.
+            if params.mode == "video" {
+                let base_url = state.base_url().await;
+                crate::comfyui::nodes::verify_required_h3_nodes_for_generation(
+                    &state.http_client,
+                    &base_url,
+                    &params,
+                )
+                .await?;
+            }
             let seed = if params.seed < 0 {
                 (rand::random::<u64>() >> 1) as i64
             } else {
@@ -4336,6 +4349,49 @@ async fn dispatch_command(
             }
             result.map(|_| serde_json::json!(null))
         }
+        "is_h3_teacache_installed" => {
+            let comfyui_path = state.config.read().await.comfyui_path.clone();
+            Ok(serde_json::json!(
+                crate::comfyui::nodes::is_h3_teacache_installed(&comfyui_path)
+            ))
+        }
+        "install_h3_teacache" => {
+            let (comfyui_path, venv_path, network_proxy, pip_index_url) = {
+                let config = state.config.read().await;
+                (
+                    config.comfyui_path.clone(),
+                    config.venv_path.clone(),
+                    config.network_proxy.clone(),
+                    config.pip_index_url.clone(),
+                )
+            };
+
+            let emit = |step: &str, message: &str, done: bool| {
+                state.broadcast(
+                    "install:progress",
+                    serde_json::json!({
+                        "node_name": "ComfyUI-MiniMaxH3-TeaCache",
+                        "step": step,
+                        "message": message,
+                        "done": done,
+                    }),
+                );
+            };
+
+            let result = crate::comfyui::nodes::install_h3_teacache(
+                &comfyui_path,
+                &venv_path,
+                network_proxy.as_deref(),
+                pip_index_url.as_deref(),
+                &emit,
+            )
+            .await;
+
+            if let Err(e) = &result {
+                emit("error", e, true);
+            }
+            result.map(|_| serde_json::json!(null))
+        }
 
         // --- Config extras ---
         "set_gallery_path" => {
@@ -5212,6 +5268,7 @@ pub async fn chat_any_headless(
     };
 
     if ext_enabled {
+        crate::prompt_assistant::local_llm::wake_local_server(&state.http_client, &ext_base).await;
         state.broadcast("llm:stage", serde_json::json!("generating"));
         return crate::prompt_assistant::server::chat_provider(
             &state.http_client,

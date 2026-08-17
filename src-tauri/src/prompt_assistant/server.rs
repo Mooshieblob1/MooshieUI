@@ -4,8 +4,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
-use tokio::process::{Child, Command};
+use tokio::process::Child;
 
+use crate::comfyui::process::tokio_command_no_window;
 use crate::error::AppError;
 
 /// Pinned llama.cpp release. Update this constant to roll the binary forward.
@@ -225,7 +226,7 @@ impl LlamaServer {
         let log_path = self.log_path();
         let log_file = std::fs::File::create(&log_path)
             .map_err(|e| AppError::LlmError(format!("Failed to create llama-server log: {e}")))?;
-        let mut cmd = Command::new(self.server_path());
+        let mut cmd = tokio_command_no_window(self.server_path());
         cmd.arg("-m")
             .arg(model_path)
             .arg("--host")
@@ -239,10 +240,6 @@ impl LlamaServer {
             .stderr(Stdio::from(log_file))
             // Ensure the child dies with the app even if unload() is skipped.
             .kill_on_drop(true);
-        #[cfg(windows)]
-        {
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        }
         let child = cmd
             .spawn()
             .map_err(|e| AppError::LlmError(format!("Failed to spawn llama-server: {e}")))?;

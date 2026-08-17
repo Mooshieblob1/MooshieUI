@@ -154,9 +154,19 @@ fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Comman
     cmd.creation_flags(0x08000000) // CREATE_NO_WINDOW
 }
 
-#[cfg(not(target_os = "windows"))]
+// On Linux, spawned setup tooling (`uv`, the venv's `python`, `nvidia-smi`, ...)
+// must not inherit the AppImage's bundled `LD_LIBRARY_PATH`/`LD_PRELOAD` — see
+// `crate::comfyui::process::strip_appimage_env` for why that breaks symbol
+// resolution against the system's native libraries.
+#[cfg(target_os = "linux")]
 fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
-    cmd // no-op on non-Windows
+    crate::comfyui::process::strip_appimage_env(cmd);
+    cmd
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn hide_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
+    cmd // no-op on macOS
 }
 
 /// Run a command with hidden window, capturing stdout/stderr and streaming
@@ -819,13 +829,25 @@ async fn detect_gpu_type() -> String {
                     if let Ok(vendor) = std::fs::read_to_string(&vendor_path) {
                         // Intel PCI vendor ID is 0x8086
                         if vendor.trim() == "0x8086" {
-                            // Check if it's a discrete GPU (class 0x0300 = VGA controller)
+                            // Check if it's a VGA-class device (0x0300). Every Intel CPU
+                            // since ~2011 has an integrated GPU that also reports vendor
+                            // 0x8086 / class 0x0300, so this alone can't distinguish a
+                            // discrete Arc card from a CPU's iGPU.
                             let class_path = entry.path().join("device/class");
-                            if let Ok(class) = std::fs::read_to_string(&class_path) {
-                                if class.trim().starts_with("0x0300") {
-                                    log::info!("GPU detection: Intel Arc GPU found via sysfs");
-                                    return "intel".to_string();
-                                }
+                            let is_vga = std::fs::read_to_string(&class_path)
+                                .is_ok_and(|c| c.trim().starts_with("0x0300"));
+                            if !is_vga {
+                                continue;
+                            }
+                            // Gate on dedicated VRAM, like the AMD discrete check above.
+                            // Only cards with local memory (Arc's i915 DG2 path or the
+                            // newer xe driver) expose these sysfs files at all -- an
+                            // integrated GPU has neither, so this excludes it rather
+                            // than reading a real "0".
+                            let device_dir = entry.path().join("device");
+                            if device_vram_bytes(&device_dir).unwrap_or(0) > 0 {
+                                log::info!("GPU detection: Intel Arc GPU found via sysfs");
+                                return "intel".to_string();
                             }
                         }
                     }
@@ -1513,6 +1535,43 @@ async fn step_install_attention_backend(
     }
 }
 
+/// Max VRAM in MB reported under a `/sys/class/drm`-shaped root, across all
+/// `card*/device` entries. Checks `mem_info_vram_total` (i915, and AMD's
+/// `amdgpu`) first, falling back to `tile0/vram0/total_bytes` (Intel's newer
+/// `xe` driver, default for Battlemage and increasingly used for Alchemist).
+/// No vendor filtering -- both paths only exist for dedicated VRAM in
+/// practice, matching the pre-existing (also unfiltered) behavior here.
+/// Dedicated VRAM in bytes for a single `.../cardN/device` sysfs dir, or
+/// `None` if neither path exists. Both `mem_info_vram_total` (i915, amdgpu)
+/// and `tile0/vram0/total_bytes` (Intel's `xe` driver) are only ever present
+/// for cards with local memory -- an integrated GPU has neither file, which
+/// is what lets callers use presence (not just value) to tell discrete and
+/// integrated GPUs apart.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn device_vram_bytes(device_dir: &std::path::Path) -> Option<u64> {
+    std::fs::read_to_string(device_dir.join("mem_info_vram_total"))
+        .ok()
+        .or_else(|| std::fs::read_to_string(device_dir.join("tile0/vram0/total_bytes")).ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+}
+
+// Only called from the #[cfg(target_os = "linux")] block; tests exercise it
+// cross-platform, so the function is ungated but unused on non-Linux.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_vram_from_drm_root(root: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return 0;
+    };
+    let mut max_vram: u64 = 0;
+    for entry in entries.flatten() {
+        let device_dir = entry.path().join("device");
+        if let Some(bytes) = device_vram_bytes(&device_dir) {
+            max_vram = max_vram.max(bytes / (1024 * 1024));
+        }
+    }
+    max_vram
+}
+
 /// Detect total GPU VRAM in megabytes. Returns 0 if detection fails.
 async fn detect_vram_mb() -> u64 {
     // NVIDIA: nvidia-smi reports MiB
@@ -1535,24 +1594,13 @@ async fn detect_vram_mb() -> u64 {
         }
     }
 
-    // AMD: sysfs exposes VRAM in bytes (Linux only)
+    // AMD (mem_info_vram_total) and Intel Arc (i915: mem_info_vram_total,
+    // xe: tile0/vram0/total_bytes) both expose VRAM via sysfs (Linux only).
     #[cfg(target_os = "linux")]
     {
-        if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
-            let mut max_vram: u64 = 0;
-            for entry in entries.flatten() {
-                let path = entry.path().join("device/mem_info_vram_total");
-                if path.exists() {
-                    if let Ok(val) = std::fs::read_to_string(&path) {
-                        if let Ok(bytes) = val.trim().parse::<u64>() {
-                            max_vram = max_vram.max(bytes / (1024 * 1024));
-                        }
-                    }
-                }
-            }
-            if max_vram > 0 {
-                return max_vram;
-            }
+        let max_vram = parse_vram_from_drm_root(std::path::Path::new("/sys/class/drm"));
+        if max_vram > 0 {
+            return max_vram;
         }
     }
 
@@ -2543,4 +2591,107 @@ pub async fn update_comfyui(
         target_ref: COMFYUI_REF.to_string(),
         method,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{device_vram_bytes, parse_vram_from_drm_root};
+    use std::fs;
+
+    fn unique_temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mooshieui-test-{}-{}",
+            name,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn parses_i915_mem_info_vram_total_path() {
+        let root = unique_temp_dir("i915");
+        let device_dir = root.join("card0").join("device");
+        fs::create_dir_all(&device_dir).unwrap();
+        fs::write(device_dir.join("mem_info_vram_total"), "17179869184").unwrap(); // 16 GiB
+        assert_eq!(parse_vram_from_drm_root(&root), 16384);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn parses_xe_tile0_vram0_total_bytes_path_when_mem_info_absent() {
+        let root = unique_temp_dir("xe");
+        let device_dir = root.join("card0").join("device");
+        let tile_dir = device_dir.join("tile0").join("vram0");
+        fs::create_dir_all(&tile_dir).unwrap();
+        fs::write(tile_dir.join("total_bytes"), "17179869184").unwrap(); // 16 GiB
+        assert_eq!(parse_vram_from_drm_root(&root), 16384);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn prefers_mem_info_vram_total_when_both_paths_present() {
+        let root = unique_temp_dir("both");
+        let device_dir = root.join("card0").join("device");
+        let tile_dir = device_dir.join("tile0").join("vram0");
+        fs::create_dir_all(&tile_dir).unwrap();
+        fs::write(device_dir.join("mem_info_vram_total"), "8589934592").unwrap(); // 8 GiB
+        fs::write(tile_dir.join("total_bytes"), "17179869184").unwrap(); // 16 GiB
+        assert_eq!(parse_vram_from_drm_root(&root), 8192);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn takes_max_across_multiple_cards() {
+        let root = unique_temp_dir("multi");
+        let card0 = root.join("card0").join("device");
+        let card1 = root.join("card1").join("device");
+        fs::create_dir_all(&card0).unwrap();
+        fs::create_dir_all(&card1).unwrap();
+        fs::write(card0.join("mem_info_vram_total"), "8589934592").unwrap(); // 8 GiB
+        fs::write(card1.join("mem_info_vram_total"), "17179869184").unwrap(); // 16 GiB
+        assert_eq!(parse_vram_from_drm_root(&root), 16384);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn returns_zero_when_no_vram_files_present() {
+        let root = unique_temp_dir("empty");
+        fs::create_dir_all(root.join("card0").join("device")).unwrap();
+        assert_eq!(parse_vram_from_drm_root(&root), 0);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn returns_zero_when_root_does_not_exist() {
+        let root = std::env::temp_dir().join("mooshieui-test-nonexistent-drm-root");
+        assert_eq!(parse_vram_from_drm_root(&root), 0);
+    }
+
+    // device_vram_bytes() is what gates the Linux Intel Arc sysfs detection
+    // (setup.rs, detect_gpu_type) against misfiring on integrated GPUs: every
+    // Intel CPU exposes a vendor=0x8086/class=0x0300 DRM device just like a
+    // discrete Arc card, but only a card with local memory has either of
+    // these sysfs files at all.
+    #[test]
+    fn device_vram_bytes_is_none_for_integrated_gpu_with_no_vram_files() {
+        let root = unique_temp_dir("igpu");
+        let device_dir = root.join("card0").join("device");
+        fs::create_dir_all(&device_dir).unwrap();
+        assert_eq!(device_vram_bytes(&device_dir), None);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn device_vram_bytes_is_some_for_discrete_gpu_with_vram_file() {
+        let root = unique_temp_dir("dgpu");
+        let device_dir = root.join("card0").join("device");
+        fs::create_dir_all(&device_dir).unwrap();
+        fs::write(device_dir.join("mem_info_vram_total"), "8589934592").unwrap(); // 8 GiB
+        assert_eq!(device_vram_bytes(&device_dir), Some(8589934592));
+        fs::remove_dir_all(&root).ok();
+    }
 }

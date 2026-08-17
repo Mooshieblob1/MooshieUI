@@ -70,7 +70,7 @@ See the [Wiki](https://github.com/Mooshieblob1/MooshieUI/wiki) for the full feat
 ### Desktop (Windows/Linux)
 
 1. Download a release from [Releases](https://github.com/Mooshieblob1/MooshieUI/releases).
-2. Run the app. The setup wizard downloads uv, Python, ComfyUI, and PyTorch (GPU auto-detected) and installs MooshieUI's custom nodes - no Python or pip setup required.
+2. Run the app. The setup wizard downloads uv, Python, ComfyUI, and PyTorch (NVIDIA, AMD, or Intel Arc GPU auto-detected) and installs MooshieUI's custom nodes - no Python or pip setup required.
 3. Start generating; ComfyUI launches automatically.
 
 > ~5–10 GB disk, 5–15 minutes on first launch. macOS, Docker, and remote/cloud ComfyUI setups are covered in [Installation](https://github.com/Mooshieblob1/MooshieUI/wiki/Installation).

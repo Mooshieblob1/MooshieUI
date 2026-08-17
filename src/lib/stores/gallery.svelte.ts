@@ -178,6 +178,7 @@ function isWebpGalleryFile(filename: string | undefined): boolean {
 
 const GALLERY_BOARDS_KEY = "mooshieui.gallery.boards.v1";
 const GALLERY_BOARD_NAMES_KEY = "mooshieui.gallery.boardNames.v1";
+const GALLERY_SHOW_GEN_TIME_KEY = "mooshieui.gallery.showGenerationTime.v1";
 
 type ToastType = "success" | "error" | "info" | "warning";
 type ToastOptions = {
@@ -212,6 +213,8 @@ class GalleryStore {
   toast = $state<GalleryToast | null>(null);
   boardAssignments = $state<Record<string, string>>({});
   customBoards = $state<string[]>([]);
+  /** Shown as a badge on thumbnails and the lightbox when true; persisted across sessions. */
+  showGenerationTime = $state(false);
   /** Storage info from the server (browser mode only). */
   storageInfo = $state<StorageInfo | null>(null);
   /** Lookup map for artist-tag detection.  Populated by loadArtistIndex(). */
@@ -257,6 +260,24 @@ class GalleryStore {
   constructor() {
     this.loadBoardAssignments();
     this.loadCustomBoards();
+    this.loadShowGenerationTime();
+  }
+
+  private loadShowGenerationTime() {
+    try {
+      this.showGenerationTime = localStorage.getItem(GALLERY_SHOW_GEN_TIME_KEY) === "true";
+    } catch (e) {
+      console.error("Failed to load showGenerationTime pref:", e);
+    }
+  }
+
+  setShowGenerationTime(value: boolean) {
+    this.showGenerationTime = value;
+    try {
+      localStorage.setItem(GALLERY_SHOW_GEN_TIME_KEY, String(value));
+    } catch (e) {
+      console.error("Failed to save showGenerationTime pref:", e);
+    }
   }
 
   private loadBoardAssignments() {
@@ -543,7 +564,8 @@ class GalleryStore {
    */
   async addPersistedImage(
     galleryFilename: string,
-    videoMeta?: { duration_seconds?: number; fps?: number },
+    videoMeta?: { duration_seconds?: number; fps?: number; generationTimeMs?: number },
+    addToSession = false,
   ) {
     // Mirror loadFromDisk's modern-format parse: {promptId}__{mode}__{origFilename}.
     let promptId = "";
@@ -572,8 +594,16 @@ class GalleryStore {
       generated_at_ms: Date.now(),
       duration_seconds: videoMeta?.duration_seconds,
       fps: videoMeta?.fps,
+      generationTimeMs: videoMeta?.generationTimeMs,
     };
     this.images = [entry, ...this.images];
+    // The "generated this session" tabs (e.g. BottomPanel's Videos tab) read
+    // sessionImages, not images — videos land here instead of addImages()
+    // because they're saved server-side rather than streamed as blobs, so
+    // they need to be added to both to show up while the app is still open.
+    if (addToSession) {
+      this.sessionImages = [entry, ...this.sessionImages];
+    }
     // Pull in the embedded metadata (artist detection etc.) in the background.
     void this.hydrateMetadataInBackground();
   }

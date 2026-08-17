@@ -650,6 +650,9 @@ const en: Record<string, string> = {
   "generation.sampler.metadata_upgraded": "16-bit active — Stealth Alpha upgraded to Both.",
   "generation.sampler.anima_recommended": "Anima Recommended Settings",
   "generation.sampler.anima_hint": "30 steps, CFG 4, sampler er_sde (from Anima model card guidance).",
+  "generation.sampler.anima_rdbt_toggle": "RDBT-Anima LoRA",
+  "generation.sampler.anima_rdbt_tip": "Downloads and applies the community RDBT-Anima guidance-distilled LoRA (~92MB, unofficial mirror). Speeds up generation by removing the need for CFG.",
+  "generation.sampler.anima_rdbt_downloading": "Downloading RDBT-Anima LoRA…",
   "generation.sampler.nanosaur_recommended": "Nanosaur Recommended Settings",
   "generation.sampler.nanosaur_hint": "40 steps, CFG 7, euler sampler, simple scheduler. 896×1152 default resolution.",
   "generation.sampler.sih_recommended": "SIH Recommended Settings",
@@ -816,15 +819,22 @@ const en: Record<string, string> = {
   "generation.video.turbo_install_verifying": "Verifying the nodes loaded",
   "generation.video.turbo_install_not_loaded": "ComfyUI restarted but the Turbo sampler nodes did not load. Check the ComfyUI log.",
   "generation.video.turbo_install_failed": "The Turbo LoRA could not be installed: {error}",
+  "generation.video.teacache": "TeaCache",
+  "generation.video.teacache_tip": "Skips the model's forward pass on steps where the output barely changed from the last one, reusing the cached result instead. Faster with a small risk of softer motion; stacks with Turbo.",
+  "generation.video.teacache_install_hint": "Turning this on installs the TeaCache nodes, then restarts ComfyUI.",
+  "generation.video.teacache_install_starting": "Installing the TeaCache nodes",
+  "generation.video.teacache_install_verifying": "Verifying the nodes loaded",
+  "generation.video.teacache_install_not_loaded": "ComfyUI restarted but the TeaCache nodes did not load. Check the ComfyUI log.",
+  "generation.video.teacache_install_failed": "TeaCache could not be installed: {error}",
   "generation.video.models": "Models",
-  "generation.video.models_tip": "Video mode runs the MiniMax H3 stack. Pick a quality tier and MooshieUI selects the matching diffusion model, text encoder and both VAEs, downloading whatever is missing.",
+  "generation.video.models_tip": "Video mode runs the MiniMax H3 stack. Pick a quality tier and MooshieUI lists every file it uses, including a separate diffusion model for each mode, and downloads whatever is missing.",
   "generation.video.stack.nvfp4": "NVFP4 - 12.5 GB, Blackwell only",
   "generation.video.stack.int8": "int8 - 21 GB, recommended",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB, full precision",
-  "generation.video.stack_ready": "All four model files are installed.",
-  "generation.video.stack_missing": "Missing {count} of 4 model files, {size} to download.",
-  "generation.video.stack_download": "Download the missing files ({size})",
+  "generation.video.stack_ready": "All model files are installed.",
+  "generation.video.stack_missing": "Missing {count} of {total} model files, {size} to download.",
+  "generation.video.stack_download": "Download all missing ({count} files, {size})",
   "generation.video.stack_downloading": "Downloading",
   "generation.video.stack_download_failed": "The download failed: {error}",
   "generation.video.stack_requires_blackwell": "NVFP4 needs a Blackwell card (RTX 50 series). On older cards it falls back to a much slower path.",
@@ -1120,6 +1130,8 @@ const en: Record<string, string> = {
   "generation.sampler.smart_guidance_tip": "Positive-biased adaptive guidance — makes the model follow your prompt more closely instead of just avoiding the negative. Applies to all generation steps. No tuning needed.",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
+  "generation.sampler.anima_teacache_label": "TeaCache",
+  "generation.sampler.anima_teacache_tip": "Speeds up Anima generation by reusing the model's previous output on steps where little changed, skipping the forward pass. Small risk of softer detail; off by default.",
 
   // Refiner History
   "generation.upscale_history.title": "Refiner History",
@@ -1488,7 +1500,7 @@ const en: Record<string, string> = {
   "video.export.size_actual": "{size}",
   "video.export.frames": "{count} frames",
   "video.export.target_platform": "Size limit",
-  "video.export.target_discord": "Discord (free) 10 MB",
+  "video.export.target_discord": "Discord (free) 20 MB",
   "video.export.target_nitro": "Discord Nitro 500 MB",
   "video.export.target_none": "No limit",
   "video.export.over_limit": "Over the {target} limit. Try the next preset down.",
@@ -1586,6 +1598,8 @@ const en: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "Auto-assign images to boards based on detected artist tags in their prompts",
   "gallery.sort_by_artist_done": "Sorted {sorted} image(s) into {boards} artist board(s)",
   "gallery.sort_by_artist_none": "No artist tags detected in your gallery",
+  "gallery.show_generation_time": "Show Generation Time",
+  "gallery.generation_time": "Generation Time",
   "gallery.artist_detected": "Artist tag detected: {tag}",
   "gallery.col_preview": "Preview",
   "gallery.col_name": "Name",
@@ -2805,5 +2819,47 @@ const en: Record<string, string> = {
   "errors.report.submit": "Open issue",
   "errors.report.opening": "Opening...",
   "errors.report.copied_hint": "Diagnostics copied to clipboard. Paste them into the issue body.",
+  "generation.video.role_fl2va": "First / last frame model",
+
+  "generation.video.role_ref2va": "Reference model",
+
+  "generation.video.role_text_encoder": "Text encoder",
+
+  "generation.video.role_video_vae": "Video VAE",
+
+  "generation.video.role_audio_vae": "Audio VAE",
+
+  "generation.video.role_in_use": "in use",
+
+  "generation.video.stack_file_installed": "Installed",
+
+  "generation.video.stack_download_one": "Download",
+
+  "gallery.make_video": "Make video",
+
+  "gallery.add_video_reference": "Add as video reference",
+
+  "gallery.toast.loaded_video_frame": "Image loaded as the first video frame",
+
+  "gallery.toast.loaded_video_reference": "Image added as reference {index}",
+
+  "gallery.toast.video_refs_full": "All {count} reference slots are already full",
+
+  "gallery.picker.session": "Session",
+
+  "gallery.picker.gallery": "Gallery",
+
+  "gallery.picker.search": "Search by filename",
+
+  "gallery.picker.empty": "No images to choose from",
+
+  "gallery.picker.add": "Add {count}",
+
+  "generation.video.choose_from_gallery": "Choose from gallery",
+
+  "generation.video.pick_for_slot": "Choose an image for {slot}",
+
+  "generation.video.pick_refs_title": "Choose reference images",
+
 };
 export default en;

@@ -18,6 +18,7 @@ export function lazyThumbnail(node: HTMLImageElement, opts: LazyThumbnailOpts) {
   let current = opts;
   let retryCount = 0;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let hasEnteredView = false;
 
   function getSrc(): string | undefined {
     const img = current.image;
@@ -55,10 +56,14 @@ export function lazyThumbnail(node: HTMLImageElement, opts: LazyThumbnailOpts) {
 
   node.addEventListener("error", onError);
 
+  // Only sets src once the element actually scrolls into view (or already is,
+  // which IntersectionObserver reports on the first callback) — a grid full of
+  // off-screen thumbnails must not all start downloading on mount.
   const observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
         if (entry.isIntersecting) {
+          hasEnteredView = true;
           applySrc();
           observer.unobserve(node);
         }
@@ -67,8 +72,6 @@ export function lazyThumbnail(node: HTMLImageElement, opts: LazyThumbnailOpts) {
     { rootMargin: "100px" },
   );
 
-  // Session images already have url — apply immediately if visible
-  applySrc();
   observer.observe(node);
 
   return {
@@ -79,7 +82,8 @@ export function lazyThumbnail(node: HTMLImageElement, opts: LazyThumbnailOpts) {
         clearTimeout(retryTimer);
         retryTimer = null;
       }
-      applySrc();
+      // Off-screen elements stay unloaded until the observer reports intersection.
+      if (hasEnteredView) applySrc();
     },
     destroy() {
       observer.disconnect();

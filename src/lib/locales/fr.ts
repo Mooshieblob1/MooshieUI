@@ -577,6 +577,9 @@ const fr: Record<string, string> = {
   "generation.sampler.metadata_upgraded": "16 bits actif — Stealth Alpha mis à jour en « Les deux ».",
   "generation.sampler.anima_recommended": "Paramètres recommandés Anima",
   "generation.sampler.anima_hint": "30 étapes, CFG 4, échantillonneur er_sde (guide du modèle Anima).",
+  "generation.sampler.anima_rdbt_toggle": "LoRA RDBT-Anima",
+  "generation.sampler.anima_rdbt_tip": "Télécharge et applique le LoRA communautaire RDBT-Anima à guidance distillée (~92 Mo, miroir non officiel). Accélère la génération en supprimant le besoin de CFG.",
+  "generation.sampler.anima_rdbt_downloading": "Téléchargement du LoRA RDBT-Anima…",
   "generation.sampler.sih_recommended": "Paramètres recommandés SIH",
   "generation.sampler.sih_hint": "Aucun paramètre public SIH trouvé ; utilisation des défauts du projet : 20 étapes, CFG 1.4, euler_cfg_pp, sgm_uniform.",
   "generation.sampler.juice_recommended": "Paramètres recommandés Juice",
@@ -739,15 +742,22 @@ const fr: Record<string, string> = {
   "generation.video.turbo_install_verifying": "Vérification du chargement des nodes",
   "generation.video.turbo_install_not_loaded": "ComfyUI a redémarré mais les nodes du sampler Turbo ne se sont pas chargés. Consultez le journal de ComfyUI.",
   "generation.video.turbo_install_failed": "Le LoRA Turbo n'a pas pu être installé : {error}",
+  "generation.video.teacache": "TeaCache",
+  "generation.video.teacache_tip": "Ignore la passe avant du modèle sur les étapes où la sortie a peu changé par rapport à la précédente, en réutilisant le résultat mis en cache. Plus rapide, avec un léger risque de mouvement plus doux ; se cumule avec Turbo.",
+  "generation.video.teacache_install_hint": "Activer cette option installe les nœuds TeaCache, puis redémarre ComfyUI.",
+  "generation.video.teacache_install_starting": "Installation des nœuds TeaCache",
+  "generation.video.teacache_install_verifying": "Vérification du chargement des nœuds",
+  "generation.video.teacache_install_not_loaded": "ComfyUI a redémarré mais les nœuds TeaCache ne se sont pas chargés. Vérifiez le journal de ComfyUI.",
+  "generation.video.teacache_install_failed": "TeaCache n'a pas pu être installé : {error}",
   "generation.video.models": "Modèles",
-  "generation.video.models_tip": "Le mode vidéo utilise la pile MiniMax H3. Choisissez un niveau de qualité et MooshieUI sélectionne le modèle de diffusion, l'encodeur de texte et les deux VAE correspondants, en téléchargeant ce qui manque.",
+  "generation.video.models_tip": "Le mode vidéo utilise la pile MiniMax H3. Choisissez un niveau de qualité et MooshieUI liste tous les fichiers utilisés, y compris un modèle de diffusion distinct pour chaque mode, et télécharge ce qui manque.",
   "generation.video.stack.nvfp4": "NVFP4 - 12,5 Go, Blackwell uniquement",
   "generation.video.stack.int8": "int8 - 21 Go, recommandé",
   "generation.video.stack.fp8": "fp8 - 21 Go",
   "generation.video.stack.bf16": "bf16 - 40 Go, pleine précision",
-  "generation.video.stack_ready": "Les quatre fichiers de modèle sont installés.",
-  "generation.video.stack_missing": "{count} des 4 fichiers de modèle manquent, {size} à télécharger.",
-  "generation.video.stack_download": "Télécharger les fichiers manquants ({size})",
+  "generation.video.stack_ready": "Tous les fichiers de modèle sont installés.",
+  "generation.video.stack_missing": "{count} des {total} fichiers de modèle manquent, {size} à télécharger.",
+  "generation.video.stack_download": "Tout télécharger ({count} fichiers, {size})",
   "generation.video.stack_downloading": "Téléchargement",
   "generation.video.stack_download_failed": "Le téléchargement a échoué : {error}",
   "generation.video.stack_requires_blackwell": "NVFP4 nécessite une carte Blackwell (série RTX 50). Sur des cartes plus anciennes, il bascule sur un chemin bien plus lent.",
@@ -1260,7 +1270,7 @@ const fr: Record<string, string> = {
   "video.export.size_actual": "{size}",
   "video.export.frames": "{count} frames",
   "video.export.target_platform": "Size limit",
-  "video.export.target_discord": "Discord (free) 10 MB",
+  "video.export.target_discord": "Discord (free) 20 MB",
   "video.export.target_nitro": "Discord Nitro 500 MB",
   "video.export.target_none": "No limit",
   "video.export.over_limit": "Over the {target} limit. Try the next preset down.",
@@ -1358,6 +1368,8 @@ const fr: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "Attribuer automatiquement les images à des tableaux selon les tags d'artiste détectés dans leurs prompts",
   "gallery.sort_by_artist_done": "{sorted} image(s) triée(s) dans {boards} tableau(x) d'artiste",
   "gallery.sort_by_artist_none": "Aucun tag d'artiste détecté dans votre galerie",
+  "gallery.show_generation_time": "Afficher le temps de génération",
+  "gallery.generation_time": "Temps de génération",
   "gallery.artist_detected": "Tag d'artiste détecté : {tag}",
   "gallery.col_preview": "Aperçu",
   "gallery.col_name": "Nom",
@@ -1972,6 +1984,8 @@ const fr: Record<string, string> = {
   "generation.prompts.negative_disabled_for_model": "ignoré par ce modèle",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
+  "generation.sampler.anima_teacache_label": "TeaCache",
+  "generation.sampler.anima_teacache_tip": "Accélère la génération Anima en réutilisant la sortie précédente du modèle aux étapes où peu de choses ont changé, en sautant le passage avant. Léger risque de détails plus doux ; désactivé par défaut.",
 
 
 
@@ -2892,6 +2906,48 @@ const fr: Record<string, string> = {
   "errors.report.opening": "Ouverture...",
 
   "errors.report.copied_hint": "Diagnostics copiés dans le presse-papiers. Collez-les dans le corps du problème.",
+
+  "generation.video.role_fl2va": "Modèle premier/dernier cadre",
+
+  "generation.video.role_ref2va": "Modèle de référence",
+
+  "generation.video.role_text_encoder": "Encodeur de texte",
+
+  "generation.video.role_video_vae": "VAE vidéo",
+
+  "generation.video.role_audio_vae": "VAE audio",
+
+  "generation.video.role_in_use": "en cours d'utilisation",
+
+  "generation.video.stack_file_installed": "Installé",
+
+  "generation.video.stack_download_one": "Télécharger",
+
+  "gallery.make_video": "Créer une vidéo",
+
+  "gallery.add_video_reference": "Ajouter comme référence vidéo",
+
+  "gallery.toast.loaded_video_frame": "Image chargée comme première image de la vidéo",
+
+  "gallery.toast.loaded_video_reference": "Image ajoutée comme référence {index}",
+
+  "gallery.toast.video_refs_full": "Les {count} emplacements de référence sont déjà tous occupés",
+
+  "gallery.picker.session": "Session",
+
+  "gallery.picker.gallery": "Galerie",
+
+  "gallery.picker.search": "Rechercher par nom de fichier",
+
+  "gallery.picker.empty": "Aucune image disponible",
+
+  "gallery.picker.add": "Ajouter {count}",
+
+  "generation.video.choose_from_gallery": "Choisir depuis la galerie",
+
+  "generation.video.pick_for_slot": "Choisir une image pour {slot}",
+
+  "generation.video.pick_refs_title": "Choisir des images de référence",
 
 };
 export default fr;

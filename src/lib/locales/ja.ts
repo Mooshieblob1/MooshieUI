@@ -577,6 +577,9 @@ const ja: Record<string, string> = {
   "generation.sampler.metadata_upgraded": "16ビット有効 — ステルスアルファは「両方」にアップグレードされました。",
   "generation.sampler.anima_recommended": "Anima推奨設定",
   "generation.sampler.anima_hint": "30ステップ、CFG 4、サンプラー er_sde（Animaモデルカードのガイダンスより）。",
+  "generation.sampler.anima_rdbt_toggle": "RDBT-Anima LoRA",
+  "generation.sampler.anima_rdbt_tip": "コミュニティ製のRDBT-Anima ガイダンス蒸留LoRAをダウンロードして適用します(約92MB、非公式ミラー)。CFGが不要になり生成が高速化します。",
+  "generation.sampler.anima_rdbt_downloading": "RDBT-Anima LoRAをダウンロード中…",
   "generation.sampler.sih_recommended": "SIH推奨設定",
   "generation.sampler.sih_hint": "公開SIHモデルカード設定なし。プロジェクトデフォルト使用：20ステップ、CFG 1.4、euler_cfg_pp、sgm_uniform。",
   "generation.sampler.juice_recommended": "Juice推奨設定",
@@ -739,15 +742,22 @@ const ja: Record<string, string> = {
   "generation.video.turbo_install_verifying": "ノードが読み込まれたか確認しています",
   "generation.video.turbo_install_not_loaded": "ComfyUI は再起動しましたが、Turbo サンプラー ノードが読み込まれませんでした。ComfyUI のログを確認してください。",
   "generation.video.turbo_install_failed": "Turbo LoRA をインストールできませんでした: {error}",
+  "generation.video.teacache": "TeaCache",
+  "generation.video.teacache_tip": "前のステップと出力がほとんど変わらないステップではモデルの順伝播をスキップし、キャッシュされた結果を再利用します。高速化されますが、動きがわずかに滑らかになるリスクがあります。Turbo と併用可能です。",
+  "generation.video.teacache_install_hint": "オンにすると TeaCache ノードをインストールし、ComfyUI を再起動します。",
+  "generation.video.teacache_install_starting": "TeaCache ノードをインストールしています",
+  "generation.video.teacache_install_verifying": "ノードの読み込みを確認しています",
+  "generation.video.teacache_install_not_loaded": "ComfyUI は再起動しましたが、TeaCache ノードが読み込まれませんでした。ComfyUI のログを確認してください。",
+  "generation.video.teacache_install_failed": "TeaCache をインストールできませんでした: {error}",
   "generation.video.models": "モデル",
-  "generation.video.models_tip": "動画モードは MiniMax H3 スタックを使用します。品質ティアを選ぶと、MooshieUI が対応する拡散モデル、テキストエンコーダー、2つの VAE を自動選択し、不足分をダウンロードします。",
+  "generation.video.models_tip": "動画モードは MiniMax H3 スタックを使用します。品質ティアを選ぶと、MooshieUI が使用するすべてのファイルを一覧表示し、各モードごとに個別の拡散モデルを含め、不足分をダウンロードします。",
   "generation.video.stack.nvfp4": "NVFP4 - 12.5 GB、Blackwell のみ",
   "generation.video.stack.int8": "int8 - 21 GB、推奨",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB、フル精度",
-  "generation.video.stack_ready": "4つのモデルファイルはすべてインストール済みです。",
-  "generation.video.stack_missing": "4つのモデルファイルのうち {count} 個が不足しています。ダウンロード量は {size} です。",
-  "generation.video.stack_download": "不足しているファイルをダウンロード ({size})",
+  "generation.video.stack_ready": "すべてのモデルファイルがインストール済みです。",
+  "generation.video.stack_missing": "{total} 個のモデルファイルのうち {count} 個が不足しています。ダウンロード量は {size} です。",
+  "generation.video.stack_download": "不足しているすべてをダウンロード ({count} 個のファイル、{size})",
   "generation.video.stack_downloading": "ダウンロード中",
   "generation.video.stack_download_failed": "ダウンロードに失敗しました: {error}",
   "generation.video.stack_requires_blackwell": "NVFP4 には Blackwell 世代のカード (RTX 50 シリーズ) が必要です。それ以前のカードでは大幅に遅い処理経路になります。",
@@ -1260,7 +1270,7 @@ const ja: Record<string, string> = {
   "video.export.size_actual": "{size}",
   "video.export.frames": "{count} frames",
   "video.export.target_platform": "Size limit",
-  "video.export.target_discord": "Discord (free) 10 MB",
+  "video.export.target_discord": "Discord (free) 20 MB",
   "video.export.target_nitro": "Discord Nitro 500 MB",
   "video.export.target_none": "No limit",
   "video.export.over_limit": "Over the {target} limit. Try the next preset down.",
@@ -1358,6 +1368,8 @@ const ja: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "プロンプトから検出されたアーティストタグに基づいて画像を自動でボードに振り分けます",
   "gallery.sort_by_artist_done": "{sorted} 枚の画像を {boards} 個のアーティストボードに整理しました",
   "gallery.sort_by_artist_none": "ギャラリーからアーティストタグが見つかりませんでした",
+  "gallery.show_generation_time": "生成時間を表示",
+  "gallery.generation_time": "生成時間",
   "gallery.artist_detected": "アーティストタグを検出: {tag}",
   "gallery.col_preview": "プレビュー",
   "gallery.col_name": "名前",
@@ -1971,6 +1983,8 @@ const ja: Record<string, string> = {
   "generation.prompts.negative_disabled_for_model": "このモデルでは無視されます",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
+  "generation.sampler.anima_teacache_label": "TeaCache",
+  "generation.sampler.anima_teacache_tip": "変化がほとんどないステップでモデルの前回の出力を再利用し、フォワードパスをスキップすることで Anima の生成を高速化します。ディテールがわずかに柔らかくなるリスクがあります。デフォルトではオフです。",
 
 
 
@@ -2891,6 +2905,48 @@ const ja: Record<string, string> = {
   "errors.report.opening": "開いています...",
 
   "errors.report.copied_hint": "診断情報がクリップボードにコピーされました。Issue の本文に貼り付けてください。",
+
+  "generation.video.role_fl2va": "最初/最後のフレームモデル",
+
+  "generation.video.role_ref2va": "参照モデル",
+
+  "generation.video.role_text_encoder": "テキストエンコーダー",
+
+  "generation.video.role_video_vae": "ビデオ VAE",
+
+  "generation.video.role_audio_vae": "オーディオ VAE",
+
+  "generation.video.role_in_use": "使用中",
+
+  "generation.video.stack_file_installed": "インストール済み",
+
+  "generation.video.stack_download_one": "ダウンロード",
+
+  "gallery.make_video": "動画を作成",
+
+  "gallery.add_video_reference": "動画参照として追加",
+
+  "gallery.toast.loaded_video_frame": "画像を最初の動画フレームとして読み込みました",
+
+  "gallery.toast.loaded_video_reference": "画像を参照 {index} として追加しました",
+
+  "gallery.toast.video_refs_full": "{count} つの参照スロットはすべて埋まっています",
+
+  "gallery.picker.session": "セッション",
+
+  "gallery.picker.gallery": "ギャラリー",
+
+  "gallery.picker.search": "ファイル名で検索",
+
+  "gallery.picker.empty": "選択できる画像がありません",
+
+  "gallery.picker.add": "{count} 件追加",
+
+  "generation.video.choose_from_gallery": "ギャラリーから選択",
+
+  "generation.video.pick_for_slot": "{slot} の画像を選択",
+
+  "generation.video.pick_refs_title": "参照画像を選択",
 
 };
 export default ja;

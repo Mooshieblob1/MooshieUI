@@ -41,21 +41,23 @@ pub async fn generate(
         )?;
     }
 
-    // The MiniMax H3 Director pack is verified here rather than at startup: it is
-    // video-only and needs ComfyUI >= 0.30, so an older or external server can be
-    // perfectly healthy for image generation without it. Checking on the timeline
-    // path alone keeps every other generation free of the round trip, and turns
-    // what would otherwise be a ComfyUI prompt-validation error into an
-    // actionable message.
-    if params
-        .video_timeline_data
-        .as_deref()
-        .is_some_and(|data| !data.trim().is_empty())
-    {
+    // The MiniMax H3 nodes are verified here rather than at startup: they are
+    // video-only and need ComfyUI >= 0.30, so an older or external server can be
+    // perfectly healthy for image generation without them. Checking only in video
+    // mode keeps every other generation free of the round trip, and turns what
+    // would otherwise be a raw ComfyUI prompt-validation error into an actionable
+    // message. mode == "video" always uses one of these nodes (native or,
+    // when a timeline drives the graph, the vendored Director) — see
+    // `templates::video::build`.
+    if params.mode == "video" {
         let base_url = { state.config.read().await.server_url.clone() };
-        crate::comfyui::nodes::verify_required_h3_director_nodes(&state.http_client, &base_url)
-            .await
-            .map_err(AppError::InvalidWorkflow)?;
+        crate::comfyui::nodes::verify_required_h3_nodes_for_generation(
+            &state.http_client,
+            &base_url,
+            &params,
+        )
+        .await
+        .map_err(AppError::InvalidWorkflow)?;
     }
 
     let mut params = params;

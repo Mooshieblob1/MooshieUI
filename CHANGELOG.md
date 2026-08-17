@@ -1,5 +1,91 @@
 # Changelog
 
+## What's New in v2.0.9
+
+### New features
+- **Generation time is now tracked for video, not just images**: the video output pipeline never recorded how long a generation took, so videos never showed a duration anywhere in the UI. Video prompts now get the same timing capture images already had.
+- **"Show Generation Time" checkbox in the gallery**: a new toggle in the gallery toolbar displays how long each image or video took to generate directly on the grid and details view, instead of only on hover in the bottom panel.
+- **Generation time shown in the lightbox**: opening an image or video in the lightbox now shows its generation time alongside the rest of its metadata.
+
+### Fixes and maintenance
+- **The "Videos generated this session" gallery tab wasn't populating**: newly generated videos never got added to the in-memory session gallery list, so the tab stayed empty even right after generating a video.
+
+---
+
+## What's New in v2.0.8
+
+### Fixes and maintenance
+- **Model downloads (e.g. the RDBT-Anima LoRA) could freeze mid-transfer with no error**: a connection that stalled after the server stopped sending bytes without closing the socket would hang forever, since the shared HTTP client had no read timeout, leaving the download progress bar stuck indefinitely. Chunk reads now time out after 30 seconds of silence, cleaning up the partial file and surfacing a clear error so the download can be retried.
+
+---
+
+## What's New in v2.0.7
+
+### New features
+- **TeaCache for Anima**: Anima generation now has the same TeaCache speedup already available for video. It skips the model's forward pass on steps where little changed since the last one, reusing the cached output instead. Small risk of softer detail, off by default. Toggle it under sampler settings when an Anima checkpoint is selected.
+- **TeaCache for MiniMax H3 video**: video generation gets a TeaCache toggle for the MiniMax H3 pipeline, installing the required nodes and restarting ComfyUI on first use, matching the existing image TeaCache install flow.
+
+### Fixes and maintenance
+- **Looping video export used a flat 4-frame crossfade regardless of clip length**: a short loop got the same blend window as a long one, which could look like a visible jump-cut on short clips or an unnecessarily long fade on longer ones. The default crossfade now scales with clip length (roughly 8% of the frame count, clamped to a sane range) instead of a fixed 4 frames.
+- **Discord's free-tier attachment limit was checked against the old 10 MB cap**: Discord raised the free upload limit to 20 MB; exported videos under that were being incorrectly flagged as over the limit. Corrected to 20 MB. ([#588](https://github.com/Mooshieblob1/MooshieUI/pull/588))
+- **Prompt names containing `+` or `-` could collide with InvokeAI-style emphasis syntax**: a saved prompt name like `cat+dog` could be misread as emphasis weighting. Backslash-escaped `\+`/`\-` in prompt names are now preserved instead of being treated as emphasis markers. ([#589](https://github.com/Mooshieblob1/MooshieUI/pull/589))
+
+---
+
+## What's New in v2.0.6
+
+### Fixes and maintenance
+- **Intel Arc GPUs on the newer `xe` kernel driver reported 0 VRAM**: Battlemage/B-series Arc GPUs default to the `xe` driver on Linux, which VRAM detection didn't account for, so it silently corrupted hardware-tier recommendations. Detection now covers both the legacy `i915` and newer `xe` drivers.
+- **Intel SYCL/DPC++ kernels recompiled from scratch on every ComfyUI XPU launch**: `SYCL_CACHE_PERSISTENT` defaults to off, so kernel cache persistence wasn't actually enabled for Intel Arc workers. It's now set explicitly, cutting repeat startup time.
+- **Enhance, Compose, and prompt rewrite could hang on a stopped local LLM server**: if the configured Ollama or LM Studio endpoint wasn't running, requests would just fail instead of trying to start it. The app now makes a best-effort attempt to wake the server (`ollama list` / `lms server start`, 20s timeout) before giving up, skipped automatically if the endpoint is already up or not local.
+
+---
+
+## What's New in v2.0.5
+
+### Fixes and maintenance
+- **Video generation could fail with a raw ComfyUI error instead of an actionable one**: the pre-flight check for required MiniMax H3 nodes only ran when a timeline drove the graph (the vendored Director pack). The native, non-timeline video path (image-to-video and reference-to-video) had no equivalent check, so a ComfyUI install missing that node, or older than 0.30, surfaced a raw prompt-validation error. Both video paths are now checked before submission, on the desktop app and the LAN web server alike.
+- **Linux release builds now build AppImage, deb, and rpm as separate steps**: isolates Tauri's per-format binary patching to its own process for each package type, matching how the Windows build already isolates to NSIS only.
+
+---
+
+## What's New in v2.0.4
+
+### Fixes and maintenance
+- **AppImage env leakage still reached some spawned processes**: v2.0.3 stripped the AppImage's bundled `LD_LIBRARY_PATH`/`LD_PRELOAD` from custom-node `git`/`pip`/`uv` calls, but the rest of the setup wizard (venv creation and repair, `nvidia-smi`/`rocm-smi` GPU probes), the video export subprocess, and the prompt assistant's local `llama-server` process still inherited it. Every process the app spawns on Linux now goes through the same AppImage-safe path.
+- **Gallery picker could lag on open with a large gallery**: "Make video" and "Add reference" mounted every image in the grid at once, which stalled on galleries with thousands of images. It now renders a bounded window and loads more as you scroll, and thumbnails no longer eagerly start downloading before they scroll into view.
+
+---
+
+## What's New in v2.0.3
+
+### Fixes and maintenance
+- **Custom node installs could fail on the Linux AppImage build**: the bundled AppImage runtime leaks its own `LD_LIBRARY_PATH` and `LD_PRELOAD` into every child process, so `git clone` for a required custom node could link against the AppImage's bundled `libssl`/`libpcre2` instead of the system ones and abort with a version mismatch. Node installs now strip the AppImage-specific environment before spawning `git`, `pip`, and `uv`.
+- **Wrong Wayland library picked up on Fedora-based distros (Nobara, RHEL, etc.)**: the search order for the bundled Wayland compatibility library checked `/usr/lib/` before `/usr/lib64/`, which is backwards on Fedora-family systems where `/usr/lib/` holds 32-bit compat stubs. That could preload a 32-bit library into a 64-bit process and produce a "wrong ELF class" failure. The search now checks the 64-bit path first.
+
+---
+
+## What's New in v2.0.2
+
+### Fixes
+- **Video generation now has a seed control**: video mode shared the same seed as image generation but had no way to see or change it, so a seed pinned earlier (metadata import, "Use Last Seed", or just a saved session) silently stuck to every video afterwards. Video settings now has the same seed field, "Rng" toggle and "Last" button as image generation.
+- **Regenerating a video with unchanged settings could silently do nothing**: the video save node had no cache-bypass, so when every input matched the previous run (guaranteed by the seed bug above, or whenever a seed is pinned on purpose), ComfyUI's execution cache skipped the whole pipeline and the app was left showing the previous clip instead of a new one.
+
+---
+
+## What's New in v2.0.1
+
+### New features
+- **Pick video frames straight from the gallery**: "Make video" and "Add reference" now show up on the lightbox, the session hover bar, and the context menu for any still image, opening a gallery picker instead of requiring a file upload. A failed pick leaves whatever frame or reference was already set alone rather than clearing it.
+- **Model Stack shows the whole H3 tier**: the Models view now lists every file a tier can use, both DiT variants included, with a per-file download row, instead of only the variant currently selected.
+
+### Fixes
+- **Video first/last frame distortion**: a first or last frame image whose aspect ratio didn't match the output canvas is now pre-cropped to the canvas before generation, instead of being squashed or stretched to fit.
+- **Artist gallery: tags with no CDN preview are visible again**: 7,415 artist tags that exist in the vocabulary but never got a CDN preview image (15 percent of the total) were invisible in the style explorer. They now show as placeholder cards behind an opt-in toggle, with a "generate this preview yourself" action that renders the same recipe the CDN previews use, locally.
+- **Server build**: `video_export.rs` and `video_interpolate.rs` referenced `tauri` outside a `desktop`-feature gate, which broke the server-only binary build and skipped publishing it in v2.0.0's release CI. Fixed, and `cargo check --no-default-features --features server` is now a blocking gate in the pre-commit and release checks so it can't happen again silently.
+
+---
+
 ## What's New in v2.0.0
 
 MooshieUI generates video. That is the whole reason this is a 2.0 and not another point release: everything below is new surface area rather than a change to how images work, and image generation is untouched.

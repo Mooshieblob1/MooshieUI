@@ -193,6 +193,8 @@ export interface GenerationParams {
   style_transfer_pmi_alpha?: number;
   style_transfer_megapixels?: number;
   style_transfer_blocks?: string;
+  /** Anima TeaCache: reuses the previous step's DiT output when little changed. */
+  anima_teacache_enabled?: boolean;
   /** Image Edit mode reference images (ComfyUI input filenames); slot 0 primary. */
   edit_reference_images?: string[];
   // --- Video generation (MiniMax H3) ---
@@ -220,6 +222,8 @@ export interface GenerationParams {
   video_turbo_steps?: number;
   /** Turbo adapter filename inside `models/loras/`. */
   video_turbo_lora?: string | null;
+  /** MiniMax-H3 TeaCache: reuses the previous step's model output when little changed. */
+  video_teacache_enabled?: boolean;
   video_diffusion_model?: string | null;
   video_clip_model?: string | null;
   video_vae_model?: string | null;

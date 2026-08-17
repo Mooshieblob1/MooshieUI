@@ -162,6 +162,11 @@ function translateNaiWeightSyntax(prompt: string): string {
  * Guard: bareword rewrite only fires when the base (token minus the trailing
  * +/- run) contains an ASCII letter, so emoticon tags like +_+ and bare ++ / 1+
  * are left untouched. Blend/swap operators are intentionally not handled.
+ *
+ * Escape: a backslash directly before a trailing +/- run keeps it a literal
+ * character instead of emphasis — e.g. a crossover tag "nero (bride)\+astolfo"
+ * or a character name "La\+ darkness" whose name is not emphasis syntax. The
+ * escaping backslash is stripped from the output either way.
  */
 function translateInvokeAiWeightSyntax(prompt: string): string {
   const emphasisWeight = (marks: string): string => {
@@ -176,23 +181,32 @@ function translateInvokeAiWeightSyntax(prompt: string): string {
   );
 
   // 2. Group emphasis: (group)+++ / (group)--- -> (group:W). Innermost-first.
+  // An escaped run is left untouched here (returned byte-for-byte) so the loop
+  // still converges; the escaping backslash is stripped once, after the loop,
+  // so the now-literal +/- doesn't get re-matched and wrongly converted on a
+  // later pass.
   let prev: string;
   do {
     prev = prompt;
     prompt = prompt.replace(
-      /\(([^()]+)\)(\++|-+)/g,
-      (_m, inner, marks) => `(${inner}:${emphasisWeight(marks)})`,
+      /\(([^()]+)\)(\\(?:\++|-+)|\++|-+)/g,
+      (_m, inner, marks) => {
+        if (marks[0] === "\\") return `(${inner})${marks}`;
+        return `(${inner}:${emphasisWeight(marks)})`;
+      },
     );
   } while (prompt !== prev);
+  prompt = prompt.replace(/\)\\(\++|-+)/g, ")$1");
 
   // 3. Bareword emphasis: tokenize on delimiters, rewrite word+ / word- when the
   // base has a letter. Delimiters: whitespace , ( ) { }
   prompt = prompt.replace(/[^\s,(){}]+/g, (token) => {
-    const m = token.match(/^(.*?)(\++|-+)$/);
+    const m = token.match(/^(.*?)(\\?)(\++|-+)$/);
     if (!m) return token;
-    const base = m[1];
+    const [, base, esc, marks] = m;
+    if (esc) return base + marks;
     if (!/[a-zA-Z]/.test(base)) return token;
-    return `(${base}:${emphasisWeight(m[2])})`;
+    return `(${base}:${emphasisWeight(marks)})`;
   });
 
   return prompt;
@@ -555,6 +569,10 @@ class GenerationStore {
   styleTransferPmiAlpha = $state(0.5);
   styleTransferMegapixels = $state(1.05);
   styleTransferBlocks = $state("0-999");
+  /** Anima TeaCache: reuses the previous step's DiT output while the
+   *  accumulated input delta stays under threshold. MooshieUI-authored node,
+   *  always available (no lazy install, unlike video's H3 TeaCache). */
+  animaTeacacheEnabled = $state(false);
   facefixEnabled = $state(false);
   facefixDetector = $state<string | null>(null);
   facefixDenoise = $state(0.4);
@@ -628,6 +646,10 @@ class GenerationStore {
   videoTurboEnabled = $state(false);
   /** Sampling steps while Turbo is on; clamped to 4..8 by the backend too. */
   videoTurboSteps = $state(H3_TURBO_DEFAULT_STEPS);
+  /** TeaCache: reuses the previous step's model output while the accumulated
+   *  input delta stays under threshold. Only ever true once the lazy install
+   *  has put the node pack on disk. */
+  videoTeacacheEnabled = $state(false);
   videoDiffusionModel = $state<string | null>(null);
   videoClipModel = $state<string | null>(null);
   videoVaeModel = $state<string | null>(null);
@@ -1953,6 +1975,8 @@ class GenerationStore {
         if (saved.videoRifeEnsemble !== undefined) this.videoRifeEnsemble = saved.videoRifeEnsemble;
         if (saved.videoTurboEnabled !== undefined)
           this.videoTurboEnabled = saved.videoTurboEnabled;
+        if (saved.videoTeacacheEnabled !== undefined)
+          this.videoTeacacheEnabled = saved.videoTeacacheEnabled;
         if (saved.videoTurboSteps !== undefined)
           this.videoTurboSteps = Math.min(
             H3_TURBO_MAX_STEPS,
@@ -1975,6 +1999,8 @@ class GenerationStore {
         if (saved.styleTransferPmiAlpha !== undefined) this.styleTransferPmiAlpha = saved.styleTransferPmiAlpha;
         if (saved.styleTransferMegapixels !== undefined) this.styleTransferMegapixels = saved.styleTransferMegapixels;
         if (saved.styleTransferBlocks !== undefined) this.styleTransferBlocks = saved.styleTransferBlocks;
+        if (saved.animaTeacacheEnabled !== undefined)
+          this.animaTeacacheEnabled = saved.animaTeacacheEnabled;
         if (saved.facefixEnabled !== undefined) this.facefixEnabled = saved.facefixEnabled;
         if (saved.facefixDetector !== undefined) this.facefixDetector = saved.facefixDetector;
         if (saved.facefixDenoise !== undefined) this.facefixDenoise = saved.facefixDenoise;
@@ -2134,6 +2160,7 @@ class GenerationStore {
         styleTransferPmiAlpha: this.styleTransferPmiAlpha,
         styleTransferMegapixels: this.styleTransferMegapixels,
         styleTransferBlocks: this.styleTransferBlocks,
+        animaTeacacheEnabled: this.animaTeacacheEnabled,
         facefixEnabled: this.facefixEnabled,
         facefixDetector: this.facefixDetector,
         facefixDenoise: this.facefixDenoise,
@@ -2177,6 +2204,7 @@ class GenerationStore {
         videoRifeEnsemble: this.videoRifeEnsemble,
         videoTurboEnabled: this.videoTurboEnabled,
         videoTurboSteps: this.videoTurboSteps,
+        videoTeacacheEnabled: this.videoTeacacheEnabled,
         videoDiffusionModel: this.videoDiffusionModel,
         videoClipModel: this.videoClipModel,
         videoVaeModel: this.videoVaeModel,
@@ -2259,6 +2287,7 @@ class GenerationStore {
       styleTransferPmiAlpha: this.styleTransferPmiAlpha,
       styleTransferMegapixels: this.styleTransferMegapixels,
       styleTransferBlocks: this.styleTransferBlocks,
+      animaTeacacheEnabled: this.animaTeacacheEnabled,
       facefixEnabled: this.facefixEnabled,
       facefixDetector: this.facefixDetector,
       facefixDenoise: this.facefixDenoise,
@@ -2302,6 +2331,7 @@ class GenerationStore {
       videoRifeEnsemble: this.videoRifeEnsemble,
       videoTurboEnabled: this.videoTurboEnabled,
       videoTurboSteps: this.videoTurboSteps,
+      videoTeacacheEnabled: this.videoTeacacheEnabled,
       videoDiffusionModel: this.videoDiffusionModel,
       videoClipModel: this.videoClipModel,
       videoVaeModel: this.videoVaeModel,
@@ -2688,6 +2718,7 @@ class GenerationStore {
       style_transfer_pmi_alpha: this.styleTransferPmiAlpha,
       style_transfer_megapixels: this.styleTransferMegapixels,
       style_transfer_blocks: this.styleTransferBlocks,
+      anima_teacache_enabled: this.animaTeacacheEnabled,
       edit_reference_images: this.editReferenceImages.filter((v): v is string => !!v),
       video_variant: this.videoVariant,
       video_duration_seconds: this.videoDurationSeconds,
@@ -2708,6 +2739,7 @@ class GenerationStore {
       video_turbo_enabled: this.videoTurboEnabled,
       video_turbo_steps: this.videoTurboSteps,
       video_turbo_lora: this.videoTurboEnabled ? H3_TURBO_LORA.filename : null,
+      video_teacache_enabled: this.videoTeacacheEnabled,
       video_diffusion_model: this.videoDiffusionModel,
       video_clip_model: this.videoClipModel,
       video_vae_model: this.videoVaeModel,

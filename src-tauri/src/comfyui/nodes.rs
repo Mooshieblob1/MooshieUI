@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use super::process::tokio_command_no_window;
+use super::types::GenerationParams;
 
 #[derive(Clone, Copy)]
 struct RequiredCustomNodePackage {
@@ -135,6 +136,22 @@ pub const H3_TURBO_LORA_FILENAME: &str = "minimax_h3_turbo_v4_step600_ema.safete
 pub const H3_TURBO_LORA_URL: &str =
     "https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora/resolve/main/minimax_h3_turbo_v4_step600_ema.safetensors";
 
+// MiniMax-H3 TeaCache, installed lazily from the video settings panel for the
+// same reason as Turbo: opt-in, video-only, and no reason to clone it at every
+// startup for users who never touch the toggle.
+const H3_TEACACHE_PACKAGE_DIR: &str = "ComfyUI-MiniMaxH3-TeaCache";
+
+const H3_TEACACHE_PACKAGES: &[RequiredCustomNodePackage] = &[RequiredCustomNodePackage {
+    name: H3_TEACACHE_PACKAGE_DIR,
+    git_url: "https://github.com/Icyoung/ComfyUI-MiniMaxH3-TeaCache.git",
+    verify_nodes: &["MiniMaxH3TeaCache"],
+    // The pack's pyproject.toml declares no dependencies beyond ComfyUI itself
+    // (pure torch, already provided by the host), and it ships no
+    // requirements.txt at all — the clone is the entire install.
+    // `ensure_custom_node_package` skips the pip stage when the file is absent.
+    requirements_file: "requirements.txt",
+}];
+
 /// Substring present in [`format_missing_mooshie_nodes_error`] output.
 pub const MISSING_MOOSHIE_NODES_MARKER: &str = "has not loaded required MooshieUI custom nodes";
 
@@ -155,6 +172,9 @@ pub const MISSING_RIFE_NODES_MARKER: &str = "Required RIFE custom nodes failed t
 pub const MISSING_H3_DIRECTOR_NODES_MARKER: &str =
     "Required MiniMax H3 Director custom nodes failed to load";
 
+/// Substring present in [`verify_required_h3_native_nodes`] error output.
+pub const MISSING_H3_NATIVE_NODES_MARKER: &str = "Required MiniMax H3 video node failed to load";
+
 const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieSaveImage",
     "MooshieSaveVideo",
@@ -167,6 +187,7 @@ const REQUIRED_MOOSHIE_NODE_CLASSES: &[&str] = &[
     "MooshieDiffusionLoaderPath",
     "NanoSaurLoader",
     "ApplyTiledDiffusion",
+    "MooshieAnimaTeaCache",
 ];
 
 const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
@@ -178,6 +199,7 @@ const MOOSHIE_NODES_INIT: &str = include_str!("mooshie_nodes.py");
 const MOOSHIE_NODES_REQUIREMENTS: &str = "ultralytics==8.4.75\n";
 const TILED_DIFFUSION_PY: &str = include_str!("../../../comfyui-nodes/nodes_tiled_diffusion.py");
 const GUIDANCE_PY: &str = include_str!("../../../comfyui-nodes/nodes_guidance.py");
+const ANIMA_TEACACHE_PY: &str = include_str!("../../../comfyui-nodes/nodes_anima_teacache.py");
 /// Combined flat file: nodes.py content + NODE_CLASS_MAPPINGS.
 /// Deployed as a single top-level file to avoid the circular import that occurs when a
 /// package named `nodes.py` tries to `import nodes` (ComfyUI's own nodes.py) while
@@ -277,6 +299,16 @@ pub fn ensure_mooshie_nodes(comfyui_path: &str) -> Result<(), String> {
         format!(
             "Failed to write nodes_guidance.py at '{}': {}",
             guidance_path.display(),
+            e
+        )
+    })?;
+
+    // ── Anima TeaCache (step-caching for the Anima/Cosmos-Predict2 DiT) ──────
+    let anima_teacache_path = custom_nodes.join("nodes_anima_teacache.py");
+    std::fs::write(&anima_teacache_path, ANIMA_TEACACHE_PY).map_err(|e| {
+        format!(
+            "Failed to write nodes_anima_teacache.py at '{}': {}",
+            anima_teacache_path.display(),
             e
         )
     })?;
@@ -957,6 +989,77 @@ pub async fn install_h3_turbo(
     Ok(())
 }
 
+/// Whether the MiniMax-H3 TeaCache node pack is present.
+///
+/// Same rationale as [`is_h3_turbo_installed`]: no requirements stamp file to
+/// check because the pack installs no requirements, so directory presence is
+/// the only signal available up front.
+pub fn is_h3_teacache_installed(comfyui_path: &str) -> bool {
+    if comfyui_path.trim().is_empty() {
+        return false;
+    }
+
+    Path::new(comfyui_path)
+        .join("custom_nodes")
+        .join(H3_TEACACHE_PACKAGE_DIR)
+        .join("__init__.py")
+        .is_file()
+}
+
+/// Clone the MiniMax-H3 TeaCache node pack into `custom_nodes/`, on demand.
+pub async fn ensure_required_h3_teacache_nodes(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+) -> Result<(), String> {
+    let custom_nodes = Path::new(comfyui_path).join("custom_nodes");
+    std::fs::create_dir_all(&custom_nodes).map_err(|e| {
+        format!(
+            "Failed to create ComfyUI custom_nodes directory at '{}': {}",
+            custom_nodes.display(),
+            e
+        )
+    })?;
+
+    for package in H3_TEACACHE_PACKAGES {
+        ensure_custom_node_package(
+            &custom_nodes,
+            venv_path,
+            network_proxy,
+            pip_index_url,
+            *package,
+        )
+        .await
+        .map_err(|e| format!("{}: {}", package.name, e))?;
+    }
+
+    log::info!("Ensured MiniMax-H3 TeaCache custom node package");
+    Ok(())
+}
+
+/// Install the MiniMax-H3 TeaCache node pack, driven by the video settings
+/// panel the first time the user enables the toggle. Emits `install:progress`
+/// events with the same shape as `install_custom_node`.
+pub async fn install_h3_teacache(
+    comfyui_path: &str,
+    venv_path: &str,
+    network_proxy: Option<&str>,
+    pip_index_url: Option<&str>,
+    on_progress: &(dyn Fn(&str, &str, bool) + Send + Sync),
+) -> Result<(), String> {
+    if comfyui_path.trim().is_empty() {
+        return Err("ComfyUI path is not configured".to_string());
+    }
+
+    on_progress("clone", "Installing MiniMax-H3 TeaCache nodes...", false);
+    ensure_required_h3_teacache_nodes(comfyui_path, venv_path, network_proxy, pip_index_url)
+        .await?;
+
+    on_progress("done", "MiniMax-H3 TeaCache nodes are ready", true);
+    Ok(())
+}
+
 /// Verify that ComfyUI actually loaded every custom node class required by the
 /// built-in ControlNet presets. Directory presence alone is not enough because
 /// custom-node import failures leave the class missing from /object_info.
@@ -1044,6 +1147,76 @@ pub async fn verify_required_h3_director_nodes(
         MISSING_H3_DIRECTOR_NODES_MARKER,
         missing.join(", ")
     ))
+}
+
+/// Native ComfyUI-core node class the non-timeline video path builds into the
+/// workflow for a given `video_variant` (see `templates::video::build`).
+fn required_h3_native_node_class(video_variant: &str) -> &'static str {
+    if video_variant == "fl2va" {
+        "MiniMaxH3ImageToVideo"
+    } else {
+        "MiniMaxH3ReferenceToVideo"
+    }
+}
+
+/// Verify ComfyUI exposes the native MiniMax H3 node the non-timeline video
+/// path depends on for `video_variant`.
+///
+/// Unlike [`verify_required_h3_director_nodes`], this class ships inside
+/// ComfyUI core itself (`comfy_extras/nodes_minimax_h3`, ComfyUI >= 0.30), not
+/// a package MooshieUI deploys — so a missing class here means the fix is
+/// updating ComfyUI, not restarting it.
+pub async fn verify_required_h3_native_nodes(
+    http_client: &reqwest::Client,
+    base_url: &str,
+    video_variant: &str,
+) -> Result<(), String> {
+    let node_class = required_h3_native_node_class(video_variant);
+
+    for attempt in 0..5 {
+        if object_info_has_node_class(http_client, base_url, node_class).await? {
+            log::info!("Verified required MiniMax H3 video node class ({node_class})");
+            return Ok(());
+        }
+        if attempt < 4 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    Err(format!(
+        "{}: {}. This node ships inside ComfyUI itself (it is not a MooshieUI custom node), and requires ComfyUI 0.30 or newer. Open Settings and run \"Update ComfyUI\", then try again.",
+        MISSING_H3_NATIVE_NODES_MARKER, node_class
+    ))
+}
+
+/// Verify the MiniMax H3 video node(s) a `generate` call actually needs are
+/// loaded, before the workflow is submitted to ComfyUI.
+///
+/// A no-op outside video mode. Video mode branches into either the vendored
+/// Director package (when a timeline drives the graph) or ComfyUI's native H3
+/// node for the selected variant — same 0.30-or-newer requirement either way,
+/// just two different sources for the class. Both the Tauri `generate`
+/// command and the LAN web server `generate` route call this so neither can
+/// drift out of sync with what `templates::video::build` actually emits.
+pub async fn verify_required_h3_nodes_for_generation(
+    http_client: &reqwest::Client,
+    base_url: &str,
+    params: &GenerationParams,
+) -> Result<(), String> {
+    if params.mode != "video" {
+        return Ok(());
+    }
+
+    let timeline_drives = params
+        .video_timeline_data
+        .as_deref()
+        .is_some_and(|data| !data.trim().is_empty());
+
+    if timeline_drives {
+        verify_required_h3_director_nodes(http_client, base_url).await
+    } else {
+        verify_required_h3_native_nodes(http_client, base_url, &params.video_variant).await
+    }
 }
 
 /// Verify that ComfyUI loaded the MooshieUI custom node classes required by
@@ -1490,6 +1663,26 @@ mod tests {
         assert_eq!(payload["kind"], "missing_mooshie_nodes");
         assert_eq!(payload["port"], 8188);
         assert!(payload["missing_nodes"].as_array().unwrap().len() == 1);
+    }
+
+    #[test]
+    fn native_h3_node_class_matches_video_variant() {
+        assert_eq!(
+            required_h3_native_node_class("fl2va"),
+            "MiniMaxH3ImageToVideo"
+        );
+        assert_eq!(
+            required_h3_native_node_class("ref2va"),
+            "MiniMaxH3ReferenceToVideo"
+        );
+        // Any other/unknown variant falls back to the ref2va node, matching
+        // `templates::video::build`'s `else` branch (guarded upstream by
+        // `validate_generation_params`, which rejects anything but the two
+        // known variants before this is ever reached).
+        assert_eq!(
+            required_h3_native_node_class("unknown"),
+            "MiniMaxH3ReferenceToVideo"
+        );
     }
 
     #[test]

@@ -564,6 +564,9 @@ const zhTw: Record<string, string> = {
   "generation.sampler.metadata_upgraded": "16 位元已啟用 — 隱寫 alpha 已升級為「全部」。",
   "generation.sampler.anima_recommended": "Anima 建議設定",
   "generation.sampler.anima_hint": "30 步，CFG 4，取樣器 er_sde（Anima 模型卡指南）。",
+  "generation.sampler.anima_rdbt_toggle": "RDBT-Anima LoRA",
+  "generation.sampler.anima_rdbt_tip": "下載並套用社群製作的 RDBT-Anima 引導蒸餾 LoRA（約 92MB，非官方鏡像）。透過移除 CFG 需求加快生成速度。",
+  "generation.sampler.anima_rdbt_downloading": "正在下載 RDBT-Anima LoRA…",
   "generation.sampler.sih_recommended": "SIH 建議設定",
   "generation.sampler.sih_hint": "無公開 SIH 模型卡設定。使用專案預設值：20 步，CFG 1.4，euler_cfg_pp，sgm_uniform。",
   "generation.sampler.juice_recommended": "Juice 建議設定",
@@ -724,15 +727,22 @@ const zhTw: Record<string, string> = {
   "generation.video.turbo_install_verifying": "正在確認節點已載入",
   "generation.video.turbo_install_not_loaded": "ComfyUI 已重新啟動，但 Turbo 取樣器節點沒有載入。請查看 ComfyUI 記錄。",
   "generation.video.turbo_install_failed": "無法安裝 Turbo LoRA: {error}",
+  "generation.video.teacache": "TeaCache",
+  "generation.video.teacache_tip": "在輸出與前一步幾乎沒有變化的步驟中跳過模型的前向計算，改為重複使用快取的結果。速度更快，但有輕微的動作變得較不清晰的風險；可與 Turbo 疊加使用。",
+  "generation.video.teacache_install_hint": "開啟此選項會安裝 TeaCache 節點，然後重新啟動 ComfyUI。",
+  "generation.video.teacache_install_starting": "正在安裝 TeaCache 節點",
+  "generation.video.teacache_install_verifying": "正在驗證節點是否已載入",
+  "generation.video.teacache_install_not_loaded": "ComfyUI 已重新啟動，但 TeaCache 節點未能載入。請檢查 ComfyUI 的紀錄。",
+  "generation.video.teacache_install_failed": "無法安裝 TeaCache: {error}",
   "generation.video.models": "模型",
-  "generation.video.models_tip": "影片模式使用 MiniMax H3 模型組。選擇一個品質層級，MooshieUI 會自動選好對應的擴散模型、文字編碼器與兩個 VAE，並下載缺少的檔案。",
+  "generation.video.models_tip": "影片模式使用 MiniMax H3 模型組。選擇一個品質層級，MooshieUI 會列出所有需要的檔案，包括每種模式各自的擴散模型，並下載缺少的檔案。",
   "generation.video.stack.nvfp4": "NVFP4 - 12.5 GB，僅限 Blackwell",
   "generation.video.stack.int8": "int8 - 21 GB，建議",
   "generation.video.stack.fp8": "fp8 - 21 GB",
   "generation.video.stack.bf16": "bf16 - 40 GB，完整精度",
-  "generation.video.stack_ready": "四個模型檔案都已安裝。",
-  "generation.video.stack_missing": "四個模型檔案中缺少 {count} 個，需下載 {size}。",
-  "generation.video.stack_download": "下載缺少的檔案 ({size})",
+  "generation.video.stack_ready": "所有模型檔案均已安裝。",
+  "generation.video.stack_missing": "{total} 個模型檔案中缺少 {count} 個，需下載 {size}。",
+  "generation.video.stack_download": "下載全部缺少的檔案（{count} 個檔案，{size}）",
   "generation.video.stack_downloading": "正在下載",
   "generation.video.stack_download_failed": "下載失敗: {error}",
   "generation.video.stack_requires_blackwell": "NVFP4 需要 Blackwell 顯示卡 (RTX 50 系列)。在較舊的顯示卡上會退回到慢得多的路徑。",
@@ -1238,7 +1248,7 @@ const zhTw: Record<string, string> = {
   "video.export.size_actual": "{size}",
   "video.export.frames": "{count} frames",
   "video.export.target_platform": "Size limit",
-  "video.export.target_discord": "Discord (free) 10 MB",
+  "video.export.target_discord": "Discord (free) 20 MB",
   "video.export.target_nitro": "Discord Nitro 500 MB",
   "video.export.target_none": "No limit",
   "video.export.over_limit": "Over the {target} limit. Try the next preset down.",
@@ -1336,6 +1346,8 @@ const zhTw: Record<string, string> = {
   "gallery.sort_by_artist_tooltip": "根據提示詞中偵測到的畫師標籤自動將圖片分配到看板",
   "gallery.sort_by_artist_done": "已將 {sorted} 張圖片排序到 {boards} 個畫師看板",
   "gallery.sort_by_artist_none": "您的圖庫中未偵測到任何畫師標籤",
+  "gallery.show_generation_time": "顯示產生時間",
+  "gallery.generation_time": "產生時間",
   "gallery.artist_detected": "偵測到畫師標籤：{tag}",
   "gallery.col_preview": "預覽",
   "gallery.col_name": "名稱",
@@ -1946,6 +1958,8 @@ const zhTw: Record<string, string> = {
   "generation.prompts.negative_disabled_for_model": "此模型會忽略",
   "generation.sampler.flux_guidance_label": "Flux Guidance",
   "generation.sampler.flux_guidance_tip": "Distilled guidance scale used by Flux Dev / Flux 2 Klein. Replaces CFG (which these models ignore). Sweet spot is 2.5–4. Higher = stronger prompt adherence but less natural images.",
+  "generation.sampler.anima_teacache_label": "TeaCache",
+  "generation.sampler.anima_teacache_tip": "透過在幾乎沒有變化的步驟中重複使用模型的上一次輸出、跳過前向運算來加速 Anima 生成。存在細節略微變軟的小風險；預設關閉。",
 
 
 
@@ -2866,6 +2880,48 @@ const zhTw: Record<string, string> = {
   "errors.report.opening": "正在開啟...",
 
   "errors.report.copied_hint": "診斷資訊已複製到剪貼板。請貼上至問題內容中。",
+
+  "generation.video.role_fl2va": "首/末幀模型",
+
+  "generation.video.role_ref2va": "參考模型",
+
+  "generation.video.role_text_encoder": "文字編碼器",
+
+  "generation.video.role_video_vae": "影片 VAE",
+
+  "generation.video.role_audio_vae": "音訊 VAE",
+
+  "generation.video.role_in_use": "使用中",
+
+  "generation.video.stack_file_installed": "已安裝",
+
+  "generation.video.stack_download_one": "下載",
+
+  "gallery.make_video": "製作影片",
+
+  "gallery.add_video_reference": "新增為影片參考",
+
+  "gallery.toast.loaded_video_frame": "圖像已載入為第一個影片格",
+
+  "gallery.toast.loaded_video_reference": "圖像已新增為參考 {index}",
+
+  "gallery.toast.video_refs_full": "{count} 個參考槽位已全部填滿",
+
+  "gallery.picker.session": "工作階段",
+
+  "gallery.picker.gallery": "圖庫",
+
+  "gallery.picker.search": "依檔案名稱搜尋",
+
+  "gallery.picker.empty": "沒有可選擇的圖像",
+
+  "gallery.picker.add": "新增 {count}",
+
+  "generation.video.choose_from_gallery": "從圖庫選擇",
+
+  "generation.video.pick_for_slot": "為 {slot} 選擇圖像",
+
+  "generation.video.pick_refs_title": "選擇參考圖像",
 
 };
 export default zhTw;
