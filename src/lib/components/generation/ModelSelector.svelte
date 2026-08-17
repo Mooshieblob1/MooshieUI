@@ -733,6 +733,17 @@
     generation.loras.filter((l) => l.enabled && l.name).length
   );
 
+  const LORAS_COLLAPSE_KEY = "mooshieui.generation.lorasCollapsed.v1";
+  let lorasOpen = $state(localStorage.getItem(LORAS_COLLAPSE_KEY) !== "true");
+  let lorasSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const collapsed = String(!lorasOpen);
+    if (lorasSaveTimer) clearTimeout(lorasSaveTimer);
+    lorasSaveTimer = setTimeout(() => {
+      try { localStorage.setItem(LORAS_COLLAPSE_KEY, collapsed); } catch {}
+    }, 300);
+  });
+
   function filteredLorasForIndex(index: number) {
     const search = loraSearches[index] ?? "";
     return models.loras.filter((l) =>
@@ -1525,16 +1536,29 @@
           </span>
         {/if}
       </div>
-      <button
-        onclick={() => {
-          generation.addLora();
-          generation.saveSettings();
-        }}
-        class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
-      >
-        {locale.t('generation.model.add_lora')}
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          onclick={() => {
+            generation.addLora();
+            generation.saveSettings();
+          }}
+          class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+        >
+          {locale.t('generation.model.add_lora')}
+        </button>
+        {#if generation.loras.length > 0}
+          <button
+            class="text-neutral-400 hover:text-neutral-200 focus:outline-none"
+            onclick={() => (lorasOpen = !lorasOpen)}
+            title={lorasOpen ? locale.t('common.collapse', { section: locale.t('generation.model.lora_title') }) : locale.t('common.expand', { section: locale.t('generation.model.lora_title') })}
+            aria-label={lorasOpen ? locale.t('common.collapse', { section: locale.t('generation.model.lora_title') }) : locale.t('common.expand', { section: locale.t('generation.model.lora_title') })}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {lorasOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        {/if}
+      </div>
     </div>
+    {#if lorasOpen}
     {#each generation.loras as lora, i}
       <div
         class="mb-2 rounded-lg border p-2.5 transition-opacity {lora.enabled
@@ -1646,5 +1670,6 @@
         {/if}
       </div>
     {/each}
+    {/if}
   </div>
 </div>

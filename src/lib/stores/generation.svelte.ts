@@ -605,6 +605,8 @@ class GenerationStore {
    *  The first-ever preset application (while `modelPresetAppliedKey` is still unset) is
    *  exempt so a fresh profile still gets sane defaults; every later swap preserves. */
   advancedMode = $state(false);
+  /** When true, checkpoint/model swaps never overwrite width/height, regardless of advancedMode. */
+  resolutionLocked = $state(false);
   regionalPrompts = $state<RegionalPromptSelection[]>([]);
   /** SDXL/Illustrious: conditioning areas vs sequential inpaint. Anima always uses inpaint chain. */
   regionalPromptStrategy = $state<RegionalPromptStrategy>("conditioning");
@@ -1528,7 +1530,7 @@ class GenerationStore {
     this.cfg = preset.cfg;
     this.samplerName = this.resolveAvailableOption(models.samplers, preset.samplerName, preset.samplerFallback ?? "euler");
     this.scheduler = this.resolveAvailableOption(models.schedulers, preset.scheduler, "normal");
-    if (!this.hasAuthoritativeEditSource) {
+    if (!this.hasAuthoritativeEditSource && !this.resolutionLocked) {
       this.width = preset.width;
       this.height = preset.height;
     }
@@ -2040,6 +2042,7 @@ class GenerationStore {
         }
         if (saved.manualSaveMode !== undefined) this.manualSaveMode = saved.manualSaveMode;
         if (saved.advancedMode !== undefined) this.advancedMode = saved.advancedMode;
+        if (saved.resolutionLocked !== undefined) this.resolutionLocked = saved.resolutionLocked;
         if (Array.isArray(saved.autoSaveDirs)) this.autoSaveDirs = saved.autoSaveDirs;
         if (saved.regionalPromptStrategy === "conditioning" || saved.regionalPromptStrategy === "inpaint_chain") {
           this.regionalPromptStrategy = saved.regionalPromptStrategy;
@@ -2184,6 +2187,7 @@ class GenerationStore {
         modelFamilyOverrides: this.modelFamilyOverrides,
         manualSaveMode: this.manualSaveMode,
         advancedMode: this.advancedMode,
+        resolutionLocked: this.resolutionLocked,
         autoSaveDirs: this.autoSaveDirs,
         regionalPrompts: this.regionalPrompts,
         regionalPromptStrategy: this.regionalPromptStrategy,
@@ -2310,6 +2314,7 @@ class GenerationStore {
       customNanosaurNegativeQuality: this.customNanosaurNegativeQuality,
       manualSaveMode: this.manualSaveMode,
       advancedMode: this.advancedMode,
+      resolutionLocked: this.resolutionLocked,
       autoSaveDirs: this.autoSaveDirs,
       regionalPrompts: this.regionalPrompts,
       regionalPromptStrategy: this.regionalPromptStrategy,
@@ -2764,13 +2769,48 @@ class GenerationStore {
   }
 
   removeLora(index: number) {
+    const removed = this.loras[index];
     this.loras = this.loras.filter((_, i) => i !== index);
+    if (removed?.insertedWords?.length) {
+      this.removeInsertedWordsFromPrompt(removed.insertedWords);
+    }
   }
 
   toggleLora(index: number) {
+    const target = this.loras[index];
+    const disabling = !!target?.enabled;
     this.loras = this.loras.map((l, i) =>
       i === index ? { ...l, enabled: !l.enabled } : l
     );
+    if (disabling && target?.insertedWords?.length) {
+      this.removeInsertedWordsFromPrompt(target.insertedWords);
+    }
+  }
+
+  /** Record a trigger word inserted into the prompt via a LoRA's trigger-word chip, so it can be removed on deselect. */
+  recordInsertedLoraWord(loraName: string, word: string) {
+    this.loras = this.loras.map((l) =>
+      l.name === loraName && !(l.insertedWords ?? []).includes(word)
+        ? { ...l, insertedWords: [...(l.insertedWords ?? []), word] }
+        : l
+    );
+  }
+
+  /** Strip trigger words previously inserted via addTriggerWord/recordInsertedLoraWord, removing each as its own comma-delimited segment so surrounding text is untouched. */
+  private removeInsertedWordsFromPrompt(words: string[]) {
+    let text = this.positivePrompt;
+    for (const word of words) {
+      const trimmed = word.trim();
+      if (!trimmed) continue;
+      const segments = text.split(",");
+      const idx = segments.findIndex((s) => s.trim() === trimmed);
+      if (idx === -1) continue;
+      segments.splice(idx, 1);
+      text = segments.join(",").replace(/^\s*,\s*/, "").replace(/,\s*$/, "").trim();
+    }
+    if (text !== this.positivePrompt) {
+      this.positivePrompt = text;
+    }
   }
 
   /** Apply defaults if no checkpoint is selected yet (first run). */

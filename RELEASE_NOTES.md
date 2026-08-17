@@ -1,3 +1,12 @@
+## What's New in v2.1.1
+
+### New features
+- **Lock resolution across model swaps**: switching checkpoints normally resets width/height to that model's default resolution. A new lock toggle next to the resolution controls keeps your current width and height fixed through model swaps.
+- **LoRA trigger words tracked and highlighted in the prompt**: words added via a LoRA's trigger-word chip are now tracked per-LoRA, highlighted inline in the prompt, and automatically removed if you disable or remove that LoRA.
+- **Collapsible LoRA list**: the LoRA section in the model picker can now be collapsed, with the state remembered between sessions.
+
+---
+
 ## What's New in v2.1.0
 
 ### New features

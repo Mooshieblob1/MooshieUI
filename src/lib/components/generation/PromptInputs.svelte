@@ -422,6 +422,7 @@
       minHeight="min-h-25"
       storageKey="mooshieui.promptHeight.positive"
       tagAssist={!isVideoMode}
+      highlightLoraWords={true}
     />
     {#if !isVideoMode && hasRegionalPrompting && !regionalPromptingSupported}
       <p class="mt-1 text-[10px] text-amber-300">

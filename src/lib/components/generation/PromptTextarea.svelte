@@ -9,6 +9,7 @@
     renderHighlightedPrompt,
     hasSchedulingTags,
     hasPresetTokens,
+    hasLoraWordInPrompt,
     findPromptInertRangeContaining,
   } from "../../utils/promptSchedule.js";
   import {
@@ -39,6 +40,15 @@
      * completing, underlining and linking them all misfire together.
      */
     tagAssist?: boolean;
+    /**
+     * Highlight prompt words inserted via a LoRA's trigger-word chip
+     * (tracked per-LoRA in `generation.loras[].insertedWords`). Only the
+     * positive-prompt instance should set this — trigger words are only
+     * ever inserted into `generation.positivePrompt`, so lighting up the
+     * same literal text in the negative prompt or region boxes would be
+     * a false positive.
+     */
+    highlightLoraWords?: boolean;
   }
 
   let {
@@ -48,6 +58,7 @@
     minHeight = "min-h-25",
     storageKey,
     tagAssist = true,
+    highlightLoraWords = false,
   }: Props = $props();
 
   // Restored height is applied as inline style (set in $effect on mount).
@@ -537,11 +548,29 @@
     }, 200);
   }
 
-  // Reactive: detect if current value has scheduling tags or inline preset tokens
-  const showBackdrop = $derived(hasSchedulingTags(value) || hasPresetTokens(value));
+  // Words inserted into the prompt via an enabled LoRA's trigger-word chip,
+  // lowercased for case-insensitive matching against the raw prompt text.
+  const activeLoraWords = $derived(
+    highlightLoraWords
+      ? new Set(
+          generation.loras
+            .filter((l) => l.enabled && l.name)
+            .flatMap((l) => l.insertedWords ?? [])
+            .map((w) => w.trim().toLowerCase())
+            .filter(Boolean),
+        )
+      : new Set<string>(),
+  );
+
+  // Reactive: detect if current value has scheduling tags, inline preset tokens, or LoRA trigger words
+  const showBackdrop = $derived(
+    hasSchedulingTags(value) || hasPresetTokens(value) || hasLoraWordInPrompt(value, activeLoraWords),
+  );
 
   // Reactive: render highlighted HTML for the backdrop overlay
-  const highlightedHtml = $derived(showBackdrop ? renderHighlightedPrompt(value, promptPresets.slugs) : "");
+  const highlightedHtml = $derived(
+    showBackdrop ? renderHighlightedPrompt(value, promptPresets.slugs, activeLoraWords) : "",
+  );
   const clickableSegments = $derived(
     tagAssist && autocomplete.clickableOverlayEnabled ? getPromptClickableSegments(value) : [],
   );
