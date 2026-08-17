@@ -23,7 +23,7 @@
     "@tauri-apps/plugin-shell": "^2",
     "@tauri-apps/plugin-store": "^2.4.3",
     "@tauri-apps/plugin-updater": "^2.10.1",
-    "dompurify": "^3.4.12",
+    "dompurify": "^3.4.13",
     "konva": "^10.3.0",
     "marked": "^18.0.7",
     "ntc-ts": "^0.0.8",
