@@ -841,15 +841,21 @@ pub async fn start_server(
     // the top of this function.
 
     // Periodic image expiry cleanup — delete images older than 7 days (every 30 min).
+    // Skipped entirely when `gallery_never_expire` is set (checked each cycle so
+    // toggling the setting takes effect without a restart).
     {
         let expiry_auth = web_state.auth.clone();
+        let expiry_app = web_state.app.clone();
         tokio::spawn(async move {
             // Run once at startup after a short delay, then every 30 minutes
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(30 * 60));
             loop {
                 interval.tick().await;
-                cleanup_expired_images(&expiry_auth);
+                let never_expire = expiry_app.config.read().await.gallery_never_expire;
+                if !never_expire {
+                    cleanup_expired_images(&expiry_auth);
+                }
             }
         });
     }
@@ -6288,8 +6294,13 @@ async fn storage_info_handler(
         (0_u64, 0_u64) // 0 means unlimited
     } else {
         let name = username.as_deref().unwrap_or("admin");
-        let limit = state.auth.get_storage_limit(name);
-        (limit, crate::auth::DEFAULT_EXPIRY_SECS)
+        let never_expire = state.app.config.read().await.gallery_never_expire;
+        let expiry = if never_expire {
+            0 // 0 means never expires, same convention as the unlimited-storage case above
+        } else {
+            crate::auth::DEFAULT_EXPIRY_SECS
+        };
+        (state.auth.get_storage_limit(name), expiry)
     };
 
     // Collect per-image age info (oldest first)

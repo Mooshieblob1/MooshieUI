@@ -3,6 +3,8 @@ export interface LoraEntry {
   strength_model: number;
   strength_clip: number;
   enabled: boolean;
+  /** Trigger words inserted into the prompt via the LoRA's trigger-word chips, tracked so they can be removed on deselect. */
+  insertedWords?: string[];
 }
 
 export interface LoraPayloadEntry {
@@ -375,6 +377,8 @@ export interface AppConfig {
   llm_external_api_key_configured?: boolean;
   /** External LLM model name (e.g. gpt-4o-mini). */
   llm_external_model: string;
+  /** Disable the 7-day gallery image auto-expiry entirely (default: false). */
+  gallery_never_expire: boolean;
 }
 
 export interface ThemeTone {

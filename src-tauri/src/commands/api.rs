@@ -2663,7 +2663,9 @@ pub async fn install_h3_turbo(
 #[tauri::command]
 pub async fn is_h3_teacache_installed(state: State<'_, Arc<AppState>>) -> Result<bool, AppError> {
     let comfyui_path = state.config.read().await.comfyui_path.clone();
-    Ok(crate::comfyui::nodes::is_h3_teacache_installed(&comfyui_path))
+    Ok(crate::comfyui::nodes::is_h3_teacache_installed(
+        &comfyui_path,
+    ))
 }
 
 /// Install the MiniMax-H3 TeaCache node pack, driven by the video settings
