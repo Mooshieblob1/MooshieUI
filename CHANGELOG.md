@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v2.1.2
+
+### Fixes and maintenance
+- **Dependency maintenance**: routine updates across Rust crates (`base64`, `futures-util`, `serde`, `tauri-plugin-dialog`, `ort`), npm packages (`@tauri-apps/plugin-dialog`, `dompurify`, `svelte`, `svelte-check`, `marked`), and GitHub Actions (`dtolnay/rust-toolchain`, `swatinem/rust-cache`, `docker/login-action`). No user-facing changes; each Rust crate bump was verified with `cargo check` against both the desktop and server build targets before merge.
+
+---
+
 ## What's New in v2.1.1
 
 ### New features
