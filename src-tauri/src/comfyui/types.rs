@@ -260,6 +260,12 @@ pub struct GenerationParams {
     /// checkpoint when the client omits it.
     #[serde(default)]
     pub video_turbo_lora: Option<String>,
+    /// TeaCache — reuses the previous step's model output while the
+    /// accumulated input delta stays under threshold, skipping the real
+    /// forward pass. Requires the `ComfyUI-MiniMaxH3-TeaCache` custom node
+    /// pack.
+    #[serde(default)]
+    pub video_teacache_enabled: bool,
     #[serde(default)]
     pub video_diffusion_model: Option<String>,
     #[serde(default)]
@@ -361,6 +367,11 @@ pub struct GenerationParams {
     /// Blocks range for UntwistingRoPE node (e.g. "0-999").
     #[serde(default = "default_style_transfer_blocks")]
     pub style_transfer_blocks: String,
+    /// Anima TeaCache — reuses the previous step's DiT output while the
+    /// accumulated input delta stays under threshold, skipping the forward
+    /// pass. MooshieUI-authored node, always deployed (no lazy install).
+    #[serde(default)]
+    pub anima_teacache_enabled: bool,
     /// Reference images for Image Edit mode (ComfyUI input filenames). Slot 0 is
     /// the primary edit source; slots 1-2 are Qwen Image Edit Plus extras.
     #[serde(default)]

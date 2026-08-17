@@ -85,6 +85,7 @@
     checkStyleTransferNodesReady,
   } from "./lib/utils/styleTransferNodes.js";
   import { classifyGenerationError } from "./lib/utils/generationErrors.js";
+  import { formatGenerationTime } from "./lib/utils/localeFormat.js";
   import {
     parseComfyServerError,
     type ComfyServerErrorPayload,
@@ -2770,11 +2771,13 @@
         const durationSeconds =
           typeof data.duration_seconds === "number" ? data.duration_seconds : undefined;
         const videoFps = typeof data.fps === "number" && data.fps > 0 ? data.fps : undefined;
+        const generationTimeMs = data.prompt_id ? progress.peekDurationMs(data.prompt_id) : undefined;
 
-        await gallery.addPersistedImage(videoFilename, {
-          duration_seconds: durationSeconds,
-          fps: videoFps,
-        });
+        await gallery.addPersistedImage(
+          videoFilename,
+          { duration_seconds: durationSeconds, fps: videoFps, generationTimeMs },
+          true,
+        );
 
         // Play it in the progress preview. The gallery URL is Range-served, so
         // the preview never buffers the whole clip.
@@ -3668,6 +3671,13 @@
                 {/each}
               </select>
             </div>
+
+            {#if gallery.selectedImage.generationTimeMs != null}
+              <div class="mb-3 flex justify-between gap-2">
+                <span class="text-[10px] text-neutral-500 uppercase tracking-wider">{locale.t("gallery.generation_time")}</span>
+                <span class="text-neutral-200">{formatGenerationTime(gallery.selectedImage.generationTimeMs, locale.current)}</span>
+              </div>
+            {/if}
 
             {#if lightboxMetadata}
               {@const promptKeys = ["positive_prompt", "negative_prompt"]}

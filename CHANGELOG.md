@@ -1,5 +1,65 @@
 # Changelog
 
+## What's New in v2.1.1
+
+### New features
+- **Lock resolution across model swaps**: switching checkpoints normally resets width/height to that model's default resolution. A new lock toggle next to the resolution controls keeps your current width and height fixed through model swaps.
+- **LoRA trigger words tracked and highlighted in the prompt**: words added via a LoRA's trigger-word chip are now tracked per-LoRA, highlighted inline in the prompt, and automatically removed if you disable or remove that LoRA.
+- **Collapsible LoRA list**: the LoRA section in the model picker can now be collapsed, with the state remembered between sessions.
+
+---
+
+## What's New in v2.1.0
+
+### New features
+- **Option to disable gallery image auto-expiry**: gallery images auto-delete after 7 days as a disk-usage safety net for shared/public servers, but this left no way to opt out. Single-owner setups reached remotely (for example, a home PC over Tailscale) now have a **Never auto-delete gallery images** toggle in Settings > Gallery. ([#596](https://github.com/Mooshieblob1/MooshieUI/pull/596))
+
+### Fixes and maintenance
+- **Bumped pinned ComfyUI to v0.31.0**: the bundled custom nodes and the core node inputs MooshieUI's workflow builder emits were verified compatible with this release. ([#564](https://github.com/Mooshieblob1/MooshieUI/pull/564))
+
+---
+
+## What's New in v2.0.9
+
+### New features
+- **Generation time is now tracked for video, not just images**: the video output pipeline never recorded how long a generation took, so videos never showed a duration anywhere in the UI. Video prompts now get the same timing capture images already had.
+- **"Show Generation Time" checkbox in the gallery**: a new toggle in the gallery toolbar displays how long each image or video took to generate directly on the grid and details view, instead of only on hover in the bottom panel.
+- **Generation time shown in the lightbox**: opening an image or video in the lightbox now shows its generation time alongside the rest of its metadata.
+
+### Fixes and maintenance
+- **The "Videos generated this session" gallery tab wasn't populating**: newly generated videos never got added to the in-memory session gallery list, so the tab stayed empty even right after generating a video.
+
+---
+
+## What's New in v2.0.8
+
+### Fixes and maintenance
+- **Model downloads (e.g. the RDBT-Anima LoRA) could freeze mid-transfer with no error**: a connection that stalled after the server stopped sending bytes without closing the socket would hang forever, since the shared HTTP client had no read timeout, leaving the download progress bar stuck indefinitely. Chunk reads now time out after 30 seconds of silence, cleaning up the partial file and surfacing a clear error so the download can be retried.
+
+---
+
+## What's New in v2.0.7
+
+### New features
+- **TeaCache for Anima**: Anima generation now has the same TeaCache speedup already available for video. It skips the model's forward pass on steps where little changed since the last one, reusing the cached output instead. Small risk of softer detail, off by default. Toggle it under sampler settings when an Anima checkpoint is selected.
+- **TeaCache for MiniMax H3 video**: video generation gets a TeaCache toggle for the MiniMax H3 pipeline, installing the required nodes and restarting ComfyUI on first use, matching the existing image TeaCache install flow.
+
+### Fixes and maintenance
+- **Looping video export used a flat 4-frame crossfade regardless of clip length**: a short loop got the same blend window as a long one, which could look like a visible jump-cut on short clips or an unnecessarily long fade on longer ones. The default crossfade now scales with clip length (roughly 8% of the frame count, clamped to a sane range) instead of a fixed 4 frames.
+- **Discord's free-tier attachment limit was checked against the old 10 MB cap**: Discord raised the free upload limit to 20 MB; exported videos under that were being incorrectly flagged as over the limit. Corrected to 20 MB. ([#588](https://github.com/Mooshieblob1/MooshieUI/pull/588))
+- **Prompt names containing `+` or `-` could collide with InvokeAI-style emphasis syntax**: a saved prompt name like `cat+dog` could be misread as emphasis weighting. Backslash-escaped `\+`/`\-` in prompt names are now preserved instead of being treated as emphasis markers. ([#589](https://github.com/Mooshieblob1/MooshieUI/pull/589))
+
+---
+
+## What's New in v2.0.6
+
+### Fixes and maintenance
+- **Intel Arc GPUs on the newer `xe` kernel driver reported 0 VRAM**: Battlemage/B-series Arc GPUs default to the `xe` driver on Linux, which VRAM detection didn't account for, so it silently corrupted hardware-tier recommendations. Detection now covers both the legacy `i915` and newer `xe` drivers.
+- **Intel SYCL/DPC++ kernels recompiled from scratch on every ComfyUI XPU launch**: `SYCL_CACHE_PERSISTENT` defaults to off, so kernel cache persistence wasn't actually enabled for Intel Arc workers. It's now set explicitly, cutting repeat startup time.
+- **Enhance, Compose, and prompt rewrite could hang on a stopped local LLM server**: if the configured Ollama or LM Studio endpoint wasn't running, requests would just fail instead of trying to start it. The app now makes a best-effort attempt to wake the server (`ollama list` / `lms server start`, 20s timeout) before giving up, skipped automatically if the endpoint is already up or not local.
+
+---
+
 ## What's New in v2.0.5
 
 ### Fixes and maintenance

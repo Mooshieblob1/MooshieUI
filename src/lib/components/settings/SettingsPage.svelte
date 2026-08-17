@@ -3221,6 +3221,20 @@
                 <p class="mt-1.5 text-[11px] text-amber-400">{galleryPathMessage}</p>
               {/if}
             </div>
+
+            <!-- Never expire gallery images -->
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 rounded accent-indigo-500"
+                  bind:checked={config.gallery_never_expire}
+                  onchange={() => { autoSave(); }}
+                />
+                <span class="text-sm text-neutral-200">{locale.t('settings.gallery.never_expire_label')}</span>
+              </label>
+              <p class="text-[10px] text-neutral-500 mt-1 ml-6">{locale.t('settings.gallery.never_expire_desc')}</p>
+            </div>
             {/if}
 
             <!-- Manual save mode -->

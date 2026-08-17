@@ -536,6 +536,22 @@ fn attention_package_present(venv_path: &str, backend: &str) -> bool {
     false
 }
 
+/// (env var, target directory) pairs for persisted GPU kernel/compiler
+/// caches, given the shared cache base directory. MIOpen vars are no-ops
+/// off ROCm, the inductor/Triton vars are harmless on platforms that don't
+/// use them, and SYCL_CACHE_DIR/NEO_CACHE_DIR are the Intel XPU equivalents.
+/// Callers skip entries the user has already set explicitly.
+fn kernel_cache_targets(cache_base: &std::path::Path) -> [(&'static str, std::path::PathBuf); 6] {
+    [
+        ("TORCHINDUCTOR_CACHE_DIR", cache_base.join("torchinductor")),
+        ("TRITON_CACHE_DIR", cache_base.join("triton")),
+        ("MIOPEN_USER_DB_PATH", cache_base.join("miopen")),
+        ("MIOPEN_CUSTOM_CACHE_DIR", cache_base.join("miopen")),
+        ("SYCL_CACHE_DIR", cache_base.join("sycl")),
+        ("NEO_CACHE_DIR", cache_base.join("neo")),
+    ]
+}
+
 /// Spawn the ComfyUI process (or detect an already-running one).
 /// Returns immediately — does NOT wait for the server to become ready.
 pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppError> {
@@ -1034,34 +1050,32 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     // compiling and autotuning kernels. This is most severe on AMD RDNA4
     // (gfx120x) with bleeding-edge ROCm, where MIOpen has no prebuilt kernel db
     // and does an exhaustive search, but it also affects the torch.compile /
-    // Triton path on CUDA. Those caches default to per-process or /tmp locations,
-    // so the compile cost is re-paid on every restart. Point them at a stable
-    // directory under the app data dir (the parent of the ComfyUI install) so the
-    // cost is paid once. Any value the user already set in the environment wins.
+    // Triton path on CUDA and Intel XPU's SYCL/NEO compiler caches. Those
+    // caches default to per-process or /tmp locations, so the compile cost is
+    // re-paid on every restart. Point them at a stable directory under the app
+    // data dir (the parent of the ComfyUI install) so the cost is paid once.
+    // Any value the user already set in the environment wins.
     {
         let cache_base = std::path::Path::new(&config.comfyui_path)
             .parent()
             .map(|p| p.join("kernel-cache"))
             .unwrap_or_else(|| std::env::temp_dir().join("mooshieui-kernel-cache"));
-        // (env var, subdir). MIOpen vars are no-ops off ROCm; the inductor/Triton
-        // vars are harmless on platforms that don't use them.
-        let caches: [(&str, &str); 4] = [
-            ("TORCHINDUCTOR_CACHE_DIR", "torchinductor"),
-            ("TRITON_CACHE_DIR", "triton"),
-            ("MIOPEN_USER_DB_PATH", "miopen"),
-            ("MIOPEN_CUSTOM_CACHE_DIR", "miopen"),
-        ];
-        for (var, subdir) in caches {
+        for (var, dir) in kernel_cache_targets(&cache_base) {
             if std::env::var_os(var).is_some() {
                 continue; // respect an explicit user override
             }
-            let dir = cache_base.join(subdir);
             match std::fs::create_dir_all(&dir) {
                 Ok(()) => {
                     cmd.env(var, &dir);
                 }
                 Err(e) => log::warn!("Could not create kernel cache dir {:?}: {}", dir, e),
             }
+        }
+        // Unlike CUDA/ROCm, Intel's SYCL runtime ships with persistent kernel
+        // caching disabled by default (SYCL_CACHE_PERSISTENT=0) — without this,
+        // SYCL_CACHE_DIR above has nothing to persist into.
+        if std::env::var_os("SYCL_CACHE_PERSISTENT").is_none() {
+            cmd.env("SYCL_CACHE_PERSISTENT", "1");
         }
         log::info!("Persistent kernel cache dir: {}", cache_base.display());
     }
@@ -1620,23 +1634,19 @@ pub async fn start_worker_process(
             .map(|p| p.join("kernel-cache"))
             .unwrap_or_else(|| std::env::temp_dir().join("mooshieui-kernel-cache"))
             .join(format!("gpu{}", worker.gpu_index));
-        let caches: [(&str, &str); 4] = [
-            ("TORCHINDUCTOR_CACHE_DIR", "torchinductor"),
-            ("TRITON_CACHE_DIR", "triton"),
-            ("MIOPEN_USER_DB_PATH", "miopen"),
-            ("MIOPEN_CUSTOM_CACHE_DIR", "miopen"),
-        ];
-        for (var, subdir) in caches {
+        for (var, dir) in kernel_cache_targets(&cache_base) {
             if std::env::var_os(var).is_some() {
                 continue; // respect an explicit user override
             }
-            let dir = cache_base.join(subdir);
             match std::fs::create_dir_all(&dir) {
                 Ok(()) => {
                     cmd.env(var, &dir);
                 }
                 Err(e) => log::warn!("Could not create kernel cache dir {:?}: {}", dir, e),
             }
+        }
+        if std::env::var_os("SYCL_CACHE_PERSISTENT").is_none() {
+            cmd.env("SYCL_CACHE_PERSISTENT", "1");
         }
     }
 
@@ -1978,7 +1988,7 @@ pub fn stop_all_workers_blocking(state: &AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::uses_configured_gpu_workers;
+    use super::{kernel_cache_targets, uses_configured_gpu_workers};
     use crate::config::{AppConfig, GpuWorkerConfig};
 
     #[test]
@@ -2008,5 +2018,28 @@ mod tests {
         });
 
         assert!(uses_configured_gpu_workers(&config));
+    }
+
+    #[test]
+    fn kernel_cache_targets_covers_all_backends_including_intel() {
+        let base = std::path::Path::new("/tmp/mooshie-kernel-cache-test");
+        let targets = kernel_cache_targets(base);
+        assert_eq!(targets.len(), 6);
+
+        let find = |var: &str| {
+            targets
+                .iter()
+                .find(|(v, _)| *v == var)
+                .map(|(_, d)| d.clone())
+        };
+        assert_eq!(
+            find("TORCHINDUCTOR_CACHE_DIR"),
+            Some(base.join("torchinductor"))
+        );
+        assert_eq!(find("TRITON_CACHE_DIR"), Some(base.join("triton")));
+        assert_eq!(find("MIOPEN_USER_DB_PATH"), Some(base.join("miopen")));
+        assert_eq!(find("MIOPEN_CUSTOM_CACHE_DIR"), Some(base.join("miopen")));
+        assert_eq!(find("SYCL_CACHE_DIR"), Some(base.join("sycl")));
+        assert_eq!(find("NEO_CACHE_DIR"), Some(base.join("neo")));
     }
 }

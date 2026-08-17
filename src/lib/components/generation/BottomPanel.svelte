@@ -572,7 +572,7 @@
                       </div>
                     </div>
                   {/if}
-                  {#if hoveredImage === image && image.generationTimeMs != null}
+                  {#if (hoveredImage === image || gallery.showGenerationTime) && image.generationTimeMs != null}
                     <div
                       class="absolute top-1.5 left-1.5 flex items-center gap-1 bg-black/65 text-white text-[10px] font-medium px-1.5 py-0.5 rounded backdrop-blur-sm pointer-events-none"
                       title={locale.t("generation.gen_time_label")}

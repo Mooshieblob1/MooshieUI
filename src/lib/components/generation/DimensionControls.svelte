@@ -318,17 +318,38 @@
   <div>
     <div class="flex items-center justify-between mb-1.5">
       <label class="text-xs text-neutral-400">{locale.t('generation.dimensions.resolution')}<InfoTip text={locale.t('generation.dimensions.resolution_tip')} /></label>
-      <button
-        onclick={() => applySideLength(DEFAULT_SIDE)}
-        class="inline-flex items-center gap-1 text-[10px] text-neutral-400 hover:text-neutral-200 transition-colors"
-        title={locale.t('generation.dimensions.reset', { res: DEFAULT_SIDE })}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-          <path d="M3 3v5h5"/>
-        </svg>
-        {locale.t('generation.dimensions.reset', { res: DEFAULT_SIDE })}
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          onclick={() => { generation.resolutionLocked = !generation.resolutionLocked; generation.saveSettings(); }}
+          class="inline-flex items-center gap-1 text-[10px] transition-colors {generation.resolutionLocked ? 'text-indigo-400 hover:text-indigo-300' : 'text-neutral-400 hover:text-neutral-200'}"
+          title={locale.t('generation.dimensions.lock_tip')}
+          aria-pressed={generation.resolutionLocked}
+        >
+          {#if generation.resolutionLocked}
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          {:else}
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2"/>
+              <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+            </svg>
+          {/if}
+          {locale.t('generation.dimensions.lock')}
+        </button>
+        <button
+          onclick={() => applySideLength(DEFAULT_SIDE)}
+          class="inline-flex items-center gap-1 text-[10px] text-neutral-400 hover:text-neutral-200 transition-colors"
+          title={locale.t('generation.dimensions.reset', { res: DEFAULT_SIDE })}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/>
+          </svg>
+          {locale.t('generation.dimensions.reset', { res: DEFAULT_SIDE })}
+        </button>
+      </div>
     </div>
     <div class="flex items-center gap-1 flex-wrap mb-2">
       {#each sidePresets as side (side)}
