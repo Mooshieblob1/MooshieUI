@@ -1,5 +1,15 @@
 # Changelog
 
+## What's New in v2.1.0
+
+### New features
+- **Option to disable gallery image auto-expiry**: gallery images auto-delete after 7 days as a disk-usage safety net for shared/public servers, but this left no way to opt out. Single-owner setups reached remotely (for example, a home PC over Tailscale) now have a **Never auto-delete gallery images** toggle in Settings > Gallery. ([#596](https://github.com/Mooshieblob1/MooshieUI/pull/596))
+
+### Fixes and maintenance
+- **Bumped pinned ComfyUI to v0.31.0**: the bundled custom nodes and the core node inputs MooshieUI's workflow builder emits were verified compatible with this release. ([#564](https://github.com/Mooshieblob1/MooshieUI/pull/564))
+
+---
+
 ## What's New in v2.0.9
 
 ### New features
