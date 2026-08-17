@@ -135,6 +135,7 @@ async fn chat_any(
     };
 
     if ext_enabled {
+        crate::prompt_assistant::local_llm::wake_local_server(&state.http_client, &ext_base).await;
         app.emit("llm:stage", "generating").ok();
         return crate::prompt_assistant::server::chat_provider(
             &state.http_client,

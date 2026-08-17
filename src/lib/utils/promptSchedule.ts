@@ -214,7 +214,11 @@ function highlightPill(colors: { bg: string; border: string; glow: string }): st
  * Render prompt text as HTML with styled highlights for scheduling blocks.
  * Used by the backdrop overlay behind the textarea.
  */
-export function renderHighlightedPrompt(raw: string, knownPresetSlugs?: ReadonlySet<string>): string {
+export function renderHighlightedPrompt(
+  raw: string,
+  knownPresetSlugs?: ReadonlySet<string>,
+  loraWords?: ReadonlySet<string>,
+): string {
   let html = "";
   let lastIndex = 0;
 
@@ -225,7 +229,7 @@ export function renderHighlightedPrompt(raw: string, knownPresetSlugs?: Readonly
     const fullMatch = match[0];
     const matchStart = match.index;
 
-    html += renderSegmentAwareText(raw.slice(lastIndex, matchStart), knownPresetSlugs);
+    html += renderSegmentAwareText(raw.slice(lastIndex, matchStart), knownPresetSlugs, loraWords);
     lastIndex = matchStart + fullMatch.length;
 
     let isValid = false;
@@ -261,7 +265,7 @@ export function renderHighlightedPrompt(raw: string, knownPresetSlugs?: Readonly
     html += `</span>`;
   }
 
-  html += renderSegmentAwareText(raw.slice(lastIndex), knownPresetSlugs);
+  html += renderSegmentAwareText(raw.slice(lastIndex), knownPresetSlugs, loraWords);
   return html;
 }
 
@@ -274,15 +278,19 @@ const PRESET_TOKEN_REGEX = PROMPT_PRESET_TOKEN_REGEX;
  * feedback for typos. Returns escaped HTML so it can be concatenated into the
  * larger highlight string.
  */
-function renderPresetSegment(text: string, knownPresetSlugs?: ReadonlySet<string>): string {
+function renderPresetSegment(
+  text: string,
+  knownPresetSlugs?: ReadonlySet<string>,
+  loraWords?: ReadonlySet<string>,
+): string {
   if (!text) return "";
-  if (!text.includes("@preset:")) return escapeHtml(text);
+  if (!text.includes("@preset:")) return renderLoraWordsInPlainText(text, loraWords);
   let html = "";
   let lastIndex = 0;
   PRESET_TOKEN_REGEX.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = PRESET_TOKEN_REGEX.exec(text)) !== null) {
-    html += escapeHtml(text.slice(lastIndex, match.index));
+    html += renderLoraWordsInPlainText(text.slice(lastIndex, match.index), loraWords);
     lastIndex = match.index + match[0].length;
     const slug = match[1].toLowerCase();
     const known = knownPresetSlugs?.has(slug) ?? false;
@@ -295,7 +303,7 @@ function renderPresetSegment(text: string, knownPresetSlugs?: ReadonlySet<string
     html += escapeHtml(match[0]);
     html += `</span>`;
   }
-  html += escapeHtml(text.slice(lastIndex));
+  html += renderLoraWordsInPlainText(text.slice(lastIndex), loraWords);
   return html;
 }
 
@@ -305,6 +313,56 @@ const SEGMENT_TAG_COLOR = {
   border: "rgba(45, 212, 191, 0.45)",
   glow: "0 0 10px rgba(45, 212, 191, 0.25), 0 0 4px rgba(45, 212, 191, 0.12)",
 };
+
+/** Sky-blue pill for prompt words inserted via a LoRA's trigger-word chip. */
+const LORA_WORD_COLOR = {
+  bg: "rgba(56, 189, 248, 0.14)",
+  border: "rgba(56, 189, 248, 0.50)",
+  glow: "0 0 8px rgba(56, 189, 248, 0.30), 0 0 4px rgba(56, 189, 248, 0.15)",
+};
+
+/**
+ * Highlight comma-delimited segments of `text` that exactly match a known
+ * LoRA-inserted trigger word (case-insensitive). Only whole segments match —
+ * the same "own comma segment" rule `removeInsertedWordsFromPrompt` uses —
+ * so a word that merely appears inside a longer hand-written phrase is left
+ * alone. Escapes and emits the plain (non-matching) HTML itself, so callers
+ * can use this in place of a bare `escapeHtml()` on leaf text runs.
+ */
+function renderLoraWordsInPlainText(text: string, loraWords?: ReadonlySet<string>): string {
+  if (!text) return "";
+  if (!loraWords || loraWords.size === 0) return escapeHtml(text);
+  const parts = text.split(/(,)/);
+  let html = "";
+  for (const part of parts) {
+    if (part === ",") {
+      html += ",";
+      continue;
+    }
+    const trimmed = part.trim();
+    if (trimmed && loraWords.has(trimmed.toLowerCase())) {
+      const start = part.indexOf(trimmed);
+      html += escapeHtml(part.slice(0, start));
+      html += highlightPill(LORA_WORD_COLOR);
+      html += escapeHtml(trimmed);
+      html += `</span>`;
+      html += escapeHtml(part.slice(start + trimmed.length));
+    } else {
+      html += escapeHtml(part);
+    }
+  }
+  return html;
+}
+
+/**
+ * Check whether the prompt has any comma-delimited segment matching a known
+ * LoRA-inserted trigger word. Cheap guard so the backdrop overlay only
+ * mounts when there's actually something to highlight.
+ */
+export function hasLoraWordInPrompt(raw: string, loraWords?: ReadonlySet<string>): boolean {
+  if (!raw || !loraWords || loraWords.size === 0) return false;
+  return raw.split(",").some((segment) => loraWords.has(segment.trim().toLowerCase()));
+}
 
 /**
  * Highlight <segment:...> regions within a plain-text run, delegating the
@@ -318,22 +376,23 @@ const SEGMENT_TAG_COLOR = {
 function renderSegmentAwareText(
   text: string,
   knownPresetSlugs?: ReadonlySet<string>,
+  loraWords?: ReadonlySet<string>,
 ): string {
   if (!text) return "";
   if (!text.toLowerCase().includes("<segment:")) {
-    return renderPresetSegment(text, knownPresetSlugs);
+    return renderPresetSegment(text, knownPresetSlugs, loraWords);
   }
   const { ranges } = parseSegmentDetailPrompt(text);
   let html = "";
   let lastIndex = 0;
   for (const range of ranges) {
-    html += renderPresetSegment(text.slice(lastIndex, range.start), knownPresetSlugs);
+    html += renderPresetSegment(text.slice(lastIndex, range.start), knownPresetSlugs, loraWords);
     html += highlightPill(SEGMENT_TAG_COLOR);
     html += escapeHtml(text.slice(range.start, range.end));
     html += `</span>`;
     lastIndex = range.end;
   }
-  html += renderPresetSegment(text.slice(lastIndex), knownPresetSlugs);
+  html += renderPresetSegment(text.slice(lastIndex), knownPresetSlugs, loraWords);
   return html;
 }
 

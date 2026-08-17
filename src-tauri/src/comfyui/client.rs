@@ -656,8 +656,40 @@ impl AppState {
         )
         .ok();
 
+        // A stalled connection (server stops sending bytes without closing the
+        // socket) leaves `resp.chunk().await` pending forever — reqwest's default
+        // client has no read timeout, so nothing else would ever surface this as
+        // an error. Bound each chunk read so a stall fails loudly instead of
+        // hanging the download (and the UI's downloading state) indefinitely.
+        const STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
         let mut resp = resp;
-        while let Some(chunk) = resp.chunk().await? {
+        loop {
+            let chunk = match tokio::time::timeout(STALL_TIMEOUT, resp.chunk()).await {
+                Ok(result) => result?,
+                Err(_) => {
+                    drop(file);
+                    let _ = std::fs::remove_file(&dest);
+                    app.emit(
+                        "download:progress",
+                        crate::setup::DownloadProgress {
+                            filename: filename.to_string(),
+                            downloaded,
+                            total,
+                            done: true,
+                        },
+                    )
+                    .ok();
+                    return Err(AppError::Other(format!(
+                        "Download stalled for '{}': no data received for {} seconds",
+                        filename,
+                        STALL_TIMEOUT.as_secs()
+                    )));
+                }
+            };
+            let Some(chunk) = chunk else {
+                break;
+            };
             use std::io::Write;
             // Abort cleanly if the user cancelled this download (#399).
             if self.is_download_cancelled(filename) {

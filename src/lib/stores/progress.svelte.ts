@@ -344,6 +344,18 @@ class ProgressStore {
    * frame is then discarded instead of being promoted to lastOutputImage —
    * promoting it first risks the blurry progress frame sticking around if the
    * final image swap fails. */
+  /**
+   * Non-destructive elapsed-time lookup for a still-pending prompt. Used by
+   * the video output handler, which fires before `completePrompt()` closes
+   * the prompt out, so it needs the same startedAt/generationStartTime
+   * fallback without removing the prompt from the queue.
+   */
+  peekDurationMs(promptId: string): number | undefined {
+    const item = this.pendingPrompts.find((p) => p.promptId === promptId);
+    const startedAt = item?.startedAt ?? this.generationStartTime;
+    return startedAt != null ? Date.now() - startedAt : undefined;
+  }
+
   completePrompt(promptId: string, hasFinalImage = false): QueuedPrompt | undefined {
     const item = this.pendingPrompts.find((p) => p.promptId === promptId);
 

@@ -816,6 +816,16 @@ export async function installH3Turbo(): Promise<void> {
   return ipcInvoke("install_h3_turbo", {});
 }
 
+/** Is the MiniMax-H3 TeaCache node pack on disk? */
+export async function isH3TeacacheInstalled(): Promise<boolean> {
+  return ipcInvoke("is_h3_teacache_installed", {});
+}
+
+/** Clone the MiniMax-H3 TeaCache node pack. Reports through `install:progress`. */
+export async function installH3Teacache(): Promise<void> {
+  return ipcInvoke("install_h3_teacache", {});
+}
+
 export async function installPipPackage(packageName: string): Promise<void> {
   return ipcInvoke("install_pip_package", { package: packageName });
 }

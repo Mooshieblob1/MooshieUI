@@ -502,6 +502,32 @@ pub fn build(params: &GenerationParams, seed: i64, include_metadata: bool) -> Va
         H3_DEFAULT_STEPS
     };
 
+    // TeaCache wraps the model in a cached-forward-pass function: it reuses the
+    // previous step's output while the accumulated input delta stays under
+    // threshold. Inserted after `steps` is known (needed for the "last N
+    // steps" guard) and before the scheduler/guider fan `model_link` out to
+    // both consumers, so both pick up the wrapped model transparently.
+    let model_link = if params.video_teacache_enabled {
+        let teacache_id = next_id.to_string();
+        workflow.insert(
+            teacache_id.clone(),
+            json!({
+                "class_type": "MiniMaxH3TeaCache",
+                "inputs": {
+                    "model": model_link,
+                    "rel_l1_thresh": 0.15,
+                    "start_step": 2,
+                    "end_step": -2,
+                    "total_steps": steps
+                }
+            }),
+        );
+        next_id += 1;
+        json!([teacache_id.as_str(), 0])
+    } else {
+        model_link
+    };
+
     let scheduler_id = next_id.to_string();
     workflow.insert(
         scheduler_id.clone(),

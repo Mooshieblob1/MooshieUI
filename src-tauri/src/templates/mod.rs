@@ -472,6 +472,30 @@ pub fn load_model_nodes(
         }
     }
 
+    // Anima TeaCache — wraps the fully-assembled model (after LoRAs) in a
+    // step-caching function. Inserted here rather than as a post-hoc inject_*
+    // step in `build_workflow` because this is the one function every
+    // Anima-capable template routes through, including `style_transfer::build`,
+    // which bypasses the entire `inject_*` pipeline.
+    if params.model_architecture == "anima" && params.anima_teacache_enabled {
+        let teacache_id = next_id.to_string();
+        workflow.insert(
+            teacache_id.clone(),
+            json!({
+                "class_type": "MooshieAnimaTeaCache",
+                "inputs": {
+                    "model": [model_source.0, model_source.1],
+                    "rel_l1_thresh": 0.15,
+                    "start_step": 2,
+                    "end_step": -2,
+                    "total_steps": params.steps
+                }
+            }),
+        );
+        model_source = (teacache_id, 0);
+        next_id += 1;
+    }
+
     ModelLoadResult {
         model_source,
         clip_source,

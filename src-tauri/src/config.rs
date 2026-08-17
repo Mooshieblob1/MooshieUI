@@ -171,6 +171,13 @@ pub struct AppConfig {
     /// the hosted proxy; set to null/empty to fall back to prefilled issues.
     #[serde(default = "default_report_endpoint")]
     pub report_endpoint: Option<String>,
+    /// Disable the 7-day gallery image auto-expiry entirely (default: false).
+    /// The expiry exists as a disk-usage safety net for shared/public servers;
+    /// this is an opt-in escape hatch for single-owner setups (e.g. a home
+    /// server reached remotely over Tailscale/LAN under one's own account)
+    /// where there's no untrusted guest to protect against.
+    #[serde(default)]
+    pub gallery_never_expire: bool,
 }
 
 /// Default report proxy endpoint. In-app error reports post here unless the
@@ -248,6 +255,7 @@ impl Default for AppConfig {
             llm_external_api_key: String::new(),
             llm_external_model: String::new(),
             report_endpoint: default_report_endpoint(),
+            gallery_never_expire: false,
         }
     }
 }
