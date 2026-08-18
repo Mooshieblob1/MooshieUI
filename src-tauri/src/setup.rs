@@ -30,6 +30,16 @@ pub struct DownloadProgress {
     pub done: bool,
 }
 
+/// Escapes a path for interpolation into a single-quoted PowerShell string
+/// literal by doubling embedded single quotes (PowerShell's own escape
+/// convention). Needed because Windows usernames/folders can contain an
+/// apostrophe (e.g. `C:\Users\Cole's Computer\...`), which would otherwise
+/// terminate the quoted string early and corrupt the command.
+#[cfg(target_os = "windows")]
+fn ps_quote(path: &Path) -> String {
+    path.display().to_string().replace('\'', "''")
+}
+
 fn emit(app: &AppHandle, step: &str, msg: &str, pct: u32) {
     app.emit(
         "setup:progress",
@@ -507,12 +517,12 @@ async fn step_download_uv(
             "Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
              Get-ChildItem -Path '{}' -Filter 'uv.exe' -Recurse | Select-Object -First 1 | Move-Item -Destination '{}\\uv.exe' -Force; \
              Get-ChildItem -Path '{}' -Filter 'uvx.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 | Move-Item -Destination '{}\\uvx.exe' -Force",
-            archive.display(),
-            temp_dir.display(),
-            temp_dir.display(),
-            bin_dir.display(),
-            temp_dir.display(),
-            bin_dir.display(),
+            ps_quote(&archive),
+            ps_quote(&temp_dir),
+            ps_quote(&temp_dir),
+            ps_quote(&bin_dir),
+            ps_quote(&temp_dir),
+            ps_quote(&bin_dir),
         );
         run_logged(app, "powershell", &["-NoProfile", "-Command", &ps_cmd], &[])
             .await
@@ -654,8 +664,8 @@ async fn step_download_comfyui(
     {
         let ps = format!(
             "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-            zip_path.display(),
-            base.display()
+            ps_quote(&zip_path),
+            ps_quote(base)
         );
         run_logged(app, "powershell", &["-Command", &ps], &[])
             .await
