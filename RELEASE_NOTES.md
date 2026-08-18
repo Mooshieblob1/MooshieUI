@@ -1,3 +1,10 @@
+## What's New in v2.1.4
+
+### Fixes and maintenance
+- **Fixed ComfyUI crashing on startup with "Torch not compiled with CUDA enabled"**: when the installed PyTorch build has no GPU accelerator support (for example CPU-only installs, or AMD GPUs on Windows where ROCm isn't available), ComfyUI was launched without the `--cpu` flag, and its own startup code assumes CUDA is present, crashing instead of falling back to CPU. MooshieUI now checks the installed torch build at launch and automatically passes `--cpu` when no accelerator is available. ([#610](https://github.com/Mooshieblob1/MooshieUI/pull/610))
+
+---
+
 ## What's New in v2.1.3
 
 ### Fixes and maintenance
