@@ -1,5 +1,12 @@
 # Changelog
 
+## What's New in v2.1.3
+
+### Fixes and maintenance
+- **Fixed setup failing on Windows profiles with an apostrophe in the path**: the uv/uvx and ComfyUI archive extraction steps built PowerShell commands by interpolating file paths directly into single-quoted strings, so a path like `C:\Users\Cole's Computer\...` broke the quoting and corrupted the command, causing setup to fail. Paths are now properly escaped before being passed to PowerShell. ([#608](https://github.com/Mooshieblob1/MooshieUI/pull/608))
+
+---
+
 ## What's New in v2.1.2
 
 ### Fixes and maintenance
