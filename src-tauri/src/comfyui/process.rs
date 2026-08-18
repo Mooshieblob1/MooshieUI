@@ -124,6 +124,29 @@ fn appimage_env_overrides() -> Option<String> {
     )
 }
 
+/// True when the venv's installed torch build reports a usable GPU accelerator
+/// (CUDA, ROCm/HIP — which aliases to `torch.cuda`, Intel XPU, or Apple MPS).
+/// Checked fresh at every launch via a quick python probe rather than trusting
+/// setup-time GPU detection, since the two can drift (GPU removed/disabled,
+/// torch reinstalled manually, etc). ComfyUI's own `get_torch_device()` assumes
+/// CUDA is available unless launched with `--cpu`, and crashes with
+/// `AssertionError: Torch not compiled with CUDA enabled` instead of falling
+/// back gracefully — so MooshieUI must pass `--cpu` explicitly when torch has
+/// no accelerator support.
+fn torch_has_accelerator(python_path: &str) -> bool {
+    let output = std_command_no_window(python_path)
+        .args([
+            "-c",
+            "import torch,sys\n\
+             a = torch.cuda.is_available()\n\
+             a = a or (hasattr(torch, 'xpu') and torch.xpu.is_available())\n\
+             a = a or (hasattr(torch.backends, 'mps') and torch.backends.mps.is_available())\n\
+             sys.exit(0 if a else 1)",
+        ])
+        .output();
+    matches!(output, Ok(o) if o.status.success())
+}
+
 /// Detect whether the system has a Blackwell (compute capability 12.x) NVIDIA GPU.
 /// Returns `true` if any installed GPU has compute capability >= 12.0.
 fn has_blackwell_gpu() -> bool {
@@ -876,6 +899,14 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     if !has_vae_flag && has_blackwell_gpu() {
         cmd.arg("--bf16-vae");
         log::info!("Auto-applied --bf16-vae for Blackwell GPU");
+    }
+
+    // Self-heal: force CPU mode when the installed torch has no GPU accelerator
+    // support. Without this, ComfyUI's own startup code assumes CUDA is present
+    // and crashes instead of falling back — see torch_has_accelerator() above.
+    if !config.extra_args.iter().any(|a| a == "--cpu") && !torch_has_accelerator(&python_path) {
+        cmd.arg("--cpu");
+        log::warn!("Installed torch has no GPU accelerator support; launching ComfyUI with --cpu");
     }
 
     // Shared model directory support (newline-separated for multiple directories)
