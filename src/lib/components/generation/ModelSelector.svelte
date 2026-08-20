@@ -1194,7 +1194,7 @@
                 class="mb-1 w-full rounded px-2 py-1 text-left text-xs text-neutral-300 hover:bg-neutral-800"
                 onclick={() => applyCurrentModelFamilyOverride(null)}
               >
-                Auto
+                {locale.t("generation.model.architecture_auto")}
               </button>
               {#each MODEL_FAMILIES.filter((family) => family !== "unknown") as family}
                 <button
@@ -1577,7 +1577,7 @@
             }}
             role="switch"
             aria-checked={lora.enabled}
-            title={lora.enabled ? "Disable" : "Enable"}
+            title={lora.enabled ? locale.t("generation.lora.disable") : locale.t("generation.lora.enable")}
           >
             <span
               class="absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform {lora.enabled

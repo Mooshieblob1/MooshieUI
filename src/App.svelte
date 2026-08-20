@@ -1524,12 +1524,12 @@
   }
 
   function formatDate(ts: number | undefined): string {
-    if (!ts) return "Unknown";
+    if (!ts) return locale.t("gallery.date.unknown");
     return locale.formatDateTime(ts);
   }
 
   function formatDateGroup(ts: number | undefined): string {
-    if (!ts) return "Unknown Date";
+    if (!ts) return locale.t("gallery.date.unknown_date");
     return new Date(ts).toLocaleDateString(locale.intlTag, {
       year: "numeric",
       month: "short",
@@ -1538,7 +1538,7 @@
   }
 
   function formatMonthGroup(ts: number | undefined): string {
-    if (!ts) return "Unknown Month";
+    if (!ts) return locale.t("gallery.date.unknown_month");
     return new Date(ts).toLocaleDateString(locale.intlTag, {
       year: "numeric",
       month: "long",

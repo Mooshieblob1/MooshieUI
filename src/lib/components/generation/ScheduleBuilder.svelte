@@ -49,7 +49,7 @@
     if (mode === "fromto") {
       const before = swapBefore.trim();
       const after = swapAfter.trim();
-      if (!before || !after) return "";
+      if (!after) return "";
       const sep = swapSeparator === "," ? ", " : ` ${swapSeparator} `;
       return `<fromto[${fmt(swapPivot)}]:${before}${sep}${after}>`;
     }

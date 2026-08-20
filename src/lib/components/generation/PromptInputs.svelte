@@ -289,8 +289,8 @@
           type="button"
           onclick={() => styles.deactivate(activeStyle.id)}
           class="shrink-0 inline-flex items-center gap-1 rounded-full border border-indigo-500/50 bg-indigo-500/10 text-indigo-200 hover:bg-red-500/15 hover:border-red-500/50 hover:text-red-200 px-2 py-0.5 text-[10px] transition-colors"
-          title={`Click to deactivate — ${activeStyle.artists.length} artists × ${locale.formatDecimal(activeStyle.overallWeight, 2)}`}
-          aria-label={`Deactivate style ${activeStyle.name}`}
+          title={locale.t('generation.prompts.style_deactivate_title', { count: activeStyle.artists.length, weight: locale.formatDecimal(activeStyle.overallWeight, 2) })}
+          aria-label={locale.t('generation.prompts.style_deactivate_aria', { name: activeStyle.name })}
         >
           {#if activeStyle.thumbnail}
             <img src={activeStyle.thumbnail} alt="" class="h-3.5 w-3.5 rounded-sm object-cover" />
@@ -304,13 +304,13 @@
       {/each}
       {#each promptPresets.activeEntries as entry (entry.preset.id)}
         {@const icon = entry.mode === "prepend" ? "↑" : entry.mode === "append" ? "↓" : entry.mode === "wildcard_ordered" ? "1→" : "🎲"}
-        {@const modeLabel = entry.mode === "wildcard_ordered" ? "ordered wildcard" : entry.mode}
+        {@const modeLabel = entry.mode === "wildcard_ordered" ? locale.t('generation.prompts.preset_mode_wildcard_ordered') : entry.mode}
         <button
           type="button"
           onclick={() => promptPresets.deactivate(entry.preset.id)}
           class="shrink-0 inline-flex items-center gap-1 rounded-full border border-indigo-500/50 bg-indigo-500/10 text-indigo-200 hover:bg-red-500/15 hover:border-red-500/50 hover:text-red-200 px-2 py-0.5 text-[10px] transition-colors"
-          title={`Click to deactivate — ${modeLabel}`}
-          aria-label={`Deactivate preset ${entry.preset.name}`}
+          title={locale.t('generation.prompts.preset_deactivate_title', { mode: modeLabel })}
+          aria-label={locale.t('generation.prompts.preset_deactivate_aria', { name: entry.preset.name })}
         >
           <span class="leading-none">⚡</span>
           <span class="max-w-28 truncate">{entry.preset.name}</span>
@@ -325,8 +325,8 @@
           type="button"
           onclick={() => artistFavourites.toggle(hit.slug)}
           class="shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-colors {isFav ? 'border-red-500/50 bg-red-500/10 text-red-300 hover:bg-red-500/20' : 'border-neutral-700 bg-neutral-800/60 text-neutral-400 hover:border-red-500/60 hover:text-red-300'}"
-          title={isFav ? `Unfavourite ${hit.tag}` : `Favourite ${hit.tag}`}
-          aria-label={isFav ? `Unfavourite artist ${displayName}` : `Favourite artist ${displayName}`}
+          title={isFav ? locale.t('generation.prompts.favourite_remove_title', { tag: hit.tag }) : locale.t('generation.prompts.favourite_add_title', { tag: hit.tag })}
+          aria-label={isFav ? locale.t('generation.prompts.favourite_remove_aria', { name: displayName }) : locale.t('generation.prompts.favourite_add_aria', { name: displayName })}
         >
           {#if favCat}
             <span class="h-2 w-2 rounded-full border border-black/20" style="background-color: {favCat.color}" aria-hidden="true"></span>
@@ -531,7 +531,7 @@
         <button
           class="w-full text-left flex items-center justify-between text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
           onclick={() => (historySectionOpen = !historySectionOpen)}
-          title={historySectionOpen ? "Collapse Prompt History & Favorites" : "Expand Prompt History & Favorites"}
+          title={historySectionOpen ? locale.t('generation.prompts.history_collapse_title') : locale.t('generation.prompts.history_expand_title')}
         >
           <span>{locale.t('generation.prompts.history')}<InfoTip text={locale.t('generation.prompts.history_tip')} /></span>
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {historySectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>

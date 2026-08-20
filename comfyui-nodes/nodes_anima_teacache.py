@@ -55,14 +55,25 @@ def _make_wrapper(state, rel_l1_thresh, start_step, end_step, total_steps):
         # would for a 4D image-model latent.
         input_mean = x.detach().mean(dim=tuple(range(1, x.ndim)))
 
+        # Prompt-scheduling tags (<fromto>, <from>, <to>, <range>) add or drop
+        # conditioning entries partway through sampling, which changes the
+        # cond/uncond batch size — and therefore input_mean's shape — from one
+        # step to the next. Comparing means across that boundary would crash
+        # (or silently compare unrelated batch slots), so treat a shape change
+        # the same as having no prior baseline: skip reuse and start fresh.
+        same_shape = (
+            state.previous_input_mean is not None
+            and state.previous_input_mean.shape == input_mean.shape
+        )
+
         can_reuse = False
-        if in_window and state.previous_residual is not None and state.previous_input_mean is not None:
+        if in_window and same_shape and state.previous_residual is not None:
             state.accumulated_distance += _rel_l1(input_mean, state.previous_input_mean)
             if state.accumulated_distance < rel_l1_thresh:
                 can_reuse = True
             else:
                 state.accumulated_distance = 0.0
-        elif not in_window:
+        else:
             state.accumulated_distance = 0.0
 
         state.previous_input_mean = input_mean

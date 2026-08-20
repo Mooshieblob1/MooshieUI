@@ -543,7 +543,11 @@ async fn step_download_uv(
     Ok(())
 }
 
-async fn step_install_python(app: &AppHandle, base: &Path) -> Result<(), String> {
+async fn step_install_python(
+    app: &AppHandle,
+    base: &Path,
+    python_version: &str,
+) -> Result<(), String> {
     let uv = uv_bin(base);
     let python_dir = base.join("python");
     std::fs::create_dir_all(&python_dir).map_err(|e| e.to_string())?;
@@ -581,7 +585,7 @@ async fn step_install_python(app: &AppHandle, base: &Path) -> Result<(), String>
     }
 
     let python_dir_str = python_dir.to_string_lossy().to_string();
-    let args = ["python", "install", "3.11"];
+    let args = ["python", "install", python_version];
     let env = [("UV_PYTHON_INSTALL_DIR", python_dir_str.as_str())];
 
     // Try once; on failure, fall back to `--reinstall` which forces uv to
@@ -597,11 +601,11 @@ async fn step_install_python(app: &AppHandle, base: &Path) -> Result<(), String>
     run_logged(
         app,
         uv.to_str().unwrap(),
-        &["python", "install", "--reinstall", "3.11"],
+        &["python", "install", "--reinstall", python_version],
         &env,
     )
     .await
-    .map_err(|_| "Failed to install Python 3.11".to_string())
+    .map_err(|_| format!("Failed to install Python {}", python_version))
 }
 
 async fn step_download_comfyui(
@@ -686,7 +690,11 @@ async fn step_download_comfyui(
     Ok(())
 }
 
-async fn step_create_venv(app: &AppHandle, base: &Path) -> Result<(), String> {
+async fn step_create_venv(
+    app: &AppHandle,
+    base: &Path,
+    python_version: &str,
+) -> Result<(), String> {
     let uv = uv_bin(base);
     let venv_dir = base.join("venv");
     let python_dir = base.join("python");
@@ -699,7 +707,7 @@ async fn step_create_venv(app: &AppHandle, base: &Path) -> Result<(), String> {
             "venv",
             venv_dir.to_str().unwrap(),
             "--python",
-            "3.11",
+            python_version,
             "--allow-existing",
         ],
         &[("UV_PYTHON_INSTALL_DIR", &python_dir_str)],
@@ -789,7 +797,12 @@ async fn detect_gpu_type() -> String {
                 // Only match discrete AMD GPUs (RX series) — not integrated Radeon on Ryzen APUs.
                 // Integrated GPUs report as "AMD Radeon Graphics" or "AMD Radeon Vega X Graphics"
                 // and don't support ROCm. Discrete GPUs have "RX" in the name (RX 7900, RX 6800, etc.)
-                if text.contains("radeon rx") || text.contains("radeon pro w") {
+                // "radeon ai pro" catches the R9700, whose product name doesn't contain "rx" or
+                // "pro w" (it's ROCm-on-Windows-eligible -- see amd_windows_rocm_model_supported).
+                if text.contains("radeon rx")
+                    || text.contains("radeon pro w")
+                    || text.contains("radeon ai pro")
+                {
                     log::info!("GPU detection: AMD discrete GPU found via WMI");
                     return "amd".to_string();
                 }
@@ -867,6 +880,134 @@ async fn detect_gpu_type() -> String {
         log::warn!("GPU detection: No discrete GPU detected, falling back to CPU");
         "cpu".to_string()
     }
+}
+
+/// AMD's ROCm-on-Windows PyTorch preview (7.2.1) supports only an explicit
+/// hardware allowlist -- unlike Linux ROCm, it isn't "any RDNA3/4 card".
+/// See: https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2.1/docs/compatibility/compatibilityryz/native_windows/windows_compatibility.html
+/// RX 7700 XT is explicitly NOT supported even though plain RX 7700 is, so
+/// the XT variant is checked first to keep the shorter "rx 7700" substring
+/// from false-matching it.
+fn amd_windows_rocm_model_supported(name_lower: &str) -> bool {
+    if name_lower.contains("rx 7700 xt") {
+        return false;
+    }
+    const SUPPORTED_MARKERS: [&str; 6] = [
+        "rx 9070",             // covers "RX 9070" and "RX 9070 XT"
+        "rx 9060 xt",          // RX 9060 XT
+        "radeon ai pro r9700", // Radeon AI PRO R9700
+        "rx 7900 xtx",         // RX 7900 XTX
+        "pro w7900",           // covers "PRO W7900" and "PRO W7900 Dual Slot"
+        "rx 7700",             // RX 7700 (not XT, excluded above)
+    ];
+    SUPPORTED_MARKERS.iter().any(|m| name_lower.contains(m))
+}
+
+/// Windows-only: query WMI for the GPU name and check it against AMD's ROCm
+/// preview allowlist. Only meaningful when `detect_gpu_type()` already
+/// returned "amd" -- this narrows that down to models the Windows preview
+/// actually supports (see `amd_windows_rocm_model_supported`).
+#[cfg(target_os = "windows")]
+async fn detect_amd_windows_rocm_supported() -> bool {
+    let mut cmd = tokio::process::Command::new("powershell");
+    cmd.args([
+        "-NoProfile",
+        "-Command",
+        "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+    ]);
+    hide_window(&mut cmd);
+    let Ok(output) = cmd.output().await else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
+    let eligible = amd_windows_rocm_model_supported(&text);
+    if eligible {
+        log::info!("GPU detection: AMD GPU is eligible for the ROCm-on-Windows PyTorch preview");
+    } else {
+        log::info!(
+            "GPU detection: AMD GPU is not on the ROCm-on-Windows preview allowlist \u{2014} CPU fallback"
+        );
+    }
+    eligible
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn detect_amd_windows_rocm_supported() -> bool {
+    false
+}
+
+// AMD's ROCm-on-Windows PyTorch preview ships as direct wheel/tarball
+// downloads from repo.radeon.com rather than a pip index, and the SDK and
+// PyTorch wheels are versioned in lockstep. These URLs are pinned to ROCm
+// 7.2.1 / torch 2.9.1 / torchvision 0.24.1 and WILL go stale as AMD ships
+// new releases -- check
+// https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installryz/windows/install-pytorch.html
+// for the current version before bumping.
+#[cfg(target_os = "windows")]
+const AMD_ROCM_WINDOWS_SDK_WHEELS: [&str; 4] = [
+    "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_core-7.2.1-py3-none-win_amd64.whl",
+    "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_devel-7.2.1-py3-none-win_amd64.whl",
+    "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_libraries_custom-7.2.1-py3-none-win_amd64.whl",
+    "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm-7.2.1.tar.gz",
+];
+#[cfg(target_os = "windows")]
+const AMD_ROCM_WINDOWS_TORCH_WHEELS: [&str; 3] = [
+    "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl",
+    "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl",
+    "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchvision-0.24.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl",
+];
+
+/// Install AMD's ROCm-on-Windows PyTorch preview: SDK components first, then
+/// the torch/torchvision/torchaudio wheels, per AMD's documented two-stage
+/// install. Requires a Python 3.12 venv (the wheels are cp312-only) and a
+/// model on `amd_windows_rocm_model_supported`'s allowlist -- callers must
+/// check both before calling this.
+#[cfg(target_os = "windows")]
+async fn install_amd_windows_rocm_pytorch(
+    app: &AppHandle,
+    base: &Path,
+    net: &SetupNetworkOpts,
+) -> Result<(), String> {
+    emit_log(
+        app,
+        "Installing AMD ROCm 7.2.1 SDK components (Windows preview)...",
+    );
+    let mut sdk_args: Vec<&str> = AMD_ROCM_WINDOWS_SDK_WHEELS.to_vec();
+    sdk_args.push("--reinstall");
+    uv_pip(app, base, &sdk_args, net, false).await?;
+
+    emit_log(app, "Installing PyTorch (ROCm 7.2.1) wheels...");
+    let mut torch_args: Vec<&str> = AMD_ROCM_WINDOWS_TORCH_WHEELS.to_vec();
+    torch_args.push("--reinstall");
+    uv_pip(app, base, &torch_args, net, false).await
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn install_amd_windows_rocm_pytorch(
+    _app: &AppHandle,
+    _base: &Path,
+    _net: &SetupNetworkOpts,
+) -> Result<(), String> {
+    Err("AMD ROCm Windows preview install invoked on a non-Windows platform".to_string())
+}
+
+/// Read the Python major.minor a venv was created with, from its
+/// `pyvenv.cfg` (`version = 3.12.7` or `version_info = 3.12.7`). `None` if
+/// the venv or file is missing or unparseable.
+fn venv_python_version(venv_dir: &Path) -> Option<String> {
+    let cfg = std::fs::read_to_string(venv_dir.join("pyvenv.cfg")).ok()?;
+    for line in cfg.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() == "version" || key.trim() == "version_info" {
+            let mut parts = value.trim().splitn(3, '.');
+            if let (Some(major), Some(minor)) = (parts.next(), parts.next()) {
+                return Some(format!("{}.{}", major, minor));
+            }
+        }
+    }
+    None
 }
 
 async fn uv_pip(
@@ -1119,6 +1260,7 @@ async fn step_install_pytorch(
     app: &AppHandle,
     base: &Path,
     gpu: &str,
+    amd_windows_rocm: bool,
     net: &SetupNetworkOpts,
 ) -> Result<(), String> {
     // Spawn a heartbeat so the user sees activity during the long, silent download.
@@ -1165,15 +1307,25 @@ async fn step_install_pytorch(
             )
             .await
         }
+        "amd" if amd_windows_rocm => {
+            emit_log(app, "Using AMD's ROCm-on-Windows PyTorch preview (7.2.1)");
+            install_amd_windows_rocm_pytorch(app, base, net).await
+        }
         "amd" => {
             let index_url = amd_pytorch_index_url().await;
             emit_log(app, &format!("Using PyTorch index: {}", index_url));
-            #[cfg(target_os = "windows")]
+            // Linux always gets real ROCm wheels from amd_pytorch_index_url() above,
+            // so this CPU-only warning only applies where that function's cfg-gated
+            // Windows/other-platform variants fall back to the CPU index — i.e. here,
+            // on Windows, only when the GPU isn't on the ROCm preview's allowlist
+            // (amd_windows_rocm is false, see amd_windows_rocm_model_supported).
+            #[cfg(not(target_os = "linux"))]
             emit_log(
                 app,
-                "⚠ WARNING: AMD GPU acceleration (ROCm) is only available on Linux. \
-                 PyTorch will be installed in CPU-only mode on Windows. \
-                 For GPU acceleration with AMD on Windows, consider using Linux instead.",
+                "⚠ WARNING: this AMD GPU doesn't support GPU acceleration here. \
+                 PyTorch will be installed in CPU-only mode. AMD ROCm works on Linux \
+                 for most discrete cards, or on Windows via AMD's ROCm preview for a \
+                 narrow set of RDNA3/4 models.",
             );
             uv_pip(
                 app,
@@ -2070,12 +2222,16 @@ pub async fn move_installation(
         let python_dir_str = python_dir.to_string_lossy().to_string();
         let venv_dir_str = venv_dir.to_string_lossy().to_string();
         let uv_str = uv.to_string_lossy().to_string();
+        // Read the copied venv's own pyvenv.cfg rather than assuming 3.11 —
+        // an AMD ROCm-on-Windows-preview install created it with 3.12, and
+        // hardcoding 3.11 here would silently downgrade/corrupt that venv.
+        let python_version = venv_python_version(&venv_dir).unwrap_or_else(|| "3.11".to_string());
         let mut cmd = tokio::process::Command::new(&uv_str);
         cmd.args([
             "venv",
             &venv_dir_str,
             "--python",
-            "3.11",
+            &python_version,
             "--allow-existing",
         ])
         .env("UV_PYTHON_INSTALL_DIR", &python_dir_str)
@@ -2233,26 +2389,19 @@ pub async fn reinstall_pytorch(
         SetupNetworkOpts::from_options(config.network_proxy.clone(), config.pip_index_url.clone())
     };
 
-    let url = match index_url {
-        Some(ref url) => url.as_str(),
-        None => match gpu.as_str() {
-            "nvidia" => nvidia_pytorch_index_url().await,
-            "amd" => amd_pytorch_index_url().await,
-            "intel" => "https://download.pytorch.org/whl/xpu",
-            "mps" => "",
-            _ => "https://download.pytorch.org/whl/cpu",
-        },
-    };
-
-    emit(&app, "pytorch", "Reinstalling PyTorch...", 50);
-
-    let mut args = vec!["torch", "torchvision", "torchaudio", "--force-reinstall"];
-    if !url.is_empty() {
-        args.push("--index-url");
-        args.push(url);
-        args.push("--extra-index-url");
-        args.push("https://pypi.org/simple/");
-    }
+    // The ROCm-on-Windows preview ships cp312-only wheels, so it's only usable
+    // here when the existing venv was already created with Python 3.12 (i.e.
+    // setup detected an eligible AMD GPU originally). A 3.11 venv can't be
+    // upgraded in place — re-run setup to get a 3.12 one. Also skip it when
+    // the caller passed an explicit index_url, since that signals they want
+    // that specific index, not the wheel-based preview install.
+    #[cfg(target_os = "windows")]
+    let amd_windows_rocm = index_url.is_none()
+        && gpu == "amd"
+        && venv_python_version(&base.join("venv")).as_deref() == Some("3.12")
+        && detect_amd_windows_rocm_supported().await;
+    #[cfg(not(target_os = "windows"))]
+    let amd_windows_rocm = false;
 
     // Heartbeat so the user sees activity during the long silent download
     let app_hb = app.clone();
@@ -2278,7 +2427,38 @@ pub async fn reinstall_pytorch(
         }
     });
 
-    let install_result = uv_pip(&app, &base, &args, &net, false).await;
+    let install_result = if amd_windows_rocm {
+        emit(
+            &app,
+            "pytorch",
+            "Reinstalling PyTorch (AMD ROCm 7.2.1 Windows preview)...",
+            50,
+        );
+        install_amd_windows_rocm_pytorch(&app, &base, &net).await
+    } else {
+        let url = match index_url {
+            Some(ref url) => url.as_str(),
+            None => match gpu.as_str() {
+                "nvidia" => nvidia_pytorch_index_url().await,
+                "amd" => amd_pytorch_index_url().await,
+                "intel" => "https://download.pytorch.org/whl/xpu",
+                "mps" => "",
+                _ => "https://download.pytorch.org/whl/cpu",
+            },
+        };
+
+        emit(&app, "pytorch", "Reinstalling PyTorch...", 50);
+
+        let mut args = vec!["torch", "torchvision", "torchaudio", "--force-reinstall"];
+        if !url.is_empty() {
+            args.push("--index-url");
+            args.push(url);
+            args.push("--extra-index-url");
+            args.push("https://pypi.org/simple/");
+        }
+        uv_pip(&app, &base, &args, &net, false).await
+    };
+
     heartbeat.abort();
     install_result?;
     emit(&app, "done", "PyTorch reinstalled successfully.", 100);
@@ -2320,14 +2500,31 @@ pub async fn run_setup(
     emit(&app, "uv", "Downloading uv package manager...", 5);
     step_download_uv(&app, &base, &state.http_client).await?;
 
+    // 1b. Use user-selected GPU type, or auto-detect if not provided. Done before
+    // Python/venv creation because an AMD GPU eligible for the ROCm-on-Windows
+    // preview needs a Python 3.12 venv (the preview's wheels are cp312-only) —
+    // every other case still uses 3.11.
+    let gpu = match gpu_type {
+        Some(ref g) if !g.is_empty() => g.clone(),
+        _ => detect_gpu_type().await,
+    };
+    #[cfg(target_os = "windows")]
+    let amd_windows_rocm = gpu == "amd" && detect_amd_windows_rocm_supported().await;
+    #[cfg(not(target_os = "windows"))]
+    let amd_windows_rocm = false;
+    let python_version = if amd_windows_rocm { "3.12" } else { "3.11" };
+
     // 2. Install Python
     emit(
         &app,
         "python",
-        "Installing Python 3.11 (this may take a minute)...",
+        &format!(
+            "Installing Python {} (this may take a minute)...",
+            python_version
+        ),
         15,
     );
-    step_install_python(&app, &base).await?;
+    step_install_python(&app, &base, python_version).await?;
 
     // 3. Download ComfyUI
     emit(&app, "comfyui", "Downloading ComfyUI...", 30);
@@ -2335,19 +2532,16 @@ pub async fn run_setup(
 
     // 4. Create venv
     emit(&app, "venv", "Creating virtual environment...", 40);
-    step_create_venv(&app, &base).await?;
+    step_create_venv(&app, &base, python_version).await?;
 
-    // 5. Use user-selected GPU type, or auto-detect if not provided
-    let gpu = match gpu_type {
-        Some(ref g) if !g.is_empty() => g.clone(),
-        _ => detect_gpu_type().await,
-    };
+    // 5. Install PyTorch for the detected/selected GPU
     let label = match gpu.as_str() {
         "nvidia" => "NVIDIA CUDA",
+        "amd" if amd_windows_rocm => "AMD ROCm (Windows preview)",
         #[cfg(target_os = "linux")]
         "amd" => "AMD ROCm",
         #[cfg(not(target_os = "linux"))]
-        "amd" => "AMD (CPU-only — ROCm requires Linux)",
+        "amd" => "AMD (CPU-only — GPU not on the ROCm-on-Windows preview allowlist)",
         "intel" => "Intel XPU",
         "mps" => "Apple Metal",
         _ => "CPU",
@@ -2361,7 +2555,7 @@ pub async fn run_setup(
         ),
         50,
     );
-    step_install_pytorch(&app, &base, &gpu, &net).await?;
+    step_install_pytorch(&app, &base, &gpu, amd_windows_rocm, &net).await?;
 
     // 6. Install ComfyUI deps
     emit(&app, "deps", "Installing ComfyUI dependencies...", 75);
@@ -2605,7 +2799,10 @@ pub async fn update_comfyui(
 
 #[cfg(test)]
 mod tests {
-    use super::{device_vram_bytes, parse_vram_from_drm_root};
+    use super::{
+        amd_windows_rocm_model_supported, device_vram_bytes, parse_vram_from_drm_root,
+        venv_python_version,
+    };
     use std::fs;
 
     fn unique_temp_dir(name: &str) -> std::path::PathBuf {
@@ -2702,6 +2899,77 @@ mod tests {
         fs::create_dir_all(&device_dir).unwrap();
         fs::write(device_dir.join("mem_info_vram_total"), "8589934592").unwrap(); // 8 GiB
         assert_eq!(device_vram_bytes(&device_dir), Some(8589934592));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn amd_windows_rocm_model_supported_matches_every_allowlisted_model() {
+        let names = [
+            "amd radeon rx 9070",
+            "amd radeon rx 9070 xt",
+            "amd radeon rx 9060 xt",
+            "amd radeon ai pro r9700",
+            "amd radeon rx 7900 xtx",
+            "amd radeon pro w7900",
+            "amd radeon pro w7900 dual slot",
+            "amd radeon rx 7700",
+        ];
+        for name in names {
+            assert!(
+                amd_windows_rocm_model_supported(name),
+                "expected {name:?} to be supported"
+            );
+        }
+    }
+
+    #[test]
+    fn amd_windows_rocm_model_supported_excludes_rx_7700_xt() {
+        assert!(!amd_windows_rocm_model_supported("amd radeon rx 7700 xt"));
+    }
+
+    #[test]
+    fn amd_windows_rocm_model_supported_excludes_unrelated_models() {
+        assert!(!amd_windows_rocm_model_supported("amd radeon rx 6800"));
+        assert!(!amd_windows_rocm_model_supported("amd radeon graphics"));
+        assert!(!amd_windows_rocm_model_supported("amd radeon rx 5600"));
+    }
+
+    #[test]
+    fn venv_python_version_parses_version_key() {
+        let root = unique_temp_dir("venv-version-key");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("pyvenv.cfg"),
+            "home = /usr/bin\nversion = 3.12.7\n",
+        )
+        .unwrap();
+        assert_eq!(venv_python_version(&root), Some("3.12".to_string()));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn venv_python_version_parses_version_info_key() {
+        let root = unique_temp_dir("venv-version-info-key");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("pyvenv.cfg"), "version_info = 3.11.9\n").unwrap();
+        assert_eq!(venv_python_version(&root), Some("3.11".to_string()));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn venv_python_version_none_when_cfg_missing() {
+        let root = unique_temp_dir("venv-missing-cfg");
+        fs::create_dir_all(&root).unwrap();
+        assert_eq!(venv_python_version(&root), None);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn venv_python_version_none_when_key_missing() {
+        let root = unique_temp_dir("venv-missing-key");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("pyvenv.cfg"), "home = /usr/bin\n").unwrap();
+        assert_eq!(venv_python_version(&root), None);
         fs::remove_dir_all(&root).ok();
     }
 }

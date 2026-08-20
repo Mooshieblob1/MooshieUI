@@ -122,7 +122,7 @@
         const { readTextFile } = await import("@tauri-apps/plugin-fs");
         const selected = await open({
           multiple: false,
-          filters: [{ name: "Favourites export", extensions: ["json", "txt"] }],
+          filters: [{ name: locale.t("artist_gallery.fav_manager.export_filter_name"), extensions: ["json", "txt"] }],
         });
         if (!selected || typeof selected !== "string") return;
         raw = await readTextFile(selected);

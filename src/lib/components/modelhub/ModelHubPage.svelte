@@ -762,9 +762,9 @@
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (message.includes("timeout")) {
-        architectureError = "Timed out loading full architecture list. Showing discovered architectures.";
+        architectureError = locale.t("modelhub.architecture.error_timeout");
       } else {
-        architectureError = "Could not load full architecture list right now.";
+        architectureError = locale.t("modelhub.architecture.error_load_failed");
       }
       if (!hasExistingOptions) {
         architectureOptions.length = 0;

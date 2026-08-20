@@ -843,19 +843,34 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     // Enable latent previews over WebSocket
     cmd.arg("--preview-method").arg("auto");
 
-    // VRAM management flag
-    match config.vram_mode.as_str() {
-        "high" => {
-            apply_highvram_flag(&mut cmd, &config);
+    // Self-heal: force CPU mode when the installed torch has no GPU accelerator
+    // support. Without this, ComfyUI's own startup code assumes CUDA is present
+    // and crashes instead of falling back — see torch_has_accelerator() above.
+    // Checked before the VRAM-mode flag below because ComfyUI's argparser treats
+    // --cpu and --lowvram/--novram/--highvram as mutually exclusive; passing both
+    // exits with code 2 ("argument --cpu: not allowed with argument --lowvram").
+    let force_cpu =
+        !config.extra_args.iter().any(|a| a == "--cpu") && !torch_has_accelerator(&python_path);
+    if force_cpu {
+        cmd.arg("--cpu");
+        log::warn!("Installed torch has no GPU accelerator support; launching ComfyUI with --cpu");
+    }
+
+    // VRAM management flag (mutually exclusive with --cpu, so skip when forcing CPU)
+    if !force_cpu {
+        match config.vram_mode.as_str() {
+            "high" => {
+                apply_highvram_flag(&mut cmd, &config);
+            }
+            "low" => {
+                cmd.arg("--lowvram");
+            }
+            "none" => {
+                cmd.arg("--novram");
+            }
+            // "normal" and "auto" use ComfyUI's default behavior
+            _ => {}
         }
-        "low" => {
-            cmd.arg("--lowvram");
-        }
-        "none" => {
-            cmd.arg("--novram");
-        }
-        // "normal" and "auto" use ComfyUI's default behavior
-        _ => {}
     }
 
     // Attention backend flag (mutually exclusive in ComfyUI). Self-heal: only pass
@@ -899,14 +914,6 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
     if !has_vae_flag && has_blackwell_gpu() {
         cmd.arg("--bf16-vae");
         log::info!("Auto-applied --bf16-vae for Blackwell GPU");
-    }
-
-    // Self-heal: force CPU mode when the installed torch has no GPU accelerator
-    // support. Without this, ComfyUI's own startup code assumes CUDA is present
-    // and crashes instead of falling back — see torch_has_accelerator() above.
-    if !config.extra_args.iter().any(|a| a == "--cpu") && !torch_has_accelerator(&python_path) {
-        cmd.arg("--cpu");
-        log::warn!("Installed torch has no GPU accelerator support; launching ComfyUI with --cpu");
     }
 
     // Shared model directory support (newline-separated for multiple directories)
@@ -1608,22 +1615,35 @@ pub async fn start_worker_process(
 
     cmd.arg("--preview-method").arg("auto");
 
-    // VRAM mode: worker-specific override > global config
-    let vram_mode = worker
-        .vram_mode
-        .as_deref()
-        .unwrap_or(config.vram_mode.as_str());
-    match vram_mode {
-        "high" => {
-            apply_highvram_flag(&mut cmd, &config);
+    // Self-heal: force CPU mode when the installed torch has no GPU accelerator
+    // support (see torch_has_accelerator() above). Checked before the VRAM-mode
+    // flag below because ComfyUI's argparser treats --cpu and
+    // --lowvram/--novram/--highvram as mutually exclusive.
+    let force_cpu =
+        !config.extra_args.iter().any(|a| a == "--cpu") && !torch_has_accelerator(&python_path);
+    if force_cpu {
+        cmd.arg("--cpu");
+        log::warn!("Installed torch has no GPU accelerator support; launching ComfyUI with --cpu");
+    }
+
+    // VRAM mode: worker-specific override > global config (mutually exclusive with --cpu)
+    if !force_cpu {
+        let vram_mode = worker
+            .vram_mode
+            .as_deref()
+            .unwrap_or(config.vram_mode.as_str());
+        match vram_mode {
+            "high" => {
+                apply_highvram_flag(&mut cmd, &config);
+            }
+            "low" => {
+                cmd.arg("--lowvram");
+            }
+            "none" => {
+                cmd.arg("--novram");
+            }
+            _ => {}
         }
-        "low" => {
-            cmd.arg("--lowvram");
-        }
-        "none" => {
-            cmd.arg("--novram");
-        }
-        _ => {}
     }
 
     // bf16 VAE for Blackwell

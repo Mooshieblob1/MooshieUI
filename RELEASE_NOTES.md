@@ -1,3 +1,16 @@
+## What's New in v2.1.5
+
+### New features
+- **AMD ROCm-on-Windows PyTorch preview support**: setup now detects AMD GPUs eligible for AMD's ROCm 7.2.1 Windows preview (RX 9070/9070 XT, RX 9060 XT, Radeon AI PRO R9700, RX 7900 XTX, PRO W7900, RX 7700) and installs the matching Python 3.12 venv and ROCm/PyTorch wheels automatically, instead of falling back to CPU-only. Unsupported AMD models (including RX 7700 XT, which AMD's allowlist excludes) still fall back to CPU-only with an updated, more accurate warning message.
+
+### Fixes and maintenance
+- **Fixed a follow-up case of the v2.1.4 CPU-fallback crash**: the `--cpu` self-heal flag added in v2.1.4 was applied after the VRAM-mode flag (`--lowvram`/`--novram`/`--highvram`) instead of before it, and ComfyUI's argument parser treats those as mutually exclusive, so machines needing CPU fallback with a non-default VRAM mode still crashed on launch. The check is now applied before the VRAM-mode flag in both the main ComfyUI process and worker processes.
+- **Fixed prompt-schedule builder forcing a non-empty "before" value**: the `<fromto[start]: before || after>` UI required both sides of the schedule to be filled in, even though the underlying syntax supports an empty "before" (e.g. `<fromto[0.2]: || after>`).
+- **Fixed an intermittent crash when using prompt-schedule tags with artist tags**: TeaCache's step-reuse optimization compared conditioning-batch statistics across steps without accounting for `<fromto>`/`<from>`/`<to>`/`<range>` tags changing the batch size mid-generation, which could raise a `RuntimeError` when combined with artist tags like `<fromto[0.2]: || (@mitsu \(mitsu art\):1.00)>`. A batch-size change now resets TeaCache's reuse state instead of comparing incompatible shapes.
+- **i18n sweep**: replaced hardcoded English strings with translated locale keys across the model picker, prompt inputs, style editor, Model Hub, Settings, Gallery, Animadex character explorer, and the Artist Gallery favourites exporter, so these strings now respect the selected language.
+
+---
+
 ## What's New in v2.1.4
 
 ### Fixes and maintenance

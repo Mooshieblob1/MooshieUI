@@ -1230,7 +1230,7 @@
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       settingsLoadError = message;
-      error = `Failed to load config: ${message}`;
+      error = locale.t("settings.error.load_config", { message });
       config = null;
     } finally {
       loading = false;
@@ -1297,7 +1297,7 @@
     try {
       await updateConfig(config);
     } catch (e) {
-      error = `Failed to save: ${e}`;
+      error = locale.t("settings.error.save", { error: String(e) });
     }
   }
 
@@ -1387,7 +1387,7 @@
       void refreshAttentionStatus();
       setTimeout(() => (saved = false), 2000);
     } catch (e) {
-      error = `Failed to save: ${e}`;
+      error = locale.t("settings.error.save", { error: String(e) });
     } finally {
       saving = false;
     }
@@ -1710,7 +1710,7 @@
       snapshotRestartFields();
       restartNeeded = false;
     } catch (e) {
-      error = `Failed to restart: ${e}`;
+      error = locale.t("settings.error.restart", { error: String(e) });
     } finally {
       restarting = false;
     }

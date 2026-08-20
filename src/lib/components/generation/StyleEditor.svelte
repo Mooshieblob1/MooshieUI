@@ -314,7 +314,7 @@
                   value={artist.weight}
                   oninput={(e) => updateArtistWeight(i, parseFloat((e.currentTarget as HTMLInputElement).value))}
                   class="w-28"
-                  aria-label={`Weight for ${displayTag(artist.tag)}`}
+                  aria-label={locale.t("styles.editor.weight_aria", { tag: displayTag(artist.tag) })}
                 />
                 <span class="w-10 shrink-0 text-right font-mono text-[10px] text-neutral-400">{locale.formatDecimal(artist.weight, 2)}</span>
                 <span class="w-14 shrink-0 text-right font-mono text-[10px] text-indigo-300" title={locale.t("styles.editor.effective_weight")}>= {effective}</span>
@@ -354,7 +354,7 @@
                     type="button"
                     class="inline-flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-200"
                     onclick={() => addArtist(slug, slug)}
-                    title={`Add ${generation.isAnima ? "@" : ""}${slug}`}
+                    title={locale.t("styles.editor.add_artist_title", { tag: `${generation.isAnima ? "@" : ""}${slug}` })}
                   >
                     {#if cat}
                       <span class="h-2 w-2 rounded-full" style="background-color: {cat.color}" aria-hidden="true"></span>
@@ -375,7 +375,7 @@
                     type="button"
                     class="inline-flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-200"
                     onclick={() => addArtist(hit.tag, hit.slug)}
-                    title={`Add ${hit.tag}`}
+                    title={locale.t("styles.editor.add_artist_title", { tag: hit.tag })}
                   >
                     <span class="font-mono">+ {generation.isAnima ? hit.tag : displayTag(hit.tag)}</span>
                   </button>
@@ -395,7 +395,7 @@
                     type="button"
                     class="inline-flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[10px] text-red-300 hover:border-indigo-500 hover:text-indigo-200"
                     onclick={() => addArtist(hit.name)}
-                    title={`Add ${generation.isAnima ? "@" : ""}${hit.name} — ${hit.postCount} posts`}
+                    title={locale.t("styles.editor.add_artist_with_posts_title", { tag: `${generation.isAnima ? "@" : ""}${hit.name}`, count: hit.postCount })}
                   >
                     <span class="font-mono">+ {generation.isAnima ? "@" : ""}{hit.name.replace(/_/g, " ")}</span>
                   </button>
