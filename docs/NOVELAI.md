@@ -300,8 +300,9 @@ here, newest first. Each entry says plainly whether testing is needed at all.
 shape. Every V4 and V4.5 generation with a vibe attached failed with an opaque
 500. Reference images now go through `/ai/encode-vibe` first.
 
-**Testing required: yes.** This also unblocks the Phase E checklist below,
-which could not be run past step 7.
+**Testing required: yes. Done 2026-08-23: all nine steps pass on both V4.5
+Full and V4 Full.** This also unblocked the Phase E checklist below, which
+could not be run past step 7.
 
 | # | Step | Expected |
 |---|------|----------|
