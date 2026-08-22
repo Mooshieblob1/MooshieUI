@@ -190,9 +190,20 @@ reference and not an unexplained 500.
 
 NovelAI bills 2 Anlas per encode, per image and per `information_extracted`
 value, so results are cached for the life of the process, keyed on the model,
-the extraction level and a SHA-256 of the image. Restarting the app pays
-again: the frontend never receives the token back, so nothing survives to
-settings.
+the extraction level and a SHA-256 of the image.
+
+A restart used to pay again, because the token never left Rust. It does now.
+`emit_vibe_encodings()` sends a `novelai:vibes_encoded` event carrying, per
+vibe, the token plus the model and the extraction level it was minted for.
+The frontend stores all three next to the image in `novelaiSettings`, which
+is already persisted, and sends them back on the next generation.
+`vibe_needs_encoding()` then re-encodes only when the token is missing, or
+when the model or the extraction level no longer matches what the token was
+minted for, so a stale token is paid for again rather than sent to a server
+that would reject it. The process-lifetime cache still sits in front of all
+of this. In browser mode every client sees the event, so the listener applies
+it only when the prompt id is one of its own pending prompts, the same filter
+previews already use.
 
 The V4 key set also differs: `reference_information_extracted_multiple` is
 gone (the value is baked into the token at encode time) and
@@ -294,6 +305,43 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - Vibe tokens persist, normalize strengths (PR #618)
+
+**Shipped:** two follow-ups to the vibe transfer fix.
+
+- **The `.naiv4vibe` token now survives a restart.** The backend emits
+  `novelai:vibes_encoded` after an encode pass, the frontend stores the token
+  next to the image it came from, and the pair it was minted for (model and
+  Information extracted) travels with it. A green **Encoded** badge marks a
+  vibe that will cost nothing, and it clears the moment the model or the
+  extraction level moves, because at that point the token is stale and the
+  next generation pays 2 Anlas for a fresh one. See section 2.10.
+- **Normalize strengths.** A checkbox under the vibe list, shown once there is
+  at least one vibe. It drives `normalize_reference_strength_multiple`, which
+  was wired end to end in Rust but had no way to be turned on. NovelAI's own
+  client offers the same option.
+
+**Testing required: yes.**
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Add a vibe image, note the Anlas balance, generate | The vibe gets a green Encoded badge; balance drops by the generation cost plus 2 |
+| 2 | Generate again without touching anything | Still badged, no extra 2 Anlas |
+| 3 | Restart the app | The vibe is still there and still badged |
+| 4 | Generate after that restart | Works, and **no** 2 Anlas is charged this time |
+| 5 | Move that vibe's Information extracted slider | The badge disappears immediately |
+| 6 | Generate | 2 Anlas is charged and the badge comes back |
+| 7 | Switch the model from V4.5 Full to V4 Full | The badge disappears without touching the sliders |
+| 8 | Switch back to V4.5 Full | The badge returns, because that token was never thrown away |
+| 9 | Move only the Strength slider | The badge stays on, and the next generation charges no encode |
+| 10 | Add two vibes at high strengths, generate, then tick Normalize strengths and generate again | The second result differs; the strengths are scaled to sum to 1 |
+| 11 | Restart with the checkbox ticked | It is still ticked |
+| 12 | Remove the last vibe | The Normalize strengths checkbox disappears |
+| 13 | Switch UI language | The Encoded badge and the Normalize strengths label and tooltip are translated |
+
+**Do not skip:** 3, 4, 5, 7. Those are the persistence itself and the two ways
+a token goes stale, which is the only way the badge can lie.
+**Low-risk, skip if short on time:** 9, 12, 13.
 ### 2026-08-23 - V4 vibe transfer fix (PR #618)
 
 **Fixed:** vibe transfer sent the raw reference image, which is the V3 request
@@ -312,7 +360,7 @@ could not be run past step 7.
 | 4 | Move the vibe's Information extracted slider, generate | Another 2 Anlas is spent, and the result visibly changes |
 | 5 | Move only the Strength slider, generate | No extra 2 Anlas |
 | 6 | Add a second vibe image, generate | Both influence the result; 2 Anlas charged for the new one only |
-| 7 | Restart the app, generate with the same vibe | Works; 2 Anlas is charged again (the token is not persisted) |
+| 7 | Restart the app, generate with the same vibe | Works; 2 Anlas is charged again (superseded: tokens now persist, see the entry above) |
 | 8 | Generate on V4 Full with a vibe | Works the same way |
 | 9 | Remove all vibes, generate | Normal generation, no encode charge |
 

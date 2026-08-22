@@ -3016,6 +3016,8 @@ const it: Record<string, string> = {
   "generation.novelai.vibe.information": "Informazioni estratte",
   "generation.novelai.vibe.cost": "Codificare ogni nuova immagine costa {anlas} Anlas.",
   "generation.novelai.vibe.encoded": "Codificata",
+  "generation.novelai.vibe.normalize": "Normalizza le intensità",
+  "generation.novelai.vibe.normalize_desc": "Ridimensiona le intensità in modo che la loro somma sia 1. Il client ufficiale di NovelAI offre la stessa opzione.",
   "generation.novelai.advanced.title": "Opzioni NovelAI",
   "generation.novelai.advanced.quality_toggle": "Tag di qualità",
   "generation.novelai.advanced.quality_toggle_desc": "Aggiunge al prompt i tag di qualità forniti da NovelAI.",

@@ -2954,6 +2954,8 @@ const en: Record<string, string> = {
   "generation.novelai.vibe.information": "Information extracted",
   "generation.novelai.vibe.cost": "Each new image costs {anlas} Anlas to encode.",
   "generation.novelai.vibe.encoded": "Encoded",
+  "generation.novelai.vibe.normalize": "Normalize strengths",
+  "generation.novelai.vibe.normalize_desc": "Scales the strengths so they add up to 1. NovelAI's own client offers the same option.",
   "generation.novelai.advanced.title": "NovelAI options",
   "generation.novelai.advanced.quality_toggle": "Quality tags",
   "generation.novelai.advanced.quality_toggle_desc": "Appends the quality tags NovelAI ships with to the prompt.",

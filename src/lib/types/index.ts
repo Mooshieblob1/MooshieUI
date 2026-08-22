@@ -125,6 +125,19 @@ export interface NovelAiVibe {
   image?: string | null;
   strength: number;
   information_extracted: number;
+  /** Model the cached `encoding` was minted for. */
+  encoded_model?: string | null;
+  /** Extraction level baked into the cached `encoding`. */
+  encoded_information_extracted?: number | null;
+}
+
+/** One entry of the `novelai:vibes_encoded` event: a token the backend just
+ * minted, plus the pair it is only valid for. */
+export interface NovelAiVibeEncoding {
+  index: number;
+  encoding: string;
+  encoded_model?: string | null;
+  encoded_information_extracted?: number | null;
 }
 
 /** A Precise Reference (also called character reference). V4.5 only. */
@@ -171,6 +184,8 @@ export interface NovelAiParams {
   /** Infill: keep the unmasked region pixel-identical to the input. */
   add_original_image: boolean;
   vibes: NovelAiVibe[];
+  /** Scale the vibe strengths so they sum to 1. */
+  normalize_reference_strength: boolean;
   director_references: NovelAiDirectorReference[];
   /** Run the local ComfyUI upscale/facefix chain on the returned image. Free. */
   local_post_process: boolean;

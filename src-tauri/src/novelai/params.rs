@@ -65,6 +65,16 @@ pub struct NovelAiVibe {
     pub strength: f64,
     #[serde(default = "default_information_extracted")]
     pub information_extracted: f64,
+    /// Model the `encoding` was minted for.
+    ///
+    /// A token is only good for the model and the extraction level it was
+    /// made with, so these two travel with it and a change to either forces
+    /// a fresh encode. The client persists all three and sends them back,
+    /// which is what keeps a restart from paying for the same vibe twice.
+    #[serde(default)]
+    pub encoded_model: Option<String>,
+    #[serde(default)]
+    pub encoded_information_extracted: Option<f64>,
 }
 
 /// A Precise Reference (`director_reference_*`) entry. V4.5 only.

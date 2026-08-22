@@ -3016,6 +3016,8 @@ const zhTw: Record<string, string> = {
   "generation.novelai.vibe.information": "擷取的資訊量",
   "generation.novelai.vibe.cost": "每張新圖像的編碼需要 {anlas} Anlas。",
   "generation.novelai.vibe.encoded": "已編碼",
+  "generation.novelai.vibe.normalize": "正規化強度",
+  "generation.novelai.vibe.normalize_desc": "把各項強度縮放到總和為 1。NovelAI 官方客戶端也有相同的選項。",
   "generation.novelai.advanced.title": "NovelAI 選項",
   "generation.novelai.advanced.quality_toggle": "品質標籤",
   "generation.novelai.advanced.quality_toggle_desc": "將 NovelAI 內建的品質標籤附加到提示詞中。",

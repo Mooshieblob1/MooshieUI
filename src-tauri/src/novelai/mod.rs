@@ -116,7 +116,29 @@ fn vibe_cache_key(image: &str, information_extracted: f64, model_id: &str) -> St
     )
 }
 
-/// Turn every reference image that has no `.naiv4vibe` token yet into one.
+/// Whether a vibe still owes NovelAI an encode.
+///
+/// A token is minted for one model at one extraction level, so it stops
+/// being usable the moment either changes. A vibe that arrived as a bare
+/// token with no image cannot be re-encoded here at all, and is left alone.
+fn vibe_needs_encoding(vibe: &params::NovelAiVibe, model_id: &str) -> bool {
+    if vibe.image.as_deref().unwrap_or_default().is_empty() {
+        return false;
+    }
+    if vibe.encoding.as_deref().unwrap_or_default().is_empty() {
+        return true;
+    }
+    if vibe.encoded_model.as_deref() != Some(model_id) {
+        return true;
+    }
+    // A token minted before the client tracked these fields has no recorded
+    // extraction level, so it is treated as stale and paid for once more.
+    vibe.encoded_information_extracted
+        .is_none_or(|level| (level - vibe.information_extracted).abs() > f64::EPSILON)
+}
+
+/// Turn every reference image whose `.naiv4vibe` token is missing or stale
+/// into a fresh one.
 ///
 /// V4 and later do not accept a raw image in `reference_image_multiple`:
 /// that is the V3 shape, and sending it earns a bare 500 with no hint of
@@ -142,10 +164,7 @@ async fn encode_pending_vibes(
         .vibes
         .iter()
         .enumerate()
-        .filter(|(_, vibe)| {
-            vibe.encoding.as_deref().unwrap_or_default().is_empty()
-                && !vibe.image.as_deref().unwrap_or_default().is_empty()
-        })
+        .filter(|(_, vibe)| vibe_needs_encoding(vibe, &model_id))
         .map(|(index, _)| index)
         .collect();
     if pending.is_empty() {
@@ -161,15 +180,51 @@ async fn encode_pending_vibes(
         let image = nai.vibes[index].image.clone().unwrap_or_default();
         let extracted = nai.vibes[index].information_extracted;
         let key = vibe_cache_key(&image, extracted, &model_id);
-        if let Some(hit) = vibe_cache_get(&key) {
-            nai.vibes[index].encoding = Some(hit);
-            continue;
-        }
-        let encoding = client.encode_vibe(&image, &model_id, extracted).await?;
-        vibe_cache_put(key, encoding.clone());
+        let encoding = match vibe_cache_get(&key) {
+            Some(hit) => hit,
+            None => {
+                let fresh = client.encode_vibe(&image, &model_id, extracted).await?;
+                vibe_cache_put(key, fresh.clone());
+                fresh
+            }
+        };
         nai.vibes[index].encoding = Some(encoding);
+        nai.vibes[index].encoded_model = Some(model_id.clone());
+        nai.vibes[index].encoded_information_extracted = Some(extracted);
     }
     Ok(Some(encoded))
+}
+
+/// Hand the freshly minted tokens back to the client that asked for them.
+///
+/// The client stores them next to the image it sent, so the same vibe costs
+/// nothing on the next generation or after a restart. Only clients that own
+/// the prompt apply the payload, the way they already filter previews.
+fn emit_vibe_encodings(sink: &EventSink, prompt_id: &str, params: &GenerationParams) {
+    let Some(nai) = params.novelai.as_ref() else {
+        return;
+    };
+    let vibes: Vec<serde_json::Value> = nai
+        .vibes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, vibe)| {
+            let encoding = vibe.encoding.as_deref().filter(|s| !s.is_empty())?;
+            Some(serde_json::json!({
+                "index": index,
+                "encoding": encoding,
+                "encoded_model": vibe.encoded_model,
+                "encoded_information_extracted": vibe.encoded_information_extracted,
+            }))
+        })
+        .collect();
+    if vibes.is_empty() {
+        return;
+    }
+    sink.emit(
+        "novelai:vibes_encoded",
+        serde_json::json!({ "prompt_id": prompt_id, "vibes": vibes }),
+    );
 }
 
 fn vibe_cache_get(key: &str) -> Option<String> {
@@ -310,6 +365,9 @@ async fn run_inner(
     // The client has to exist before the payload does: vibe references are
     // encoded over the network, and V4 will not take the raw images.
     let encoded = encode_pending_vibes(&client, params).await?;
+    if let Some(encoded) = encoded.as_ref() {
+        emit_vibe_encodings(sink, prompt_id, encoded);
+    }
     let body = build_request(encoded.as_ref().unwrap_or(params))?;
     let steps = params.steps.max(1);
 
@@ -502,6 +560,48 @@ pub async fn fetch_subscription(state: &Arc<AppState>) -> Result<Subscription, A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A vibe carrying a token minted for this exact model and extraction
+    /// level is the only case that costs nothing.
+    #[test]
+    fn a_vibe_is_re_encoded_when_its_token_no_longer_matches() {
+        let good = params::NovelAiVibe {
+            image: Some("png".into()),
+            encoding: Some("token".into()),
+            encoded_model: Some("nai-diffusion-4-5-full".into()),
+            encoded_information_extracted: Some(1.0),
+            information_extracted: 1.0,
+            ..Default::default()
+        };
+        assert!(!vibe_needs_encoding(&good, "nai-diffusion-4-5-full"));
+
+        // Switching model invalidates the token.
+        assert!(vibe_needs_encoding(&good, "nai-diffusion-4-full"));
+
+        // So does moving the extraction slider.
+        let moved = params::NovelAiVibe {
+            information_extracted: 0.7,
+            ..good.clone()
+        };
+        assert!(vibe_needs_encoding(&moved, "nai-diffusion-4-5-full"));
+
+        // A token from before these fields were tracked is treated as stale.
+        let legacy = params::NovelAiVibe {
+            encoded_model: None,
+            encoded_information_extracted: None,
+            ..good.clone()
+        };
+        assert!(vibe_needs_encoding(&legacy, "nai-diffusion-4-5-full"));
+
+        // No image means nothing to re-encode from, whatever the model is.
+        let token_only = params::NovelAiVibe {
+            image: None,
+            encoded_model: None,
+            encoded_information_extracted: None,
+            ..good.clone()
+        };
+        assert!(!vibe_needs_encoding(&token_only, "nai-diffusion-4-full"));
+    }
 
     #[test]
     fn prompt_ids_are_namespaced_and_unique() {

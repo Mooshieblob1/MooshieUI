@@ -50,6 +50,7 @@ import type {
   NovelAiDirectorReference,
   NovelAiParams,
   NovelAiVibe,
+  NovelAiVibeEncoding,
   RegionalPromptSelection,
   RegionalPromptStrategy,
   VideoAspectRatio,
@@ -134,6 +135,7 @@ export function createDefaultNovelAiSettings(): NovelAiSettings {
     noise: 0,
     add_original_image: true,
     vibes: [],
+    normalize_reference_strength: false,
     director_references: [],
     local_post_process: false,
     local_checkpoint: null,
@@ -1784,7 +1786,14 @@ class GenerationStore {
     this.updateNovelAiSettings({
       vibes: [
         ...this.novelaiSettings.vibes,
-        { image, encoding: null, strength: 0.6, information_extracted: 1.0 },
+        {
+          image,
+          encoding: null,
+          encoded_model: null,
+          encoded_information_extracted: null,
+          strength: 0.6,
+          information_extracted: 1.0,
+        },
       ],
       director_references: [],
     });
@@ -1793,6 +1802,31 @@ class GenerationStore {
   updateNovelAiVibe(index: number, patch: Partial<NovelAiVibe>) {
     this.updateNovelAiSettings({
       vibes: this.novelaiSettings.vibes.map((v, i) => (i === index ? { ...v, ...patch } : v)),
+    });
+  }
+
+  /**
+   * Store the `.naiv4vibe` tokens the backend minted for these vibes.
+   *
+   * NovelAI charges 2 Anlas per encode, so keeping the token next to the
+   * image it came from is what stops a re-run, or a restart, from paying
+   * again. The model and extraction level travel with it: the backend
+   * re-encodes when either no longer matches.
+   */
+  applyNovelAiVibeEncodings(entries: NovelAiVibeEncoding[]) {
+    const byIndex = new Map(entries.map((e) => [e.index, e]));
+    if (byIndex.size === 0) return;
+    this.updateNovelAiSettings({
+      vibes: this.novelaiSettings.vibes.map((vibe, index) => {
+        const entry = byIndex.get(index);
+        if (!entry) return vibe;
+        return {
+          ...vibe,
+          encoding: entry.encoding,
+          encoded_model: entry.encoded_model ?? null,
+          encoded_information_extracted: entry.encoded_information_extracted ?? null,
+        };
+      }),
     });
   }
 

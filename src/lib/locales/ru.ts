@@ -3016,6 +3016,8 @@ const ru: Record<string, string> = {
   "generation.novelai.vibe.information": "Извлекаемая информация",
   "generation.novelai.vibe.cost": "Кодирование каждого нового изображения стоит {anlas} Anlas.",
   "generation.novelai.vibe.encoded": "Закодировано",
+  "generation.novelai.vibe.normalize": "Нормализовать силу",
+  "generation.novelai.vibe.normalize_desc": "Масштабирует значения силы так, чтобы их сумма равнялась 1. В официальном клиенте NovelAI есть такая же опция.",
   "generation.novelai.advanced.title": "Параметры NovelAI",
   "generation.novelai.advanced.quality_toggle": "Теги качества",
   "generation.novelai.advanced.quality_toggle_desc": "Добавляет в промпт собственные теги качества NovelAI.",

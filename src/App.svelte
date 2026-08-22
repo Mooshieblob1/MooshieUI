@@ -2519,6 +2519,14 @@
         artistLocalPreviews.failAll();
         compare.clearGridBatch();
       }),
+      ipcListen("novelai:vibes_encoded", (event: any) => {
+        const data = event.payload;
+        // The tokens are only ours if the prompt is. In browser mode every
+        // client sees the event, and applying another client's tokens would
+        // attach them to unrelated images.
+        if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
+        if (Array.isArray(data.vibes)) generation.applyNovelAiVibeEncodings(data.vibes);
+      }),
       ipcListen("comfyui:preview", async (event: any) => {
         const data = event.payload;
         if (!progress.isGenerating) return;

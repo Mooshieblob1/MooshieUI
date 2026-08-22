@@ -3017,6 +3017,8 @@ const zh: Record<string, string> = {
   "generation.novelai.vibe.information": "提取的信息量",
   "generation.novelai.vibe.cost": "每张新图像的编码需要 {anlas} Anlas。",
   "generation.novelai.vibe.encoded": "已编码",
+  "generation.novelai.vibe.normalize": "归一化强度",
+  "generation.novelai.vibe.normalize_desc": "把各项强度缩放到总和为 1。NovelAI 官方客户端也有同样的选项。",
   "generation.novelai.advanced.title": "NovelAI 选项",
   "generation.novelai.advanced.quality_toggle": "质量标签",
   "generation.novelai.advanced.quality_toggle_desc": "把 NovelAI 自带的质量标签追加到提示词中。",

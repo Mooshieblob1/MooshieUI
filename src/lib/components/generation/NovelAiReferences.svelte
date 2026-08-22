@@ -18,10 +18,24 @@
   import { fileToNovelAiBase64, novelAiBase64ToSrc } from "../../utils/novelaiImage.js";
   import { VIBE_ENCODE_COST } from "../../utils/novelaiCost.js";
   import InfoTip from "../ui/InfoTip.svelte";
+  import type { NovelAiVibe } from "../../types/index.js";
 
   let busy = $state(false);
 
   const vibes = $derived(generation.novelaiSettings.vibes);
+  /**
+   * Whether this vibe already has a token NovelAI will accept as is.
+   *
+   * A token is minted for one model at one extraction level, so moving
+   * either invalidates it and the next generation pays for a fresh encode.
+   * A vibe that arrived as a bare token has no image to re-encode from and
+   * is always good.
+   */
+  const isEncoded = (vibe: NovelAiVibe) =>
+    !!vibe.encoding &&
+    (!vibe.image ||
+      (vibe.encoded_model === generation.checkpoint &&
+        vibe.encoded_information_extracted === vibe.information_extracted));
   const references = $derived(generation.novelaiSettings.director_references);
   const anySupported = $derived(
     generation.supportsNovelAiVibeTransfer || generation.supportsNovelAiPreciseReference,
@@ -193,7 +207,16 @@
               </div>
             {/if}
             <div class="flex-1 space-y-1.5 min-w-0">
-              <div class="flex justify-end">
+              <div class="flex items-center justify-between gap-2">
+                {#if isEncoded(vibe)}
+                  <span
+                    class="px-1.5 py-0.5 text-[10px] rounded bg-emerald-900/40 text-emerald-300 border border-emerald-800/60"
+                  >
+                    {locale.t("generation.novelai.vibe.encoded")}
+                  </span>
+                {:else}
+                  <span></span>
+                {/if}
                 <button
                   class="px-2 py-0.5 text-[11px] rounded-md text-neutral-400 hover:text-red-400 hover:bg-neutral-800"
                   onclick={() => generation.removeNovelAiVibe(index)}
@@ -236,6 +259,22 @@
             </div>
           </div>
         {/each}
+
+        {#if vibes.length > 0}
+          <label class="flex items-center gap-2 text-xs text-neutral-300">
+            <input
+              type="checkbox"
+              class="accent-indigo-500"
+              checked={generation.novelaiSettings.normalize_reference_strength}
+              onchange={(e) =>
+                generation.updateNovelAiSettings({
+                  normalize_reference_strength: e.currentTarget.checked,
+                })}
+            />
+            {locale.t("generation.novelai.vibe.normalize")}
+            <InfoTip text={locale.t("generation.novelai.vibe.normalize_desc")} />
+          </label>
+        {/if}
       </div>
     {/if}
   {/if}

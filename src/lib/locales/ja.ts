@@ -3041,6 +3041,8 @@ const ja: Record<string, string> = {
   "generation.novelai.vibe.information": "抽出する情報量",
   "generation.novelai.vibe.cost": "画像を1枚エンコードするごとに {anlas} Anlas かかります。",
   "generation.novelai.vibe.encoded": "エンコード済み",
+  "generation.novelai.vibe.normalize": "強度を正規化",
+  "generation.novelai.vibe.normalize_desc": "合計が 1 になるように強度をスケーリングします。NovelAI 公式クライアントにも同じオプションがあります。",
   "generation.novelai.advanced.title": "NovelAI オプション",
   "generation.novelai.advanced.quality_toggle": "品質タグ",
   "generation.novelai.advanced.quality_toggle_desc": "NovelAI 標準の品質タグをプロンプトに追加します。",

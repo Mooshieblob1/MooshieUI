@@ -3016,6 +3016,8 @@ const ko: Record<string, string> = {
   "generation.novelai.vibe.information": "추출 정보량",
   "generation.novelai.vibe.cost": "이미지를 새로 인코딩할 때마다 {anlas} Anlas가 듭니다.",
   "generation.novelai.vibe.encoded": "인코딩됨",
+  "generation.novelai.vibe.normalize": "강도 정규화",
+  "generation.novelai.vibe.normalize_desc": "강도의 합이 1이 되도록 조정합니다. NovelAI 공식 클라이언트에도 같은 옵션이 있습니다.",
   "generation.novelai.advanced.title": "NovelAI 옵션",
   "generation.novelai.advanced.quality_toggle": "품질 태그",
   "generation.novelai.advanced.quality_toggle_desc": "NovelAI 기본 품질 태그를 프롬프트에 덧붙입니다.",
