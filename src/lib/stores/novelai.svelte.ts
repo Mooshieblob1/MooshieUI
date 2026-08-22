@@ -67,8 +67,11 @@ class NovelAiStore {
    * `getConfig()` de-duplicates concurrent loads and serves a cache after that.
    */
   async refresh(): Promise<void> {
+    // A pre-seed to avoid a flash, nothing more. The cache can lag a
+    // `setApiKey` that has already told us a key exists, so it may turn the
+    // flag on but never off; `getConfig()` below is the authority.
     const cached = getCachedConfig();
-    if (cached) this.applyConfigured(cached);
+    if (cached && !this.apiKeyConfigured) this.applyConfigured(cached);
     try {
       this.applyConfigured(await getConfig());
     } catch (e) {
@@ -97,6 +100,13 @@ class NovelAiStore {
    */
   async setApiKey(key: string): Promise<void> {
     this.apiKeyConfigured = await setNovelaiApiKey(key);
+    // The key lives outside the ordinary config write, so the cached config in
+    // `utils/api.ts` still describes the pre-save state. `refresh()` reads that
+    // cache on every ModelSelector and SettingsPage mount, so without a forced
+    // reload the next mount reports "no key" and the models vanish again.
+    await getConfig({ force: true }).catch((e) => {
+      console.error("Failed to reload config after NovelAI key change:", e);
+    });
     this.loaded = true;
     // The old account record belongs to the old key, so it goes either way.
     this.subscription = null;

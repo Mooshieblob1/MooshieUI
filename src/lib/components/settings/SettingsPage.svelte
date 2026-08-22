@@ -1193,6 +1193,13 @@
     novelaiKeyError = null;
     try {
       await novelai.setApiKey(key);
+      // Our local copy predates the save. Any later unrelated autoSave() would
+      // otherwise push the old key state back into the config cache, and the
+      // next ModelSelector mount would read it as "no key".
+      if (config) {
+        config.novelai_api_key = null;
+        config.novelai_api_key_configured = novelai.apiKeyConfigured;
+      }
       // Never keep the secret in component state once it is stored.
       novelaiKeyInput = "";
     } catch (e) {
