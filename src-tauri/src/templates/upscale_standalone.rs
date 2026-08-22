@@ -1,0 +1,293 @@
+//! Free local post-process for images that were generated off-box.
+//!
+//! A NovelAI generation is already paid for by the time it lands, so running
+//! the upscale and face-fix chains over it costs nothing but local GPU time.
+//! Rather than hand-assembling a second graph, this module derives a
+//! `GenerationParams` describing a *refine-only img2img* and hands it to the
+//! ordinary [`super::build_workflow`]. `img2img::build` already short-circuits
+//! after `LoadImage` when `refine_only` is set, which is exactly the seed graph
+//! this needs, and going through `build_workflow` means the v-pred, cascade,
+//! rectified-flow and smart-guidance injections stay in one place.
+
+use serde_json::Value;
+
+use crate::comfyui::types::GenerationParams;
+
+/// Does this request ask for a local pass that can actually run?
+///
+/// The local checkpoint is the hard requirement: `params.checkpoint` names a
+/// NovelAI model here, and ComfyUI has no such file. Without one there is
+/// nothing to sample with, so the NovelAI image is delivered untouched.
+pub fn is_requested(params: &GenerationParams) -> bool {
+    let Some(nai) = params.novelai.as_ref() else {
+        return false;
+    };
+    nai.local_post_process
+        && nai
+            .local_checkpoint
+            .as_deref()
+            .is_some_and(|c| !c.trim().is_empty())
+        && (params.upscale_enabled || params.facefix_enabled)
+}
+
+/// Derive the refine-only parameters for the local pass.
+///
+/// `input_filename` is the name the NovelAI PNG was uploaded under in
+/// ComfyUI's input directory, i.e. what `LoadImage` will resolve.
+///
+/// Returns `None` when [`is_requested`] would be false, so callers can treat
+/// "no post-process" and "post-process not possible" identically.
+pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<GenerationParams> {
+    if !is_requested(params) {
+        return None;
+    }
+    let nai = params.novelai.as_ref()?;
+
+    let mut out = params.clone();
+
+    out.mode = "img2img".to_string();
+    out.refine_only = true;
+    out.input_image = Some(input_filename.to_string());
+    // The NovelAI mask (if any) applied to NovelAI's own infill pass. The local
+    // pass works on the finished image and must not be masked by it.
+    out.mask_image = None;
+    out.grow_mask_by = None;
+
+    // Local model identity. `model_architecture` and `is_vpred_model` describe
+    // the *sampling* model, so they have to follow the checkpoint swap or the
+    // injections would be applied on the strength of the NovelAI model's
+    // metadata.
+    out.checkpoint = nai.local_checkpoint.clone()?;
+    out.model_architecture = nai.local_architecture.clone().unwrap_or_default();
+    out.is_vpred_model = nai.local_is_vpred;
+    out.is_sdxl_like = matches!(
+        out.model_architecture.as_str(),
+        "sdxl" | "illustrious" | "noobai" | "pony" | "anima"
+    );
+    // Split loaders are a per-checkpoint choice; the local refiner is always
+    // addressed as a plain checkpoint.
+    out.use_split_model = false;
+    out.vae = None;
+
+    // LoRAs, ControlNet, style transfer and `<segment:...>` refinement all
+    // belong to the NovelAI request the user was composing. Carrying them into
+    // the local pass would apply weights the user never asked for here, and
+    // would fail outright when a LoRA does not match the refiner.
+    out.loras = Vec::new();
+    out.controlnet = None;
+    out.style_transfer_enabled = false;
+    out.detail_segments = Vec::new();
+    out.positive_regions = Vec::new();
+    out.positive_segments = Vec::new();
+    out.negative_segments = Vec::new();
+
+    // Optional overrides. The NovelAI syntax rewrite happens while the request
+    // body is built and never touches `params`, so the top-level prompt is
+    // already the ComfyUI-syntax one this pass wants. These exist only for a
+    // caller that wants the local pass to run on different text.
+    if let Some(pos) = nai.local_positive_prompt.clone() {
+        out.positive_prompt = pos;
+    }
+    if let Some(neg) = nai.local_negative_prompt.clone() {
+        out.negative_prompt = neg;
+    }
+
+    // One image in, one image out. The NovelAI batch has already been split
+    // into individual deliveries by the time this runs.
+    out.batch_size = 1;
+    // Handled by the caller instead: the pre-upscale image here *is* the
+    // NovelAI image, and delivering it is a decision about not losing paid
+    // work, not a graph concern. `finish_workflow` skips this node in
+    // refine-only mode anyway.
+    out.save_pre_upscale_image = false;
+
+    // Nothing downstream should re-enter the NovelAI path from these params.
+    out.novelai = None;
+
+    Some(out)
+}
+
+/// Build the ComfyUI workflow for the local pass, or `None` if it is not
+/// applicable.
+pub fn build(params: &GenerationParams, input_filename: &str, seed: i64) -> Option<Value> {
+    let derived = build_params(params, input_filename)?;
+    Some(super::build_workflow(&derived, seed, false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::novelai::params::NovelAiParams;
+
+    fn base() -> GenerationParams {
+        let json = serde_json::json!({
+            "mode": "txt2img",
+            "positive_prompt": "1.3::masterpiece::, girl",
+            "negative_prompt": "1.1::bad::",
+            "checkpoint": "nai-diffusion-4-5-full",
+            "vae": null,
+            "loras": [],
+            "sampler_name": "k_euler_ancestral",
+            "scheduler": "karras",
+            "steps": 23,
+            "cfg": 7.0,
+            "seed": "12345",
+            "width": 1024,
+            "height": 1024,
+            "batch_size": 4,
+            "denoise": 1.0,
+            "input_image": null,
+            "mask_image": null,
+            "grow_mask_by": null,
+            "upscale_enabled": true,
+            "upscale_method": "model",
+            "upscale_model": "4x-UltraSharp.pth",
+            "upscale_scale": 2.0,
+            "upscale_denoise": 0.18,
+            "upscale_steps": 20,
+            "upscale_tile_size": 1024,
+            "upscale_tiling": true,
+        });
+        serde_json::from_value(json).expect("base params")
+    }
+
+    fn with_nai(nai: NovelAiParams) -> GenerationParams {
+        let mut p = base();
+        p.novelai = Some(nai);
+        p
+    }
+
+    fn local_nai() -> NovelAiParams {
+        NovelAiParams {
+            model: "nai-diffusion-4-5-full".into(),
+            local_post_process: true,
+            local_checkpoint: Some("animaPencilXL.safetensors".into()),
+            local_architecture: Some("anima".into()),
+            local_positive_prompt: Some("(masterpiece:1.3), girl".into()),
+            local_negative_prompt: Some("(bad:1.1)".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn no_novelai_block_means_no_local_pass() {
+        assert!(!is_requested(&base()));
+        assert!(build_params(&base(), "nai.png").is_none());
+    }
+
+    #[test]
+    fn a_local_pass_without_a_checkpoint_is_skipped() {
+        // Otherwise the graph would ask ComfyUI to load "nai-diffusion-4-5-full"
+        // and the user would lose the post-process to a confusing load error.
+        let nai = NovelAiParams {
+            local_checkpoint: None,
+            ..local_nai()
+        };
+        assert!(!is_requested(&with_nai(nai)));
+    }
+
+    #[test]
+    fn a_local_pass_with_nothing_to_do_is_skipped() {
+        let mut p = with_nai(local_nai());
+        p.upscale_enabled = false;
+        p.facefix_enabled = false;
+        assert!(!is_requested(&p));
+    }
+
+    #[test]
+    fn facefix_alone_is_enough_to_run() {
+        let mut p = with_nai(local_nai());
+        p.upscale_enabled = false;
+        p.facefix_enabled = true;
+        assert!(is_requested(&p));
+    }
+
+    #[test]
+    fn derived_params_describe_a_refine_only_img2img() {
+        let p = with_nai(local_nai());
+        let out = build_params(&p, "nai-abc.png").expect("derived");
+        assert_eq!(out.mode, "img2img");
+        assert!(out.refine_only);
+        assert_eq!(out.input_image.as_deref(), Some("nai-abc.png"));
+        assert_eq!(out.batch_size, 1);
+    }
+
+    #[test]
+    fn derived_params_swap_in_the_local_model_identity() {
+        let p = with_nai(local_nai());
+        let out = build_params(&p, "nai-abc.png").expect("derived");
+        assert_eq!(out.checkpoint, "animaPencilXL.safetensors");
+        assert_eq!(out.model_architecture, "anima");
+        assert!(out.is_sdxl_like);
+        assert!(!out.use_split_model);
+        assert!(out.novelai.is_none());
+    }
+
+    #[test]
+    fn derived_params_prefer_the_local_prompt_overrides() {
+        // When supplied, the overrides win over the top-level prompt.
+        let p = with_nai(local_nai());
+        let out = build_params(&p, "nai-abc.png").expect("derived");
+        assert_eq!(out.positive_prompt, "(masterpiece:1.3), girl");
+        assert_eq!(out.negative_prompt, "(bad:1.1)");
+    }
+
+    #[test]
+    fn derived_params_fall_back_to_the_top_level_prompt() {
+        let nai = NovelAiParams {
+            local_positive_prompt: None,
+            local_negative_prompt: None,
+            ..local_nai()
+        };
+        let p = with_nai(nai);
+        let out = build_params(&p, "nai-abc.png").expect("derived");
+        assert_eq!(out.positive_prompt, p.positive_prompt);
+    }
+
+    #[test]
+    fn derived_params_drop_the_novelai_side_of_the_request() {
+        let mut p = with_nai(local_nai());
+        p.mask_image = Some("mask.png".into());
+        p.loras = serde_json::from_value(serde_json::json!([
+            { "name": "style.safetensors", "strength_model": 1.0, "strength_clip": 1.0 }
+        ]))
+        .expect("loras");
+        let out = build_params(&p, "nai-abc.png").expect("derived");
+        assert!(out.mask_image.is_none());
+        assert!(out.loras.is_empty());
+        assert!(out.controlnet.is_none());
+        assert!(!out.style_transfer_enabled);
+        assert!(out.detail_segments.is_empty());
+    }
+
+    #[test]
+    fn the_graph_loads_the_uploaded_image_and_never_samples_it_twice() {
+        let p = with_nai(local_nai());
+        let wf = build(&p, "nai-abc.png", 12345).expect("workflow");
+        let nodes = wf.as_object().expect("object");
+
+        let load = nodes
+            .values()
+            .find(|n| n["class_type"] == "LoadImage")
+            .expect("LoadImage present");
+        assert_eq!(load["inputs"]["image"], "nai-abc.png");
+
+        // Refine-only means exactly one sampling pass (the upscale refiner);
+        // a VAEEncode would mean the base img2img round-trip crept back in and
+        // the paid image got re-denoised at full strength.
+        let vae_encodes = nodes
+            .values()
+            .filter(|n| n["class_type"] == "VAEEncode")
+            .count();
+        assert_eq!(vae_encodes, 0, "refine-only must not re-encode the input");
+
+        assert!(nodes
+            .values()
+            .any(|n| n["class_type"] == "MooshieSaveImage"));
+    }
+
+    #[test]
+    fn a_request_with_no_local_pass_builds_no_graph() {
+        assert!(build(&base(), "nai-abc.png", 1).is_none());
+    }
+}

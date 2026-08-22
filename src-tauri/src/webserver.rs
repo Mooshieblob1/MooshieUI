@@ -248,6 +248,12 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "set_llm_model",
     "set_llm_base_url",
     "list_external_llm_models",
+    // NovelAI: the key is the instance owner's and every generation spends
+    // their Anlas, so all three follow `update_config` rather than `generate`.
+    // A LAN guest must not be able to bill the host.
+    "novelai_generate",
+    "novelai_subscription",
+    "set_novelai_api_key",
     // previously admin-only: mode switching, filesystem, node install
     "switch_to_app_mode",
     "set_gallery_path",
@@ -3003,6 +3009,82 @@ async fn dispatch_command(
                 "queue_position": queue_pos,
                 "queue_total": queue_total,
             }))
+        }
+        "novelai_generate" => {
+            crate::temp_images::cleanup(300);
+
+            let mut params: crate::comfyui::types::GenerationParams =
+                serde_json::from_value(args["params"].clone())
+                    .map_err(|e| format!("Invalid params: {}", e))?;
+            params.seed = crate::novelai::resolve_seed(params.seed);
+
+            // Built before the id is minted so a bad request fails this HTTP
+            // call instead of arriving later as an execution_error.
+            crate::novelai::build_request(&params).map_err(|e| e.to_string())?;
+
+            let prompt_id = crate::novelai::new_prompt_id();
+            let seed = params.seed;
+            let user = username.map(|s| s.to_string());
+
+            log::info!(
+                "[nai] user={} seed={} steps={} model={}",
+                user.as_deref().unwrap_or("admin"),
+                seed,
+                params.steps,
+                params.checkpoint,
+            );
+
+            // NovelAI runs off-box and takes no local GPU slot, so it skips the
+            // fair-queue hold entirely; it is still tracked so cancellation and
+            // the queue readout see it.
+            state.prompt_queue.insert(&prompt_id, user);
+            state.broadcast_queue_positions();
+
+            let bg_state = Arc::clone(&state);
+            let bg_prompt_id = prompt_id.clone();
+            tokio::spawn(async move {
+                let sink = crate::novelai::EventSink::new(
+                    Arc::clone(&bg_state),
+                    #[cfg(feature = "desktop")]
+                    None,
+                );
+                let result =
+                    crate::novelai::run(Arc::clone(&bg_state), sink, bg_prompt_id.clone(), params)
+                        .await;
+                if let Err(err) = &result {
+                    log::error!("[nai] generation {bg_prompt_id} failed: {err}");
+                }
+                // A handed-off generation is still running as a local ComfyUI
+                // prompt under this same id; the websocket finishes and
+                // removes it.
+                if !matches!(result, Ok(crate::novelai::RunOutcome::HandedOff)) {
+                    bg_state.prompt_queue.cancel_and_remove(&bg_prompt_id);
+                    bg_state.broadcast_queue_positions();
+                }
+            });
+
+            // Seed as a string: 63-bit values exceed JS's 2^53 safe-integer range.
+            Ok(serde_json::json!({
+                "prompt_id": prompt_id,
+                "seed": seed.to_string(),
+            }))
+        }
+        "novelai_subscription" => {
+            let sub = crate::novelai::fetch_subscription(&state)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(sub).map_err(|e| e.to_string())
+        }
+        "set_novelai_api_key" => {
+            let api_key = args["apiKey"].as_str().unwrap_or("").trim().to_string();
+            let configured = !api_key.is_empty();
+            let snapshot = {
+                let mut config = state.config.write().await;
+                config.novelai_api_key = if configured { Some(api_key) } else { None };
+                config.clone()
+            };
+            crate::config::save_config(&snapshot)?;
+            Ok(serde_json::json!(configured))
         }
         "generate_controlnet_preprocessor_preview" => {
             crate::temp_images::cleanup(300);

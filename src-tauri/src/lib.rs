@@ -15,6 +15,7 @@ pub mod log_buffer;
 pub mod metadata;
 pub mod model_requests;
 pub mod notifications;
+pub mod novelai;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod prompt_assistant;
 #[cfg(feature = "desktop")]
@@ -544,6 +545,9 @@ pub fn run() {
             commands::websocket::disconnect_ws,
             commands::workflow::generate,
             commands::workflow::generate_controlnet_preprocessor_preview,
+            commands::novelai::novelai_generate,
+            commands::novelai::novelai_subscription,
+            commands::novelai::set_novelai_api_key,
             commands::config::get_config,
             commands::config::update_config,
             commands::config::get_gallery_path,

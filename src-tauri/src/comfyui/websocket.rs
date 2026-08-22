@@ -29,7 +29,7 @@ fn comfyui_ws_config() -> WebSocketConfig {
 }
 
 /// Result of processing a MOOSHIE_OUTPUT_IMAGE (event_type 100) binary frame.
-struct ProcessedOutputImage {
+pub(crate) struct ProcessedOutputImage {
     format: &'static str, // "jxl", "webp", or "png"
     ext: &'static str,    // file extension for the canonical image
     bit_depth: u8,
@@ -43,7 +43,7 @@ struct ProcessedOutputImage {
 /// payloads (format_tags 3/4/5), encode to JXL + a WebP/PNG display copy, or to
 /// lossless WebP directly (tag 5).
 /// Shared by the Tauri, headless, and multi-GPU WebSocket handlers.
-async fn process_output_image(data: &[u8]) -> Option<ProcessedOutputImage> {
+pub(crate) async fn process_output_image(data: &[u8]) -> Option<ProcessedOutputImage> {
     if data.len() < 8 {
         return None;
     }
@@ -196,7 +196,7 @@ async fn process_output_image(data: &[u8]) -> Option<ProcessedOutputImage> {
 
 /// Save the processed output image to temp files and build the SSE event payload.
 /// Shared by the headless and multi-GPU WebSocket handlers.
-fn build_sse_payload(img: &ProcessedOutputImage, prompt_id: &str) -> serde_json::Value {
+pub(crate) fn build_sse_payload(img: &ProcessedOutputImage, prompt_id: &str) -> serde_json::Value {
     let temp_filename = crate::temp_images::save(&img.image_bytes, img.ext);
 
     // For JXL: save the pre-computed display copy (WebP/PNG) so the browser
@@ -247,7 +247,7 @@ fn build_sse_payload(img: &ProcessedOutputImage, prompt_id: &str) -> serde_json:
     }
 }
 
-fn cache_temp_event(
+pub(crate) fn cache_temp_event(
     state: &Arc<AppState>,
     event: &str,
     prompt_id: &str,

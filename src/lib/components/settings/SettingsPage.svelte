@@ -9,6 +9,7 @@
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import { novelai } from "../../stores/novelai.svelte.js";
   import PromptAssistantSetupModal from "../generation/PromptAssistantSetupModal.svelte";
   import OpenModelFolders from "./OpenModelFolders.svelte";
   import ModelManagerModal from "./ModelManagerModal.svelte";
@@ -1085,6 +1086,7 @@
       interrogator: false,
       prompt_assistant: false,
       civitai: false,
+      novelai: false,
       about: false,
     };
     try {
@@ -1121,6 +1123,7 @@
     { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
     { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf ai assistant" },
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
+    { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token" },
     { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
     { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates about troubleshooting logs export diagnostic github report issue" },
   ];
@@ -1167,6 +1170,35 @@
       applyTheme(config);
     } catch (e) {
       console.error("Failed to apply theme from config:", e);
+    }
+  }
+
+  // NovelAI key entry. Held locally rather than in `config` because the key is
+  // redacted out of the config a browser client receives, so `config` can never
+  // be the source of truth for this field.
+  let novelaiKeyInput = $state("");
+  let novelaiKeySaving = $state(false);
+  let novelaiKeyError = $state<string | null>(null);
+
+  /**
+   * Save or clear the NovelAI key.
+   *
+   * Not `autoSave()`: `preserve_secrets()` keeps the stored key when a config
+   * write omits it, which is what stops a browser client blanking the key it
+   * cannot see. Clearing therefore has to go through the dedicated command.
+   */
+  async function saveNovelaiKey() {
+    const key = novelaiKeyInput.trim();
+    novelaiKeySaving = true;
+    novelaiKeyError = null;
+    try {
+      await novelai.setApiKey(key);
+      // Never keep the secret in component state once it is stored.
+      novelaiKeyInput = "";
+    } catch (e) {
+      novelaiKeyError = e instanceof Error ? e.message : String(e);
+    } finally {
+      novelaiKeySaving = false;
     }
   }
 
@@ -1241,6 +1273,8 @@
     void initSettings().then(() => {
       void refreshAttentionStatus();
     });
+    // Drives the "key set" readout, and the NovelAI models in the dropdown.
+    void novelai.refresh();
     // The in-app ComfyUI updater is desktop-only (hosted/browser ships ComfyUI
     // in the image), so only probe the installed version off-browser.
     if (!isBrowserMode) void refreshComfyuiVersion();
@@ -3756,6 +3790,63 @@
                 class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
               />
               <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.civitai.api_key_link')}</p>
+            </div>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
+        <!-- NovelAI (admin / moderator) -->
+        {#if canManageServer && sectionVisible("novelai")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.novelai = !collapsed.novelai)}
+          >
+            <span class="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-teal-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+              {locale.t('settings.novelai.title')}
+            </span>
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-neutral-500 transition-transform {collapsed.novelai ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.novelai}
+          <div class="px-5 pb-5 space-y-3">
+            <p class="text-[10px] text-neutral-500">{locale.t('settings.novelai.api_key_desc')}</p>
+            <div>
+              <label class="text-xs text-neutral-400 block mb-1" for="novelai-api-key">{locale.t('settings.novelai.api_key')}</label>
+              <div class="flex gap-2">
+                <input
+                  id="novelai-api-key"
+                  type="password"
+                  autocomplete="off"
+                  bind:value={novelaiKeyInput}
+                  placeholder={novelai.apiKeyConfigured ? locale.t('settings.novelai.api_key_set') : locale.t('settings.novelai.api_key_placeholder')}
+                  class="flex-1 min-w-0 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
+                />
+                <button
+                  class="shrink-0 px-3 py-2 rounded-lg text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
+                  disabled={novelaiKeySaving || novelaiKeyInput.trim() === ''}
+                  onclick={() => { void saveNovelaiKey(); }}
+                >
+                  {locale.t('settings.novelai.save_key')}
+                </button>
+                {#if novelai.apiKeyConfigured}
+                  <button
+                    class="shrink-0 px-3 py-2 rounded-lg text-sm bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-neutral-300 transition-colors"
+                    disabled={novelaiKeySaving}
+                    onclick={() => { novelaiKeyInput = ''; void saveNovelaiKey(); }}
+                  >
+                    {locale.t('settings.novelai.clear_key')}
+                  </button>
+                {/if}
+              </div>
+              {#if novelaiKeyError}
+                <p class="text-[10px] text-red-400 mt-1">{novelaiKeyError}</p>
+              {:else if novelai.apiKeyConfigured}
+                <p class="text-[10px] text-emerald-400 mt-1">{locale.t('settings.novelai.api_key_set_hint')}</p>
+              {/if}
+              <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.novelai.api_key_link')}</p>
             </div>
           </div>
           {/if}

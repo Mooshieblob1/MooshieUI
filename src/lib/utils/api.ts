@@ -13,6 +13,7 @@ import type {
   LlmHardware,
   LlmProviderState,
   LlmStatus,
+  NovelAiSubscription,
   OutputImage,
   PromptAssistantOpts,
   QueueInfo,
@@ -42,6 +43,42 @@ export interface GenerateResponse {
 
 export async function generate(params: GenerationParams): Promise<GenerateResponse> {
   return ipcInvoke("generate", { params });
+}
+
+/**
+ * NovelAI's answer to `generate`. There is no queue position: NovelAI requests
+ * use no local GPU and so never enter the fair queue.
+ */
+export interface NovelAiGenerateResponse {
+  prompt_id: string;
+  /** Decimal string, matching `GenerateResponse.seed`. */
+  seed: string;
+}
+
+/**
+ * Start a NovelAI generation. Returns as soon as the request is accepted; the
+ * work is reported through the same `comfyui:*` events a local generation uses.
+ */
+export async function novelaiGenerate(
+  params: GenerationParams,
+): Promise<NovelAiGenerateResponse> {
+  return ipcInvoke("novelai_generate", { params });
+}
+
+/** Anlas balance and subscription tier. Throws when no API key is configured. */
+export async function novelaiSubscription(): Promise<NovelAiSubscription> {
+  return ipcInvoke("novelai_subscription", {});
+}
+
+/**
+ * Store the NovelAI API key, or clear it with an empty string. Returns whether
+ * a key is now configured.
+ *
+ * Deliberately not part of `updateConfig`: a config write that omits the key
+ * preserves the stored one, so there would be no way to clear it.
+ */
+export async function setNovelaiApiKey(apiKey: string): Promise<boolean> {
+  return ipcInvoke("set_novelai_api_key", { apiKey });
 }
 
 export interface ControlNetPreprocessorPreviewResponse {

@@ -21,6 +21,12 @@ import {
 import { readModelSpec, type ModelSpec } from "../utils/api.js";
 import { H3_TURBO_LORA } from "../utils/h3Models.js";
 import {
+  NOVELAI_DEFAULTS,
+  findNovelAiModel,
+  isNovelAiModel,
+  toNovelAiSampler,
+} from "../utils/novelaiModels.js";
+import {
   H3_DIFFUSION_MARKERS,
   H3_MAX_REF_IMAGES,
   H3_TURBO_DEFAULT_STEPS,
@@ -36,6 +42,8 @@ import type {
   GenerationMode,
   GenerationParams,
   LoraEntry,
+  NovelAiCharacter,
+  NovelAiParams,
   RegionalPromptSelection,
   RegionalPromptStrategy,
   VideoAspectRatio,
@@ -87,6 +95,56 @@ const UNKNOWN_MODEL_METADATA = {
   modelRecommendedClipModel: null,
   modelRecommendedClipType: null,
 };
+
+/**
+ * The NovelAI settings the UI owns, held in the exact shape they are sent in.
+ *
+ * Kept in wire shape (snake_case) rather than mirrored into camelCase fields
+ * because `toParams()` maps by hand and a mismatch there fails silently. The
+ * four omitted fields are derived at send time: `model` and `action` come from
+ * the selected checkpoint and mode, and the two `local_*` prompts are an
+ * override the UI does not expose yet.
+ */
+export type NovelAiSettings = Omit<
+  NovelAiParams,
+  "model" | "action" | "local_positive_prompt" | "local_negative_prompt"
+>;
+
+/** NovelAI's own recommended starting point. Mirrors `novelai/params.rs`. */
+export function createDefaultNovelAiSettings(): NovelAiSettings {
+  return {
+    sampler: NOVELAI_DEFAULTS.sampler,
+    noise_schedule: NOVELAI_DEFAULTS.noiseSchedule,
+    cfg_rescale: NOVELAI_DEFAULTS.cfgRescale,
+    uncond_scale: 1.0,
+    dynamic_thresholding: false,
+    variety_plus: false,
+    quality_toggle: true,
+    uc_preset: 0,
+    legacy_uc: false,
+    characters: [],
+    use_coords: false,
+    strength: 0.7,
+    noise: 0,
+    add_original_image: true,
+    vibes: [],
+    director_references: [],
+    local_post_process: false,
+    local_checkpoint: null,
+    local_architecture: null,
+    local_is_vpred: false,
+  };
+}
+
+/** A blank character prompt, centred. */
+export function createNovelAiCharacter(): NovelAiCharacter {
+  return {
+    prompt: "",
+    negative_prompt: "",
+    center: { x: 0.5, y: 0.5 },
+    enabled: true,
+  };
+}
 
 export interface GenerationToParamsOptions {
   fixedPresetChoices?: ReadonlyMap<string, string>;
@@ -482,6 +540,12 @@ class GenerationStore {
    */
   promptBuckets = $state<PromptBuckets>(createDefaultPromptBuckets());
   checkpoint = $state("");
+  /**
+   * NovelAI's half of the request. Only sent when `checkpoint` names a NovelAI
+   * model, so it can be edited at any time without affecting a local
+   * generation.
+   */
+  novelaiSettings = $state<NovelAiSettings>(createDefaultNovelAiSettings());
   vae = $state("");
   loras = $state<LoraEntry[]>([]);
   samplerName = $state("euler_cfg_pp");
@@ -1022,6 +1086,47 @@ class GenerationStore {
     ].includes(this.modelFamily);
   }
 
+  /**
+   * True when the selected model runs on NovelAI rather than local ComfyUI.
+   *
+   * This is the switch the whole NovelAI mode hangs off: it picks the backend
+   * in `requestGeneration`, and the UI uses it to hide controls ComfyUI owns.
+   */
+  get isNovelAi(): boolean {
+    return isNovelAiModel(this.checkpoint);
+  }
+
+  /** Capability flags for the selected NovelAI model, or null outside NovelAI mode. */
+  get novelAiModel() {
+    return findNovelAiModel(this.checkpoint) ?? null;
+  }
+
+  /** True when the model takes per-character prompts. */
+  get supportsNovelAiCharacters(): boolean {
+    return this.novelAiModel?.v4Prompt ?? false;
+  }
+
+  /**
+   * True when Precise Reference (also called character reference) is available.
+   *
+   * Mutually exclusive with vibe transfer: NovelAI rejects a request carrying
+   * both, so the UI must let only one be active at a time.
+   */
+  get supportsNovelAiPreciseReference(): boolean {
+    return this.novelAiModel?.preciseReference ?? false;
+  }
+
+  get supportsNovelAiVibeTransfer(): boolean {
+    return this.novelAiModel?.vibeTransfer ?? false;
+  }
+
+  /** Character prompts that would actually be sent. */
+  get activeNovelAiCharacters(): NovelAiCharacter[] {
+    return this.novelaiSettings.characters.filter(
+      (c) => c.enabled && c.prompt.trim() !== "",
+    );
+  }
+
   /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow, Mugen, Nanosaur). */
   get usesRectifiedFlow(): boolean {
     return this.isSd3 || this.isFlux || this.isAuraFlow || this.isMugen || this.isNanosaur;
@@ -1544,6 +1649,38 @@ class GenerationStore {
     }
   }
 
+  /**
+   * Switch to a NovelAI model.
+   *
+   * NovelAI models have no file on disk, so none of the metadata detection that
+   * `selectCheckpoint` triggers applies. This clears the local-model state that
+   * would otherwise linger and applies NovelAI's own recommended sampling
+   * settings, which differ sharply from any local model's.
+   */
+  selectNovelAiModel(id: string) {
+    this.useSplitModel = false;
+    this.diffusionModel = null;
+    this.modelSourceCategory = null;
+    this.clipModel = null;
+    this.clipType = null;
+    this.vae = "";
+    this.loras = [];
+    this.checkpoint = id;
+    this.applyModelMetadata(UNKNOWN_MODEL_METADATA);
+    this.novelaiSettings = {
+      ...this.novelaiSettings,
+      sampler: toNovelAiSampler(this.novelaiSettings.sampler),
+    };
+    // Applied unconditionally rather than through `applyModelSpecificPreset`:
+    // its Advanced Mode escape hatch preserves the user's params on a swap, and
+    // a local model's steps and CFG are simply wrong for NovelAI.
+    this.steps = NOVELAI_DEFAULTS.steps;
+    this.cfg = NOVELAI_DEFAULTS.cfg;
+    // Keyed as applied so a later switch back to a local model still re-presets.
+    this.modelPresetAppliedKey = `cp:${id}|novelai|none`;
+    this.saveSettings();
+  }
+
   applyModelSpecificPreset() {
     // Autocomplete tag-set sync on model-family change is handled by an
     // $effect in App.svelte (stores must not import each other).
@@ -1990,6 +2127,13 @@ class GenerationStore {
         if (saved.videoVaeModel !== undefined) this.videoVaeModel = saved.videoVaeModel;
         if (saved.videoAudioVaeModel !== undefined)
           this.videoAudioVaeModel = saved.videoAudioVaeModel;
+        // Merged over the defaults rather than assigned, so a settings blob
+        // written by an older build still gets every field NovelAI now needs.
+        if (saved.novelaiSettings !== undefined)
+          this.novelaiSettings = {
+            ...createDefaultNovelAiSettings(),
+            ...(saved.novelaiSettings as Partial<NovelAiSettings>),
+          };
         if (saved.styleTransferLowScaleEnd !== undefined) this.styleTransferLowScaleEnd = saved.styleTransferLowScaleEnd;
         if (saved.styleTransferHighScaleStart !== undefined) this.styleTransferHighScaleStart = saved.styleTransferHighScaleStart;
         if (saved.styleTransferBeta !== undefined) this.styleTransferBeta = saved.styleTransferBeta;
@@ -2213,6 +2357,7 @@ class GenerationStore {
         videoClipModel: this.videoClipModel,
         videoVaeModel: this.videoVaeModel,
         videoAudioVaeModel: this.videoAudioVaeModel,
+        novelaiSettings: this.novelaiSettings,
       });
       triggerSync();
     } catch (e) {
@@ -2341,6 +2486,7 @@ class GenerationStore {
       videoClipModel: this.videoClipModel,
       videoVaeModel: this.videoVaeModel,
       videoAudioVaeModel: this.videoAudioVaeModel,
+      novelaiSettings: this.novelaiSettings,
     };
   }
 
@@ -2370,6 +2516,32 @@ class GenerationStore {
     } catch (e) {
       console.error("generation: applyPromptHistory failed", e);
     }
+  }
+
+  /**
+   * The NovelAI half of the request, or null for an ordinary local generation.
+   *
+   * `model` and `action` are derived here rather than stored: the model is
+   * whatever checkpoint is selected, and the action follows the generation
+   * mode. Rust's `normalise_action()` degrades an action back down when the
+   * image or mask it needs is missing, so a stale mode cannot burn Anlas on a
+   * request NovelAI would reject.
+   *
+   * Both `local_*` prompts stay null. The NovelAI syntax reversal happens in
+   * Rust while building the payload and never touches `params`, so the
+   * top-level prompt is still the ComfyUI-syntax one the free local pass wants.
+   */
+  private novelAiParams(): NovelAiParams | null {
+    if (!isNovelAiModel(this.checkpoint)) return null;
+    const action =
+      this.mode === "inpainting" ? "infill" : this.mode === "img2img" ? "img2img" : "generate";
+    return {
+      ...this.novelaiSettings,
+      model: this.checkpoint,
+      action,
+      local_positive_prompt: null,
+      local_negative_prompt: null,
+    };
   }
 
   toParams(options: GenerationToParamsOptions = {}) {
@@ -2753,6 +2925,9 @@ class GenerationStore {
       // Node widgets rather than `timeline_data` keys, so they travel beside it.
       video_timeline_custom_motion: timeline?.useCustomMotion ?? false,
       video_timeline_custom_audio: timeline?.useCustomAudio ?? false,
+      // Null for every local generation, so the backend's NovelAI branch is
+      // never reachable from one.
+      novelai: this.novelAiParams(),
     };
 
     if (options.overrides) {

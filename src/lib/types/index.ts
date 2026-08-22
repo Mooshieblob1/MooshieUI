@@ -104,6 +104,99 @@ export type VideoVariant = "fl2va" | "ref2va";
  */
 export type VideoAspectRatio = "auto" | "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 
+/** A character's placement, as a fraction of the canvas. */
+export interface NovelAiCoord {
+  x: number;
+  y: number;
+}
+
+export interface NovelAiCharacter {
+  prompt: string;
+  negative_prompt: string;
+  /** Normalised 0..1 grid centre. Only sent when `use_coords` is on. */
+  center: NovelAiCoord;
+  enabled: boolean;
+}
+
+export interface NovelAiVibe {
+  /** Cached `.naiv4vibe` payload. When present, no encode is charged. */
+  encoding?: string | null;
+  /** Raw base64 PNG, used the first time a vibe is encoded (costs 2 Anlas). */
+  image?: string | null;
+  strength: number;
+  information_extracted: number;
+}
+
+/** A Precise Reference (also called character reference). V4.5 only. */
+export interface NovelAiDirectorReference {
+  /** Base64 PNG, pre-normalised client-side to an accepted reference ratio. */
+  image: string;
+  /** What to take from the reference, e.g. "character" or "character&style". */
+  description: string;
+  information_extracted: number;
+  strength: number;
+}
+
+/**
+ * The NovelAI-only request surface. Mirrors `src-tauri/src/novelai/params.rs`.
+ *
+ * Nested under `GenerationParams.novelai` so NovelAI's controls never leak into
+ * the ComfyUI parameter set. Field names are snake_case because they reach
+ * serde unchanged.
+ */
+export interface NovelAiParams {
+  model: string;
+  /** "generate" | "img2img" | "infill". */
+  action: string;
+  /**
+   * NovelAI sampler, e.g. `k_euler_ancestral`. Separate from the top-level
+   * `sampler_name`, which stays a ComfyUI sampler for the local post-process.
+   */
+  sampler: string;
+  noise_schedule: string;
+  cfg_rescale: number;
+  uncond_scale: number;
+  dynamic_thresholding: boolean;
+  /** "Variety+": suppresses CFG above a sigma threshold. */
+  variety_plus: boolean;
+  quality_toggle: boolean;
+  uc_preset: number;
+  legacy_uc: boolean;
+  characters: NovelAiCharacter[];
+  /** When false, NovelAI infers placement and character centres are omitted. */
+  use_coords: boolean;
+  /** img2img strength. */
+  strength: number;
+  noise: number;
+  /** Infill: keep the unmasked region pixel-identical to the input. */
+  add_original_image: boolean;
+  vibes: NovelAiVibe[];
+  director_references: NovelAiDirectorReference[];
+  /** Run the local ComfyUI upscale/facefix chain on the returned image. Free. */
+  local_post_process: boolean;
+  /** Checkpoint the local pass samples with. Required for it to run at all. */
+  local_checkpoint: string | null;
+  local_architecture: string | null;
+  local_is_vpred: boolean;
+  /** Prompt in ComfyUI weight syntax, for the local pass only. */
+  local_positive_prompt: string | null;
+  local_negative_prompt: string | null;
+}
+
+/** NovelAI's `/user/subscription` response, as the backend re-serialises it. */
+export interface NovelAiSubscription {
+  tier: number;
+  active: boolean;
+  expiresAt?: number | null;
+  trainingStepsLeft?: {
+    fixedTrainingStepsLeft: number;
+    purchasedTrainingSteps: number;
+  } | null;
+  perks?: unknown;
+  /** Everything NovelAI returned that the backend does not name yet. */
+  [key: string]: unknown;
+}
+
 export interface GenerationParams {
   mode: GenerationMode;
   positive_prompt: string;
@@ -239,6 +332,9 @@ export interface GenerationParams {
   video_timeline_custom_motion?: boolean;
   /** Director `use_custom_audio` widget: the timeline has audio cues. */
   video_timeline_custom_audio?: boolean;
+  /** Present only for NovelAI generations; its presence is not the backend
+   *  switch, `checkpoint` naming a NovelAI model is. */
+  novelai?: NovelAiParams | null;
 }
 
 export interface OutputImage {
@@ -338,6 +434,10 @@ export interface AppConfig {
   civitai_api_key: string | null;
   /** Present in browser mode for non-admin users when a server-side key is configured. */
   civitai_api_key_configured?: boolean;
+  /** Never populated for clients: the key is redacted to null on the way out. */
+  novelai_api_key: string | null;
+  /** True when a key is stored, so the UI can show "key set" without the value. */
+  novelai_api_key_configured?: boolean;
   /** When set, in-app error reports POST here (Sub-project B proxy) instead of opening a prefilled GitHub issue. */
   report_endpoint?: string | null;
   gallery_path: string | null;

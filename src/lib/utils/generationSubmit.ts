@@ -1,4 +1,5 @@
-import { generate, type GenerateResponse } from "./api.js";
+import { generate, novelaiGenerate, type GenerateResponse } from "./api.js";
+import { isNovelAiModel } from "./novelaiModels.js";
 import { progress } from "../stores/progress.svelte.js";
 import type { GenerationParams } from "../types/index.js";
 
@@ -13,7 +14,11 @@ import type { GenerationParams } from "../types/index.js";
  */
 
 export async function requestGeneration(params: GenerationParams): Promise<GenerateResponse> {
-  const result = await generate(params);
+  // The checkpoint is the backend switch. NovelAI reports through the same
+  // events and prompt-id contract, so everything downstream is unchanged.
+  const result = isNovelAiModel(params.checkpoint)
+    ? await novelaiGenerate(params)
+    : await generate(params);
   // The backend resolves seed "-1" to a concrete value; write it back so a
   // caller reusing the same params object keeps the resolved seed.
   params.seed = result.seed;
