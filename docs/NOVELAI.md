@@ -15,10 +15,10 @@ built the way it is. It is the design rationale, not a task list.
 5. A free local upscale, so a paid image can be enlarged without spending
    Anlas. Anima at denoise 0.15 to 0.2 is the suggested refiner.
 6. FaceFix, also as a free local pass.
-7. Anlas remaining, Opus subscription status, and the Opus generation
-   allowance bar, in the Settings NovelAI section. An option there also pins a
-   compact version of the same readout to the generation page, directly above
-   the generate button.
+7. Anlas remaining and Opus subscription status, in the Settings NovelAI
+   section. An option there also pins a compact version of the same readout to
+   the generation page, directly above the generate button. (The Opus
+   generation allowance bar is not built: see section 6.)
 8. The Anlas cost of the pending request, on the generate button.
 
 NovelAI's recommended sampling defaults are applied when a NovelAI model is
@@ -151,6 +151,28 @@ draws, mirroring the website's arithmetic so the two readouts agree:
 Doing this in Rust rather than the component keeps it under test, since the
 frontend has no test framework.
 
+### 2.9 The NovelAI panel is one section, not scattered options
+
+Everything NovelAI owns that ComfyUI has no equivalent for lives in a single
+collapsible NovelAI section on the generation page, shown only in NovelAI mode:
+per-character prompts with a 5x5 placement grid, Precise Reference, Vibe
+Transfer, the NovelAI-only sampling options (quality tags, undesired-content
+preset, Variety+, dynamic thresholding, guidance rescale, undesired-content
+strength), the img2img/inpainting strength and noise, and the local
+post-process toggle.
+
+Sampler, steps and guidance are deliberately **not** in it. Those are top-level
+generation params shared with ComfyUI, so they stay in the Sampler panel and do
+not move when the backend changes. The panel adapts its contents instead: in
+NovelAI mode the Sampler panel lists NovelAI sampler names and a noise
+schedule, and labels CFG as Guidance.
+
+Going the other way, ComfyUI controls with no NovelAI counterpart are hidden
+rather than left to silently do nothing: ControlNet, Style Transfer, LoRAs,
+VAE, the denoise slider, Differential Diffusion and the grow-mask slider.
+FaceFix and Upscale stay visible on purpose, because in NovelAI mode they drive
+the free local post-process pass (section 3).
+
 ## 3. The free local post-process
 
 NovelAI has already been paid for the pixels it returns, so upscaling and face
@@ -218,15 +240,20 @@ key:
 These are inferences, not confirmed facts. They are listed so the next person
 does not mistake them for verified behaviour.
 
-1. **The Anlas cost badge has no pricing formula yet.** Cost depends on
-   resolution, steps, sample count and Opus status, and belongs in its own pure
-   module with tests. NovelAI publishes no formula and its web bundle carries no
-   cost function to read one from.
+1. **The Anlas cost badge is an estimate, not NovelAI's number.** The formula
+   in `src/lib/utils/novelaiCost.ts` was fitted from observed prices; NovelAI
+   publishes no formula and its web bundle carries no cost function to read one
+   from. The badge is prefixed with `~` and the readout above the generate
+   button remains the authority on what was actually spent.
 2. **`n_samples` is clamped to 1 through 8** in `payload.rs`. NovelAI's real cap
    is unconfirmed.
 3. **The image estimate on the Opus bar is NovelAI's own approximation.** The
    allowance is a percentage, not an image count; `17.3` images per percent is
    the ratio the website applies, and it is presented as approximate there too.
+4. **The Opus generation allowance bar is not built.** The field names that
+   carry the remaining allowance are still unconfirmed, and a bar fed by a
+   guessed field would read wrong rather than read empty. Anlas remaining and
+   Opus status are shown instead.
 
 `Subscription.extra` captures any key the backend does not name, and
 `fetch_subscription` logs them at debug level, so a field NovelAI adds later

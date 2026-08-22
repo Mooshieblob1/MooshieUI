@@ -1532,7 +1532,8 @@
     {/if}
   </div>
 
-  <!-- VAE -->
+  <!-- VAE. NovelAI decodes on its own servers, so there is nothing to pick. -->
+  {#if !generation.isNovelAi}
   <div>
     <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.model.vae')}<InfoTip text={locale.t('generation.model.vae_tip')} /></label>
     <select
@@ -1545,6 +1546,7 @@
       {/each}
     </select>
   </div>
+  {/if}
 
   <!-- Text encoder (split models only). Lists files from both the
        text_encoders/ and clip/ folders (models.textEncoders merges them). -->
@@ -1569,7 +1571,8 @@
     </div>
   {/if}
 
-  <!-- LoRAs -->
+  <!-- LoRAs. NovelAI has no LoRA equivalent in its API. -->
+  {#if !generation.isNovelAi}
   <div>
     <div class="flex items-center justify-between mb-1.5">
       <div class="flex items-center gap-2">
@@ -1716,4 +1719,5 @@
     {/each}
     {/if}
   </div>
+  {/if}
 </div>

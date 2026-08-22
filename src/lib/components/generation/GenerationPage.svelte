@@ -12,6 +12,7 @@
   import GenerateButton from "./GenerateButton.svelte";
   import UpscaleSettings from "./UpscaleSettings.svelte";
   import FaceFixSettings from "./FaceFixSettings.svelte";
+  import NovelAiSettings from "./NovelAiSettings.svelte";
   import ControlNetSettings from "./ControlNetSettings.svelte";
   import StyleTransferSettings from "./StyleTransferSettings.svelte";
   import ImageEditSettings from "./ImageEditSettings.svelte";
@@ -72,6 +73,7 @@
     | "generationSettings"
     | "model"
     | "sampler"
+    | "novelai"
     | "controlnet"
     | "styleTransfer"
     | "facefix"
@@ -113,6 +115,7 @@
     generationSettings: "right",
     model: "right",
     sampler: "right",
+    novelai: "right",
     controlnet: "right",
     styleTransfer: "right",
     facefix: "right",
@@ -142,6 +145,7 @@
     "generationSettings",
     "model",
     "sampler",
+    "novelai",
     "controlnet",
     "styleTransfer",
     "facefix",
@@ -289,6 +293,7 @@
     if (section === "generationSettings") return locale.t('generation.settings.title');
     if (section === "model") return locale.t('generation.model.title');
     if (section === "sampler") return locale.t('generation.sampler.title');
+    if (section === "novelai") return locale.t('generation.novelai.title');
     if (section === "facefix") return locale.t('generation.facefix.title');
     if (section === "styleTransfer") return locale.t('generation.style_transfer.title');
     return locale.t('generation.upscale.title');
@@ -300,6 +305,12 @@
     if (generation.mode === "video")
       return section === "prompts" || section === "videoSettings";
     if (section === "videoSettings") return false;
+    // NovelAI renders on its own servers: LoRAs, ControlNet and style transfer
+    // have no counterpart in its API and would silently do nothing. FaceFix and
+    // Upscale stay put, because they drive the free local post-process pass.
+    if (section === "novelai") return generation.isNovelAi;
+    if (generation.isNovelAi && (section === "controlnet" || section === "styleTransfer"))
+      return false;
     if (section === "imageInputs")
       return generation.mode === "img2img" || generation.mode === "inpainting";
     if (section === "imageEdit") return generation.mode === "image_edit";
@@ -347,6 +358,7 @@
   let controlsSectionOpen = $state(savedCollapse.generationSettings !== false);
   let modelSectionOpen = $state(savedCollapse.model !== false);
   let samplerSectionOpen = $state(savedCollapse.sampler !== false);
+  let novelaiSectionOpen = $state(savedCollapse.novelai !== false);
   let controlnetSectionOpen = $state(savedCollapse.controlnet !== false);
   let styleTransferSectionOpen = $state(savedCollapse.styleTransfer !== false);
   let facefixSectionOpen = $state(savedCollapse.facefix !== false);
@@ -363,6 +375,7 @@
       generationSettings: controlsSectionOpen,
       model: modelSectionOpen,
       sampler: samplerSectionOpen,
+      novelai: novelaiSectionOpen,
       controlnet: controlnetSectionOpen,
       styleTransfer: styleTransferSectionOpen,
       facefix: facefixSectionOpen,
@@ -1620,6 +1633,8 @@
             {/if}
           </div>
 
+          <!-- NovelAI has its own strength and noise controls in the NovelAI panel. -->
+          {#if !generation.isNovelAi}
           <div use:scrollCapture>
             <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
               <span>{locale.t('generation.image.denoise')}<InfoTip text={locale.t('generation.image.denoise_tip')} /></span>
@@ -1634,8 +1649,9 @@
               class="w-full accent-indigo-500"
             />
           </div>
+          {/if}
 
-          {#if generation.mode === "inpainting"}
+          {#if generation.mode === "inpainting" && !generation.isNovelAi}
             <div class="rounded-md border border-neutral-800 bg-neutral-900/70 p-2.5">
               <label class="flex items-center justify-between gap-3 text-xs text-neutral-300">
                 <span class="leading-tight">{locale.t('generation.inpaint.differential_diffusion')}<InfoTip text={locale.t('generation.inpaint.differential_tip')} /></span>
@@ -1724,6 +1740,7 @@
               {/if}
             </div>
 
+            {#if !generation.isNovelAi}
             <div use:scrollCapture>
               <div class="flex items-center justify-between text-xs mb-0.5">
                 <span class="text-neutral-400">{locale.t('generation.inpaint.grow_mask')}<InfoTip text={locale.t('generation.inpaint.grow_mask_tip')} /></span>
@@ -1738,6 +1755,7 @@
                 class="w-full accent-indigo-500"
               />
             </div>
+            {/if}
           {/if}
         </div>
       {/if}
@@ -1894,6 +1912,27 @@
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
             {locale.t('common.drop_to_import', { section: locale.t('generation.sampler.title') })}
           </span>
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
+  {#snippet novelaiSection()}
+    <div bind:this={sectionRefs['novelai']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'novelai' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("novelai")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (novelaiSectionOpen = !novelaiSectionOpen)}
+          title={novelaiSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.novelai.title') }) : locale.t('common.expand', { section: locale.t('generation.novelai.title') })}
+        >
+          <span class="font-medium">{locale.t('generation.novelai.title')}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {novelaiSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if novelaiSectionOpen}
+        <div class="px-3 pb-2 pt-0.5 space-y-3">
+          <NovelAiSettings />
         </div>
       {/if}
     </div>
@@ -2068,6 +2107,8 @@
       {@render modelSection()}
     {:else if section === "sampler"}
       {@render samplerSection()}
+    {:else if section === "novelai"}
+      {@render novelaiSection()}
     {:else if section === "controlnet"}
       {@render controlnetSection()}
     {:else if section === "styleTransfer"}

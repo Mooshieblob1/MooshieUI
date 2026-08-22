@@ -15,6 +15,8 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import NovelAiUsage from "./NovelAiUsage.svelte";
+  import { novelai } from "../../stores/novelai.svelte.js";
+  import { estimateNovelAiCost } from "../../utils/novelaiCost.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
   import type { GenerationParams } from "../../types/index.js";
@@ -529,6 +531,28 @@
 
   const canGenerate = $derived(!!generation.checkpoint);
 
+  /**
+   * Anlas the pending request is expected to cost, or null outside NovelAI mode.
+   *
+   * Computed here rather than in the generation store because the estimate
+   * needs the Opus flag from the NovelAI store, and the hub store may not
+   * import a feature store. The number is an estimate, hence the leading `~`.
+   */
+  const anlasEstimate = $derived.by(() => {
+    if (!generation.isNovelAi) return null;
+    const nai = generation.novelaiSettings;
+    return estimateNovelAiCost({
+      width: generation.width,
+      height: generation.height,
+      steps: generation.steps,
+      nSamples: generation.batchSize,
+      uncondScale: nai.uncond_scale,
+      strength: generation.mode === "txt2img" ? 1 : nai.strength,
+      isOpus: novelai.isOpus,
+      vibeEncodes: nai.vibes.filter((v) => !v.encoding).length,
+    });
+  });
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
@@ -559,6 +583,11 @@
       {locale.t('generation.generate_ordered', { count: orderedWildcardRunCount })}
     {:else}
       {locale.t('generation.generate')}
+    {/if}
+    {#if anlasEstimate !== null}
+      <span class="ml-2 text-[11px] font-normal opacity-80" title={locale.t('generation.novelai.cost_tip')}>
+        {locale.t('generation.novelai.cost_badge', { anlas: anlasEstimate })}
+      </span>
     {/if}
   </button>
 

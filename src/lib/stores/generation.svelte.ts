@@ -26,6 +26,9 @@ import {
   isNovelAiModel,
   snapNovelAiDimension,
   toNovelAiSampler,
+  NOVELAI_MAX_CHARACTERS,
+  NOVELAI_MAX_VIBES,
+  NOVELAI_MAX_DIRECTOR_REFERENCES,
 } from "../utils/novelaiModels.js";
 import {
   H3_DIFFUSION_MARKERS,
@@ -44,7 +47,9 @@ import type {
   GenerationParams,
   LoraEntry,
   NovelAiCharacter,
+  NovelAiDirectorReference,
   NovelAiParams,
+  NovelAiVibe,
   RegionalPromptSelection,
   RegionalPromptStrategy,
   VideoAspectRatio,
@@ -1704,6 +1709,123 @@ class GenerationStore {
   updateNovelAiSettings(patch: Partial<NovelAiSettings>) {
     this.novelaiSettings = { ...this.novelaiSettings, ...patch };
     this.saveSettings();
+  }
+
+  /**
+   * Pick the local checkpoint the free post-process pass samples with.
+   *
+   * Architecture and v-pred travel with that checkpoint, not with the selected
+   * model: `checkpoint` names a NovelAI model in this mode, so the usual
+   * metadata pass has nothing to say about the refiner and the spec has to be
+   * read separately. Passing null clears all three together, since a stale
+   * architecture would be applied to whatever is picked next.
+   */
+  async setNovelAiLocalCheckpoint(filename: string | null) {
+    if (!filename) {
+      this.updateNovelAiSettings({
+        local_checkpoint: null,
+        local_architecture: null,
+        local_is_vpred: false,
+      });
+      return;
+    }
+    this.updateNovelAiSettings({ local_checkpoint: filename });
+    let spec: ModelSpec | null = null;
+    try {
+      spec = await readModelSpec("checkpoints", filename);
+    } catch {
+      spec = null;
+    }
+    // A later pick may have landed while the spec read was in flight.
+    if (this.novelaiSettings.local_checkpoint !== filename) return;
+    this.updateNovelAiSettings({
+      local_architecture: spec?.family ?? null,
+      local_is_vpred: signalsIndicateVPred({
+        filename,
+        modelspecPredictionType: spec?.prediction_type ?? null,
+        modelspecPredictKey: spec?.predict_key ?? null,
+        headerVPred: spec?.header_v_pred === "true",
+      }),
+    });
+  }
+
+  /** Append a blank character prompt, up to the limit NovelAI's own UI offers. */
+  addNovelAiCharacter() {
+    if (this.novelaiSettings.characters.length >= NOVELAI_MAX_CHARACTERS) return;
+    this.updateNovelAiSettings({
+      characters: [...this.novelaiSettings.characters, createNovelAiCharacter()],
+    });
+  }
+
+  updateNovelAiCharacter(index: number, patch: Partial<NovelAiCharacter>) {
+    this.updateNovelAiSettings({
+      characters: this.novelaiSettings.characters.map((c, i) =>
+        i === index ? { ...c, ...patch } : c,
+      ),
+    });
+  }
+
+  removeNovelAiCharacter(index: number) {
+    this.updateNovelAiSettings({
+      characters: this.novelaiSettings.characters.filter((_, i) => i !== index),
+    });
+  }
+
+  /**
+   * Add a vibe from a base64 PNG.
+   *
+   * Vibe transfer and Precise Reference cannot both be sent: the payload
+   * builder drops vibes as soon as a director reference is present, so adding
+   * one here clears the other outright rather than leaving a panel populated
+   * with settings that are silently ignored.
+   */
+  addNovelAiVibe(image: string) {
+    if (this.novelaiSettings.vibes.length >= NOVELAI_MAX_VIBES) return;
+    this.updateNovelAiSettings({
+      vibes: [
+        ...this.novelaiSettings.vibes,
+        { image, encoding: null, strength: 0.6, information_extracted: 1.0 },
+      ],
+      director_references: [],
+    });
+  }
+
+  updateNovelAiVibe(index: number, patch: Partial<NovelAiVibe>) {
+    this.updateNovelAiSettings({
+      vibes: this.novelaiSettings.vibes.map((v, i) => (i === index ? { ...v, ...patch } : v)),
+    });
+  }
+
+  removeNovelAiVibe(index: number) {
+    this.updateNovelAiSettings({
+      vibes: this.novelaiSettings.vibes.filter((_, i) => i !== index),
+    });
+  }
+
+  /** Add a Precise Reference, clearing vibes for the same reason as above. */
+  addNovelAiDirectorReference(image: string) {
+    if (this.novelaiSettings.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) return;
+    this.updateNovelAiSettings({
+      director_references: [
+        ...this.novelaiSettings.director_references,
+        { image, description: "character", information_extracted: 1.0, strength: 1.0 },
+      ],
+      vibes: [],
+    });
+  }
+
+  updateNovelAiDirectorReference(index: number, patch: Partial<NovelAiDirectorReference>) {
+    this.updateNovelAiSettings({
+      director_references: this.novelaiSettings.director_references.map((r, i) =>
+        i === index ? { ...r, ...patch } : r,
+      ),
+    });
+  }
+
+  removeNovelAiDirectorReference(index: number) {
+    this.updateNovelAiSettings({
+      director_references: this.novelaiSettings.director_references.filter((_, i) => i !== index),
+    });
   }
 
   /** Restore NovelAI's own recommended sampling settings. */

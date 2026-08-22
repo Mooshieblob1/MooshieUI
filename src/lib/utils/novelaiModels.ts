@@ -150,3 +150,21 @@ export function toNovelAiSampler(name: string): string {
   if (NOVELAI_SAMPLERS.some((s) => s.value === name)) return name;
   return SAMPLER_ALIASES[name] ?? NOVELAI_DEFAULTS.sampler;
 }
+
+/**
+ * How many of each reference input the UI offers.
+ *
+ * These mirror NovelAI's own client rather than a hard API limit: the API
+ * accepts more, but going past what NovelAI itself allows is untested and
+ * costs Anlas to discover.
+ */
+export const NOVELAI_MAX_CHARACTERS = 6;
+export const NOVELAI_MAX_VIBES = 4;
+export const NOVELAI_MAX_DIRECTOR_REFERENCES = 4;
+
+/** What a Precise Reference is allowed to take from its image. */
+export const NOVELAI_REFERENCE_DESCRIPTIONS = [
+  { value: "character", labelKey: "generation.novelai.reference.desc_character" },
+  { value: "style", labelKey: "generation.novelai.reference.desc_style" },
+  { value: "character&style", labelKey: "generation.novelai.reference.desc_character_style" },
+] as const;
