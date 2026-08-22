@@ -1876,6 +1876,8 @@ const pl: Record<string, string> = {
   "settings.novelai.allowance_empty": "Twój limit generowania Opus został wyczerpany. Generowanie będzie kosztować Anlas do czasu odnowienia.",
   "settings.novelai.refresh_account": "Odśwież",
   "settings.novelai.account_loading": "Sprawdzanie w NovelAI...",
+  "settings.novelai.show_usage": "Pokaż Anlas nad przyciskiem generowania",
+  "settings.novelai.show_usage_desc": "Utrzymuje saldo Anlas i limit Opus na stronie generowania, tuż nad przyciskiem generowania.",
   "settings.novelai.save_key": "Zapisz",
   "settings.novelai.clear_key": "Wyczyść",
 

@@ -1772,6 +1772,8 @@ const ko: Record<string, string> = {
   "settings.novelai.allowance_empty": "Opus 생성 한도를 모두 사용했습니다. 회복될 때까지 생성에 Anlas가 소모됩니다.",
   "settings.novelai.refresh_account": "새로 고침",
   "settings.novelai.account_loading": "NovelAI에 확인하는 중...",
+  "settings.novelai.show_usage": "생성 버튼 위에 Anlas 표시",
+  "settings.novelai.show_usage_desc": "Anlas 잔액과 Opus 할당량을 생성 페이지의 생성 버튼 바로 위에 계속 표시합니다.",
   "settings.novelai.save_key": "저장",
   "settings.novelai.clear_key": "지우기",
   "artist_gallery.title": "아티스트 갤러리",

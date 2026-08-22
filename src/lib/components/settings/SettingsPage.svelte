@@ -1123,7 +1123,7 @@
     { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
     { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf ai assistant" },
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
-    { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token" },
+    { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token allowance balance usage show" },
     { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
     { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates about troubleshooting logs export diagnostic github report issue" },
   ];
@@ -3910,6 +3910,19 @@
                   {/if}
                 {/if}
               </div>
+
+              <label class="flex items-start gap-3 cursor-pointer select-none border-t border-neutral-800 pt-3">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 mt-0.5 rounded accent-teal-500"
+                  bind:checked={generation.showNovelaiUsage}
+                  onchange={() => generation.saveSettings()}
+                />
+                <div>
+                  <p class="text-xs font-medium text-neutral-200">{locale.t('settings.novelai.show_usage')}</p>
+                  <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.novelai.show_usage_desc')}</p>
+                </div>
+              </label>
             {/if}
           </div>
           {/if}

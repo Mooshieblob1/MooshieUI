@@ -1771,6 +1771,8 @@ const pt: Record<string, string> = {
   "settings.novelai.allowance_empty": "Sua cota de gerações Opus acabou. As gerações custarão Anlas até que ela recarregue.",
   "settings.novelai.refresh_account": "Atualizar",
   "settings.novelai.account_loading": "Consultando a NovelAI...",
+  "settings.novelai.show_usage": "Mostrar Anlas acima do botão de gerar",
+  "settings.novelai.show_usage_desc": "Mantém seu saldo de Anlas e sua cota Opus na página de geração, logo acima do botão de gerar.",
   "settings.novelai.save_key": "Salvar",
   "settings.novelai.clear_key": "Limpar",
   "artist_gallery.title": "Galeria de artistas",

@@ -16,7 +16,9 @@ built the way it is. It is the design rationale, not a task list.
    Anlas. Anima at denoise 0.15 to 0.2 is the suggested refiner.
 6. FaceFix, also as a free local pass.
 7. Anlas remaining, Opus subscription status, and the Opus generation
-   allowance bar, in the Settings NovelAI section.
+   allowance bar, in the Settings NovelAI section. An option there also pins a
+   compact version of the same readout to the generation page, directly above
+   the generate button.
 8. The Anlas cost of the pending request, on the generate button.
 
 NovelAI's recommended sampling defaults are applied when a NovelAI model is

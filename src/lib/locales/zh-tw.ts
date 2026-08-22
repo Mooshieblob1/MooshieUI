@@ -1772,6 +1772,8 @@ const zhTw: Record<string, string> = {
   "settings.novelai.allowance_empty": "你的 Opus 生成額度已用盡。在額度恢復之前，生成將消耗 Anlas。",
   "settings.novelai.refresh_account": "重新整理",
   "settings.novelai.account_loading": "正在向 NovelAI 查詢...",
+  "settings.novelai.show_usage": "在生成按鈕上方顯示 Anlas",
+  "settings.novelai.show_usage_desc": "將你的 Anlas 餘額和 Opus 額度保留在生成頁面上，就在生成按鈕的上方。",
   "settings.novelai.save_key": "儲存",
   "settings.novelai.clear_key": "清除",
   "artist_gallery.title": "繪師圖庫",

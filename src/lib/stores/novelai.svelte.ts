@@ -35,6 +35,15 @@ class NovelAiStore {
   subscriptionLoading = $state(false);
   subscriptionError = $state<string | null>(null);
 
+  /**
+   * Whether a fetch has been attempted for the current key.
+   *
+   * `ensureSubscription()` reads this so a component that mounts on every
+   * generation-page render fetches once, and so a failed fetch is not retried
+   * in a loop by an effect watching `subscription`.
+   */
+  private attempted = false;
+
   /** Anlas is the monthly allowance plus any purchased balance. */
   get anlas(): number {
     const steps = this.subscription?.trainingStepsLeft;
@@ -92,7 +101,20 @@ class NovelAiStore {
     // The old account record belongs to the old key, so it goes either way.
     this.subscription = null;
     this.subscriptionError = null;
+    this.attempted = false;
     if (this.apiKeyConfigured) await this.refreshSubscription();
+  }
+
+  /**
+   * Fetch the account record unless one has already been asked for.
+   *
+   * This is what the usage readout above the generate button calls, since it
+   * mounts far more often than Settings does and must not turn every render
+   * into a call to NovelAI.
+   */
+  async ensureSubscription(): Promise<void> {
+    if (this.attempted) return;
+    await this.refreshSubscription();
   }
 
   /**
@@ -101,6 +123,7 @@ class NovelAiStore {
    */
   async refreshSubscription(): Promise<void> {
     if (!this.apiKeyConfigured || this.subscriptionLoading) return;
+    this.attempted = true;
     this.subscriptionLoading = true;
     this.subscriptionError = null;
     try {

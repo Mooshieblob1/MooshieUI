@@ -1772,6 +1772,8 @@ const it: Record<string, string> = {
   "settings.novelai.allowance_empty": "La tua quota di generazioni Opus è esaurita. Le generazioni costeranno Anlas finché non si ricarica.",
   "settings.novelai.refresh_account": "Aggiorna",
   "settings.novelai.account_loading": "Verifica con NovelAI in corso...",
+  "settings.novelai.show_usage": "Mostra gli Anlas sopra il pulsante di generazione",
+  "settings.novelai.show_usage_desc": "Mantiene il tuo saldo di Anlas e la tua quota Opus nella pagina di generazione, subito sopra il pulsante di generazione.",
   "settings.novelai.save_key": "Salva",
   "settings.novelai.clear_key": "Cancella",
   "artist_gallery.title": "Galleria artisti",

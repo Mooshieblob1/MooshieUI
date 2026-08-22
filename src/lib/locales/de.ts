@@ -1792,6 +1792,8 @@ const de: Record<string, string> = {
   "settings.novelai.allowance_empty": "Ihr Opus-Generierungskontingent ist aufgebraucht. Generierungen kosten Anlas, bis es sich wieder auffüllt.",
   "settings.novelai.refresh_account": "Aktualisieren",
   "settings.novelai.account_loading": "Abfrage bei NovelAI...",
+  "settings.novelai.show_usage": "Anlas über der Generieren-Schaltfläche anzeigen",
+  "settings.novelai.show_usage_desc": "Hält Ihr Anlas-Guthaben und Ihr Opus-Kontingent auf der Generierungsseite, direkt über der Generieren-Schaltfläche.",
   "settings.novelai.save_key": "Speichern",
   "settings.novelai.clear_key": "Löschen",
   "artist_gallery.title": "Künstler-Galerie",

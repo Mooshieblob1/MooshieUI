@@ -1797,6 +1797,8 @@ const ja: Record<string, string> = {
   "settings.novelai.allowance_empty": "Opus の生成枠を使い切りました。回復するまで生成には Anlas を消費します。",
   "settings.novelai.refresh_account": "更新",
   "settings.novelai.account_loading": "NovelAI に問い合わせ中...",
+  "settings.novelai.show_usage": "生成ボタンの上に Anlas を表示",
+  "settings.novelai.show_usage_desc": "Anlas の残高と Opus の割り当てを生成ページの生成ボタンのすぐ上に表示し続けます。",
   "settings.novelai.save_key": "保存",
   "settings.novelai.clear_key": "消去",
   "artist_gallery.title": "アーティストギャラリー",

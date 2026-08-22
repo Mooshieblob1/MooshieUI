@@ -1895,6 +1895,8 @@ const en: Record<string, string> = {
   "settings.novelai.allowance_empty": "Your Opus Generations allowance is used up. Generations will cost Anlas until it refills.",
   "settings.novelai.refresh_account": "Refresh",
   "settings.novelai.account_loading": "Checking with NovelAI...",
+  "settings.novelai.show_usage": "Show Anlas above the generate button",
+  "settings.novelai.show_usage_desc": "Keeps your Anlas balance and Opus allowance on the generation page, just above the generate button.",
   "settings.novelai.save_key": "Save",
   "settings.novelai.clear_key": "Clear",
 

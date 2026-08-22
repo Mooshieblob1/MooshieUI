@@ -1772,6 +1772,8 @@ const ru: Record<string, string> = {
   "settings.novelai.allowance_empty": "Ваш лимит генераций Opus исчерпан. Генерации будут стоить Anlas, пока он не восстановится.",
   "settings.novelai.refresh_account": "Обновить",
   "settings.novelai.account_loading": "Запрос к NovelAI...",
+  "settings.novelai.show_usage": "Показывать Anlas над кнопкой генерации",
+  "settings.novelai.show_usage_desc": "Держит баланс Anlas и лимит Opus на странице генерации, прямо над кнопкой генерации.",
   "settings.novelai.save_key": "Сохранить",
   "settings.novelai.clear_key": "Очистить",
   "artist_gallery.title": "Галерея художников",

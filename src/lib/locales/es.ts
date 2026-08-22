@@ -1834,6 +1834,8 @@ const es: Record<string, string> = {
   "settings.novelai.allowance_empty": "Su cupo de generaciones Opus está agotado. Las generaciones costarán Anlas hasta que se reponga.",
   "settings.novelai.refresh_account": "Actualizar",
   "settings.novelai.account_loading": "Consultando a NovelAI...",
+  "settings.novelai.show_usage": "Mostrar Anlas encima del botón de generar",
+  "settings.novelai.show_usage_desc": "Mantiene su saldo de Anlas y su asignación de Opus en la página de generación, justo encima del botón de generar.",
   "settings.novelai.save_key": "Guardar",
   "settings.novelai.clear_key": "Borrar",
   "artist_gallery.title": "Galería de artistas",

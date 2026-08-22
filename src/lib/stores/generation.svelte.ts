@@ -546,6 +546,13 @@ class GenerationStore {
    * generation.
    */
   novelaiSettings = $state<NovelAiSettings>(createDefaultNovelAiSettings());
+  /**
+   * Pin the Anlas and Opus readout above the generate button.
+   *
+   * Display only, so it is deliberately not part of `novelaiSettings`: that
+   * object is the request wire shape and every field in it is sent to NovelAI.
+   */
+  showNovelaiUsage = $state(false);
   vae = $state("");
   loras = $state<LoraEntry[]>([]);
   samplerName = $state("euler_cfg_pp");
@@ -2134,6 +2141,8 @@ class GenerationStore {
             ...createDefaultNovelAiSettings(),
             ...(saved.novelaiSettings as Partial<NovelAiSettings>),
           };
+        if (saved.showNovelaiUsage !== undefined)
+          this.showNovelaiUsage = saved.showNovelaiUsage;
         if (saved.styleTransferLowScaleEnd !== undefined) this.styleTransferLowScaleEnd = saved.styleTransferLowScaleEnd;
         if (saved.styleTransferHighScaleStart !== undefined) this.styleTransferHighScaleStart = saved.styleTransferHighScaleStart;
         if (saved.styleTransferBeta !== undefined) this.styleTransferBeta = saved.styleTransferBeta;
@@ -2358,6 +2367,7 @@ class GenerationStore {
         videoVaeModel: this.videoVaeModel,
         videoAudioVaeModel: this.videoAudioVaeModel,
         novelaiSettings: this.novelaiSettings,
+        showNovelaiUsage: this.showNovelaiUsage,
       });
       triggerSync();
     } catch (e) {
@@ -2487,6 +2497,7 @@ class GenerationStore {
       videoVaeModel: this.videoVaeModel,
       videoAudioVaeModel: this.videoAudioVaeModel,
       novelaiSettings: this.novelaiSettings,
+      showNovelaiUsage: this.showNovelaiUsage,
     };
   }
 

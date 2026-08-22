@@ -14,6 +14,7 @@
   import { models } from "../../stores/models.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import NovelAiUsage from "./NovelAiUsage.svelte";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
   import type { GenerationParams } from "../../types/index.js";
@@ -537,6 +538,10 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
+
+{#if generation.showNovelaiUsage}
+  <NovelAiUsage />
+{/if}
 
 <div class="flex gap-3">
   <button

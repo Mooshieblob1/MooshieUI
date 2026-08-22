@@ -1796,6 +1796,8 @@ const fr: Record<string, string> = {
   "settings.novelai.allowance_empty": "Votre quota de générations Opus est épuisé. Les générations coûteront des Anlas jusqu'à sa recharge.",
   "settings.novelai.refresh_account": "Actualiser",
   "settings.novelai.account_loading": "Vérification auprès de NovelAI...",
+  "settings.novelai.show_usage": "Afficher les Anlas au-dessus du bouton de génération",
+  "settings.novelai.show_usage_desc": "Garde votre solde d'Anlas et votre quota Opus sur la page de génération, juste au-dessus du bouton de génération.",
   "settings.novelai.save_key": "Enregistrer",
   "settings.novelai.clear_key": "Effacer",
   "artist_gallery.title": "Galerie d'artistes",
