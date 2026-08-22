@@ -38,7 +38,11 @@ Endpoints:
 
 - `https://image.novelai.net/ai/generate-image`
 - `https://image.novelai.net/ai/generate-image-stream`
-- `https://api.novelai.net/user/subscription`
+- `https://image.novelai.net/user/subscription`
+
+All three are on the image host. The subscription record used to be served
+from `api.novelai.net`, which now answers with 400 "Please refresh
+NovelAI.net. If using a third-party tool, update to the image URL."
 
 Keeping the client in Rust means one code path serves both the desktop app and
 browser mode, the API key never leaves the backend, and generation reuses the
@@ -169,11 +173,13 @@ key:
 These are inferences, not confirmed facts. They are listed so the next person
 does not mistake them for verified behaviour.
 
-1. **The Opus V5 allowance bar is not implemented.** NovelAI's UI shows a
-   percentage-remaining and refill-rate readout for Opus subscribers, but the
-   field names are undocumented. `Subscription.extra` is a flattened map that
-   captures unmapped keys, and `fetch_subscription` logs them at debug level, so
-   the bar can be wired from an observed response. Until then it is omitted.
+1. **The Opus V5 allowance bar is not drawn yet, but its data is decoded.** A
+   live Opus response carries `usage: { percent, isNegative,
+   timeUntilNextPercent }`, now typed as `response::Usage`. What is still
+   unconfirmed is which way `percent` runs: one sample cannot say whether it
+   counts the allowance spent or the allowance left. Confirm against the
+   website before labelling the bar. `Subscription.extra` still captures any
+   other unmapped key, and `fetch_subscription` logs them at debug level.
 2. **V5 model ids** (`nai-diffusion-5-full`, `nai-diffusion-5-curated`) follow
    V4.5's naming convention and have not been confirmed against a live API.
 3. **V5 inpainting checkpoint ids** are the same inference.

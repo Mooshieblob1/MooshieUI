@@ -148,9 +148,8 @@ fn decode_base64(s: &str) -> Option<Vec<u8>> {
 
 /// NovelAI's `/user/subscription` response.
 ///
-/// Only the fields MooshieUI displays are named. `extra` keeps everything else
-/// so the Opus allowance fields can be identified from a real response without
-/// another round of guessing at names.
+/// Only the fields MooshieUI displays are named. `extra` keeps everything else,
+/// which is how `usage` was identified from a real response.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Subscription {
     #[serde(default)]
@@ -163,8 +162,28 @@ pub struct Subscription {
     pub training_steps_left: Option<TrainingSteps>,
     #[serde(default)]
     pub perks: Option<Value>,
+    #[serde(default)]
+    pub usage: Option<Usage>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+}
+
+/// The Opus generation allowance behind the V5 usage bar.
+///
+/// `time_until_next_percent` is the seconds until one point of the allowance
+/// is restored, and `is_negative` marks an account that has spent past it.
+/// Whether `percent` counts up as the allowance is used or down as it is
+/// consumed is not settled by a single sample, so nothing here labels it: the
+/// UI that draws the bar has to confirm the direction against the website
+/// first.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Usage {
+    #[serde(default)]
+    pub percent: i64,
+    #[serde(default, rename = "isNegative")]
+    pub is_negative: bool,
+    #[serde(default, rename = "timeUntilNextPercent")]
+    pub time_until_next_percent: i64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -316,6 +335,35 @@ mod tests {
         assert_eq!(sub.anlas(), 1250);
         assert!(sub.is_opus());
         assert!(sub.extra.contains_key("unknownOpusField"));
+    }
+
+    #[test]
+    fn a_real_opus_response_decodes_every_named_field() {
+        // Captured from a live account, with the balances rounded off. Guards
+        // the field names the Opus usage bar reads.
+        let sub: Subscription = serde_json::from_str(
+            r#"{"tier":3,"active":true,"paymentProcessor":"chargebee","expiresAt":1789956770,
+                "perks":{"maxPriorityActions":1000,"contextTokens":8192},
+                "paymentProcessorData":null,
+                "trainingStepsLeft":{"fixedTrainingStepsLeft":4237,"purchasedTrainingSteps":2},
+                "accountType":0,"isGracePeriod":false,"isPaypal":false,
+                "usage":{"percent":69,"isNegative":false,"timeUntilNextPercent":7888}}"#,
+        )
+        .unwrap();
+        assert!(sub.is_opus());
+        assert_eq!(sub.anlas(), 4239);
+        assert_eq!(sub.expires_at, Some(1789956770));
+        let usage = sub.usage.expect("usage");
+        assert_eq!(usage.percent, 69);
+        assert!(!usage.is_negative);
+        assert_eq!(usage.time_until_next_percent, 7888);
+    }
+
+    #[test]
+    fn a_response_without_usage_still_decodes() {
+        // Free and lower tiers have no allowance bar at all.
+        let sub: Subscription = serde_json::from_str(r#"{"tier":0,"active":false}"#).unwrap();
+        assert!(sub.usage.is_none());
     }
 
     #[test]

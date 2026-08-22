@@ -9,8 +9,11 @@ use crate::error::AppError;
 
 use super::response::{self, StreamDecoder, StreamEvent, Subscription};
 
+// Every endpoint MooshieUI calls lives on the image host, the subscription
+// record included. api.novelai.net answers a subscription request with
+// 400 "Please refresh NovelAI.net. If using a third-party tool, update to
+// the image URL."
 const IMAGE_BASE: &str = "https://image.novelai.net";
-const API_BASE: &str = "https://api.novelai.net";
 
 pub struct NovelAiClient<'a> {
     http: &'a reqwest::Client,
@@ -106,7 +109,7 @@ impl<'a> NovelAiClient<'a> {
     pub async fn subscription(&self) -> Result<Subscription, AppError> {
         let res = self
             .http
-            .get(format!("{API_BASE}/user/subscription"))
+            .get(format!("{IMAGE_BASE}/user/subscription"))
             .bearer_auth(self.api_key)
             .send()
             .await?;
