@@ -262,3 +262,39 @@ shows up rather than being silently dropped.
 Confirmed since the first draft, and no longer guesses: the four V5 model ids
 and their inpainting variants, the subscription host, the `usage` field names
 and the direction of `percent`, and the streaming protocol.
+
+## 7. Manual test checklist
+
+Nothing in this backend is covered by an automated test that touches NovelAI's
+servers, so every phase that ships is followed by a hand-test pass recorded
+here, newest first. Each entry says plainly whether testing is needed at all.
+
+### 2026-08-23 - Phase E: the NovelAI panel (PR #618)
+
+**Testing required: yes.**
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Select a NovelAI model | A "NovelAI" section appears on the right; ControlNet and Style Transfer sections are gone |
+| 2 | Switch back to a local model | The NovelAI section disappears, ControlNet and Style Transfer are back |
+| 3 | In NovelAI mode, open the model/LoRA area | No LoRA list, no VAE picker |
+| 4 | Add a character, type a prompt, generate | The character prompt visibly affects the result |
+| 5 | Turn on "Place characters on a grid", pick a corner cell, generate | The character lands in roughly that part of the frame |
+| 6 | Add two characters with clearly different descriptions | They stay distinct rather than blending |
+| 7 | Add a Vibe Transfer image, then add a Precise Reference image | The vibe list empties and dims; only the reference survives |
+| 8 | Do the reverse (reference first, then vibe) | The reference list empties and dims |
+| 9 | Select V5 (or whichever model lacks them) | Both reference panels show the "not supported" note instead of controls |
+| 10 | Set undesired-content strength off 1.00 | The amber 30-percent warning appears |
+| 11 | Look at the generate button in NovelAI mode | An Anlas estimate badge is shown; it moves when you change size or steps |
+| 12 | With Opus, at 1024x1024 and 28 steps or fewer | The badge reflects the first sample being free |
+| 13 | Switch to img2img or inpainting in NovelAI mode | Strength and Noise appear in the NovelAI panel; the ComfyUI denoise slider is gone |
+| 14 | Switch to inpainting | "Keep the area outside the mask" appears; Differential Diffusion and the grow-mask slider are gone |
+| 15 | Turn on Local post-processing without picking a checkpoint | Amber "pick a checkpoint" warning |
+| 16 | Pick a checkpoint but leave Upscale and Face Fix off | Amber "nothing to do" warning |
+| 17 | Enable Face Fix, generate on NovelAI | The image comes back face-fixed, and no extra Anlas is spent |
+| 18 | Collapse the NovelAI section, restart the app | It is still collapsed |
+| 19 | Switch UI language | Every label in the NovelAI panel is translated |
+
+**Do not skip:** 1, 7, 11, 17. Those cover the section wiring, the exclusivity
+rule, the cost estimate and the free local pass.
+**Low-risk, skip if short on time:** 6, 18, 19.
