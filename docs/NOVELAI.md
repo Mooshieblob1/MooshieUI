@@ -334,14 +334,22 @@ here, newest first. Each entry says plainly whether testing is needed at all.
 | 7 | Switch the model from V4.5 Full to V4 Full | The badge disappears without touching the sliders |
 | 8 | Switch back to V4.5 Full | The badge returns, because that token was never thrown away |
 | 9 | Move only the Strength slider | The badge stays on, and the next generation charges no encode |
-| 10 | Add two vibes at high strengths, generate, then tick Normalize strengths and generate again | The second result differs; the strengths are scaled to sum to 1 |
+| 10 | Fix the seed, add two vibes at 1.0 and 1.0, generate, then tick Normalize strengths and generate again | The second result differs; the log line reads `normalize true` |
 | 11 | Restart with the checkbox ticked | It is still ticked |
 | 12 | Remove the last vibe | The Normalize strengths checkbox disappears |
 | 13 | Switch UI language | The Encoded badge and the Normalize strengths label and tooltip are translated |
 
+Normalising happens on NovelAI's side, so the Strength sliders keep their
+raw values and nothing moves in the UI. To see it at all the strengths have
+to not already sum to 1 (two vibes at 0.5 each, or one vibe at 1.0, make it a
+no-op) and the seed has to be fixed. `apply_vibes()` logs one line per
+vibe-carrying request giving the reference count, the strengths and the flag,
+which is the only direct confirmation the request carried it.
+
 **Do not skip:** 3, 4, 5, 7. Those are the persistence itself and the two ways
 a token goes stale, which is the only way the badge can lie.
 **Low-risk, skip if short on time:** 9, 12, 13.
+
 ### 2026-08-23 - V4 vibe transfer fix (PR #618)
 
 **Fixed:** vibe transfer sent the raw reference image, which is the V3 request
