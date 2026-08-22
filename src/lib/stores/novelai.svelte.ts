@@ -1,4 +1,10 @@
-import { getCachedConfig, getConfig, setNovelaiApiKey } from "../utils/api.js";
+import type { NovelAiSubscription } from "../types/index.js";
+import {
+  getCachedConfig,
+  getConfig,
+  novelaiSubscription,
+  setNovelaiApiKey,
+} from "../utils/api.js";
 
 /**
  * Whether a NovelAI API key is stored, kept reactive.
@@ -18,6 +24,34 @@ class NovelAiStore {
 
   /** True once the config has been consulted, so the UI can avoid a flash. */
   loaded = $state(false);
+
+  /**
+   * The account record behind the Anlas and Opus readouts.
+   *
+   * Null until it is fetched, and fetched only on demand: it is a live call to
+   * NovelAI, so it must not fire on every settings render.
+   */
+  subscription = $state<NovelAiSubscription | null>(null);
+  subscriptionLoading = $state(false);
+  subscriptionError = $state<string | null>(null);
+
+  /** Anlas is the monthly allowance plus any purchased balance. */
+  get anlas(): number {
+    const steps = this.subscription?.trainingStepsLeft;
+    if (!steps) return 0;
+    return steps.fixedTrainingStepsLeft + steps.purchasedTrainingSteps;
+  }
+
+  /** Opus is tier 3, and only while the subscription is active. */
+  get isOpus(): boolean {
+    const sub = this.subscription;
+    return !!sub && sub.active && sub.tier >= 3;
+  }
+
+  /** What the Opus usage bar draws, or null when there is no bar to draw. */
+  get opusAllowance() {
+    return this.subscription?.opusAllowance ?? null;
+  }
 
   /**
    * Seed from the config. Safe to call from several components; the underlying
@@ -55,6 +89,28 @@ class NovelAiStore {
   async setApiKey(key: string): Promise<void> {
     this.apiKeyConfigured = await setNovelaiApiKey(key);
     this.loaded = true;
+    // The old account record belongs to the old key, so it goes either way.
+    this.subscription = null;
+    this.subscriptionError = null;
+    if (this.apiKeyConfigured) await this.refreshSubscription();
+  }
+
+  /**
+   * Fetch the account record. Silently does nothing without a key, because the
+   * backend can only answer with an error and there is nothing to report.
+   */
+  async refreshSubscription(): Promise<void> {
+    if (!this.apiKeyConfigured || this.subscriptionLoading) return;
+    this.subscriptionLoading = true;
+    this.subscriptionError = null;
+    try {
+      this.subscription = await novelaiSubscription();
+    } catch (e) {
+      this.subscription = null;
+      this.subscriptionError = e instanceof Error ? e.message : String(e);
+    } finally {
+      this.subscriptionLoading = false;
+    }
   }
 }
 

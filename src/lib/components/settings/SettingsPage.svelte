@@ -1274,7 +1274,9 @@
       void refreshAttentionStatus();
     });
     // Drives the "key set" readout, and the NovelAI models in the dropdown.
-    void novelai.refresh();
+    // The account record follows only when a key exists, so opening Settings
+    // without one never calls NovelAI.
+    void novelai.refresh().then(() => novelai.refreshSubscription());
     // The in-app ComfyUI updater is desktop-only (hosted/browser ships ComfyUI
     // in the image), so only probe the installed version off-browser.
     if (!isBrowserMode) void refreshComfyuiVersion();
@@ -3848,6 +3850,67 @@
               {/if}
               <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.novelai.api_key_link')}</p>
             </div>
+
+            {#if novelai.apiKeyConfigured}
+              <div class="border-t border-neutral-800 pt-3 space-y-2">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-xs text-neutral-400">{locale.t('settings.novelai.account')}</span>
+                  <button
+                    class="px-2 py-1 rounded-lg text-[10px] bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-neutral-300 transition-colors"
+                    disabled={novelai.subscriptionLoading}
+                    onclick={() => { void novelai.refreshSubscription(); }}
+                  >
+                    {locale.t('settings.novelai.refresh_account')}
+                  </button>
+                </div>
+
+                {#if novelai.subscriptionError}
+                  <p class="text-[10px] text-red-400">{novelai.subscriptionError}</p>
+                {:else if novelai.subscriptionLoading && !novelai.subscription}
+                  <p class="text-[10px] text-neutral-500">{locale.t('settings.novelai.account_loading')}</p>
+                {:else if novelai.subscription}
+                  <div class="flex items-center justify-between gap-2 text-xs">
+                    <span class="text-neutral-400">{locale.t('settings.novelai.anlas')}</span>
+                    <span class="text-neutral-200 font-mono">{novelai.anlas.toLocaleString()}</span>
+                  </div>
+                  <p class="text-[10px] {novelai.isOpus ? 'text-emerald-400' : 'text-neutral-500'}">
+                    {novelai.isOpus
+                      ? locale.t('settings.novelai.opus_active')
+                      : locale.t('settings.novelai.opus_inactive')}
+                  </p>
+
+                  {#if novelai.opusAllowance}
+                    {@const allowance = novelai.opusAllowance}
+                    <div class="space-y-1 pt-1">
+                      <span class="text-[10px] text-neutral-400 block">{locale.t('settings.novelai.allowance_title')}</span>
+                      <div class="h-1.5 w-full rounded-full bg-neutral-800 overflow-hidden">
+                        <div
+                          class="h-full rounded-full transition-all {allowance.isLow ? 'bg-amber-500' : 'bg-teal-500'}"
+                          style="width: {allowance.percent}%"
+                        ></div>
+                      </div>
+                      <p class="text-[10px] {allowance.isLow ? 'text-amber-400' : 'text-neutral-400'}">
+                        {locale.t('settings.novelai.allowance_remaining', {
+                          percent: allowance.percent,
+                          images: allowance.approxImages.toLocaleString(),
+                        })}
+                      </p>
+                      {#if allowance.isEmpty}
+                        <p class="text-[10px] text-amber-400">{locale.t('settings.novelai.allowance_empty')}</p>
+                      {/if}
+                      {#if allowance.refillPercentPerDay > 0}
+                        <p class="text-[10px] text-neutral-500">
+                          {locale.t('settings.novelai.allowance_refill', {
+                            percent: allowance.refillPercentPerDay,
+                            images: allowance.refillImagesPerDay.toLocaleString(),
+                          })}
+                        </p>
+                      {/if}
+                    </div>
+                  {/if}
+                {/if}
+              </div>
+            {/if}
           </div>
           {/if}
         </section>

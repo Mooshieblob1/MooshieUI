@@ -15,7 +15,8 @@ built the way it is. It is the design rationale, not a task list.
 5. A free local upscale, so a paid image can be enlarged without spending
    Anlas. Anima at denoise 0.15 to 0.2 is the suggested refiner.
 6. FaceFix, also as a free local pass.
-7. Anlas remaining and Opus subscription status.
+7. Anlas remaining, Opus subscription status, and the Opus generation
+   allowance bar, in the Settings NovelAI section.
 8. The Anlas cost of the pending request, on the generate button.
 
 NovelAI's recommended sampling defaults are applied when a NovelAI model is
@@ -30,7 +31,7 @@ The client is Rust, not JavaScript. It lives in `src-tauri/src/novelai/`:
 | `models.rs` | The `MODELS` table: model ids, inpainting ids, per-model capability flags |
 | `params.rs` | `NovelAiParams` and its sub-structs (characters, vibes, director references, coordinates) |
 | `payload.rs` | Builds the request body NovelAI expects |
-| `response.rs` | ZIP image unpacking, SSE stream decoding, the subscription shape |
+| `response.rs` | ZIP image unpacking, msgpack stream decoding, the subscription shape |
 | `client.rs` | The three HTTP calls and their status-code mapping |
 | `mod.rs` | Orchestration: prompt ids, the event sink, `run()`, image delivery |
 
@@ -83,9 +84,9 @@ generation.
 
 Anlas is real money, so every failure mode degrades rather than discards:
 
-- `generate_stream` keeps the last preview it saw. If the stream dies before its
-  final frame, that preview is delivered instead of nothing.
-- Malformed SSE frames are skipped, not treated as fatal.
+- `generate_stream` keeps the last preview it saw per sample. If the stream dies
+  before its final frames, those previews are delivered instead of nothing.
+- Malformed stream frames are skipped, not treated as fatal.
 - `normalise_action()` degrades `infill` to `img2img` to `generate` when the
   required image or mask is missing, so a malformed request never burns Anlas on
   a guaranteed 400.
@@ -105,6 +106,48 @@ the same `director_reference_*` system.
 `vibe_transfer`, `character_negatives`, `inpainting_id`). V5's reference
 features are wired but set to `false`, because NovelAI has not shipped them.
 Turning them on later is a two-boolean change, not a code change.
+
+### 2.7 The generation stream is msgpack, not SSE
+
+`/ai/generate-image-stream` does not speak server-sent events. The request opts
+in with `parameters.stream = "msgpack"`, and the response is a sequence of
+frames, each a big-endian `u32` byte count followed by that many bytes of
+msgpack:
+
+| Key | Meaning |
+|-----|---------|
+| `event_type` | `intermediate`, `final` or `error` |
+| `image` | the image bytes, as a msgpack binary |
+| `samp_ix` | which sample of the batch this frame belongs to |
+| `step_ix` | the zero-based step, on intermediate frames |
+| `message` | the error text, on error frames |
+
+`stream` is injected in `client.rs` on a copy of the body rather than in
+`payload.rs`, because the non-streaming `/ai/generate-image` endpoint must not
+receive it. `StreamDecoder` buffers until a whole frame is present, since chunk
+boundaries have nothing to do with frame boundaries, and refuses a length
+prefix beyond 64 MiB so a corrupt one fails loudly instead of waiting forever
+for bytes that are never coming.
+
+Finals are collected into a map keyed by `samp_ix`, because NovelAI interleaves
+the samples of a batch and the images have to come back in order.
+
+### 2.8 The Opus allowance is derived in Rust
+
+`/user/subscription` returns `usage: { percent, isNegative, timeUntilNextPercent }`
+for Opus accounts. `percent` is the allowance **remaining**: NovelAI's own web
+app labels the same field "% of Opus Generations remaining".
+
+`Usage::allowance()` reduces those three numbers to the `OpusAllowance` the bar
+draws, mirroring the website's arithmetic so the two readouts agree:
+
+- displayed percent is `isNegative ? 0 : percent` clamped to 0 through 100
+- "low" is `isNegative || percent < 5`
+- refill rate is `86400 / timeUntilNextPercent`, rounded to one decimal
+- the image estimate is `17.3` images per percent, which is the site's own ratio
+
+Doing this in Rust rather than the component keeps it under test, since the
+frontend has no test framework.
 
 ## 3. The free local post-process
 
@@ -173,20 +216,20 @@ key:
 These are inferences, not confirmed facts. They are listed so the next person
 does not mistake them for verified behaviour.
 
-1. **The Opus V5 allowance bar is not drawn yet, but its data is decoded.** A
-   live Opus response carries `usage: { percent, isNegative,
-   timeUntilNextPercent }`, now typed as `response::Usage`. What is still
-   unconfirmed is which way `percent` runs: one sample cannot say whether it
-   counts the allowance spent or the allowance left. Confirm against the
-   website before labelling the bar. `Subscription.extra` still captures any
-   other unmapped key, and `fetch_subscription` logs them at debug level.
-2. **V5 model ids** (`nai-diffusion-5-full`, `nai-diffusion-5-curated`) follow
-   V4.5's naming convention and have not been confirmed against a live API.
-3. **V5 inpainting checkpoint ids** are the same inference.
-4. **The Anlas cost badge has no pricing formula yet.** Cost depends on
+1. **The Anlas cost badge has no pricing formula yet.** Cost depends on
    resolution, steps, sample count and Opus status, and belongs in its own pure
-   module with tests.
-5. **`n_samples` is clamped to 1 through 8** in `payload.rs`. NovelAI's real cap
+   module with tests. NovelAI publishes no formula and its web bundle carries no
+   cost function to read one from.
+2. **`n_samples` is clamped to 1 through 8** in `payload.rs`. NovelAI's real cap
    is unconfirmed.
-6. **The streaming event names** (`newImage`, `final`) are inferred. The decoder
-   treats `event: final`, or `newImage` with no `step_ix`, as terminal.
+3. **The image estimate on the Opus bar is NovelAI's own approximation.** The
+   allowance is a percentage, not an image count; `17.3` images per percent is
+   the ratio the website applies, and it is presented as approximate there too.
+
+`Subscription.extra` captures any key the backend does not name, and
+`fetch_subscription` logs them at debug level, so a field NovelAI adds later
+shows up rather than being silently dropped.
+
+Confirmed since the first draft, and no longer guesses: the four V5 model ids
+and their inpainting variants, the subscription host, the `usage` field names
+and the direction of `percent`, and the streaming protocol.

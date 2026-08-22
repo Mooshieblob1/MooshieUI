@@ -3,6 +3,8 @@
 //! The client borrows the shared `reqwest::Client` from `AppState` rather than
 //! building its own, and never logs the bearer token.
 
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 
 use crate::error::AppError;
@@ -57,27 +59,38 @@ impl<'a> NovelAiClient<'a> {
     where
         F: FnMut(StreamEvent),
     {
+        // `stream` is set here rather than in `payload::build_request` on
+        // purpose: the batch endpoint must not receive it.
+        let mut streaming_body = body.clone();
+        if let Some(parameters) = streaming_body
+            .get_mut("parameters")
+            .and_then(Value::as_object_mut)
+        {
+            parameters.insert("stream".into(), Value::String("msgpack".into()));
+        }
+
         let res = self
             .http
             .post(format!("{IMAGE_BASE}/ai/generate-image-stream"))
             .bearer_auth(self.api_key)
-            .header("Accept", "text/event-stream")
-            .json(body)
+            .json(&streaming_body)
             .send()
             .await?;
 
         let mut res = check_status(res).await?;
         let mut decoder = StreamDecoder::new();
-        let mut finals: Vec<Vec<u8>> = Vec::new();
-        let mut last_preview: Option<Vec<u8>> = None;
+        // Keyed by sample index so an interleaved batch comes back in order.
+        let mut finals: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+        let mut previews: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
 
         while let Some(chunk) = res.chunk().await? {
-            let text = String::from_utf8_lossy(&chunk).to_string();
-            for event in decoder.push(&text) {
+            for event in decoder.push(&chunk) {
                 match &event {
-                    StreamEvent::Final { image } => finals.push(image.clone()),
-                    StreamEvent::Intermediate { image, .. } => {
-                        last_preview = Some(image.clone());
+                    StreamEvent::Final { image, sample } => {
+                        finals.insert(*sample, image.clone());
+                    }
+                    StreamEvent::Intermediate { image, sample, .. } => {
+                        previews.insert(*sample, image.clone());
                     }
                     StreamEvent::Error { message } => {
                         return Err(AppError::ApiError {
@@ -90,19 +103,17 @@ impl<'a> NovelAiClient<'a> {
             }
         }
 
-        // A stream that ends after previews but before its final frame still
-        // billed the user, so the last preview is delivered rather than lost.
-        if finals.is_empty() {
-            match last_preview {
-                Some(image) => finals.push(image),
-                None => {
-                    return Err(AppError::Other(
-                        "NovelAI closed the stream without returning an image".into(),
-                    ))
-                }
-            }
+        // A stream that ends after previews but before its final frames still
+        // billed the user, so those previews are delivered rather than lost.
+        for (sample, image) in previews {
+            finals.entry(sample).or_insert(image);
         }
-        Ok(finals)
+        if finals.is_empty() {
+            return Err(AppError::Other(
+                "NovelAI closed the stream without returning an image".into(),
+            ));
+        }
+        Ok(finals.into_values().collect())
     }
 
     /// Fetch the subscription record backing the Anlas and Opus readouts.

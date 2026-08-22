@@ -184,6 +184,23 @@ export interface NovelAiParams {
 }
 
 /** NovelAI's `/user/subscription` response, as the backend re-serialises it. */
+/**
+ * The Opus generation allowance, already reduced to what the bar draws.
+ *
+ * Every value here is derived in Rust so the UI has no NovelAI arithmetic in
+ * it. Present only for an active Opus subscription; lower tiers get null.
+ */
+export interface NovelAiOpusAllowance {
+  /** Allowance remaining, 0 through 100. */
+  percent: number;
+  approxImages: number;
+  isEmpty: boolean;
+  isLow: boolean;
+  refillPercentPerDay: number;
+  refillImagesPerDay: number;
+  secondsUntilNextPercent: number;
+}
+
 export interface NovelAiSubscription {
   tier: number;
   active: boolean;
@@ -193,6 +210,12 @@ export interface NovelAiSubscription {
     purchasedTrainingSteps: number;
   } | null;
   perks?: unknown;
+  usage?: {
+    percent: number;
+    isNegative: boolean;
+    timeUntilNextPercent: number;
+  } | null;
+  opusAllowance?: NovelAiOpusAllowance | null;
   /** Everything NovelAI returned that the backend does not name yet. */
   [key: string]: unknown;
 }

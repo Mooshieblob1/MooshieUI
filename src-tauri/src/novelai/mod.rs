@@ -210,7 +210,7 @@ async fn run_inner(
                 return;
             }
             match event {
-                StreamEvent::Intermediate { image, step } => {
+                StreamEvent::Intermediate { image, step, .. } => {
                     if let Some(temp) = crate::temp_images::save(&image, "png") {
                         sink.emit(
                             "comfyui:preview",
@@ -369,11 +369,11 @@ pub async fn fetch_subscription(state: &Arc<AppState>) -> Result<Subscription, A
         config.novelai_api_key.clone().unwrap_or_default()
     };
     let client = NovelAiClient::new(&state.http_client, &api_key)?;
-    let sub = client.subscription().await?;
+    let mut sub = client.subscription().await?;
+    sub.derive_opus_allowance();
 
-    // NovelAI documents the Opus V5 allowance in prose but publishes no field
-    // names for it. Log unrecognised keys once so the real names can be wired
-    // up from an observed response rather than guessed at.
+    // Log unrecognised keys so a field NovelAI adds later can be wired up from
+    // an observed response rather than guessed at.
     if !sub.extra.is_empty() {
         log::debug!(
             "NovelAI subscription carried unmapped fields: {:?}",
