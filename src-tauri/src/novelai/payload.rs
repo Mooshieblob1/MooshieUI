@@ -159,7 +159,7 @@ fn apply_vibes(parameters: &mut Map<String, Value>, nai: &NovelAiParams, model: 
         return;
     }
     let mut refs = Vec::new();
-    let mut strengths = Vec::new();
+    let mut strengths: Vec<f64> = Vec::new();
     for vibe in &nai.vibes {
         // Every vibe-capable model in the table is V4 or later, and those take
         // an encoded `.naiv4vibe` token here, never a raw image. `mod.rs` runs
@@ -170,19 +170,45 @@ fn apply_vibes(parameters: &mut Map<String, Value>, nai: &NovelAiParams, model: 
             continue;
         };
         refs.push(json!(encoding));
-        strengths.push(json!(vibe.strength));
+        strengths.push(vibe.strength);
     }
     if refs.is_empty() {
         return;
     }
+    if nai.normalize_reference_strength {
+        normalize_strengths(&mut strengths);
+    }
     parameters.insert("reference_image_multiple".into(), json!(refs));
     parameters.insert("reference_strength_multiple".into(), json!(strengths));
     // `information_extracted` is baked into the token at encode time, so V4
-    // takes this flag in place of the per-image list V3 used.
+    // takes this flag in place of the per-image list V3 used. NovelAI's team
+    // confirmed the backend ignores this key entirely, but their own client
+    // sends it, so it is kept for request parity rather than for effect.
     parameters.insert(
         "normalize_reference_strength_multiple".into(),
         json!(nai.normalize_reference_strength),
     );
+}
+
+/// Scale the strengths so they sum to 1.
+///
+/// This is client-side work. `normalize_reference_strength_multiple` reaches
+/// NovelAI untouched but the backend does nothing with it (confirmed by their
+/// team); the official client divides the strengths itself before sending and
+/// keeps the checkbox as local state. Doing it anywhere later would be wrong,
+/// because the sliders are meant to keep showing the raw values the user set.
+///
+/// A sum of zero is left alone rather than divided by, and so is a set that
+/// already sums to 1, which keeps two vibes at 0.5 a genuine no-op instead of
+/// a round-trip through floating point.
+fn normalize_strengths(strengths: &mut [f64]) {
+    let total: f64 = strengths.iter().sum();
+    if total <= 0.0 || (total - 1.0).abs() < f64::EPSILON {
+        return;
+    }
+    for s in strengths.iter_mut() {
+        *s /= total;
+    }
 }
 
 fn apply_director_references(
@@ -425,6 +451,95 @@ mod tests {
         let p = &body["parameters"];
         assert_eq!(p["normalize_reference_strength_multiple"], true);
         assert!(p.get("reference_information_extracted_multiple").is_none());
+    }
+
+    #[test]
+    fn normalize_scales_the_strengths_client_side() {
+        // NovelAI's backend ignores the flag; the official client divides the
+        // strengths itself. Two vibes at 1.0 have to leave here as 0.5 each.
+        let mut n = nai();
+        n.normalize_reference_strength = true;
+        n.vibes = vec![
+            NovelAiVibe {
+                encoding: Some("a".into()),
+                strength: 1.0,
+                ..Default::default()
+            },
+            NovelAiVibe {
+                encoding: Some("b".into()),
+                strength: 1.0,
+                ..Default::default()
+            },
+        ];
+        let body = build(&input(), &n, v45()).unwrap();
+        assert_eq!(
+            body["parameters"]["reference_strength_multiple"],
+            json!([0.5, 0.5])
+        );
+    }
+
+    #[test]
+    fn normalize_off_leaves_the_strengths_alone() {
+        let mut n = nai();
+        n.normalize_reference_strength = false;
+        n.vibes = vec![
+            NovelAiVibe {
+                encoding: Some("a".into()),
+                strength: 1.0,
+                ..Default::default()
+            },
+            NovelAiVibe {
+                encoding: Some("b".into()),
+                strength: 1.0,
+                ..Default::default()
+            },
+        ];
+        let body = build(&input(), &n, v45()).unwrap();
+        assert_eq!(
+            body["parameters"]["reference_strength_multiple"],
+            json!([1.0, 1.0])
+        );
+    }
+
+    #[test]
+    fn normalize_is_a_no_op_when_the_strengths_already_sum_to_one() {
+        let mut n = nai();
+        n.normalize_reference_strength = true;
+        n.vibes = vec![
+            NovelAiVibe {
+                encoding: Some("a".into()),
+                strength: 0.5,
+                ..Default::default()
+            },
+            NovelAiVibe {
+                encoding: Some("b".into()),
+                strength: 0.5,
+                ..Default::default()
+            },
+        ];
+        let body = build(&input(), &n, v45()).unwrap();
+        assert_eq!(
+            body["parameters"]["reference_strength_multiple"],
+            json!([0.5, 0.5])
+        );
+    }
+
+    #[test]
+    fn normalize_survives_an_all_zero_set() {
+        // Dividing by the sum would produce NaN, which serialises to null and
+        // would make NovelAI reject the whole request.
+        let mut n = nai();
+        n.normalize_reference_strength = true;
+        n.vibes = vec![NovelAiVibe {
+            encoding: Some("a".into()),
+            strength: 0.0,
+            ..Default::default()
+        }];
+        let body = build(&input(), &n, v45()).unwrap();
+        assert_eq!(
+            body["parameters"]["reference_strength_multiple"],
+            json!([0.0])
+        );
     }
 
     #[test]

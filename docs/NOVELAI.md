@@ -209,6 +209,18 @@ The V4 key set also differs: `reference_information_extracted_multiple` is
 gone (the value is baked into the token at encode time) and
 `normalize_reference_strength_multiple` takes its place.
 
+That last key is a decoy. NovelAI's team confirmed it is frontend logic and
+that the backend does nothing with the flag at all, which matches the
+measurement that first raised the question: a seed-1 pair on
+`nai-diffusion-4-5-full` with two vibes at 1.0 each came back pixel-identical
+with the flag true and false. So `normalize_strengths()` in `payload.rs` does
+the division here instead, dividing each strength by their sum just before the
+request goes out. A sum of zero is left alone rather than divided by, and a
+set that already sums to 1 is skipped so two vibes at 0.5 stay a genuine
+no-op. The flag itself is still sent, because NovelAI's own client sends it
+and request parity is worth more than the byte. The sliders keep showing the
+raw values the user set, which is also what the official client does.
+
 ## 3. The free local post-process
 
 NovelAI has already been paid for the pixels it returns, so upscaling and face
@@ -290,16 +302,6 @@ does not mistake them for verified behaviour.
    carry the remaining allowance are still unconfirmed, and a bar fed by a
    guessed field would read wrong rather than read empty. Anlas remaining and
    Opus status are shown instead.
-5. **NovelAI appears to ignore `normalize_reference_strength_multiple`.** The
-   flag is built into the request and logged on the way out, but a controlled
-   pair on `nai-diffusion-4-5-full` at seed 1, two vibes at strength 1.0 each,
-   one request with the flag true and one with it false, came back
-   pixel-identical: the decoded RGB buffers share a SHA-256. Changing the
-   strengths on the same seed does change the image, so neither the seed nor
-   the local pipeline is the reason. Either the server drops the key, or it
-   normalises unconditionally, or the key is named something else on V4. The
-   checkbox stays, because the request we send is the correct one and it costs
-   nothing, but nothing observable happens today.
 
 `Subscription.extra` captures any key the backend does not name, and
 `fetch_subscription` logs them at debug level, so a field NovelAI adds later
@@ -307,13 +309,38 @@ shows up rather than being silently dropped.
 
 Confirmed since the first draft, and no longer guesses: the four V5 model ids
 and their inpainting variants, the subscription host, the `usage` field names
-and the direction of `percent`, and the streaming protocol.
+and the direction of `percent`, the streaming protocol, and that
+`normalize_reference_strength_multiple` is inert server side (see section
+2.10).
 
 ## 7. Manual test checklist
 
 Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
+
+### 2026-08-23 - Normalize strengths moves client side (PR #618)
+
+**Fixed:** Normalize strengths did nothing. The checkbox drove
+`normalize_reference_strength_multiple`, which NovelAI's team confirmed is
+frontend logic that the backend ignores. `normalize_strengths()` in
+`payload.rs` now scales the strengths here, just before the request is built.
+The flag is still sent for parity with NovelAI's own client. See section 2.10.
+
+**Testing required: yes.** Small, but this is the third attempt at this
+checkbox and the first two looked fine from the outside.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Fix the seed, add two vibes at Strength 1.0 each, generate, tick Normalize strengths, generate again | The two images differ. The log reads `strengths [1.0,1.0]` then `strengths [0.5,0.5]` |
+| 2 | Untick it and generate a third time | The image matches the first one exactly |
+| 3 | With the box ticked, set both vibes to 0.5 and generate, then set them to 1.0 and generate | Both give the same image, because both normalise to 0.5 and 0.5 |
+| 4 | With the box ticked, drag a Strength slider | The slider still shows the raw value; only the log line shows the scaled one |
+| 5 | One vibe at 0.6, box ticked, generate | The log reads `strengths [1.0]` |
+| 6 | Both vibes at 0.0, box ticked, generate | No crash and no `null` in the request; the log reads `strengths [0.0,0.0]` |
+
+**Do not skip:** 1 and 2. That pair is the whole fix, and step 2 is what
+proves the change is the normalisation rather than drift.
 
 ### 2026-08-23 - Vibe tokens persist, normalize strengths (PR #618)
 
@@ -344,7 +371,7 @@ here, newest first. Each entry says plainly whether testing is needed at all.
 | 7 | Switch the model from V4.5 Full to V4 Full | The badge disappears without touching the sliders |
 | 8 | Switch back to V4.5 Full | The badge returns, because that token was never thrown away |
 | 9 | Move only the Strength slider | The badge stays on, and the next generation charges no encode |
-| 10 | Fix the seed, add two vibes at 1.0 and 1.0, generate, then tick Normalize strengths and generate again | The log reads `normalize true` on one and `normalize false` on the other. The two images are expected to match, see known unknown 5 |
+| 10 | Fix the seed, add two vibes at 1.0 and 1.0, generate, then tick Normalize strengths and generate again | Superseded: see the entry above. As shipped here the two images matched, because the flag was inert |
 | 11 | Restart with the checkbox ticked | It is still ticked |
 | 12 | Remove the last vibe | The Normalize strengths checkbox disappears |
 | 13 | Switch UI language | The Encoded badge and the Normalize strengths label and tooltip are translated |
@@ -358,20 +385,19 @@ params on purpose: the pre-flight validation build in `commands::novelai`
 would otherwise double every line, and the tokens themselves are never
 logged.
 
-Step 10 cannot pass as written. The flag reaches NovelAI intact and NovelAI
-does nothing with it; see known unknown 5. Note also that with two vibes the
-obvious A/B is a trap, because normalising 0.5 and 0.5 is a no-op and
-normalising 0.1 and 0.1 lands on exactly the 0.5 and 0.5 case, so a working
-flag and a dropped flag both predict identical images. Only strengths that do
-not sum to 1 and do not halve into another tested pair, such as 1.0 and 1.0,
-can tell the two apart.
+Step 10 could not pass as written, which is what the next entry fixes. Note
+also that with two vibes the obvious A/B is a trap, because normalising 0.5
+and 0.5 is a no-op and normalising 0.1 and 0.1 lands on exactly the 0.5 and
+0.5 case, so a working normalisation and a dropped one both predict identical
+images. Only strengths that do not sum to 1 and do not halve into another
+tested pair, such as 1.0 and 1.0, can tell the two apart.
 
 **Do not skip:** 3, 4, 5, 7. Those are the persistence itself and the two ways
 a token goes stale, which is the only way the badge can lie.
 **Low-risk, skip if short on time:** 9, 12, 13.
 
-**Result, 2026-08-23:** 1 to 9 and 11 to 13 pass. Step 10 is a null result and
-is recorded as known unknown 5 rather than as a defect in this branch.
+**Result, 2026-08-23:** 1 to 9 and 11 to 13 pass. Step 10 was a null result,
+traced to NovelAI ignoring the flag and fixed in the entry above.
 
 ### 2026-08-23 - V4 vibe transfer fix (PR #618)
 
