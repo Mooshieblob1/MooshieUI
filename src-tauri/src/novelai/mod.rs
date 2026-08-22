@@ -195,6 +195,36 @@ async fn encode_pending_vibes(
     Ok(Some(encoded))
 }
 
+/// One line per vibe-carrying request, read back off the body that is
+/// actually sent.
+///
+/// Normalising happens on NovelAI side, so nothing about it is observable
+/// locally and this is the only confirmation that the flag left the machine.
+/// Reading the built body rather than the params also keeps the pre-flight
+/// validation build in `commands::novelai` from doubling every line. The
+/// tokens themselves are never logged.
+fn log_vibe_summary(body: &serde_json::Value) {
+    let Some(parameters) = body.get("parameters") else {
+        return;
+    };
+    let Some(refs) = parameters
+        .get("reference_image_multiple")
+        .and_then(|v| v.as_array())
+    else {
+        return;
+    };
+    let null = serde_json::Value::Null;
+    log::info!(
+        "NovelAI vibe transfer: {} reference(s), strengths {}, normalize {}",
+        refs.len(),
+        parameters
+            .get("reference_strength_multiple")
+            .unwrap_or(&null),
+        parameters
+            .get("normalize_reference_strength_multiple")
+            .unwrap_or(&null)
+    );
+}
 /// Hand the freshly minted tokens back to the client that asked for them.
 ///
 /// The client stores them next to the image it sent, so the same vibe costs
@@ -369,6 +399,7 @@ async fn run_inner(
         emit_vibe_encodings(sink, prompt_id, encoded);
     }
     let body = build_request(encoded.as_ref().unwrap_or(params))?;
+    log_vibe_summary(&body);
     let steps = params.steps.max(1);
 
     sink.emit(

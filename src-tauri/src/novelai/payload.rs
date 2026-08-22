@@ -183,15 +183,6 @@ fn apply_vibes(parameters: &mut Map<String, Value>, nai: &NovelAiParams, model: 
         "normalize_reference_strength_multiple".into(),
         json!(nai.normalize_reference_strength),
     );
-    // One line per vibe-carrying request. Normalising happens on NovelAI
-    // side, so this is the only place the setting is observable from here.
-    // The tokens themselves are never logged.
-    log::info!(
-        "NovelAI vibe transfer: {} reference(s), strengths {:?}, normalize {}",
-        refs.len(),
-        strengths,
-        nai.normalize_reference_strength
-    );
 }
 
 fn apply_director_references(
