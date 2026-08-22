@@ -132,6 +132,10 @@ pub struct NovelAiParams {
     pub add_original_image: bool,
     #[serde(default)]
     pub vibes: Vec<NovelAiVibe>,
+    /// Scale the vibe strengths down so they sum to 1. NovelAI's own
+    /// client offers this as a checkbox next to the strength sliders.
+    #[serde(default)]
+    pub normalize_reference_strength: bool,
     #[serde(default)]
     pub director_references: Vec<NovelAiDirectorReference>,
     /// Run the local ComfyUI upscale/facefix chain on the returned image.

@@ -13,10 +13,13 @@ pub mod payload;
 pub mod prompt_syntax;
 pub mod response;
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter};
+
+use sha2::{Digest, Sha256};
 
 use crate::comfyui::types::GenerationParams;
 use crate::error::AppError;
@@ -80,6 +83,110 @@ impl EventSink {
     }
 }
 
+/// Pick the model a request runs against.
+///
+/// The checkpoint field is the backend switch, but a client may also name
+/// the model in the NovelAI block. The checkpoint wins.
+fn resolve_model_id(params: &GenerationParams, nai: &params::NovelAiParams) -> String {
+    if models::is_novelai_model(&params.checkpoint) {
+        params.checkpoint.clone()
+    } else {
+        nai.model.clone()
+    }
+}
+
+/// Vibe encodings already paid for during this run of the app.
+///
+/// `/ai/encode-vibe` bills 2 Anlas every time it is handed an image it has
+/// not seen, so re-running the same generation must not pay again. The key
+/// covers everything the token depends on: the image, how much of it NovelAI
+/// is asked to extract, and the model the token is minted for.
+static VIBE_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+/// Encodings are a few kilobytes each; this bounds the cache without
+/// bothering with eviction order, since a cold key only costs one encode.
+const VIBE_CACHE_LIMIT: usize = 64;
+
+fn vibe_cache_key(image: &str, information_extracted: f64, model_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(image.as_bytes());
+    format!(
+        "{model_id}:{information_extracted:.4}:{:x}",
+        hasher.finalize()
+    )
+}
+
+/// Turn every reference image that has no `.naiv4vibe` token yet into one.
+///
+/// V4 and later do not accept a raw image in `reference_image_multiple`:
+/// that is the V3 shape, and sending it earns a bare 500 with no hint of
+/// what went wrong. The image has to go through `/ai/encode-vibe` first, so
+/// this pass runs before the payload is built.
+///
+/// Returns `None` when there was nothing to encode, so the caller can keep
+/// using the params it already has instead of a clone.
+async fn encode_pending_vibes(
+    client: &NovelAiClient<'_>,
+    params: &GenerationParams,
+) -> Result<Option<GenerationParams>, AppError> {
+    let Some(nai) = params.novelai.as_ref() else {
+        return Ok(None);
+    };
+    let model_id = resolve_model_id(params, nai);
+    // An unknown model is `build_request`'s error to report, with a better
+    // message than anything this pass could give.
+    if !models::find(&model_id).is_some_and(|model| model.vibe_transfer) {
+        return Ok(None);
+    }
+    let pending: Vec<usize> = nai
+        .vibes
+        .iter()
+        .enumerate()
+        .filter(|(_, vibe)| {
+            vibe.encoding.as_deref().unwrap_or_default().is_empty()
+                && !vibe.image.as_deref().unwrap_or_default().is_empty()
+        })
+        .map(|(index, _)| index)
+        .collect();
+    if pending.is_empty() {
+        return Ok(None);
+    }
+
+    let mut encoded = params.clone();
+    let nai = encoded
+        .novelai
+        .as_mut()
+        .expect("novelai block present, checked above");
+    for index in pending {
+        let image = nai.vibes[index].image.clone().unwrap_or_default();
+        let extracted = nai.vibes[index].information_extracted;
+        let key = vibe_cache_key(&image, extracted, &model_id);
+        if let Some(hit) = vibe_cache_get(&key) {
+            nai.vibes[index].encoding = Some(hit);
+            continue;
+        }
+        let encoding = client.encode_vibe(&image, &model_id, extracted).await?;
+        vibe_cache_put(key, encoding.clone());
+        nai.vibes[index].encoding = Some(encoding);
+    }
+    Ok(Some(encoded))
+}
+
+fn vibe_cache_get(key: &str) -> Option<String> {
+    let cache = VIBE_CACHE.get_or_init(Default::default).lock().ok()?;
+    cache.get(key).cloned()
+}
+
+fn vibe_cache_put(key: String, encoding: String) {
+    let Ok(mut cache) = VIBE_CACHE.get_or_init(Default::default).lock() else {
+        return;
+    };
+    if cache.len() >= VIBE_CACHE_LIMIT {
+        cache.clear();
+    }
+    cache.insert(key, encoding);
+}
+
 /// Build the NovelAI request body for a generation.
 ///
 /// Separated from [`run`] so a caller can inspect or price the payload without
@@ -90,14 +197,8 @@ pub fn build_request(params: &GenerationParams) -> Result<serde_json::Value, App
         .as_ref()
         .ok_or_else(|| AppError::Other("NovelAI parameters missing from the request".into()))?;
 
-    // The checkpoint field is the backend switch, but a client may also name
-    // the model in the NovelAI block. The checkpoint wins.
-    let model_id = if models::is_novelai_model(&params.checkpoint) {
-        params.checkpoint.as_str()
-    } else {
-        nai.model.as_str()
-    };
-    let model = models::find(model_id)
+    let model_id = resolve_model_id(params, nai);
+    let model = models::find(&model_id)
         .ok_or_else(|| AppError::Other(format!("Unknown NovelAI model: {model_id}")))?;
 
     // Weight syntax is rewritten here rather than in `payload.rs` so that
@@ -200,14 +301,17 @@ async fn run_inner(
     prompt_id: &str,
     params: &GenerationParams,
 ) -> Result<RunOutcome, AppError> {
-    let body = build_request(params)?;
-    let steps = params.steps.max(1);
-
     let api_key = {
         let config = state.config.read().await;
         config.novelai_api_key.clone().unwrap_or_default()
     };
     let client = NovelAiClient::new(&state.http_client, &api_key)?;
+
+    // The client has to exist before the payload does: vibe references are
+    // encoded over the network, and V4 will not take the raw images.
+    let encoded = encode_pending_vibes(&client, params).await?;
+    let body = build_request(encoded.as_ref().unwrap_or(params))?;
+    let steps = params.steps.max(1);
 
     sink.emit(
         "comfyui:progress",

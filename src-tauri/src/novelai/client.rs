@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 
+use base64::Engine as _;
 use serde_json::Value;
 
 use crate::error::AppError;
@@ -114,6 +115,44 @@ impl<'a> NovelAiClient<'a> {
             ));
         }
         Ok(finals.into_values().collect())
+    }
+
+    /// Encode a reference image into a vibe token.
+    ///
+    /// V4 and later do not accept a raw reference image in
+    /// `reference_image_multiple`: that is the V3 shape, and sending it earns a
+    /// bare 500. The image has to be turned into a `.naiv4vibe` payload here
+    /// first, which NovelAI bills at 2 Anlas per new image and per
+    /// `information_extracted` value.
+    ///
+    /// The endpoint answers with raw bytes; the generate payload wants them
+    /// base64-encoded.
+    pub async fn encode_vibe(
+        &self,
+        image: &str,
+        model_id: &str,
+        information_extracted: f64,
+    ) -> Result<String, AppError> {
+        let res = self
+            .http
+            .post(format!("{IMAGE_BASE}/ai/encode-vibe"))
+            .bearer_auth(self.api_key)
+            .json(&serde_json::json!({
+                "image": image,
+                "model": model_id,
+                "information_extracted": information_extracted,
+            }))
+            .send()
+            .await?;
+
+        let res = check_status(res).await?;
+        let bytes = res.bytes().await?;
+        if bytes.is_empty() {
+            return Err(AppError::Other(
+                "NovelAI returned an empty vibe encoding".into(),
+            ));
+        }
+        Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
     }
 
     /// Fetch the subscription record backing the Anlas and Opus readouts.

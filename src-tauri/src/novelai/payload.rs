@@ -159,30 +159,30 @@ fn apply_vibes(parameters: &mut Map<String, Value>, nai: &NovelAiParams, model: 
         return;
     }
     let mut refs = Vec::new();
-    let mut extracted = Vec::new();
     let mut strengths = Vec::new();
     for vibe in &nai.vibes {
-        // A cached encoding costs nothing; a raw image is encoded (and billed)
-        // by NovelAI on arrival.
-        let payload = vibe
-            .encoding
-            .as_ref()
-            .filter(|s| !s.is_empty())
-            .or(vibe.image.as_ref().filter(|s| !s.is_empty()));
-        let Some(payload) = payload else { continue };
-        refs.push(json!(payload));
-        extracted.push(json!(vibe.information_extracted));
+        // Every vibe-capable model in the table is V4 or later, and those take
+        // an encoded `.naiv4vibe` token here, never a raw image. `mod.rs` runs
+        // the encode pass before this, so a vibe with no encoding is one that
+        // failed to encode and is dropped rather than sent as a raw image,
+        // which NovelAI answers with an opaque 500.
+        let Some(encoding) = vibe.encoding.as_ref().filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        refs.push(json!(encoding));
         strengths.push(json!(vibe.strength));
     }
     if refs.is_empty() {
         return;
     }
     parameters.insert("reference_image_multiple".into(), json!(refs));
-    parameters.insert(
-        "reference_information_extracted_multiple".into(),
-        json!(extracted),
-    );
     parameters.insert("reference_strength_multiple".into(), json!(strengths));
+    // `information_extracted` is baked into the token at encode time, so V4
+    // takes this flag in place of the per-image list V3 used.
+    parameters.insert(
+        "normalize_reference_strength_multiple".into(),
+        json!(nai.normalize_reference_strength),
+    );
 }
 
 fn apply_director_references(
@@ -196,8 +196,8 @@ fn apply_director_references(
     // NovelAI rejects a request carrying both systems, so the UI makes them
     // mutually exclusive and the payload enforces the same precedence.
     parameters.remove("reference_image_multiple");
-    parameters.remove("reference_information_extracted_multiple");
     parameters.remove("reference_strength_multiple");
+    parameters.remove("normalize_reference_strength_multiple");
 
     let active: Vec<_> = nai
         .director_references
@@ -385,6 +385,46 @@ mod tests {
         let body = build(&input(), &n, v45()).unwrap();
         assert_eq!(body["parameters"]["reference_image_multiple"][0], "cached");
         assert_eq!(body["parameters"]["reference_strength_multiple"][0], 0.6);
+    }
+
+    #[test]
+    fn an_unencoded_vibe_is_dropped_rather_than_sent_raw() {
+        // V4 answers a raw reference image with an opaque 500, so a vibe
+        // whose encode pass did not run must not reach the wire at all.
+        let mut n = nai();
+        n.vibes = vec![
+            NovelAiVibe {
+                image: Some("rawpng".into()),
+                strength: 0.5,
+                ..Default::default()
+            },
+            NovelAiVibe {
+                encoding: Some("token".into()),
+                strength: 0.7,
+                ..Default::default()
+            },
+        ];
+        let body = build(&input(), &n, v45()).unwrap();
+        let p = &body["parameters"];
+        assert_eq!(p["reference_image_multiple"].as_array().unwrap().len(), 1);
+        assert_eq!(p["reference_image_multiple"][0], "token");
+        assert_eq!(p["reference_strength_multiple"][0], 0.7);
+    }
+
+    #[test]
+    fn vibes_use_the_v4_key_set() {
+        // `information_extracted` is baked into the token at encode time, so
+        // V4 has no per-image list for it and takes a normalise flag instead.
+        let mut n = nai();
+        n.normalize_reference_strength = true;
+        n.vibes = vec![NovelAiVibe {
+            encoding: Some("token".into()),
+            ..Default::default()
+        }];
+        let body = build(&input(), &n, v45()).unwrap();
+        let p = &body["parameters"];
+        assert_eq!(p["normalize_reference_strength_multiple"], true);
+        assert!(p.get("reference_information_extracted_multiple").is_none());
     }
 
     #[test]

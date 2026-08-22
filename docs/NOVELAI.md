@@ -173,6 +173,31 @@ VAE, the denoise slider, Differential Diffusion and the grow-mask slider.
 FaceFix and Upscale stay visible on purpose, because in NovelAI mode they drive
 the free local post-process pass (section 3).
 
+### 2.10 Vibe transfer is a two-step flow on V4 and later
+
+V3 accepted a raw base64 PNG inline in `reference_image_multiple`. V4 and
+V4.5 do not, and they say so with a bare `500 Error generating image, an
+internal error occurred` that names nothing. The image has to be posted to
+`/ai/encode-vibe` first, with `{image, model, information_extracted}`; the
+reply is raw `.naiv4vibe` bytes whose base64 is the value the generate call
+wants.
+
+`encode_pending_vibes()` in `novelai/mod.rs` runs that pass before the payload
+is built, which is why `run_inner` constructs the client before calling
+`build_request`. A vibe that still has no token by the time `apply_vibes()`
+runs is dropped rather than sent raw, so a failed encode costs a missing
+reference and not an unexplained 500.
+
+NovelAI bills 2 Anlas per encode, per image and per `information_extracted`
+value, so results are cached for the life of the process, keyed on the model,
+the extraction level and a SHA-256 of the image. Restarting the app pays
+again: the frontend never receives the token back, so nothing survives to
+settings.
+
+The V4 key set also differs: `reference_information_extracted_multiple` is
+gone (the value is baked into the token at encode time) and
+`normalize_reference_strength_multiple` takes its place.
+
 ## 3. The free local post-process
 
 NovelAI has already been paid for the pixels it returns, so upscaling and face
@@ -268,6 +293,31 @@ and the direction of `percent`, and the streaming protocol.
 Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
+
+### 2026-08-23 - V4 vibe transfer fix (PR #618)
+
+**Fixed:** vibe transfer sent the raw reference image, which is the V3 request
+shape. Every V4 and V4.5 generation with a vibe attached failed with an opaque
+500. Reference images now go through `/ai/encode-vibe` first.
+
+**Testing required: yes.** This also unblocks the Phase E checklist below,
+which could not be run past step 7.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Note the Anlas balance, then generate on V4.5 Full with one Vibe Transfer image | An image comes back instead of an error |
+| 2 | Check the balance again | Down by the generation cost plus 2 Anlas for the encode |
+| 3 | Generate again without touching the vibe | Works, and this time no extra 2 Anlas is spent |
+| 4 | Move the vibe's Information extracted slider, generate | Another 2 Anlas is spent, and the result visibly changes |
+| 5 | Move only the Strength slider, generate | No extra 2 Anlas |
+| 6 | Add a second vibe image, generate | Both influence the result; 2 Anlas charged for the new one only |
+| 7 | Restart the app, generate with the same vibe | Works; 2 Anlas is charged again (the token is not persisted) |
+| 8 | Generate on V4 Full with a vibe | Works the same way |
+| 9 | Remove all vibes, generate | Normal generation, no encode charge |
+
+**Do not skip:** 1, 3. Those are the fix itself and the cache that keeps it
+from re-billing.
+**Low-risk, skip if short on time:** 5, 7, 9.
 
 ### 2026-08-23 - Phase E: the NovelAI panel (PR #618)
 
