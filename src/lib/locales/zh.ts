@@ -577,6 +577,11 @@ const zh: Record<string, string> = {
   "generation.sampler.cfg1_warning_body": "At CFG 1 the model ignores your prompt's guidance. This only produces good results on Turbo, distilled, or Lightning models, and it breaks CFG++ samplers (like euler_cfg_pp / euler_ancestral_cfg_pp) entirely. Raise CFG to the recommended range unless you know your model needs CFG 1.",
   "generation.sampler.nanosaur_recommended": "Nanosaur 推荐设置",
   "generation.sampler.nanosaur_hint": "40 步，CFG 7，euler 采样器，simple 调度器。默认分辨率 896×1152。",
+  "generation.sampler.novelai_recommended": "NovelAI 推荐设置",
+  "generation.sampler.novelai_hint": "23 步、引导 7、Euler Ancestral、Karras 噪声调度。",
+  "generation.sampler.noise_schedule": "噪声调度",
+  "generation.sampler.noise_schedule_tip": "NovelAI 分配去噪步骤的方式。默认是 Karras。",
+  "generation.sampler.guidance": "引导",
   "generation.sampler.fix": "修复",
 
   "generation.model.title": "模型",

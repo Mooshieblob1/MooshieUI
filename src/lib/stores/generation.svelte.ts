@@ -24,6 +24,7 @@ import {
   NOVELAI_DEFAULTS,
   findNovelAiModel,
   isNovelAiModel,
+  snapNovelAiDimension,
   toNovelAiSampler,
 } from "../utils/novelaiModels.js";
 import {
@@ -1683,9 +1684,37 @@ class GenerationStore {
     // a local model's steps and CFG are simply wrong for NovelAI.
     this.steps = NOVELAI_DEFAULTS.steps;
     this.cfg = NOVELAI_DEFAULTS.cfg;
+    // NovelAI rejects any dimension off a 64px grid. Snapping here rather than
+    // only in DimensionControls covers the panel being collapsed or unmounted,
+    // and a local model is happy on the coarser grid too.
+    this.width = snapNovelAiDimension(this.width);
+    this.height = snapNovelAiDimension(this.height);
     // Keyed as applied so a later switch back to a local model still re-presets.
     this.modelPresetAppliedKey = `cp:${id}|novelai|none`;
     this.saveSettings();
+  }
+
+  /**
+   * Patch NovelAI's wire settings.
+   *
+   * Spread-replaced rather than mutated in place so the object the persisted
+   * snapshot captures is a new one, and persisted immediately: these are
+   * request fields, and a lost write silently changes what NovelAI is asked for.
+   */
+  updateNovelAiSettings(patch: Partial<NovelAiSettings>) {
+    this.novelaiSettings = { ...this.novelaiSettings, ...patch };
+    this.saveSettings();
+  }
+
+  /** Restore NovelAI's own recommended sampling settings. */
+  applyNovelAiRecommendedSampling() {
+    this.steps = NOVELAI_DEFAULTS.steps;
+    this.cfg = NOVELAI_DEFAULTS.cfg;
+    this.updateNovelAiSettings({
+      sampler: NOVELAI_DEFAULTS.sampler,
+      noise_schedule: NOVELAI_DEFAULTS.noiseSchedule,
+      cfg_rescale: NOVELAI_DEFAULTS.cfgRescale,
+    });
   }
 
   applyModelSpecificPreset() {

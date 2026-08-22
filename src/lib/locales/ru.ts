@@ -577,6 +577,11 @@ const ru: Record<string, string> = {
   "generation.sampler.cfg1_warning_body": "At CFG 1 the model ignores your prompt's guidance. This only produces good results on Turbo, distilled, or Lightning models, and it breaks CFG++ samplers (like euler_cfg_pp / euler_ancestral_cfg_pp) entirely. Raise CFG to the recommended range unless you know your model needs CFG 1.",
   "generation.sampler.nanosaur_recommended": "Рекомендуемые настройки Nanosaur",
   "generation.sampler.nanosaur_hint": "40 шагов, CFG 7, сэмплер euler, планировщик simple. Разрешение по умолчанию 896×1152.",
+  "generation.sampler.novelai_recommended": "Рекомендуемые настройки NovelAI",
+  "generation.sampler.novelai_hint": "23 шага, guidance 7, Euler Ancestral, шумовое расписание Karras.",
+  "generation.sampler.noise_schedule": "Шумовое расписание",
+  "generation.sampler.noise_schedule_tip": "Как NovelAI распределяет шаги шумоподавления. По умолчанию Karras.",
+  "generation.sampler.guidance": "Guidance",
   "generation.sampler.fix": "Исправить",
 
   "generation.model.title": "Модель",

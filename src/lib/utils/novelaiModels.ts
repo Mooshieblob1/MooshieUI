@@ -84,6 +84,21 @@ export function isNovelAiModel(id: string | null | undefined): boolean {
   return !!id && NOVELAI_MODELS.some((m) => m.id === id);
 }
 
+/**
+ * NovelAI accepts only dimensions that are a multiple of 64, and its own UI
+ * steps the side length on that grid (1024 -> 1088 -> 1152). Local backends are
+ * happy on an 8px grid, so this applies to NovelAI mode only.
+ */
+export const NOVELAI_DIMENSION_STEP = 64;
+
+/** Round a pixel dimension onto NovelAI's grid, never below one full step. */
+export function snapNovelAiDimension(px: number): number {
+  return Math.max(
+    NOVELAI_DIMENSION_STEP,
+    Math.round(px / NOVELAI_DIMENSION_STEP) * NOVELAI_DIMENSION_STEP,
+  );
+}
+
 /** NovelAI's recommended sampling settings, applied when a NAI model is picked. */
 export const NOVELAI_DEFAULTS = {
   steps: 23,

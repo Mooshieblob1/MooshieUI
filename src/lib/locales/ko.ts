@@ -577,6 +577,11 @@ const ko: Record<string, string> = {
   "generation.sampler.cfg1_warning_body": "At CFG 1 the model ignores your prompt's guidance. This only produces good results on Turbo, distilled, or Lightning models, and it breaks CFG++ samplers (like euler_cfg_pp / euler_ancestral_cfg_pp) entirely. Raise CFG to the recommended range unless you know your model needs CFG 1.",
   "generation.sampler.nanosaur_recommended": "Nanosaur 권장 설정",
   "generation.sampler.nanosaur_hint": "40단계, CFG 7, euler 샘플러, simple 스케줄러. 기본 해상도 896×1152.",
+  "generation.sampler.novelai_recommended": "NovelAI 권장 설정",
+  "generation.sampler.novelai_hint": "23 스텝, 가이던스 7, Euler Ancestral, Karras 노이즈 스케줄.",
+  "generation.sampler.noise_schedule": "노이즈 스케줄",
+  "generation.sampler.noise_schedule_tip": "NovelAI 가 노이즈 제거 단계를 배분하는 방식입니다. 기본값은 Karras 입니다.",
+  "generation.sampler.guidance": "가이던스",
   "generation.sampler.fix": "수정",
 
   "generation.model.title": "모델",

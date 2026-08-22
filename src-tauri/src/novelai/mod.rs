@@ -109,8 +109,11 @@ pub fn build_request(params: &GenerationParams) -> Result<serde_json::Value, App
     let input = payload::PayloadInput {
         positive_prompt: prompt_syntax::to_novelai(&params.positive_prompt),
         negative_prompt: prompt_syntax::to_novelai(&params.negative_prompt),
-        width: params.width,
-        height: params.height,
+        // NovelAI rejects any dimension that is not a multiple of 64. The UI
+        // already snaps, so this is the backstop for a preset or a restored
+        // gallery setting that predates that.
+        width: snap_dimension(params.width),
+        height: snap_dimension(params.height),
         steps: params.steps,
         cfg: params.cfg,
         seed: params.seed,
@@ -127,6 +130,15 @@ pub fn build_request(params: &GenerationParams) -> Result<serde_json::Value, App
     };
 
     payload::build(&input, &nai, model).map_err(AppError::Other)
+}
+
+/// NovelAI's dimension grid. Its own UI steps 1024 -> 1088 -> 1152.
+const DIMENSION_STEP: u32 = 64;
+
+/// Round a pixel dimension onto NovelAI's grid, never below one full step.
+fn snap_dimension(px: u32) -> u32 {
+    let snapped = ((px + DIMENSION_STEP / 2) / DIMENSION_STEP) * DIMENSION_STEP;
+    snapped.max(DIMENSION_STEP)
 }
 
 /// Copy the NovelAI block with every character prompt rewritten into NovelAI
@@ -401,6 +413,19 @@ mod tests {
             let seed = resolve_seed(-1);
             assert!((0..=MAX_SEED).contains(&seed), "out of range: {seed}");
         }
+    }
+
+    #[test]
+    fn dimensions_snap_onto_novelais_64px_grid() {
+        assert_eq!(snap_dimension(1024), 1024);
+        assert_eq!(snap_dimension(1088), 1088);
+        assert_eq!(snap_dimension(832), 832);
+        // An 8px-grid value from a local model rounds to the nearest legal one.
+        assert_eq!(snap_dimension(1080), 1088);
+        assert_eq!(snap_dimension(1352), 1344);
+        // Never zero, whatever comes in.
+        assert_eq!(snap_dimension(0), 64);
+        assert_eq!(snap_dimension(8), 64);
     }
 
     #[test]

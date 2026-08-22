@@ -3,6 +3,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import type { ModelFamily } from "../../utils/modelFamily.js";
+  import { NOVELAI_DIMENSION_STEP } from "../../utils/novelaiModels.js";
 
   interface Props {
     suggestedAspect?: { w: number; h: number } | null;
@@ -27,14 +28,23 @@
   let aspectHInput = $state("1");
   let lastSyncedDimensions = "";
 
+  /**
+   * The pixel grid every dimension has to land on.
+   *
+   * NovelAI rejects anything that is not a multiple of 64, and its own UI steps
+   * the side length 1024 -> 1088 -> 1152. Local backends accept 8, so the
+   * coarser grid applies in NovelAI mode only.
+   */
+  const quantum = $derived(generation.isNovelAi ? NOVELAI_DIMENSION_STEP : 8);
+
   /** Try to match persisted width/height back to a preset or simplified ratio. */
   /** Compute dimensions for a given aspect ratio using the area-faithful formula. */
-  function dimsForAspect(aw: number, ah: number, side: number): { w: number; h: number } {
+  function dimsForAspect(aw: number, ah: number, side: number, q = quantum): { w: number; h: number } {
     const area = side * side;
-    const wA = Math.round(Math.sqrt(area * (aw / ah)) / 8) * 8;
-    const hA = Math.max(8, Math.round(area / wA / 8) * 8);
-    const hB = Math.round(Math.sqrt(area * (ah / aw)) / 8) * 8;
-    const wB = Math.max(8, Math.round(area / hB / 8) * 8);
+    const wA = Math.max(q, Math.round(Math.sqrt(area * (aw / ah)) / q) * q);
+    const hA = Math.max(q, Math.round(area / wA / q) * q);
+    const hB = Math.max(q, Math.round(Math.sqrt(area * (ah / aw)) / q) * q);
+    const wB = Math.max(q, Math.round(area / hB / q) * q);
     return Math.abs(wA * hA - area) <= Math.abs(wB * hB - area)
       ? { w: wA, h: hA }
       : { w: wB, h: hB };
@@ -70,7 +80,7 @@
       aspectHInput = String(inferred.h);
 
       // Keep side-length control aligned with the current generated area.
-      sideLength = Math.max(64, Math.round(Math.sqrt(w * h) / 8) * 8);
+      sideLength = Math.max(quantum, Math.round(Math.sqrt(w * h) / quantum) * quantum);
     }
   });
 
@@ -104,7 +114,7 @@
     const dims = dimsForAspect(
       Math.max(0.01, aspectW),
       Math.max(0.01, aspectH),
-      Math.max(64, sideLength),
+      Math.max(quantum, sideLength),
     );
     generation.width = dims.w;
     generation.height = dims.h;
@@ -160,6 +170,21 @@
     sideLength = side;
     recalc();
   }
+
+  // Switching backends changes the legal grid, so dimensions carried over from
+  // the other one can be illegal. Re-run the aspect maths whenever it changes.
+  // The equality guard is what stops the self-write on `sideLength` from
+  // re-triggering this effect.
+  let lastQuantum = 0;
+  $effect(() => {
+    const q = quantum;
+    if (q === lastQuantum) return;
+    const first = lastQuantum === 0;
+    lastQuantum = q;
+    if (first) return;
+    sideLength = Math.max(q, Math.round(sideLength / q) * q);
+    recalc();
+  });
 
   const FAMILY_LABELS: Partial<Record<ModelFamily, string>> = {
     anima: "Anima",
@@ -376,7 +401,7 @@
       oninput={recalc}
       min="64"
       max="2048"
-      step="8"
+      step={quantum}
       class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
     />
     {#if recommended && familyLabel}
