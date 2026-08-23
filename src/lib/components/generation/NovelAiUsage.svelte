@@ -4,10 +4,14 @@
   import { novelai } from "../../stores/novelai.svelte.js";
   import { progress } from "../../stores/progress.svelte.js";
 
+  // The balance only means something while NovelAI is the backend, and a
+  // configured key alone is not that: the checkpoint picker decides.
+  const show = $derived(generation.isNovelAi && novelai.apiKeyConfigured);
+
   // Fetch once per key rather than on every mount: this sits above the generate
   // button, so it remounts every time the generation page is rebuilt.
   $effect(() => {
-    if (novelai.apiKeyConfigured) void novelai.ensureSubscription();
+    if (show) void novelai.ensureSubscription();
   });
 
   // Anlas is spent the moment a NovelAI generation runs, so a balance that is
@@ -22,7 +26,7 @@
   const allowance = $derived(novelai.opusAllowance);
 </script>
 
-{#if novelai.apiKeyConfigured}
+{#if show}
   <div class="mb-2 rounded-lg border border-neutral-800 bg-neutral-900/60 px-2.5 py-1.5 space-y-1">
     <div class="flex items-center justify-between gap-2">
       <span class="text-[10px] text-neutral-400">{locale.t('settings.novelai.anlas')}</span>

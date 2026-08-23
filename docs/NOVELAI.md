@@ -326,6 +326,33 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - The Anlas balance showed on the ComfyUI backend (PR #618)
+
+**Reported by:** the user, on the entry below: "the anlas counter still exists
+even in non NAI mode".
+
+The readout above the generate button was gated on `novelai.apiKeyConfigured`
+alone. A key stays configured once it is saved, so anyone who has ever used the
+NovelAI backend saw a NovelAI balance sitting over every ComfyUI generation.
+The gate is now `generation.isNovelAi && novelai.apiKeyConfigured`, which is
+the same rule the cost badge beside it already used.
+
+The subscription fetch moved behind the same condition, so switching to the
+ComfyUI backend also stops the component reaching NovelAI's account endpoint.
+
+**Testing required: yes.** A UI visibility change.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Configure a NovelAI key, then pick a ComfyUI checkpoint | No Anlas readout above the generate button, and no cost badge |
+| 2 | Switch to a NovelAI model | The Anlas readout and the cost badge are both back |
+| 3 | Refresh the balance with the arrow, then switch back to ComfyUI and back again | The balance is still there and correct, not blanked to `--` |
+| 4 | With no NovelAI key configured, in either mode | No readout, as before |
+
+**Do not skip:** 1, 2.
+
+**Result: pending.**
+
 ### 2026-08-23 - The tiling controls are back in NovelAI mode (PR #618)
 
 **Reported by:** the user, on the entry below: "turning off tiling broke it,
@@ -365,7 +392,7 @@ renders.
 
 **Do not skip:** 1, 2, 4, 7.
 
-**Result: pending.**
+**Result: 1, 2, 3, 4, 5, 6, 7 and 8 pass.**
 
 ### 2026-08-23 - NovelAI mode no longer offers the tiling knobs (PR #618)
 
