@@ -34,6 +34,29 @@ export function presetSlug(name: string): string {
 export const PROMPT_PRESET_TOKEN_REGEX = /@(?:preset:([a-z0-9_]+)|\[([^\][\n]+)\])/gi;
 
 /**
+ * A fresh matcher over the same pattern.
+ *
+ * The exported constant carries the `g` flag, so a bare `.test()` leaves its
+ * `lastIndex` pointing past the first match, and the next `matchAll` on that
+ * same object starts halfway through the string and finds nothing. Four
+ * modules share the constant, so every scan takes its own copy instead.
+ */
+export function presetTokenRegex(): RegExp {
+  return new RegExp(PROMPT_PRESET_TOKEN_REGEX.source, PROMPT_PRESET_TOKEN_REGEX.flags);
+}
+
+/**
+ * The slug with its separators dropped, used as a fallback lookup key.
+ *
+ * Nobody reproduces a chunk's exact spacing from memory, so `@[xenogirl]`
+ * has to find a chunk named "Xeno Girl". An inline token that fails to
+ * resolve is silent at generation time, which is the worst way to be wrong.
+ */
+export function looseSlug(slug: string): string {
+  return slug.replace(/_/g, "");
+}
+
+/**
  * Cheap substring pre-filter. The highlighter and the inert-range scanner run
  * on every keystroke, so they check this before allocating a regex match.
  */

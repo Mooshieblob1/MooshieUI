@@ -22,10 +22,11 @@
  */
 
 import {
+  looseSlug,
   mayContainPresetToken,
   presetSlug,
+  presetTokenRegex,
   presetTokenSlug,
-  PROMPT_PRESET_TOKEN_REGEX,
 } from "../utils/promptChunkTokens.js";
 
 const STORAGE_KEY = "mooshieui.promptPresets.v1";
@@ -148,7 +149,7 @@ function splitWildcardChoices(content: string): string[] {
 export {
   inlineChunkToken,
   presetSlug,
-  PROMPT_PRESET_TOKEN_REGEX as INLINE_PRESET_REGEX,
+  presetTokenRegex,
 } from "../utils/promptChunkTokens.js";
 
 /**
@@ -287,7 +288,10 @@ class PromptPresetsStore {
     const ids = new Set<string>();
     if (!mayContainPresetToken(text)) return ids;
     const lookup = this.bySlug;
-    for (const match of text.matchAll(PROMPT_PRESET_TOKEN_REGEX)) {
+    // A fresh matcher: `matchAll` copies the regex's `lastIndex`, so a shared
+    // one that any other module has run `.test()` on would start past the
+    // first token and report no chunks at all.
+    for (const match of text.matchAll(presetTokenRegex())) {
       const preset = lookup.get(presetTokenSlug(match));
       if (preset) ids.add(preset.id);
     }
@@ -377,6 +381,13 @@ class PromptPresetsStore {
       // the natural uniqueness of display names means dupes are rare.
       if (!map.has(slug)) map.set(slug, p);
     }
+    // A second, looser key per chunk: the slug with its underscores dropped,
+    // so `@[xenogirl]` finds "Xeno Girl". Added in a separate pass so an exact
+    // slug always wins over another chunk's loose form.
+    for (const p of this.presets) {
+      const loose = looseSlug(presetSlug(p.name));
+      if (!map.has(loose)) map.set(loose, p);
+    }
     return map;
   }
 
@@ -398,7 +409,7 @@ class PromptPresetsStore {
   resolveInline(text: string, options: Pick<ResolvePromptPresetOptions, "fixedChoices"> = {}): string {
     if (!mayContainPresetToken(text)) return text;
     const lookup = this.bySlug;
-    let resolved = text.replace(PROMPT_PRESET_TOKEN_REGEX, (full: string, slug?: string, name?: string) => {
+    let resolved = text.replace(presetTokenRegex(), (full: string, slug?: string, name?: string) => {
       const preset = lookup.get(presetTokenSlug([full, slug, name] as unknown as RegExpMatchArray));
       if (!preset) return full;
       const fixedChoice = options.fixedChoices?.get(preset.id)?.trim();

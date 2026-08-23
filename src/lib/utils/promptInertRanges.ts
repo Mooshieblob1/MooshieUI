@@ -1,5 +1,5 @@
-import { SYNTAX_ANGLE_LOOKBEHIND } from "./promptSyntaxEscape.ts";
-import { PROMPT_PRESET_TOKEN_REGEX, mayContainPresetToken } from "./promptChunkTokens.js";
+import { SYNTAX_ANGLE_LOOKBEHIND } from "./promptSyntaxEscape.js";
+import { mayContainPresetToken, presetTokenRegex } from "./promptChunkTokens.js";
 
 /**
  * Shared detection for prompt syntax blocks that should not participate in
@@ -16,8 +16,6 @@ export const PROMPT_SCHEDULE_REGEX = new RegExp(
   `${SYNTAX_ANGLE_LOOKBEHIND}<(?:(from|to|range):(\\d+(?:\\.\\d+)?)(?::(\\d+(?:\\.\\d+)?))?>([ \\s\\S]*?)<\\/\\1>|fromto\\[(\\d+(?:\\.\\d+)?)\\]:([^>]+)>)`,
   "g",
 );
-
-export { PROMPT_PRESET_TOKEN_REGEX } from "./promptChunkTokens.js";
 
 export const PROMPT_LORA_TOKEN_REGEX = new RegExp(
   `${SYNTAX_ANGLE_LOOKBEHIND}<lora:\\s*[^>]+>`,
@@ -74,7 +72,7 @@ export function getPromptInertRanges(raw: string): PromptTextRange[] {
   ];
 
   if (mayContainPresetToken(raw)) {
-    ranges.push(...collectRegexRanges(raw, PROMPT_PRESET_TOKEN_REGEX));
+    ranges.push(...collectRegexRanges(raw, presetTokenRegex()));
   }
   if (raw.includes("<lora:")) {
     ranges.push(...collectRegexRanges(raw, PROMPT_LORA_TOKEN_REGEX));

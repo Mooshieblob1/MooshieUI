@@ -12,6 +12,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { NOVELAI_MAX_CHARACTERS } from "../../utils/novelaiModels.js";
   import InfoTip from "../ui/InfoTip.svelte";
+  import NovelAiCharacterPrompt from "./NovelAiCharacterPrompt.svelte";
 
   const GRID = [0, 1, 2, 3, 4];
 
@@ -79,20 +80,21 @@
           </button>
         </div>
 
-        <textarea
-          class="w-full h-16 px-2 py-1.5 text-xs rounded-md bg-neutral-950 border border-neutral-800 text-neutral-200 placeholder-neutral-600 resize-y focus:outline-none focus:border-indigo-600"
-          placeholder={locale.t("generation.novelai.characters.prompt_placeholder")}
+        <NovelAiCharacterPrompt
+          {index}
+          field="prompt"
           value={character.prompt}
-          oninput={(e) => generation.updateNovelAiCharacter(index, { prompt: e.currentTarget.value })}
-        ></textarea>
+          placeholder={locale.t("generation.novelai.characters.prompt_placeholder")}
+          minHeight="min-h-16"
+        />
 
-        <textarea
-          class="w-full h-12 px-2 py-1.5 text-xs rounded-md bg-neutral-950 border border-neutral-800 text-neutral-200 placeholder-neutral-600 resize-y focus:outline-none focus:border-indigo-600"
-          placeholder={locale.t("generation.novelai.characters.negative_placeholder")}
+        <NovelAiCharacterPrompt
+          {index}
+          field="negative_prompt"
           value={character.negative_prompt}
-          oninput={(e) =>
-            generation.updateNovelAiCharacter(index, { negative_prompt: e.currentTarget.value })}
-        ></textarea>
+          placeholder={locale.t("generation.novelai.characters.negative_placeholder")}
+          minHeight="min-h-12"
+        />
 
         {#if generation.novelaiSettings.use_coords}
           <div class="space-y-1">

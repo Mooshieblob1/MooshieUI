@@ -2854,17 +2854,47 @@ class GenerationStore {
    * Rust while building the payload and never touches `params`, so the
    * top-level prompt is still the ComfyUI-syntax one the free local pass wants.
    */
-  private novelAiParams(): NovelAiParams | null {
+  private novelAiParams(characters: NovelAiCharacter[]): NovelAiParams | null {
     if (!isNovelAiModel(this.checkpoint)) return null;
     const action =
       this.mode === "inpainting" ? "infill" : this.mode === "img2img" ? "img2img" : "generate";
     return {
       ...this.novelaiSettings,
+      characters,
       model: this.checkpoint,
       action,
       local_positive_prompt: null,
       local_negative_prompt: null,
     };
+  }
+
+  /**
+   * Inline chunk resolution for the NovelAI per-character prompt boxes.
+   *
+   * They are prompt fields like any other, so `@[Chunk]` has to mean there
+   * what it means in the main box. Without this the token travels to NovelAI
+   * as literal text and silently becomes part of the character's prompt.
+   *
+   * Returns the rewritten characters plus the chunk ids consumed, so a chunk
+   * spliced in inline is not appended a second time by the active-chunk pass.
+   */
+  private resolveNovelAiCharacters(fixedChoices?: ReadonlyMap<string, string>): {
+    characters: NovelAiCharacter[];
+    inlineIds: Set<string>;
+  } {
+    const inlineIds = new Set<string>();
+    const characters = (this.novelaiSettings.characters ?? []).map((character) => {
+      for (const id of promptPresets.inlinePresetIds(character.prompt)) inlineIds.add(id);
+      for (const id of promptPresets.inlinePresetIds(character.negative_prompt)) {
+        inlineIds.add(id);
+      }
+      return {
+        ...character,
+        prompt: promptPresets.resolveInline(character.prompt, { fixedChoices }),
+        negative_prompt: promptPresets.resolveInline(character.negative_prompt, { fixedChoices }),
+      };
+    });
+    return { characters, inlineIds };
   }
 
   toParams(options: GenerationToParamsOptions = {}) {
@@ -2920,7 +2950,12 @@ class GenerationStore {
     // occurrence rolls independently.
     const inlinePositiveIds = promptPresets.inlinePresetIds(effectivePositive);
     const inlineNegativeIds = promptPresets.inlinePresetIds(effectiveNegative);
-    const inlinePresetIds = new Set([...inlinePositiveIds, ...inlineNegativeIds]);
+    const novelAiCharacters = this.resolveNovelAiCharacters(options.fixedPresetChoices);
+    const inlinePresetIds = new Set([
+      ...inlinePositiveIds,
+      ...inlineNegativeIds,
+      ...novelAiCharacters.inlineIds,
+    ]);
     const inlinePositive = promptPresets.resolveInline(effectivePositive, {
       fixedChoices: options.fixedPresetChoices,
     });
@@ -3253,7 +3288,7 @@ class GenerationStore {
       video_timeline_custom_audio: timeline?.useCustomAudio ?? false,
       // Null for every local generation, so the backend's NovelAI branch is
       // never reachable from one.
-      novelai: this.novelAiParams(),
+      novelai: this.novelAiParams(novelAiCharacters.characters),
     };
 
     if (options.overrides) {

@@ -67,11 +67,10 @@ class NovelAiStore {
    * `getConfig()` de-duplicates concurrent loads and serves a cache after that.
    */
   async refresh(): Promise<void> {
-    // A pre-seed to avoid a flash, nothing more. The cache can lag a
-    // `setApiKey` that has already told us a key exists, so it may turn the
-    // flag on but never off; `getConfig()` below is the authority.
+    // A pre-seed to avoid a flash, nothing more. Both this and the read below
+    // go through `applyConfigured`, which only ever turns the flag on.
     const cached = getCachedConfig();
-    if (cached && !this.apiKeyConfigured) this.applyConfigured(cached);
+    if (cached) this.applyConfigured(cached);
     try {
       this.applyConfigured(await getConfig());
     } catch (e) {
@@ -87,8 +86,16 @@ class NovelAiStore {
   }) {
     // Desktop sees the real key, browser mode only the boolean. Either is
     // enough to answer the one question this store exists to answer.
-    this.apiKeyConfigured =
+    const configured =
       config.novelai_api_key_configured === true || !!config.novelai_api_key?.trim();
+    // Only ever turns the flag on. A config read cannot prove a key is gone:
+    // `updateConfig` writes the frontend's own copy straight into the config
+    // cache, and that copy carries a blanked key (the backend's
+    // `preserve_secrets()` is what keeps the stored one), so an ordinary
+    // settings save would otherwise report "no key" on the next mount and take
+    // the NovelAI models, the Anlas readout and the Opus discount with it.
+    // Clearing goes through `setApiKey("")`, which sets the flag directly.
+    if (configured) this.apiKeyConfigured = true;
   }
 
   /**

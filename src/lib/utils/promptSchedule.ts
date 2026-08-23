@@ -1,11 +1,15 @@
 import type { PromptSegment } from "../types/index.js";
 import {
-  PROMPT_PRESET_TOKEN_REGEX,
   PROMPT_REGION_TAG_REGEX,
   PROMPT_SCHEDULE_REGEX,
 } from "./promptInertRanges.js";
 import { parseSegmentDetailPrompt } from "./promptSegmentDetail.js";
-import { mayContainPresetToken, presetTokenSlug } from "./promptChunkTokens.js";
+import {
+  looseSlug,
+  mayContainPresetToken,
+  presetTokenRegex,
+  presetTokenSlug,
+} from "./promptChunkTokens.js";
 
 export {
   findPromptInertRangeContaining,
@@ -270,8 +274,6 @@ export function renderHighlightedPrompt(
   return html;
 }
 
-/** Matches both `@preset:<slug>` and `@[Chunk Name]`. */
-const PRESET_TOKEN_REGEX = PROMPT_PRESET_TOKEN_REGEX;
 
 /**
  * Highlight inline chunk tokens within an arbitrary plain-text segment.
@@ -289,13 +291,16 @@ function renderPresetSegment(
   if (!mayContainPresetToken(text)) return renderLoraWordsInPlainText(text, loraWords);
   let html = "";
   let lastIndex = 0;
-  PRESET_TOKEN_REGEX.lastIndex = 0;
+  const tokens = presetTokenRegex();
   let match: RegExpExecArray | null;
-  while ((match = PRESET_TOKEN_REGEX.exec(text)) !== null) {
+  while ((match = tokens.exec(text)) !== null) {
     html += renderLoraWordsInPlainText(text.slice(lastIndex, match.index), loraWords);
     lastIndex = match.index + match[0].length;
     const slug = presetTokenSlug(match);
-    const known = knownPresetSlugs?.has(slug) ?? false;
+    // The known set carries the loose key too, so a name typed without its
+    // spacing still reads as known and matches what generation will resolve.
+    const known =
+      knownPresetSlugs?.has(slug) || knownPresetSlugs?.has(looseSlug(slug)) || false;
     const bg = known ? "rgba(99, 102, 241, 0.18)" : "rgba(239, 68, 68, 0.16)";
     const border = known ? "rgba(129, 140, 248, 0.55)" : "rgba(248, 113, 113, 0.55)";
     const glow = known
@@ -413,8 +418,7 @@ export function hasSchedulingTags(raw: string): boolean {
  */
 export function hasPresetTokens(raw: string): boolean {
   if (!mayContainPresetToken(raw)) return false;
-  PRESET_TOKEN_REGEX.lastIndex = 0;
-  return PRESET_TOKEN_REGEX.test(raw);
+  return presetTokenRegex().test(raw);
 }
 
 export interface PositiveRegionPrompt {

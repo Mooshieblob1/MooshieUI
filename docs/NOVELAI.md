@@ -326,6 +326,66 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - Inline chunk tokens resolve again, and the character prompts are real prompt boxes (PR #618)
+
+**Reported by:** the user, on the entry below: "cost of anlas isn't displaying
+properly after switching back to NAI mode and the bar is gone again ...
+@preset:xenogirl does not work @[xenogirl] does not work", and "prompt chunks
+do not work in the character box".
+
+Four separate causes.
+
+**A shared regex with the `g` flag is stateful.** Moving the token pattern into
+one leaf util gave four modules one regex object rather than four copies. A bare
+`.test()` leaves `lastIndex` pointing past the first match, and `matchAll`
+copies `lastIndex` rather than resetting it, so the very next scan started
+halfway through the prompt and found nothing. That is why the highlighter and
+the resolver both went quiet. Every scan now takes a fresh matcher from
+`presetTokenRegex()`.
+
+**A name typed from memory does not carry its spacing.** `@[xenogirl]` slugs to
+`xenogirl`, and a chunk named "Xeno Girl" slugs to `xeno_girl`, so the lookup
+missed. The chunk map now carries a second, looser key per chunk with the
+underscores dropped, added in its own pass so an exact slug always wins. The
+highlighter checks the same loose key, so what lights up is what resolves.
+
+**The NovelAI character prompts never went through chunk resolution.**
+`novelAiParams()` spread the settings object straight onto the request, tokens
+and all, so a chunk token in a character box travelled to NovelAI as literal
+text. `toParams()` now resolves both character fields and counts the chunks it
+spliced in, so an inline chunk is not appended a second time by the active-chunk
+pass. The two fields also became real `PromptTextarea`s, with the same
+highlighting, autocomplete and weight editing as the main box.
+
+**A config read cannot prove a key is gone.** `updateConfig()` writes the
+frontend's own config copy into the config cache, and that copy carries a
+blanked API key (the backend's `preserve_secrets()` is what keeps the stored
+one). Any later unforced read then reported "no key", which turned off the Anlas
+readout, took the Opus allowance bar with it and made the cost badge quote the
+non-Opus price. `applyConfigured()` is now one-way: only `setApiKey("")` clears
+the flag.
+
+**Testing required: yes.** All four are user-visible.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Create a chunk named `Xeno Girl` with content `green skin, antennae` | The copy button beside the name shows `@[Xeno Girl]` |
+| 2 | Type `@[Xeno Girl]` into the positive prompt by hand | It highlights as a chunk token while you type, without clicking anything |
+| 3 | Type `@[xenogirl]` (no space, all lowercase) | It highlights too, and is treated as the same chunk |
+| 4 | Type `@preset:xeno_girl` | Also highlights, the old form is unchanged |
+| 5 | Generate with each of the three forms in turn | All three splice `green skin, antennae` in at that exact spot |
+| 6 | Put two tokens in one prompt, e.g. `@[Xeno Girl] and @[Cool Lighting]` | Both resolve. This is the case the stale regex broke |
+| 7 | Open the NovelAI character panel and add a character | Its prompt and undesired-content boxes look and behave like the main prompt box: tag autocomplete, weight editing, resizable |
+| 8 | Type `@[Xeno Girl]` into a character prompt | It highlights there too |
+| 9 | Generate with that character | The character prompt sent to NovelAI has the chunk expanded, not the literal token. The chunk is spliced in once, not appended again at the end |
+| 10 | Type into a character box, switch tabs, come back | The text is still there, and no keystroke was lost or reverted mid-typing |
+| 11 | Open Settings and save anything at all, then return to the generation page | The NovelAI models are still listed, the Anlas readout is still there, and the Opus bar is still drawn |
+| 12 | Switch to a ComfyUI checkpoint and back to a NovelAI model | The balance, the Opus allowance bar and the cost badge all come back with the same numbers |
+| 13 | With an Opus subscription, compare the cost badge before and after step 12 | The same figure both times, the Opus discount is not lost |
+| 14 | Clear the NovelAI key in Settings | Everything NovelAI disappears, the models included. This is the one path that may turn the flag off |
+
+**Do not skip:** 2, 3, 5, 6, 8, 9, 12, 14.
+
 ### 2026-08-23 - Prompt presets are now Prompt Chunks, and @[Name] works inline (PR #618)
 
 Two changes to the same feature.
@@ -365,6 +425,11 @@ empty or contains a `]` or a newline.
 | 13 | Check the Styles tab, ControlNet, video export and LoRA panels | They all still say "preset", unchanged |
 
 **Do not skip:** 2, 3, 4, 5, 6, 12.
+
+**Result: 1 and 2 pass. 3 fails**, a hand-typed `@[Name]` was not highlighted.
+4 passes only by clicking the copy button, which inserts the token for you.
+Neither `@preset:<name>` nor `@[<name>]` resolved at generation time, so 5
+onwards were blocked. Causes and fixes in the entry above.
 
 ### 2026-08-23 - The Anlas balance showed on the ComfyUI backend (PR #618)
 
