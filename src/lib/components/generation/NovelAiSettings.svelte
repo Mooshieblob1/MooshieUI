@@ -271,6 +271,35 @@
         {/if}
       {/if}
 
+      {#if nai.local_checkpoint}
+        <label class="block text-[11px] text-neutral-500">
+          {locale.t("generation.novelai.local.denoise")}
+          {nai.local_denoise.toFixed(2)}
+          <InfoTip text={locale.t("generation.novelai.local.denoise_desc")} />
+          <input
+            type="range"
+            min="0.05"
+            max="0.75"
+            step="0.01"
+            class="w-full accent-indigo-500"
+            value={nai.local_denoise}
+            oninput={(e) =>
+              generation.updateNovelAiSettings({ local_denoise: Number(e.currentTarget.value) })}
+          />
+        </label>
+
+        {#if nai.local_sampler}
+          <p class="text-[11px] text-neutral-500">
+            {locale.t("generation.novelai.local.sampling", {
+              sampler: nai.local_sampler,
+              scheduler: nai.local_scheduler ?? "",
+              steps: String(nai.local_steps ?? ""),
+              cfg: (nai.local_cfg ?? 0).toFixed(1),
+            })}
+          </p>
+        {/if}
+      {/if}
+
       {#if !nai.local_checkpoint}
         <p class="text-[11px] text-amber-400/90">
           {locale.t("generation.novelai.local.checkpoint_required")}

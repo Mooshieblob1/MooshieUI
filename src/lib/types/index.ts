@@ -187,7 +187,9 @@ export interface NovelAiParams {
   /** Scale the vibe strengths so they sum to 1. */
   normalize_reference_strength: boolean;
   director_references: NovelAiDirectorReference[];
-  /** Run the local ComfyUI upscale/facefix chain on the returned image. Free. */
+  /**
+   * Re-sample the returned image locally, then upscale and face-fix it. Free.
+   */
   local_post_process: boolean;
   /** Model the local pass samples with. Required for it to run at all. */
   local_checkpoint: string | null;
@@ -202,6 +204,20 @@ export interface NovelAiParams {
   local_clip_type: string | null;
   /** VAE for the split load. */
   local_vae: string | null;
+  /**
+   * How far the local model may move NovelAI's image. Low by default: the paid
+   * image is the composition, and the pass only re-renders it.
+   */
+  local_denoise: number;
+  /**
+   * Sampling for the local pass, filled from the picked model's recommendation.
+   * NovelAI's own sampler names and guidance describe a different model, so
+   * they cannot be carried over. `null` means no recommendation was known.
+   */
+  local_sampler: string | null;
+  local_scheduler: string | null;
+  local_steps: number | null;
+  local_cfg: number | null;
   /** Prompt in ComfyUI weight syntax, for the local pass only. */
   local_positive_prompt: string | null;
   local_negative_prompt: string | null;

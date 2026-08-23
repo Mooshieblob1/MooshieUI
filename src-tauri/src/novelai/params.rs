@@ -195,6 +195,32 @@ pub struct NovelAiParams {
     /// Negative counterpart of [`Self::local_positive_prompt`].
     #[serde(default)]
     pub local_negative_prompt: Option<String>,
+    /// Denoise for the local img2img pass: how far the local model is allowed
+    /// to move the image NovelAI returned.
+    ///
+    /// Low on purpose. The paid image is the composition, and the point of the
+    /// pass is to re-render it in the local model's hand before upscaling, not
+    /// to redraw it.
+    #[serde(default = "default_local_denoise")]
+    pub local_denoise: f64,
+    /// Sampler settings for the local pass, filled from the picked model's
+    /// recommendation.
+    ///
+    /// NovelAI's own sampler and noise schedule are its private vocabulary
+    /// ("k_euler_ancestral", "karras") and its guidance is tuned for its own
+    /// model, so none of it can be carried into a ComfyUI `KSampler`. `None`
+    /// leaves the top-level value alone.
+    #[serde(default)]
+    pub local_sampler: Option<String>,
+    /// Noise schedule for the local pass. See [`Self::local_sampler`].
+    #[serde(default)]
+    pub local_scheduler: Option<String>,
+    /// Step count for the local pass. See [`Self::local_sampler`].
+    #[serde(default)]
+    pub local_steps: Option<u32>,
+    /// Guidance scale for the local pass. See [`Self::local_sampler`].
+    #[serde(default)]
+    pub local_cfg: Option<f64>,
 }
 
 impl NovelAiParams {
@@ -209,6 +235,12 @@ impl NovelAiParams {
 
 fn default_true() -> bool {
     true
+}
+
+/// Enough to re-render NovelAI's image in the local model's style while
+/// leaving the composition it was paid for intact.
+fn default_local_denoise() -> f64 {
+    0.2
 }
 
 fn default_action() -> String {

@@ -326,6 +326,52 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - The local post-process never re-drew the image (PR #618)
+
+**Reported by:** the entry below, once it started delivering. The refined image
+arrived and was upscaled correctly, but it still looked like NovelAI had drawn
+it. The intended result is an img2img of NovelAI's image through the picked
+local model at roughly 0.2 denoise, using that model's own recommended sampling,
+and only then the upscale chain and face fix.
+
+Two things were wrong. The derived params set `refine_only = true`, and
+`img2img::build` returns immediately after `LoadImage` in that mode, so there
+was no img2img sampling pass at all: the NovelAI pixels went straight to the
+upscale chain's KSampler and the local model only ever touched the image at
+upscale resolution. And the sampling settings were still the NovelAI request's.
+NovelAI mode hides the ComfyUI sampler dropdowns and edits `novelaiSettings`
+instead, so `sampler_name` was whatever stale value the top level happened to
+hold, while cfg was NovelAI's guidance halved by the upscale rule.
+
+The pass is now an ordinary low-denoise img2img: `refine_only = false`, denoise
+from a new `local_denoise` (0.2 by default, with a runtime fallback because
+`NovelAiParams` derives `Default` and would otherwise hand it 0.0). Sampler,
+schedule, steps and cfg come from the picked model's recommendation, which now
+lives in `src/lib/utils/samplingRecommendation.ts` and is shared with the
+sampler panel's Apply buttons so the two cannot drift. An unrecognised model
+falls back to a conservative generic middle rather than to nothing, because the
+graph has to name some sampler.
+
+**Testing required: yes.** This changes what the local pass renders, for every
+NovelAI generation that uses it.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NAI mode, local post-process on, pick the Anima model, upscale on, generate | The final image keeps NovelAI's composition but is visibly re-drawn in Anima's style, not NovelAI's |
+| 2 | Look at the line under the local model picker after picking Anima | Reads `er_sde / sgm_uniform, 30 steps, CFG 4.0` |
+| 3 | Set "Local refine denoise" to 0.05 and generate | The result is nearly identical to the raw NovelAI image |
+| 4 | Set it to 0.60 and generate | The result diverges a lot, proving the slider reaches the sampler |
+| 5 | Turn face fix on as well and generate | Face fix runs last, on the re-drawn and upscaled image |
+| 6 | Pick a model with no known recommendation | The line shows the generic fallback (`euler / normal, 25 steps, CFG 6.0`) and the pass still runs |
+| 7 | Pick Juice, then Nanosaur | The line shows each model's own recommended settings |
+| 8 | On the ComfyUI backend, press the Anima "Apply" button in the sampler panel | Unchanged: 30 steps, CFG 4.0, er_sde, sgm_uniform, and the same upscale/facefix step counts as before |
+| 9 | Open settings saved before this change | Local refine denoise reads 0.20, and the sampler line fills in once the model is re-picked |
+| 10 | Switch the UI language and reopen the NAI local panel | The denoise label, its tip and the sampler line are translated |
+
+**Do not skip:** 1, 3, 8.
+
+**Result: pending.**
+
 ### 2026-08-23 - Desktop events kept ComfyUI's prompt id after the NovelAI handoff (PR #618)
 
 **Reported by:** the entry below, twice. With the local post-process on, the
@@ -368,7 +414,9 @@ below, and it touches every desktop event that carries a prompt id.
 
 **Do not skip:** 1, 5, 6.
 
-**Result: pending.**
+**Result: passed.** The refined image arrives, the progress bar follows the
+ComfyUI half of the run, and no generation is declared lost. What the pass
+actually rendered was wrong, which is the entry above.
 
 ### 2026-08-23 - NovelAI prompts declared lost by the desktop reconciler (PR #618)
 

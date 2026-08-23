@@ -1,13 +1,25 @@
 //! Free local post-process for images that were generated off-box.
 //!
-//! A NovelAI generation is already paid for by the time it lands, so running
-//! the upscale and face-fix chains over it costs nothing but local GPU time.
-//! Rather than hand-assembling a second graph, this module derives a
-//! `GenerationParams` describing a *refine-only img2img* and hands it to the
-//! ordinary [`super::build_workflow`]. `img2img::build` already short-circuits
-//! after `LoadImage` when `refine_only` is set, which is exactly the seed graph
-//! this needs, and going through `build_workflow` means the v-pred, cascade,
-//! rectified-flow and smart-guidance injections stay in one place.
+//! A NovelAI generation is already paid for by the time it lands, so running a
+//! local pass over it costs nothing but GPU time. Rather than hand-assembling a
+//! second graph, this module derives a `GenerationParams` describing a
+//! low-denoise img2img and hands it to the ordinary [`super::build_workflow`],
+//! which keeps the v-pred, cascade, rectified-flow and smart-guidance
+//! injections in one place.
+//!
+//! The pass is an ordinary img2img round-trip, not the `refine_only`
+//! short-circuit: the NovelAI image is encoded and re-sampled by the local
+//! model at roughly 0.2 denoise, and the upscale and face-fix chains then run
+//! on *that*. Refine-only was tried first and was wrong, because it skips
+//! sampling entirely and hands the NovelAI pixels straight to the upscale
+//! sampler, so the local model only ever touched the image at upscale
+//! resolution and the result still looked like NovelAI had drawn it.
+//!
+//! Sampling settings come from the local model rather than from the NovelAI
+//! request. NovelAI's sampler names are its own vocabulary and its guidance is
+//! tuned for its own model, so the frontend fills `local_sampler`,
+//! `local_scheduler`, `local_steps` and `local_cfg` from the picked model's
+//! recommendation when the model is chosen.
 
 use serde_json::Value;
 
@@ -30,7 +42,7 @@ pub fn is_requested(params: &GenerationParams) -> bool {
         && (params.upscale_enabled || params.facefix_enabled)
 }
 
-/// Derive the refine-only parameters for the local pass.
+/// Derive the img2img parameters for the local pass.
 ///
 /// `input_filename` is the name the NovelAI PNG was uploaded under in
 /// ComfyUI's input directory, i.e. what `LoadImage` will resolve.
@@ -46,8 +58,18 @@ pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<G
     let mut out = params.clone();
 
     out.mode = "img2img".to_string();
-    out.refine_only = true;
+    // A full img2img round-trip, not the refine-only short circuit: the local
+    // model has to actually re-draw the image before anything is upscaled.
+    out.refine_only = false;
     out.input_image = Some(input_filename.to_string());
+    // Deliberately low. The composition is what NovelAI was paid for; this pass
+    // is only re-rendering it. `Default::default()` on the params struct gives
+    // 0.0, which would be a no-op pass, so an unset value falls back too.
+    out.denoise = if nai.local_denoise > 0.0 {
+        nai.local_denoise.clamp(0.01, 1.0)
+    } else {
+        0.2
+    };
     // The NovelAI mask (if any) applied to NovelAI's own infill pass. The local
     // pass works on the finished image and must not be masked by it.
     out.mask_image = None;
@@ -96,6 +118,35 @@ pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<G
     };
     out.resolved_model_path = None;
 
+    // Sampling follows the local model too. Left alone, these would still be
+    // the NovelAI request's: "k_euler_ancestral" and "karras" are names
+    // ComfyUI's KSampler does not know, and NovelAI's guidance scale is tuned
+    // for a model that is not the one about to sample. The frontend fills these
+    // from the picked model's recommendation; `None` means it had none to give,
+    // so the top-level value is left in place rather than guessed at.
+    if let Some(sampler) = nai
+        .local_sampler
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        out.sampler_name = sampler.to_string();
+    }
+    if let Some(scheduler) = nai
+        .local_scheduler
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        out.scheduler = scheduler.to_string();
+    }
+    if let Some(steps) = nai.local_steps.filter(|s| *s > 0) {
+        out.steps = steps;
+    }
+    if let Some(cfg) = nai.local_cfg.filter(|c| *c > 0.0) {
+        out.cfg = cfg;
+    }
+
     // LoRAs, ControlNet, style transfer and `<segment:...>` refinement all
     // belong to the NovelAI request the user was composing. Carrying them into
     // the local pass would apply weights the user never asked for here, and
@@ -122,10 +173,10 @@ pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<G
     // One image in, one image out. The NovelAI batch has already been split
     // into individual deliveries by the time this runs.
     out.batch_size = 1;
-    // Handled by the caller instead: the pre-upscale image here *is* the
-    // NovelAI image, and delivering it is a decision about not losing paid
-    // work, not a graph concern. `finish_workflow` skips this node in
-    // refine-only mode anyway.
+    // The caller delivers the NovelAI image itself, before this pass is even
+    // submitted, so that paid work is not lost if the local pass fails. Saving
+    // the pre-upscale image here would only add a third, near-duplicate frame
+    // to the gallery.
     out.save_pre_upscale_image = false;
 
     // Nothing downstream should re-enter the NovelAI path from these params.
@@ -190,6 +241,11 @@ mod tests {
             local_post_process: true,
             local_checkpoint: Some("animaPencilXL.safetensors".into()),
             local_architecture: Some("anima".into()),
+            local_denoise: 0.2,
+            local_sampler: Some("er_sde".into()),
+            local_scheduler: Some("sgm_uniform".into()),
+            local_steps: Some(30),
+            local_cfg: Some(4.0),
             local_positive_prompt: Some("(masterpiece:1.3), girl".into()),
             local_negative_prompt: Some("(bad:1.1)".into()),
             ..Default::default()
@@ -230,13 +286,58 @@ mod tests {
     }
 
     #[test]
-    fn derived_params_describe_a_refine_only_img2img() {
+    fn derived_params_describe_a_low_denoise_img2img() {
         let p = with_nai(local_nai());
         let out = build_params(&p, "nai-abc.png").expect("derived");
         assert_eq!(out.mode, "img2img");
-        assert!(out.refine_only);
+        // Refine-only would skip sampling entirely and leave NovelAI's
+        // rendering in place all the way to the upscaler.
+        assert!(!out.refine_only);
+        assert!((out.denoise - 0.2).abs() < 1e-9);
         assert_eq!(out.input_image.as_deref(), Some("nai-abc.png"));
         assert_eq!(out.batch_size, 1);
+    }
+
+    #[test]
+    fn derived_params_sample_with_the_local_models_recommendation() {
+        // The base params carry NovelAI's own sampler and guidance, and neither
+        // is a thing a ComfyUI KSampler can be handed.
+        let p = with_nai(local_nai());
+        assert_eq!(p.sampler_name, "k_euler_ancestral");
+        let out = build_params(&p, "nai-abc.png").expect("derived");
+        assert_eq!(out.sampler_name, "er_sde");
+        assert_eq!(out.scheduler, "sgm_uniform");
+        assert_eq!(out.steps, 30);
+        assert!((out.cfg - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_unknown_local_model_keeps_the_top_level_sampling() {
+        // No recommendation to give: guessing would be worse than leaving the
+        // settings the user can see in the sampler panel alone.
+        let nai = NovelAiParams {
+            local_sampler: None,
+            local_scheduler: None,
+            local_steps: None,
+            local_cfg: None,
+            ..local_nai()
+        };
+        let p = with_nai(nai);
+        let out = build_params(&p, "nai-abc.png").expect("derived");
+        assert_eq!(out.sampler_name, p.sampler_name);
+        assert_eq!(out.steps, p.steps);
+    }
+
+    #[test]
+    fn a_zero_local_denoise_falls_back_rather_than_no_opping() {
+        // `NovelAiParams::default()` gives 0.0, and a 0.0-denoise img2img would
+        // hand the upscaler the same pixels refine-only did.
+        let nai = NovelAiParams {
+            local_denoise: 0.0,
+            ..local_nai()
+        };
+        let out = build_params(&with_nai(nai), "nai-abc.png").expect("derived");
+        assert!((out.denoise - 0.2).abs() < 1e-9);
     }
 
     #[test]
@@ -372,7 +473,7 @@ mod tests {
     }
 
     #[test]
-    fn the_graph_loads_the_uploaded_image_and_never_samples_it_twice() {
+    fn the_graph_re_samples_the_uploaded_image_before_upscaling_it() {
         let p = with_nai(local_nai());
         let wf = build(&p, "nai-abc.png", 12345).expect("workflow");
         let nodes = wf.as_object().expect("object");
@@ -383,14 +484,35 @@ mod tests {
             .expect("LoadImage present");
         assert_eq!(load["inputs"]["image"], "nai-abc.png");
 
-        // Refine-only means exactly one sampling pass (the upscale refiner);
-        // a VAEEncode would mean the base img2img round-trip crept back in and
-        // the paid image got re-denoised at full strength.
+        // The img2img round-trip: the NovelAI image is encoded and re-drawn by
+        // the local model. Its absence is what made the first version of this
+        // pass leave NovelAI's rendering untouched.
         let vae_encodes = nodes
             .values()
             .filter(|n| n["class_type"] == "VAEEncode")
             .count();
-        assert_eq!(vae_encodes, 0, "refine-only must not re-encode the input");
+        assert_eq!(vae_encodes, 1, "the local pass must re-encode the input");
+
+        // That first sampler runs at the local model's settings and the low
+        // denoise, and the upscale refiner follows it.
+        let base_sampler = nodes
+            .values()
+            .find(|n| {
+                n["class_type"] == "KSampler"
+                    && (n["inputs"]["denoise"].as_f64().unwrap_or(0.0) - 0.2).abs() < 1e-9
+            })
+            .expect("base img2img sampler present");
+        assert_eq!(base_sampler["inputs"]["sampler_name"], "er_sde");
+        assert_eq!(base_sampler["inputs"]["steps"], 30);
+
+        assert!(
+            nodes
+                .values()
+                .filter(|n| n["class_type"] == "KSampler")
+                .count()
+                >= 2,
+            "the upscale refiner must still run after the img2img pass"
+        );
 
         assert!(nodes
             .values()

@@ -11,6 +11,12 @@
     NOVELAI_NOISE_SCHEDULES,
     NOVELAI_SAMPLERS,
   } from "../../utils/novelaiModels.js";
+  import {
+    ANIMA_SAMPLING,
+    JUICE_SAMPLING,
+    NANOSAUR_SAMPLING,
+    type SamplingRecommendation,
+  } from "../../utils/samplingRecommendation.js";
   import { downloadModel } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
   import { onMount } from "svelte";
@@ -139,24 +145,26 @@
     generation.cfg = cfgRange.target;
   }
 
+  /**
+   * The tables live in `utils/samplingRecommendation.ts` because the NovelAI
+   * local post-process needs the same numbers, and two copies would drift.
+   */
+  function applyRecommendation(rec: SamplingRecommendation) {
+    generation.steps = rec.steps;
+    generation.cfg = rec.cfg;
+    generation.samplerName = rec.samplerName;
+    generation.scheduler = rec.scheduler;
+    if (rec.upscaleSteps !== undefined) generation.upscaleSteps = rec.upscaleSteps;
+    if (rec.facefixSteps !== undefined) generation.facefixSteps = rec.facefixSteps;
+    if (rec.upscaleDenoise !== undefined) generation.upscaleDenoise = rec.upscaleDenoise;
+  }
+
   function applyAnimaRecommendation() {
-    generation.steps = 30;
-    generation.cfg = 4.0;
-    generation.samplerName = "er_sde";
-    generation.scheduler = "sgm_uniform";
-    // Face fix and upscale steps are 1/3 of main steps
-    generation.facefixSteps = Math.ceil(30 / 3);
-    generation.upscaleSteps = Math.ceil(30 / 3);
+    applyRecommendation(ANIMA_SAMPLING);
   }
 
   function applyJuiceRecommendation() {
-    generation.steps = 20;
-    generation.cfg = 1.4;
-    generation.samplerName = "euler_cfg_pp";
-    generation.scheduler = "sgm_uniform";
-    // Face fix and upscale steps are 1/3 of main steps
-    generation.facefixSteps = Math.ceil(20 / 3);
-    generation.upscaleSteps = Math.ceil(20 / 3);
+    applyRecommendation(JUICE_SAMPLING);
   }
 
   let novelaiRecOpen = $state(true);
@@ -166,12 +174,7 @@
   }
 
   function applyNanosaurRecommendation() {
-    generation.steps = 40;
-    generation.cfg = 7;
-    generation.samplerName = "euler";
-    generation.scheduler = "simple";
-    generation.upscaleSteps = 20;
-    generation.upscaleDenoise = 0.5;
+    applyRecommendation(NANOSAUR_SAMPLING);
   }
 </script>
 
