@@ -326,6 +326,49 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - The local pass is a straight upscale again (PR #618)
+
+**Reported by:** the user, on the entry below. The low-denoise img2img round
+trip "doesn't seem to be working very well", and the "Local refine denoise"
+slider should not exist at all: the pass should render with whatever the
+upscale (refiner) and face-fix panels are already set to, the same way an
+ordinary ComfyUI upscale does.
+
+So the local pass is back to `refine_only = true`: the NovelAI image is loaded
+and handed straight to the upscale chain, with no base sampling pass of its own.
+`local_denoise` and `local_steps` are gone from `NovelAiParams`, from the
+TypeScript settings type, from the store and from all twelve locale files, and
+the slider is gone from the NovelAI panel. Denoise and step count now come from
+the upscale panel's own controls, and the face-fix panel's from its own.
+
+What did survive from the img2img attempt is the sampler override. NovelAI mode
+hides the ComfyUI sampler dropdowns, so `sampler_name` is a stale leftover and
+`cfg` is NovelAI's guidance scale. `local_sampler`, `local_scheduler` and
+`local_cfg` still come from the picked model's recommendation in
+`src/lib/utils/samplingRecommendation.ts`, which the sampler panel's Apply
+buttons share.
+
+**Testing required: yes.** This changes what the local pass renders, for every
+NovelAI generation that uses it.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NAI mode, local post-process on, pick Anima, upscale on, generate | The final image is NovelAI's image upscaled. Composition and style are NovelAI's, just at higher resolution and detail |
+| 2 | Open the NovelAI local panel | There is no "Local refine denoise" slider anywhere in it |
+| 3 | Look at the line under the local model picker after picking Anima | Reads `er_sde / sgm_uniform, CFG 4.0`, with no step count |
+| 4 | Change the upscale panel's denoise, then generate | The change is visible in the result: the upscale panel is what drives it now |
+| 5 | Change the upscale panel's steps, then generate | The run takes correspondingly longer or shorter |
+| 6 | Turn face fix on as well and generate | Face fix runs last, on the upscaled image, at the face-fix panel's own steps |
+| 7 | Turn upscale off and face fix on, then generate | Face fix alone still runs, and the pass is not skipped |
+| 8 | Pick a model with no known recommendation | The line shows the generic fallback (`euler / normal, CFG 6.0`) and the pass still runs |
+| 9 | On the ComfyUI backend, press the Anima "Apply" button in the sampler panel | Unchanged: 30 steps, CFG 4.0, er_sde, sgm_uniform, and the same upscale and facefix step counts as before |
+| 10 | Open settings saved while the slider existed | The panel loads with no error and the pass runs; the stale denoise value is simply ignored |
+| 11 | Switch the UI language and reopen the NAI local panel | The sampler line is translated and shows no leftover step count |
+
+**Do not skip:** 1, 2, 4, 9.
+
+**Result: pending.**
+
 ### 2026-08-23 - The local post-process never re-drew the image (PR #618)
 
 **Reported by:** the entry below, once it started delivering. The refined image
@@ -370,7 +413,10 @@ NovelAI generation that uses it.
 
 **Do not skip:** 1, 3, 8.
 
-**Result: pending.**
+**Result: reverted.** The img2img pass shipped and made the result worse rather
+than better, so it was rolled back to a straight upscale. See the entry above.
+Steps 8 and the shared recommendation table survived the revert; the rest of
+this table no longer describes what the pass does.
 
 ### 2026-08-23 - Desktop events kept ComfyUI's prompt id after the NovelAI handoff (PR #618)
 

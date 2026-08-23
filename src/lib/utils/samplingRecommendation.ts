@@ -1,12 +1,14 @@
 /**
  * Per-model sampling recommendations, in one place.
  *
- * These are the numbers the "Apply" button in the sampler panel writes, and
- * they are also what the NovelAI local post-process samples with. The local
- * pass cannot inherit NovelAI's sampler, schedule, step count or guidance:
- * those describe NovelAI's own model, and "k_euler_ancestral" / "karras" are
- * not even names ComfyUI's KSampler knows. It has to be told what the local
- * model wants, so the table lives here rather than inside a component.
+ * These are the numbers the "Apply" button in the sampler panel writes. The
+ * NovelAI local post-process borrows the sampler, schedule and guidance from
+ * the same table: it cannot inherit NovelAI's, because those describe
+ * NovelAI's own model and "k_euler_ancestral" / "karras" are not even names
+ * ComfyUI's KSampler knows, and the sampler panel is hidden in NovelAI mode so
+ * nothing else fills them. Its step count and denoise come from the upscale
+ * and face-fix panels instead, which the user can see. The table lives here
+ * rather than inside a component because both callers need it.
  */
 
 export interface SamplingRecommendation {

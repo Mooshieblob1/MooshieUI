@@ -188,10 +188,10 @@ export interface NovelAiParams {
   normalize_reference_strength: boolean;
   director_references: NovelAiDirectorReference[];
   /**
-   * Re-sample the returned image locally, then upscale and face-fix it. Free.
+   * Upscale and face-fix the returned image on this machine. Free.
    */
   local_post_process: boolean;
-  /** Model the local pass samples with. Required for it to run at all. */
+  /** Model the local pass renders with. Required for it to run at all. */
   local_checkpoint: string | null;
   local_architecture: string | null;
   local_is_vpred: boolean;
@@ -205,18 +205,15 @@ export interface NovelAiParams {
   /** VAE for the split load. */
   local_vae: string | null;
   /**
-   * How far the local model may move NovelAI's image. Low by default: the paid
-   * image is the composition, and the pass only re-renders it.
-   */
-  local_denoise: number;
-  /**
-   * Sampling for the local pass, filled from the picked model's recommendation.
-   * NovelAI's own sampler names and guidance describe a different model, so
-   * they cannot be carried over. `null` means no recommendation was known.
+   * Sampler for the local pass, filled from the picked model's recommendation.
+   * Steps and denoise are deliberately absent: those come from the upscale and
+   * face-fix panels, which the user can see. NovelAI's own sampler names and
+   * guidance describe a different model and have no panel of their own in
+   * NovelAI mode, so they cannot be carried over. `null` means no
+   * recommendation was known.
    */
   local_sampler: string | null;
   local_scheduler: string | null;
-  local_steps: number | null;
   local_cfg: number | null;
   /** Prompt in ComfyUI weight syntax, for the local pass only. */
   local_positive_prompt: string | null;

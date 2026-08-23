@@ -148,10 +148,8 @@ export function createDefaultNovelAiSettings(): NovelAiSettings {
     local_clip_model: null,
     local_clip_type: null,
     local_vae: null,
-    local_denoise: 0.2,
     local_sampler: null,
     local_scheduler: null,
-    local_steps: null,
     local_cfg: null,
   };
 }
@@ -1820,7 +1818,6 @@ class GenerationStore {
         local_vae: null,
         local_sampler: null,
         local_scheduler: null,
-        local_steps: null,
         local_cfg: null,
       });
       return;
@@ -1852,10 +1849,13 @@ class GenerationStore {
           ? false
           : category === "diffusion_models";
 
-    // Sampling has to be settled here, not at send time: the top-level sampler
-    // and CFG belong to the NovelAI request, whose sampler names ComfyUI does
-    // not share. Falling back to a generic middle rather than to nothing,
-    // because the local pass has to put some sampler in the graph.
+    // The sampler has to be settled here, not at send time: the top-level
+    // sampler and CFG belong to the NovelAI request, whose sampler names
+    // ComfyUI does not share, and the sampler panel is hidden in NovelAI mode
+    // so nothing else fills them. Steps and denoise are left alone, because
+    // the upscale and face-fix panels own those. Falling back to a generic
+    // middle rather than to nothing, because the local pass has to put some
+    // sampler in the graph.
     const rec = recommendedSamplingFor(filename, spec?.family) ?? GENERIC_SAMPLING;
 
     this.updateNovelAiSettings({
@@ -1874,7 +1874,6 @@ class GenerationStore {
       local_vae: useSplit ? matchInstalledModel(spec?.recommended_vae, vaes) : null,
       local_sampler: rec.samplerName,
       local_scheduler: rec.scheduler,
-      local_steps: rec.steps,
       local_cfg: rec.cfg,
     });
   }
