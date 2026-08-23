@@ -326,6 +326,68 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - Chunks in the prompt toolbar, NovelAI token bars, no edit/video tabs (PR #618)
+
+**Requested by:** the user: "let's actually move prompt chunks to the prompt box
+next to the toggle for uncombining the positive and negative prompt box button,
+also hide regional prompting in NAI mode plus max tokens for NAI is 1471, make
+it a bar underneath each prompt box (if using more than one, just display the
+total of all tokens under each prompt box) also disable the "image edit and
+video" tabs from being seen completely in NAI mode since those don't exist."
+
+**Chunks moved to where prompts are written.** The chunk list only existed in
+the Styles panel at the bottom of the page, so using one meant leaving the
+prompt box. A compact picker now sits in the prompt toolbar next to the
+combine/uncombine toggle: it lists every chunk, activates or deactivates on
+click (opening the existing mode modal), copies the inline `@[Name]` token, and
+shows the active count on the trigger. The Styles panel keeps the full editor
+(create, edit, duplicate, import, export, delete); the picker is a short path,
+not a replacement.
+
+**Regional prompting is gone in NovelAI mode, not just hidden.** Both regional
+strategies are ComfyUI graph rewrites, and NovelAI takes a finished prompt over
+HTTP, so neither can apply. `supportsRegionalConditioning` and
+`supportsRegionalInpaintChain` now return false for NovelAI, and the toolbar
+button and its amber "unsupported" hint are dropped rather than shown disabled.
+
+**A token bar under every NovelAI prompt box.** NovelAI's cap is 1471 tokens, a
+single ceiling rather than CLIP's 75-token chunk boundary, so it is drawn as a
+bar rather than the chunk counter ComfyUI mode keeps. Every box on a side (main
+plus extras) is concatenated into one prompt before it is sent, so each bar
+shows the whole side's total, with the same number repeated under each box and
+a "total" suffix once more than one box is in use. The bar turns amber at 90
+percent and red past the limit. The estimator is the existing CLIP heuristic,
+so the reading is approximate.
+
+**Image edit and video tabs are hidden in NovelAI mode.** NovelAI has no edit
+or video endpoint, so those two tabs are filtered out of the mode list that all
+three tab bars render, rather than shown disabled. Switching to a NovelAI model
+while sitting on one of them snaps back to txt2img, so nobody is stranded on a
+tab that no longer has a way back.
+
+**Testing required: yes.** All four are user-visible UI changes.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Start the app fresh (`npm run tauri dev`) on a ComfyUI model | Prompt toolbar shows a Chunks button next to the regional and combine/uncombine buttons |
+| 2 | Click the Chunks button | A popover lists every chunk with its mode icon and a truncated preview |
+| 3 | Click a chunk in the popover | The mode modal opens; picking a mode activates it and the trigger shows "(1)" |
+| 4 | Click the same chunk again | It deactivates and the count drops back |
+| 5 | Click the `@` button on a chunk row | A toast confirms the copied token; pasting into the prompt gives `@[Name]` |
+| 6 | Click outside the popover, then reopen it and press Escape | Both close it |
+| 7 | Switch to a NovelAI model | The Chunks and combine/uncombine buttons stay; the regional prompting button is gone |
+| 8 | Still in NovelAI mode, check the mode tabs | Only txt2img, img2img and inpainting; no image edit, no video |
+| 9 | Switch to ComfyUI, select the image edit tab, then switch back to a NovelAI model | The tab bar drops those two tabs and the view snaps to txt2img |
+| 10 | Repeat step 9 with the video tab | Same |
+| 11 | Back on ComfyUI, confirm all five tabs and the regional button are present | Nothing was removed for ComfyUI |
+| 12 | In NovelAI mode, type into the positive prompt | A thin bar sits under the box reading `N/1471` and filling as you type |
+| 13 | Paste enough text to pass 1471 tokens | The bar goes red and the count reads over the limit |
+| 14 | Add an extra positive prompt box and put text in both | Both bars show the same combined total with a "total" suffix |
+| 15 | Check the negative side the same way | Its bar counts only the negative boxes, independently of the positive side |
+| 16 | Switch back to a ComfyUI model | The 1471 bars are gone and the usual 75-token chunk badge is back |
+
+**Do not skip:** 1, 3, 7, 8, 9, 12, 14.
+
 ### 2026-08-23 - Typed tokens splice the whole chunk, and a failed Anlas fetch retries (PR #618)
 
 **Reported by:** the user, after rebuilding on the entry below: "@[xenogirl] in

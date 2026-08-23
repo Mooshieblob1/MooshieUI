@@ -303,6 +303,15 @@
     );
   });
 
+  // NovelAI has no image-edit or video endpoint, so those mode tabs are hidden
+  // there (see GenerationPage). Switching to a NovelAI model while one of them
+  // is selected would otherwise strand the user on a tab with no way back.
+  $effect(() => {
+    if (!generation.isNovelAi) return;
+    const mode = generation.mode;
+    if (mode === "image_edit" || mode === "video") generation.setMode("txt2img");
+  });
+
   // Model family/spec detection lives here rather than in ModelSelector, which
   // is unmounted while the Model panel is collapsed. Quality-tag injection keys
   // off generation.modelFamily, so detection has to run panel state aside.

@@ -81,13 +81,21 @@
 
   type SectionSide = "left" | "right";
 
-  const modes = [
+  const ALL_MODES = [
     { id: "txt2img" as const, label: () => locale.t('generation.mode.txt2img') },
     { id: "img2img" as const, label: () => locale.t('generation.mode.img2img') },
     { id: "inpainting" as const, label: () => locale.t('generation.mode.inpainting') },
     { id: "image_edit" as const, label: () => locale.t('generation.mode.image_edit') },
     { id: "video" as const, label: () => locale.t('generation.mode.video') },
   ];
+
+  // NovelAI has no edit or video endpoint, so those tabs are dropped entirely
+  // rather than shown disabled. All three tab bars render this list.
+  const modes = $derived(
+    generation.isNovelAi
+      ? ALL_MODES.filter((m) => m.id !== "image_edit" && m.id !== "video")
+      : ALL_MODES,
+  );
 
   let canvasEditorRef: CanvasEditor | undefined = $state();
   let imagePreviewUrl = $state<string | null>(null);

@@ -1481,11 +1481,15 @@ class GenerationStore {
   /** SDXL-style area conditioning (ConditioningSetArea). */
   get supportsRegionalConditioning(): boolean {
     if (this.mode !== "txt2img") return false;
+    // Both regional strategies are ComfyUI graph rewrites. NovelAI takes a
+    // finished prompt over HTTP, so neither can apply there.
+    if (this.isNovelAi) return false;
     return this.isSdxlLike;
   }
 
   /** Sequential masked inpaint per region (works on Anima + optional SDXL). */
   get supportsRegionalInpaintChain(): boolean {
+    if (this.isNovelAi) return false;
     return this.mode === "txt2img" && (this.isAnima || this.supportsRegionalConditioning);
   }
 

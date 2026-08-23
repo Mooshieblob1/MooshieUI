@@ -8,6 +8,8 @@
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
   import ExtraPromptBoxList from "./ExtraPromptBoxList.svelte";
+  import PromptChunkPicker from "./PromptChunkPicker.svelte";
+  import NovelAiTokenBar from "./NovelAiTokenBar.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { parseScheduledPrompt, hasRegionalTags, hasSchedulingTags } from "../../utils/promptSchedule.js";
   import { joinPromptBoxes } from "../../utils/promptSanitize.js";
@@ -391,6 +393,11 @@
       </div>
       <div class="flex items-center gap-1.5">
         {#if !isVideoMode}
+          <PromptChunkPicker />
+        {/if}
+        <!-- NovelAI has no regional conditioning at all, so the button is gone
+             there rather than shown disabled with an "unsupported" toast. -->
+        {#if !isVideoMode && !generation.isNovelAi}
           <button
             type="button"
             disabled={!regionalPromptingSupported}
@@ -424,7 +431,10 @@
       tagAssist={!isVideoMode}
       highlightLoraWords={true}
     />
-    {#if !isVideoMode && hasRegionalPrompting && !regionalPromptingSupported}
+    {#if generation.isNovelAi}
+      <NovelAiTokenBar side="positive" />
+    {/if}
+    {#if !isVideoMode && !generation.isNovelAi && hasRegionalPrompting && !regionalPromptingSupported}
       <p class="mt-1 text-[10px] text-amber-300">
         {locale.t("generation.regional.unsupported")}
       </p>
@@ -461,6 +471,9 @@
       storageKey="mooshieui.promptHeight.negative"
       tagAssist={!isVideoMode}
     />
+    {#if generation.isNovelAi}
+      <NovelAiTokenBar side="negative" />
+    {/if}
     <ExtraPromptBoxList side="negative" />
   </div>
   {/snippet}
