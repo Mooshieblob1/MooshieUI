@@ -2987,6 +2987,7 @@ const en: Record<string, string> = {
   "generation.novelai.local.group_checkpoints": "Checkpoints",
   "generation.novelai.local.group_diffusion": "Diffusion models",
   "generation.novelai.local.auto_split": "Split model: using {clip} and {vae}.",
+  "generation.novelai.local.split_missing": "This is a split-file model and its text encoder or VAE is not installed. Install the companion file or pick a full checkpoint.",
   "generation.novelai.local.checkpoint_required": "Pick a checkpoint for the local pass to run.",
   "generation.novelai.local.nothing_to_do": "Turn on Upscale or Face Fix for the local pass to do anything.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",

@@ -3049,6 +3049,7 @@ const it: Record<string, string> = {
   "generation.novelai.local.group_checkpoints": "Checkpoint",
   "generation.novelai.local.group_diffusion": "Modelli di diffusione",
   "generation.novelai.local.auto_split": "Modello separato: usa {clip} e {vae}.",
+  "generation.novelai.local.split_missing": "Questo e un modello a file separati e il suo encoder di testo o VAE non e installato. Installa il file complementare oppure scegli un checkpoint completo.",
   "generation.novelai.local.checkpoint_required": "Scegli un checkpoint per far partire la passata locale.",
   "generation.novelai.local.nothing_to_do": "Attiva Upscale o Correzione volti perché la passata locale faccia qualcosa.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",

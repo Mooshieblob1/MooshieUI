@@ -3051,6 +3051,7 @@ const de: Record<string, string> = {
   "generation.novelai.local.group_checkpoints": "Checkpoints",
   "generation.novelai.local.group_diffusion": "Diffusionsmodelle",
   "generation.novelai.local.auto_split": "Split-Modell: verwendet {clip} und {vae}.",
+  "generation.novelai.local.split_missing": "Dies ist ein Split-Datei-Modell und sein Text-Encoder oder VAE ist nicht installiert. Installiere die passende Datei oder waehle einen vollstaendigen Checkpoint.",
   "generation.novelai.local.checkpoint_required": "Wählen Sie einen Checkpoint, damit der lokale Durchlauf startet.",
   "generation.novelai.local.nothing_to_do": "Aktivieren Sie Hochskalieren oder Gesichtskorrektur, damit der lokale Durchlauf etwas bewirkt.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",

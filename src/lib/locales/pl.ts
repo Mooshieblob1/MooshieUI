@@ -3088,6 +3088,7 @@ const pl: Record<string, string> = {
   "generation.novelai.local.group_checkpoints": "Checkpointy",
   "generation.novelai.local.group_diffusion": "Modele dyfuzyjne",
   "generation.novelai.local.auto_split": "Model dzielony: używa {clip} i {vae}.",
+  "generation.novelai.local.split_missing": "To model w osobnych plikach, a jego enkoder tekstu lub VAE nie jest zainstalowany. Zainstaluj brakujacy plik albo wybierz pelny checkpoint.",
   "generation.novelai.local.checkpoint_required": "Wybierz checkpoint, aby uruchomić przebieg lokalny.",
   "generation.novelai.local.nothing_to_do": "Włącz Powiększanie lub Poprawianie twarzy, aby przebieg lokalny coś zrobił.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",

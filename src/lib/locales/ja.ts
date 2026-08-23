@@ -3074,6 +3074,7 @@ const ja: Record<string, string> = {
   "generation.novelai.local.group_checkpoints": "チェックポイント",
   "generation.novelai.local.group_diffusion": "拡散モデル",
   "generation.novelai.local.auto_split": "分割モデル: {clip} と {vae} を使用します。",
+  "generation.novelai.local.split_missing": "これは分割ファイル形式のモデルで、テキストエンコーダーまたは VAE がインストールされていません。対応するファイルをインストールするか、完全なチェックポイントを選択してください。",
   "generation.novelai.local.checkpoint_required": "ローカル処理を実行するチェックポイントを選んでください。",
   "generation.novelai.local.nothing_to_do": "ローカル処理を動かすには、アップスケールか顔補正を有効にしてください。",
   "generation.novelai.cost_badge": "~{anlas} Anlas",

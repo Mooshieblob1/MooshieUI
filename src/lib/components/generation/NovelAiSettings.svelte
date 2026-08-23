@@ -32,6 +32,19 @@
       : "",
   );
 
+  /**
+   * A split-file model is only loadable once its text encoder and VAE have both
+   * been resolved. Selection fills them from the ModelSpec recommendation, and
+   * that recommendation is deliberately omitted rather than substituted when
+   * nothing installed is compatible, so an empty slot here means the companion
+   * file is missing from disk.
+   */
+  const splitCompanionsMissing = $derived(
+    !!nai.local_checkpoint &&
+      nai.local_use_split_model &&
+      (!nai.local_clip_model?.trim() || !nai.local_vae?.trim()),
+  );
+
   function pickLocalModel(value: string) {
     if (!value) {
       generation.setNovelAiLocalCheckpoint(null);
@@ -244,12 +257,18 @@
       </label>
 
       {#if nai.local_checkpoint && nai.local_use_split_model}
-        <p class="text-[11px] text-neutral-500">
-          {locale.t("generation.novelai.local.auto_split", {
-            clip: nai.local_clip_model ?? "-",
-            vae: nai.local_vae ?? "-",
-          })}
-        </p>
+        {#if splitCompanionsMissing}
+          <p class="text-[11px] text-amber-400/90">
+            {locale.t("generation.novelai.local.split_missing")}
+          </p>
+        {:else}
+          <p class="text-[11px] text-neutral-500">
+            {locale.t("generation.novelai.local.auto_split", {
+              clip: nai.local_clip_model ?? "",
+              vae: nai.local_vae ?? "",
+            })}
+          </p>
+        {/if}
       {/if}
 
       {#if !nai.local_checkpoint}

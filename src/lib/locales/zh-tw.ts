@@ -3049,6 +3049,7 @@ const zhTw: Record<string, string> = {
   "generation.novelai.local.group_checkpoints": "檢查點",
   "generation.novelai.local.group_diffusion": "擴散模型",
   "generation.novelai.local.auto_split": "拆分模型: 使用 {clip} 和 {vae}。",
+  "generation.novelai.local.split_missing": "這是分檔模型，其文字編碼器或 VAE 尚未安裝。請安裝對應檔案，或改選完整的 checkpoint。",
   "generation.novelai.local.checkpoint_required": "選擇一個模型檔，本機處理才能執行。",
   "generation.novelai.local.nothing_to_do": "啟用放大或臉部修復，本機處理才會有作用。",
   "generation.novelai.cost_badge": "~{anlas} Anlas",

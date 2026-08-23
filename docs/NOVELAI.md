@@ -326,6 +326,53 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - Text encoders filed under `clip/` (PR #618)
+
+**Reported by:** step 3 of the entry below, on a machine where the local
+post-process died with a lost connection as soon as a split-file model was
+picked.
+
+ComfyUI's `CLIPLoader` offers `models/text_encoders/` and the legacy
+`models/clip/` as a single list, and the frontend model picker already merges
+the two (`src/lib/stores/models.svelte.ts`). `read_modelspec` did not: it drew
+its `recommended_clip_model` from `text_encoders/` alone. On the reporting
+machine `text_encoders/` holds one unrelated 15 GB encoder and Anima's
+`qwen_3_06b_base.safetensors` sits in `clip/`, so the recommendation came back
+empty.
+
+Empty is a deliberate state, not an error. The recommendation is omitted rather
+than substituted when nothing installed is compatible, because a mismatched
+encoder fails deep inside sampling instead of failing loudly. But nothing
+downstream checked for it, so the NovelAI local pass built a `CLIPLoader` with
+`clip_name: ""` and handed it to ComfyUI.
+
+Three changes.
+
+- **The recommendation** now reads both folders and de-duplicates, matching what
+  `CLIPLoader` actually offers. This also fixes the main model picker on any
+  install using the legacy layout.
+- **The local pass** refuses to submit a split-file graph whose text encoder or
+  VAE is still unresolved, and names the missing half in the log instead of
+  letting an empty loader input reach ComfyUI.
+- **The picker** replaces the neutral "Split model: using X and Y" hint with an
+  amber warning when either companion is unresolved, so the gap is visible
+  before generating rather than after.
+
+**Testing required: yes.**
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NAI mode, local post-process on, pick the Anima split model | The hint reads "Split model: using qwen_3_06b_base.safetensors and qwen_image_vae.safetensors" (or whichever encoder is installed), not the amber warning and not a blank name |
+| 2 | Generate | The local pass runs to completion and the refined image lands in the gallery. No lost connection |
+| 3 | Check the Rust log for `NovelAI <id>: local pass model=` | `split=true`, and `clip=` names a real file rather than `None` |
+| 4 | Switch to the main ComfyUI backend and pick the same Anima model | The text encoder and VAE fields fill in the same way |
+| 5 | Temporarily move the encoder out of `clip/`, restart ComfyUI, re-pick the model | The amber warning appears under the dropdown, and generating delivers the plain NovelAI image with a log line naming the missing text encoder rather than an error from ComfyUI |
+| 6 | Pick a plain checkpoint | No hint, no warning, and the pass runs as before |
+
+**Do not skip:** 1, 2, 5.
+
+**Result: pending.**
+
 ### 2026-08-23 - Split-file models in the NovelAI local post-process (PR #618)
 
 **Reported by:** step 4 of the entry below. The local post-process model picker
@@ -373,7 +420,8 @@ resolve it to an absolute path before the graph is built.
 
 **Do not skip:** 2, 3, 7.
 
-**Result: pending.**
+**Result:** 1 and 2 pass. 3 fails and blocks 4 through 8: the pass errors out
+with a lost connection. Cause found and fixed in the entry above.
 
 ### 2026-08-23 - App-mode metadata loss, and Anlas-free aspect ratios (PR #618)
 

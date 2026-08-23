@@ -3049,6 +3049,7 @@ const ko: Record<string, string> = {
   "generation.novelai.local.group_checkpoints": "체크포인트",
   "generation.novelai.local.group_diffusion": "확산 모델",
   "generation.novelai.local.auto_split": "분할 모델: {clip} 및 {vae} 사용.",
+  "generation.novelai.local.split_missing": "이 모델은 분할 파일 형식이며 텍스트 인코더 또는 VAE가 설치되지 않았습니다. 해당 파일을 설치하거나 전체 체크포인트를 선택하세요.",
   "generation.novelai.local.checkpoint_required": "로컬 처리를 실행할 체크포인트를 선택하세요.",
   "generation.novelai.local.nothing_to_do": "로컬 처리가 동작하려면 업스케일 또는 얼굴 보정을 켜세요.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",

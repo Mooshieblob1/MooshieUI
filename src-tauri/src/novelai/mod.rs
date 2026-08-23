@@ -544,6 +544,27 @@ async fn run_local_post_process(
             }
         }
     }
+    // A split-file model needs all three names. An unresolved companion reaches
+    // ComfyUI as `clip_name: ""`, which is rejected during graph validation with
+    // no mention of the model that caused it, so refuse it here where the
+    // message can say which half is missing.
+    if derived.use_split_model {
+        let missing: Vec<&str> = [
+            ("text encoder", derived.clip_model.as_deref()),
+            ("VAE", derived.vae.as_deref()),
+        ]
+        .into_iter()
+        .filter(|(_, name)| name.unwrap_or("").trim().is_empty())
+        .map(|(label, _)| label)
+        .collect();
+        if !missing.is_empty() {
+            return Err(AppError::Other(format!(
+                "Local post-process model {} is a split-file model and no {} is installed for it; pick a full checkpoint or install the companion file",
+                derived.checkpoint,
+                missing.join(" or "),
+            )));
+        }
+    }
     // What the pass will actually load. The failure modes here are all "the
     // wrong file name reached a loader", and the graph is derived rather than
     // user-authored, so the names are worth one line in the log.

@@ -3049,6 +3049,7 @@ const ru: Record<string, string> = {
   "generation.novelai.local.group_checkpoints": "Чекпоинты",
   "generation.novelai.local.group_diffusion": "Диффузионные модели",
   "generation.novelai.local.auto_split": "Раздельная модель: используются {clip} и {vae}.",
+  "generation.novelai.local.split_missing": "Это модель из отдельных файлов, и ее текстовый энкодер или VAE не установлен. Установите недостающий файл или выберите полный чекпоинт.",
   "generation.novelai.local.checkpoint_required": "Выберите чекпоинт, чтобы локальный проход запустился.",
   "generation.novelai.local.nothing_to_do": "Включите Апскейл или Исправление лиц, чтобы локальный проход что-то сделал.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",

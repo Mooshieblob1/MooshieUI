@@ -3050,6 +3050,7 @@ const zh: Record<string, string> = {
   "generation.novelai.local.group_checkpoints": "检查点",
   "generation.novelai.local.group_diffusion": "扩散模型",
   "generation.novelai.local.auto_split": "拆分模型: 使用 {clip} 和 {vae}。",
+  "generation.novelai.local.split_missing": "这是分文件模型，其文本编码器或 VAE 未安装。请安装对应文件，或改选完整的 checkpoint。",
   "generation.novelai.local.checkpoint_required": "选择一个模型文件，本地处理才能运行。",
   "generation.novelai.local.nothing_to_do": "启用放大或面部修复，本地处理才会起作用。",
   "generation.novelai.cost_badge": "~{anlas} Anlas",

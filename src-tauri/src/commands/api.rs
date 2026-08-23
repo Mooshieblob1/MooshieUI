@@ -4748,21 +4748,35 @@ pub(crate) async fn read_modelspec_internal(
                 result.insert("recommended_vae".to_string(), recommended_vae);
             }
         }
-        if let Ok(encoders) = state.get_models_list("text_encoders").await {
-            if let Some((recommended_clip_model, recommended_clip_type)) =
-                recommended_clip_from_available(category, &family, &encoders)
-            {
-                // The model key is omitted (not defaulted) when no installed
-                // encoder is compatible, so the frontend can offer a download
-                // instead of silently loading a mismatched encoder.
-                if let Some(recommended_clip_model) = recommended_clip_model {
-                    result.insert("recommended_clip_model".to_string(), recommended_clip_model);
+        // ComfyUI's CLIPLoader offers `text_encoders/` and the legacy `clip/`
+        // folder as one list, so a recommendation drawn from `text_encoders/`
+        // alone reports "no compatible encoder" for a model whose encoder is
+        // merely filed under `clip/`. Mirror the merge the frontend picker
+        // already does in `src/lib/stores/models.svelte.ts`.
+        let mut encoders = state
+            .get_models_list("text_encoders")
+            .await
+            .unwrap_or_default();
+        if let Ok(legacy) = state.get_models_list("clip").await {
+            for encoder in legacy {
+                if !encoders.contains(&encoder) {
+                    encoders.push(encoder);
                 }
-                result.insert(
-                    "recommended_clip_type".to_string(),
-                    recommended_clip_type.to_string(),
-                );
             }
+        }
+        if let Some((recommended_clip_model, recommended_clip_type)) =
+            recommended_clip_from_available(category, &family, &encoders)
+        {
+            // The model key is omitted (not defaulted) when no installed
+            // encoder is compatible, so the frontend can offer a download
+            // instead of silently loading a mismatched encoder.
+            if let Some(recommended_clip_model) = recommended_clip_model {
+                result.insert("recommended_clip_model".to_string(), recommended_clip_model);
+            }
+            result.insert(
+                "recommended_clip_type".to_string(),
+                recommended_clip_type.to_string(),
+            );
         }
     }
 
