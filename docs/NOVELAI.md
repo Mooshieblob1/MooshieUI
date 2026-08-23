@@ -326,6 +326,40 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - Phase F follow-up: styles leaked `@` into NovelAI prompts (PR #618)
+
+**Found by:** Phase F step 6. The style editor still showed `@artist` while in
+NovelAI mode. Chasing it turned up two bugs, one cosmetic and one that changed
+the generated image.
+
+- The artist list in the style editor hardcoded the `@` in its template, so it
+  rendered `@name` no matter what was stored. Cosmetic only. It now uses
+  `animaArtistTagPrefix`, so it shows the form that will actually be sent.
+- `styles.buildPromptFragment()` emitted the stored tag verbatim. A style built
+  while an Anima checkpoint was selected stores `@artist`, so activating that
+  same style in NovelAI mode put `@artist` straight into the NovelAI prompt,
+  where `@` is the prompt-chunk reference sigil. It now takes a `stripSigil`
+  flag that `toParams()` sets from `isNovelAi`. The flag is passed in rather
+  than read from the store, because `generation` already imports `styles` and
+  the reverse would be a cycle.
+
+`animaArtistTagPrefix` now excludes NovelAI explicitly instead of relying on
+the family test. A NovelAI model id is not a safetensors file, so no family
+metadata is ever resolved for it, and leaning on `isAnima` alone would have
+depended on that clearing having happened.
+
+**Testing required: yes,** but short.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Anima checkpoint, create a style, add an artist. Switch to NovelAI mode and reopen that style | The artist row shows the bare name, no `@` |
+| 2 | With that style active in NovelAI mode, generate | The artist tag reaches NovelAI bare. No `@artist` in the request or the saved metadata |
+| 3 | Switch back to the Anima checkpoint with the same style still active, generate | `@artist` is back in the prompt, unchanged from before this fix |
+| 4 | Non-Anima ComfyUI checkpoint with a style whose artists are stored bare, generate | Still bare. No `@` is added |
+
+**Do not skip:** 2 and 3. Step 2 is the leak itself, step 3 proves the fix did
+not break Anima.
+
 ### 2026-08-23 - Phase F: artist tag sigil centralised (PR #618)
 
 **Changed:** The `@` on an artist tag is now decided in one place. The new
@@ -361,6 +395,13 @@ half of this pass is a no-regression check.
 **Do not skip:** 2 and 5. Step 2 is the bug this phase existed to fix, and
 step 5 is the regression guard for every existing ComfyUI user.
 
+**Result: steps 1 to 5 and 7 pass.** Step 6 found a real bug, fixed in the
+entry above. Step 8 behaves as designed: clicks that land before the artist
+index has loaded each add a copy, then the first click after it loads
+removes every copy at once. That is the toggle path doing its job once it
+can identify the tag, and it self-heals, so it is accepted rather than
+fixed.
+
 ### 2026-08-23 - Normalize strengths moves client side (PR #618)
 
 **Fixed:** Normalize strengths did nothing. The checkbox drove
@@ -383,6 +424,11 @@ checkbox and the first two looked fine from the outside.
 
 **Do not skip:** 1 and 2. That pair is the whole fix, and step 2 is what
 proves the change is the normalisation rather than drift.
+
+**Result: pass.** Steps 1 and 2 confirmed. Same seed, two vibes, images
+visibly distinct, and the log reads `strengths [1.0,1.0], normalize false`
+then `strengths [0.5,0.5], normalize true`. The backend agrees with the UI.
+Remaining steps not run and not needed.
 
 ### 2026-08-23 - Vibe tokens persist, normalize strengths (PR #618)
 

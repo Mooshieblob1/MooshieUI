@@ -305,7 +305,7 @@
             {#each style.artists as artist, i (artist.tag + i)}
               {@const effective = locale.formatDecimal(artist.weight * style.overallWeight, 2)}
               <div class="flex items-center gap-2 rounded border border-neutral-800 bg-neutral-950/60 px-2 py-1.5">
-                <span class="flex-1 truncate font-mono text-[11px] text-red-300">@{displayTag(artist.tag)}</span>
+                <span class="flex-1 truncate font-mono text-[11px] text-red-300">{generation.animaArtistTagPrefix}{displayTag(artist.tag)}</span>
                 <input
                   type="range"
                   min="0"

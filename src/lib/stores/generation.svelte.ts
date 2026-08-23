@@ -1154,14 +1154,18 @@ class GenerationStore {
   }
 
   /**
-   * The sigil the *saved style* form uses, which is a narrower rule: only
-   * Anima-family checkpoints were trained on `@artist`, so a style built
-   * for SDXL/Pony/Illustrious stores the bare danbooru name. NovelAI lands
-   * on bare through the same test, which is why the style editor needed no
-   * NovelAI-specific branch.
+   * The sigil the *saved style* form uses, which is a narrower rule than
+   * `artistTagPrefix`: only Anima-family checkpoints were trained on
+   * `@artist`, so a style built for SDXL/Pony/Illustrious stores the bare
+   * danbooru name.
+   *
+   * NovelAI is excluded explicitly rather than relying on the family test.
+   * A NovelAI model id is not a safetensors file, so no family metadata is
+   * ever resolved for it, and leaning on `isAnima` alone would depend on
+   * that clearing having happened.
    */
   get animaArtistTagPrefix(): string {
-    return this.isAnima ? "@" : "";
+    return !this.isNovelAi && this.isAnima ? "@" : "";
   }
 
   /**
@@ -2851,7 +2855,10 @@ class GenerationStore {
     // Inject tags contributed by any currently-active Artist Styles. These are
     // not visible in the prompt textbox — they flow straight into the payload
     // so the user sees badges in the UI instead.
-    const styleFragment = styles.buildPromptFragment();
+    // NovelAI mode strips the `@` a style may have stored: a style built
+    // while an Anima checkpoint was selected holds `@artist`, and `@` is
+    // the prompt-chunk sigil on NovelAI, not an artist marker.
+    const styleFragment = styles.buildPromptFragment(this.isNovelAi);
     if (styleFragment) {
       positivePrompt = this.mergeTagPrompts(positivePrompt, styleFragment);
     }
