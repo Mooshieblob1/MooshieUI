@@ -388,6 +388,18 @@ tab that no longer has a way back.
 
 **Do not skip:** 1, 3, 7, 8, 9, 12, 14.
 
+**Follow-up: the list is a modal now.** As first shipped the list was a
+dropdown anchored under the button. The prompt toolbar sits in a narrow
+column, so a panel wide enough to preview chunk content extended past the left
+edge and was clipped at ordinary window widths. It is now a centred modal, the
+same shape as the mode picker it opens, which is width independent.
+
+**Result: all pass except 10, which does not apply.** Step 10 has no
+traditional model selector to test against (the video tab always uses the
+video models), and it is deliberately left unpatched. Steps 1 through 6 were
+verified against the original dropdown and still describe the modal, except
+that it is now opened and closed as a dialog.
+
 ### 2026-08-23 - Typed tokens splice the whole chunk, and a failed Anlas fetch retries (PR #618)
 
 **Reported by:** the user, after rebuilding on the entry below: "@[xenogirl] in
