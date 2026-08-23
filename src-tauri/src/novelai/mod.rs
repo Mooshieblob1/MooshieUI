@@ -512,8 +512,39 @@ async fn run_local_post_process(
         .upload_image_from_bytes(png.to_vec(), filename)
         .await?;
 
-    let workflow = crate::templates::upscale_standalone::build(params, &upload.name, params.seed)
+    let mut derived = crate::templates::upscale_standalone::build_params(params, &upload.name)
         .ok_or_else(|| AppError::Other("Local post-process is not applicable".into()))?;
+    // The local model lives in a folder that does not match what it is (a
+    // split-file model in checkpoints/, or a full checkpoint in
+    // diffusion_models/), so the path loaders take over and need an absolute
+    // path. Anything correctly filed skips this entirely.
+    if let Some(category) = derived.model_source_category.clone() {
+        let filename = if derived.use_split_model {
+            derived.diffusion_model.clone().unwrap_or_default()
+        } else {
+            derived.checkpoint.clone()
+        };
+        let resolved = {
+            let config = state.config.read().await;
+            crate::commands::api::resolve_model_path(
+                &config.comfyui_path,
+                config.extra_model_paths.as_deref(),
+                &category,
+                &filename,
+            )
+        };
+        match resolved {
+            Some(path) => {
+                derived.resolved_model_path = Some(path.to_string_lossy().to_string());
+            }
+            None => {
+                return Err(AppError::Other(format!(
+                    "Local post-process model not found: {category}/{filename}"
+                )));
+            }
+        }
+    }
+    let workflow = crate::templates::build_workflow(&derived, params.seed, false);
 
     let timeout = std::time::Duration::from_secs(300);
     let (worker_id, response) = state

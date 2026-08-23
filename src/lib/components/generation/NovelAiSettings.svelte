@@ -19,6 +19,32 @@
   const nai = $derived(generation.novelaiSettings);
   const isImageMode = $derived(generation.mode === "img2img" || generation.mode === "inpainting");
   const postProcessArmed = $derived(generation.upscaleEnabled || generation.facefixEnabled);
+
+  /**
+   * The local model picker spans two folders, so the option value carries the
+   * folder with it. A colon is safe as the separator: no filesystem this runs
+   * on allows one in a file name, and only the first is split on so a
+   * subfolder path survives intact.
+   */
+  const localModelValue = $derived(
+    nai.local_checkpoint
+      ? `${nai.local_model_category ?? "checkpoints"}:${nai.local_checkpoint}`
+      : "",
+  );
+
+  function pickLocalModel(value: string) {
+    if (!value) {
+      generation.setNovelAiLocalCheckpoint(null);
+      return;
+    }
+    const split = value.indexOf(":");
+    generation.setNovelAiLocalCheckpoint(
+      value.slice(split + 1),
+      value.slice(0, split),
+      models.textEncoders,
+      models.vaes,
+    );
+  }
 </script>
 
 <div class="space-y-4">
@@ -196,16 +222,35 @@
         {locale.t("generation.novelai.local.checkpoint")}
         <select
           class="mt-1 w-full px-2 py-1 text-xs rounded-md bg-neutral-950 border border-neutral-800 text-neutral-200 focus:outline-none focus:border-indigo-600"
-          value={nai.local_checkpoint ?? ""}
-          onchange={(e) =>
-            generation.setNovelAiLocalCheckpoint(e.currentTarget.value || null)}
+          value={localModelValue}
+          onchange={(e) => pickLocalModel(e.currentTarget.value)}
         >
           <option value="">{locale.t("generation.novelai.local.checkpoint_none")}</option>
-          {#each models.checkpoints as name (name)}
-            <option value={name}>{name}</option>
-          {/each}
+          {#if models.checkpoints.length > 0}
+            <optgroup label={locale.t("generation.novelai.local.group_checkpoints")}>
+              {#each models.checkpoints as name (name)}
+                <option value={`checkpoints:${name}`}>{name}</option>
+              {/each}
+            </optgroup>
+          {/if}
+          {#if models.diffusionModels.length > 0}
+            <optgroup label={locale.t("generation.novelai.local.group_diffusion")}>
+              {#each models.diffusionModels as name (name)}
+                <option value={`diffusion_models:${name}`}>{name}</option>
+              {/each}
+            </optgroup>
+          {/if}
         </select>
       </label>
+
+      {#if nai.local_checkpoint && nai.local_use_split_model}
+        <p class="text-[11px] text-neutral-500">
+          {locale.t("generation.novelai.local.auto_split", {
+            clip: nai.local_clip_model ?? "-",
+            vae: nai.local_vae ?? "-",
+          })}
+        </p>
+      {/if}
 
       {#if !nai.local_checkpoint}
         <p class="text-[11px] text-amber-400/90">

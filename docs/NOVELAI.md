@@ -326,6 +326,55 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - Split-file models in the NovelAI local post-process (PR #618)
+
+**Reported by:** step 4 of the entry below. The local post-process model picker
+listed only `models/checkpoints`, which on the reporting machine holds one file
+and that file is broken, so the pass could not be run at all.
+
+Two layers were hardcoded to the single-file case.
+
+- **The picker.** The dropdown was fed `models.checkpoints` alone, and the store
+  always asked the backend for `readModelSpec("checkpoints", filename)`, so a
+  split-file model living in `models/diffusion_models` (Anima, Flux, Chroma and
+  the rest) was invisible to it. It now renders two option groups, "Checkpoints"
+  and "Diffusion models", and each option carries its folder along with the name
+  as `"{category}:{filename}"`.
+- **The workflow builder.** `upscale_standalone::build_params` hardcoded
+  `use_split_model = false` and `vae = None`, so even a hand-set split file would
+  have been handed to `CheckpointLoaderSimple` and failed to load. The derived
+  params now follow the file that was picked: a split model gets UNETLoader +
+  CLIPLoader + VAELoader, a full checkpoint keeps the single loader.
+
+The companion files are chosen for the user rather than asked for. Selecting a
+model reads its ModelSpec, which reports `model_kind`, `recommended_clip_model`,
+`recommended_clip_type` and `recommended_vae`; the store matches those against
+the installed text encoders and VAEs (exact name first, then basename) and fills
+them in, and the hint under the dropdown names the two it settled on. A `.gguf`
+file skips the tensor-key check and is judged by the folder it sits in.
+
+A file in the wrong folder still loads. `local_model_category` records where the
+file physically is, and Rust sets `model_source_category` only when that folder
+disagrees with the loader mode, which is what makes `run_local_post_process`
+resolve it to an absolute path before the graph is built.
+
+**Testing required: yes.** All of it is new behaviour in the picker.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NAI mode, open the local post-process section and open the model dropdown | Two groups, "Checkpoints" and "Diffusion models", each listing the installed models for that folder. An empty group is not rendered |
+| 2 | Pick a split-file model (Anima) | A hint appears under the dropdown reading "Split model: using <clip> and <vae>", naming a text encoder and a VAE that are actually installed |
+| 3 | Generate with the local post-process on | The pass runs. No `CheckpointLoaderSimple` failure, and the refined image lands in the gallery |
+| 4 | Pick a plain checkpoint instead | The hint disappears, and generating still runs the pass exactly as before |
+| 5 | Set the model back to none | The post-process is skipped and a plain NovelAI image comes back |
+| 6 | Take a post-processed image and upload it to novelai.net | The site does not read it, and MooshieUI's lightbox still names NovelAI as the backend. Unchanged from the entry below |
+| 7 | Restart the app and reopen the section | The picked model, its folder and the hint all come back |
+| 8 | Optional. Pick a model whose recommended VAE is not installed | Generation fails with a ComfyUI error naming the missing file, rather than quietly loading something else |
+
+**Do not skip:** 2, 3, 7.
+
+**Result: pending.**
+
 ### 2026-08-23 - App-mode metadata loss, and Anlas-free aspect ratios (PR #618)
 
 **Reported by:** the hand-test pass on the entry below. Steps 6 and 7 passed in
@@ -392,7 +441,10 @@ the buttons apply, so it cannot disagree with what clicking one produces.
 
 **Do not skip:** 1, 3, 6.
 
-**Result: pending.**
+**Result:** 1, 3, 6, 7, 8 and 9 pass. 2 goes through the same export path as
+1, so it is redundant with it. 5 was not applicable. 4 could not be run: the
+local post-process model picker offered only `models/checkpoints`, which on the
+reporting machine holds a single broken file. That gap is the entry above.
 
 ### 2026-08-23 - Clipboard interop follow-up: drop targets, browser-mode save, Anlas estimate (PR #618)
 

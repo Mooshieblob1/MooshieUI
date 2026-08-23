@@ -189,10 +189,19 @@ export interface NovelAiParams {
   director_references: NovelAiDirectorReference[];
   /** Run the local ComfyUI upscale/facefix chain on the returned image. Free. */
   local_post_process: boolean;
-  /** Checkpoint the local pass samples with. Required for it to run at all. */
+  /** Model the local pass samples with. Required for it to run at all. */
   local_checkpoint: string | null;
   local_architecture: string | null;
   local_is_vpred: boolean;
+  /** Folder `local_checkpoint` lives in: "checkpoints" or "diffusion_models". */
+  local_model_category: string | null;
+  /** Load it with UNETLoader + CLIPLoader + VAELoader, not as a checkpoint. */
+  local_use_split_model: boolean;
+  /** Text encoder and CLIPLoader type for the split load. */
+  local_clip_model: string | null;
+  local_clip_type: string | null;
+  /** VAE for the split load. */
+  local_vae: string | null;
   /** Prompt in ComfyUI weight syntax, for the local pass only. */
   local_positive_prompt: string | null;
   local_negative_prompt: string | null;

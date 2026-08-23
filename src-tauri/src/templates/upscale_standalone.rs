@@ -64,10 +64,37 @@ pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<G
         out.model_architecture.as_str(),
         "sdxl" | "illustrious" | "noobai" | "pony" | "anima"
     );
-    // Split loaders are a per-checkpoint choice; the local refiner is always
-    // addressed as a plain checkpoint.
-    out.use_split_model = false;
-    out.vae = None;
+    // Loader mode follows the file the user picked. A split-file model (Anima,
+    // Flux, Chroma, ...) has no text encoder or VAE baked in, so it needs
+    // UNETLoader + CLIPLoader + VAELoader; the frontend resolves the companion
+    // files when the model is chosen.
+    out.use_split_model = nai.local_use_split_model;
+    if out.use_split_model {
+        out.diffusion_model = Some(out.checkpoint.clone());
+        out.clip_model = nai.local_clip_model.clone();
+        out.clip_type = nai.local_clip_type.clone();
+    } else {
+        out.diffusion_model = None;
+        out.clip_model = None;
+        out.clip_type = None;
+    }
+    out.vae = nai.local_vae.clone().filter(|v| !v.trim().is_empty());
+    // Misplaced file: a split-file model sitting in checkpoints/, or a full
+    // checkpoint sitting in diffusion_models/. ComfyUI's stock loaders validate
+    // the name against their own folder listing, so those load by absolute path
+    // instead. `resolved_model_path` is filled in by the caller, which has the
+    // config the lookup needs.
+    let category = nai
+        .local_model_category
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty());
+    out.model_source_category = match category {
+        Some("checkpoints") if out.use_split_model => Some("checkpoints".to_string()),
+        Some("diffusion_models") if !out.use_split_model => Some("diffusion_models".to_string()),
+        _ => None,
+    };
+    out.resolved_model_path = None;
 
     // LoRAs, ControlNet, style transfer and `<segment:...>` refinement all
     // belong to the NovelAI request the user was composing. Carrying them into
@@ -221,6 +248,90 @@ mod tests {
         assert!(out.is_sdxl_like);
         assert!(!out.use_split_model);
         assert!(out.novelai.is_none());
+    }
+
+    fn split_nai() -> NovelAiParams {
+        NovelAiParams {
+            local_checkpoint: Some("anima_pencil.safetensors".into()),
+            local_model_category: Some("diffusion_models".into()),
+            local_use_split_model: true,
+            local_clip_model: Some("clip_l.safetensors".into()),
+            local_clip_type: Some("sdxl".into()),
+            local_vae: Some("sdxl_vae.safetensors".into()),
+            ..local_nai()
+        }
+    }
+
+    #[test]
+    fn a_split_file_model_keeps_its_own_loaders() {
+        let out = build_params(&with_nai(split_nai()), "nai-abc.png").expect("derived");
+        assert!(out.use_split_model);
+        assert_eq!(
+            out.diffusion_model.as_deref(),
+            Some("anima_pencil.safetensors")
+        );
+        assert_eq!(out.clip_model.as_deref(), Some("clip_l.safetensors"));
+        assert_eq!(out.clip_type.as_deref(), Some("sdxl"));
+        assert_eq!(out.vae.as_deref(), Some("sdxl_vae.safetensors"));
+        // Filed where its loader expects it, so no absolute-path fallback.
+        assert!(out.model_source_category.is_none());
+    }
+
+    #[test]
+    fn the_split_graph_loads_the_unet_and_the_text_encoder() {
+        let wf = build(&with_nai(split_nai()), "nai-abc.png", 12345).expect("workflow");
+        let nodes = wf.as_object().expect("object");
+        for class in ["UNETLoader", "CLIPLoader", "VAELoader"] {
+            assert!(
+                nodes.values().any(|n| n["class_type"] == class),
+                "{class} missing from the split local pass"
+            );
+        }
+        assert!(!nodes
+            .values()
+            .any(|n| n["class_type"] == "CheckpointLoaderSimple"));
+    }
+
+    #[test]
+    fn a_misplaced_local_model_is_flagged_for_path_loading() {
+        // A split file dropped into models/checkpoints/: the stock UNETLoader
+        // validates names against its own folder listing and would reject it.
+        let nai = NovelAiParams {
+            local_model_category: Some("checkpoints".into()),
+            ..split_nai()
+        };
+        let out = build_params(&with_nai(nai), "nai-abc.png").expect("derived");
+        assert_eq!(out.model_source_category.as_deref(), Some("checkpoints"));
+        // The caller fills this in; nothing stale may survive the clone.
+        assert!(out.resolved_model_path.is_none());
+
+        // ...and the mirror case, a full checkpoint filed under diffusion_models/.
+        let nai = NovelAiParams {
+            local_model_category: Some("diffusion_models".into()),
+            local_use_split_model: false,
+            ..split_nai()
+        };
+        let out = build_params(&with_nai(nai), "nai-abc.png").expect("derived");
+        assert_eq!(
+            out.model_source_category.as_deref(),
+            Some("diffusion_models")
+        );
+    }
+
+    #[test]
+    fn a_plain_checkpoint_drops_the_split_companions() {
+        // Switching back from a split file must not leave its text encoder
+        // pointed at a checkpoint that bakes its own in.
+        let nai = NovelAiParams {
+            local_use_split_model: false,
+            local_model_category: Some("checkpoints".into()),
+            ..split_nai()
+        };
+        let out = build_params(&with_nai(nai), "nai-abc.png").expect("derived");
+        assert!(out.diffusion_model.is_none());
+        assert!(out.clip_model.is_none());
+        assert!(out.clip_type.is_none());
+        assert!(out.model_source_category.is_none());
     }
 
     #[test]

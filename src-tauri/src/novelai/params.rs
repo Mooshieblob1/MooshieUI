@@ -167,6 +167,24 @@ pub struct NovelAiParams {
     /// `local_checkpoint` is a v-prediction SDXL variant.
     #[serde(default)]
     pub local_is_vpred: bool,
+    /// Folder `local_checkpoint` physically lives in, "checkpoints" or
+    /// "diffusion_models". Compared against the loader mode below to decide
+    /// whether the file has to be opened by absolute path.
+    #[serde(default)]
+    pub local_model_category: Option<String>,
+    /// Load `local_checkpoint` with UNETLoader + CLIPLoader + VAELoader
+    /// instead of CheckpointLoaderSimple. Split-file models (Anima, Flux,
+    /// Chroma, ...) carry no text encoder or VAE of their own.
+    #[serde(default)]
+    pub local_use_split_model: bool,
+    /// Text encoder for the split load, and the CLIPLoader type it needs.
+    #[serde(default)]
+    pub local_clip_model: Option<String>,
+    #[serde(default)]
+    pub local_clip_type: Option<String>,
+    /// VAE for the split load.
+    #[serde(default)]
+    pub local_vae: Option<String>,
     /// Prompt in ComfyUI weight syntax, for the local pass only.
     ///
     /// By the time params reach the backend the top-level `positive_prompt`

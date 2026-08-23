@@ -142,7 +142,28 @@ export function createDefaultNovelAiSettings(): NovelAiSettings {
     local_checkpoint: null,
     local_architecture: null,
     local_is_vpred: false,
+    local_model_category: null,
+    local_use_split_model: false,
+    local_clip_model: null,
+    local_clip_type: null,
+    local_vae: null,
   };
+}
+
+/**
+ * Map a recommended companion file onto what is actually installed.
+ *
+ * The backend recommends a plain filename; the installed list may carry the
+ * same file under a subfolder ("clip/te.safetensors"). An exact hit wins, then
+ * a basename match, and failing both the recommendation is kept so ComfyUI
+ * reports the missing file rather than the app silently loading nothing.
+ */
+function matchInstalledModel(name: string | null | undefined, installed: string[]): string | null {
+  const wanted = name?.trim();
+  if (!wanted) return null;
+  if (installed.includes(wanted)) return wanted;
+  const basename = (path: string) => path.split(/[\\/]/).pop() ?? path;
+  return installed.find((candidate) => basename(candidate) === basename(wanted)) ?? wanted;
 }
 
 /** A blank character prompt, centred. */
@@ -1762,32 +1783,65 @@ class GenerationStore {
   }
 
   /**
-   * Pick the local checkpoint the free post-process pass samples with.
+   * Pick the local model the free post-process pass samples with.
    *
-   * Architecture and v-pred travel with that checkpoint, not with the selected
-   * model: `checkpoint` names a NovelAI model in this mode, so the usual
+   * Architecture, v-pred and loader mode travel with that model, not with the
+   * selected one: `checkpoint` names a NovelAI model in this mode, so the usual
    * metadata pass has nothing to say about the refiner and the spec has to be
-   * read separately. Passing null clears all three together, since a stale
-   * architecture would be applied to whatever is picked next.
+   * read separately. Passing null clears the lot together, since a stale
+   * architecture or text encoder would be applied to whatever is picked next.
+   *
+   * Split-file models are offered alongside checkpoints and carry no text
+   * encoder or VAE of their own, so the companions are resolved here from the
+   * spec's recommendations. `encoders` and `vaes` are passed in rather than
+   * read from the models store: this store must not import feature stores.
    */
-  async setNovelAiLocalCheckpoint(filename: string | null) {
+  async setNovelAiLocalCheckpoint(
+    filename: string | null,
+    category = "checkpoints",
+    encoders: string[] = [],
+    vaes: string[] = [],
+  ) {
     if (!filename) {
       this.updateNovelAiSettings({
         local_checkpoint: null,
         local_architecture: null,
         local_is_vpred: false,
+        local_model_category: null,
+        local_use_split_model: false,
+        local_clip_model: null,
+        local_clip_type: null,
+        local_vae: null,
       });
       return;
     }
-    this.updateNovelAiSettings({ local_checkpoint: filename });
+    this.updateNovelAiSettings({
+      local_checkpoint: filename,
+      local_model_category: category,
+    });
     let spec: ModelSpec | null = null;
     try {
-      spec = await readModelSpec("checkpoints", filename);
+      spec = await readModelSpec(category, filename);
     } catch {
       spec = null;
     }
     // A later pick may have landed while the spec read was in flight.
     if (this.novelaiSettings.local_checkpoint !== filename) return;
+
+    // Detection wins over the folder it was listed under: a split file dropped
+    // into checkpoints/ still needs the UNET loaders, and a full checkpoint
+    // filed under diffusion_models/ still needs CheckpointLoaderSimple. GGUF is
+    // left on the folder's word, as UnetLoaderGGUF has no absolute-path input.
+    const modelKind = filename.toLowerCase().endsWith(".gguf")
+      ? null
+      : (spec?.model_kind ?? null);
+    const useSplit =
+      modelKind === "diffusion_model"
+        ? true
+        : modelKind === "checkpoint"
+          ? false
+          : category === "diffusion_models";
+
     this.updateNovelAiSettings({
       local_architecture: spec?.family ?? null,
       local_is_vpred: signalsIndicateVPred({
@@ -1796,6 +1850,12 @@ class GenerationStore {
         modelspecPredictKey: spec?.predict_key ?? null,
         headerVPred: spec?.header_v_pred === "true",
       }),
+      local_use_split_model: useSplit,
+      local_clip_model: useSplit
+        ? matchInstalledModel(spec?.recommended_clip_model, encoders)
+        : null,
+      local_clip_type: useSplit ? (spec?.recommended_clip_type ?? null) : null,
+      local_vae: useSplit ? matchInstalledModel(spec?.recommended_vae, vaes) : null,
     });
   }
 
