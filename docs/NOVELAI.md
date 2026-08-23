@@ -326,6 +326,53 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - NovelAI prompts declared lost by the desktop reconciler (PR #618)
+
+**Reported by:** step 2 of the entry below. With the local post-process on, the
+NovelAI image never arrives and an error toast reads "A generation was lost due
+to a connection issue - please try again". Nothing is actually disconnected.
+
+The toast has exactly one source: the 5-second reconciler in `App.svelte`. Its
+rule is "if a pending prompt is not in ComfyUI's queue, it finished and we
+missed the event", softened by a 30-second grace window off the last progress
+event.
+
+A NovelAI prompt is never in ComfyUI's queue. It runs off-box, and it is only
+tracked in MooshieUI's own fair queue. So the 30-second window is the only thing
+keeping it alive, and the handoff to the local post-process blows straight
+through it: after the last diffusion step the backend uploads the PNG, waits for
+a free GPU worker and waits for ComfyUI to load the model, all without emitting
+a single event. A cold split-file model takes well over 30 seconds on its own.
+
+Browser mode already had this right. `webserver.rs` injects every prompt the
+internal queue is tracking into `queue_pending`, with a comment saying the
+reconciler would otherwise clear them the moment the user clicks generate.
+Desktop's `get_queue` never got the same treatment: it filled in
+`queue_positions`, which the reconciler does not read, and passed ComfyUI's
+queue through untouched.
+
+Desktop now injects the same entries, including the same 120-second submission
+shield that lets a genuinely hung `gen-` submit still surface as a lost
+generation rather than sit on "Preparing" forever. Nothing masks a real failure:
+a NovelAI run is removed from the internal queue on every outcome, and a
+handed-off one is removed by the websocket when the ComfyUI prompt ends.
+
+**Testing required: yes.** Backend-only, but it changes when the UI gives up on
+a prompt.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NAI mode, local post-process on, pick the Anima split model, generate | The NovelAI image generates, then the local pass runs and the refined image lands in the gallery. No "generation lost" toast at any point |
+| 2 | Repeat with a model ComfyUI has not loaded this session, so the load is cold and slow | Same. The progress bar may sit still for a minute while the model loads, and the generation still completes |
+| 3 | Generate in NAI mode with the local post-process off | Unchanged: the plain NovelAI image arrives |
+| 4 | Open Settings and the Queue section mid-generation | The NovelAI prompt is listed, as before |
+| 5 | Generate normally on the ComfyUI backend | Unchanged. No duplicate queue entries and no stuck "Preparing" |
+| 6 | Cancel a NovelAI generation mid-run | It clears immediately, no lingering queue entry and no lost-generation toast afterwards |
+
+**Do not skip:** 1, 2, 5.
+
+**Result: pending.**
+
 ### 2026-08-23 - Text encoders filed under `clip/` (PR #618)
 
 **Reported by:** step 3 of the entry below, on a machine where the local
@@ -371,7 +418,9 @@ Three changes.
 
 **Do not skip:** 1, 2, 5.
 
-**Result: pending.**
+**Result:** the encoder is found now, but step 2 still fails with "a generation
+was lost due to a connection issue". That turned out to be a second, unrelated
+bug in the desktop queue readout, fixed in the entry above.
 
 ### 2026-08-23 - Split-file models in the NovelAI local post-process (PR #618)
 

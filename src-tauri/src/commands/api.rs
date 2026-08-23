@@ -102,24 +102,63 @@ pub async fn get_embeddings(state: State<'_, Arc<AppState>>) -> Result<Vec<Strin
 #[tauri::command]
 pub async fn get_queue(state: State<'_, Arc<AppState>>) -> Result<QueueInfo, AppError> {
     let mut info = state.get_queue_info().await?;
+    let tracked: Vec<String> = {
+        let queue = state.prompt_queue.queue.read().unwrap();
+        queue.iter().map(|(id, _owner)| id.clone()).collect()
+    };
+
     // Augment with internal fair-queue positions so the Settings Queue section
     // works in Tauri desktop mode (raw ComfyUI /queue has no queue_positions).
-    let queue_positions: Vec<serde_json::Value> = {
-        let queue = state.prompt_queue.queue.read().unwrap();
-        let total = queue.len();
-        queue
-            .iter()
-            .enumerate()
-            .map(|(pos, (id, _owner))| {
-                serde_json::json!({
-                    "prompt_id": id,
-                    "position": pos,
-                    "total": total,
-                })
+    let total = tracked.len();
+    info.queue_positions = tracked
+        .iter()
+        .enumerate()
+        .map(|(pos, id)| {
+            serde_json::json!({
+                "prompt_id": id,
+                "position": pos,
+                "total": total,
             })
+        })
+        .collect();
+
+    // Prompts the internal queue is still tracking that ComfyUI has never heard
+    // of: a NovelAI generation, which runs off-box and never enters ComfyUI's
+    // queue at all, or a local prompt whose submission is still in flight. The
+    // frontend reconciler reads "absent from ComfyUI's queue" as "finished and
+    // the event was lost", so without these a NovelAI run is declared a lost
+    // generation as soon as it goes 30s without a progress event, which the
+    // handoff to the local post-process does every time while ComfyUI loads the
+    // model. Browser mode already injects them in `webserver.rs`.
+    let missing: Vec<String> = {
+        let known: std::collections::HashSet<&str> = info
+            .queue_running
+            .iter()
+            .chain(info.queue_pending.iter())
+            .filter_map(|entry| entry.as_array()?.get(1)?.as_str())
+            .collect();
+        tracked
+            .into_iter()
+            .filter(|id| !known.contains(id.as_str()))
             .collect()
     };
-    info.queue_positions = queue_positions;
+    const SUBMISSION_SHIELD_SECS: u64 = 120;
+    for id in missing {
+        // A `gen-` placeholder whose submission has hung past the shield is left
+        // out, so a genuinely stuck submit still surfaces as a lost generation
+        // rather than sitting on "Preparing" forever.
+        if id.starts_with("gen-")
+            && !state.prompt_queue.is_placeholder_bound(&id)
+            && state
+                .prompt_queue
+                .insert_age_secs(&id)
+                .is_some_and(|age| age > SUBMISSION_SHIELD_SECS)
+        {
+            continue;
+        }
+        info.queue_pending
+            .push(serde_json::json!([0, id, {}, {}, []]));
+    }
     Ok(info)
 }
 
