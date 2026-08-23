@@ -1860,6 +1860,18 @@ async fn embed_temp_metadata_handler(
     let embed_mode = crate::metadata::MetadataMode::from_str(metadata_mode);
     let detected_format = crate::metadata::detect_format(&bytes);
 
+    // A NovelAI PNG is handed back as-is. This endpoint exists so a browser
+    // right-click "Copy Image" carries our metadata, but NovelAI's own chunks
+    // and stealth alpha are worth more here: they are what its site reads, and
+    // the app reads them back too. Re-encoding would lose both.
+    if matches!(detected_format, crate::metadata::ImageFormat::Png)
+        && crate::metadata::png_carries_novelai_metadata(&bytes)
+    {
+        log::info!("embed_temp_metadata: preserving NovelAI PNG bytes verbatim");
+        let json = serde_json::json!({ "tempFilename": temp_filename });
+        return axum::Json(json).into_response();
+    }
+
     let (embedded, out_ext) = match detected_format {
         crate::metadata::ImageFormat::Jxl => {
             match crate::metadata::embed_jxl_metadata(&bytes, &metadata) {
@@ -6252,6 +6264,18 @@ fn save_to_gallery_in_dir(
 
     let final_bytes = if let Some(meta) = metadata {
         match detected_format {
+            // Byte-for-byte counterpart of the guard in `save_to_gallery_inner`:
+            // a PNG that still carries NovelAI's own metadata goes to disk
+            // untouched, because re-encoding to embed our copy would strip its
+            // chunks and overwrite the alpha bits its stealth payload lives in.
+            crate::metadata::ImageFormat::Png
+                if crate::metadata::png_carries_novelai_metadata(bytes) =>
+            {
+                log::info!(
+                    "save_to_gallery_in_dir: preserving NovelAI PNG bytes verbatim (no metadata embed)"
+                );
+                bytes.to_vec()
+            }
             crate::metadata::ImageFormat::Png => {
                 crate::metadata::embed_png_metadata(bytes, meta, embed_mode)
                     .unwrap_or_else(|_| bytes.to_vec())

@@ -1241,6 +1241,8 @@
   }
 
   let pasteHandler: ((e: ClipboardEvent) => void) | null = null;
+  let windowDragOverHandler: ((e: DragEvent) => void) | null = null;
+  let windowDropHandler: ((e: DragEvent) => void) | null = null;
   let unlistenDragDrop: (() => void) | null = null;
 
   /** Find the metadata drop section under the given CSS-pixel coordinates.
@@ -1327,6 +1329,17 @@
             console.error("Tauri drag-drop image upload failed:", err);
             gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
           }
+          return;
+        }
+
+        // Anywhere else in the window is a plain metadata import. Dropping an
+        // image onto the app should read its settings wherever it lands; the
+        // section and drop-zone lookups above only exist to narrow that down.
+        try {
+          await handleMetadataImportPath(imgPath, "all");
+        } catch (err) {
+          console.error("Tauri drag-drop metadata import failed:", err);
+          gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
         }
       } else if (payload.type === "leave") {
         metadataDropTarget = null;
@@ -1438,11 +1451,37 @@
       await handleMetadataImport(file, targetSection);
     };
     window.addEventListener("paste", pasteHandler);
+
+    // Anywhere in the window that is not a drop zone of its own accepts an image
+    // as a plain metadata import. Without a window-level handler the browser
+    // follows its default and navigates away to display the dropped file, which
+    // loses the app. The sections and the image inputs keep their targeted
+    // behaviour because their own handlers run first and call preventDefault.
+    windowDragOverHandler = (e: DragEvent) => {
+      if (!hasFilePayload(e.dataTransfer)) return;
+      if (!e.defaultPrevented && e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      e.preventDefault();
+    };
+    windowDropHandler = async (e: DragEvent) => {
+      if (e.defaultPrevented) return;
+      e.preventDefault();
+      metadataDropTarget = null;
+      metadataDropCounters = {};
+      if (!e.dataTransfer) return;
+      const file = getImageFile(e.dataTransfer);
+      if (!file) return;
+      await handleMetadataImport(file, "all");
+    };
+    window.addEventListener("dragover", windowDragOverHandler);
+    window.addEventListener("drop", windowDropHandler);
+
     setupTauriDragDrop();
   });
 
   onDestroy(() => {
     if (pasteHandler) window.removeEventListener("paste", pasteHandler);
+    if (windowDragOverHandler) window.removeEventListener("dragover", windowDragOverHandler);
+    if (windowDropHandler) window.removeEventListener("drop", windowDropHandler);
     if (unlistenDragDrop) unlistenDragDrop();
   });
 </script>

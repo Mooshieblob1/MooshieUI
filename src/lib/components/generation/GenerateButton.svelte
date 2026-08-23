@@ -538,6 +538,14 @@
    * needs the Opus flag from the NovelAI store, and the hub store may not
    * import a feature store. The number is an estimate, hence the leading `~`.
    */
+  // The estimate needs the Opus flag, and the account record it comes from is
+  // only fetched on demand. The usage readout fetches it too, but that readout
+  // sits behind a display toggle, so without this the badge quotes the full
+  // price of a generation Opus covers whenever the toggle is off.
+  $effect(() => {
+    if (generation.isNovelAi && novelai.apiKeyConfigured) void novelai.ensureSubscription();
+  });
+
   const anlasEstimate = $derived.by(() => {
     if (!generation.isNovelAi) return null;
     const nai = generation.novelaiSettings;

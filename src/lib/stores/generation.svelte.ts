@@ -560,8 +560,13 @@ class GenerationStore {
    *
    * Display only, so it is deliberately not part of `novelaiSettings`: that
    * object is the request wire shape and every field in it is sent to NovelAI.
+   *
+   * On by default. The readout only renders once a NovelAI key is configured,
+   * and a balance that has to be turned on is a balance nobody sees before
+   * spending against it. Desktop and browser mode keep separate stores, so the
+   * default is also what keeps a fresh browser client matching the desktop app.
    */
-  showNovelaiUsage = $state(false);
+  showNovelaiUsage = $state(true);
   vae = $state("");
   loras = $state<LoraEntry[]>([]);
   samplerName = $state("euler_cfg_pp");

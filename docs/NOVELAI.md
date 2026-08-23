@@ -326,6 +326,71 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - Clipboard interop follow-up: drop targets, browser-mode save, Anlas estimate (PR #618)
+
+**Reported by:** the hand-test pass on the entry below. Steps 2, 3, 4 and the
+browser-mode repeats of them failed, which blocked 6.
+
+Four separate causes, only two of them the same bug wearing different clothes.
+
+- **Browser-mode save was still re-encoding.** `webserver.rs` carries its own
+  copy of the gallery save path, `save_to_gallery_in_dir`, and the NovelAI guard
+  had only been added to the desktop `save_to_gallery_inner`. The browser copy
+  ran `embed_png_metadata()` unconditionally, which is exactly the decode and
+  re-encode that drops NovelAI's text chunks and overwrites its stealth alpha.
+  Same guard now sits in both.
+- **`_embed_temp_metadata` re-encoded too.** That endpoint exists so a browser
+  right-click "Copy Image" carries our metadata. On a NovelAI PNG that trade is
+  the wrong way round, so it now hands the bytes back untouched.
+- **The desktop drop handler was panel-scoped.** `setupTauriDragDrop` looked up
+  a section under the cursor, then an image drop zone, and if neither matched it
+  did nothing at all. Dropping an image anywhere else in the window now falls
+  back to a plain metadata import.
+- **Browser mode had no window-level drop handler,** so Firefox followed its own
+  default and navigated the tab to the dropped file. A `dragover` and a `drop`
+  listener now sit on the window, both skipped when an inner zone has already
+  called `preventDefault`, so the sections and the image inputs keep the
+  targeted behaviour they had.
+
+Two findings worth writing down because they are not bugs:
+
+- **The desktop save path was already correct when it was tested.** The binary
+  in use predated the fix. Gallery files written after it carry the six NovelAI
+  chunks (`Title`, `Description`, `Software`, `Source`, `Generation time`,
+  `Comment`); files written before it carry a single `parameters` chunk.
+- **Step 4 cannot be made to work through Firefox.** On Windows the app puts a
+  file drop list on the clipboard, not a bitmap, precisely so the PNG bytes are
+  never touched. A web page cannot read a file reference out of a paste. Drag
+  the gallery file onto novelai.net, or use its file picker.
+
+The same pass turned up an Anlas readout problem that had nothing to do with
+the clipboard. The account record is fetched on demand, and the only thing that
+asked for it was the usage readout, which sits behind a display toggle. With the
+toggle off nothing ever fetched it, so `isOpus` stayed false and the cost badge
+quoted the full price of a generation Opus covers. The generate button now asks
+for the record itself, and the readout defaults to on, since a balance you have
+to switch on is a balance nobody sees before spending against it.
+
+**Testing required: yes.** Steps 4, 6 and 8 are the ones that were actually
+broken.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Desktop, NAI mode. Drag a NovelAI PNG from Windows Explorer onto the middle of the app window, not onto any panel | Settings restore, same as Ctrl+V |
+| 2 | Same drag, this time onto a specific section (Prompts, Sampler, Dimensions) | Only that section restores. Unchanged from before this fix |
+| 3 | Same drag onto the img2img image input | The image uploads as the input. No metadata import |
+| 4 | Browser mode. Drag a NovelAI PNG from Explorer anywhere onto the page | Settings restore. The tab does **not** navigate away to the image |
+| 5 | Browser mode. Drag an image straight out of a Firefox tab onto the page | Either the same restore or nothing at all, but never a navigation away |
+| 6 | Browser mode, NAI mode, local post-process **off**. Generate, take the file out of the gallery folder, upload it to novelai.net | The site accepts it and reads its own metadata. This is the one that was broken |
+| 7 | Browser mode. Right-click the finished image, Copy Image, paste into an image editor | A PNG arrives, not a blank |
+| 8 | Desktop, NAI key configured, usage readout switched **off** in Settings. Opus account, 1024x1024, 28 steps | The badge on the generate button reads ~0 Anlas, not ~28 |
+| 9 | Fresh browser-mode client (clear site data first) with a NAI key configured | The Anlas readout and Opus bar appear above the generate button without toggling anything |
+| 10 | Switch the readout off in Settings, reload | It stays off |
+
+**Do not skip:** 4, 6, 8.
+
+**Result: pending.**
+
 ### 2026-08-23 - NovelAI clipboard interop, both directions (PR #618)
 
 **Asked for:** copy an image off novelai.net, Ctrl+V into the app, and get the
@@ -383,7 +448,9 @@ from the code.
 
 **Do not skip:** 3, 6, 8.
 
-**Result: pending.**
+**Result: 1, 5, 7, 9 pass. In browser mode 8-1, 8-5 and 8-7 pass. 2, 3, 4, 8-2,
+8-3 and 8-4 fail; 6 and 8-6 are blocked behind 3.** The follow-up entry above
+records what each failure turned out to be.
 
 ### 2026-08-23 - Style fragment weights in NovelAI mode (PR #618)
 
