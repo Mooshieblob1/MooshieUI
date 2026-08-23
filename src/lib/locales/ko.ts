@@ -519,6 +519,8 @@ const ko: Record<string, string> = {
   "generation.dimensions.title": "크기",
   "generation.dimensions.aspect_ratio": "화면 비율",
   "generation.dimensions.aspect_ratio_tip": "이미지의 형태입니다. 1:1은 정사각형, 16:9는 와이드스크린, 9:16은 세로형입니다. 비율을 먼저 선택한 다음 해상도로 총 픽셀 수를 조정하세요.",
+  "generation.dimensions.free_opus": "Opus 무료 생성",
+  "generation.dimensions.free_opus_tip": "현재 스텝 수에서 Opus가 이 크기를 지원하므로 첫 번째 이미지는 Anlas를 소모하지 않습니다",
   "generation.dimensions.resolution": "해상도",
   "generation.dimensions.resolution_tip": "이미지의 총 픽셀 면적. 동등한 정사각형 변의 길이로 표현됩니다. 1024 = 약 100만 픽셀. 해상도가 높을수록 더 세밀하지만 생성이 느리고 VRAM 사용량이 증가합니다.",
   "generation.dimensions.lock": "해상도 잠금",

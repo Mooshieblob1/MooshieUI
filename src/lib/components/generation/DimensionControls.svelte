@@ -4,6 +4,8 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import type { ModelFamily } from "../../utils/modelFamily.js";
   import { NOVELAI_DIMENSION_STEP } from "../../utils/novelaiModels.js";
+  import { novelai } from "../../stores/novelai.svelte.js";
+  import { novelAiOpusCovers } from "../../utils/novelaiCost.js";
 
   interface Props {
     suggestedAspect?: { w: number; h: number } | null;
@@ -38,9 +40,37 @@
   const quantum = $derived(generation.isNovelAi ? NOVELAI_DIMENSION_STEP : 8);
 
   /** Try to match persisted width/height back to a preset or simplified ratio. */
+  /**
+   * Largest pair on the pixel grid whose area does not go over `area`.
+   *
+   * NovelAI prices by pixel count and Opus only covers a generation while it
+   * stays at or under one megapixel, so rounding a ratio up past the requested
+   * area is what quietly turns a free 1024 generation into a paid one. That is
+   * what 2:3 did: the area-faithful formula picked 832x1280, 1.06 MP, while
+   * 3:4 happened to round down and stayed free. Walking the width across a few
+   * grid steps and taking the tallest height that still fits lands on
+   * 832x1216, which is NovelAI's own portrait preset.
+   */
+  function dimsUnderArea(aw: number, ah: number, area: number, q: number): { w: number; h: number } {
+    const target = aw / ah;
+    let best: { w: number; h: number; err: number } | null = null;
+    const mid = Math.round(Math.sqrt(area * target) / q);
+    for (let k = Math.max(1, mid - 2); k <= mid + 2; k++) {
+      const w = k * q;
+      const h = Math.floor(area / w / q) * q;
+      if (h < q) continue;
+      // Scored in log space so a result that is too wide and one that is too
+      // tall by the same factor are treated as equally far off.
+      const err = Math.abs(Math.log(w / h / target));
+      if (!best || err < best.err) best = { w, h, err };
+    }
+    return best ? { w: best.w, h: best.h } : { w: q, h: q };
+  }
+
   /** Compute dimensions for a given aspect ratio using the area-faithful formula. */
   function dimsForAspect(aw: number, ah: number, side: number, q = quantum): { w: number; h: number } {
     const area = side * side;
+    if (generation.isNovelAi) return dimsUnderArea(aw, ah, area, q);
     const wA = Math.max(q, Math.round(Math.sqrt(area * (aw / ah)) / q) * q);
     const hA = Math.max(q, Math.round(area / wA / q) * q);
     const hB = Math.max(q, Math.round(Math.sqrt(area * (ah / aw)) / q) * q);
@@ -163,6 +193,24 @@
     presets.find((p) => p.w === aspectW && p.h === aspectH)?.label ?? ""
   );
 
+  /**
+   * Which presets Opus covers at the current side length and step count.
+   *
+   * Only ever populated on an Opus account in NovelAI mode: on any other plan
+   * every generation costs Anlas, so marking them all would say nothing. The
+   * dimensions come from the same `dimsForAspect` the buttons apply, so a
+   * green border cannot disagree with what clicking one produces.
+   */
+  const freePresets = $derived.by(() => {
+    const free = new Set<string>();
+    if (!generation.isNovelAi || !novelai.isOpus) return free;
+    for (const p of presets) {
+      const dims = dimsForAspect(p.w, p.h, sideLength);
+      if (novelAiOpusCovers(dims.w, dims.h, generation.steps, true)) free.add(p.label);
+    }
+    return free;
+  });
+
   const DEFAULT_SIDE = 1024;
   const sidePresets = [512, 768, 1024, 1536, 2048];
 
@@ -268,8 +316,17 @@
         title={arOpen ? locale.t('common.collapse', { section: locale.t('generation.dimensions.aspect_ratio') }) : locale.t('common.expand', { section: locale.t('generation.dimensions.aspect_ratio') })}
       >{locale.t('generation.dimensions.aspect_ratio')}</button>
       <InfoTip text={locale.t('generation.dimensions.aspect_ratio_tip')} />
+      {#if freePresets.size > 0}
+        <span
+          class="ml-auto mr-1 inline-flex items-center gap-1 rounded-full border border-green-500/40 bg-green-500/10 px-1.5 py-0.5 text-[10px] text-green-400"
+          title={locale.t('generation.dimensions.free_opus_tip')}
+        >
+          <span class="h-1.5 w-1.5 rounded-full bg-green-400"></span>
+          {locale.t('generation.dimensions.free_opus')}
+        </span>
+      {/if}
       <button
-        class="ml-auto text-neutral-400 hover:text-neutral-200 focus:outline-none"
+        class="{freePresets.size > 0 ? '' : 'ml-auto '}text-neutral-400 hover:text-neutral-200 focus:outline-none"
         onclick={() => (arOpen = !arOpen)}
         title={arOpen ? locale.t('common.collapse', { section: locale.t('generation.dimensions.aspect_ratio') }) : locale.t('common.expand', { section: locale.t('generation.dimensions.aspect_ratio') })}
         aria-label={arOpen ? locale.t('common.collapse', { section: locale.t('generation.dimensions.aspect_ratio') }) : locale.t('common.expand', { section: locale.t('generation.dimensions.aspect_ratio') })}
@@ -281,12 +338,19 @@
     <div class="flex items-center gap-1 flex-wrap mb-2">
       {#each presets as preset (preset.label)}
         {@const preview = aspectPreviewSize(preset.w, preset.h)}
+        {@const isFree = freePresets.has(preset.label)}
         <button
           onclick={() => applyPreset(preset.w, preset.h)}
-          class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded transition-colors {activePreset === preset.label
-            ? 'bg-indigo-600 text-white'
-            : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:bg-neutral-700'}"
-          title={preset.label}
+          class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded border transition-colors {activePreset === preset.label
+            ? isFree
+              ? 'bg-indigo-600 border-green-400 text-white'
+              : 'bg-indigo-600 border-indigo-600 text-white'
+            : isFree
+              ? 'bg-neutral-800 border-green-500/60 text-neutral-400 hover:bg-neutral-700'
+              : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:bg-neutral-700'}"
+          title={isFree
+            ? `${preset.label} - ${locale.t('generation.dimensions.free_opus_tip')}`
+            : preset.label}
         >
           <span
             class="inline-flex h-4 w-4 shrink-0 items-center justify-center overflow-visible"

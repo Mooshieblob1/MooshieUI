@@ -519,6 +519,8 @@ const ru: Record<string, string> = {
   "generation.dimensions.title": "Размеры",
   "generation.dimensions.aspect_ratio": "Соотношение сторон",
   "generation.dimensions.aspect_ratio_tip": "Форма вашего изображения. 1:1 — квадрат, 16:9 — широкий экран, 9:16 — портрет. Сначала выберите соотношение, затем настройте разрешение для управления общим количеством пикселей.",
+  "generation.dimensions.free_opus": "Бесплатные генерации Opus",
+  "generation.dimensions.free_opus_tip": "Opus покрывает этот размер при текущем числе шагов, первое изображение не тратит Anlas",
   "generation.dimensions.resolution": "Разрешение",
   "generation.dimensions.resolution_tip": "Общая площадь пикселей вашего изображения, выраженная как эквивалентная сторона квадрата. 1024 = ~1 мегапиксель. Выше разрешение = больше деталей, но медленнее генерация и больше VRAM.",
   "generation.dimensions.lock": "Закрепить разрешение",

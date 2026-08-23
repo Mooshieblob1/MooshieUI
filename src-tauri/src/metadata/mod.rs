@@ -199,12 +199,25 @@ pub fn embed_uuid_for_test(bytes: &[u8], json: &str) -> Vec<u8> {
 ///
 /// JXL carries metadata in an `xml ` box and has no stealth-alpha variant, so
 /// `mode` is ignored there.
+///
+/// A PNG that still carries NovelAI's own chunks comes back untouched. Every
+/// export and clipboard route reaches this one function, and embedding here
+/// means a full decode and re-encode, which would drop those chunks and
+/// overwrite the stealth alpha that novelai.net reads. Preserving the bytes
+/// costs nothing: the metadata this call would have written says the same
+/// thing, and the app reads NovelAI's chunks back just as happily as its own.
+/// Once a local post-process has re-encoded the image the chunks are already
+/// gone, so that case falls through and is embedded as normal.
 pub fn embed_image_metadata(
     image_bytes: &[u8],
     params: &HashMap<String, String>,
     mode: MetadataMode,
 ) -> Result<Vec<u8>, String> {
     match detect_format(image_bytes) {
+        ImageFormat::Png if png_carries_novelai_metadata(image_bytes) => {
+            log::info!("embed_image_metadata: preserving NovelAI PNG bytes verbatim");
+            Ok(image_bytes.to_vec())
+        }
         ImageFormat::Png => embed_png_metadata(image_bytes, params, mode),
         ImageFormat::Jxl => embed_jxl_metadata(image_bytes, params),
         ImageFormat::WebP => embed_webp_metadata(image_bytes, params, mode),

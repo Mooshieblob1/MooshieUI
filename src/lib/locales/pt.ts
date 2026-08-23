@@ -519,6 +519,8 @@ const pt: Record<string, string> = {
   "generation.dimensions.title": "Dimensões",
   "generation.dimensions.aspect_ratio": "Proporção",
   "generation.dimensions.aspect_ratio_tip": "A forma da sua imagem. 1:1 é quadrado, 16:9 é widescreen, 9:16 é retrato. Escolha a proporção primeiro, depois ajuste a resolução para controlar a contagem total de pixels.",
+  "generation.dimensions.free_opus": "Gerações Opus grátis",
+  "generation.dimensions.free_opus_tip": "O Opus cobre este tamanho com o número de passos atual, a primeira imagem não custa Anlas",
   "generation.dimensions.resolution": "Resolução",
   "generation.dimensions.resolution_tip": "A área total de pixels da sua imagem, expressa como comprimento de lado quadrado equivalente. 1024 = ~1 megapixel. Maior resolução = mais detalhes, mas geração mais lenta e mais uso de VRAM.",
   "generation.dimensions.lock": "Bloquear resolução",

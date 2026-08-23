@@ -563,6 +563,8 @@ const es: Record<string, string> = {
   "generation.dimensions.title": "Dimensiones",
   "generation.dimensions.aspect_ratio": "Relación de aspecto",
   "generation.dimensions.aspect_ratio_tip": "La forma de tu imagen. 1:1 es cuadrado, 16:9 es panorámico, 9:16 es vertical. Elige la relación primero, luego ajusta la resolución para controlar el total de píxeles.",
+  "generation.dimensions.free_opus": "Gens Opus gratis",
+  "generation.dimensions.free_opus_tip": "Opus cubre este tamaño con el número de pasos actual, la primera imagen no cuesta Anlas",
   "generation.dimensions.resolution": "Resolución",
   "generation.dimensions.resolution_tip": "El área total de píxeles de tu imagen, expresada como lado equivalente de un cuadrado. 1024 = ~1 megapíxel. Mayor resolución = más detalle pero generación más lenta y más uso de VRAM.",
   "generation.dimensions.lock": "Bloquear resolución",

@@ -531,6 +531,8 @@ const ja: Record<string, string> = {
   "generation.dimensions.title": "寸法",
   "generation.dimensions.aspect_ratio": "アスペクト比",
   "generation.dimensions.aspect_ratio_tip": "画像の形状です。1:1は正方形、16:9はワイドスクリーン、9:16は縦型です。比率を先に選び、解像度で総ピクセル数を調整してください。",
+  "generation.dimensions.free_opus": "Opus無料生成",
+  "generation.dimensions.free_opus_tip": "現在のステップ数ならOpusがこのサイズを対象にするため、最初の画像はAnlasを消費しません",
   "generation.dimensions.resolution": "解像度",
   "generation.dimensions.resolution_tip": "画像の総ピクセル面積。等価正方形の辺の長さで表されます。1024 = 約100万ピクセル。解像度が高い = より詳細だが生成が遅くVRAM使用量が増加。",
   "generation.dimensions.lock": "解像度をロック",

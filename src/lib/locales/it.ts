@@ -519,6 +519,8 @@ const it: Record<string, string> = {
   "generation.dimensions.title": "Dimensioni",
   "generation.dimensions.aspect_ratio": "Rapporto d'aspetto",
   "generation.dimensions.aspect_ratio_tip": "La forma della tua immagine. 1:1 è quadrato, 16:9 è panoramico, 9:16 è ritratto. Scegli prima il rapporto, poi regola la risoluzione per controllare il numero totale di pixel.",
+  "generation.dimensions.free_opus": "Gen Opus gratis",
+  "generation.dimensions.free_opus_tip": "Opus copre questa dimensione con il numero di passi attuale, la prima immagine non costa Anlas",
   "generation.dimensions.resolution": "Risoluzione",
   "generation.dimensions.resolution_tip": "L'area totale in pixel dell'immagine, espressa come lunghezza del lato equivalente di un quadrato. 1024 = ~1 megapixel. Risoluzione più alta = più dettagli ma generazione più lenta e più VRAM.",
   "generation.dimensions.lock": "Blocca risoluzione",

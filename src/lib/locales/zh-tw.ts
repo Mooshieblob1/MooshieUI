@@ -519,6 +519,8 @@ const zhTw: Record<string, string> = {
   "generation.dimensions.title": "尺寸",
   "generation.dimensions.aspect_ratio": "寬高比",
   "generation.dimensions.aspect_ratio_tip": "影像的形狀。1:1 是正方形，16:9 是寬螢幕，9:16 是直向。先選擇比例，然後用解析度調整總像素數。",
+  "generation.dimensions.free_opus": "Opus 免費生成",
+  "generation.dimensions.free_opus_tip": "在目前步數下 Opus 涵蓋此尺寸，第一張圖片不消耗 Anlas",
   "generation.dimensions.resolution": "解析度",
   "generation.dimensions.resolution_tip": "影像的總像素面積，用等效正方形邊長表示。1024 ≈ 100 萬像素。解析度越高，細節越多，但生成更慢，顯存佔用更大。",
   "generation.dimensions.lock": "鎖定解析度",

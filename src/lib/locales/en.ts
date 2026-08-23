@@ -611,6 +611,8 @@ const en: Record<string, string> = {
   "generation.dimensions.title": "Dimensions",
   "generation.dimensions.aspect_ratio": "Aspect Ratio",
   "generation.dimensions.aspect_ratio_tip": "The shape of your image. 1:1 is square, 16:9 is widescreen, 9:16 is portrait. Pick the ratio first, then adjust resolution to control the total pixel count.",
+  "generation.dimensions.free_opus": "Free Opus gens",
+  "generation.dimensions.free_opus_tip": "Opus covers this size at the current step count, so the first image costs no Anlas",
   "generation.dimensions.resolution": "Resolution",
   "generation.dimensions.resolution_tip": "The total pixel area of your image, expressed as an equivalent square side length. 1024 = ~1 megapixel. Higher resolution = more detail but slower generation and more VRAM usage.",
   "generation.dimensions.lock": "Lock resolution",

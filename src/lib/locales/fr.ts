@@ -531,6 +531,8 @@ const fr: Record<string, string> = {
   "generation.dimensions.title": "Dimensions",
   "generation.dimensions.aspect_ratio": "Format d'image",
   "generation.dimensions.aspect_ratio_tip": "La forme de votre image. 1:1 est carré, 16:9 est panoramique, 9:16 est portrait. Choisissez d'abord le ratio, puis ajustez la résolution pour contrôler le nombre total de pixels.",
+  "generation.dimensions.free_opus": "Gens Opus gratuites",
+  "generation.dimensions.free_opus_tip": "Opus couvre cette taille avec le nombre d'étapes actuel, la première image ne coûte pas d'Anlas",
   "generation.dimensions.resolution": "Résolution",
   "generation.dimensions.resolution_tip": "La surface totale en pixels de votre image, exprimée comme le côté d'un carré équivalent. 1024 = ~1 mégapixel. Résolution plus élevée = plus de détails mais génération plus lente et plus de VRAM utilisée.",
   "generation.dimensions.lock": "Verrouiller la résolution",

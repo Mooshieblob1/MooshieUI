@@ -540,6 +540,8 @@ const de: Record<string, string> = {
   "generation.dimensions.title": "Abmessungen",
   "generation.dimensions.aspect_ratio": "Seitenverhältnis",
   "generation.dimensions.aspect_ratio_tip": "Die Form des Bildes. 1:1 ist quadratisch, 16:9 ist Breitbild, 9:16 ist Hochformat. Wählen Sie zuerst das Verhältnis, dann passen Sie mit der Auflösung die Gesamtpixelzahl an.",
+  "generation.dimensions.free_opus": "Gratis Opus-Gens",
+  "generation.dimensions.free_opus_tip": "Opus deckt diese Groesse bei der aktuellen Schrittzahl ab, das erste Bild kostet keine Anlas",
   "generation.dimensions.resolution": "Auflösung",
   "generation.dimensions.resolution_tip": "Die Gesamtpixelfläche des Bildes, als äquivalente Quadratseitenlänge ausgedrückt. 1024 ≈ 1 Megapixel. Höhere Auflösung = mehr Details, aber langsamer und mehr VRAM-Verbrauch.",
   "generation.dimensions.lock": "Auflösung sperren",

@@ -519,6 +519,8 @@ const zh: Record<string, string> = {
   "generation.dimensions.title": "尺寸",
   "generation.dimensions.aspect_ratio": "宽高比",
   "generation.dimensions.aspect_ratio_tip": "图像的形状。1:1 是正方形，16:9 是宽屏，9:16 是纵向。先选择比例，然后用分辨率调整总像素数。",
+  "generation.dimensions.free_opus": "Opus 免费生成",
+  "generation.dimensions.free_opus_tip": "在当前步数下 Opus 覆盖此尺寸，第一张图片不消耗 Anlas",
   "generation.dimensions.resolution": "分辨率",
   "generation.dimensions.resolution_tip": "图像的总像素面积，用等效正方形边长表示。1024 ≈ 100万像素。分辨率越高，细节越多，但生成更慢，显存占用更大。",
   "generation.dimensions.lock": "锁定分辨率",

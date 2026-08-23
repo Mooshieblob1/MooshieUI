@@ -326,6 +326,74 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - App-mode metadata loss, and Anlas-free aspect ratios (PR #618)
+
+**Reported by:** the hand-test pass on the entry below. Steps 6 and 7 passed in
+browser mode and failed in the desktop app, and a 2:3 generation at side 1024
+was charging Anlas while 3:4 was free.
+
+Two causes, unrelated to each other.
+
+- **Every export re-encoded the PNG.** The gallery write path was already
+  correct in both modes: files on disk carry NovelAI's six chunks byte for byte.
+  The loss happened on the way out. `saveImageAs` and `saveImageToDir` embed the
+  app's own metadata into whatever they are about to hand the user, which
+  reaches Rust `embed_image_metadata` -> `embed_png_metadata`, a full decode and
+  re-encode that drops the text chunks and overwrites the stealth alpha. Rather
+  than guard four frontend call sites, the guard now sits at the one Rust
+  function every export and clipboard route passes through: a PNG that still
+  carries NovelAI's chunks comes back untouched. Nothing is lost by that, since
+  the metadata the call would have written says the same thing and the app reads
+  NovelAI's chunks back just as happily as its own. A locally post-processed
+  image has already lost the chunks to its own re-encode, so it falls through
+  and is embedded as normal.
+- **The aspect ratio mapping rounded up past one megapixel.** Opus covers a
+  generation only while it stays at or under 1,048,576 pixels. The area-faithful
+  formula picks the closest pair on the grid, in either direction, so 2:3, 3:2
+  and 21:9 all landed on 1,064,960, over by 16,384, while 3:4 and 16:9 happened
+  to round down and stayed free. In NovelAI mode the dimensions are now taken
+  from the largest pair on the 64px grid whose area does not exceed the
+  requested one. Local backends keep the old mapping.
+
+| Preset | Before, at side 1024 | After | Free on Opus |
+|--------|----------------------|-------|--------------|
+| 1:1 | 1024x1024 | unchanged | yes, exactly at the cap |
+| 4:3 | 1152x896 | unchanged | yes |
+| 3:4 | 896x1152 | unchanged | yes |
+| 16:9 | 1344x768 | unchanged | yes |
+| 9:16 | 768x1344 | unchanged | yes |
+| 3:2 | 1280x832 | **1216x832** | now yes |
+| 2:3 | 832x1280 | **832x1216** | now yes |
+| 21:9 | 1664x640 | **1536x640** | now yes |
+
+832x1216 and 1216x832 are NovelAI's own portrait and landscape presets, so the
+new numbers are not an invention of ours.
+
+The highlight was built as well, since it still says something at side lengths
+above 1024 where the presets genuinely do cost Anlas: on an Opus account in
+NovelAI mode, every preset the plan covers at the current side length and step
+count gets a green border, and a green dot with "Free Opus gens" sits at the top
+right of the aspect ratio section. The border is computed from the same function
+the buttons apply, so it cannot disagree with what clicking one produces.
+
+**Testing required: yes.** 1, 3 and 6 are the ones that were broken.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Desktop, NAI mode, local post-process **off**. Generate, Save Image As, upload the saved PNG to novelai.net | The site reads its own metadata. This is the one that was broken |
+| 2 | Desktop. Same image, save it to a folder instead (the gallery save-to-directory action), upload that file | Same result |
+| 3 | Desktop. Copy the image to the clipboard, then paste into an image editor, and separately drag the gallery file onto novelai.net | The editor gets a real PNG, the site accepts the dragged file |
+| 4 | Desktop, NAI mode, with a local post-process applied (upscale). Save the result, upload it to novelai.net | The site does **not** read it. MooshieUI's own lightbox still shows NovelAI as the backend |
+| 5 | Desktop, ComfyUI backend. Generate, Save Image As, drag the saved file back into the app | Settings restore as before. The guard must not touch local images |
+| 6 | NAI mode, Opus account, side 1024, 28 steps. Click each of the eight aspect presets | 1:1 1024x1024, 4:3 1152x896, 3:2 1216x832, 16:9 1344x768, 21:9 1536x640, 3:4 896x1152, 2:3 832x1216, 9:16 768x1344. All eight carry a green border, the "Free Opus gens" dot shows, and the generate button quotes ~0 Anlas |
+| 7 | Same, side 1536 | The green borders and the dot disappear, and the cost badge quotes a real Anlas price |
+| 8 | Back to side 1024, raise steps to 50 | Same: borders and dot gone, cost badge quotes Anlas |
+| 9 | Non-Opus NAI account, or switch to the ComfyUI backend | No green borders and no dot at all |
+
+**Do not skip:** 1, 3, 6.
+
+**Result: pending.**
+
 ### 2026-08-23 - Clipboard interop follow-up: drop targets, browser-mode save, Anlas estimate (PR #618)
 
 **Reported by:** the hand-test pass on the entry below. Steps 2, 3, 4 and the
@@ -389,7 +457,11 @@ broken.
 
 **Do not skip:** 4, 6, 8.
 
-**Result: pending.**
+**Result: 1 pass, 2 pass, 3 pass, 5 pass. 4 passes from Explorer onto a
+Firefox tab. 6 and 7 pass in browser mode and fail in the desktop app: both
+the saved file and the copied image reached novelai.net with no metadata. 8
+passes. 9 and 10 skipped by the tester. The app-mode failure is fixed in the
+entry above.**
 
 ### 2026-08-23 - NovelAI clipboard interop, both directions (PR #618)
 

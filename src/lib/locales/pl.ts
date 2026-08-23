@@ -599,6 +599,8 @@ const pl: Record<string, string> = {
   "generation.dimensions.title": "Wymiary",
   "generation.dimensions.aspect_ratio": "Proporcje",
   "generation.dimensions.aspect_ratio_tip": "Kształt obrazu. 1:1 to kwadrat, 16:9 to panoramiczny, 9:16 to pionowy. Najpierw wybierz proporcje, a następnie dostosuj rozdzielczość, aby kontrolować łączną liczbę pikseli.",
+  "generation.dimensions.free_opus": "Darmowe generacje Opus",
+  "generation.dimensions.free_opus_tip": "Opus obejmuje ten rozmiar przy obecnej liczbie kroków, więc pierwszy obraz nie kosztuje Anlas",
   "generation.dimensions.resolution": "Rozdzielczość",
   "generation.dimensions.resolution_tip": "Łączna powierzchnia pikselowa obrazu wyrażona jako równoważna długość boku kwadratu. 1024 = ~1 megapiksel. Wyższa rozdzielczość = więcej szczegółów, ale wolniejsze generowanie i większe zużycie VRAM.",
   "generation.dimensions.lock": "Zablokuj rozdzielczość",
