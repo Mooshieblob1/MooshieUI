@@ -359,6 +359,19 @@ style store can emit, including a tag with escaped Danbooru parentheses.
 
 **Do not skip:** 1 and 3.
 
+**Result: pass, all four.** Step 2's `(artist_tag:1.2)` in the lightbox is
+correct and not a leak. Image metadata is written from `GenerationParams`, the
+app's canonical backend-neutral prompt, which is always ComfyUI syntax. The
+NovelAI rewrite happens later, in `build_request()`, and is not written back to
+`params`. That is deliberate: loading settings from a gallery image puts the
+metadata prompt straight back into the prompt box, which expects ComfyUI
+syntax, so a NovelAI-syntax metadata prompt would round-trip through
+`translateNaiWeightSyntax()` and come back as `(artist_tag:1.2)` anyway.
+
+The one thing this costs is that the metadata prompt cannot be pasted into
+NovelAI's own site and keep its weights. That applies to every weighted tag,
+not just style tags, and predates this change.
+
 ### 2026-08-23 - Phase F follow-up: styles leaked `@` into NovelAI prompts (PR #618)
 
 **Found by:** Phase F step 6. The style editor still showed `@artist` while in
