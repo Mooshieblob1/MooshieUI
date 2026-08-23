@@ -326,6 +326,65 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - NovelAI clipboard interop, both directions (PR #618)
+
+**Asked for:** copy an image off novelai.net, Ctrl+V into the app, and get the
+settings back; and the reverse, an image this app generated through NovelAI
+staying acceptable to novelai.net, unless a local post-process touched it.
+
+Four pieces, one of which is nothing:
+
+- **Copy out needed no code.** `copy_image_to_clipboard` and
+  `copy_gallery_image_to_clipboard` already read PNGs off disk and put them on
+  the clipboard unchanged. Only JXL and WebP get decoded and re-encoded, and
+  NovelAI output is neither: `deliver_image()` tags it as PNG.
+- **Nothing re-encodes a NovelAI PNG any more.** The one place that did was
+  `embed_png_metadata()`, called from `save_to_gallery_inner`. It fully decodes
+  and re-encodes, which drops NovelAI's own text chunks and, in stealth mode,
+  overwrites the alpha bits its hidden copy lives in. A PNG that still carries
+  NovelAI chunks now goes to disk byte for byte instead.
+- **A reader for NovelAI's metadata**, `novelai::metadata`, plus a browser-mode
+  mirror in `novelaiPngMetadata.ts`. NovelAI writes no `parameters` chunk, so
+  its images used to read as having no metadata at all.
+- **A writer half**, in `buildPngMetadata`, so a post-processed image still says
+  it came from NovelAI and restores its NovelAI settings on reimport.
+
+Two things worth stating plainly, because neither matches the literal ask:
+
+- **The reader is not gated on NAI mode.** Mode is a frontend concept and the
+  reader is in Rust; it only fires on an image that actually carries NovelAI
+  chunks, so gating it would add a switch that never changes an outcome.
+- **Byte preservation is decided from the bytes, not from a flag.** A pure
+  NovelAI generation still has the chunks and is preserved; the same image after
+  a local post-process lost them in the re-encode that post-processing already
+  performed, so it takes the normal embed path. No flag needed anywhere.
+
+Restored settings land in the right halves of the panel: NovelAI's sampler and
+noise schedule go into `novelaiSettings`, not the top-level `samplerName` and
+`scheduler`, which stay ComfyUI values for the local post-process pass. The
+quality toggle and UC preset are forced off on import, because the captured
+prompt already has their text folded into it and re-enabling them would append
+a second copy.
+
+**Testing required: yes.** Steps 3 and 6 are the ones that cannot be inferred
+from the code.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Desktop, NAI mode. Copy an image on novelai.net, focus the app, Ctrl+V | Prompt, UC, seed, steps, sampler, noise schedule, CFG and model all populate. Nothing is saved to the gallery |
+| 2 | Drag that same file onto the app window instead | Same restore as step 1 |
+| 3 | Generate in NAI mode with local post-process **off**. Take the file out of the gallery folder and upload it to novelai.net (img2img or vibe transfer) | The site accepts it and reads its own metadata back |
+| 4 | Copy that same gallery image from inside the app, paste into any image editor | A PNG arrives, not a blank or a re-encode |
+| 5 | Ctrl+V that gallery PNG back into the app | Settings restore. Sampler and noise schedule land in the NovelAI panel, and the ComfyUI sampler dropdown is untouched |
+| 6 | Generate in NAI mode with local post-process **on**, then upload that file to novelai.net | The site does **not** recognise it as its own. Reimporting it into the app still restores the settings and still reads as NovelAI |
+| 7 | Paste a NovelAI image with two or more characters | The character list comes back with each prompt and position |
+| 8 | Browser mode (LAN or `--server`). Repeat step 1 | Same restore, via the client-side reader |
+| 9 | Regression: paste a normal ComfyUI or SwarmUI PNG in ComfyUI mode | Unchanged from before this change |
+
+**Do not skip:** 3, 6, 8.
+
+**Result: pending.**
+
 ### 2026-08-23 - Style fragment weights in NovelAI mode (PR #618)
 
 **Reported by:** Phase F follow-up step 2. An active Artist Style showed up as

@@ -4,8 +4,11 @@
  * Reads metadata from PNG files without requiring server round-trips.
  * Supports:
  *  - PNG tEXt / iTXt chunks (SwarmUI JSON + A1111 fallback)
- *  - Stealth alpha-channel LSB encoding (SwarmUI-compatible)
+ *  - NovelAI text chunks (Software / Source / Comment)
+ *  - Stealth alpha-channel LSB encoding (SwarmUI and NovelAI)
  */
+
+import { parseNovelAiChunks, parseNovelAiStealthJson } from "./novelaiPngMetadata.js";
 
 // ---------------------------------------------------------------------------
 // PNG chunk reader
@@ -226,6 +229,40 @@ function readTextChunks(buf: ArrayBuffer): Record<string, string> | null {
   return null;
 }
 
+/**
+ * Collect every PNG text chunk into a keyword-to-text map.
+ *
+ * `readTextChunks` above keys off the one well-known `parameters` keyword and
+ * can stop as soon as it sees it. A reader that has to look at the whole set
+ * needs them flattened first, which the NovelAI one does: its metadata is split
+ * across five chunks of its own naming. Later encodings win, which only matters
+ * for a file that wrote the same keyword twice.
+ *
+ * zTXt is skipped. Its text is zlib-deflated and nothing in the browser will
+ * inflate a raw stream synchronously; NovelAI writes tEXt, so this costs
+ * nothing today.
+ */
+function readAllTextChunks(buf: ArrayBuffer): Record<string, string> {
+  const chunks: Record<string, string> = {};
+  for (const chunk of iterChunks(buf)) {
+    if (chunk.type === "tEXt") {
+      const [keyword, consumed] = readNullTerminated(chunk.data, 0);
+      chunks[keyword] = new TextDecoder("latin1").decode(chunk.data.subarray(consumed));
+    } else if (chunk.type === "iTXt") {
+      const [keyword, consumed] = readNullTerminated(chunk.data, 0);
+      const compressed = chunk.data[consumed] === 1;
+      if (compressed) continue;
+      let pos = consumed + 2; // compression flag + method
+      while (pos < chunk.data.length && chunk.data[pos] !== 0) pos++;
+      pos++; // language tag terminator
+      while (pos < chunk.data.length && chunk.data[pos] !== 0) pos++;
+      pos++; // translated keyword terminator
+      chunks[keyword] = new TextDecoder("utf-8").decode(chunk.data.subarray(pos));
+    }
+  }
+  return chunks;
+}
+
 // ---------------------------------------------------------------------------
 // Stealth alpha reader (mirrors Rust read_stealth_alpha)
 // ---------------------------------------------------------------------------
@@ -324,10 +361,24 @@ async function readStealthAlphaAsync(
     }
 
     const jsonText = new TextDecoder("utf-8").decode(result).trim();
-    return parseSwarmUIJson(jsonText);
+    return parseStealthPayload(jsonText);
   } catch {
     return null;
   }
+}
+
+/**
+ * Parse a decoded stealth-alpha payload, whichever tool wrote it.
+ *
+ * Both SwarmUI and NovelAI hide JSON in the alpha LSBs with the same envelope,
+ * so the carrier cannot say which one it is; the shape of the JSON inside can.
+ * Each parser declines anything that is not its own, so trying them in turn is
+ * safe, and NovelAI goes last because SwarmUI is the common case here.
+ *
+ * Mirrors the Rust `parse_stealth_payload`.
+ */
+function parseStealthPayload(text: string): Record<string, string> | null {
+  return parseSwarmUIJson(text) ?? parseNovelAiStealthJson(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -345,7 +396,13 @@ export async function readPngMetadataClientSide(
   const textResult = readTextChunks(buf);
   if (textResult) return textResult;
 
-  // 2. Try stealth alpha (requires pixel decoding via Canvas)
+  // 2. Try NovelAI chunks. NovelAI writes no `parameters` chunk, so an image
+  //    copied straight off novelai.net gets past step 1 untouched. Desktop
+  //    reads these in Rust; browser mode never reaches that reader.
+  const novelAiResult = parseNovelAiChunks(readAllTextChunks(buf));
+  if (novelAiResult) return novelAiResult;
+
+  // 3. Try stealth alpha (requires pixel decoding via Canvas)
   try {
     const blob = new Blob([buf], { type: "image/png" });
     const bitmap = await createImageBitmap(blob);

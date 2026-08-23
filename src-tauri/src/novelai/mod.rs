@@ -7,6 +7,7 @@
 //! the progress store need no NovelAI-specific handling.
 
 pub mod client;
+pub mod metadata;
 pub mod models;
 pub mod params;
 pub mod payload;

@@ -1,4 +1,5 @@
 import { generation } from "../stores/generation.svelte.js";
+import type { NovelAiSettings } from "../stores/generation.svelte.js";
 import { readImageMetadataBytes, readImageMetadataPath } from "./api.js";
 import { gallery } from "../stores/gallery.svelte.js";
 import { locale } from "../stores/locale.svelte.js";
@@ -124,10 +125,97 @@ function applyPrompts(meta: Record<string, string>): boolean {
   return applied;
 }
 
+/**
+ * Was this image made by NovelAI?
+ *
+ * Set by our own writer for anything generated against the NovelAI backend,
+ * and by the Rust reader for an image copied straight off novelai.net, so both
+ * routes into the panel land here.
+ */
+function isNovelAiMeta(meta: Record<string, string>): boolean {
+  return meta.mooshie_backend === "novelai";
+}
+
+function metaBool(value: string | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  return value.trim().toLowerCase() === "true";
+}
+
+function metaNumber(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = parseFloat(value);
+  return isNaN(parsed) ? undefined : parsed;
+}
+
+/**
+ * Restore the NovelAI half of an image's settings.
+ *
+ * NovelAI's sampler and noise schedule are not the top-level `samplerName` and
+ * `scheduler`: those stay ComfyUI values for the local post-process pass, and
+ * writing a NovelAI sampler into them would leave the local pass asking ComfyUI
+ * for a sampler it does not have. Everything NovelAI-specific goes through the
+ * one settings patch instead, which persists on write.
+ */
+function applyNovelAiSettings(meta: Record<string, string>): void {
+  const patch: Partial<NovelAiSettings> = {};
+  if (meta.sampler) patch.sampler = meta.sampler;
+  if (meta.scheduler) patch.noise_schedule = meta.scheduler;
+
+  const numbers: [string, keyof NovelAiSettings][] = [
+    ["mooshie_novelai_cfg_rescale", "cfg_rescale"],
+    ["mooshie_novelai_uncond_scale", "uncond_scale"],
+    ["mooshie_novelai_uc_preset", "uc_preset"],
+    ["mooshie_novelai_strength", "strength"],
+    ["mooshie_novelai_noise", "noise"],
+  ];
+  for (const [key, field] of numbers) {
+    const value = metaNumber(meta[key]);
+    if (value !== undefined) (patch as Record<string, unknown>)[field] = value;
+  }
+
+  const booleans: [string, keyof NovelAiSettings][] = [
+    ["mooshie_novelai_dynamic_thresholding", "dynamic_thresholding"],
+    ["mooshie_novelai_variety_plus", "variety_plus"],
+    ["mooshie_novelai_use_coords", "use_coords"],
+    ["mooshie_novelai_quality_toggle", "quality_toggle"],
+    ["mooshie_novelai_legacy_uc", "legacy_uc"],
+  ];
+  for (const [key, field] of booleans) {
+    const value = metaBool(meta[key]);
+    if (value !== undefined) (patch as Record<string, unknown>)[field] = value;
+  }
+
+  if (meta.mooshie_novelai_characters) {
+    try {
+      const parsed = JSON.parse(meta.mooshie_novelai_characters);
+      if (Array.isArray(parsed)) {
+        patch.characters = parsed.map((c: any) => ({
+          prompt: typeof c?.prompt === "string" ? c.prompt : "",
+          negative_prompt: typeof c?.negative_prompt === "string" ? c.negative_prompt : "",
+          center: {
+            x: typeof c?.center?.x === "number" ? c.center.x : 0.5,
+            y: typeof c?.center?.y === "number" ? c.center.y : 0.5,
+          },
+          enabled: c?.enabled !== false,
+        }));
+      }
+    } catch {
+      // A character list we cannot read is dropped; the rest still applies.
+    }
+  }
+
+  generation.updateNovelAiSettings(patch);
+}
+
 function applySampler(meta: Record<string, string>): boolean {
   let applied = false;
-  if (meta.sampler) { generation.samplerName = meta.sampler; applied = true; }
-  if (meta.scheduler) { generation.scheduler = meta.scheduler; applied = true; }
+  if (isNovelAiMeta(meta)) {
+    applyNovelAiSettings(meta);
+    applied = true;
+  } else {
+    if (meta.sampler) { generation.samplerName = meta.sampler; applied = true; }
+    if (meta.scheduler) { generation.scheduler = meta.scheduler; applied = true; }
+  }
   if (meta.steps) {
     const v = parseInt(meta.steps, 10);
     if (!isNaN(v)) { generation.steps = v; applied = true; }

@@ -1663,6 +1663,44 @@
       metadata.mooshie_prompt_schedule = schedParts.join(", ");
     }
 
+    // NovelAI settings live in their own block, so the generic fields above
+    // hold the ComfyUI values the local post-process would have used. Overwrite
+    // the ones that have a NovelAI counterpart, and record the rest, so an
+    // image that came back from NovelAI reads as a NovelAI image on reimport.
+    //
+    // Only a post-processed image is ever written with this map: a pure NovelAI
+    // generation keeps NovelAI's own bytes (see `save_to_gallery_inner`) and is
+    // read back through its chunks instead. The map still reaches SQLite either
+    // way, which is what the in-app settings restore reads.
+    const nai = params.novelai;
+    if (nai) {
+      metadata.mooshie_backend = "novelai";
+      metadata.sampler = nai.sampler;
+      metadata.scheduler = nai.noise_schedule;
+      metadata.model = nai.model;
+      metadata.mooshie_novelai_cfg_rescale = String(nai.cfg_rescale);
+      metadata.mooshie_novelai_uncond_scale = String(nai.uncond_scale);
+      metadata.mooshie_novelai_dynamic_thresholding = String(nai.dynamic_thresholding);
+      metadata.mooshie_novelai_variety_plus = String(nai.variety_plus);
+      metadata.mooshie_novelai_use_coords = String(nai.use_coords);
+      metadata.mooshie_novelai_quality_toggle = String(nai.quality_toggle);
+      metadata.mooshie_novelai_uc_preset = String(nai.uc_preset);
+      metadata.mooshie_novelai_legacy_uc = String(nai.legacy_uc);
+      if (params.mode !== "txt2img") {
+        metadata.mooshie_novelai_strength = String(nai.strength);
+        metadata.mooshie_novelai_noise = String(nai.noise);
+      }
+      const enabledCharacters = nai.characters.filter((c) => c.enabled && c.prompt.trim());
+      if (enabledCharacters.length > 0) {
+        metadata.mooshie_novelai_characters = JSON.stringify(enabledCharacters);
+      }
+      if (nai.local_post_process) {
+        // The reason this image no longer carries NovelAI's own signature: the
+        // local pass re-encoded it, so novelai.net will not accept it back.
+        metadata.mooshie_novelai_post_processed = "true";
+      }
+    }
+
     return metadata;
   }
 

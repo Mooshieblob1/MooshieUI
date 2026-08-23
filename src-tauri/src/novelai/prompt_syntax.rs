@@ -1,4 +1,4 @@
-//! Rewrite ComfyUI/A1111 prompt weight syntax into NovelAI weight syntax.
+//! Translate prompt weight syntax between ComfyUI/A1111 and NovelAI.
 //!
 //! The frontend translates *into* ComfyUI syntax (`1.1::tag::` becomes
 //! `(tag:1.1)`) because ComfyUI is the default backend. NovelAI does not
@@ -6,7 +6,8 @@
 //! the weight is silently lost, so a prompt that looked weighted in the UI
 //! generates unweighted and the user pays Anlas for it.
 //!
-//! This module runs on the way out, only for NovelAI requests. It lives in Rust
+//! This module runs on the way out for every NovelAI request, and on the way
+//! back in when NovelAI's own metadata is read out of a PNG. It lives in Rust
 //! rather than next to the frontend translator because the repo has no frontend
 //! test framework and a silent bug here costs real money.
 //!
@@ -145,6 +146,111 @@ fn apply_weight(segment: &str, weight: f64) -> String {
         return format!("{lead}{trimmed}{trail}");
     }
     format!("{lead}{}::{trimmed}::{trail}", format_weight(weight))
+}
+
+/// Rewrite a prompt from NovelAI weight syntax back into ComfyUI syntax.
+///
+/// The inverse of [`to_novelai`], for the way back in: NovelAI writes its own
+/// prompt into every PNG it returns, and the app's prompt box holds ComfyUI
+/// syntax on every backend, so that prompt has to be translated before it can
+/// be restored into the panel.
+///
+/// This mirrors the frontend's `translateNaiWeightSyntax`, which does the same
+/// job for a prompt the user pastes in as text:
+///
+/// - `1.1::tag::` becomes `(tag:1.10)`
+/// - `{tag}` becomes `(tag:1.05)` and `[tag]` becomes `(tag:0.95)`, innermost
+///   first, so `{{tag}}` becomes `((tag:1.05):1.05)`
+/// - An escaped bracket is left alone, since it is a literal character
+pub fn from_novelai(prompt: &str) -> String {
+    let mut out = expand_novelai_weights(prompt);
+    while let Some(next) = rewrite_innermost_bracket(&out, b'{', b'}', "1.05") {
+        out = next;
+    }
+    while let Some(next) = rewrite_innermost_bracket(&out, b'[', b']', "0.95") {
+        out = next;
+    }
+    out
+}
+
+/// Rewrite every `weight::text::` run as `(text:weight)`.
+///
+/// The weight is the digit run immediately before the opening `::`, and the run
+/// ends at the next `::`. A run whose text holds a further colon is left alone:
+/// that is not one flat weighted span, and guessing at it would corrupt the
+/// prompt rather than fail visibly.
+fn expand_novelai_weights(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    // Everything before `cursor` has already been copied or rewritten.
+    let mut cursor = 0usize;
+    let mut i = 0usize;
+    while i + 1 < bytes.len() {
+        if bytes[i] != b':' || bytes[i + 1] != b':' {
+            i += 1;
+            continue;
+        }
+        let mut num_start = i;
+        while num_start > cursor {
+            let c = bytes[num_start - 1];
+            if c.is_ascii_digit() || c == b'.' {
+                num_start -= 1;
+            } else {
+                break;
+            }
+        }
+        let weight = text[num_start..i].parse::<f64>().ok();
+        let close = text[i + 2..].find("::").map(|rel| i + 2 + rel);
+        if let (Some(weight), Some(close)) = (weight, close) {
+            let inner = &text[i + 2..close];
+            if !inner.contains(':') && !inner.trim().is_empty() {
+                out.push_str(&text[cursor..num_start]);
+                out.push_str(&format!("({}:{:.2})", inner.trim(), weight));
+                cursor = close + 2;
+                i = cursor;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&text[cursor..]);
+    out
+}
+
+/// Rewrite the innermost `open ... close` pair as `(inner:weight)`, or return
+/// `None` when there is none left.
+///
+/// The first unescaped closing bracket is innermost by definition, so the
+/// nearest unescaped opening bracket before it is its partner. Every call
+/// removes one pair, which is what lets the caller loop to a fixed point.
+fn rewrite_innermost_bracket(text: &str, open: u8, close: u8, weight: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    for i in 0..bytes.len() {
+        if bytes[i] != close || is_escaped(bytes, i) {
+            continue;
+        }
+        let mut start = i;
+        let found = loop {
+            if start == 0 {
+                break None;
+            }
+            start -= 1;
+            if bytes[start] == open && !is_escaped(bytes, start) {
+                break Some(start);
+            }
+        };
+        let Some(start) = found else { continue };
+        let inner = &text[start + 1..i];
+        if inner.trim().is_empty() {
+            continue;
+        }
+        let mut out = String::with_capacity(text.len() + 8);
+        out.push_str(&text[..start]);
+        out.push_str(&format!("({inner}:{weight})"));
+        out.push_str(&text[i + 1..]);
+        return Some(out);
+    }
+    None
 }
 
 /// Split an exact `weight::text::` run into its parts.
@@ -287,5 +393,85 @@ mod tests {
         // The style store escapes Danbooru parentheses before weighting.
         let src = "(hoshino_\\(artist\\):1.2)";
         assert_eq!(to_novelai(src), r"1.2::hoshino_\(artist\)::");
+    }
+    #[test]
+    fn from_novelai_expands_a_weighted_run() {
+        assert_eq!(from_novelai("1.1::masterpiece::"), "(masterpiece:1.10)");
+    }
+
+    #[test]
+    fn from_novelai_expands_runs_in_place() {
+        assert_eq!(from_novelai("a, 1.2::b::, c"), "a, (b:1.20), c");
+    }
+
+    #[test]
+    fn from_novelai_trims_the_weighted_text() {
+        assert_eq!(from_novelai("1.2:: b ::"), "(b:1.20)");
+    }
+
+    #[test]
+    fn from_novelai_handles_a_weight_below_one() {
+        assert_eq!(from_novelai("0.9::blurry::"), "(blurry:0.90)");
+    }
+
+    #[test]
+    fn from_novelai_leaves_a_run_with_no_weight_alone() {
+        assert_eq!(from_novelai("::tag::"), "::tag::");
+    }
+
+    #[test]
+    fn from_novelai_leaves_an_empty_run_alone() {
+        assert_eq!(from_novelai("1.2::::"), "1.2::::");
+    }
+
+    #[test]
+    fn from_novelai_converts_curly_emphasis() {
+        assert_eq!(from_novelai("{tag}"), "(tag:1.05)");
+    }
+
+    #[test]
+    fn from_novelai_converts_square_de_emphasis() {
+        assert_eq!(from_novelai("[tag]"), "(tag:0.95)");
+    }
+
+    #[test]
+    fn from_novelai_nests_repeated_emphasis_innermost_first() {
+        assert_eq!(from_novelai("{{tag}}"), "((tag:1.05):1.05)");
+    }
+
+    #[test]
+    fn from_novelai_converts_each_bracket_group_in_a_list() {
+        assert_eq!(from_novelai("{a}, b, [c]"), "(a:1.05), b, (c:0.95)");
+    }
+
+    #[test]
+    fn from_novelai_leaves_escaped_brackets_as_literals() {
+        assert_eq!(from_novelai(r"tag_\[1\]"), r"tag_\[1\]");
+    }
+
+    #[test]
+    fn from_novelai_leaves_an_empty_bracket_pair_alone() {
+        assert_eq!(from_novelai("a, {}, b"), "a, {}, b");
+    }
+
+    #[test]
+    fn from_novelai_leaves_a_danbooru_parenthesis_tag_alone() {
+        assert_eq!(
+            from_novelai("hatsune_miku_(vocaloid)"),
+            "hatsune_miku_(vocaloid)"
+        );
+    }
+
+    #[test]
+    fn from_novelai_handles_multibyte_text() {
+        assert_eq!(
+            from_novelai("1.2::\u{3053}\u{3093}::"),
+            "(\u{3053}\u{3093}:1.20)"
+        );
+    }
+
+    #[test]
+    fn from_novelai_round_trips_a_comfyui_weight() {
+        assert_eq!(from_novelai(&to_novelai("(tag:1.2)")), "(tag:1.20)");
     }
 }
