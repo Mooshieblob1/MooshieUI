@@ -326,6 +326,46 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - Prompt presets are now Prompt Chunks, and @[Name] works inline (PR #618)
+
+Two changes to the same feature.
+
+The user-facing wording moved from "prompt preset" to "prompt chunk" across all
+12 locales (16 keys). The code symbols were left alone on purpose, so
+`promptPresets.svelte.ts`, `PromptPreset` and the `@preset:` token all keep
+their names. Unrelated features that legitimately say "preset" were not touched:
+Fooocus style presets, ControlNet presets, video export presets, LoRA presets
+and the appearance style presets.
+
+The inline token gained a second, friendlier spelling. `@[Chunk Name]` now
+resolves to the same chunk as `@preset:chunk_name`, because the display name is
+slugified with the same rule the old form already used. The vocabulary moved
+into a leaf util (`src/lib/utils/promptChunkTokens.ts`) so the highlighter, the
+inert-range scanner, the scheduler and the store all share one regex instead of
+four copies. The copy button in the chunk editor and in the Style Manager now
+hands out the `@[Name]` form, falling back to `@preset:slug` when the name is
+empty or contains a `]` or a newline.
+
+**Testing required: yes.** New prompt syntax plus a broad string rename.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Open the Style Manager | The second tab reads "Chunks", its panel title reads "Prompt Chunks", and the empty state says "No chunks yet." |
+| 2 | Create a chunk named `Cool Lighting` with content `dramatic rim light` | The copy button beside the name shows `@[Cool Lighting]` and copies exactly that |
+| 3 | Paste `@[Cool Lighting]` into the positive prompt | It highlights as a chunk token, the same way `@preset:cool_lighting` does |
+| 4 | Generate with that prompt | The final prompt splices `dramatic rim light` in at that exact spot |
+| 5 | Replace it with `@preset:cool_lighting` and generate again | Identical result, the old form still works |
+| 6 | Click the `@[Cool Lighting]` token in the prompt box | Nothing opens. No tag popup, and the artist detector does not treat it as an artist reference |
+| 7 | Name a chunk `Neon, Night` and use `@[Neon, Night]` | Resolves. `@preset:neon_night` resolves to the same chunk |
+| 8 | Name a chunk `Weird]Name` | The copy button falls back to `@preset:weird_name` rather than emitting a broken token |
+| 9 | Use a chunk token inside a schedule, e.g. `[@[Cool Lighting]:0.5]` | The chunk content expands inside the scheduled segment as before |
+| 10 | Save a prompt from the extra prompt box | The button reads "Save as chunk" and the toast reads "Saved '<name>' to chunks" |
+| 11 | Hover or tab to an active chunk chip's deactivate control | The accessible label reads "Deactivate chunk <name>" |
+| 12 | Switch the UI language to Japanese, then German | The chunk wording is translated in both, no raw keys and no English left in that block |
+| 13 | Check the Styles tab, ControlNet, video export and LoRA panels | They all still say "preset", unchanged |
+
+**Do not skip:** 2, 3, 4, 5, 6, 12.
+
 ### 2026-08-23 - The Anlas balance showed on the ComfyUI backend (PR #618)
 
 **Reported by:** the user, on the entry below: "the anlas counter still exists
@@ -351,7 +391,7 @@ ComfyUI backend also stops the component reaching NovelAI's account endpoint.
 
 **Do not skip:** 1, 2.
 
-**Result: pending.**
+**Result: 1, 2, 3 and 4 pass.**
 
 ### 2026-08-23 - The tiling controls are back in NovelAI mode (PR #618)
 

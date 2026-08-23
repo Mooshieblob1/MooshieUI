@@ -1,6 +1,6 @@
 <script lang="ts">
   import { styles, type ArtistStyle } from "../../stores/styles.svelte.js";
-  import { promptPresets, presetSlug, type PromptPreset, type PresetMode } from "../../stores/promptPresets.svelte.js";
+  import { promptPresets, inlineChunkToken, type PromptPreset, type PresetMode } from "../../stores/promptPresets.svelte.js";
   import { saveTextFile } from "../../utils/api.js";
   import StyleEditor from "./StyleEditor.svelte";
   import PresetEditor from "./PresetEditor.svelte";
@@ -370,8 +370,8 @@
                       type="button"
                       class="rounded border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 font-mono text-[10px] text-neutral-400 hover:border-indigo-500/40 hover:text-indigo-200"
                       title={locale.t("styles.manager.inline_token_title")}
-                      onclick={() => navigator.clipboard?.writeText(`@preset:${presetSlug(preset.name)}`)}
-                    >@preset:{presetSlug(preset.name)}</button>
+                      onclick={() => navigator.clipboard?.writeText(inlineChunkToken(preset.name))}
+                    >{inlineChunkToken(preset.name)}</button>
                   </p>
                 </div>
                 <div class="flex shrink-0 items-center gap-1">
@@ -426,7 +426,7 @@
     <!-- Import / export -->
     <section class="rounded-lg border border-neutral-800 bg-neutral-950/50 p-3 space-y-2">
       <h3 class="text-[10px] uppercase tracking-wide text-neutral-500">
-        {locale.t("styles.manager.import_export", { kind: activeTab === "styles" ? "styles" : "presets" })}
+        {locale.t("styles.manager.import_export", { kind: activeTab === "styles" ? "styles" : "chunks" })}
       </h3>
       <div class="flex flex-wrap items-center gap-2">
         <button
@@ -445,7 +445,7 @@
       </div>
       <p class="text-[10px] text-neutral-500">
         {activeTab === "styles" ? locale.t("styles.manager.help_styles") : locale.t("styles.manager.help_presets")}
-        {locale.t("styles.manager.help_export", { kind: activeTab === "styles" ? "style" : "preset" })}
+        {locale.t("styles.manager.help_export", { kind: activeTab === "styles" ? "style" : "chunk" })}
       </p>
       {#if importStatus}
         <p class="text-[11px] text-emerald-400">{importStatus}</p>

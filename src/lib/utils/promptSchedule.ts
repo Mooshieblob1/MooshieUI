@@ -5,6 +5,7 @@ import {
   PROMPT_SCHEDULE_REGEX,
 } from "./promptInertRanges.js";
 import { parseSegmentDetailPrompt } from "./promptSegmentDetail.js";
+import { mayContainPresetToken, presetTokenSlug } from "./promptChunkTokens.js";
 
 export {
   findPromptInertRangeContaining,
@@ -269,13 +270,14 @@ export function renderHighlightedPrompt(
   return html;
 }
 
-/** Match `@preset:<slug>` directives. Slug = lowercase alnum + underscore. */
+/** Matches both `@preset:<slug>` and `@[Chunk Name]`. */
 const PRESET_TOKEN_REGEX = PROMPT_PRESET_TOKEN_REGEX;
 
 /**
- * Highlight `@preset:<slug>` tokens within an arbitrary plain-text segment.
- * Indigo pill when the slug is known, red when unknown — gives users instant
- * feedback for typos. Returns escaped HTML so it can be concatenated into the
+ * Highlight inline chunk tokens within an arbitrary plain-text segment.
+ * Indigo pill when the chunk is known, red when unknown — gives users instant
+ * feedback for typos. Both spellings normalise to the same slug, so one known
+ * set covers them. Returns escaped HTML so it can be concatenated into the
  * larger highlight string.
  */
 function renderPresetSegment(
@@ -284,7 +286,7 @@ function renderPresetSegment(
   loraWords?: ReadonlySet<string>,
 ): string {
   if (!text) return "";
-  if (!text.includes("@preset:")) return renderLoraWordsInPlainText(text, loraWords);
+  if (!mayContainPresetToken(text)) return renderLoraWordsInPlainText(text, loraWords);
   let html = "";
   let lastIndex = 0;
   PRESET_TOKEN_REGEX.lastIndex = 0;
@@ -292,7 +294,7 @@ function renderPresetSegment(
   while ((match = PRESET_TOKEN_REGEX.exec(text)) !== null) {
     html += renderLoraWordsInPlainText(text.slice(lastIndex, match.index), loraWords);
     lastIndex = match.index + match[0].length;
-    const slug = match[1].toLowerCase();
+    const slug = presetTokenSlug(match);
     const known = knownPresetSlugs?.has(slug) ?? false;
     const bg = known ? "rgba(99, 102, 241, 0.18)" : "rgba(239, 68, 68, 0.16)";
     const border = known ? "rgba(129, 140, 248, 0.55)" : "rgba(248, 113, 113, 0.55)";
@@ -405,11 +407,12 @@ export function hasSchedulingTags(raw: string): boolean {
 }
 
 /**
- * Check whether the prompt contains any `@preset:<slug>` directives. Cheap
- * substring guard first so we don't allocate a regex match on every keystroke.
+ * Check whether the prompt contains any inline chunk directives, in either
+ * spelling. Cheap substring guard first so we don't allocate a regex match on
+ * every keystroke.
  */
 export function hasPresetTokens(raw: string): boolean {
-  if (!raw || !raw.includes("@preset:")) return false;
+  if (!mayContainPresetToken(raw)) return false;
   PRESET_TOKEN_REGEX.lastIndex = 0;
   return PRESET_TOKEN_REGEX.test(raw);
 }

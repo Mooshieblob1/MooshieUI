@@ -1,4 +1,5 @@
 import { SYNTAX_ANGLE_LOOKBEHIND } from "./promptSyntaxEscape.ts";
+import { PROMPT_PRESET_TOKEN_REGEX, mayContainPresetToken } from "./promptChunkTokens.js";
 
 /**
  * Shared detection for prompt syntax blocks that should not participate in
@@ -16,8 +17,7 @@ export const PROMPT_SCHEDULE_REGEX = new RegExp(
   "g",
 );
 
-/** Match `@preset:<slug>` directives. Slug = lowercase alnum + underscore. */
-export const PROMPT_PRESET_TOKEN_REGEX = /@preset:([a-z0-9_]+)/gi;
+export { PROMPT_PRESET_TOKEN_REGEX } from "./promptChunkTokens.js";
 
 export const PROMPT_LORA_TOKEN_REGEX = new RegExp(
   `${SYNTAX_ANGLE_LOOKBEHIND}<lora:\\s*[^>]+>`,
@@ -73,7 +73,7 @@ export function getPromptInertRanges(raw: string): PromptTextRange[] {
     ...collectRegexRanges(raw, PROMPT_SCHEDULE_REGEX),
   ];
 
-  if (raw.includes("@preset:")) {
+  if (mayContainPresetToken(raw)) {
     ranges.push(...collectRegexRanges(raw, PROMPT_PRESET_TOKEN_REGEX));
   }
   if (raw.includes("<lora:")) {

@@ -21,6 +21,13 @@
  * badges, not tags — and survive reloads via localStorage.
  */
 
+import {
+  mayContainPresetToken,
+  presetSlug,
+  presetTokenSlug,
+  PROMPT_PRESET_TOKEN_REGEX,
+} from "../utils/promptChunkTokens.js";
+
 const STORAGE_KEY = "mooshieui.promptPresets.v1";
 const ACTIVE_KEY = "mooshieui.promptPresets.active.v1";
 const EXPORT_KIND = "mooshieui.prompt-presets";
@@ -134,19 +141,15 @@ function splitWildcardChoices(content: string): string[] {
 }
 
 /**
- * Derive a URL/token-safe slug from a preset display name. Lowercased, with
- * runs of non-alphanumeric chars collapsed to a single underscore. Used as
- * the inline `@preset:<slug>` token form so users can drop a preset at any
- * point in the prompt without worrying about case or punctuation.
+ * The inline token vocabulary lives in a leaf util so the highlighter and the
+ * inert-range scanner can share it without importing a store. Re-exported here
+ * because this is where callers already look for it.
  */
-export function presetSlug(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "") || "preset"
-  );
-}
+export {
+  inlineChunkToken,
+  presetSlug,
+  PROMPT_PRESET_TOKEN_REGEX as INLINE_PRESET_REGEX,
+} from "../utils/promptChunkTokens.js";
 
 /**
  * Reserved keywords that must NOT be treated as artist tags when they appear
@@ -156,12 +159,6 @@ export function presetSlug(name: string): string {
  */
 export const RESERVED_AT_KEYWORDS: ReadonlySet<string> = new Set(["preset"]);
 
-/**
- * Regex that matches inline preset directives: `@preset:<slug>`. The slug
- * captures `[a-z0-9_]` only (matches `presetSlug()` output). Case-insensitive
- * on the keyword for forgiveness; slug must already be lowercased.
- */
-export const INLINE_PRESET_REGEX = /@preset:([a-z0-9_]+)/gi;
 
 class PromptPresetsStore {
   presets = $state<PromptPreset[]>([]);
@@ -288,10 +285,10 @@ class PromptPresetsStore {
 
   inlinePresetIds(text: string): Set<string> {
     const ids = new Set<string>();
-    if (!text || !text.includes("@preset:")) return ids;
+    if (!mayContainPresetToken(text)) return ids;
     const lookup = this.bySlug;
-    for (const match of text.matchAll(INLINE_PRESET_REGEX)) {
-      const preset = lookup.get(match[1].toLowerCase());
+    for (const match of text.matchAll(PROMPT_PRESET_TOKEN_REGEX)) {
+      const preset = lookup.get(presetTokenSlug(match));
       if (preset) ids.add(preset.id);
     }
     return ids;
@@ -367,7 +364,8 @@ class PromptPresetsStore {
   }
 
   /**
-   * Map of slug → preset for inline `@preset:<slug>` lookups. Recomputed
+   * Map of slug → preset for inline chunk lookups. Both token spellings
+   * normalise to this same slug, so one map covers both. Recomputed
    * each access so it stays in sync with renames; the list is small enough
    * that caching isn't worth the bookkeeping.
    */
@@ -388,19 +386,20 @@ class PromptPresetsStore {
   }
 
   /**
-   * Resolve `@preset:<slug>` directives inline within a prompt string.
+   * Resolve inline chunk directives within a prompt string, in either
+   * spelling: `@preset:<slug>` and `@[Chunk Name]`.
    * - Single-line preset content is inserted verbatim (trimmed).
    * - Multi-line preset content picks one random line per occurrence
    *   (independent rolls — `@preset:foo, @preset:foo` rolls twice).
    * - Empty presets resolve to an empty string; adjacent commas/whitespace
    *   are tidied so the prompt doesn't end up with `, ,` artefacts.
-   * - Unknown slugs are left untouched (so typos are debuggable).
+   * - Unknown names are left untouched (so typos are debuggable).
    */
   resolveInline(text: string, options: Pick<ResolvePromptPresetOptions, "fixedChoices"> = {}): string {
-    if (!text || !text.includes("@preset:")) return text;
+    if (!mayContainPresetToken(text)) return text;
     const lookup = this.bySlug;
-    let resolved = text.replace(INLINE_PRESET_REGEX, (full, slug: string) => {
-      const preset = lookup.get(slug.toLowerCase());
+    let resolved = text.replace(PROMPT_PRESET_TOKEN_REGEX, (full: string, slug?: string, name?: string) => {
+      const preset = lookup.get(presetTokenSlug([full, slug, name] as unknown as RegExpMatchArray));
       if (!preset) return full;
       const fixedChoice = options.fixedChoices?.get(preset.id)?.trim();
       if (fixedChoice) return fixedChoice;

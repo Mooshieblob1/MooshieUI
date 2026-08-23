@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { promptPresets, presetSlug } from "../../stores/promptPresets.svelte.js";
+  import { promptPresets, inlineChunkToken } from "../../stores/promptPresets.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
 
@@ -12,8 +12,7 @@
 
   const preset = $derived(promptPresets.getById(presetId));
   const choiceCount = $derived(promptPresets.countChoices(presetId));
-  const slug = $derived(preset ? presetSlug(preset.name) : "");
-  const inlineToken = $derived(slug ? `@preset:${slug}` : "");
+  const inlineToken = $derived(preset?.name.trim() ? inlineChunkToken(preset.name) : "");
 
   function setName(v: string) {
     if (!preset) return;
