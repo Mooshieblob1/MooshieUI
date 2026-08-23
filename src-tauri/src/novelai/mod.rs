@@ -544,6 +544,19 @@ async fn run_local_post_process(
             }
         }
     }
+    // What the pass will actually load. The failure modes here are all "the
+    // wrong file name reached a loader", and the graph is derived rather than
+    // user-authored, so the names are worth one line in the log.
+    log::info!(
+        "NovelAI {prompt_id}: local pass model={} split={} clip={:?} clip_type={:?} vae={:?} source_category={:?} path={:?}",
+        derived.checkpoint,
+        derived.use_split_model,
+        derived.clip_model,
+        derived.clip_type,
+        derived.vae,
+        derived.model_source_category,
+        derived.resolved_model_path,
+    );
     let workflow = crate::templates::build_workflow(&derived, params.seed, false);
 
     let timeout = std::time::Duration::from_secs(300);
