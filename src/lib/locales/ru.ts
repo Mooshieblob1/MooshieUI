@@ -923,6 +923,7 @@ const ru: Record<string, string> = {
   "generation.upscale.scale": "Масштаб",
   "generation.upscale.denoise": "Шумоподавление",
   "generation.upscale.denoise_tip": "Сколько деталей перерисовать. Низкие значения (0.2-0.4) сохраняют стиль, высокие (0.5-0.7) добавляют больше деталей.",
+  "generation.upscale.denoise_novelai_warning": "Выше 0,20 доработка начинает перерисовывать изображение NovelAI, а не повышать его резкость, поэтому результат может перестать быть похожим на вывод NovelAI.",
   "generation.upscale.steps": "Шаги",
   "generation.upscale.steps_tip": "Шаги шумоподавления для рифайнера. 10-15 обычно достаточно.",
   "generation.upscale.model": "Модель апскейлера",

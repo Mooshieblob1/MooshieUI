@@ -1101,6 +1101,7 @@ const pl: Record<string, string> = {
   "generation.upscale.scale": "Skala",
   "generation.upscale.denoise": "Denoise",
   "generation.upscale.denoise_tip": "Jak wiele szczegółów przerysować. Niższe wartości (0.2-0.4) ściśle zachowują styl, wyższe (0.5-0.7) dodają więcej szczegółów.",
+  "generation.upscale.denoise_novelai_warning": "Powyzej 0,20 dopracowanie zaczyna przerysowywac obraz z NovelAI zamiast go wyostrzac, wiec wynik moze przestac przypominac to, co wygenerowal NovelAI.",
   "generation.upscale.steps": "Kroki",
   "generation.upscale.steps_tip": "Kroki odszumiania przy dopracowywaniu. Zwykle wystarczy 10-15.",
   "generation.upscale.model": "Model Upscalera",

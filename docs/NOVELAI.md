@@ -326,6 +326,56 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - NovelAI mode no longer offers the tiling knobs (PR #618)
+
+**Reported by:** the user, on the entry below, after confirming the CFG fix.
+The remaining artifacts went away once tiled diffusion was unchecked by hand,
+and that box "should just not be visible in NAI mode anyways". Along with it, a
+soft warning when the upscale denoise goes above 0.20.
+
+The local pass is a single refine over a single image, so MultiDiffusion and
+the tiled VAE have nothing to spread over and only contribute tile seams. The
+derived params now set `upscale_fast_refine = true` (and `upscale_tiling =
+false`), which is the one flag that turns both off even for a split-file local
+model, where the tiling gate ORs `use_split_model` and would otherwise force
+them back on.
+
+The upscale panel hides all three tiling controls in NovelAI mode to match:
+the tiling checkbox, the Anima forced-tiling notice, the tile size slider and
+the fast refine checkbox. Leaving them visible would be showing knobs that no
+longer reach the graph. On the ComfyUI backend nothing changes.
+
+The denoise warning is a plain amber line under the denoise and steps grid,
+shown only in NovelAI mode and only above 0.20. It does not clamp anything: the
+upscale panel is still where denoise lives, and someone who wants a heavier
+re-draw can have one.
+
+`the_graph_loads_the_uploaded_image_and_never_samples_it_twice` also stopped
+asserting `VAEEncode == 0`. With tiling off the upscale chain encodes the
+upscaled pixels through a plain `VAEEncode`, so that count is one either way
+and never proved what it claimed. It now counts `KSampler` nodes, which is what
+"never samples it twice" actually means, and asserts the three tiled node types
+are absent.
+
+**Testing required: yes.** Both a UI change and a change to what the local pass
+renders.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NAI mode, local post-process on, open the upscale panel | No tiling checkbox, no tile size slider, no fast refine checkbox, and no Anima forced-tiling notice |
+| 2 | Generate with upscale on | Clean, with no tile seams, and without having to uncheck anything by hand |
+| 3 | Drag the upscale denoise above 0.20 | An amber line appears under the denoise and steps row |
+| 4 | Drag it back to 0.20 or below | The line disappears |
+| 5 | Switch the UI language and repeat 3 | The line is translated, not English |
+| 6 | Switch to the ComfyUI backend and open the upscale panel | All four controls are back, unchanged |
+| 7 | ComfyUI backend with Anima, upscale on | Still shows the forced-tiling notice, and still tiles |
+| 8 | ComfyUI backend, drag upscale denoise above 0.20 | No warning line: it is NovelAI-only |
+| 9 | Turn tiling on in ComfyUI mode, switch to NovelAI, generate, read the log | `tiling=false` on the `local pass` line |
+
+**Do not skip:** 1, 2, 3, 6.
+
+**Result: pending.**
+
 ### 2026-08-23 - The refine pass was running at half CFG (PR #618)
 
 **Reported by:** the user, on the entry below. Upscaled output "looks quite
@@ -384,7 +434,10 @@ every ComfyUI upscale that has "Refine only" on.
 
 **Do not skip:** 1, 3, 5, 7.
 
-**Result: pending.**
+**Result: 1, 2, 4, 5, 6, 8 and 9 pass; 3 was not needed.** The refine and the
+face fix both came out clean, and the step count now moves the run, so the
+`log::info!` never had to be read. The user did have to uncheck tiled diffusion
+by hand to get there, which is carried into the entry above.
 
 ### 2026-08-23 - The local pass is a straight upscale again (PR #618)
 

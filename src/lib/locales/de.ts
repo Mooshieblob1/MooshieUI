@@ -944,6 +944,7 @@ const de: Record<string, string> = {
   "generation.upscale.scale": "Skalierung",
   "generation.upscale.denoise": "Entrauschen",
   "generation.upscale.denoise_tip": "Wie stark Details überarbeitet werden. Niedrig (0.2-0.4) bewahrt den Stil treu, hoch (0.5-0.7) fügt mehr Details hinzu.",
+  "generation.upscale.denoise_novelai_warning": "Ueber 0,20 zeichnet die Verfeinerung das NovelAI-Bild neu, statt es zu schaerfen, und das Ergebnis sieht dann moeglicherweise nicht mehr wie NovelAIs Bild aus.",
   "generation.upscale.steps": "Schritte",
   "generation.upscale.steps_tip": "Entrauschungsschritte für den Refiner. 10-15 reicht normalerweise.",
   "generation.upscale.model": "Upscaler-Modell",

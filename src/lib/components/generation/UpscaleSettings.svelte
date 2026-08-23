@@ -285,6 +285,14 @@
       </div>
     </div>
 
+    {#if generation.isNovelAi && generation.upscaleDenoise > 0.2}
+      <p class="text-[11px] text-amber-500/90">{locale.t('generation.upscale.denoise_novelai_warning')}</p>
+    {/if}
+
+    <!-- Tiling, tile size and fast refine are all one knob, and the NovelAI
+         local pass forces it off: a single refine over a single image gains
+         nothing from MultiDiffusion and picks up tile seams. -->
+    {#if !generation.isNovelAi}
     <!-- Tiling toggle -->
     {#if generation.isAnima && !generation.upscaleFastRefine}
       <div class="flex items-center gap-2">
@@ -344,6 +352,7 @@
         class="w-full accent-indigo-500"
       />
     </div>
+    {/if}
     {/if}
 
     <!-- Soft Guidance toggle -->

@@ -942,6 +942,7 @@ const fr: Record<string, string> = {
   "generation.upscale.scale": "Échelle",
   "generation.upscale.denoise": "Débruitage",
   "generation.upscale.denoise_tip": "Quantité de détails à redessiner. Valeurs basses (0.2-0.4) préservent le style fidèlement, valeurs hautes (0.5-0.7) ajoutent plus de détails.",
+  "generation.upscale.denoise_novelai_warning": "Au-dela de 0,20, le raffinement redessine l'image NovelAI au lieu de l'affiner, et le resultat peut ne plus ressembler a celui de NovelAI.",
   "generation.upscale.steps": "Étapes",
   "generation.upscale.steps_tip": "Étapes de débruitage pour le refiner. 10-15 est généralement suffisant.",
   "generation.upscale.model": "Modèle d'upscaler",

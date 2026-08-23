@@ -923,6 +923,7 @@ const pt: Record<string, string> = {
   "generation.upscale.scale": "Escala",
   "generation.upscale.denoise": "Ruído",
   "generation.upscale.denoise_tip": "Quanto detalhe redesenhar. Valores baixos (0.2-0.4) preservam o estilo fielmente, valores altos (0.5-0.7) adicionam mais detalhes.",
+  "generation.upscale.denoise_novelai_warning": "Acima de 0,20 o refino comeca a redesenhar a imagem do NovelAI em vez de deixa-la mais nitida, entao o resultado pode deixar de se parecer com o do NovelAI.",
   "generation.upscale.steps": "Passos",
   "generation.upscale.steps_tip": "Passos de remoção de ruído para o refiner. 10-15 geralmente é suficiente.",
   "generation.upscale.model": "Modelo de Upscaler",

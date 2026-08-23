@@ -923,6 +923,7 @@ const ko: Record<string, string> = {
   "generation.upscale.scale": "스케일",
   "generation.upscale.denoise": "디노이즈",
   "generation.upscale.denoise_tip": "디테일을 얼마나 다시 그리는지. 낮은 값(0.2-0.4)은 스타일을 충실히 보존, 높은 값(0.5-0.7)은 더 많은 디테일을 추가.",
+  "generation.upscale.denoise_novelai_warning": "0.20을 넘으면 리파인이 선명하게 다듬는 대신 NovelAI 이미지를 다시 그리기 시작하므로 결과가 NovelAI의 출력과 달라질 수 있습니다.",
   "generation.upscale.steps": "단계",
   "generation.upscale.steps_tip": "리파이너 디노이징 단계 수. 보통 10-15이면 충분합니다.",
   "generation.upscale.model": "업스케일러 모델",

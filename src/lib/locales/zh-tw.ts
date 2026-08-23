@@ -923,6 +923,7 @@ const zhTw: Record<string, string> = {
   "generation.upscale.scale": "倍數",
   "generation.upscale.denoise": "去雜訊",
   "generation.upscale.denoise_tip": "重繪細節的程度。低值（0.2-0.4）忠實保留風格，高值（0.5-0.7）增加更多細節。",
+  "generation.upscale.denoise_novelai_warning": "超過 0.20 後，精修會開始重畫 NovelAI 的圖像而不是讓它更銳利，結果可能不再像 NovelAI 產生的畫面。",
   "generation.upscale.steps": "步數",
   "generation.upscale.steps_tip": "精煉去雜訊步數。通常 10-15 就足夠了。",
   "generation.upscale.model": "放大模型",

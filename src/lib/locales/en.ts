@@ -1117,6 +1117,7 @@ const en: Record<string, string> = {
   "generation.upscale.scale": "Scale",
   "generation.upscale.denoise": "Denoise",
   "generation.upscale.denoise_tip": "How much detail to re-draw. Lower values (0.2-0.4) preserve style closely, higher values (0.5-0.7) add more detail.",
+  "generation.upscale.denoise_novelai_warning": "Above 0.20 the refine starts redrawing NovelAI's image instead of sharpening it, so the result may no longer look like what NovelAI produced.",
   "generation.upscale.steps": "Steps",
   "generation.upscale.steps_tip": "Denoising steps for refining. 10-15 is usually enough.",
   "generation.upscale.model": "Upscaler Model",

@@ -67,6 +67,13 @@ pub fn build_params(params: &GenerationParams, input_filename: &str) -> Option<G
     // pass works on the finished image and must not be masked by it.
     out.mask_image = None;
     out.grow_mask_by = None;
+    // One image, one refine pass, and no batch to spread over: MultiDiffusion
+    // and the tiled VAE buy nothing here and cost tile seams. Fast refine is
+    // the flag that turns both off, including for a split-file local model,
+    // where the tiling gate would otherwise force them back on. The upscale
+    // panel hides all three tiling controls in NovelAI mode to match.
+    out.upscale_tiling = false;
+    out.upscale_fast_refine = true;
 
     // Local model identity. `model_architecture` and `is_vpred_model` describe
     // the *sampling* model, so they have to follow the checkpoint swap or the
@@ -460,14 +467,25 @@ mod tests {
             .expect("LoadImage present");
         assert_eq!(load["inputs"]["image"], "nai-abc.png");
 
-        // Refine-only means exactly one sampling pass (the upscale refiner);
-        // a VAEEncode would mean the base img2img round-trip crept back in and
-        // the paid image got re-denoised at full strength.
-        let vae_encodes = nodes
+        // Refine-only means exactly one sampling pass (the upscale refiner). A
+        // second KSampler would mean the base img2img round-trip crept back in
+        // and the paid image got re-denoised at full strength. Counting
+        // VAEEncode nodes cannot say this: the upscale chain encodes the
+        // upscaled pixels itself, so one is expected either way.
+        let samplers = nodes
             .values()
-            .filter(|n| n["class_type"] == "VAEEncode")
+            .filter(|n| n["class_type"] == "KSampler")
             .count();
-        assert_eq!(vae_encodes, 0, "refine-only must not re-encode the input");
+        assert_eq!(samplers, 1, "refine-only must sample exactly once");
+
+        // MultiDiffusion and the tiled VAE are off for the local pass: one
+        // image, one refine, nothing to gain and tile seams to lose.
+        for class in ["ApplyTiledDiffusion", "VAEEncodeTiled", "VAEDecodeTiled"] {
+            assert!(
+                !nodes.values().any(|n| n["class_type"] == class),
+                "{class} must not appear in the local pass"
+            );
+        }
 
         assert!(nodes
             .values()

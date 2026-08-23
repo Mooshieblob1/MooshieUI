@@ -942,6 +942,7 @@ const ja: Record<string, string> = {
   "generation.upscale.scale": "スケール",
   "generation.upscale.denoise": "デノイズ",
   "generation.upscale.denoise_tip": "どれだけディテールを描き直すか。低い値（0.2-0.4）はスタイルを忠実に保持、高い値（0.5-0.7）はより多くのディテールを追加。",
+  "generation.upscale.denoise_novelai_warning": "0.20 を超えるとリファインはシャープ化ではなく NovelAI の画像を描き直し始めるため、結果が NovelAI の出力に似なくなることがあります。",
   "generation.upscale.steps": "ステップ",
   "generation.upscale.steps_tip": "リファイナー用のデノイズステップ数。通常10-15で十分です。",
   "generation.upscale.model": "アップスケーラーモデル",
