@@ -326,6 +326,66 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - The refine pass was running at half CFG (PR #618)
+
+**Reported by:** the user, on the entry below. Upscaled output "looks quite
+noisy and artifacty for both refine and face", plus a direct question: "is it
+taking the direct png pixels?"
+
+Yes, and that part is already working as asked. The derived graph's first node
+is `LoadImage` on NovelAI's exact returned PNG bytes, uploaded byte for byte,
+and the node order after it is the one the user described: pixel upscale, then
+the latent refine, then the face segment inpaint, then save. Nothing about the
+pipeline shape needed to change.
+
+The noise came from what the refine was given to work with.
+
+`append_upscale_chain` halves CFG for its KSampler, on the reasoning that the
+base sampling pass already applied full guidance and the refine only has to
+clean up after it. Under `refine_only` there is no base pass, so that KSampler
+is the only guidance the image ever receives, and Anima was refining at CFG 2.0
+instead of its recommended 4.0. Weak guidance over a GAN upscaler's
+high-frequency output leaves that noise in rather than resolving it. The
+halving now applies only when a base pass actually ran.
+
+The tiled VAE was a second, smaller contributor. `VAEEncodeTiled` and
+`VAEDecodeTiled` both hardcoded `overlap: 64` while the tile size is the
+upscale panel's own, typically 1024. ComfyUI's own defaults pair a 512 tile
+with a 64 overlap, so this ran at half the overlap ratio it was designed for,
+which shows up as seams between tiles. Overlap is now `tile_size / 8` floored
+at 64, which restores that ratio and leaves a 512 tile behaving exactly as
+before.
+
+Both changes reach the ComfyUI backend too, because `refine_only` is not
+NovelAI-only: it is the upscale panel's own "Refine only (skip img2img pass)"
+toggle, and the one the gallery preview's "Upscale this image" sets. Those runs
+had the same defect and get the same fix.
+
+Step count is still open. `upscale_steps` provably reaches the submitted
+KSampler, so a `log::info!` now records every setting the local pass derives
+(upscale on/off, method, model, scale, downscale ratio, steps, denoise, CFG,
+sampler, scheduler, tiling, tile size, face-fix steps and denoise) so the next
+run's log says whether the slider moved the graph or only the perception of it.
+
+**Testing required: yes.** The render changes for NovelAI local passes and for
+every ComfyUI upscale that has "Refine only" on.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NAI mode, Anima, upscale on, face fix off, generate | The upscaled result is noticeably cleaner than before: less grain, fewer crunchy edges |
+| 2 | Same again with face fix on | The face is cleaner too, and still matches the rest of the image rather than looking pasted on |
+| 3 | Export logs and read the Rust lines for that run | Two `local pass` lines. The second lists steps, denoise, CFG, sampler, tiling and tile size |
+| 4 | Compare that line's `steps=` with the upscale panel's Steps slider | They match |
+| 5 | Set the upscale panel's Steps to 40, generate, read the log again | `steps=40`, and the run is visibly longer than at the default |
+| 6 | Watch the progress bar during the local pass | It counts up to the upscale panel's step count, not to some other number |
+| 7 | ComfyUI backend, ordinary generation, upscale on and "Refine only" OFF | Unchanged from before: that refine still runs at half CFG |
+| 8 | ComfyUI backend, "Upscale this image" from the gallery preview | Cleaner than before, the same way 1 is: that path sets `refine_only` |
+| 9 | Set the upscale tile size to 512 and run | Unchanged from before: overlap stays 64 at that tile size |
+
+**Do not skip:** 1, 3, 5, 7.
+
+**Result: pending.**
+
 ### 2026-08-23 - The local pass is a straight upscale again (PR #618)
 
 **Reported by:** the user, on the entry below. The low-denoise img2img round
@@ -367,7 +427,12 @@ NovelAI generation that uses it.
 
 **Do not skip:** 1, 2, 4, 9.
 
-**Result: pending.**
+**Result: 1, 2, 3, 4 and 6 pass. 5 failed and 7 partially failed.** Changing
+the upscale panel's steps made no difference to run length and none to the step
+count shown on the progress bar. Face fix alone did run, so 7 is not skipped,
+but the output of both the refine and the face fix looked noisy and artifacty.
+8, 9, 10 and 11 were not exercised. Both failures are carried into the entry
+above.
 
 ### 2026-08-23 - The local post-process never re-drew the image (PR #618)
 

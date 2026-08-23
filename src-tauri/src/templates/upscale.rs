@@ -98,7 +98,7 @@ pub fn append_upscale_chain(
                     "pixels": [upscaled_image.0, upscaled_image.1],
                     "vae": [result.vae_source.0.clone(), result.vae_source.1],
                     "tile_size": params.upscale_tile_size,
-                    "overlap": 64,
+                    "overlap": (params.upscale_tile_size / 8).max(64),
                     "temporal_size": 64,
                     "temporal_overlap": 8
                 }
@@ -217,7 +217,14 @@ pub fn append_upscale_chain(
     // Halve CFG for the low-denoise refine pass, but keep a floor so a low base
     // CFG (or a Flux/distilled model at cfg 0-1) can't drive the upscale sampler
     // to a near-zero CFG, which disables guidance and yields noise.
-    let upscale_cfg = if is_cfgpp_sampler {
+    //
+    // Refine-only skips the base sampling pass entirely, so this KSampler is the
+    // only guidance the image ever receives. Halving there just under-guides the
+    // refine and leaves the upscaler's high-frequency noise in place, so keep the
+    // model's full CFG instead.
+    let upscale_cfg = if params.refine_only {
+        params.cfg
+    } else if is_cfgpp_sampler {
         (params.cfg / 2.0).max(2.0)
     } else {
         (params.cfg / 2.0).max(1.0)
@@ -252,7 +259,7 @@ pub fn append_upscale_chain(
                     "samples": [sampler_id, 0],
                     "vae": [result.vae_source.0.clone(), result.vae_source.1],
                     "tile_size": params.upscale_tile_size,
-                    "overlap": 64,
+                    "overlap": (params.upscale_tile_size / 8).max(64),
                     "temporal_size": 64,
                     "temporal_overlap": 8
                 }

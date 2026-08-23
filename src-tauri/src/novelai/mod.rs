@@ -578,6 +578,27 @@ async fn run_local_post_process(
         derived.model_source_category,
         derived.resolved_model_path,
     );
+    // Every knob the local pass reads comes from the upscale and face-fix
+    // panels rather than from the NovelAI panel, so when a slider looks like it
+    // did nothing this line is what says whether it reached the graph.
+    log::info!(
+        "NovelAI {prompt_id}: local pass upscale={} method={} model={:?} scale={} downscale={} steps={} denoise={} cfg={} sampler={}/{} tiling={} tile_size={} facefix={} facefix_steps={} facefix_denoise={}",
+        derived.upscale_enabled,
+        derived.upscale_method,
+        derived.upscale_model,
+        derived.upscale_scale,
+        derived.upscale_model_downscale_ratio,
+        derived.upscale_steps,
+        derived.upscale_denoise,
+        derived.cfg,
+        derived.sampler_name,
+        derived.scheduler,
+        derived.upscale_tiling || derived.use_split_model,
+        derived.upscale_tile_size,
+        derived.facefix_enabled,
+        derived.facefix_steps,
+        derived.facefix_denoise,
+    );
     let workflow = crate::templates::build_workflow(&derived, params.seed, false);
 
     let timeout = std::time::Duration::from_secs(300);

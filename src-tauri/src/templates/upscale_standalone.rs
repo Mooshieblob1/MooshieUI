@@ -475,6 +475,28 @@ mod tests {
     }
 
     #[test]
+    fn the_refine_keeps_the_models_full_cfg() {
+        // The upscale chain normally halves CFG because the base sampling pass
+        // already applied the model's full guidance. Refine-only has no base
+        // pass, so this KSampler is the only guidance the image ever gets, and
+        // halving it under-guides the refine and leaves the upscaler's noise in.
+        let p = with_nai(local_nai());
+        let wf = build(&p, "nai-abc.png", 12345).expect("workflow");
+        let nodes = wf.as_object().expect("object");
+
+        let samplers: Vec<_> = nodes
+            .values()
+            .filter(|n| n["class_type"] == "KSampler")
+            .collect();
+        assert_eq!(samplers.len(), 1, "refine-only samples exactly once");
+        let cfg = samplers[0]["inputs"]["cfg"].as_f64().expect("cfg");
+        assert!(
+            (cfg - 4.0).abs() < 1e-9,
+            "expected Anima's own CFG, got {cfg}"
+        );
+    }
+
+    #[test]
     fn a_request_with_no_local_pass_builds_no_graph() {
         assert!(build(&base(), "nai-abc.png", 1).is_none());
     }
