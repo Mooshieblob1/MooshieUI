@@ -6,6 +6,9 @@ import {
   setNovelaiApiKey,
 } from "../utils/api.js";
 
+/** How long a failed subscription fetch suppresses automatic retries. */
+const RETRY_AFTER_FAILURE_MS = 30_000;
+
 /**
  * Whether a NovelAI API key is stored, kept reactive.
  *
@@ -43,6 +46,14 @@ class NovelAiStore {
    * in a loop by an effect watching `subscription`.
    */
   private attempted = false;
+
+  /**
+   * Failure bookkeeping for `ensureSubscription()` retries. Deliberately
+   * plain fields, not `$state`: the callers are `$effect`s, and a tracked
+   * read here would re-run them on every failed fetch and loop.
+   */
+  private lastFetchFailed = false;
+  private lastFailureAt = 0;
 
   /** Anlas is the monthly allowance plus any purchased balance. */
   get anlas(): number {
@@ -130,7 +141,11 @@ class NovelAiStore {
    * into a call to NovelAI.
    */
   async ensureSubscription(): Promise<void> {
-    if (this.attempted) return;
+    if (this.attempted && !this.lastFetchFailed) return;
+    // A failed fetch (offline at startup, transient NovelAI error) may be
+    // retried, but rate-limited so remounting components cannot hammer the
+    // endpoint while it is down.
+    if (this.attempted && Date.now() - this.lastFailureAt < RETRY_AFTER_FAILURE_MS) return;
     await this.refreshSubscription();
   }
 
@@ -145,9 +160,15 @@ class NovelAiStore {
     this.subscriptionError = null;
     try {
       this.subscription = await novelaiSubscription();
+      this.lastFetchFailed = false;
     } catch (e) {
       this.subscription = null;
       this.subscriptionError = e instanceof Error ? e.message : String(e);
+      this.lastFetchFailed = true;
+      this.lastFailureAt = Date.now();
+      // Into the ring buffer, so an exported log shows why the Anlas
+      // readout is blank instead of nothing at all.
+      console.error("NovelAI subscription fetch failed:", e);
     } finally {
       this.subscriptionLoading = false;
     }

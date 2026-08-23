@@ -400,8 +400,8 @@ class PromptPresetsStore {
    * Resolve inline chunk directives within a prompt string, in either
    * spelling: `@preset:<slug>` and `@[Chunk Name]`.
    * - Single-line preset content is inserted verbatim (trimmed).
-   * - Multi-line preset content picks one random line per occurrence
-   *   (independent rolls — `@preset:foo, @preset:foo` rolls twice).
+   * - Multi-line preset content is spliced in whole, lines joined with
+   *   ", ", matching what click-activating the chunk inserts.
    * - Empty presets resolve to an empty string; adjacent commas/whitespace
    *   are tidied so the prompt doesn't end up with `, ,` artefacts.
    * - Unknown names are left untouched (so typos are debuggable).
@@ -415,12 +415,13 @@ class PromptPresetsStore {
       const fixedChoice = options.fixedChoices?.get(preset.id)?.trim();
       if (fixedChoice) return fixedChoice;
       const choices = splitWildcardChoices(preset.content);
-      if (choices.length === 0) {
-        const verbatim = preset.content.trim();
-        return verbatim;
-      }
-      if (choices.length === 1) return choices[0];
-      return choices[Math.floor(Math.random() * choices.length)];
+      if (choices.length === 0) return preset.content.trim();
+      // Splice the whole chunk in, lines joined with commas so per-line
+      // trailing commas from the editor do not double up. Typing a token
+      // means "insert this chunk here", the same as clicking it, which is
+      // what the inline help text promises. Random rolls stay an activation
+      // feature (the wildcard modes).
+      return choices.join(", ");
     });
     // Tidy up commas/whitespace left behind when a preset resolved to "".
     resolved = resolved

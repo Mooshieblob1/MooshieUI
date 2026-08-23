@@ -326,6 +326,50 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - Typed tokens splice the whole chunk, and a failed Anlas fetch retries (PR #618)
+
+**Reported by:** the user, after rebuilding on the entry below: "@[xenogirl] in
+either character and main prompt still doesn't work, only clicking on it does,
+I rebuilt, also the anlas counter and opus usage bars are still missing and
+anlas cost is still wrong."
+
+**The token cause was in the resolver all along.** `resolveInline` treated any
+multi-line chunk as a wildcard: one random line per occurrence. Click
+activation in prepend or append mode inserts the whole content. So clicking
+always looked right and typing looked broken for any chunk longer than one
+line. Proven from the saved generation metadata: the clicked run carried every
+line of the chunk, and each typed run carried exactly one, a different one
+each time. Typed tokens now splice the whole chunk in at that spot, lines
+joined with ", " so per-line trailing commas do not double up. This matches
+what the inline help text always promised. Random rolls remain an activation
+feature via the wildcard modes, and a pinned ordered-run choice still wins
+over the token.
+
+**The Anlas chain itself is correct.** Every link was verified at head: the
+config read, the one-way configured flag (fixed in the entry below), the
+command, the endpoint host, and the response shape, the last against the live
+NovelAI subscription endpoint with the real account. The user's Anlas retest
+images predate their rebuild, so that half of the report described the
+pre-fix build. Two genuine gaps are fixed anyway: a failed fetch used to
+stick until an app restart (it now retries automatically after 30 seconds),
+and the failure was swallowed silently (it now lands in the exported log).
+
+**Testing required: yes.** Both halves are user-visible.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Close the app fully and start `npm run tauri dev` fresh | A clean session, nothing carried over |
+| 2 | Keep a chunk with several lines of content, e.g. `Xeno Girl` | - |
+| 3 | Type `@[xenogirl]` in the main prompt and generate | The saved image's prompt contains every line of the chunk at that spot, comma separated, same as clicking it |
+| 4 | Type `@[xenogirl]` in a character prompt and generate | Same: the whole chunk, in the character prompt |
+| 5 | Type `@preset:xeno_girl` in the main prompt and generate | Same as step 3, the old spelling behaves identically |
+| 6 | In NovelAI mode, look above the Generate button | The Anlas balance shows a real number and the Opus usage bar is drawn |
+| 7 | Check the cost badge on the Generate button at an Opus-included size | Shows the discounted (usually zero) cost |
+| 8 | Save anything in Settings, then switch to a ComfyUI model and back | Balance, bar and cost badge all come back unchanged |
+| 9 | Only if the readouts are blank: press the refresh arrow in the usage panel, then export logs | The exported log contains a "NovelAI subscription fetch failed" line naming the reason |
+
+**Do not skip:** 3, 4, 5, 6, 7.
+
 ### 2026-08-23 - Inline chunk tokens resolve again, and the character prompts are real prompt boxes (PR #618)
 
 **Reported by:** the user, on the entry below: "cost of anlas isn't displaying
@@ -386,7 +430,7 @@ the flag.
 
 **Do not skip:** 2, 3, 5, 6, 8, 9, 12, 14.
 
-**Result: reported failing at first, but the running app was stale.** Typed tokens did nothing in the main prompt or the character boxes while clicking a chunk still worked. Diagnosis: the app window had been open since before any of these fixes landed and had only ever received Vite hot-swaps, never a full reload. A hot-swapped component re-imports the chunk store as a fresh instance, so the editor and the Style Manager were reading two different stores and typed tokens looked unknown. The code itself was verified against the real saved chunk data (name `xenogirl`) and resolves both spellings correctly. Fix: restart the app (or reload the page) after pulling; a forced full reload was pushed to the running window. Retest from step 2.
+**Result: steps 7, 10 and 11 stand, but the stale-app diagnosis was wrong.** The user rebuilt and typed tokens still failed the same way, so the hot-swap explanation above does not hold. The real cause was in the resolver itself: `resolveInline` treated a multi-line chunk as a wildcard and spliced one random line per occurrence, while clicking (prepend or append) inserted all of it, which is exactly the "only clicking works" symptom. The Anlas half of the retest was run before the rebuild, so it described the pre-fix build; the fetch chain was separately verified good end to end against the live API. Both are addressed in the entry above; retest there.
 
 ### 2026-08-23 - Prompt presets are now Prompt Chunks, and @[Name] works inline (PR #618)
 
