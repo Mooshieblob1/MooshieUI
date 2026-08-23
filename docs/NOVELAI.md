@@ -370,6 +370,11 @@ and the failure was swallowed silently (it now lands in the exported log).
 
 **Do not skip:** 3, 4, 5, 6, 7.
 
+**Result: 1 through 8 pass; 9 was not applicable** (the readouts were never
+blank, so the failure-log path had nothing to show). Typed tokens now splice
+the whole chunk in both the main and character prompts, and the Anlas
+balance, Opus bar and cost badge all behave.
+
 ### 2026-08-23 - Inline chunk tokens resolve again, and the character prompts are real prompt boxes (PR #618)
 
 **Reported by:** the user, on the entry below: "cost of anlas isn't displaying
