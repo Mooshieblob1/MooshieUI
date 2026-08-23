@@ -267,6 +267,13 @@ The `@` sigil is also mode-dependent. In ComfyUI mode artist tags are inserted a
 `@tag`. In NovelAI mode they are inserted bare, because there `@` is the
 prompt-chunk reference sigil (`@[chunk name]`), not an artist marker.
 
+That decision lives in one place: `generation.artistTagPrefix` and
+`formatArtistTag()`, with the pure string work in `src/lib/utils/artistTag.ts`.
+Matching and removal use the same prefix, and in NovelAI mode, where a bare
+artist tag looks like any other danbooru tag, the artist index is what tells
+them apart. Saved styles keep a narrower rule (`animaArtistTagPrefix`), because
+only Anima-family checkpoints were trained on `@artist`.
+
 ## 5. Security
 
 The NovelAI API key is a user secret and is handled like the existing Civitai
@@ -318,6 +325,41 @@ and the direction of `percent`, the streaming protocol, and that
 Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
+
+### 2026-08-23 - Phase F: artist tag sigil centralised (PR #618)
+
+**Changed:** The `@` on an artist tag is now decided in one place. The new
+`src/lib/utils/artistTag.ts` holds the pure string work, and
+`generation.artistTagPrefix` / `formatArtistTag()` decide the sigil for the
+current mode: `@` in ComfyUI mode, bare in NovelAI mode. Insertion, clipboard
+copy, duplicate detection, toggle-off and replace now all read the same rule.
+The saved-style form keeps its own narrower rule as
+`generation.animaArtistTagPrefix`, because only Anima checkpoints were trained
+on `@artist`.
+
+**Fixed:** In NovelAI mode artist insert could only ever add. Duplicate
+detection, toggle-off and replace all tested `startsWith("@")`, which is never
+true when there is no sigil. Without a sigil an artist tag is indistinguishable
+from any other danbooru tag, so the artist index is what identifies one now. If
+the index has not loaded the code adds rather than guessing, so nothing gets
+silently eaten.
+
+**Testing required: yes.** ComfyUI behaviour is meant to be byte-identical, so
+half of this pass is a no-regression check.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NovelAI mode, empty prompt, click an artist in the artist gallery | Tag inserted bare, no `@` |
+| 2 | NovelAI mode, click that same artist again | Tag is removed (toggle off). Before this change it was added a second time |
+| 3 | NovelAI mode, with one artist in the prompt, click a different artist | The replace/add modal appears. Replace swaps the artist, Add keeps both |
+| 4 | NovelAI mode, use the copy-tag button on a gallery card and in the lightbox | The clipboard holds the bare tag |
+| 5 | ComfyUI mode on any non-Anima checkpoint, repeat steps 1 to 4 | `@tag` everywhere, exactly as before this change |
+| 6 | Anima checkpoint, Style editor, add an artist. Then switch to a non-Anima checkpoint and add one | Anima stores `@tag`, non-Anima stores the bare name |
+| 7 | NovelAI mode, prompt containing an artist tag, run Interrogate and choose Replace | The artist tag survives the replace |
+| 8 | NovelAI mode, restart the app and click an artist before the index finishes loading | The tag is added, nothing is removed or replaced |
+
+**Do not skip:** 2 and 5. Step 2 is the bug this phase existed to fix, and
+step 5 is the regression guard for every existing ComfyUI user.
 
 ### 2026-08-23 - Normalize strengths moves client side (PR #618)
 

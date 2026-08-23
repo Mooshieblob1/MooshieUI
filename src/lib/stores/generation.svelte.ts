@@ -20,6 +20,7 @@ import {
 } from "../utils/modelFamily.js";
 import { readModelSpec, type ModelSpec } from "../utils/api.js";
 import { H3_TURBO_LORA } from "../utils/h3Models.js";
+import { artistTagBody } from "../utils/artistTag.js";
 import {
   NOVELAI_DEFAULTS,
   findNovelAiModel,
@@ -1133,6 +1134,44 @@ class GenerationStore {
 
   get supportsNovelAiVibeTransfer(): boolean {
     return this.novelAiModel?.vibeTransfer ?? false;
+  }
+
+  /**
+   * The sigil to put in front of an artist tag when inserting it into a
+   * prompt or copying it to the clipboard.
+   *
+   * ComfyUI mode keeps the `@artist` convention. NovelAI mode inserts the
+   * tag bare, because there `@` is the prompt-chunk reference sigil
+   * (`@[chunk name]`) and a stray one would read as a broken chunk
+   * reference rather than an artist.
+   *
+   * Every feature that writes an artist tag goes through this so the
+   * convention is decided in one place. Matching and removal must agree,
+   * which is why `isArtistTagToken()` takes the same prefix.
+   */
+  get artistTagPrefix(): string {
+    return this.isNovelAi ? "" : "@";
+  }
+
+  /**
+   * The sigil the *saved style* form uses, which is a narrower rule: only
+   * Anima-family checkpoints were trained on `@artist`, so a style built
+   * for SDXL/Pony/Illustrious stores the bare danbooru name. NovelAI lands
+   * on bare through the same test, which is why the style editor needed no
+   * NovelAI-specific branch.
+   */
+  get animaArtistTagPrefix(): string {
+    return this.isAnima ? "@" : "";
+  }
+
+  /**
+   * Normalise a raw tag and prefix it for the current mode: underscores
+   * become spaces (danbooru convention), unescaped parens are escaped so
+   * the prompt round-trips through the scheduler, and any sigil the caller
+   * already supplied is replaced rather than doubled.
+   */
+  formatArtistTag(tag: string): string {
+    return this.artistTagPrefix + artistTagBody(tag);
   }
 
   /** Character prompts that would actually be sent. */

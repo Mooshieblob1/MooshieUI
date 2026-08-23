@@ -4,6 +4,7 @@
   import { gallery } from "../../stores/gallery.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { stripArtistSigil } from "../../utils/artistTag.js";
   import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
@@ -87,8 +88,7 @@
    * raw danbooru-style names. Strips a leading `@` when not on Anima.
    */
   function normalizeArtistTag(tag: string): string {
-    if (generation.isAnima) return tag.startsWith("@") ? tag : `@${tag}`;
-    return tag.replace(/^@/, "");
+    return generation.animaArtistTagPrefix + stripArtistSigil(tag);
   }
 
   function addArtist(tag: string, slug?: string) {
@@ -354,12 +354,12 @@
                     type="button"
                     class="inline-flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-300 hover:border-indigo-500 hover:text-indigo-200"
                     onclick={() => addArtist(slug, slug)}
-                    title={locale.t("styles.editor.add_artist_title", { tag: `${generation.isAnima ? "@" : ""}${slug}` })}
+                    title={locale.t("styles.editor.add_artist_title", { tag: `${generation.animaArtistTagPrefix}${slug}` })}
                   >
                     {#if cat}
                       <span class="h-2 w-2 rounded-full" style="background-color: {cat.color}" aria-hidden="true"></span>
                     {/if}
-                    <span class="font-mono">+ {generation.isAnima ? "@" : ""}{slug}</span>
+                    <span class="font-mono">+ {generation.animaArtistTagPrefix}{slug}</span>
                   </button>
                 {/each}
               </div>
@@ -395,9 +395,9 @@
                     type="button"
                     class="inline-flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[10px] text-red-300 hover:border-indigo-500 hover:text-indigo-200"
                     onclick={() => addArtist(hit.name)}
-                    title={locale.t("styles.editor.add_artist_with_posts_title", { tag: `${generation.isAnima ? "@" : ""}${hit.name}`, count: hit.postCount })}
+                    title={locale.t("styles.editor.add_artist_with_posts_title", { tag: `${generation.animaArtistTagPrefix}${hit.name}`, count: hit.postCount })}
                   >
-                    <span class="font-mono">+ {generation.isAnima ? "@" : ""}{hit.name.replace(/_/g, " ")}</span>
+                    <span class="font-mono">+ {generation.animaArtistTagPrefix}{hit.name.replace(/_/g, " ")}</span>
                   </button>
                 {/each}
               </div>

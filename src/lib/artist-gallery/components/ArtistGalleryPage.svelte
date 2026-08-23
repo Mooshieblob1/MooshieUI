@@ -12,6 +12,7 @@
   import { CharacterExplorer } from "../../animadex/index.js";
   import type { AnimadexCharacter } from "../../animadex/types.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { stripArtistSigil } from "../../utils/artistTag.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { detectArtistsInPrompt } from "../detection.js";
   import { ARTIST_PREVIEW_RECIPE } from "../previewRecipe.js";
@@ -401,7 +402,7 @@
   });
 
   async function copyTag(tag: string, slug: string) {
-    const formatted = "@" + tag.replace(/^@/, "");
+    const formatted = generation.artistTagPrefix + stripArtistSigil(tag);
     await navigator.clipboard.writeText(formatted);
     copiedSlug = slug;
     window.setTimeout(() => { copiedSlug = null; }, 1500);

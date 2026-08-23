@@ -3,6 +3,8 @@
   import { formatPostCount } from "../counts.js";
   import { cachedSrc } from "../imageCache.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { generation } from "../../stores/generation.svelte.js";
+  import { stripArtistSigil } from "../../utils/artistTag.js";
 
   interface Props {
     entry: ArtistEntry;
@@ -81,7 +83,7 @@
 
   async function copyTag() {
     try {
-      const formatted = "@" + entry.tag.replace(/^@/, "");
+      const formatted = generation.artistTagPrefix + stripArtistSigil(entry.tag);
       await navigator.clipboard.writeText(formatted);
     } catch {
       // no-op; clipboard may be unavailable in some webviews
