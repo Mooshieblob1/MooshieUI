@@ -530,7 +530,7 @@ const en: Record<string, string> = {
   "generation.prompts.style_deactivate_aria": "Deactivate style {name}",
   "generation.prompts.preset_deactivate_title": "Click to deactivate — {mode}",
   "generation.prompts.chunks_title": "Prompt chunks",
-  "generation.prompts.chunks_manage_hint": "Create, edit and import chunks in the Styles panel.",
+  "generation.prompts.chunks_manage_hint": "Import and export chunks in the Styles panel.",
   "generation.prompts.chunk_token_copied": "Copied {token}",
   "generation.novelai.tokens_tip": "Estimated NovelAI tokens. The limit is {limit}.",
   "generation.novelai.tokens_total_tip": "Estimated NovelAI tokens across every box on this side, which are sent as one prompt. The limit is {limit}.",

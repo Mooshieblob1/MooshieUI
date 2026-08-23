@@ -2970,7 +2970,7 @@ const ko: Record<string, string> = {
   "generation.prompts.style_deactivate_aria": "Deactivate style {name}",
   "generation.prompts.preset_deactivate_title": "Click to deactivate — {mode}",
   "generation.prompts.chunks_title": "프롬프트 청크",
-  "generation.prompts.chunks_manage_hint": "청크 생성, 편집, 가져오기는 스타일 패널에서 할 수 있습니다.",
+  "generation.prompts.chunks_manage_hint": "청크 가져오기와 내보내기는 스타일 패널에서 할 수 있습니다.",
   "generation.prompts.chunk_token_copied": "{token} 복사됨",
   "generation.novelai.tokens_tip": "NovelAI 토큰 추정치입니다. 한도는 {limit} 입니다.",
   "generation.novelai.tokens_total_tip": "이쪽의 모든 상자에 대한 NovelAI 토큰 추정치이며 하나의 프롬프트로 전송됩니다. 한도는 {limit} 입니다.",

@@ -2970,7 +2970,7 @@ const zhTw: Record<string, string> = {
   "generation.prompts.style_deactivate_aria": "Deactivate style {name}",
   "generation.prompts.preset_deactivate_title": "Click to deactivate — {mode}",
   "generation.prompts.chunks_title": "提示詞片段",
-  "generation.prompts.chunks_manage_hint": "在樣式面板中建立、編輯與匯入片段。",
+  "generation.prompts.chunks_manage_hint": "在樣式面板中匯入與匯出片段。",
   "generation.prompts.chunk_token_copied": "已複製 {token}",
   "generation.novelai.tokens_tip": "NovelAI 權杖估算值。上限為 {limit}。",
   "generation.novelai.tokens_total_tip": "本側所有輸入框的 NovelAI 權杖估算值，會作為一個提示詞送出。上限為 {limit}。",

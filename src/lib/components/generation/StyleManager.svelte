@@ -2,9 +2,8 @@
   import { styles, type ArtistStyle } from "../../stores/styles.svelte.js";
   import { promptPresets, inlineChunkToken, type PromptPreset, type PresetMode } from "../../stores/promptPresets.svelte.js";
   import { saveTextFile } from "../../utils/api.js";
-  import StyleEditor from "./StyleEditor.svelte";
-  import PresetEditor from "./PresetEditor.svelte";
   import PresetActivationModal from "./PresetActivationModal.svelte";
+  import { styleEditors } from "../../stores/styleEditors.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
 
   interface Props {
@@ -16,12 +15,11 @@
 
   let activeTab = $state<"styles" | "presets">("styles");
 
-  // Styles tab state
-  let editingId = $state<string | null>(null);
+  // Styles tab state. The editor itself is mounted once at the app root and
+  // opened through the styleEditors store, so it is not confined to this panel.
   let newName = $state("");
 
   // Presets tab state
-  let editingPresetId = $state<string | null>(null);
   let activatingPresetId = $state<string | null>(null);
   let newPresetName = $state("");
 
@@ -34,7 +32,7 @@
     const name = newName.trim() || locale.t("styles.manager.default_style_name", { n: String(styles.styles.length + 1) });
     const created = styles.create(name);
     newName = "";
-    editingId = created.id;
+    styleEditors.openStyle(created.id);
   }
 
   function confirmDelete(style: ArtistStyle) {
@@ -46,7 +44,7 @@
     const name = newPresetName.trim() || locale.t("styles.manager.default_preset_name", { n: String(promptPresets.presets.length + 1) });
     const created = promptPresets.create(name);
     newPresetName = "";
-    editingPresetId = created.id;
+    styleEditors.openPreset(created.id);
   }
 
   function confirmDeletePreset(preset: PromptPreset) {
@@ -289,7 +287,7 @@
                 <button
                   type="button"
                   class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:text-indigo-200"
-                  onclick={() => (editingId = style.id)}
+                  onclick={() => styleEditors.openStyle(style.id)}
                 >{locale.t("common.edit")}</button>
                 <button
                   type="button"
@@ -392,7 +390,7 @@
                   <button
                     type="button"
                     class="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:text-indigo-200"
-                    onclick={() => (editingPresetId = preset.id)}
+                    onclick={() => styleEditors.openPreset(preset.id)}
                   >{locale.t("common.edit")}</button>
                   <button
                     type="button"
@@ -455,14 +453,6 @@
       {/if}
     </section>
 </div>
-
-{#if editingId}
-  <StyleEditor styleId={editingId} onclose={() => (editingId = null)} />
-{/if}
-
-{#if editingPresetId}
-  <PresetEditor presetId={editingPresetId} onclose={() => (editingPresetId = null)} />
-{/if}
 
 {#if activatingPresetId}
   <PresetActivationModal

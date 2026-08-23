@@ -2971,7 +2971,7 @@ const pt: Record<string, string> = {
   "generation.prompts.style_deactivate_aria": "Deactivate style {name}",
   "generation.prompts.preset_deactivate_title": "Click to deactivate — {mode}",
   "generation.prompts.chunks_title": "Blocos de prompt",
-  "generation.prompts.chunks_manage_hint": "Crie, edite e importe blocos no painel Estilos.",
+  "generation.prompts.chunks_manage_hint": "Importe e exporte blocos no painel Estilos.",
   "generation.prompts.chunk_token_copied": "{token} copiado",
   "generation.novelai.tokens_tip": "Tokens estimados do NovelAI. O limite e {limit}.",
   "generation.novelai.tokens_total_tip": "Tokens estimados do NovelAI em todas as caixas deste lado, enviadas como um unico prompt. O limite e {limit}.",

@@ -2996,7 +2996,7 @@ const fr: Record<string, string> = {
   "generation.prompts.style_deactivate_aria": "Deactivate style {name}",
   "generation.prompts.preset_deactivate_title": "Click to deactivate — {mode}",
   "generation.prompts.chunks_title": "Blocs de prompt",
-  "generation.prompts.chunks_manage_hint": "Creez, modifiez et importez des blocs dans le panneau Styles.",
+  "generation.prompts.chunks_manage_hint": "Importez et exportez des blocs dans le panneau Styles.",
   "generation.prompts.chunk_token_copied": "{token} copie",
   "generation.novelai.tokens_tip": "Tokens NovelAI estimes. La limite est {limit}.",
   "generation.novelai.tokens_total_tip": "Tokens NovelAI estimes sur toutes les zones de ce cote, envoyees comme un seul prompt. La limite est {limit}.",

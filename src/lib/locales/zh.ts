@@ -2971,7 +2971,7 @@ const zh: Record<string, string> = {
   "generation.prompts.style_deactivate_aria": "Deactivate style {name}",
   "generation.prompts.preset_deactivate_title": "Click to deactivate — {mode}",
   "generation.prompts.chunks_title": "提示词片段",
-  "generation.prompts.chunks_manage_hint": "在样式面板中创建、编辑和导入片段。",
+  "generation.prompts.chunks_manage_hint": "在样式面板中导入和导出片段。",
   "generation.prompts.chunk_token_copied": "已复制 {token}",
   "generation.novelai.tokens_tip": "NovelAI 令牌估算值。上限为 {limit}。",
   "generation.novelai.tokens_total_tip": "本侧所有输入框的 NovelAI 令牌估算值，它们会作为一个提示词发送。上限为 {limit}。",

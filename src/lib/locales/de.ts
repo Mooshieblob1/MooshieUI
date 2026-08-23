@@ -2972,7 +2972,7 @@ const de: Record<string, string> = {
   "generation.prompts.style_deactivate_aria": "Deactivate style {name}",
   "generation.prompts.preset_deactivate_title": "Click to deactivate — {mode}",
   "generation.prompts.chunks_title": "Prompt-Bausteine",
-  "generation.prompts.chunks_manage_hint": "Bausteine erstellen, bearbeiten und importieren im Stile-Panel.",
+  "generation.prompts.chunks_manage_hint": "Bausteine importieren und exportieren im Stile-Panel.",
   "generation.prompts.chunk_token_copied": "{token} kopiert",
   "generation.novelai.tokens_tip": "Geschätzte NovelAI-Tokens. Das Limit ist {limit}.",
   "generation.novelai.tokens_total_tip": "Geschätzte NovelAI-Tokens über alle Felder dieser Seite, die als ein Prompt gesendet werden. Das Limit ist {limit}.",

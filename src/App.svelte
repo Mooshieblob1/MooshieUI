@@ -51,6 +51,9 @@
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
   import PhotopeaEditor from "./lib/components/PhotopeaEditor.svelte";
   import GlobalErrorModal from "./lib/components/errors/GlobalErrorModal.svelte";
+  import StyleEditor from "./lib/components/generation/StyleEditor.svelte";
+  import PresetEditor from "./lib/components/generation/PresetEditor.svelte";
+  import { styleEditors } from "./lib/stores/styleEditors.svelte.js";
   import ReportErrorModal from "./lib/components/errors/ReportErrorModal.svelte";
   import ErrorGallery from "./lib/components/errors/ErrorGallery.svelte";
   import type { FriendlyError } from "./lib/errors/types.js";
@@ -4226,4 +4229,16 @@
       </button>
     </div>
   </div>
+{/if}
+
+<!-- Artist style and prompt chunk editors. Mounted here rather than inside the
+     Styles tab so they can be opened from anywhere (the prompt toolbar, the
+     bottom panel) and so their full-screen overlay covers the window instead of
+     the transformed mobile panel wrapper they used to live in. -->
+{#if styleEditors.styleId}
+  <StyleEditor styleId={styleEditors.styleId} onclose={() => styleEditors.closeStyle()} />
+{/if}
+
+{#if styleEditors.presetId}
+  <PresetEditor presetId={styleEditors.presetId} onclose={() => styleEditors.closePreset()} />
 {/if}

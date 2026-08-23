@@ -16,6 +16,7 @@
   import { locale } from "../../stores/locale.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import PresetActivationModal from "./PresetActivationModal.svelte";
+  import { styleEditors } from "../../stores/styleEditors.svelte.js";
 
   let open = $state(false);
   let activatingPresetId = $state<string | null>(null);
@@ -46,6 +47,23 @@
       return;
     }
     activatingPresetId = preset.id;
+  }
+
+  // The editor is mounted at the app root, so it is reachable from here as well
+  // as from the Styles panel. Close the picker first: the editor is the taller
+  // surface and stacking both adds nothing.
+  function editChunk(preset: PromptPreset) {
+    open = false;
+    styleEditors.openPreset(preset.id);
+  }
+
+  function newChunk() {
+    const name = locale.t("styles.manager.default_preset_name", {
+      n: String(promptPresets.presets.length + 1),
+    });
+    const created = promptPresets.create(name);
+    open = false;
+    styleEditors.openPreset(created.id);
   }
 
   async function copyToken(preset: PromptPreset) {
@@ -143,6 +161,13 @@
                 {/if}
                 <button
                   type="button"
+                  class="shrink-0 rounded border border-neutral-700 bg-neutral-800 px-1 py-0.5 text-[10px] text-neutral-400 hover:text-indigo-200"
+                  onclick={() => editChunk(preset)}
+                  title={locale.t("common.edit")}
+                  aria-label={locale.t("common.edit")}
+                >✎</button>
+                <button
+                  type="button"
                   class="shrink-0 rounded border border-neutral-800 bg-neutral-900 px-1 py-0.5 font-mono text-[10px] text-neutral-400 hover:border-indigo-500/40 hover:text-indigo-200"
                   onclick={() => copyToken(preset)}
                   title={locale.t("styles.manager.inline_token_title")}
@@ -154,9 +179,16 @@
         {/if}
       </div>
 
-      <p class="mt-3 shrink-0 border-t border-neutral-800 pt-2 text-[10px] text-neutral-500">
-        {locale.t("generation.prompts.chunks_manage_hint")}
-      </p>
+      <div class="mt-3 flex shrink-0 items-center justify-between gap-3 border-t border-neutral-800 pt-2">
+        <p class="min-w-0 text-[10px] text-neutral-500">
+          {locale.t("generation.prompts.chunks_manage_hint")}
+        </p>
+        <button
+          type="button"
+          class="shrink-0 rounded border border-neutral-700 bg-neutral-800 px-2 py-0.5 text-[10px] text-neutral-300 transition-colors hover:border-indigo-500 hover:text-indigo-200"
+          onclick={newChunk}
+        >+ {locale.t("styles.manager.new_preset")}</button>
+      </div>
     </div>
   </div>
 {/if}

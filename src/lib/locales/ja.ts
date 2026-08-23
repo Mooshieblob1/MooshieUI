@@ -2995,7 +2995,7 @@ const ja: Record<string, string> = {
   "generation.prompts.style_deactivate_aria": "Deactivate style {name}",
   "generation.prompts.preset_deactivate_title": "Click to deactivate — {mode}",
   "generation.prompts.chunks_title": "プロンプトチャンク",
-  "generation.prompts.chunks_manage_hint": "チャンクの作成・編集・インポートはスタイルパネルで行えます。",
+  "generation.prompts.chunks_manage_hint": "チャンクのインポートとエクスポートはスタイルパネルで行えます。",
   "generation.prompts.chunk_token_copied": "{token} をコピーしました",
   "generation.novelai.tokens_tip": "NovelAI トークンの推定値です。上限は {limit} です。",
   "generation.novelai.tokens_total_tip": "この側のすべてのボックスの NovelAI トークン推定値です。1 つのプロンプトとして送信されます。上限は {limit} です。",

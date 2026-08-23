@@ -2970,7 +2970,7 @@ const ru: Record<string, string> = {
   "generation.prompts.style_deactivate_aria": "Deactivate style {name}",
   "generation.prompts.preset_deactivate_title": "Click to deactivate — {mode}",
   "generation.prompts.chunks_title": "Блоки промпта",
-  "generation.prompts.chunks_manage_hint": "Создавайте, редактируйте и импортируйте блоки в панели стилей.",
+  "generation.prompts.chunks_manage_hint": "Импорт и экспорт блоков доступны в панели стилей.",
   "generation.prompts.chunk_token_copied": "{token} скопирован",
   "generation.novelai.tokens_tip": "Расчетное число токенов NovelAI. Лимит: {limit}.",
   "generation.novelai.tokens_total_tip": "Расчетное число токенов NovelAI по всем полям этой стороны, которые отправляются одним промптом. Лимит: {limit}.",

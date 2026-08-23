@@ -326,6 +326,41 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - Style and chunk editors are app level modals (PR #618)
+
+**Requested by:** the user: "make the prompt chunk and artist style editors
+modals for the whole app not just the bottom panel."
+
+**What changed.** Both editors were already full screen overlays, but they were
+mounted inside the Styles tab of the bottom panel, which had two consequences.
+They could only be opened from that tab, and on the mobile layout the panel
+wrapper carries a CSS transform, which makes it the containing block for any
+`position: fixed` descendant, so the overlay was clipped to the panel instead of
+the window. Their open state now lives in a small `styleEditors` store and both
+editors are mounted once at the App root, outside every transformed wrapper.
+
+**Reachable from the prompt box.** The chunk picker in the prompt toolbar gained
+a per chunk edit button and a "+ New chunk" button, so a chunk can be created or
+edited without opening the Styles panel. The footer hint now points at the
+Styles panel for import and export only, which is what is still exclusive to it.
+
+| # | Step | Expect |
+|---|------|--------|
+| 1 | Open the bottom panel, Styles tab, Styles list, click Edit on a style | The editor covers the whole window, not just the bottom panel |
+| 2 | Close it with the X or Escape | Editor closes, Styles tab is still where you left it |
+| 3 | Same tab, Chunks list, click Edit on a chunk | Chunk editor covers the whole window |
+| 4 | In the Styles tab click "+ Create" under Styles | A new style is created and its editor opens full screen |
+| 5 | In the Styles tab click "+ Create" under Chunks | A new chunk is created and its editor opens full screen |
+| 6 | Open the chunk picker from the prompt toolbar, click the pencil on a chunk | The picker closes and the chunk editor opens full screen |
+| 7 | Edit that chunk's content, close the editor, reopen the picker | The new content shows in the chunk's preview line |
+| 8 | Open the picker and click "+ New chunk" | A chunk named "Chunk N" is created and its editor opens |
+| 9 | Close that editor, open the picker | The new chunk is in the list |
+| 10 | In the picker, click a chunk name (not the pencil) | The mode picker still opens and stacks above everything |
+| 11 | Activate a chunk from the picker, then edit it from the picker | Activation survives the edit, the chunk stays active |
+| 12 | Collapse the bottom panel entirely, then use the picker's edit and new buttons | Both still work, the bottom panel is not needed |
+| 13 | Check the picker footer text | Reads "Import and export chunks in the Styles panel." |
+| 14 | Open a style editor, then press Escape | Closes, no leftover dimmed overlay |
+
 ### 2026-08-23 - Chunks in the prompt toolbar, NovelAI token bars, no edit/video tabs (PR #618)
 
 **Requested by:** the user: "let's actually move prompt chunks to the prompt box
