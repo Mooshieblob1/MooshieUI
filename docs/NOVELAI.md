@@ -326,6 +326,47 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - The tiling controls are back in NovelAI mode (PR #618)
+
+**Reported by:** the user, on the entry below: "turning off tiling broke it,
+turn it back on".
+
+Forcing `upscale_fast_refine = true` for the local pass turned off both
+MultiDiffusion and the tiled VAE. That is exactly where the tiled path was
+earning its keep: a 4x upscale of a 1024px NovelAI image is around 4096x4096,
+and a plain `VAEEncode` / `VAEDecode` at that size is what broke the run. The
+derived params no longer touch either flag, so the NovelAI local pass tiles on
+the same rules as the ComfyUI backend, and unchecking tiled diffusion by hand
+stays available for the runs where it looks cleaner.
+
+The upscale panel shows all four tiling controls again in NovelAI mode: the
+tiling checkbox, the Anima forced-tiling notice, the fast refine checkbox and
+the tile size slider.
+
+Kept from the reverted change: the denoise soft warning above 0.20, and the
+`KSampler`-count assertion in
+`the_graph_loads_the_uploaded_image_and_never_samples_it_twice`, which is what
+"never samples it twice" actually means. Its companion assertion that the three
+tiled node types are absent is gone, since they are expected again.
+
+**Testing required: yes.** A UI change and a change to what the local pass
+renders.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NAI mode, local post-process on, open the upscale panel | Tiling checkbox, tile size slider, fast refine checkbox and the Anima forced-tiling notice are all visible again |
+| 2 | Generate with upscale on, tiling left at its default | The run completes, as it did before the tiling change |
+| 3 | Uncheck tiled diffusion by hand, generate again | Still works, and this is the state that looked cleanest |
+| 4 | Drag the upscale denoise above 0.20 | An amber line appears under the denoise and steps row |
+| 5 | Drag it back to 0.20 or below | The line disappears |
+| 6 | Switch the UI language and repeat 4 | The line is translated, not English |
+| 7 | Switch to the ComfyUI backend and open the upscale panel | Unchanged in every respect |
+| 8 | ComfyUI backend, drag upscale denoise above 0.20 | No warning line: it is NovelAI-only |
+
+**Do not skip:** 1, 2, 4, 7.
+
+**Result: pending.**
+
 ### 2026-08-23 - NovelAI mode no longer offers the tiling knobs (PR #618)
 
 **Reported by:** the user, on the entry below, after confirming the CFG fix.
@@ -374,7 +415,8 @@ renders.
 
 **Do not skip:** 1, 2, 3, 6.
 
-**Result: pending.**
+**Result: 2 failed.** Forcing the tiling off broke the local pass outright, so
+the change was reverted (see the entry above). The rest was not reached.
 
 ### 2026-08-23 - The refine pass was running at half CFG (PR #618)
 
