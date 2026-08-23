@@ -230,8 +230,12 @@ class StylesStore {
         const w = round2(clampWeight(a.weight) * clampWeight(style.overallWeight));
         if (w <= 0) continue;
         const safeTag = escapeTagForPrompt(tag);
-        // Always emit (tag:weight) so downstream code has stable weights, even at 1.0.
-        parts.push(`(${safeTag}:${w})`);
+        // A weight of exactly 1 is written bare. `(tag:1)` and `tag` render
+        // identically on every backend, but the wrapped form is noise in the
+        // saved metadata, it defeats mergeTagPrompts' dedupe against a tag the
+        // user typed by hand, and on NovelAI it is A1111 syntax that only
+        // survives because the Rust translator strips it again on the way out.
+        parts.push(w === 1 ? safeTag : `(${safeTag}:${w})`);
       }
     }
     return parts.join(", ");

@@ -326,6 +326,39 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - Style fragment weights in NovelAI mode (PR #618)
+
+**Reported by:** Phase F follow-up step 2. An active Artist Style showed up as
+`(artist_tag:1)`, which is A1111/ComfyUI weight syntax, not NovelAI's.
+
+The outgoing request was already correct. `novelai::prompt_syntax::to_novelai()`
+runs on `positive_prompt` in `build_request()` and rewrites `(tag:w)` into
+`w::tag::`, dropping the weight entirely when it is exactly 1. So NovelAI
+received the bare `artist_tag`. What was visible was the pre-conversion prompt
+that the app stores and displays, not the payload.
+
+The `(tag:1)` wrapper was still worth removing at the source.
+`styles.buildPromptFragment()` now writes a weight of exactly 1 as a bare tag.
+`(tag:1)` and `tag` render identically on every backend, so nothing changes in
+ComfyUI, but the stored prompt stops carrying syntax the user never typed, and
+`mergeTagPrompts()` can now dedupe a style's artist against the same tag typed
+by hand (it compares whole tag strings, so `(artist:1)` and `artist` used to
+both survive).
+
+Rust regression tests were added to `prompt_syntax.rs` pinning the shapes the
+style store can emit, including a tag with escaped Danbooru parentheses.
+
+**Testing required: yes,** small.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | NovelAI mode, activate a style whose artist weight is 1, generate | The saved metadata prompt shows the bare `artist_tag`, no `(artist_tag:1)` |
+| 2 | Same style but set the artist weight to 1.2, generate | Metadata shows `(artist_tag:1.2)`; the image is visibly weighted |
+| 3 | Type the same artist tag by hand in the prompt box with that style active, generate | The tag appears once, not twice |
+| 4 | ComfyUI checkpoint, style active at weight 1, generate | Unchanged output from before this fix |
+
+**Do not skip:** 1 and 3.
+
 ### 2026-08-23 - Phase F follow-up: styles leaked `@` into NovelAI prompts (PR #618)
 
 **Found by:** Phase F step 6. The style editor still showed `@artist` while in

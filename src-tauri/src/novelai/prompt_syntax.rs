@@ -271,4 +271,21 @@ mod tests {
     fn whitespace_around_a_tag_is_preserved() {
         assert_eq!(to_novelai("a, ( b :1.2), c"), "a, 1.2::b::, c");
     }
+
+    /// The artist style store builds its fragment as `(tag:weight)`, so the
+    /// shapes it can emit are worth pinning: a style reaching NovelAI in
+    /// A1111 syntax would be charged for and generate wrong.
+    #[test]
+    fn a_style_fragment_is_rewritten() {
+        assert_eq!(to_novelai("(artist_tag:1)"), "artist_tag");
+        assert_eq!(to_novelai("(artist_tag:1.2)"), "1.2::artist_tag::");
+        assert_eq!(to_novelai("(a:1), (b:0.8)"), "a, 0.8::b::");
+    }
+
+    #[test]
+    fn a_style_fragment_keeps_its_escaped_parentheses() {
+        // The style store escapes Danbooru parentheses before weighting.
+        let src = "(hoshino_\\(artist\\):1.2)";
+        assert_eq!(to_novelai(src), r"1.2::hoshino_\(artist\)::");
+    }
 }
