@@ -363,6 +363,31 @@ async fn handle_video_output(
     }))
 }
 
+/// Swap ComfyUI's real prompt id for the placeholder the frontend was handed.
+///
+/// The SSE fan-out in `webserver.rs` does this for browser clients, but
+/// `app.emit` has no such layer, so on desktop the payload reaches the frontend
+/// under an id it has never seen and every per-prompt handler drops it. The
+/// NovelAI local post-process is the flow that needs this: the frontend holds a
+/// `nai-` id for the whole run, and the ComfyUI half of it is alias-bound to
+/// that id rather than replacing it, so without this the refined image, its
+/// progress events and its completion are all discarded and the run is later
+/// declared a lost generation.
+///
+/// Only the Tauri copy of a payload is rewritten. The SSE copy and the temp
+/// event cache stay keyed by the real id, which is what their own alias
+/// handling expects.
+#[cfg(feature = "desktop")]
+fn with_resolved_alias(state: &AppState, mut payload: serde_json::Value) -> serde_json::Value {
+    if let Some(raw) = payload.get("prompt_id").and_then(|v| v.as_str()) {
+        let resolved = state.prompt_queue.resolve_alias(raw);
+        if resolved != raw {
+            payload["prompt_id"] = serde_json::Value::String(resolved);
+        }
+    }
+    payload
+}
+
 #[cfg(feature = "desktop")]
 pub async fn connect_websocket(
     app_handle: AppHandle,
@@ -394,7 +419,7 @@ pub async fn connect_websocket(
     let task = tokio::spawn(async move {
         // Helper to emit to both Tauri and SSE broadcast
         let emit = |event: &str, payload: serde_json::Value| {
-            let _ = app.emit(event, payload.clone());
+            let _ = app.emit(event, with_resolved_alias(&ws_state, payload.clone()));
             let _ = tx.send(crate::state::BroadcastEvent {
                 event: event.to_string(),
                 payload,
@@ -406,7 +431,7 @@ pub async fn connect_websocket(
                 if let Some(prompt_id) = sse_payload.get("prompt_id").and_then(|v| v.as_str()) {
                     cache_temp_event(&ws_state, event, prompt_id, &sse_payload);
                 }
-                let _ = app.emit(event, tauri_payload);
+                let _ = app.emit(event, with_resolved_alias(&ws_state, tauri_payload));
                 let _ = tx.send(crate::state::BroadcastEvent {
                     event: event.to_string(),
                     payload: sse_payload,
@@ -1126,7 +1151,7 @@ async fn connect_websocket_for_worker_inner(
         let emit = |event: &str, payload: serde_json::Value| {
             #[cfg(feature = "desktop")]
             if let Some(app) = &app {
-                let _ = app.emit(event, payload.clone());
+                let _ = app.emit(event, with_resolved_alias(&ws_state, payload.clone()));
             }
             if let Some(prompt_id) = payload.get("prompt_id").and_then(|v| v.as_str()) {
                 cache_temp_event(&ws_state, event, prompt_id, &payload);

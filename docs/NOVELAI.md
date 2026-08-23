@@ -326,6 +326,50 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-23 - Desktop events kept ComfyUI's prompt id after the NovelAI handoff (PR #618)
+
+**Reported by:** the entry below, twice. With the local post-process on, the
+refined image never arrives and the toast reads "A generation was lost due to a
+connection issue". The Rust log disagrees: it shows the output image being
+produced (`output_image: format=png ... bytes=5788574`) and the run completing
+(`[gen] completed prompt=nai-...`). The backend did all of the work and the
+frontend threw it away.
+
+The NovelAI handoff is the only flow where the frontend holds one prompt id for
+the whole run while ComfyUI runs the second half under a different one. The
+`nai-` id is what `novelai_generate` returned, and `run_local_post_process`
+alias-binds ComfyUI's real id back to it rather than replacing it.
+
+Browser mode resolves that alias as it fans events out over SSE, so the browser
+sees `nai-...` on every event. `app.emit` has no equivalent layer, so on desktop
+the ComfyUI half of the run reached the frontend under an id it had never been
+told about. Every per-prompt handler rejects that: the progress events did not
+count as activity, `comfyui:output_image` was dropped by the
+`pendingPrompts.some(...)` filter in `App.svelte`, and the completion never
+matched. Thirty seconds later the reconciler found a prompt with no activity and
+no images and called it lost.
+
+The Tauri copy of an outgoing payload now goes through `with_resolved_alias`
+before `app.emit`. The SSE copy and the temp event cache keep the real id, which
+is what their own alias handling expects.
+
+**Testing required: yes.** This is the fix for the blocker in both entries
+below, and it touches every desktop event that carries a prompt id.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Desktop app. NAI mode, local post-process on, pick the Anima split model, generate | The NovelAI image generates, the local pass runs, and the refined image lands in the gallery. No "generation lost" toast |
+| 2 | Watch the progress bar during step 1 after NovelAI finishes | It picks up the ComfyUI pass and shows real step progress, rather than sitting still until the run is declared lost |
+| 3 | Repeat step 1 with the model cold, so ComfyUI has to load it | Same result. A long silent model load no longer ends in a lost generation |
+| 4 | Generate in NAI mode with the local post-process off | Unchanged: the plain NovelAI image arrives |
+| 5 | Generate normally on the ComfyUI backend, desktop | Unchanged. Progress, preview and the final image all behave exactly as before |
+| 6 | Generate through the browser UI, both NAI with post-process and plain ComfyUI | Unchanged. Browser mode already resolved the alias and must not have regressed |
+| 7 | Cancel a NovelAI generation mid-run, during the local pass | It clears immediately, with no lingering queue entry and no toast afterwards |
+
+**Do not skip:** 1, 5, 6.
+
+**Result: pending.**
+
 ### 2026-08-23 - NovelAI prompts declared lost by the desktop reconciler (PR #618)
 
 **Reported by:** step 2 of the entry below. With the local post-process on, the
@@ -371,7 +415,9 @@ a prompt.
 
 **Do not skip:** 1, 2, 5.
 
-**Result: pending.**
+**Result:** no change, the same toast still appears. The desktop queue readout
+was genuinely wrong and the fix stands, but it was not what broke this. The real
+cause is the entry above.
 
 ### 2026-08-23 - Text encoders filed under `clip/` (PR #618)
 
