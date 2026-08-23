@@ -361,6 +361,10 @@ Styles panel for import and export only, which is what is still exclusive to it.
 | 13 | Check the picker footer text | Reads "Import and export chunks in the Styles panel." |
 | 14 | Open a style editor, then press Escape | Closes, no leftover dimmed overlay |
 
+**Result: all 14 pass.** The editors open full screen from both the Styles panel
+and the prompt toolbar, and creating or editing a chunk no longer requires the
+bottom panel.
+
 ### 2026-08-23 - Chunks in the prompt toolbar, NovelAI token bars, no edit/video tabs (PR #618)
 
 **Requested by:** the user: "let's actually move prompt chunks to the prompt box
