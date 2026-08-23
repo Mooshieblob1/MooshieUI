@@ -386,6 +386,8 @@ the flag.
 
 **Do not skip:** 2, 3, 5, 6, 8, 9, 12, 14.
 
+**Result: reported failing at first, but the running app was stale.** Typed tokens did nothing in the main prompt or the character boxes while clicking a chunk still worked. Diagnosis: the app window had been open since before any of these fixes landed and had only ever received Vite hot-swaps, never a full reload. A hot-swapped component re-imports the chunk store as a fresh instance, so the editor and the Style Manager were reading two different stores and typed tokens looked unknown. The code itself was verified against the real saved chunk data (name `xenogirl`) and resolves both spellings correctly. Fix: restart the app (or reload the page) after pulling; a forced full reload was pushed to the running window. Retest from step 2.
+
 ### 2026-08-23 - Prompt presets are now Prompt Chunks, and @[Name] works inline (PR #618)
 
 Two changes to the same feature.
