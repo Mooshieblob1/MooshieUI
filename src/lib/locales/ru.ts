@@ -3104,6 +3104,8 @@ const ru: Record<string, string> = {
   "generation.novelai.advanced.legacy_uc_desc": "Использует прежнюю обработку нежелательного содержимого. Оставьте выключенным, если только не воспроизводите старое изображение.",
   "generation.novelai.advanced.variety_plus": "Variety+",
   "generation.novelai.advanced.variety_plus_desc": "Добавляет разнообразия на первых шагах, что даёт более живые композиции.",
+  "generation.novelai.advanced.transparent_background": "Прозрачный фон",
+  "generation.novelai.advanced.transparent_background_desc": "Просит NovelAI V5 сделать вырезку на прозрачном фоне. VAE у V5 первым получил настоящий альфа-канал, поэтому PNG сохраняется с прозрачностью.",
   "generation.novelai.advanced.dynamic_thresholding": "Динамический порог",
   "generation.novelai.advanced.dynamic_thresholding_desc": "Сдерживает пересыщенные цвета при высоком guidance.",
   "generation.novelai.advanced.cfg_rescale": "Пересчёт guidance",
@@ -3125,6 +3127,7 @@ const ru: Record<string, string> = {
   "generation.novelai.local.sampling": "Сэмплирование: {sampler} / {scheduler}, CFG {cfg}.",
   "generation.novelai.local.checkpoint_required": "Выберите чекпоинт, чтобы локальный проход запустился.",
   "generation.novelai.local.nothing_to_do": "Включите Апскейл или Исправление лиц, чтобы локальный проход что-то сделал.",
+  "generation.novelai.local.transparency_conflict": "Локальный проход пропускается, пока включён Прозрачный фон: он свёл бы прозрачность на сплошной фон.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",
   "generation.novelai.cost_tip": "Примерная стоимость в Anlas. Окончательное слово за NovelAI; проверьте баланс выше.",
 

@@ -3133,6 +3133,8 @@ const es: Record<string, string> = {
   "generation.novelai.advanced.legacy_uc_desc": "Usa el tratamiento antiguo del contenido no deseado. Déjalo desactivado salvo que quieras reproducir una imagen antigua.",
   "generation.novelai.advanced.variety_plus": "Variety+",
   "generation.novelai.advanced.variety_plus_desc": "Añade variación en los primeros pasos, lo que da composiciones más vivas.",
+  "generation.novelai.advanced.transparent_background": "Fondo transparente",
+  "generation.novelai.advanced.transparent_background_desc": "Pide a NovelAI V5 un recorte sobre fondo transparente. El VAE de V5 es el primero con un canal alfa real, así que el PNG se guarda con la transparencia intacta.",
   "generation.novelai.advanced.dynamic_thresholding": "Umbral dinámico",
   "generation.novelai.advanced.dynamic_thresholding_desc": "Controla los colores sobresaturados cuando la guía es alta.",
   "generation.novelai.advanced.cfg_rescale": "Reescalado de guía",
@@ -3154,6 +3156,7 @@ const es: Record<string, string> = {
   "generation.novelai.local.sampling": "Muestreo: {sampler} / {scheduler}, CFG {cfg}.",
   "generation.novelai.local.checkpoint_required": "Elige un checkpoint para que se ejecute la pasada local.",
   "generation.novelai.local.nothing_to_do": "Activa Escalar o Corregir caras para que la pasada local haga algo.",
+  "generation.novelai.local.transparency_conflict": "La pasada local se omite mientras Fondo transparente está activo: aplanaría la transparencia sobre un fondo sólido.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",
   "generation.novelai.cost_tip": "Coste estimado en Anlas. NovelAI es la autoridad final; comprueba el saldo de arriba.",
 

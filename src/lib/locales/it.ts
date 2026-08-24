@@ -3104,6 +3104,8 @@ const it: Record<string, string> = {
   "generation.novelai.advanced.legacy_uc_desc": "Usa la vecchia gestione dei contenuti indesiderati. Lascialo disattivato, a meno che tu non stia riproducendo un'immagine più vecchia.",
   "generation.novelai.advanced.variety_plus": "Variety+",
   "generation.novelai.advanced.variety_plus_desc": "Aggiunge variazione ai primi passi, per composizioni più vivaci.",
+  "generation.novelai.advanced.transparent_background": "Sfondo trasparente",
+  "generation.novelai.advanced.transparent_background_desc": "Chiede a NovelAI V5 un ritaglio su sfondo trasparente. Il VAE di V5 è il primo con un vero canale alfa, quindi il PNG viene salvato con la trasparenza intatta.",
   "generation.novelai.advanced.dynamic_thresholding": "Soglia dinamica",
   "generation.novelai.advanced.dynamic_thresholding_desc": "Tiene a freno i colori sovrasaturi con guidance alta.",
   "generation.novelai.advanced.cfg_rescale": "Riscalatura della guidance",
@@ -3125,6 +3127,7 @@ const it: Record<string, string> = {
   "generation.novelai.local.sampling": "Campionamento: {sampler} / {scheduler}, CFG {cfg}.",
   "generation.novelai.local.checkpoint_required": "Scegli un checkpoint per far partire la passata locale.",
   "generation.novelai.local.nothing_to_do": "Attiva Upscale o Correzione volti perché la passata locale faccia qualcosa.",
+  "generation.novelai.local.transparency_conflict": "La passata locale viene saltata finché Sfondo trasparente è attivo: appiattirebbe la trasparenza su uno sfondo pieno.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",
   "generation.novelai.cost_tip": "Costo stimato in Anlas. NovelAI ha l'ultima parola; controlla il saldo qui sopra.",
 

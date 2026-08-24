@@ -1700,6 +1700,7 @@
       metadata.mooshie_novelai_uncond_scale = String(nai.uncond_scale);
       metadata.mooshie_novelai_dynamic_thresholding = String(nai.dynamic_thresholding);
       metadata.mooshie_novelai_variety_plus = String(nai.variety_plus);
+      metadata.mooshie_novelai_transparent_background = String(nai.transparent_background);
       metadata.mooshie_novelai_use_coords = String(nai.use_coords);
       metadata.mooshie_novelai_quality_toggle = String(nai.quality_toggle);
       metadata.mooshie_novelai_uc_preset = String(nai.uc_preset);

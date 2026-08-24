@@ -3130,6 +3130,8 @@ const fr: Record<string, string> = {
   "generation.novelai.advanced.legacy_uc_desc": "Utilise l'ancien traitement du contenu indésirable. Laissez désactivé, sauf pour reproduire une image ancienne.",
   "generation.novelai.advanced.variety_plus": "Variety+",
   "generation.novelai.advanced.variety_plus_desc": "Ajoute de la variation aux premières étapes, ce qui donne des compositions plus vivantes.",
+  "generation.novelai.advanced.transparent_background": "Fond transparent",
+  "generation.novelai.advanced.transparent_background_desc": "Demande à NovelAI V5 un détourage sur fond transparent. Le VAE de V5 est le premier à avoir un vrai canal alpha, donc le PNG est enregistré avec sa transparence.",
   "generation.novelai.advanced.dynamic_thresholding": "Seuillage dynamique",
   "generation.novelai.advanced.dynamic_thresholding_desc": "Limite les couleurs sursaturées quand la guidance est élevée.",
   "generation.novelai.advanced.cfg_rescale": "Rééchelonnage de la guidance",
@@ -3151,6 +3153,7 @@ const fr: Record<string, string> = {
   "generation.novelai.local.sampling": "Échantillonnage : {sampler} / {scheduler}, CFG {cfg}.",
   "generation.novelai.local.checkpoint_required": "Choisissez un checkpoint pour que la passe locale s'exécute.",
   "generation.novelai.local.nothing_to_do": "Activez Agrandir ou Correction des visages pour que la passe locale fasse quelque chose.",
+  "generation.novelai.local.transparency_conflict": "La passe locale est ignorée tant que Fond transparent est actif : elle aplatirait la transparence sur un fond opaque.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",
   "generation.novelai.cost_tip": "Coût estimé en Anlas. NovelAI fait foi ; vérifiez le solde ci-dessus.",
 

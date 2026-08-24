@@ -221,6 +221,42 @@ no-op. The flag itself is still sent, because NovelAI's own client sends it
 and request parity is worth more than the byte. The sliders keep showing the
 raw values the user set, which is also what the official client does.
 
+### 2.11 Transparent BG is a prompt tag, not a request field
+
+V5's custom VAE is the first NovelAI VAE with a real alpha channel, and their
+site exposes it as a "Transparent BG" button beside the prompt box. That button
+is a tag shortcut. There is no request field for transparency: the whole feature
+is the tag `2.1::transparent background::`, at the weight NovelAI's own release
+notes recommend, and the model does the rest.
+
+MooshieUI copies the behaviour but not the placement. The toggle lives in the
+NovelAI advanced section and the tag is appended by `payload::with_transparency`
+while the request body is built, so it never appears in the user's prompt box.
+That is the point of doing it in Rust: the toggle owns the tag, so turning the
+toggle off takes the tag away again cleanly, and a saved prompt does not carry a
+setting the user cannot see. Both copies of the prompt in the request body (the
+`v4_prompt` caption and the top-level `input`) get the same appended text,
+because NovelAI reads both.
+
+Three guards sit around the injection:
+
+- **`models.alpha` gates it.** Only the two V5 rows carry the flag. On V4.5 or
+  V4 the toggle is hidden by `supportsNovelAiTransparency`, and the tag is
+  dropped server side regardless, so a stale persisted setting cannot spend
+  Anlas on a picture of a checkerboard.
+- **A prompt that already says `transparent background` is left alone**, so a
+  user who typed the tag themselves does not get a second copy fighting the
+  first one's weight.
+- **The free local post-process is skipped while the toggle is on.** That pass
+  round-trips the image through ComfyUI's `LoadImage`, whose IMAGE output is RGB
+  (alpha goes to the MASK output), so the transparency just paid for would come
+  back flattened onto black. `transparency_requested()` in `novelai/mod.rs`
+  mirrors the payload's condition exactly, and the panel warns before the
+  request is sent rather than after the Anlas is gone.
+
+Nothing else in the output path needed changing. The PNG NovelAI returns is
+passed through byte for byte and the gallery encoders are RGBA already.
+
 ## 3. The free local post-process
 
 NovelAI has already been paid for the pixels it returns, so upscaling and face
@@ -255,6 +291,9 @@ ComfyUI prompt maps to one alias and one GPU worker, and the first terminal
 event finishes the queue entry. A multi-image NovelAI batch has no safe
 single-prompt handoff, so batches are delivered untouched and a warning is
 logged. Generating one image at a time is the way to get the free upscale today.
+
+**It is also skipped while Transparent BG is on**, for the reason in section
+2.11: the pass would flatten the alpha channel onto a solid background.
 
 ## 4. Prompt syntax
 
@@ -309,6 +348,14 @@ does not mistake them for verified behaviour.
    carry the remaining allowance are still unconfirmed, and a bar fed by a
    guessed field would read wrong rather than read empty. Anlas remaining and
    Opus status are shown instead.
+5. **Whether NovelAI's stealth PNG metadata survives a transparent
+   background.** NovelAI hides generation metadata in the low bits of the alpha
+   channel of images that have no meaningful alpha. A real cut-out uses that
+   channel for picture data, so the stealth payload is either omitted or written
+   somewhere the reader does not look. `novelaiPngMetadata.ts` also reads the
+   visible `Comment` chunk, which is what the app actually relies on, so a
+   missing stealth layer costs nothing here. It is listed because the
+   interaction is unverified, not because it is known to break.
 
 `Subscription.extra` captures any key the backend does not name, and
 `fetch_subscription` logs them at debug level, so a field NovelAI adds later
@@ -325,6 +372,48 @@ and the direction of `percent`, the streaming protocol, and that
 Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
+
+### 2026-08-25 - Transparent BG for V5
+
+**Requested by:** the user: "add the transparent bg feature that NAI V5 should
+have", then "add a button that functionally does the same thing and not showing
+it in prompts either".
+
+**What changed.** A "Transparent BG" checkbox in the NovelAI advanced section,
+shown only when the selected model's VAE carries an alpha channel, which today
+means the two V5 rows. NovelAI ships this as a prompt tag rather than a request
+field, so the backend appends `2.1::transparent background::` while the request
+body is built and the user's prompt box is never touched. Section 2.11 has the
+reasoning and the three guards around the injection. The free local
+post-process is suppressed while the toggle is on, with an amber warning in the
+panel and a `log::warn!` on the Rust side, because ComfyUI's `LoadImage` would
+flatten the alpha onto black.
+
+**Testing needed:** waived by the user: "no need to verify, it's a tag, will
+work right out of the box." The checklist below is kept as a regression
+reference for anyone who touches the injection later. Steps 4 to 9 spend
+Anlas, one image each.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Select NovelAI V4.5 or V4, open the NovelAI advanced section | No Transparent BG checkbox |
+| 2 | Switch to NovelAI V5 Full | Transparent BG appears under Variety+ |
+| 3 | Hover its info tip | Explains that V5's VAE is the first with a real alpha channel |
+| 4 | Tick it, generate a simple subject (`1girl, standing`) | Result is a cut-out, and the prompt box still shows exactly what you typed |
+| 5 | Open the result in something that shows transparency | Genuinely transparent, not white or black |
+| 6 | Untick it, generate again on the same seed | Normal background returns, nothing left behind in the prompt |
+| 7 | Type `transparent background` yourself, tick the toggle, generate | Only one copy of the tag is sent, output matches step 4 |
+| 8 | Tick Transparent BG and Local post-process together | Amber warning appears in the panel before you generate |
+| 9 | Generate with both on | Image arrives untouched with alpha intact, Rust log says the local pass was skipped |
+| 10 | Tick it on V5, switch to V4.5 without unticking, generate | Normal background, no Anlas spent on a checkerboard |
+| 11 | Reload the app | The toggle's state persisted |
+| 12 | Import the saved image's metadata back into the app | Transparent BG comes back ticked (`mooshie_novelai_transparent_background`) |
+| 13 | Repeat step 4 in browser mode (LAN URL) | Identical behaviour |
+| 14 | Switch UI language | Label, info tip and the local-pass warning are translated |
+
+**Do not skip:** 1, 4, 5, 8, 12. Those cover the capability gate, the happy
+path, the actual alpha channel, the post-process conflict and the metadata
+round trip. **Low-risk, skip if short on time:** 3, 14.
 
 ### 2026-08-24 - Director Tools (PR #618)
 

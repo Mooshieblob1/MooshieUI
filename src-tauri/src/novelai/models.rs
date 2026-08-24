@@ -23,6 +23,12 @@ pub struct NovelAiModel {
     pub vibe_transfer: bool,
     /// Per-character negative prompts.
     pub character_negatives: bool,
+    /// The VAE emits a real alpha channel, so transparency can be asked for.
+    ///
+    /// V5's custom VAE is the first to carry one. There is no request field for
+    /// it: NovelAI ships the feature as a prompt tag, so this flag gates the
+    /// tag rather than a parameter.
+    pub alpha: bool,
 }
 
 /// Every NovelAI model MooshieUI offers.
@@ -39,6 +45,7 @@ pub const MODELS: &[NovelAiModel] = &[
         precise_reference: false,
         vibe_transfer: false,
         character_negatives: true,
+        alpha: true,
     },
     NovelAiModel {
         id: "nai-diffusion-5-curated",
@@ -48,6 +55,7 @@ pub const MODELS: &[NovelAiModel] = &[
         precise_reference: false,
         vibe_transfer: false,
         character_negatives: true,
+        alpha: true,
     },
     NovelAiModel {
         id: "nai-diffusion-4-5-full",
@@ -57,6 +65,7 @@ pub const MODELS: &[NovelAiModel] = &[
         precise_reference: true,
         vibe_transfer: true,
         character_negatives: true,
+        alpha: false,
     },
     NovelAiModel {
         id: "nai-diffusion-4-full",
@@ -66,6 +75,7 @@ pub const MODELS: &[NovelAiModel] = &[
         precise_reference: false,
         vibe_transfer: true,
         character_negatives: true,
+        alpha: false,
     },
 ];
 
@@ -126,6 +136,14 @@ mod tests {
         let v45 = find("nai-diffusion-4-5-full").unwrap();
         assert!(v45.precise_reference);
         assert!(v45.vibe_transfer);
+    }
+
+    #[test]
+    fn only_v5_carries_an_alpha_channel() {
+        assert!(find("nai-diffusion-5-full").unwrap().alpha);
+        assert!(find("nai-diffusion-5-curated").unwrap().alpha);
+        assert!(!find("nai-diffusion-4-5-full").unwrap().alpha);
+        assert!(!find("nai-diffusion-4-full").unwrap().alpha);
     }
 
     #[test]

@@ -119,6 +119,13 @@ pub struct NovelAiParams {
     /// "Variety+" — suppresses CFG above a sigma threshold.
     #[serde(default)]
     pub variety_plus: bool,
+    /// "Transparent BG" — ask V5 for a real alpha channel.
+    ///
+    /// NovelAI has no request field for this. The feature is a prompt tag their
+    /// own UI inserts for you, so the toggle is honoured by appending the tag
+    /// while the request body is built. See `payload::with_transparency`.
+    #[serde(default)]
+    pub transparent_background: bool,
     #[serde(default = "default_true")]
     pub quality_toggle: bool,
     /// NovelAI's built-in undesired-content preset index.

@@ -3143,6 +3143,8 @@ const pl: Record<string, string> = {
   "generation.novelai.advanced.legacy_uc_desc": "Używa starszej obsługi treści niepożądanych. Zostaw wyłączone, chyba że odtwarzasz starszy obraz.",
   "generation.novelai.advanced.variety_plus": "Variety+",
   "generation.novelai.advanced.variety_plus_desc": "Dodaje zmienność w pierwszych krokach, co daje żywsze kompozycje.",
+  "generation.novelai.advanced.transparent_background": "Przezroczyste tło",
+  "generation.novelai.advanced.transparent_background_desc": "Prosi NovelAI V5 o wycinek na przezroczystym tle. VAE w V5 jako pierwszy ma prawdziwy kanał alfa, więc PNG zapisuje się z zachowaną przezroczystością.",
   "generation.novelai.advanced.dynamic_thresholding": "Dynamiczne progowanie",
   "generation.novelai.advanced.dynamic_thresholding_desc": "Powstrzymuje przesycone kolory przy wysokim guidance.",
   "generation.novelai.advanced.cfg_rescale": "Przeskalowanie guidance",
@@ -3164,6 +3166,7 @@ const pl: Record<string, string> = {
   "generation.novelai.local.sampling": "Próbkowanie: {sampler} / {scheduler}, CFG {cfg}.",
   "generation.novelai.local.checkpoint_required": "Wybierz checkpoint, aby uruchomić przebieg lokalny.",
   "generation.novelai.local.nothing_to_do": "Włącz Powiększanie lub Poprawianie twarzy, aby przebieg lokalny coś zrobił.",
+  "generation.novelai.local.transparency_conflict": "Przebieg lokalny jest pomijany, gdy Przezroczyste tło jest włączone: spłaszczyłby przezroczystość na jednolite tło.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",
   "generation.novelai.cost_tip": "Szacowany koszt w Anlas. Rozstrzygające jest NovelAI; sprawdź saldo powyżej.",
 

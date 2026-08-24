@@ -129,6 +129,7 @@ export function createDefaultNovelAiSettings(): NovelAiSettings {
     uncond_scale: 1.0,
     dynamic_thresholding: false,
     variety_plus: false,
+    transparent_background: false,
     quality_toggle: true,
     uc_preset: 0,
     legacy_uc: false,
@@ -1174,6 +1175,17 @@ class GenerationStore {
 
   get supportsNovelAiVibeTransfer(): boolean {
     return this.novelAiModel?.vibeTransfer ?? false;
+  }
+
+  /**
+   * True when the model can return a transparent background.
+   *
+   * Only V5's VAE carries an alpha channel, so on anything older the toggle
+   * would spend Anlas on a picture of a checkerboard. The Rust payload builder
+   * gates the tag on the same flag, so a stale setting cannot leak through.
+   */
+  get supportsNovelAiTransparency(): boolean {
+    return this.novelAiModel?.alpha ?? false;
   }
 
   /**

@@ -3105,6 +3105,8 @@ const zh: Record<string, string> = {
   "generation.novelai.advanced.legacy_uc_desc": "使用旧的负面内容处理方式。除非要复现旧图，否则请保持关闭。",
   "generation.novelai.advanced.variety_plus": "Variety+",
   "generation.novelai.advanced.variety_plus_desc": "在最初几步加入变化，让构图更生动。",
+  "generation.novelai.advanced.transparent_background": "透明背景",
+  "generation.novelai.advanced.transparent_background_desc": "让 NovelAI V5 生成透明背景的抠图。V5 的 VAE 首次带有真正的 Alpha 通道，因此 PNG 会保留透明度保存。",
   "generation.novelai.advanced.dynamic_thresholding": "动态阈值",
   "generation.novelai.advanced.dynamic_thresholding_desc": "在高引导值下抑制过饱和的颜色。",
   "generation.novelai.advanced.cfg_rescale": "引导值重缩放",
@@ -3126,6 +3128,7 @@ const zh: Record<string, string> = {
   "generation.novelai.local.sampling": "采样：{sampler} / {scheduler}，CFG {cfg}。",
   "generation.novelai.local.checkpoint_required": "选择一个模型文件，本地处理才能运行。",
   "generation.novelai.local.nothing_to_do": "启用放大或面部修复，本地处理才会起作用。",
+  "generation.novelai.local.transparency_conflict": "开启透明背景时会跳过本地处理，否则透明度会被合并到不透明背景上。",
   "generation.novelai.cost_badge": "~{anlas} Anlas",
   "generation.novelai.cost_tip": "预估 Anlas 消耗。以 NovelAI 为准，请查看上方余额。",
 

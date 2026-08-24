@@ -172,6 +172,13 @@ export interface NovelAiParams {
   dynamic_thresholding: boolean;
   /** "Variety+": suppresses CFG above a sigma threshold. */
   variety_plus: boolean;
+  /**
+   * "Transparent BG": ask V5 for a real alpha channel.
+   *
+   * NovelAI has no request field for it. The backend appends the prompt tag
+   * their own UI inserts, so the user's prompt box stays untouched.
+   */
+  transparent_background: boolean;
   quality_toggle: boolean;
   uc_preset: number;
   legacy_uc: boolean;

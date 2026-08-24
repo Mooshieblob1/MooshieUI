@@ -3042,6 +3042,8 @@ const en: Record<string, string> = {
   "generation.novelai.advanced.legacy_uc_desc": "Uses the older handling of undesired content. Leave this off unless you are matching an older image.",
   "generation.novelai.advanced.variety_plus": "Variety+",
   "generation.novelai.advanced.variety_plus_desc": "Adds variation to the first steps, which gives livelier compositions.",
+  "generation.novelai.advanced.transparent_background": "Transparent BG",
+  "generation.novelai.advanced.transparent_background_desc": "Asks NovelAI V5 for a cut-out on a transparent background. V5's VAE is the first with a real alpha channel, so the PNG is saved with transparency intact.",
   "generation.novelai.advanced.dynamic_thresholding": "Dynamic thresholding",
   "generation.novelai.advanced.dynamic_thresholding_desc": "Reins in oversaturated colors at high guidance.",
   "generation.novelai.advanced.cfg_rescale": "Guidance rescale",
@@ -3063,6 +3065,7 @@ const en: Record<string, string> = {
   "generation.novelai.local.sampling": "Sampling: {sampler} / {scheduler}, CFG {cfg}.",
   "generation.novelai.local.checkpoint_required": "Pick a checkpoint for the local pass to run.",
   "generation.novelai.local.nothing_to_do": "Turn on Upscale or Face Fix for the local pass to do anything.",
+  "generation.novelai.local.transparency_conflict": "The local pass is skipped while Transparent BG is on: it would flatten the transparency onto a solid background.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",
   "generation.novelai.cost_tip": "Estimated Anlas cost. NovelAI is the final authority; check the balance above.",
 

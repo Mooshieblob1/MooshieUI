@@ -21,6 +21,11 @@ export interface NovelAiModelInfo {
   preciseReference: boolean;
   vibeTransfer: boolean;
   characterNegatives: boolean;
+  /**
+   * The VAE emits a real alpha channel, so a transparent background can be
+   * asked for. V5's custom VAE is the first to carry one.
+   */
+  alpha: boolean;
 }
 
 /**
@@ -38,6 +43,7 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     preciseReference: false,
     vibeTransfer: false,
     characterNegatives: true,
+    alpha: true,
   },
   {
     id: "nai-diffusion-5-curated",
@@ -47,6 +53,7 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     preciseReference: false,
     vibeTransfer: false,
     characterNegatives: true,
+    alpha: true,
   },
   {
     id: "nai-diffusion-4-5-full",
@@ -56,6 +63,7 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     preciseReference: true,
     vibeTransfer: true,
     characterNegatives: true,
+    alpha: false,
   },
   {
     id: "nai-diffusion-4-full",
@@ -65,6 +73,7 @@ export const NOVELAI_MODELS: readonly NovelAiModelInfo[] = [
     preciseReference: false,
     vibeTransfer: true,
     characterNegatives: true,
+    alpha: false,
   },
 ] as const;
 

@@ -97,6 +97,17 @@ fn resolve_model_id(params: &GenerationParams, nai: &params::NovelAiParams) -> S
     }
 }
 
+/// True when this generation asked for, and can get, a transparent background.
+///
+/// Mirrors the condition `payload::with_transparency` injects the tag under, so
+/// the two never disagree about whether the returned PNG carries alpha.
+fn transparency_requested(params: &GenerationParams) -> bool {
+    params.novelai.as_ref().is_some_and(|nai| {
+        nai.transparent_background
+            && models::find(&resolve_model_id(params, nai)).is_some_and(|m| m.alpha)
+    })
+}
+
 /// Vibe encodings already paid for during this run of the app.
 ///
 /// `/ai/encode-vibe` bills 2 Anlas every time it is handed an image it has
@@ -452,7 +463,15 @@ async fn run_inner(
     // any failure here falls back to delivering the image untouched rather
     // than surfacing an error the user would read as "my Anlas bought nothing".
     if crate::templates::upscale_standalone::is_requested(params) {
-        if let [png] = images.as_slice() {
+        if transparency_requested(params) {
+            // The local pass loads the image through ComfyUI's `LoadImage`,
+            // whose IMAGE output is RGB: the alpha the user paid V5 for would
+            // come back flattened onto black. Keeping the original is the only
+            // outcome that honours the toggle.
+            log::warn!(
+                "NovelAI {prompt_id}: local post-process skipped, it would flatten                  the transparent background"
+            );
+        } else if let [png] = images.as_slice() {
             match run_local_post_process(state, sink, prompt_id, params, png).await {
                 Ok(()) => return Ok(RunOutcome::HandedOff),
                 Err(err) => log::warn!(

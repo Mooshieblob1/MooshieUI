@@ -3104,6 +3104,8 @@ const ko: Record<string, string> = {
   "generation.novelai.advanced.legacy_uc_desc": "예전 방식의 네거티브 처리를 사용합니다. 이전 이미지를 재현하는 경우가 아니라면 꺼 두세요.",
   "generation.novelai.advanced.variety_plus": "Variety+",
   "generation.novelai.advanced.variety_plus_desc": "초반 스텝에 변화를 더해 구도가 더 생동감 있게 나옵니다.",
+  "generation.novelai.advanced.transparent_background": "투명 배경",
+  "generation.novelai.advanced.transparent_background_desc": "NovelAI V5 에 투명 배경 컷아웃을 요청합니다. V5 의 VAE 는 처음으로 실제 알파 채널을 갖고 있어 PNG 가 투명도를 유지한 채 저장됩니다.",
   "generation.novelai.advanced.dynamic_thresholding": "동적 임계값",
   "generation.novelai.advanced.dynamic_thresholding_desc": "가이던스가 높을 때 색이 과포화되는 것을 억제합니다.",
   "generation.novelai.advanced.cfg_rescale": "가이던스 리스케일",
@@ -3125,6 +3127,7 @@ const ko: Record<string, string> = {
   "generation.novelai.local.sampling": "샘플링: {sampler} / {scheduler}, CFG {cfg}.",
   "generation.novelai.local.checkpoint_required": "로컬 처리를 실행할 체크포인트를 선택하세요.",
   "generation.novelai.local.nothing_to_do": "로컬 처리가 동작하려면 업스케일 또는 얼굴 보정을 켜세요.",
+  "generation.novelai.local.transparency_conflict": "투명 배경이 켜져 있는 동안에는 로컬 처리를 건너뜁니다. 투명도가 단색 배경으로 합쳐지기 때문입니다.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",
   "generation.novelai.cost_tip": "예상 Anlas 비용입니다. 최종 기준은 NovelAI이니 위의 잔액을 확인하세요.",
 
