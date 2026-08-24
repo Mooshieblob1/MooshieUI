@@ -204,7 +204,8 @@ function getWeightedRanges(raw: string, inertRanges: readonly PromptTextRange[])
 function isPlainClickableToken(token: string): boolean {
   const trimmed = token.trim();
   if (!trimmed) return false;
-  if (trimmed.toLowerCase().startsWith("@preset:")) return false;
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("@preset:") || lower.startsWith("@[")) return false;
   if (hasUnescapedSyntaxAngles(trimmed)) return false;
   return true;
 }

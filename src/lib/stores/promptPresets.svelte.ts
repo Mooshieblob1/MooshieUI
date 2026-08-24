@@ -21,6 +21,14 @@
  * badges, not tags — and survive reloads via localStorage.
  */
 
+import {
+  looseSlug,
+  mayContainPresetToken,
+  presetSlug,
+  presetTokenRegex,
+  presetTokenSlug,
+} from "../utils/promptChunkTokens.js";
+
 const STORAGE_KEY = "mooshieui.promptPresets.v1";
 const ACTIVE_KEY = "mooshieui.promptPresets.active.v1";
 const EXPORT_KIND = "mooshieui.prompt-presets";
@@ -134,19 +142,15 @@ function splitWildcardChoices(content: string): string[] {
 }
 
 /**
- * Derive a URL/token-safe slug from a preset display name. Lowercased, with
- * runs of non-alphanumeric chars collapsed to a single underscore. Used as
- * the inline `@preset:<slug>` token form so users can drop a preset at any
- * point in the prompt without worrying about case or punctuation.
+ * The inline token vocabulary lives in a leaf util so the highlighter and the
+ * inert-range scanner can share it without importing a store. Re-exported here
+ * because this is where callers already look for it.
  */
-export function presetSlug(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "") || "preset"
-  );
-}
+export {
+  inlineChunkToken,
+  presetSlug,
+  presetTokenRegex,
+} from "../utils/promptChunkTokens.js";
 
 /**
  * Reserved keywords that must NOT be treated as artist tags when they appear
@@ -156,12 +160,6 @@ export function presetSlug(name: string): string {
  */
 export const RESERVED_AT_KEYWORDS: ReadonlySet<string> = new Set(["preset"]);
 
-/**
- * Regex that matches inline preset directives: `@preset:<slug>`. The slug
- * captures `[a-z0-9_]` only (matches `presetSlug()` output). Case-insensitive
- * on the keyword for forgiveness; slug must already be lowercased.
- */
-export const INLINE_PRESET_REGEX = /@preset:([a-z0-9_]+)/gi;
 
 class PromptPresetsStore {
   presets = $state<PromptPreset[]>([]);
@@ -288,10 +286,13 @@ class PromptPresetsStore {
 
   inlinePresetIds(text: string): Set<string> {
     const ids = new Set<string>();
-    if (!text || !text.includes("@preset:")) return ids;
+    if (!mayContainPresetToken(text)) return ids;
     const lookup = this.bySlug;
-    for (const match of text.matchAll(INLINE_PRESET_REGEX)) {
-      const preset = lookup.get(match[1].toLowerCase());
+    // A fresh matcher: `matchAll` copies the regex's `lastIndex`, so a shared
+    // one that any other module has run `.test()` on would start past the
+    // first token and report no chunks at all.
+    for (const match of text.matchAll(presetTokenRegex())) {
+      const preset = lookup.get(presetTokenSlug(match));
       if (preset) ids.add(preset.id);
     }
     return ids;
@@ -367,7 +368,8 @@ class PromptPresetsStore {
   }
 
   /**
-   * Map of slug → preset for inline `@preset:<slug>` lookups. Recomputed
+   * Map of slug → preset for inline chunk lookups. Both token spellings
+   * normalise to this same slug, so one map covers both. Recomputed
    * each access so it stays in sync with renames; the list is small enough
    * that caching isn't worth the bookkeeping.
    */
@@ -379,6 +381,13 @@ class PromptPresetsStore {
       // the natural uniqueness of display names means dupes are rare.
       if (!map.has(slug)) map.set(slug, p);
     }
+    // A second, looser key per chunk: the slug with its underscores dropped,
+    // so `@[xenogirl]` finds "Xeno Girl". Added in a separate pass so an exact
+    // slug always wins over another chunk's loose form.
+    for (const p of this.presets) {
+      const loose = looseSlug(presetSlug(p.name));
+      if (!map.has(loose)) map.set(loose, p);
+    }
     return map;
   }
 
@@ -388,29 +397,31 @@ class PromptPresetsStore {
   }
 
   /**
-   * Resolve `@preset:<slug>` directives inline within a prompt string.
+   * Resolve inline chunk directives within a prompt string, in either
+   * spelling: `@preset:<slug>` and `@[Chunk Name]`.
    * - Single-line preset content is inserted verbatim (trimmed).
-   * - Multi-line preset content picks one random line per occurrence
-   *   (independent rolls — `@preset:foo, @preset:foo` rolls twice).
+   * - Multi-line preset content is spliced in whole, lines joined with
+   *   ", ", matching what click-activating the chunk inserts.
    * - Empty presets resolve to an empty string; adjacent commas/whitespace
    *   are tidied so the prompt doesn't end up with `, ,` artefacts.
-   * - Unknown slugs are left untouched (so typos are debuggable).
+   * - Unknown names are left untouched (so typos are debuggable).
    */
   resolveInline(text: string, options: Pick<ResolvePromptPresetOptions, "fixedChoices"> = {}): string {
-    if (!text || !text.includes("@preset:")) return text;
+    if (!mayContainPresetToken(text)) return text;
     const lookup = this.bySlug;
-    let resolved = text.replace(INLINE_PRESET_REGEX, (full, slug: string) => {
-      const preset = lookup.get(slug.toLowerCase());
+    let resolved = text.replace(presetTokenRegex(), (full: string, slug?: string, name?: string) => {
+      const preset = lookup.get(presetTokenSlug([full, slug, name] as unknown as RegExpMatchArray));
       if (!preset) return full;
       const fixedChoice = options.fixedChoices?.get(preset.id)?.trim();
       if (fixedChoice) return fixedChoice;
       const choices = splitWildcardChoices(preset.content);
-      if (choices.length === 0) {
-        const verbatim = preset.content.trim();
-        return verbatim;
-      }
-      if (choices.length === 1) return choices[0];
-      return choices[Math.floor(Math.random() * choices.length)];
+      if (choices.length === 0) return preset.content.trim();
+      // Splice the whole chunk in, lines joined with commas so per-line
+      // trailing commas from the editor do not double up. Typing a token
+      // means "insert this chunk here", the same as clicking it, which is
+      // what the inline help text promises. Random rolls stay an activation
+      // feature (the wildcard modes).
+      return choices.join(", ");
     });
     // Tidy up commas/whitespace left behind when a preset resolved to "".
     resolved = resolved

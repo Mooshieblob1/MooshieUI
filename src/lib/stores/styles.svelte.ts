@@ -17,6 +17,7 @@ const STORAGE_KEY = "mooshieui.styles.v1";
 const ACTIVE_KEY = "mooshieui.styles.active.v1";
 const EXPORT_VERSION = 1;
 
+import { stripArtistSigil } from "../utils/artistTag.js";
 import { triggerSync } from "../utils/syncTrigger.js";
 import { locale } from "./locale.svelte.js";
 
@@ -210,13 +211,18 @@ class StylesStore {
   /**
    * Build the prompt fragment (comma-separated weighted tags) contributed by
    * all currently-active styles. Returns empty string when nothing active.
+   *
+   * `stripSigil` drops the leading `@` from every tag, for NovelAI mode where
+   * `@` is the prompt-chunk reference sigil rather than an artist marker. The
+   * caller passes it in because this store must not import the generation
+   * store: that dependency already runs the other way.
    */
-  buildPromptFragment(): string {
+  buildPromptFragment(stripSigil = false): string {
     const parts: string[] = [];
     const seen = new Set<string>();
     for (const style of this.activeStyles) {
       for (const a of style.artists) {
-        const tag = a.tag.trim();
+        const tag = stripSigil ? stripArtistSigil(a.tag.trim()) : a.tag.trim();
         if (!tag) continue;
         const key = tag.toLowerCase();
         if (seen.has(key)) continue;
@@ -224,8 +230,12 @@ class StylesStore {
         const w = round2(clampWeight(a.weight) * clampWeight(style.overallWeight));
         if (w <= 0) continue;
         const safeTag = escapeTagForPrompt(tag);
-        // Always emit (tag:weight) so downstream code has stable weights, even at 1.0.
-        parts.push(`(${safeTag}:${w})`);
+        // A weight of exactly 1 is written bare. `(tag:1)` and `tag` render
+        // identically on every backend, but the wrapped form is noise in the
+        // saved metadata, it defeats mergeTagPrompts' dedupe against a tag the
+        // user typed by hand, and on NovelAI it is A1111 syntax that only
+        // survives because the Rust translator strips it again on the way out.
+        parts.push(w === 1 ? safeTag : `(${safeTag}:${w})`);
       }
     }
     return parts.join(", ");

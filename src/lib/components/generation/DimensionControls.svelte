@@ -3,6 +3,9 @@
   import { locale } from "../../stores/locale.svelte.js";
   import InfoTip from "../ui/InfoTip.svelte";
   import type { ModelFamily } from "../../utils/modelFamily.js";
+  import { NOVELAI_DIMENSION_STEP } from "../../utils/novelaiModels.js";
+  import { novelai } from "../../stores/novelai.svelte.js";
+  import { novelAiOpusCovers } from "../../utils/novelaiCost.js";
 
   interface Props {
     suggestedAspect?: { w: number; h: number } | null;
@@ -27,14 +30,51 @@
   let aspectHInput = $state("1");
   let lastSyncedDimensions = "";
 
+  /**
+   * The pixel grid every dimension has to land on.
+   *
+   * NovelAI rejects anything that is not a multiple of 64, and its own UI steps
+   * the side length 1024 -> 1088 -> 1152. Local backends accept 8, so the
+   * coarser grid applies in NovelAI mode only.
+   */
+  const quantum = $derived(generation.isNovelAi ? NOVELAI_DIMENSION_STEP : 8);
+
   /** Try to match persisted width/height back to a preset or simplified ratio. */
+  /**
+   * Largest pair on the pixel grid whose area does not go over `area`.
+   *
+   * NovelAI prices by pixel count and Opus only covers a generation while it
+   * stays at or under one megapixel, so rounding a ratio up past the requested
+   * area is what quietly turns a free 1024 generation into a paid one. That is
+   * what 2:3 did: the area-faithful formula picked 832x1280, 1.06 MP, while
+   * 3:4 happened to round down and stayed free. Walking the width across a few
+   * grid steps and taking the tallest height that still fits lands on
+   * 832x1216, which is NovelAI's own portrait preset.
+   */
+  function dimsUnderArea(aw: number, ah: number, area: number, q: number): { w: number; h: number } {
+    const target = aw / ah;
+    let best: { w: number; h: number; err: number } | null = null;
+    const mid = Math.round(Math.sqrt(area * target) / q);
+    for (let k = Math.max(1, mid - 2); k <= mid + 2; k++) {
+      const w = k * q;
+      const h = Math.floor(area / w / q) * q;
+      if (h < q) continue;
+      // Scored in log space so a result that is too wide and one that is too
+      // tall by the same factor are treated as equally far off.
+      const err = Math.abs(Math.log(w / h / target));
+      if (!best || err < best.err) best = { w, h, err };
+    }
+    return best ? { w: best.w, h: best.h } : { w: q, h: q };
+  }
+
   /** Compute dimensions for a given aspect ratio using the area-faithful formula. */
-  function dimsForAspect(aw: number, ah: number, side: number): { w: number; h: number } {
+  function dimsForAspect(aw: number, ah: number, side: number, q = quantum): { w: number; h: number } {
     const area = side * side;
-    const wA = Math.round(Math.sqrt(area * (aw / ah)) / 8) * 8;
-    const hA = Math.max(8, Math.round(area / wA / 8) * 8);
-    const hB = Math.round(Math.sqrt(area * (ah / aw)) / 8) * 8;
-    const wB = Math.max(8, Math.round(area / hB / 8) * 8);
+    if (generation.isNovelAi) return dimsUnderArea(aw, ah, area, q);
+    const wA = Math.max(q, Math.round(Math.sqrt(area * (aw / ah)) / q) * q);
+    const hA = Math.max(q, Math.round(area / wA / q) * q);
+    const hB = Math.max(q, Math.round(Math.sqrt(area * (ah / aw)) / q) * q);
+    const wB = Math.max(q, Math.round(area / hB / q) * q);
     return Math.abs(wA * hA - area) <= Math.abs(wB * hB - area)
       ? { w: wA, h: hA }
       : { w: wB, h: hB };
@@ -70,7 +110,7 @@
       aspectHInput = String(inferred.h);
 
       // Keep side-length control aligned with the current generated area.
-      sideLength = Math.max(64, Math.round(Math.sqrt(w * h) / 8) * 8);
+      sideLength = Math.max(quantum, Math.round(Math.sqrt(w * h) / quantum) * quantum);
     }
   });
 
@@ -104,7 +144,7 @@
     const dims = dimsForAspect(
       Math.max(0.01, aspectW),
       Math.max(0.01, aspectH),
-      Math.max(64, sideLength),
+      Math.max(quantum, sideLength),
     );
     generation.width = dims.w;
     generation.height = dims.h;
@@ -153,6 +193,27 @@
     presets.find((p) => p.w === aspectW && p.h === aspectH)?.label ?? ""
   );
 
+  /**
+   * Which presets Opus covers at the current side length and step count.
+   *
+   * Only ever populated on an Opus account in NovelAI mode, generating one
+   * image at a time: on any other plan, or in a batch, every generation costs
+   * Anlas and marking them all would say nothing. The dimensions come from the
+   * same `dimsForAspect` the buttons apply, so a green border cannot disagree
+   * with what clicking one produces.
+   */
+  const freePresets = $derived.by(() => {
+    const free = new Set<string>();
+    if (!generation.isNovelAi || !novelai.isOpus || generation.batchSize !== 1)
+      return free;
+    for (const p of presets) {
+      const dims = dimsForAspect(p.w, p.h, sideLength);
+      if (novelAiOpusCovers(dims.w, dims.h, generation.steps, true))
+        free.add(p.label);
+    }
+    return free;
+  });
+
   const DEFAULT_SIDE = 1024;
   const sidePresets = [512, 768, 1024, 1536, 2048];
 
@@ -160,6 +221,21 @@
     sideLength = side;
     recalc();
   }
+
+  // Switching backends changes the legal grid, so dimensions carried over from
+  // the other one can be illegal. Re-run the aspect maths whenever it changes.
+  // The equality guard is what stops the self-write on `sideLength` from
+  // re-triggering this effect.
+  let lastQuantum = 0;
+  $effect(() => {
+    const q = quantum;
+    if (q === lastQuantum) return;
+    const first = lastQuantum === 0;
+    lastQuantum = q;
+    if (first) return;
+    sideLength = Math.max(q, Math.round(sideLength / q) * q);
+    recalc();
+  });
 
   const FAMILY_LABELS: Partial<Record<ModelFamily, string>> = {
     anima: "Anima",
@@ -243,8 +319,17 @@
         title={arOpen ? locale.t('common.collapse', { section: locale.t('generation.dimensions.aspect_ratio') }) : locale.t('common.expand', { section: locale.t('generation.dimensions.aspect_ratio') })}
       >{locale.t('generation.dimensions.aspect_ratio')}</button>
       <InfoTip text={locale.t('generation.dimensions.aspect_ratio_tip')} />
+      {#if freePresets.size > 0}
+        <span
+          class="ml-auto mr-1 inline-flex items-center gap-1 rounded-full border border-green-500/40 bg-green-500/10 px-1.5 py-0.5 text-[10px] text-green-400"
+          title={locale.t('generation.dimensions.free_opus_tip')}
+        >
+          <span class="h-1.5 w-1.5 rounded-full bg-green-400"></span>
+          {locale.t('generation.dimensions.free_opus')}
+        </span>
+      {/if}
       <button
-        class="ml-auto text-neutral-400 hover:text-neutral-200 focus:outline-none"
+        class="{freePresets.size > 0 ? '' : 'ml-auto '}text-neutral-400 hover:text-neutral-200 focus:outline-none"
         onclick={() => (arOpen = !arOpen)}
         title={arOpen ? locale.t('common.collapse', { section: locale.t('generation.dimensions.aspect_ratio') }) : locale.t('common.expand', { section: locale.t('generation.dimensions.aspect_ratio') })}
         aria-label={arOpen ? locale.t('common.collapse', { section: locale.t('generation.dimensions.aspect_ratio') }) : locale.t('common.expand', { section: locale.t('generation.dimensions.aspect_ratio') })}
@@ -256,12 +341,19 @@
     <div class="flex items-center gap-1 flex-wrap mb-2">
       {#each presets as preset (preset.label)}
         {@const preview = aspectPreviewSize(preset.w, preset.h)}
+        {@const isFree = freePresets.has(preset.label)}
         <button
           onclick={() => applyPreset(preset.w, preset.h)}
-          class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded transition-colors {activePreset === preset.label
-            ? 'bg-indigo-600 text-white'
-            : 'bg-neutral-800 border border-neutral-700 text-neutral-400 hover:bg-neutral-700'}"
-          title={preset.label}
+          class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded border transition-colors {activePreset === preset.label
+            ? isFree
+              ? 'bg-indigo-600 border-green-400 text-white'
+              : 'bg-indigo-600 border-indigo-600 text-white'
+            : isFree
+              ? 'bg-neutral-800 border-green-500/60 text-neutral-400 hover:bg-neutral-700'
+              : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:bg-neutral-700'}"
+          title={isFree
+            ? `${preset.label} - ${locale.t('generation.dimensions.free_opus_tip')}`
+            : preset.label}
         >
           <span
             class="inline-flex h-4 w-4 shrink-0 items-center justify-center overflow-visible"
@@ -376,7 +468,7 @@
       oninput={recalc}
       min="64"
       max="2048"
-      step="8"
+      step={quantum}
       class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
     />
     {#if recommended && familyLabel}

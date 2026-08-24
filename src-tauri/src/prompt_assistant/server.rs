@@ -354,10 +354,7 @@ impl LlamaServer {
             .json()
             .await
             .map_err(|e| AppError::LlmError(format!("Bad llama-server response: {e}")))?;
-        let content = v["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let content = completion_content(&v, "The local model")?;
         self.touch();
         Ok(content)
     }
@@ -518,10 +515,40 @@ pub async fn chat_external(
         .json()
         .await
         .map_err(|e| AppError::LlmError(format!("Bad external LLM response: {e}")))?;
-    Ok(v["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .to_string())
+    completion_content(&v, "The external model")
+}
+
+/// Pull the assistant text out of a chat completion, naming why it can be missing.
+///
+/// A reasoning model streams its thinking into a separate `reasoning` (Ollama)
+/// or `reasoning_content` (DeepSeek, vLLM) field that is billed against the
+/// same `max_tokens` budget as the answer. Give one a budget too small and it
+/// returns HTTP 200 carrying thousands of tokens of thinking and an empty
+/// `content`. Returning that empty string as success pushed the failure
+/// downstream, where every caller had to guess at it: the prompt assistant
+/// cached "" as this model's considered answer and later callers saw an
+/// unexplained blank rather than a limit that wants raising.
+fn completion_content(v: &serde_json::Value, source: &str) -> Result<String, AppError> {
+    let choice = &v["choices"][0];
+    let content = choice["message"]["content"].as_str().unwrap_or("");
+    if !content.trim().is_empty() {
+        return Ok(content.to_string());
+    }
+    let reasoned = ["reasoning", "reasoning_content"].iter().any(|k| {
+        !choice["message"][*k]
+            .as_str()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+    });
+    if reasoned && choice["finish_reason"].as_str() == Some("length") {
+        return Err(AppError::LlmError(format!(
+            "{source} spent its entire token budget on reasoning and returned no answer.              Raise the token limit or choose a model that does not reason."
+        )));
+    }
+    Err(AppError::LlmError(format!(
+        "{source} returned an empty response."
+    )))
 }
 
 /// `anthropic-version` header required on every Messages API request.
@@ -916,4 +943,66 @@ fn extract_all_into(archive_path: &Path, dir: &Path) -> Result<(), AppError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::completion_content;
+    use serde_json::json;
+
+    #[test]
+    fn returns_the_message_content() {
+        let v = json!({ "choices": [{ "message": { "content": "BASE: a girl" } }] });
+        assert_eq!(completion_content(&v, "The model").unwrap(), "BASE: a girl");
+    }
+
+    #[test]
+    fn content_wins_even_when_the_model_also_reasoned() {
+        let v = json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "BASE: a girl", "reasoning": "let me think" }
+            }]
+        });
+        assert_eq!(completion_content(&v, "The model").unwrap(), "BASE: a girl");
+    }
+
+    #[test]
+    fn budget_spent_on_reasoning_names_the_token_limit() {
+        let v = json!({
+            "choices": [{
+                "finish_reason": "length",
+                "message": { "content": "", "reasoning": "thinking at length" }
+            }]
+        });
+        let err = completion_content(&v, "The model").unwrap_err().to_string();
+        assert!(err.contains("token budget on reasoning"), "{err}");
+    }
+
+    #[test]
+    fn reasoning_content_is_recognised_too() {
+        let v = json!({
+            "choices": [{
+                "finish_reason": "length",
+                "message": { "content": "", "reasoning_content": "thinking at length" }
+            }]
+        });
+        let err = completion_content(&v, "The model").unwrap_err().to_string();
+        assert!(err.contains("token budget on reasoning"), "{err}");
+    }
+
+    #[test]
+    fn empty_without_reasoning_is_a_plain_empty_response() {
+        let v = json!({ "choices": [{ "finish_reason": "stop", "message": { "content": "  " } }] });
+        let err = completion_content(&v, "The model").unwrap_err().to_string();
+        assert!(err.contains("empty response"), "{err}");
+    }
+
+    #[test]
+    fn a_response_with_no_choices_is_an_error_not_a_panic() {
+        let err = completion_content(&json!({}), "The model")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("empty response"), "{err}");
+    }
 }

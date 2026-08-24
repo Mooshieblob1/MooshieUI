@@ -102,24 +102,63 @@ pub async fn get_embeddings(state: State<'_, Arc<AppState>>) -> Result<Vec<Strin
 #[tauri::command]
 pub async fn get_queue(state: State<'_, Arc<AppState>>) -> Result<QueueInfo, AppError> {
     let mut info = state.get_queue_info().await?;
+    let tracked: Vec<String> = {
+        let queue = state.prompt_queue.queue.read().unwrap();
+        queue.iter().map(|(id, _owner)| id.clone()).collect()
+    };
+
     // Augment with internal fair-queue positions so the Settings Queue section
     // works in Tauri desktop mode (raw ComfyUI /queue has no queue_positions).
-    let queue_positions: Vec<serde_json::Value> = {
-        let queue = state.prompt_queue.queue.read().unwrap();
-        let total = queue.len();
-        queue
-            .iter()
-            .enumerate()
-            .map(|(pos, (id, _owner))| {
-                serde_json::json!({
-                    "prompt_id": id,
-                    "position": pos,
-                    "total": total,
-                })
+    let total = tracked.len();
+    info.queue_positions = tracked
+        .iter()
+        .enumerate()
+        .map(|(pos, id)| {
+            serde_json::json!({
+                "prompt_id": id,
+                "position": pos,
+                "total": total,
             })
+        })
+        .collect();
+
+    // Prompts the internal queue is still tracking that ComfyUI has never heard
+    // of: a NovelAI generation, which runs off-box and never enters ComfyUI's
+    // queue at all, or a local prompt whose submission is still in flight. The
+    // frontend reconciler reads "absent from ComfyUI's queue" as "finished and
+    // the event was lost", so without these a NovelAI run is declared a lost
+    // generation as soon as it goes 30s without a progress event, which the
+    // handoff to the local post-process does every time while ComfyUI loads the
+    // model. Browser mode already injects them in `webserver.rs`.
+    let missing: Vec<String> = {
+        let known: std::collections::HashSet<&str> = info
+            .queue_running
+            .iter()
+            .chain(info.queue_pending.iter())
+            .filter_map(|entry| entry.as_array()?.get(1)?.as_str())
+            .collect();
+        tracked
+            .into_iter()
+            .filter(|id| !known.contains(id.as_str()))
             .collect()
     };
-    info.queue_positions = queue_positions;
+    const SUBMISSION_SHIELD_SECS: u64 = 120;
+    for id in missing {
+        // A `gen-` placeholder whose submission has hung past the shield is left
+        // out, so a genuinely stuck submit still surfaces as a lost generation
+        // rather than sitting on "Preparing" forever.
+        if id.starts_with("gen-")
+            && !state.prompt_queue.is_placeholder_bound(&id)
+            && state
+                .prompt_queue
+                .insert_age_secs(&id)
+                .is_some_and(|age| age > SUBMISSION_SHIELD_SECS)
+        {
+            continue;
+        }
+        info.queue_pending
+            .push(serde_json::json!([0, id, {}, {}, []]));
+    }
     Ok(info)
 }
 
@@ -1323,6 +1362,21 @@ pub fn save_to_gallery_inner(
     // If metadata provided, embed it using the format-appropriate mechanism.
     let final_bytes = if let Some(meta) = metadata {
         match detected_format {
+            // A PNG that still carries NovelAI's own metadata goes to disk
+            // untouched. NovelAI signs what it returns, and re-encoding to
+            // embed our copy of the parameters would strip its chunks and
+            // overwrite the alpha bits its stealth payload lives in, leaving a
+            // file its own site no longer recognises. SQLite still gets the
+            // full map below, so the in-app settings restore is unaffected,
+            // and the reader picks NovelAI's chunks up on the way back in.
+            crate::metadata::ImageFormat::Png
+                if crate::metadata::png_carries_novelai_metadata(bytes) =>
+            {
+                log::info!(
+                    "save_to_gallery_inner: preserving NovelAI PNG bytes verbatim (no metadata embed)"
+                );
+                bytes.to_vec()
+            }
             crate::metadata::ImageFormat::Png => {
                 match crate::metadata::embed_png_metadata(bytes, meta, embed_mode) {
                     Ok(embedded) => embedded,
@@ -4733,21 +4787,35 @@ pub(crate) async fn read_modelspec_internal(
                 result.insert("recommended_vae".to_string(), recommended_vae);
             }
         }
-        if let Ok(encoders) = state.get_models_list("text_encoders").await {
-            if let Some((recommended_clip_model, recommended_clip_type)) =
-                recommended_clip_from_available(category, &family, &encoders)
-            {
-                // The model key is omitted (not defaulted) when no installed
-                // encoder is compatible, so the frontend can offer a download
-                // instead of silently loading a mismatched encoder.
-                if let Some(recommended_clip_model) = recommended_clip_model {
-                    result.insert("recommended_clip_model".to_string(), recommended_clip_model);
+        // ComfyUI's CLIPLoader offers `text_encoders/` and the legacy `clip/`
+        // folder as one list, so a recommendation drawn from `text_encoders/`
+        // alone reports "no compatible encoder" for a model whose encoder is
+        // merely filed under `clip/`. Mirror the merge the frontend picker
+        // already does in `src/lib/stores/models.svelte.ts`.
+        let mut encoders = state
+            .get_models_list("text_encoders")
+            .await
+            .unwrap_or_default();
+        if let Ok(legacy) = state.get_models_list("clip").await {
+            for encoder in legacy {
+                if !encoders.contains(&encoder) {
+                    encoders.push(encoder);
                 }
-                result.insert(
-                    "recommended_clip_type".to_string(),
-                    recommended_clip_type.to_string(),
-                );
             }
+        }
+        if let Some((recommended_clip_model, recommended_clip_type)) =
+            recommended_clip_from_available(category, &family, &encoders)
+        {
+            // The model key is omitted (not defaulted) when no installed
+            // encoder is compatible, so the frontend can offer a download
+            // instead of silently loading a mismatched encoder.
+            if let Some(recommended_clip_model) = recommended_clip_model {
+                result.insert("recommended_clip_model".to_string(), recommended_clip_model);
+            }
+            result.insert(
+                "recommended_clip_type".to_string(),
+                recommended_clip_type.to_string(),
+            );
         }
     }
 

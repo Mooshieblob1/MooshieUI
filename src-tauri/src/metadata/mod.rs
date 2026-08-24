@@ -199,12 +199,25 @@ pub fn embed_uuid_for_test(bytes: &[u8], json: &str) -> Vec<u8> {
 ///
 /// JXL carries metadata in an `xml ` box and has no stealth-alpha variant, so
 /// `mode` is ignored there.
+///
+/// A PNG that still carries NovelAI's own chunks comes back untouched. Every
+/// export and clipboard route reaches this one function, and embedding here
+/// means a full decode and re-encode, which would drop those chunks and
+/// overwrite the stealth alpha that novelai.net reads. Preserving the bytes
+/// costs nothing: the metadata this call would have written says the same
+/// thing, and the app reads NovelAI's chunks back just as happily as its own.
+/// Once a local post-process has re-encoded the image the chunks are already
+/// gone, so that case falls through and is embedded as normal.
 pub fn embed_image_metadata(
     image_bytes: &[u8],
     params: &HashMap<String, String>,
     mode: MetadataMode,
 ) -> Result<Vec<u8>, String> {
     match detect_format(image_bytes) {
+        ImageFormat::Png if png_carries_novelai_metadata(image_bytes) => {
+            log::info!("embed_image_metadata: preserving NovelAI PNG bytes verbatim");
+            Ok(image_bytes.to_vec())
+        }
         ImageFormat::Png => embed_png_metadata(image_bytes, params, mode),
         ImageFormat::Jxl => embed_jxl_metadata(image_bytes, params),
         ImageFormat::WebP => embed_webp_metadata(image_bytes, params, mode),
@@ -413,7 +426,12 @@ pub fn read_png_metadata(image_bytes: &[u8]) -> Result<Option<HashMap<String, St
         });
 
     let Some(raw_text) = raw_text else {
-        return Ok(None);
+        // No `parameters` chunk. NovelAI does not write one: it spreads its
+        // metadata across chunks of its own (`Software`, `Source`, `Comment`),
+        // so an image straight off novelai.net lands here rather than above.
+        return Ok(crate::novelai::metadata::parse_chunks(&png_text_chunks(
+            info,
+        )));
     };
     let text = raw_text.trim();
     if text.starts_with('{') {
@@ -422,6 +440,50 @@ pub fn read_png_metadata(image_bytes: &[u8]) -> Result<Option<HashMap<String, St
         }
     }
     Ok(Some(parse_a1111_params(text)))
+}
+
+/// Does this PNG still carry NovelAI's own metadata chunks?
+///
+/// The one thing that would destroy them is re-encoding, so this is the test
+/// for whether a PNG should be written to the gallery byte for byte instead of
+/// going through the usual embed. A pure NovelAI generation answers yes; the
+/// same image after local post-processing answers no, because the re-encode
+/// that post-processing performed already dropped the chunks.
+///
+/// Anything that is not a decodable PNG answers no, which is the safe way
+/// round: the caller then takes the normal path and the file is handled as it
+/// always was.
+pub fn png_carries_novelai_metadata(image_bytes: &[u8]) -> bool {
+    let decoder = png::Decoder::new(Cursor::new(image_bytes));
+    let Ok(reader) = decoder.read_info() else {
+        return false;
+    };
+    crate::novelai::metadata::is_novelai_chunks(&png_text_chunks(reader.info()))
+}
+
+/// Collect every PNG text chunk into a keyword-to-text map.
+///
+/// Readers that key off a single well-known keyword can index the decoder's
+/// three chunk lists directly; a reader that has to look at the whole set (the
+/// NovelAI one does, its metadata is split across five chunks) needs them
+/// flattened first. Later encodings win, which only matters for a file that
+/// wrote the same keyword twice.
+fn png_text_chunks(info: &png::Info<'_>) -> HashMap<String, String> {
+    let mut chunks = HashMap::new();
+    for chunk in &info.uncompressed_latin1_text {
+        chunks.insert(chunk.keyword.clone(), chunk.text.clone());
+    }
+    for chunk in &info.compressed_latin1_text {
+        if let Ok(text) = chunk.get_text() {
+            chunks.insert(chunk.keyword.clone(), text);
+        }
+    }
+    for chunk in &info.utf8_text {
+        if let Ok(text) = chunk.get_text() {
+            chunks.insert(chunk.keyword.clone(), text);
+        }
+    }
+    chunks
 }
 
 // ---------------------------------------------------------------------------
@@ -716,11 +778,17 @@ fn decode_stealth_alpha_pixels(
     let json_bytes = gzip_decompress(&compressed).map_err(|e| format!("GZip decompress: {}", e))?;
     let json_text = String::from_utf8(json_bytes).map_err(|e| format!("UTF-8 decode: {}", e))?;
 
-    if let Some(params) = parse_swarmui_json(json_text.trim()) {
-        Ok(Some(params))
-    } else {
-        Ok(None)
-    }
+    Ok(parse_stealth_payload(json_text.trim()))
+}
+
+/// Parse a decoded stealth-alpha payload, whichever tool wrote it.
+///
+/// Both SwarmUI and NovelAI hide JSON in the alpha LSBs with the same envelope,
+/// so the carrier cannot say which one it is; the shape of the JSON inside can.
+/// Each parser declines anything that is not its own, so trying them in turn is
+/// safe, and NovelAI goes last because SwarmUI's format is the common case.
+fn parse_stealth_payload(text: &str) -> Option<HashMap<String, String>> {
+    parse_swarmui_json(text).or_else(|| crate::novelai::metadata::parse_stealth_json(text))
 }
 
 // ---------------------------------------------------------------------------

@@ -376,6 +376,10 @@ pub struct GenerationParams {
     /// the primary edit source; slots 1-2 are Qwen Image Edit Plus extras.
     #[serde(default)]
     pub edit_reference_images: Vec<String>,
+    /// NovelAI-specific parameters. Present only when `checkpoint` names a
+    /// NovelAI model.
+    #[serde(default)]
+    pub novelai: Option<crate::novelai::params::NovelAiParams>,
 }
 
 fn default_output_bit_depth() -> String {

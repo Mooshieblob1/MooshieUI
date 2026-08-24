@@ -1,14 +1,16 @@
 <script lang="ts">
-  import type { AppConfig, LlmProviderState, QueueInfo } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, getComfyuiVersion, updateComfyui } from "../../utils/api.js";
+  import type { AppConfig, InterrogatorModelStatus, LlmProviderState, QueueInfo } from "../../types/index.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, listInterrogatorModels, deleteInterrogatorModel } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus, BackendSupport, ComfyUiVersionInfo } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { accessibility } from "../../stores/accessibility.svelte.js";
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
+  import { comfyuiUpdate } from "../../stores/comfyuiUpdate.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
+  import { novelai } from "../../stores/novelai.svelte.js";
   import PromptAssistantSetupModal from "../generation/PromptAssistantSetupModal.svelte";
   import OpenModelFolders from "./OpenModelFolders.svelte";
   import ModelManagerModal from "./ModelManagerModal.svelte";
@@ -1085,6 +1087,7 @@
       interrogator: false,
       prompt_assistant: false,
       civitai: false,
+      novelai: false,
       about: false,
     };
     try {
@@ -1118,9 +1121,10 @@
     { key: "paths", labelKey: "settings.sections.paths", keywords: "comfyui install venv python cli arguments extra args shared model directory models" },
     { key: "gallery", labelKey: "settings.sections.gallery", keywords: "gallery storage location import images output directory swarmui comfyui external folder manual save mode save directory artist cache clear anima preview upscale pre-upscale before base" },
     { key: "autocomplete", labelKey: "settings.sections.autocomplete", keywords: "tags taglist suggestions results url upload csv json danbooru" },
-    { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model" },
+    { key: "interrogator", labelKey: "settings.sections.interrogator", keywords: "interrogate tags tagger threshold confidence onnx model wd eva02 vit swinv2 convnext download delete disk space" },
     { key: "prompt_assistant", labelKey: "settings.sections.prompt_assistant", keywords: "llm prompt enhance compose model gguf ai assistant" },
     { key: "civitai", labelKey: "settings.sections.civitai", keywords: "civitai api key metadata model hub image fetch download authentication" },
+    { key: "novelai", labelKey: "settings.sections.novelai", keywords: "novelai nai api key anlas opus subscription cloud remote generation persistent token allowance balance usage show" },
     { key: "queue", labelKey: "settings.sections.queue", keywords: "queue position pending running cancel clear jobs users order wait" },
     { key: "about", labelKey: "settings.sections.about", keywords: "version update check updates about troubleshooting logs export diagnostic github report issue" },
   ];
@@ -1170,6 +1174,42 @@
     }
   }
 
+  // NovelAI key entry. Held locally rather than in `config` because the key is
+  // redacted out of the config a browser client receives, so `config` can never
+  // be the source of truth for this field.
+  let novelaiKeyInput = $state("");
+  let novelaiKeySaving = $state(false);
+  let novelaiKeyError = $state<string | null>(null);
+
+  /**
+   * Save or clear the NovelAI key.
+   *
+   * Not `autoSave()`: `preserve_secrets()` keeps the stored key when a config
+   * write omits it, which is what stops a browser client blanking the key it
+   * cannot see. Clearing therefore has to go through the dedicated command.
+   */
+  async function saveNovelaiKey() {
+    const key = novelaiKeyInput.trim();
+    novelaiKeySaving = true;
+    novelaiKeyError = null;
+    try {
+      await novelai.setApiKey(key);
+      // Our local copy predates the save. Any later unrelated autoSave() would
+      // otherwise push the old key state back into the config cache, and the
+      // next ModelSelector mount would read it as "no key".
+      if (config) {
+        config.novelai_api_key = null;
+        config.novelai_api_key_configured = novelai.apiKeyConfigured;
+      }
+      // Never keep the secret in component state once it is stored.
+      novelaiKeyInput = "";
+    } catch (e) {
+      novelaiKeyError = e instanceof Error ? e.message : String(e);
+    } finally {
+      novelaiKeySaving = false;
+    }
+  }
+
   async function refreshAttentionStatus() {
     if (!config) return;
     attentionStatusLoading = true;
@@ -1184,14 +1224,16 @@
     }
   }
 
-  /** Load the installed ComfyUI version and whether the pinned target is newer. */
+  /**
+   * Load the installed ComfyUI version and whether the pinned target is newer.
+   * Goes through the shared store so the sidebar badge and this card cannot
+   * disagree after an update finishes on either side.
+   */
   async function refreshComfyuiVersion() {
-    try {
-      comfyuiVersion = await getComfyuiVersion();
-    } catch (e: any) {
-      // Non-fatal: leave the card hidden if the version can't be read.
-      comfyuiVersion = null;
-    }
+    // `refresh()` swallows its own errors and leaves `info` null, which hides
+    // the card the same way the old local try/catch did.
+    await comfyuiUpdate.refresh();
+    comfyuiVersion = comfyuiUpdate.info;
   }
 
   /**
@@ -1237,10 +1279,41 @@
     }
   }
 
+  // Interrogator model picker. The list is the backend's curated registry plus
+  // a per-model "already on disk" flag, so it has to be re-read after a delete.
+  let interrogatorModels = $state<InterrogatorModelStatus[]>([]);
+  let deletingInterrogatorModel = $state<string | null>(null);
+
+  async function loadInterrogatorModels() {
+    try {
+      interrogatorModels = await listInterrogatorModels();
+    } catch {
+      interrogatorModels = [];
+    }
+  }
+
+  async function removeInterrogatorModel(modelId: string) {
+    deletingInterrogatorModel = modelId;
+    try {
+      await deleteInterrogatorModel(modelId);
+      await loadInterrogatorModels();
+    } catch {
+      // Leave the list as-is; the badge still reflects what is actually on disk
+      // the next time the list reloads.
+    } finally {
+      deletingInterrogatorModel = null;
+    }
+  }
+
   onMount(() => {
+    void loadInterrogatorModels();
     void initSettings().then(() => {
       void refreshAttentionStatus();
     });
+    // Drives the "key set" readout, and the NovelAI models in the dropdown.
+    // The account record follows only when a key exists, so opening Settings
+    // without one never calls NovelAI.
+    void novelai.refresh().then(() => novelai.refreshSubscription());
     // The in-app ComfyUI updater is desktop-only (hosted/browser ships ComfyUI
     // in the image), so only probe the installed version off-browser.
     if (!isBrowserMode) void refreshComfyuiVersion();
@@ -1842,6 +1915,23 @@
                     type="checkbox"
                     bind:checked={config.lan_enabled}
                     onchange={() => { checkRestartNeeded(); autoSave(); }}
+                    class="sr-only peer"
+                  />
+                  <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
+              </div>
+              <div class="flex items-center justify-between pt-2 border-t border-neutral-800">
+                <div>
+                  <label class="text-xs text-neutral-300 font-medium">{locale.t('settings.browser_shutdown.enable')}</label>
+                  <p class="text-xs text-neutral-500 mt-0.5">
+                    {locale.t('settings.browser_shutdown.enable_desc')}
+                  </p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    bind:checked={config.browser_auto_shutdown}
+                    onchange={() => autoSave()}
                     class="sr-only peer"
                   />
                   <div class="w-9 h-5 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
@@ -3595,6 +3685,47 @@
 
           {#if !collapsed.interrogator}
           <div class="px-5 pb-5 space-y-4">
+            <!-- Guarded on a loaded list: binding a <select> with no options
+                 would clear the selected id before the registry arrives. -->
+            {#if interrogatorModels.length > 0}
+            <div>
+              <label class="block text-xs text-neutral-400 mb-1" for="interrogator-model-select">{locale.t('settings.interrogator.model')}</label>
+              <select
+                id="interrogator-model-select"
+                bind:value={config.interrogator_model}
+                onchange={() => { autoSave(); }}
+                class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+              >
+                {#each interrogatorModels as m (m.id)}
+                  <option value={m.id}>{m.label} ({locale.formatBytes(m.size_bytes)})</option>
+                {/each}
+              </select>
+              <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.interrogator.model_desc')}</p>
+            </div>
+            {/if}
+
+            {#if interrogatorModels.some((m) => m.downloaded)}
+            <div class="space-y-1.5">
+              <p class="text-[10px] text-neutral-500">{locale.t('settings.interrogator.downloaded_title')}</p>
+              {#each interrogatorModels.filter((m) => m.downloaded) as m (m.id)}
+                <div class="flex items-center justify-between gap-2 px-3 py-2 bg-neutral-800/50 border border-neutral-700/50 rounded-lg">
+                  <span class="text-xs text-neutral-300 truncate">
+                    {m.label}
+                    <span class="text-neutral-500">{locale.formatBytes(m.size_bytes)}</span>
+                  </span>
+                  <button
+                    class="shrink-0 text-[10px] px-2 py-1 rounded border border-red-900/60 text-red-400 hover:bg-red-950/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    disabled={deletingInterrogatorModel === m.id}
+                    onclick={() => { void removeInterrogatorModel(m.id); }}
+                  >
+                    {deletingInterrogatorModel === m.id ? locale.t('settings.interrogator.deleting') : locale.t('settings.interrogator.delete')}
+                  </button>
+                </div>
+              {/each}
+              <p class="text-[10px] text-neutral-600">{locale.t('settings.interrogator.delete_hint')}</p>
+            </div>
+            {/if}
+
             <p class="text-[10px] text-neutral-500">
               {locale.t('settings.interrogator.thresholds_desc')}
             </p>
@@ -3757,6 +3888,137 @@
               />
               <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.civitai.api_key_link')}</p>
             </div>
+          </div>
+          {/if}
+        </section>
+        {/if}
+
+        <!-- NovelAI (admin / moderator) -->
+        {#if canManageServer && sectionVisible("novelai")}
+        <section class="bg-neutral-900 rounded-xl border border-neutral-800 overflow-hidden break-inside-avoid mb-4">
+          <button
+            class="w-full flex items-center justify-between p-5 text-sm font-medium text-neutral-200 hover:bg-neutral-800/50 transition-colors cursor-pointer"
+            onclick={() => (collapsed.novelai = !collapsed.novelai)}
+          >
+            <span class="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-teal-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+              {locale.t('settings.novelai.title')}
+            </span>
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-neutral-500 transition-transform {collapsed.novelai ? '' : 'rotate-180'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+
+          {#if !collapsed.novelai}
+          <div class="px-5 pb-5 space-y-3">
+            <p class="text-[10px] text-neutral-500">{locale.t('settings.novelai.api_key_desc')}</p>
+            <div>
+              <label class="text-xs text-neutral-400 block mb-1" for="novelai-api-key">{locale.t('settings.novelai.api_key')}</label>
+              <div class="flex gap-2">
+                <input
+                  id="novelai-api-key"
+                  type="password"
+                  autocomplete="off"
+                  bind:value={novelaiKeyInput}
+                  placeholder={novelai.apiKeyConfigured ? locale.t('settings.novelai.api_key_set') : locale.t('settings.novelai.api_key_placeholder')}
+                  class="flex-1 min-w-0 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
+                />
+                <button
+                  class="shrink-0 px-3 py-2 rounded-lg text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors"
+                  disabled={novelaiKeySaving || novelaiKeyInput.trim() === ''}
+                  onclick={() => { void saveNovelaiKey(); }}
+                >
+                  {locale.t('settings.novelai.save_key')}
+                </button>
+                {#if novelai.apiKeyConfigured}
+                  <button
+                    class="shrink-0 px-3 py-2 rounded-lg text-sm bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-neutral-300 transition-colors"
+                    disabled={novelaiKeySaving}
+                    onclick={() => { novelaiKeyInput = ''; void saveNovelaiKey(); }}
+                  >
+                    {locale.t('settings.novelai.clear_key')}
+                  </button>
+                {/if}
+              </div>
+              {#if novelaiKeyError}
+                <p class="text-[10px] text-red-400 mt-1">{novelaiKeyError}</p>
+              {:else if novelai.apiKeyConfigured}
+                <p class="text-[10px] text-emerald-400 mt-1">{locale.t('settings.novelai.api_key_set_hint')}</p>
+              {/if}
+              <p class="text-[10px] text-neutral-500 mt-1">{locale.t('settings.novelai.api_key_link')}</p>
+            </div>
+
+            {#if novelai.apiKeyConfigured}
+              <div class="border-t border-neutral-800 pt-3 space-y-2">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-xs text-neutral-400">{locale.t('settings.novelai.account')}</span>
+                  <button
+                    class="px-2 py-1 rounded-lg text-[10px] bg-neutral-800 hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed text-neutral-300 transition-colors"
+                    disabled={novelai.subscriptionLoading}
+                    onclick={() => { void novelai.refreshSubscription(); }}
+                  >
+                    {locale.t('settings.novelai.refresh_account')}
+                  </button>
+                </div>
+
+                {#if novelai.subscriptionError}
+                  <p class="text-[10px] text-red-400">{novelai.subscriptionError}</p>
+                {:else if novelai.subscriptionLoading && !novelai.subscription}
+                  <p class="text-[10px] text-neutral-500">{locale.t('settings.novelai.account_loading')}</p>
+                {:else if novelai.subscription}
+                  <div class="flex items-center justify-between gap-2 text-xs">
+                    <span class="text-neutral-400">{locale.t('settings.novelai.anlas')}</span>
+                    <span class="text-neutral-200 font-mono">{novelai.anlas.toLocaleString()}</span>
+                  </div>
+                  <p class="text-[10px] {novelai.isOpus ? 'text-emerald-400' : 'text-neutral-500'}">
+                    {novelai.isOpus
+                      ? locale.t('settings.novelai.opus_active')
+                      : locale.t('settings.novelai.opus_inactive')}
+                  </p>
+
+                  {#if novelai.opusAllowance}
+                    {@const allowance = novelai.opusAllowance}
+                    <div class="space-y-1 pt-1">
+                      <span class="text-[10px] text-neutral-400 block">{locale.t('settings.novelai.allowance_title')}</span>
+                      <div class="h-1.5 w-full rounded-full bg-neutral-800 overflow-hidden">
+                        <div
+                          class="h-full rounded-full transition-all {allowance.isLow ? 'bg-amber-500' : 'bg-teal-500'}"
+                          style="width: {allowance.percent}%"
+                        ></div>
+                      </div>
+                      <p class="text-[10px] {allowance.isLow ? 'text-amber-400' : 'text-neutral-400'}">
+                        {locale.t('settings.novelai.allowance_remaining', {
+                          percent: allowance.percent,
+                          images: allowance.approxImages.toLocaleString(),
+                        })}
+                      </p>
+                      {#if allowance.isEmpty}
+                        <p class="text-[10px] text-amber-400">{locale.t('settings.novelai.allowance_empty')}</p>
+                      {/if}
+                      {#if allowance.refillPercentPerDay > 0}
+                        <p class="text-[10px] text-neutral-500">
+                          {locale.t('settings.novelai.allowance_refill', {
+                            percent: allowance.refillPercentPerDay,
+                            images: allowance.refillImagesPerDay.toLocaleString(),
+                          })}
+                        </p>
+                      {/if}
+                    </div>
+                  {/if}
+                {/if}
+              </div>
+
+              <label class="flex items-start gap-3 cursor-pointer select-none border-t border-neutral-800 pt-3">
+                <input
+                  type="checkbox"
+                  class="w-4 h-4 mt-0.5 rounded accent-teal-500"
+                  bind:checked={generation.showNovelaiUsage}
+                  onchange={() => generation.saveSettings()}
+                />
+                <div>
+                  <p class="text-xs font-medium text-neutral-200">{locale.t('settings.novelai.show_usage')}</p>
+                  <p class="text-[10px] text-neutral-500 mt-0.5">{locale.t('settings.novelai.show_usage_desc')}</p>
+                </div>
+              </label>
+            {/if}
           </div>
           {/if}
         </section>

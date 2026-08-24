@@ -22,7 +22,10 @@
     buildSpellcheckPieces,
     type SpellcheckPiece,
   } from "../../utils/promptSpellcheck.js";
-  import { SYNTAX_ANGLE_LOOKBEHIND } from "../../utils/promptSyntaxEscape.js";
+  import {
+    SYNTAX_ANGLE_LOOKBEHIND,
+    escapeEmphasisMarks,
+  } from "../../utils/promptSyntaxEscape.js";
   import { CLIP_CHUNK_SIZE, estimatePromptTokens, promptTokenLimit } from "../../utils/promptTokens.js";
   import ContextMenu, { type ContextMenuItem } from "../ui/ContextMenu.svelte";
 
@@ -64,9 +67,20 @@
   // Restored height is applied as inline style (set in $effect on mount).
   let resizeStyle = $state("");
 
-  /** Format a tag name for insertion into the prompt. Escapes parentheses for models that take raw tags. */
+  /**
+   * Format a tag name for insertion into the prompt. Escapes parentheses for
+   * models that take raw tags, plus any trailing +/- run so a name like
+   * `blood+` or `9-nine-` survives instead of being read as InvokeAI emphasis
+   * at send time. Both escapes are stripped again when the prompt is sent.
+   */
   function formatTagForPrompt(name: string): string {
-    return name.replace(/_/g, " ").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+    // Emphasis escaping runs last, on the paren-escaped text, because that is
+    // what the translator sees: in `moon knight \(disney+\)` the `+` is already
+    // shielded by the trailing `\)`, and escaping it there would leave a stray
+    // backslash in the prompt.
+    return escapeEmphasisMarks(
+      name.replace(/_/g, " ").replace(/\(/g, "\\(").replace(/\)/g, "\\)"),
+    );
   }
 
   /** Format a tag name for display in the dropdown (always clean, no escapes). */

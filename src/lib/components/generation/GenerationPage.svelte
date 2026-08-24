@@ -12,6 +12,7 @@
   import GenerateButton from "./GenerateButton.svelte";
   import UpscaleSettings from "./UpscaleSettings.svelte";
   import FaceFixSettings from "./FaceFixSettings.svelte";
+  import NovelAiSettings from "./NovelAiSettings.svelte";
   import ControlNetSettings from "./ControlNetSettings.svelte";
   import StyleTransferSettings from "./StyleTransferSettings.svelte";
   import ImageEditSettings from "./ImageEditSettings.svelte";
@@ -33,6 +34,7 @@
     type NormalizedInputImage,
   } from "../../utils/editImagePreparation.js";
   import { gallery } from "../../stores/gallery.svelte.js";
+  import { directorTools, directorToolsAvailable } from "../../stores/directorTools.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage, InterrogationResult } from "../../types/index.js";
   import { onMount, onDestroy, tick } from "svelte";
@@ -40,6 +42,7 @@
   import ContextMenu from "../ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "../ui/ContextMenu.svelte";
   import InterrogateModal from "./InterrogateModal.svelte";
+  import NovelAiImportModal from "./NovelAiImportModal.svelte";
   import { interrogateGalleryImage, interrogateImage } from "../../utils/api.js";
   import { ipcListen, isTauri } from "../../utils/ipc.js";
   import { progress } from "../../stores/progress.svelte.js";
@@ -72,6 +75,7 @@
     | "generationSettings"
     | "model"
     | "sampler"
+    | "novelai"
     | "controlnet"
     | "styleTransfer"
     | "facefix"
@@ -79,13 +83,21 @@
 
   type SectionSide = "left" | "right";
 
-  const modes = [
+  const ALL_MODES = [
     { id: "txt2img" as const, label: () => locale.t('generation.mode.txt2img') },
     { id: "img2img" as const, label: () => locale.t('generation.mode.img2img') },
     { id: "inpainting" as const, label: () => locale.t('generation.mode.inpainting') },
     { id: "image_edit" as const, label: () => locale.t('generation.mode.image_edit') },
     { id: "video" as const, label: () => locale.t('generation.mode.video') },
   ];
+
+  // NovelAI has no edit or video endpoint, so those tabs are dropped entirely
+  // rather than shown disabled. All three tab bars render this list.
+  const modes = $derived(
+    generation.isNovelAi
+      ? ALL_MODES.filter((m) => m.id !== "image_edit" && m.id !== "video")
+      : ALL_MODES,
+  );
 
   let canvasEditorRef: CanvasEditor | undefined = $state();
   let imagePreviewUrl = $state<string | null>(null);
@@ -113,6 +125,7 @@
     generationSettings: "right",
     model: "right",
     sampler: "right",
+    novelai: "right",
     controlnet: "right",
     styleTransfer: "right",
     facefix: "right",
@@ -142,6 +155,7 @@
     "generationSettings",
     "model",
     "sampler",
+    "novelai",
     "controlnet",
     "styleTransfer",
     "facefix",
@@ -289,6 +303,7 @@
     if (section === "generationSettings") return locale.t('generation.settings.title');
     if (section === "model") return locale.t('generation.model.title');
     if (section === "sampler") return locale.t('generation.sampler.title');
+    if (section === "novelai") return locale.t('generation.novelai.title');
     if (section === "facefix") return locale.t('generation.facefix.title');
     if (section === "styleTransfer") return locale.t('generation.style_transfer.title');
     return locale.t('generation.upscale.title');
@@ -300,6 +315,12 @@
     if (generation.mode === "video")
       return section === "prompts" || section === "videoSettings";
     if (section === "videoSettings") return false;
+    // NovelAI renders on its own servers: LoRAs, ControlNet and style transfer
+    // have no counterpart in its API and would silently do nothing. FaceFix and
+    // Upscale stay put, because they drive the free local post-process pass.
+    if (section === "novelai") return generation.isNovelAi;
+    if (generation.isNovelAi && (section === "controlnet" || section === "styleTransfer"))
+      return false;
     if (section === "imageInputs")
       return generation.mode === "img2img" || generation.mode === "inpainting";
     if (section === "imageEdit") return generation.mode === "image_edit";
@@ -347,6 +368,7 @@
   let controlsSectionOpen = $state(savedCollapse.generationSettings !== false);
   let modelSectionOpen = $state(savedCollapse.model !== false);
   let samplerSectionOpen = $state(savedCollapse.sampler !== false);
+  let novelaiSectionOpen = $state(savedCollapse.novelai !== false);
   let controlnetSectionOpen = $state(savedCollapse.controlnet !== false);
   let styleTransferSectionOpen = $state(savedCollapse.styleTransfer !== false);
   let facefixSectionOpen = $state(savedCollapse.facefix !== false);
@@ -363,6 +385,7 @@
       generationSettings: controlsSectionOpen,
       model: modelSectionOpen,
       sampler: samplerSectionOpen,
+      novelai: novelaiSectionOpen,
       controlnet: controlnetSectionOpen,
       styleTransfer: styleTransferSectionOpen,
       facefix: facefixSectionOpen,
@@ -721,6 +744,11 @@
       { label: "", action: () => {}, separator: true },
       { label: locale.t('generation.ctx.upscale'), action: () => upscaleImage(image) },
       { label: locale.t('generation.ctx.inpaint'), action: () => inpaintImage(image) },
+      // NovelAI only, and only with a key: the entry is hidden rather than
+      // disabled, because there is nothing the user can do about it from here.
+      ...(directorToolsAvailable()
+        ? [{ label: locale.t('novelai.director.action'), action: () => directorTools.open(image, image.thumbnailUrl || image.url || null) }]
+        : []),
       { label: "", action: () => {}, separator: true },
       { label: comparePinLabel(image), action: () => gallery.toggleComparePin(image) },
       { label: "", action: () => {}, separator: true },
@@ -1228,6 +1256,8 @@
   }
 
   let pasteHandler: ((e: ClipboardEvent) => void) | null = null;
+  let windowDragOverHandler: ((e: DragEvent) => void) | null = null;
+  let windowDropHandler: ((e: DragEvent) => void) | null = null;
   let unlistenDragDrop: (() => void) | null = null;
 
   /** Find the metadata drop section under the given CSS-pixel coordinates.
@@ -1314,6 +1344,17 @@
             console.error("Tauri drag-drop image upload failed:", err);
             gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
           }
+          return;
+        }
+
+        // Anywhere else in the window is a plain metadata import. Dropping an
+        // image onto the app should read its settings wherever it lands; the
+        // section and drop-zone lookups above only exist to narrow that down.
+        try {
+          await handleMetadataImportPath(imgPath, "all");
+        } catch (err) {
+          console.error("Tauri drag-drop metadata import failed:", err);
+          gallery.showToast(locale.t('generation.toast.failed_drop'), "error");
         }
       } else if (payload.type === "leave") {
         metadataDropTarget = null;
@@ -1425,11 +1466,37 @@
       await handleMetadataImport(file, targetSection);
     };
     window.addEventListener("paste", pasteHandler);
+
+    // Anywhere in the window that is not a drop zone of its own accepts an image
+    // as a plain metadata import. Without a window-level handler the browser
+    // follows its default and navigates away to display the dropped file, which
+    // loses the app. The sections and the image inputs keep their targeted
+    // behaviour because their own handlers run first and call preventDefault.
+    windowDragOverHandler = (e: DragEvent) => {
+      if (!hasFilePayload(e.dataTransfer)) return;
+      if (!e.defaultPrevented && e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      e.preventDefault();
+    };
+    windowDropHandler = async (e: DragEvent) => {
+      if (e.defaultPrevented) return;
+      e.preventDefault();
+      metadataDropTarget = null;
+      metadataDropCounters = {};
+      if (!e.dataTransfer) return;
+      const file = getImageFile(e.dataTransfer);
+      if (!file) return;
+      await handleMetadataImport(file, "all");
+    };
+    window.addEventListener("dragover", windowDragOverHandler);
+    window.addEventListener("drop", windowDropHandler);
+
     setupTauriDragDrop();
   });
 
   onDestroy(() => {
     if (pasteHandler) window.removeEventListener("paste", pasteHandler);
+    if (windowDragOverHandler) window.removeEventListener("dragover", windowDragOverHandler);
+    if (windowDropHandler) window.removeEventListener("drop", windowDropHandler);
     if (unlistenDragDrop) unlistenDragDrop();
   });
 </script>
@@ -1620,6 +1687,8 @@
             {/if}
           </div>
 
+          <!-- NovelAI has its own strength and noise controls in the NovelAI panel. -->
+          {#if !generation.isNovelAi}
           <div use:scrollCapture>
             <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
               <span>{locale.t('generation.image.denoise')}<InfoTip text={locale.t('generation.image.denoise_tip')} /></span>
@@ -1634,8 +1703,9 @@
               class="w-full accent-indigo-500"
             />
           </div>
+          {/if}
 
-          {#if generation.mode === "inpainting"}
+          {#if generation.mode === "inpainting" && !generation.isNovelAi}
             <div class="rounded-md border border-neutral-800 bg-neutral-900/70 p-2.5">
               <label class="flex items-center justify-between gap-3 text-xs text-neutral-300">
                 <span class="leading-tight">{locale.t('generation.inpaint.differential_diffusion')}<InfoTip text={locale.t('generation.inpaint.differential_tip')} /></span>
@@ -1724,6 +1794,7 @@
               {/if}
             </div>
 
+            {#if !generation.isNovelAi}
             <div use:scrollCapture>
               <div class="flex items-center justify-between text-xs mb-0.5">
                 <span class="text-neutral-400">{locale.t('generation.inpaint.grow_mask')}<InfoTip text={locale.t('generation.inpaint.grow_mask_tip')} /></span>
@@ -1738,6 +1809,7 @@
                 class="w-full accent-indigo-500"
               />
             </div>
+            {/if}
           {/if}
         </div>
       {/if}
@@ -1894,6 +1966,27 @@
           <span class="text-xs font-medium text-indigo-300 bg-neutral-900/80 px-3 py-1.5 rounded-full">
             {locale.t('common.drop_to_import', { section: locale.t('generation.sampler.title') })}
           </span>
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
+  {#snippet novelaiSection()}
+    <div bind:this={sectionRefs['novelai']} class="rounded-lg border border-neutral-800 bg-neutral-900/40 transition-[height,opacity] duration-150 {draggingSection === 'novelai' ? 'h-0 overflow-hidden opacity-0 m-0! p-0! border-0!' : 'opacity-100'}">
+      <div class="flex items-stretch w-full rounded-t-lg transition-colors hover:bg-neutral-800/50">
+        {@render dragHandle("novelai")}
+        <button
+          class="flex-1 px-3 py-2 flex items-center justify-between text-xs text-neutral-300 hover:text-neutral-100 transition-colors"
+          onclick={() => (novelaiSectionOpen = !novelaiSectionOpen)}
+          title={novelaiSectionOpen ? locale.t('common.collapse', { section: locale.t('generation.novelai.title') }) : locale.t('common.expand', { section: locale.t('generation.novelai.title') })}
+        >
+          <span class="font-medium">{locale.t('generation.novelai.title')}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform {novelaiSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+      {#if novelaiSectionOpen}
+        <div class="px-3 pb-2 pt-0.5 space-y-3">
+          <NovelAiSettings />
         </div>
       {/if}
     </div>
@@ -2068,6 +2161,8 @@
       {@render modelSection()}
     {:else if section === "sampler"}
       {@render samplerSection()}
+    {:else if section === "novelai"}
+      {@render novelaiSection()}
     {:else if section === "controlnet"}
       {@render controlnetSection()}
     {:else if section === "styleTransfer"}
@@ -2115,10 +2210,10 @@
           use:wheelScrollLock
           class="{mobileFriendly
             ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
-            : 'overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] px-3 pt-2 flex flex-col gap-2 shrink-0 border-r'} {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
+            : 'overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] px-3 pt-2 flex flex-col gap-2 shrink-0 border-r'} {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.active ? 'compare-cell-glow' : ''}"
           style={mobileFriendly
-            ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("left")}; transition: ${mobilePanelTransition("left")}; z-index: ${mobilePanelZIndex("left")};${compare.enabled ? ` --compare-color: ${compare.activeColor};` : ""}`
-            : `width: ${leftWidth}px${compare.enabled ? `; --compare-color: ${compare.activeColor}` : ""}`}
+            ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("left")}; transition: ${mobilePanelTransition("left")}; z-index: ${mobilePanelZIndex("left")};${compare.active ? ` --compare-color: ${compare.activeColor};` : ""}`
+            : `width: ${leftWidth}px${compare.active ? `; --compare-color: ${compare.activeColor}` : ""}`}
         >
         {#if mobileFriendly}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -2294,10 +2389,10 @@
         use:wheelScrollLock
         class="{mobileFriendly
           ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
-          : 'overflow-y-auto [scrollbar-gutter:stable] p-3 flex flex-col gap-2 shrink-0 border-l'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
+          : 'overflow-y-auto [scrollbar-gutter:stable] p-3 flex flex-col gap-2 shrink-0 border-l'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.active ? 'compare-cell-glow' : ''}"
         style={mobileFriendly
-          ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("right")}; transition: ${mobilePanelTransition("right")}; z-index: ${mobilePanelZIndex("right")};${compare.enabled ? ` --compare-color: ${compare.activeColor};` : ""}`
-          : `width: ${rightWidth}px${compare.enabled ? `; --compare-color: ${compare.activeColor}` : ""}`}
+          ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("right")}; transition: ${mobilePanelTransition("right")}; z-index: ${mobilePanelZIndex("right")};${compare.active ? ` --compare-color: ${compare.activeColor};` : ""}`
+          : `width: ${rightWidth}px${compare.active ? `; --compare-color: ${compare.activeColor}` : ""}`}
       >
         {#if mobileFriendly}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -2494,3 +2589,6 @@
   {#if regionalPromptModalOpen}
     <RegionalPromptModal onclose={() => (regionalPromptModalOpen = false)} />
   {/if}
+
+  <!-- Staged by any drop or paste of a NovelAI image, wherever it landed. -->
+  <NovelAiImportModal onImage2Image={(file) => handleImagePaste(file)} />

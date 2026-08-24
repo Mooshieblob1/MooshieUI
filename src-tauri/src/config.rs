@@ -96,6 +96,9 @@ pub struct AppConfig {
     pub interrogator_general_threshold: f32,
     /// Interrogator: character tag confidence threshold (0.0–1.0)
     pub interrogator_character_threshold: f32,
+    /// Interrogator: id of the selected tagger from `interrogator::INTERROGATOR_MODELS`.
+    /// Unknown ids fall back to the default model at load time.
+    pub interrogator_model: String,
     /// Prompt assistant: selected/installed catalog model id (None = not chosen yet).
     pub prompt_assistant_model_id: Option<String>,
     /// Prompt assistant: idle seconds before the llama-server subprocess is unloaded.
@@ -105,6 +108,9 @@ pub struct AppConfig {
     pub prompt_assistant_setup_done: bool,
     /// Optional CivitAI API key for authenticated hash lookups and metadata fetching
     pub civitai_api_key: Option<String>,
+    /// Optional NovelAI API key. Required before any NovelAI model can be used.
+    #[serde(default)]
+    pub novelai_api_key: Option<String>,
     /// Custom gallery directory. When `None`, defaults to `{app_data_dir}/gallery`.
     pub gallery_path: Option<String>,
     /// Run the UI in the default web browser instead of the Tauri window.
@@ -113,6 +119,12 @@ pub struct AppConfig {
     pub ui_server_port: u16,
     /// Enable LAN access (bind to 0.0.0.0 instead of 127.0.0.1). Only effective in browser mode.
     pub lan_enabled: bool,
+    /// Shut the backend (and ComfyUI with it) down when the browser tab stops
+    /// sending heartbeats. Only armed in single-user browser mode. Turn this
+    /// off when the machine sleeps or the browser freezes background tabs and
+    /// the backend should survive it.
+    #[serde(default = "default_true")]
+    pub browser_auto_shutdown: bool,
     /// Attention backend: "default", "sage_v1", "sage_v2", "flash_v1", "flash_v2"
     pub attention_backend: String,
     /// Multi-GPU worker configs. When empty, single-worker mode (backward compat).
@@ -228,14 +240,17 @@ impl Default for AppConfig {
             extra_model_paths: None,
             interrogator_general_threshold: 0.30,
             interrogator_character_threshold: 0.85,
+            interrogator_model: crate::interrogator::DEFAULT_INTERROGATOR_MODEL.to_string(),
             prompt_assistant_model_id: None,
             prompt_assistant_idle_timeout_secs: 30,
             prompt_assistant_setup_done: false,
             civitai_api_key: None,
+            novelai_api_key: None,
             gallery_path: None,
             browser_mode: false,
             ui_server_port: 3200,
             lan_enabled: false,
+            browser_auto_shutdown: true,
             attention_backend: "default".to_string(),
             gpu_workers: vec![],
             network_proxy: None,
@@ -276,6 +291,17 @@ pub fn config_to_client_json(
             obj.insert(
                 "civitai_api_key_configured".to_string(),
                 serde_json::json!(configured),
+            );
+            // The NovelAI key spends the user's money, so it is treated the
+            // same way: the client learns only whether one is set.
+            let novelai_configured = obj
+                .get("novelai_api_key")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.is_empty());
+            obj.insert("novelai_api_key".to_string(), serde_json::Value::Null);
+            obj.insert(
+                "novelai_api_key_configured".to_string(),
+                serde_json::json!(novelai_configured),
             );
             // The external-LLM key is a provider credential (Anthropic, OpenAI,
             // xAI, OpenRouter, ...) and must never reach a non-admin client.
@@ -508,6 +534,18 @@ pub(crate) fn preserve_secrets(incoming: &mut AppConfig, current: &AppConfig) {
         incoming
             .llm_external_api_key
             .clone_from(&current.llm_external_api_key);
+    }
+    // Blanked for non-admin clients, so an absent or empty NovelAI key is a
+    // stale echo rather than an intent to clear. Clearing goes through
+    // `set_novelai_api_key("")`.
+    if incoming
+        .novelai_api_key
+        .as_deref()
+        .is_none_or(|k| k.trim().is_empty())
+    {
+        incoming
+            .novelai_api_key
+            .clone_from(&current.novelai_api_key);
     }
 }
 

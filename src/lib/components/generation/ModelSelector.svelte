@@ -9,6 +9,8 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
   import { MODEL_FAMILIES, familyIsSdxlLike } from "../../utils/modelFamily.js";
+  import { NOVELAI_MODELS } from "../../utils/novelaiModels.js";
+  import { novelai } from "../../stores/novelai.svelte.js";
   import type { ModelFamily } from "../../utils/modelFamily.js";
 
   interface ModelFile {
@@ -683,6 +685,8 @@
   }
 
   onMount(async () => {
+    // Decides whether the NovelAI models are offered at all.
+    void novelai.refresh();
     document.addEventListener("pointerdown", handleDocumentPointerDown);
     document.addEventListener("keydown", handleDocumentKeydown);
 
@@ -836,7 +840,7 @@
   });
 
   interface DropdownItem {
-    type: "checkpoint" | "recommended" | "diffusion";
+    type: "checkpoint" | "recommended" | "diffusion" | "novelai";
     label: string;
     value: string;
     rec?: RecommendedModel;
@@ -875,6 +879,22 @@
   const filteredItems = $derived(() => {
     const q = checkpointSearch.toLowerCase();
     const items: DropdownItem[] = [];
+
+    // NovelAI models first: they are remote, so they are always usable and
+    // never need a download. Hidden until a key is stored, because selecting
+    // one without a key could only ever produce an error.
+    if (novelai.apiKeyConfigured) {
+      for (const m of NOVELAI_MODELS) {
+        if (!q || m.label.toLowerCase().includes(q)) {
+          items.push({
+            type: "novelai",
+            label: m.label,
+            value: m.id,
+            installed: true,
+          });
+        }
+      }
+    }
 
     // Add recommended models first
     for (const rec of recommendedModels) {
@@ -978,6 +998,20 @@
       return;
     }
     void openLoraDropdown(index);
+  }
+
+  /**
+   * Pick a NovelAI model.
+   *
+   * Deliberately not routed through `selectCheckpoint`: there is no file on
+   * disk, so the metadata detection and hashing it kicks off have nothing to
+   * work on. The store clears the local-model state and applies NovelAI's own
+   * recommended sampling settings instead.
+   */
+  function selectNovelAiModel(id: string) {
+    generation.selectNovelAiModel(id);
+    checkpointSearch = "";
+    closeCheckpointDropdown();
   }
 
   function selectCheckpoint(name: string) {
@@ -1295,6 +1329,16 @@
                   <span class="text-[10px] text-neutral-500 shrink-0">{item.size}</span>
                 {/if}
               </button>
+            {:else if item.type === "novelai"}
+              <button
+                data-selected={isDropdownItemSelected(item) ? "true" : undefined}
+                class="w-full text-left px-3 py-1.5 flex items-center justify-between gap-2 text-sm whitespace-normal break-words leading-snug transition-colors {isDropdownItemSelected(item) ? 'bg-indigo-500/15 ring-1 ring-inset ring-indigo-500/40 text-indigo-200' : 'text-neutral-200 hover:bg-neutral-700'}"
+                onclick={() => selectNovelAiModel(item.value)}
+                title={item.label}
+              >
+                <span class="min-w-0 flex-1">{item.label}</span>
+                <span class="shrink-0 rounded border border-teal-500/40 bg-teal-500/10 px-1 py-0.5 text-[9px] uppercase tracking-wide text-teal-300">{locale.t('generation.model.cloud_badge')}</span>
+              </button>
             {:else if item.type === "diffusion"}
               <button
                 data-selected={isDropdownItemSelected(item) ? "true" : undefined}
@@ -1488,7 +1532,8 @@
     {/if}
   </div>
 
-  <!-- VAE -->
+  <!-- VAE. NovelAI decodes on its own servers, so there is nothing to pick. -->
+  {#if !generation.isNovelAi}
   <div>
     <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.model.vae')}<InfoTip text={locale.t('generation.model.vae_tip')} /></label>
     <select
@@ -1501,6 +1546,7 @@
       {/each}
     </select>
   </div>
+  {/if}
 
   <!-- Text encoder (split models only). Lists files from both the
        text_encoders/ and clip/ folders (models.textEncoders merges them). -->
@@ -1525,7 +1571,8 @@
     </div>
   {/if}
 
-  <!-- LoRAs -->
+  <!-- LoRAs. NovelAI has no LoRA equivalent in its API. -->
+  {#if !generation.isNovelAi}
   <div>
     <div class="flex items-center justify-between mb-1.5">
       <div class="flex items-center gap-2">
@@ -1672,4 +1719,5 @@
     {/each}
     {/if}
   </div>
+  {/if}
 </div>

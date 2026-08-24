@@ -15,7 +15,7 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery, isVideoImage } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage, getComfyuiVersion, type ComfyUiVersionInfo } from "./lib/utils/api.js";
+  import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
   import { H3_MAX_REF_IMAGES } from "./lib/utils/videoParams.js";
   import { prepareOutputImageForEditMode } from "./lib/utils/editImagePreparation.js";
@@ -28,6 +28,8 @@
   import { prefsSync } from "./lib/stores/prefsSync.svelte.js";
   import type { GenerationMode, GenerationParams, OutputImage, InterrogationResult } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
+  import ComfyUiVersionBadge from "./lib/components/updater/ComfyUiVersionBadge.svelte";
+  import { comfyuiUpdate } from "./lib/stores/comfyuiUpdate.svelte.js";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
   import { downloads } from "./lib/stores/downloads.svelte.js";
   import { compare } from "./lib/stores/compare.svelte.js";
@@ -51,6 +53,11 @@
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
   import PhotopeaEditor from "./lib/components/PhotopeaEditor.svelte";
   import GlobalErrorModal from "./lib/components/errors/GlobalErrorModal.svelte";
+  import NaiEnhanceModal from "./lib/components/generation/NaiEnhanceModal.svelte";
+  import DirectorToolsModal from "./lib/components/generation/DirectorToolsModal.svelte";
+  import StyleEditor from "./lib/components/generation/StyleEditor.svelte";
+  import PresetEditor from "./lib/components/generation/PresetEditor.svelte";
+  import { styleEditors } from "./lib/stores/styleEditors.svelte.js";
   import ReportErrorModal from "./lib/components/errors/ReportErrorModal.svelte";
   import ErrorGallery from "./lib/components/errors/ErrorGallery.svelte";
   import type { FriendlyError } from "./lib/errors/types.js";
@@ -92,34 +99,36 @@
   } from "./lib/utils/comfyStartup.js";
 
   const appVersion = __APP_VERSION__ ?? "dev";
-  let comfyuiVersionInfo = $state<ComfyUiVersionInfo | null>(null);
   const COMFYUI_OUTDATED_NOTIF_TITLE = "notifications.comfyui_outdated.title";
 
+  /**
+   * Refresh the installed-vs-pinned ComfyUI version and, if it is still behind,
+   * leave a notification behind. Reached after the startup auto-update has had
+   * its turn, so this only fires for the cases that pass cannot cover: manual
+   * start, a failed update, or browser mode.
+   *
+   * `comfyuiUpdate.updateAvailable` is already false in browser mode — hosted
+   * deployments ship ComfyUI baked into the Docker image and update by pulling
+   * a newer one, so an "outdated" notification there would be a dead end with
+   * no update button. The sidebar badge still shows the fetched version.
+   */
   async function checkComfyuiVersion() {
-    try {
-      const info = await getComfyuiVersion();
-      comfyuiVersionInfo = info;
-      // The in-app updater is desktop-only. Hosted/browser deployments ship
-      // ComfyUI baked into the Docker image and update by pulling a newer
-      // image, so an "outdated" notification there would be a dead end with no
-      // update button. Still keep the fetched version for the sidebar badge.
-      if (info.update_available && !isBrowserMode) {
-        const alreadyNotified = notifications.notifications.some(
-          (n) => n.local && n.i18n && n.title === COMFYUI_OUTDATED_NOTIF_TITLE && !n.read,
-        );
-        if (!alreadyNotified) {
-          notifications.addLocalNotification({
-            i18n: true,
-            title: COMFYUI_OUTDATED_NOTIF_TITLE,
-            body: "notifications.comfyui_outdated.body",
-            params: { installed: info.installed ?? locale.t("settings.performance.comfyui_unknown"), target: info.target },
-            kind: "warning",
-          });
-        }
-      }
-    } catch {
-      // Non-critical — Settings panel will surface it when opened
-    }
+    await comfyuiUpdate.refresh();
+    if (!comfyuiUpdate.updateAvailable) return;
+    const alreadyNotified = notifications.notifications.some(
+      (n) => n.local && n.i18n && n.title === COMFYUI_OUTDATED_NOTIF_TITLE && !n.read,
+    );
+    if (alreadyNotified) return;
+    notifications.addLocalNotification({
+      i18n: true,
+      title: COMFYUI_OUTDATED_NOTIF_TITLE,
+      body: "notifications.comfyui_outdated.body",
+      params: {
+        installed: comfyuiUpdate.installed ?? locale.t("settings.performance.comfyui_unknown"),
+        target: comfyuiUpdate.target,
+      },
+      kind: "warning",
+    });
   }
 
   const visionSimClass = $derived(
@@ -301,6 +310,15 @@
     autocomplete.notifyModelChanged(
       generation.isAnima || generation.isWan || generation.isQwen,
     );
+  });
+
+  // NovelAI has no image-edit or video endpoint, so those mode tabs are hidden
+  // there (see GenerationPage). Switching to a NovelAI model while one of them
+  // is selected would otherwise strand the user on a tab with no way back.
+  $effect(() => {
+    if (!generation.isNovelAi) return;
+    const mode = generation.mode;
+    if (mode === "image_edit" || mode === "video") generation.setMode("txt2img");
   });
 
   // Model family/spec detection lives here rather than in ModelSelector, which
@@ -1663,6 +1681,44 @@
       metadata.mooshie_prompt_schedule = schedParts.join(", ");
     }
 
+    // NovelAI settings live in their own block, so the generic fields above
+    // hold the ComfyUI values the local post-process would have used. Overwrite
+    // the ones that have a NovelAI counterpart, and record the rest, so an
+    // image that came back from NovelAI reads as a NovelAI image on reimport.
+    //
+    // Only a post-processed image is ever written with this map: a pure NovelAI
+    // generation keeps NovelAI's own bytes (see `save_to_gallery_inner`) and is
+    // read back through its chunks instead. The map still reaches SQLite either
+    // way, which is what the in-app settings restore reads.
+    const nai = params.novelai;
+    if (nai) {
+      metadata.mooshie_backend = "novelai";
+      metadata.sampler = nai.sampler;
+      metadata.scheduler = nai.noise_schedule;
+      metadata.model = nai.model;
+      metadata.mooshie_novelai_cfg_rescale = String(nai.cfg_rescale);
+      metadata.mooshie_novelai_uncond_scale = String(nai.uncond_scale);
+      metadata.mooshie_novelai_dynamic_thresholding = String(nai.dynamic_thresholding);
+      metadata.mooshie_novelai_variety_plus = String(nai.variety_plus);
+      metadata.mooshie_novelai_use_coords = String(nai.use_coords);
+      metadata.mooshie_novelai_quality_toggle = String(nai.quality_toggle);
+      metadata.mooshie_novelai_uc_preset = String(nai.uc_preset);
+      metadata.mooshie_novelai_legacy_uc = String(nai.legacy_uc);
+      if (params.mode !== "txt2img") {
+        metadata.mooshie_novelai_strength = String(nai.strength);
+        metadata.mooshie_novelai_noise = String(nai.noise);
+      }
+      const enabledCharacters = nai.characters.filter((c) => c.enabled && c.prompt.trim());
+      if (enabledCharacters.length > 0) {
+        metadata.mooshie_novelai_characters = JSON.stringify(enabledCharacters);
+      }
+      if (nai.local_post_process) {
+        // The reason this image no longer carries NovelAI's own signature: the
+        // local pass re-encoded it, so novelai.net will not accept it back.
+        metadata.mooshie_novelai_post_processed = "true";
+      }
+    }
+
     return metadata;
   }
 
@@ -2519,6 +2575,14 @@
         artistLocalPreviews.failAll();
         compare.clearGridBatch();
       }),
+      ipcListen("novelai:vibes_encoded", (event: any) => {
+        const data = event.payload;
+        // The tokens are only ours if the prompt is. In browser mode every
+        // client sees the event, and applying another client's tokens would
+        // attach them to unrelated images.
+        if (data.prompt_id && !progress.pendingPrompts.some((p: any) => p.promptId === data.prompt_id)) return;
+        if (Array.isArray(data.vibes)) generation.applyNovelAiVibeEncodings(data.vibes);
+      }),
       ipcListen("comfyui:preview", async (event: any) => {
         const data = event.payload;
         if (!progress.isGenerating) return;
@@ -3008,6 +3072,29 @@
     };
     window.addEventListener("mooshie:model-preview-action", modelPreviewActionHandler);
 
+    // Bring ComfyUI up to the pinned tag before starting it. MooshieUI ships
+    // against one exact ComfyUI release, so a MooshieUI update that bumps the
+    // pin would otherwise leave the user running a stale ComfyUI until they
+    // happened to find the button in Settings. The app is already
+    // interaction-locked here, so the update just extends the startup lock
+    // rather than interrupting anything.
+    if (autoStartEnabled) {
+      try {
+        await comfyuiUpdate.refresh();
+        if (comfyuiUpdate.shouldAutoUpdate) {
+          startupStatus = locale.t("app.status.updating_comfyui");
+          startupStatusKind = "starting";
+          await comfyuiUpdate.autoUpdateOnStartup((message) => {
+            startupStatus = message;
+          });
+        }
+      } catch (e) {
+        // A failed update must never block launch — ComfyUI still starts on
+        // whatever version is on disk, and the sidebar bubble reports it.
+        console.error("ComfyUI auto-update failed:", e);
+      }
+    }
+
     // Start ComfyUI server — returns immediately, background task handles readiness
     // The backend will auto-connect WebSocket and emit comfyui:server_ready when done
     if (autoStartEnabled) {
@@ -3059,6 +3146,8 @@
     // Verify the installed ComfyUI is on the pinned version even for users who
     // never open Settings — features like Krea 2 fail validation on older
     // ComfyUI builds, so surface a notification instead of a silent failure.
+    // Runs after the startup auto-update has had its turn, so this only fires
+    // for the cases that pass cannot cover.
     void checkComfyuiVersion();
   }
 
@@ -3491,22 +3580,7 @@
       >
     </button>
 
-    {#if comfyuiVersionInfo?.installed}
-      <span
-        class="flex items-center justify-center gap-1 text-[10px] text-center mb-1 select-none cursor-default {comfyuiVersionInfo.update_available
-          ? 'text-amber-500'
-          : 'text-neutral-500'}"
-        title={comfyuiVersionInfo.update_available
-          ? locale.t('settings.performance.comfyui_update_note')
-          : locale.t('settings.performance.comfyui_up_to_date')}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" class="w-2.5 h-2.5 shrink-0" aria-hidden="true">
-          <circle cx="8" cy="8" r="7.5" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-width="1" />
-          <text x="8" y="11.2" text-anchor="middle" font-size="9" font-weight="700" fill="currentColor">C</text>
-        </svg>
-        v{comfyuiVersionInfo.installed}
-      </span>
-    {/if}
+    <ComfyUiVersionBadge />
     <span
       class="mooshie-branding text-[10px] text-neutral-500 text-center mb-2 select-none cursor-default"
       role="button"
@@ -4053,6 +4127,12 @@
 
 <CharacterInsertModal onapplied={finishCharacterInsert} />
 
+<!-- NovelAI V5 rewrite, input and review both. Mounted at root because it is
+     app wide and outlives the prompt panel that opens it: switching to the
+     gallery mid-review must not discard a result not yet applied. -->
+<NaiEnhanceModal />
+<DirectorToolsModal />
+
 <!-- Global human-readable error surface -->
 <GlobalErrorModal />
 
@@ -4171,4 +4251,16 @@
       </button>
     </div>
   </div>
+{/if}
+
+<!-- Artist style and prompt chunk editors. Mounted here rather than inside the
+     Styles tab so they can be opened from anywhere (the prompt toolbar, the
+     bottom panel) and so their full-screen overlay covers the window instead of
+     the transformed mobile panel wrapper they used to live in. -->
+{#if styleEditors.styleId}
+  <StyleEditor styleId={styleEditors.styleId} onclose={() => styleEditors.closeStyle()} />
+{/if}
+
+{#if styleEditors.presetId}
+  <PresetEditor presetId={styleEditors.presetId} onclose={() => styleEditors.closePreset()} />
 {/if}

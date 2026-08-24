@@ -31,6 +31,29 @@ import {
   validateH3IdleResponse,
 } from "../utils/h3Idle.js";
 import {
+  NAI_MAX_TOKENS,
+  naiRewriteSystemPrompt,
+  naiUserPrompt,
+} from "../utils/naiPrompt.js";
+import type { NaiPromptContext } from "../utils/naiPrompt.js";
+import {
+  naiRetryInstruction,
+  normalizeNaiResponse,
+  parseNaiResponse,
+  validateNaiResponse,
+} from "../utils/naiParse.js";
+import type { NaiRewriteResult } from "../utils/naiParse.js";
+import {
+  NAI_SKILL_MAX_TOKENS,
+  loadNaiSkill,
+  naiSkillAuthoringSystem,
+  naiSkillAuthoringUser,
+  naiSkillKey,
+  naiSystemWithSkill,
+  sanitizeNaiSkill,
+  saveNaiSkill,
+} from "../utils/naiSkill.js";
+import {
   H3_SKILL_MAX_TOKENS,
   h3SkillAuthoringSystem,
   h3SkillAuthoringUser,
@@ -383,6 +406,95 @@ class PromptAssistantStore {
           rule: recheck.rule ?? check.rule,
           idle,
         };
+      });
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  /**
+   * The current model's own notes on how to write a V5 prompt, authored once
+   * per backend and variant and cached from then on.
+   *
+   * Same bargain as `ensureH3Skill`: one extra round trip the first time, none
+   * after that, and every failure falls back to running on the specification
+   * alone. A model that answers with something unusable has that recorded too,
+   * so it is not asked again before every rewrite.
+   */
+  private async ensureNaiSkill(ctx: NaiPromptContext): Promise<string | null> {
+    const key = naiSkillKey(this.llmBackendId, ctx.variant);
+    const cached = loadNaiSkill(key);
+    if (cached !== null) return cached || null;
+    try {
+      const skill = sanitizeNaiSkill(
+        await callExternalLlm(
+          naiSkillAuthoringSystem(),
+          naiSkillAuthoringUser(ctx),
+          NAI_SKILL_MAX_TOKENS,
+        ),
+      );
+      // Cached even when empty: that is a verdict on this model, not a miss.
+      // A thrown error is not, so it deliberately skips this line.
+      saveNaiSkill(key, skill);
+      return skill || null;
+    } catch (e) {
+      console.warn("[promptAssistant] NAI skill authoring failed", e);
+      return null;
+    }
+  }
+
+  /**
+   * Rewrite an idea into a NovelAI Diffusion V5 prompt.
+   *
+   * Bypasses `enhance()` for the same reason `enhanceForH3` does: that path is
+   * danbooru-tag machinery, and V5 wants natural language plus its own emphasis
+   * syntax and character boxes. Feeding V5 the tag soup that path produces makes
+   * the image worse than the raw prompt the user typed.
+   *
+   * The result is never applied here. It comes back parsed into fields for the
+   * review modal, because a V5 rewrite touches the prompt, the undesired content
+   * and every character box at once, and overwriting hand-tuned character work
+   * without asking is not recoverable by a single undo.
+   *
+   * Validator problems buy exactly one retry that quotes them back. Whatever the
+   * second attempt returns is handed over anyway, with the surviving problems
+   * attached, so the modal can warn rather than swallow the work.
+   */
+  async enhanceForNai(
+    prompt: string,
+    ctx: NaiPromptContext,
+  ): Promise<NaiRewriteResult> {
+    this.isGenerating = true;
+    try {
+      return await this.withStageListener(async () => {
+        const skill = await this.ensureNaiSkill(ctx);
+        const system = naiSystemWithSkill(naiRewriteSystemPrompt(ctx), skill);
+        const user = naiUserPrompt(prompt, ctx);
+
+        const first = normalizeNaiResponse(
+          parseNaiResponse(await callExternalLlm(system, user, NAI_MAX_TOKENS)),
+        );
+        const problems = validateNaiResponse(first, ctx);
+        if (problems.length === 0) return { parsed: first, problems: [] };
+
+        const second = normalizeNaiResponse(
+          parseNaiResponse(
+            await callExternalLlm(
+              system,
+              `${user}
+
+${naiRetryInstruction(problems)}`,
+              NAI_MAX_TOKENS,
+            ),
+          ),
+        );
+        const recheck = validateNaiResponse(second, ctx);
+        if (recheck.length === 0) return { parsed: second, problems: [] };
+        // Prefer whichever attempt produced a base prompt; the second can come
+        // back empty when the model gives up on the correction.
+        return second.base.trim()
+          ? { parsed: second, problems: recheck }
+          : { parsed: first, problems };
       });
     } finally {
       this.isGenerating = false;

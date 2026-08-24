@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import PromptTextarea from "./PromptTextarea.svelte";
+  import NovelAiTokenBar from "./NovelAiTokenBar.svelte";
   import { generation } from "../../stores/generation.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
@@ -120,4 +121,7 @@
     storageKey={`mooshieui.promptHeight.extra.${side}.${id}`}
     tagAssist={!isVideoMode}
   />
+  {#if generation.isNovelAi}
+    <NovelAiTokenBar {side} />
+  {/if}
 </div>

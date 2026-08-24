@@ -44,7 +44,9 @@ function tokenize(prompt: string): Array<{ token: string; hadAtPrefix: boolean }
     if (t.startsWith("<") && t.endsWith(">")) continue;
     // Unescape backslash-escaped parens/brackets that SD/ComfyUI uses to
     // prevent attention-weight parsing: \( → (, \) → ), \[ → [, \] → ]
-    t = t.replace(/\\([()\[\]])/g, "$1");
+    // — plus \+ / \- , which guard a name whose own trailing character would
+    // otherwise read as InvokeAI emphasis (e.g. `neverland\+`).
+    t = t.replace(/\\([()\[\]+-])/g, "$1");
     // Strip surrounding weight parens/brackets (repeated)
     while (/^[\(\[]/.test(t) && /[\)\]]$/.test(t)) {
       t = t.slice(1, -1).trim();
@@ -57,10 +59,11 @@ function tokenize(prompt: string): Array<{ token: string; hadAtPrefix: boolean }
     const hadAt = t.startsWith("@");
     if (hadAt) t = t.replace(/^@+/, "").trim();
     if (!t) continue;
-    // Skip MooshieUI directives like `@preset:foo` — those are inline preset
-    // expansions, not artist references. Only relevant when the token had an
-    // `@` prefix; a bare `preset:foo` would never reach here as a tag anyway.
-    if (hadAt && /^preset:/i.test(t)) continue;
+    // Skip MooshieUI directives like `@preset:foo` and `@[Chunk Name]` — those
+    // are inline chunk expansions, not artist references. Only relevant when
+    // the token had an `@` prefix; a bare `preset:foo` would never reach here
+    // as a tag anyway.
+    if (hadAt && (/^preset:/i.test(t) || t.startsWith("["))) continue;
     // Normalise: spaces → underscores, lowercase
     const normalized = t.toLowerCase().replace(/\s+/g, "_");
     if (normalized) out.push({ token: normalized, hadAtPrefix: hadAt });

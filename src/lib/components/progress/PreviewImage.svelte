@@ -5,6 +5,7 @@
   import { canvas } from "../../stores/canvas.svelte.js";
   import { models } from "../../stores/models.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { directorTools, directorToolsAvailable } from "../../stores/directorTools.svelte.js";
   import { generate, uploadImageBytes, downloadModel } from "../../utils/api.js";
   import { loadOutputImageForGenerationInput, uploadImageUrlForGenerationInput } from "../../utils/galleryActions.js";
   import { formatGenerationTime } from "../../utils/localeFormat.js";
@@ -344,6 +345,15 @@
     ];
     if (!progress.wasUpscaled) {
       items.push({ label: locale.t("gallery.upscale"), action: () => void upscaleImage() });
+    }
+    // NovelAI only, and only once the output has been persisted: the tool sends
+    // the real bytes, and a preview that is still just a blob has none to load.
+    const directorSource = getActiveSavedImage();
+    if (directorSource && directorToolsAvailable()) {
+      items.push({
+        label: locale.t("novelai.director.action"),
+        action: () => directorTools.open(directorSource, previewSrc),
+      });
     }
 
     ctxMenuItems = items;

@@ -285,6 +285,10 @@
       </div>
     </div>
 
+    {#if generation.isNovelAi && generation.upscaleDenoise > 0.2}
+      <p class="text-[11px] text-amber-500/90">{locale.t('generation.upscale.denoise_novelai_warning')}</p>
+    {/if}
+
     <!-- Tiling toggle -->
     {#if generation.isAnima && !generation.upscaleFastRefine}
       <div class="flex items-center gap-2">

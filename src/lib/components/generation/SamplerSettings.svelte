@@ -6,6 +6,17 @@
   import InfoTip from "../ui/InfoTip.svelte";
   import EditableValue from "../ui/EditableValue.svelte";
   import { scrollCapture } from "../../utils/scrollCapture.js";
+  import {
+    NOVELAI_DEFAULTS,
+    NOVELAI_NOISE_SCHEDULES,
+    NOVELAI_SAMPLERS,
+  } from "../../utils/novelaiModels.js";
+  import {
+    ANIMA_SAMPLING,
+    JUICE_SAMPLING,
+    NANOSAUR_SAMPLING,
+    type SamplingRecommendation,
+  } from "../../utils/samplingRecommendation.js";
   import { downloadModel } from "../../utils/api.js";
   import { ipcListen } from "../../utils/ipc.js";
   import { onMount } from "svelte";
@@ -85,6 +96,9 @@
   let nanosaurRecOpen = $state(true);
 
   function recommendedStepRange() {
+    // NovelAI ignores `samplerName` entirely, so the ComfyUI heuristics below
+    // would rate its own recommended 23 steps as out of range.
+    if (generation.isNovelAi) return { min: 20, max: 28 };
     const sampler = generation.samplerName.toLowerCase();
     if (sampler.includes("euler")) return { min: 18, max: 28 };
     if (sampler.includes("dpmpp")) return { min: 24, max: 36 };
@@ -92,6 +106,7 @@
   }
 
   function recommendedCfgRange() {
+    if (generation.isNovelAi) return { min: 4.0, max: 8.0, target: NOVELAI_DEFAULTS.cfg };
     if (isCfgPpSampler(generation.samplerName)) return { min: 1.5, max: 2.2, target: 1.8 };
     return { min: 4.0, max: 8.0, target: 6.0 };
   }
@@ -130,33 +145,36 @@
     generation.cfg = cfgRange.target;
   }
 
+  /**
+   * The tables live in `utils/samplingRecommendation.ts` because the NovelAI
+   * local post-process needs the same numbers, and two copies would drift.
+   */
+  function applyRecommendation(rec: SamplingRecommendation) {
+    generation.steps = rec.steps;
+    generation.cfg = rec.cfg;
+    generation.samplerName = rec.samplerName;
+    generation.scheduler = rec.scheduler;
+    if (rec.upscaleSteps !== undefined) generation.upscaleSteps = rec.upscaleSteps;
+    if (rec.facefixSteps !== undefined) generation.facefixSteps = rec.facefixSteps;
+    if (rec.upscaleDenoise !== undefined) generation.upscaleDenoise = rec.upscaleDenoise;
+  }
+
   function applyAnimaRecommendation() {
-    generation.steps = 30;
-    generation.cfg = 4.0;
-    generation.samplerName = "er_sde";
-    generation.scheduler = "sgm_uniform";
-    // Face fix and upscale steps are 1/3 of main steps
-    generation.facefixSteps = Math.ceil(30 / 3);
-    generation.upscaleSteps = Math.ceil(30 / 3);
+    applyRecommendation(ANIMA_SAMPLING);
   }
 
   function applyJuiceRecommendation() {
-    generation.steps = 20;
-    generation.cfg = 1.4;
-    generation.samplerName = "euler_cfg_pp";
-    generation.scheduler = "sgm_uniform";
-    // Face fix and upscale steps are 1/3 of main steps
-    generation.facefixSteps = Math.ceil(20 / 3);
-    generation.upscaleSteps = Math.ceil(20 / 3);
+    applyRecommendation(JUICE_SAMPLING);
+  }
+
+  let novelaiRecOpen = $state(true);
+
+  function applyNovelAiRecommendation() {
+    generation.applyNovelAiRecommendedSampling();
   }
 
   function applyNanosaurRecommendation() {
-    generation.steps = 40;
-    generation.cfg = 7;
-    generation.samplerName = "euler";
-    generation.scheduler = "simple";
-    generation.upscaleSteps = 20;
-    generation.upscaleDenoise = 0.5;
+    applyRecommendation(NANOSAUR_SAMPLING);
   }
 </script>
 
@@ -271,31 +289,84 @@
     </div>
   {/if}
 
+  {#if generation.isNovelAi}
+    <div class="rounded-lg border border-teal-700/50 bg-teal-900/15 overflow-hidden">
+      <button
+        class="w-full flex items-center justify-between px-2.5 py-2 text-left"
+        onclick={() => (novelaiRecOpen = !novelaiRecOpen)}
+      >
+        <p class="text-xs text-teal-300 font-medium">{locale.t('generation.sampler.novelai_recommended')}</p>
+        <svg class="w-3 h-3 text-teal-400 shrink-0 transition-transform {novelaiRecOpen ? '' : '-rotate-90'}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      {#if novelaiRecOpen}
+        <div class="flex items-start justify-between gap-2 px-2.5 pb-2.5">
+          <p class="text-[11px] text-neutral-300">{locale.t('generation.sampler.novelai_hint')}</p>
+          <button
+            class="shrink-0 px-2 py-1 text-[10px] rounded border border-teal-500/70 text-teal-200 hover:border-teal-400 hover:text-teal-100 transition-colors"
+            onclick={applyNovelAiRecommendation}
+          >
+            {locale.t('common.apply')}
+          </button>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   <!-- Sampler + Scheduler -->
   <div class="grid grid-cols-2 gap-2">
-    <div>
-      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.label')}<InfoTip text={locale.t('generation.sampler.label_tip')} /></label>
-      <select
-        bind:value={generation.samplerName}
-        onchange={onSamplerChange}
-        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
-      >
-        {#each models.samplers as s}
-          <option value={s}>{s}</option>
-        {/each}
-      </select>
-    </div>
-    <div>
-      <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.scheduler')}<InfoTip text={locale.t('generation.sampler.scheduler_tip')} /></label>
-      <select
-        bind:value={generation.scheduler}
-        class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
-      >
-        {#each models.schedulers as s}
-          <option value={s}>{s}</option>
-        {/each}
-      </select>
-    </div>
+    {#if generation.isNovelAi}
+      <!-- NovelAI ignores the ComfyUI sampler and scheduler: it takes its own
+           pair, sent in the `novelai` block. Showing the local controls here
+           would report settings that never reach the request. -->
+      <div>
+        <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.label')}<InfoTip text={locale.t('generation.sampler.label_tip')} /></label>
+        <select
+          value={generation.novelaiSettings.sampler}
+          onchange={(e) => generation.updateNovelAiSettings({ sampler: e.currentTarget.value })}
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+        >
+          {#each NOVELAI_SAMPLERS as s (s.value)}
+            <option value={s.value}>{s.label}</option>
+          {/each}
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.noise_schedule')}<InfoTip text={locale.t('generation.sampler.noise_schedule_tip')} /></label>
+        <select
+          value={generation.novelaiSettings.noise_schedule}
+          onchange={(e) => generation.updateNovelAiSettings({ noise_schedule: e.currentTarget.value })}
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+        >
+          {#each NOVELAI_NOISE_SCHEDULES as s (s.value)}
+            <option value={s.value}>{s.label}</option>
+          {/each}
+        </select>
+      </div>
+    {:else}
+      <div>
+        <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.label')}<InfoTip text={locale.t('generation.sampler.label_tip')} /></label>
+        <select
+          bind:value={generation.samplerName}
+          onchange={onSamplerChange}
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+        >
+          {#each models.samplers as s}
+            <option value={s}>{s}</option>
+          {/each}
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-neutral-400 mb-1">{locale.t('generation.sampler.scheduler')}<InfoTip text={locale.t('generation.sampler.scheduler_tip')} /></label>
+        <select
+          bind:value={generation.scheduler}
+          class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-indigo-500 transition-colors"
+        >
+          {#each models.schedulers as s}
+            <option value={s}>{s}</option>
+          {/each}
+        </select>
+      </div>
+    {/if}
   </div>
 
   <!-- Steps + CFG side-by-side -->
@@ -316,7 +387,7 @@
     </div>
     <div use:scrollCapture>
       <label class="flex items-center justify-between text-xs text-neutral-400 mb-1">
-        <span>{locale.t('generation.sampler.cfg')}<InfoTip text={locale.t('generation.sampler.cfg_tip')} /></span>
+        <span>{generation.isNovelAi ? locale.t('generation.sampler.guidance') : locale.t('generation.sampler.cfg')}<InfoTip text={locale.t('generation.sampler.cfg_tip')} /></span>
         <EditableValue value={generation.cfg} min={0} max={30} step={0.1} decimals={1} onchange={(v) => generation.cfg = v} />
       </label>
       <input

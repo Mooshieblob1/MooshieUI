@@ -4,8 +4,20 @@
  * App.svelte renders the modal and subscribes to `artistInsert.pending`.
  * Any component (artist gallery page, bottom-panel favourites tab, etc.) can
  * call `artistInsert.request(tag)` to trigger the same UX.
+ *
+ * The `@` sigil is mode-dependent, so both the tag written into the prompt and
+ * the test for tags already in it come from `generation.artistTagPrefix` and
+ * `isArtistTagToken()` rather than a hardcoded `"@"`. In NovelAI mode there is
+ * no sigil, so the artist index is what tells an artist tag apart from any
+ * other danbooru tag.
  */
 import { generation } from "./generation.svelte.js";
+import { gallery } from "./gallery.svelte.js";
+import {
+  artistTagBodiesMatch,
+  isArtistTagToken,
+  splitPromptTags,
+} from "../utils/artistTag.js";
 
 export type ArtistInsertPending = {
   tag: string;
@@ -13,90 +25,72 @@ export type ArtistInsertPending = {
   duplicate: boolean;
 };
 
-/**
- * Escape any unescaped `(` and `)` in a tag so it round-trips through the
- * prompt scheduler/highlighter without being interpreted as a weight group.
- * Already-escaped parens (preceded by `\`) are left untouched.
- */
-function escapeParens(s: string): string {
-  return s.replace(/(\\?)([()])/g, (_, esc, paren) => (esc ? esc + paren : "\\" + paren));
-}
-
-/** Canonical form for comparing or inserting `@` artist tags. */
-function normalizeArtistTag(tag: string): string {
-  return "@" + escapeParens(tag.replace(/^@+/, "").replace(/_/g, " ").trim());
-}
-
-function artistTagsMatch(a: string, b: string): boolean {
-  return normalizeArtistTag(a).toLowerCase() === normalizeArtistTag(b).toLowerCase();
-}
-
-/**
- * Split a prompt into individual tags. Tags are separated by commas *or*
- * newlines, so detecting/removing artist tags must honour both, otherwise a
- * tag on its own line escapes duplicate detection and toggle-off.
- */
-function splitPromptTags(prompt: string): string[] {
-  return prompt
-    .split(/[\n,]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
 class ArtistInsertStore {
   pending = $state<ArtistInsertPending | null>(null);
 
   /**
+   * Artist tags already in the positive prompt, in prompt order.
+   *
+   * Sigil mode reads them straight off the `@`. Sigil-free mode needs the
+   * artist index; if it has not loaded, this comes back empty and the caller
+   * degrades to a plain add rather than replacing tags it cannot identify.
+   */
+  private existingArtistTags(): string[] {
+    const prefix = generation.artistTagPrefix;
+    const index = gallery.artistIndexReady ? gallery.artistTagIndex : null;
+    return splitPromptTags(generation.positivePrompt.trim()).filter((t) =>
+      isArtistTagToken(t, prefix, index),
+    );
+  }
+
+  /**
    * Request insertion of an artist tag into the positive prompt.
    *
-   * - If there are no existing `@` tags, applies immediately (add).
-   * - If the exact tag is already present, removes it (toggle, like LoRAs).
-   * - If other `@` tags exist, opens the replace/add confirmation modal.
+   * - If there are no existing artist tags, applies immediately (add).
+   * - If the same artist is already present, removes it (toggle, like LoRAs).
+   * - If other artist tags exist, opens the replace/add confirmation modal.
    *
-   * The `tag` may be provided with or without a leading `@`.
+   * The `tag` may be provided with or without a leading `@`; whichever sigil
+   * the current mode wants is applied on the way in.
    */
   request(tag: string): void {
-    // Strip leading @, convert underscores to spaces (danbooru convention),
-    // escape any unescaped parens (so `artist (tag)` becomes `artist \(tag\)`),
-    // then re-prefix with @. Already-escaped parens are left as-is so prompts
-    // round-trip correctly through the scheduler/highlight parser.
-    const withAt = normalizeArtistTag(tag);
-    const existing = generation.positivePrompt.trim();
-    const existingArtistTags = splitPromptTags(existing).filter((s) => s.startsWith("@"));
-    if (existingArtistTags.some((t) => artistTagsMatch(t, withAt))) {
-      this.remove(withAt);
+    const formatted = generation.formatArtistTag(tag);
+    const existingArtistTags = this.existingArtistTags();
+    if (existingArtistTags.some((t) => artistTagBodiesMatch(t, formatted))) {
+      this.remove(formatted);
       return;
     } else if (existingArtistTags.length > 0) {
-      this.pending = { tag: withAt, existingTags: existingArtistTags, duplicate: false };
+      this.pending = { tag: formatted, existingTags: existingArtistTags, duplicate: false };
     } else {
-      this.apply(withAt, "add");
+      this.apply(formatted, "add");
     }
   }
 
-  /** Remove a single `@` artist tag from the positive prompt (case-insensitive). */
-  remove(withAt: string): void {
-    const target = normalizeArtistTag(withAt);
+  /**
+   * Remove a single artist tag from the positive prompt (case-insensitive).
+   *
+   * Matching is on the tag body, not the whole token, so a tag inserted in one
+   * mode is still removable after switching to the other.
+   */
+  remove(tag: string): void {
     const existing = generation.positivePrompt.trim();
     if (!existing) return;
-    const tags = splitPromptTags(existing);
-    const filtered = tags.filter(
-      (t) => !(t.startsWith("@") && artistTagsMatch(t, target)),
-    );
+    const filtered = splitPromptTags(existing).filter((t) => !artistTagBodiesMatch(t, tag));
     generation.positivePrompt = filtered.join(", ");
     generation.saveSettings();
     this.pending = null;
   }
 
-  apply(withAt: string, mode: "add" | "replace"): void {
-    // Defensive: normalize underscores → spaces and escape unescaped parens
-    // in case a caller passes a raw danbooru-style tag rather than going
-    // through request().
-    const cleaned = normalizeArtistTag(withAt);
+  apply(tag: string, mode: "add" | "replace"): void {
+    // Defensive: re-run the mode's formatting in case a caller passes a raw
+    // danbooru-style tag rather than going through request().
+    const cleaned = generation.formatArtistTag(tag);
     const existing = generation.positivePrompt.trim();
     let newPrompt: string;
     if (mode === "replace") {
+      const drop = new Set(this.existingArtistTags());
       const stripped = splitPromptTags(existing)
-        .filter((s) => !s.startsWith("@"))
+        .filter((s) => !drop.has(s))
         .join(", ");
       newPrompt = stripped ? `${cleaned}, ${stripped}` : cleaned;
     } else {

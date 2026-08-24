@@ -62,3 +62,13 @@ export function estimatePromptTokens(prompt: string): number {
 export function promptTokenLimit(tokens: number): number {
   return Math.max(CLIP_CHUNK_SIZE, Math.ceil(tokens / CLIP_CHUNK_SIZE) * CLIP_CHUNK_SIZE);
 }
+
+/**
+ * NovelAI's hard prompt cap.
+ *
+ * NovelAI rejects (or silently truncates) anything past this, and unlike CLIP's
+ * 75-token chunking it is a single ceiling rather than a boundary to be aware
+ * of, so the UI draws it as a bar rather than a chunk counter. The estimator
+ * above is a CLIP heuristic, so treat the reading as approximate.
+ */
+export const NOVELAI_TOKEN_LIMIT = 1471;

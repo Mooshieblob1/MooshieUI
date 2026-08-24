@@ -117,7 +117,7 @@ MooshieUI also ships custom ComfyUI nodes (tiled diffusion, soft/smart guidance,
 | State | Svelte 5 runes - class-based singleton stores |
 | Persistence | Tauri Store (JSON) + SQLite (`rusqlite`) |
 | ComfyUI transport | REST + WebSocket via Rust (reqwest, tokio-tungstenite) |
-| Inference | ONNX Runtime (`ort`) for WD EVA02 image interrogation |
+| Inference | ONNX Runtime (`ort`) for WD v3 image interrogation |
 | Autocomplete | Danbooru + Anima tag databases (~140k tags) |
 | i18n | 11 languages, 2,000+ keys, runtime switching |
 | Build | Vite 6 + `@sveltejs/vite-plugin-svelte` |
@@ -204,7 +204,7 @@ Auto-installed into ComfyUI alongside MooshieUI's own nodes:
 
 ### Models & model creators
 
-- **[WD EVA02 Large Tagger v3](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3)** (SmilingWolf) - image interrogation/tagging.
+- **[WD Taggers v3](https://huggingface.co/SmilingWolf)** (SmilingWolf) - image interrogation/tagging. EVA02 Large is the default; ViT Large, SwinV2, ConvNeXt, and ViT are selectable in Settings.
 - **[CLIPSeg](https://huggingface.co/CIDAS/clipseg-rd64-refined)** (CIDAS) - text-prompted region detection for `<segment:...>` refinement.
 - **Face detection models** - [Anzhc's YOLOs](https://huggingface.co/Anzhc/Anzhcs_YOLOs) (default face segmentation) and [ADetailer models](https://huggingface.co/Bingsu/adetailer) (Bingsu) for Face Fix.
 - **Upscalers** - OmniSR, SPAN, and DAT (IllustrationJaNai) model weights hosted by [Acly](https://huggingface.co/Acly/Omni-SR) and [AshtakaOOf](https://huggingface.co/AshtakaOOf/safetensored-upscalers).

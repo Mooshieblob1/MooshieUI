@@ -55,6 +55,8 @@ log = "0.4"
 env_logger = "0.11"
 rand = "0.10"
 base64 = "0.23"
+# NovelAI streams generations as length-prefixed msgpack frames.
+rmpv = "1"
 dirs = "6"
 sha2 = "0.10"
 argon2 = { version = "0.5", features = ["std"] }

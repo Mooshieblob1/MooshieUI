@@ -14,6 +14,9 @@
   import { models } from "../../stores/models.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import NovelAiUsage from "./NovelAiUsage.svelte";
+  import { novelai } from "../../stores/novelai.svelte.js";
+  import { estimateNovelAiCost } from "../../utils/novelaiCost.js";
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import { isBrowserMode } from "../../utils/ipc.js";
   import type { GenerationParams } from "../../types/index.js";
@@ -41,7 +44,7 @@
   let orderedRunToken = 0;
   let regionalChainToken = 0;
   const orderedWildcardRun = $derived(promptPresets.orderedWildcardRun);
-  const orderedWildcardRunCount = $derived(compare.enabled && compare.cellCount > 1 ? 0 : (orderedWildcardRun?.count ?? 0));
+  const orderedWildcardRunCount = $derived(compare.active && compare.cellCount > 1 ? 0 : (orderedWildcardRun?.count ?? 0));
   const pendingOrderedRunIds = $derived(orderedRunPromptIds.filter((id) => progress.pendingPrompts.some((prompt) => prompt.promptId === id)));
 
   const generateButtonTitle = $derived.by(() => {
@@ -111,7 +114,7 @@
   }
 
   function isSequentialGenerateRun(): boolean {
-    if (compare.enabled && compare.cellCount > 1) return true;
+    if (compare.active && compare.cellCount > 1) return true;
     if (orderedWildcardRunCount > 1) return true;
     const regionalPromptingSupported = generation.supportsRegionalPrompting;
     const useRegionalInpaintChain =
@@ -154,7 +157,7 @@
 
     try {
       // If compare grid has multiple cells, generate all cells
-      if (compare.enabled && compare.cellCount > 1) {
+      if (compare.active && compare.cellCount > 1) {
         await handleGridGenerate();
         return;
       }
@@ -528,6 +531,35 @@
 
   const canGenerate = $derived(!!generation.checkpoint);
 
+  /**
+   * Anlas the pending request is expected to cost, or null outside NovelAI mode.
+   *
+   * Computed here rather than in the generation store because the estimate
+   * needs the Opus flag from the NovelAI store, and the hub store may not
+   * import a feature store. The number is an estimate, hence the leading `~`.
+   */
+  // The estimate needs the Opus flag, and the account record it comes from is
+  // only fetched on demand. The usage readout fetches it too, but that readout
+  // sits behind a display toggle, so without this the badge quotes the full
+  // price of a generation Opus covers whenever the toggle is off.
+  $effect(() => {
+    if (generation.isNovelAi && novelai.apiKeyConfigured) void novelai.ensureSubscription();
+  });
+
+  const anlasEstimate = $derived.by(() => {
+    if (!generation.isNovelAi) return null;
+    const nai = generation.novelaiSettings;
+    return estimateNovelAiCost({
+      width: generation.width,
+      height: generation.height,
+      steps: generation.steps,
+      nSamples: generation.batchSize,
+      strength: generation.mode === "txt2img" ? 1 : nai.strength,
+      isOpus: novelai.isOpus,
+      vibeEncodes: nai.vibes.filter((v) => !v.encoding).length,
+    });
+  });
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
@@ -537,6 +569,10 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
+
+{#if generation.showNovelaiUsage}
+  <NovelAiUsage />
+{/if}
 
 <div class="flex gap-3">
   <button
@@ -554,6 +590,11 @@
       {locale.t('generation.generate_ordered', { count: orderedWildcardRunCount })}
     {:else}
       {locale.t('generation.generate')}
+    {/if}
+    {#if anlasEstimate !== null}
+      <span class="ml-2 text-[11px] font-normal opacity-80" title={locale.t('generation.novelai.cost_tip')}>
+        {locale.t('generation.novelai.cost_badge', { anlas: anlasEstimate })}
+      </span>
     {/if}
   </button>
 

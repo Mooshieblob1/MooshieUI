@@ -15,6 +15,7 @@ pub mod log_buffer;
 pub mod metadata;
 pub mod model_requests;
 pub mod notifications;
+pub mod novelai;
 #[cfg(any(feature = "desktop", feature = "server"))]
 pub mod prompt_assistant;
 #[cfg(feature = "desktop")]
@@ -544,6 +545,10 @@ pub fn run() {
             commands::websocket::disconnect_ws,
             commands::workflow::generate,
             commands::workflow::generate_controlnet_preprocessor_preview,
+            commands::novelai::novelai_augment,
+            commands::novelai::novelai_generate,
+            commands::novelai::novelai_subscription,
+            commands::novelai::set_novelai_api_key,
             commands::config::get_config,
             commands::config::update_config,
             commands::config::get_gallery_path,
@@ -553,6 +558,8 @@ pub fn run() {
             commands::interrogator::interrogate_image_path,
             commands::interrogator::interrogate_gallery_image,
             commands::interrogator::interrogate_clipboard,
+            commands::interrogator::list_interrogator_models,
+            commands::interrogator::delete_interrogator_model,
             commands::prompt_assistant::detect_llm_hardware,
             commands::prompt_assistant::list_llm_catalog,
             commands::prompt_assistant::llm_status,

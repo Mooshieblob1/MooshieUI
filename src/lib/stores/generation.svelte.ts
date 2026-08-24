@@ -19,7 +19,19 @@ import {
   toTurboModelVariant,
 } from "../utils/modelFamily.js";
 import { readModelSpec, type ModelSpec } from "../utils/api.js";
+import { GENERIC_SAMPLING, recommendedSamplingFor } from "../utils/samplingRecommendation.js";
 import { H3_TURBO_LORA } from "../utils/h3Models.js";
+import { artistTagPromptBody } from "../utils/artistTag.js";
+import {
+  NOVELAI_DEFAULTS,
+  findNovelAiModel,
+  isNovelAiModel,
+  snapNovelAiDimension,
+  toNovelAiSampler,
+  NOVELAI_MAX_CHARACTERS,
+  NOVELAI_MAX_VIBES,
+  NOVELAI_MAX_DIRECTOR_REFERENCES,
+} from "../utils/novelaiModels.js";
 import {
   H3_DIFFUSION_MARKERS,
   H3_MAX_REF_IMAGES,
@@ -30,12 +42,18 @@ import {
   computeH3Dimensions,
   computeH3FrameLength,
 } from "../utils/videoParams.js";
+import type { NaiLanguageChoice } from "../utils/naiLanguage.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import type {
   ExtraPromptBox,
   GenerationMode,
   GenerationParams,
   LoraEntry,
+  NovelAiCharacter,
+  NovelAiDirectorReference,
+  NovelAiParams,
+  NovelAiVibe,
+  NovelAiVibeEncoding,
   RegionalPromptSelection,
   RegionalPromptStrategy,
   VideoAspectRatio,
@@ -87,6 +105,81 @@ const UNKNOWN_MODEL_METADATA = {
   modelRecommendedClipModel: null,
   modelRecommendedClipType: null,
 };
+
+/**
+ * The NovelAI settings the UI owns, held in the exact shape they are sent in.
+ *
+ * Kept in wire shape (snake_case) rather than mirrored into camelCase fields
+ * because `toParams()` maps by hand and a mismatch there fails silently. The
+ * four omitted fields are derived at send time: `model` and `action` come from
+ * the selected checkpoint and mode, and the two `local_*` prompts are an
+ * override the UI does not expose yet.
+ */
+export type NovelAiSettings = Omit<
+  NovelAiParams,
+  "model" | "action" | "local_positive_prompt" | "local_negative_prompt"
+>;
+
+/** NovelAI's own recommended starting point. Mirrors `novelai/params.rs`. */
+export function createDefaultNovelAiSettings(): NovelAiSettings {
+  return {
+    sampler: NOVELAI_DEFAULTS.sampler,
+    noise_schedule: NOVELAI_DEFAULTS.noiseSchedule,
+    cfg_rescale: NOVELAI_DEFAULTS.cfgRescale,
+    uncond_scale: 1.0,
+    dynamic_thresholding: false,
+    variety_plus: false,
+    quality_toggle: true,
+    uc_preset: 0,
+    legacy_uc: false,
+    characters: [],
+    use_coords: false,
+    strength: 0.7,
+    noise: 0,
+    add_original_image: true,
+    vibes: [],
+    normalize_reference_strength: false,
+    director_references: [],
+    local_post_process: false,
+    local_checkpoint: null,
+    local_architecture: null,
+    local_is_vpred: false,
+    local_model_category: null,
+    local_use_split_model: false,
+    local_clip_model: null,
+    local_clip_type: null,
+    local_vae: null,
+    local_sampler: null,
+    local_scheduler: null,
+    local_cfg: null,
+  };
+}
+
+/**
+ * Map a recommended companion file onto what is actually installed.
+ *
+ * The backend recommends a plain filename; the installed list may carry the
+ * same file under a subfolder ("clip/te.safetensors"). An exact hit wins, then
+ * a basename match, and failing both the recommendation is kept so ComfyUI
+ * reports the missing file rather than the app silently loading nothing.
+ */
+function matchInstalledModel(name: string | null | undefined, installed: string[]): string | null {
+  const wanted = name?.trim();
+  if (!wanted) return null;
+  if (installed.includes(wanted)) return wanted;
+  const basename = (path: string) => path.split(/[\\/]/).pop() ?? path;
+  return installed.find((candidate) => basename(candidate) === basename(wanted)) ?? wanted;
+}
+
+/** A blank character prompt, centred. */
+export function createNovelAiCharacter(): NovelAiCharacter {
+  return {
+    prompt: "",
+    negative_prompt: "",
+    center: { x: 0.5, y: 0.5 },
+    enabled: true,
+  };
+}
 
 export interface GenerationToParamsOptions {
   fixedPresetChoices?: ReadonlyMap<string, string>;
@@ -482,6 +575,33 @@ class GenerationStore {
    */
   promptBuckets = $state<PromptBuckets>(createDefaultPromptBuckets());
   checkpoint = $state("");
+  /**
+   * NovelAI's half of the request. Only sent when `checkpoint` names a NovelAI
+   * model, so it can be edited at any time without affecting a local
+   * generation.
+   */
+  novelaiSettings = $state<NovelAiSettings>(createDefaultNovelAiSettings());
+  /**
+   * Pin the Anlas and Opus readout above the generate button.
+   *
+   * Display only, so it is deliberately not part of `novelaiSettings`: that
+   * object is the request wire shape and every field in it is sent to NovelAI.
+   *
+   * On by default. The readout only renders once a NovelAI key is configured,
+   * and a balance that has to be turned on is a balance nobody sees before
+   * spending against it. Desktop and browser mode keep separate stores, so the
+   * default is also what keeps a fresh browser client matching the desktop app.
+   */
+  showNovelaiUsage = $state(true);
+  /**
+   * Target language for the V5 prompt enhance.
+   *
+   * `"auto"` reads it off the prompt, which is right almost always. The override
+   * exists for the case detection cannot cover: writing the idea in English and
+   * wanting the prompt out in Japanese. Display only, like the usage readout, so
+   * it stays out of `novelaiSettings`.
+   */
+  naiEnhanceLanguage = $state<NaiLanguageChoice>("auto");
   vae = $state("");
   loras = $state<LoraEntry[]>([]);
   samplerName = $state("euler_cfg_pp");
@@ -1022,6 +1142,90 @@ class GenerationStore {
     ].includes(this.modelFamily);
   }
 
+  /**
+   * True when the selected model runs on NovelAI rather than local ComfyUI.
+   *
+   * This is the switch the whole NovelAI mode hangs off: it picks the backend
+   * in `requestGeneration`, and the UI uses it to hide controls ComfyUI owns.
+   */
+  get isNovelAi(): boolean {
+    return isNovelAiModel(this.checkpoint);
+  }
+
+  /** Capability flags for the selected NovelAI model, or null outside NovelAI mode. */
+  get novelAiModel() {
+    return findNovelAiModel(this.checkpoint) ?? null;
+  }
+
+  /** True when the model takes per-character prompts. */
+  get supportsNovelAiCharacters(): boolean {
+    return this.novelAiModel?.v4Prompt ?? false;
+  }
+
+  /**
+   * True when Precise Reference (also called character reference) is available.
+   *
+   * Mutually exclusive with vibe transfer: NovelAI rejects a request carrying
+   * both, so the UI must let only one be active at a time.
+   */
+  get supportsNovelAiPreciseReference(): boolean {
+    return this.novelAiModel?.preciseReference ?? false;
+  }
+
+  get supportsNovelAiVibeTransfer(): boolean {
+    return this.novelAiModel?.vibeTransfer ?? false;
+  }
+
+  /**
+   * The sigil to put in front of an artist tag when inserting it into a
+   * prompt or copying it to the clipboard.
+   *
+   * ComfyUI mode keeps the `@artist` convention. NovelAI mode inserts the
+   * tag bare, because there `@` is the prompt-chunk reference sigil
+   * (`@[chunk name]`) and a stray one would read as a broken chunk
+   * reference rather than an artist.
+   *
+   * Every feature that writes an artist tag goes through this so the
+   * convention is decided in one place. Matching and removal must agree,
+   * which is why `isArtistTagToken()` takes the same prefix.
+   */
+  get artistTagPrefix(): string {
+    return this.isNovelAi ? "" : "@";
+  }
+
+  /**
+   * The sigil the *saved style* form uses, which is a narrower rule than
+   * `artistTagPrefix`: only Anima-family checkpoints were trained on
+   * `@artist`, so a style built for SDXL/Pony/Illustrious stores the bare
+   * danbooru name.
+   *
+   * NovelAI is excluded explicitly rather than relying on the family test.
+   * A NovelAI model id is not a safetensors file, so no family metadata is
+   * ever resolved for it, and leaning on `isAnima` alone would depend on
+   * that clearing having happened.
+   */
+  get animaArtistTagPrefix(): string {
+    return !this.isNovelAi && this.isAnima ? "@" : "";
+  }
+
+  /**
+   * Normalise a raw tag and prefix it for the current mode: underscores
+   * become spaces (danbooru convention), unescaped parens and any trailing
+   * `+`/`-` run are escaped so the prompt round-trips through the scheduler
+   * and the emphasis translator, and any sigil the caller already supplied is
+   * replaced rather than doubled.
+   */
+  formatArtistTag(tag: string): string {
+    return this.artistTagPrefix + artistTagPromptBody(tag);
+  }
+
+  /** Character prompts that would actually be sent. */
+  get activeNovelAiCharacters(): NovelAiCharacter[] {
+    return this.novelaiSettings.characters.filter(
+      (c) => c.enabled && c.prompt.trim() !== "",
+    );
+  }
+
   /** True when the model uses rectified flow scheduling (SD3, Flux, AuraFlow, Mugen, Nanosaur). */
   get usesRectifiedFlow(): boolean {
     return this.isSd3 || this.isFlux || this.isAuraFlow || this.isMugen || this.isNanosaur;
@@ -1288,11 +1492,15 @@ class GenerationStore {
   /** SDXL-style area conditioning (ConditioningSetArea). */
   get supportsRegionalConditioning(): boolean {
     if (this.mode !== "txt2img") return false;
+    // Both regional strategies are ComfyUI graph rewrites. NovelAI takes a
+    // finished prompt over HTTP, so neither can apply there.
+    if (this.isNovelAi) return false;
     return this.isSdxlLike;
   }
 
   /** Sequential masked inpaint per region (works on Anima + optional SDXL). */
   get supportsRegionalInpaintChain(): boolean {
+    if (this.isNovelAi) return false;
     return this.mode === "txt2img" && (this.isAnima || this.supportsRegionalConditioning);
   }
 
@@ -1542,6 +1750,269 @@ class GenerationStore {
     if (preset.fluxGuidance !== undefined) {
       this.fluxGuidance = preset.fluxGuidance;
     }
+  }
+
+  /**
+   * Switch to a NovelAI model.
+   *
+   * NovelAI models have no file on disk, so none of the metadata detection that
+   * `selectCheckpoint` triggers applies. This clears the local-model state that
+   * would otherwise linger and applies NovelAI's own recommended sampling
+   * settings, which differ sharply from any local model's.
+   */
+  selectNovelAiModel(id: string) {
+    this.useSplitModel = false;
+    this.diffusionModel = null;
+    this.modelSourceCategory = null;
+    this.clipModel = null;
+    this.clipType = null;
+    this.vae = "";
+    this.loras = [];
+    this.checkpoint = id;
+    this.applyModelMetadata(UNKNOWN_MODEL_METADATA);
+    this.novelaiSettings = {
+      ...this.novelaiSettings,
+      sampler: toNovelAiSampler(this.novelaiSettings.sampler),
+    };
+    // Applied unconditionally rather than through `applyModelSpecificPreset`:
+    // its Advanced Mode escape hatch preserves the user's params on a swap, and
+    // a local model's steps and CFG are simply wrong for NovelAI.
+    this.steps = NOVELAI_DEFAULTS.steps;
+    this.cfg = NOVELAI_DEFAULTS.cfg;
+    // NovelAI rejects any dimension off a 64px grid. Snapping here rather than
+    // only in DimensionControls covers the panel being collapsed or unmounted,
+    // and a local model is happy on the coarser grid too.
+    this.width = snapNovelAiDimension(this.width);
+    this.height = snapNovelAiDimension(this.height);
+    // Keyed as applied so a later switch back to a local model still re-presets.
+    this.modelPresetAppliedKey = `cp:${id}|novelai|none`;
+    this.saveSettings();
+  }
+
+  /**
+   * Patch NovelAI's wire settings.
+   *
+   * Spread-replaced rather than mutated in place so the object the persisted
+   * snapshot captures is a new one, and persisted immediately: these are
+   * request fields, and a lost write silently changes what NovelAI is asked for.
+   */
+  updateNovelAiSettings(patch: Partial<NovelAiSettings>) {
+    this.novelaiSettings = { ...this.novelaiSettings, ...patch };
+    this.saveSettings();
+  }
+
+  /**
+   * Pick the local model the free post-process pass samples with.
+   *
+   * Architecture, v-pred and loader mode travel with that model, not with the
+   * selected one: `checkpoint` names a NovelAI model in this mode, so the usual
+   * metadata pass has nothing to say about the refiner and the spec has to be
+   * read separately. Passing null clears the lot together, since a stale
+   * architecture or text encoder would be applied to whatever is picked next.
+   *
+   * Split-file models are offered alongside checkpoints and carry no text
+   * encoder or VAE of their own, so the companions are resolved here from the
+   * spec's recommendations. `encoders` and `vaes` are passed in rather than
+   * read from the models store: this store must not import feature stores.
+   */
+  async setNovelAiLocalCheckpoint(
+    filename: string | null,
+    category = "checkpoints",
+    encoders: string[] = [],
+    vaes: string[] = [],
+  ) {
+    if (!filename) {
+      this.updateNovelAiSettings({
+        local_checkpoint: null,
+        local_architecture: null,
+        local_is_vpred: false,
+        local_model_category: null,
+        local_use_split_model: false,
+        local_clip_model: null,
+        local_clip_type: null,
+        local_vae: null,
+        local_sampler: null,
+        local_scheduler: null,
+        local_cfg: null,
+      });
+      return;
+    }
+    this.updateNovelAiSettings({
+      local_checkpoint: filename,
+      local_model_category: category,
+    });
+    let spec: ModelSpec | null = null;
+    try {
+      spec = await readModelSpec(category, filename);
+    } catch {
+      spec = null;
+    }
+    // A later pick may have landed while the spec read was in flight.
+    if (this.novelaiSettings.local_checkpoint !== filename) return;
+
+    // Detection wins over the folder it was listed under: a split file dropped
+    // into checkpoints/ still needs the UNET loaders, and a full checkpoint
+    // filed under diffusion_models/ still needs CheckpointLoaderSimple. GGUF is
+    // left on the folder's word, as UnetLoaderGGUF has no absolute-path input.
+    const modelKind = filename.toLowerCase().endsWith(".gguf")
+      ? null
+      : (spec?.model_kind ?? null);
+    const useSplit =
+      modelKind === "diffusion_model"
+        ? true
+        : modelKind === "checkpoint"
+          ? false
+          : category === "diffusion_models";
+
+    // The sampler has to be settled here, not at send time: the top-level
+    // sampler and CFG belong to the NovelAI request, whose sampler names
+    // ComfyUI does not share, and the sampler panel is hidden in NovelAI mode
+    // so nothing else fills them. Steps and denoise are left alone, because
+    // the upscale and face-fix panels own those. Falling back to a generic
+    // middle rather than to nothing, because the local pass has to put some
+    // sampler in the graph.
+    const rec = recommendedSamplingFor(filename, spec?.family) ?? GENERIC_SAMPLING;
+
+    this.updateNovelAiSettings({
+      local_architecture: spec?.family ?? null,
+      local_is_vpred: signalsIndicateVPred({
+        filename,
+        modelspecPredictionType: spec?.prediction_type ?? null,
+        modelspecPredictKey: spec?.predict_key ?? null,
+        headerVPred: spec?.header_v_pred === "true",
+      }),
+      local_use_split_model: useSplit,
+      local_clip_model: useSplit
+        ? matchInstalledModel(spec?.recommended_clip_model, encoders)
+        : null,
+      local_clip_type: useSplit ? (spec?.recommended_clip_type ?? null) : null,
+      local_vae: useSplit ? matchInstalledModel(spec?.recommended_vae, vaes) : null,
+      local_sampler: rec.samplerName,
+      local_scheduler: rec.scheduler,
+      local_cfg: rec.cfg,
+    });
+  }
+
+  /** Append a blank character prompt, up to the limit NovelAI's own UI offers. */
+  addNovelAiCharacter() {
+    if (this.novelaiSettings.characters.length >= NOVELAI_MAX_CHARACTERS) return;
+    this.updateNovelAiSettings({
+      characters: [...this.novelaiSettings.characters, createNovelAiCharacter()],
+    });
+  }
+
+  updateNovelAiCharacter(index: number, patch: Partial<NovelAiCharacter>) {
+    this.updateNovelAiSettings({
+      characters: this.novelaiSettings.characters.map((c, i) =>
+        i === index ? { ...c, ...patch } : c,
+      ),
+    });
+  }
+
+  removeNovelAiCharacter(index: number) {
+    this.updateNovelAiSettings({
+      characters: this.novelaiSettings.characters.filter((_, i) => i !== index),
+    });
+  }
+
+  /**
+   * Add a vibe from a base64 PNG.
+   *
+   * Vibe transfer and Precise Reference cannot both be sent: the payload
+   * builder drops vibes as soon as a director reference is present, so adding
+   * one here clears the other outright rather than leaving a panel populated
+   * with settings that are silently ignored.
+   */
+  addNovelAiVibe(image: string) {
+    if (this.novelaiSettings.vibes.length >= NOVELAI_MAX_VIBES) return;
+    this.updateNovelAiSettings({
+      vibes: [
+        ...this.novelaiSettings.vibes,
+        {
+          image,
+          encoding: null,
+          encoded_model: null,
+          encoded_information_extracted: null,
+          strength: 0.6,
+          information_extracted: 1.0,
+        },
+      ],
+      director_references: [],
+    });
+  }
+
+  updateNovelAiVibe(index: number, patch: Partial<NovelAiVibe>) {
+    this.updateNovelAiSettings({
+      vibes: this.novelaiSettings.vibes.map((v, i) => (i === index ? { ...v, ...patch } : v)),
+    });
+  }
+
+  /**
+   * Store the `.naiv4vibe` tokens the backend minted for these vibes.
+   *
+   * NovelAI charges 2 Anlas per encode, so keeping the token next to the
+   * image it came from is what stops a re-run, or a restart, from paying
+   * again. The model and extraction level travel with it: the backend
+   * re-encodes when either no longer matches.
+   */
+  applyNovelAiVibeEncodings(entries: NovelAiVibeEncoding[]) {
+    const byIndex = new Map(entries.map((e) => [e.index, e]));
+    if (byIndex.size === 0) return;
+    this.updateNovelAiSettings({
+      vibes: this.novelaiSettings.vibes.map((vibe, index) => {
+        const entry = byIndex.get(index);
+        if (!entry) return vibe;
+        return {
+          ...vibe,
+          encoding: entry.encoding,
+          encoded_model: entry.encoded_model ?? null,
+          encoded_information_extracted: entry.encoded_information_extracted ?? null,
+        };
+      }),
+    });
+  }
+
+  removeNovelAiVibe(index: number) {
+    this.updateNovelAiSettings({
+      vibes: this.novelaiSettings.vibes.filter((_, i) => i !== index),
+    });
+  }
+
+  /** Add a Precise Reference, clearing vibes for the same reason as above. */
+  addNovelAiDirectorReference(image: string) {
+    if (this.novelaiSettings.director_references.length >= NOVELAI_MAX_DIRECTOR_REFERENCES) return;
+    this.updateNovelAiSettings({
+      director_references: [
+        ...this.novelaiSettings.director_references,
+        { image, description: "character", information_extracted: 1.0, strength: 1.0 },
+      ],
+      vibes: [],
+    });
+  }
+
+  updateNovelAiDirectorReference(index: number, patch: Partial<NovelAiDirectorReference>) {
+    this.updateNovelAiSettings({
+      director_references: this.novelaiSettings.director_references.map((r, i) =>
+        i === index ? { ...r, ...patch } : r,
+      ),
+    });
+  }
+
+  removeNovelAiDirectorReference(index: number) {
+    this.updateNovelAiSettings({
+      director_references: this.novelaiSettings.director_references.filter((_, i) => i !== index),
+    });
+  }
+
+  /** Restore NovelAI's own recommended sampling settings. */
+  applyNovelAiRecommendedSampling() {
+    this.steps = NOVELAI_DEFAULTS.steps;
+    this.cfg = NOVELAI_DEFAULTS.cfg;
+    this.updateNovelAiSettings({
+      sampler: NOVELAI_DEFAULTS.sampler,
+      noise_schedule: NOVELAI_DEFAULTS.noiseSchedule,
+      cfg_rescale: NOVELAI_DEFAULTS.cfgRescale,
+    });
   }
 
   applyModelSpecificPreset() {
@@ -1990,6 +2461,17 @@ class GenerationStore {
         if (saved.videoVaeModel !== undefined) this.videoVaeModel = saved.videoVaeModel;
         if (saved.videoAudioVaeModel !== undefined)
           this.videoAudioVaeModel = saved.videoAudioVaeModel;
+        // Merged over the defaults rather than assigned, so a settings blob
+        // written by an older build still gets every field NovelAI now needs.
+        if (saved.novelaiSettings !== undefined)
+          this.novelaiSettings = {
+            ...createDefaultNovelAiSettings(),
+            ...(saved.novelaiSettings as Partial<NovelAiSettings>),
+          };
+        if (saved.showNovelaiUsage !== undefined)
+          this.showNovelaiUsage = saved.showNovelaiUsage;
+        if (saved.naiEnhanceLanguage !== undefined)
+          this.naiEnhanceLanguage = saved.naiEnhanceLanguage;
         if (saved.styleTransferLowScaleEnd !== undefined) this.styleTransferLowScaleEnd = saved.styleTransferLowScaleEnd;
         if (saved.styleTransferHighScaleStart !== undefined) this.styleTransferHighScaleStart = saved.styleTransferHighScaleStart;
         if (saved.styleTransferBeta !== undefined) this.styleTransferBeta = saved.styleTransferBeta;
@@ -2213,6 +2695,9 @@ class GenerationStore {
         videoClipModel: this.videoClipModel,
         videoVaeModel: this.videoVaeModel,
         videoAudioVaeModel: this.videoAudioVaeModel,
+        novelaiSettings: this.novelaiSettings,
+        showNovelaiUsage: this.showNovelaiUsage,
+        naiEnhanceLanguage: this.naiEnhanceLanguage,
       });
       triggerSync();
     } catch (e) {
@@ -2341,6 +2826,9 @@ class GenerationStore {
       videoClipModel: this.videoClipModel,
       videoVaeModel: this.videoVaeModel,
       videoAudioVaeModel: this.videoAudioVaeModel,
+      novelaiSettings: this.novelaiSettings,
+      showNovelaiUsage: this.showNovelaiUsage,
+      naiEnhanceLanguage: this.naiEnhanceLanguage,
     };
   }
 
@@ -2370,6 +2858,62 @@ class GenerationStore {
     } catch (e) {
       console.error("generation: applyPromptHistory failed", e);
     }
+  }
+
+  /**
+   * The NovelAI half of the request, or null for an ordinary local generation.
+   *
+   * `model` and `action` are derived here rather than stored: the model is
+   * whatever checkpoint is selected, and the action follows the generation
+   * mode. Rust's `normalise_action()` degrades an action back down when the
+   * image or mask it needs is missing, so a stale mode cannot burn Anlas on a
+   * request NovelAI would reject.
+   *
+   * Both `local_*` prompts stay null. The NovelAI syntax reversal happens in
+   * Rust while building the payload and never touches `params`, so the
+   * top-level prompt is still the ComfyUI-syntax one the free local pass wants.
+   */
+  private novelAiParams(characters: NovelAiCharacter[]): NovelAiParams | null {
+    if (!isNovelAiModel(this.checkpoint)) return null;
+    const action =
+      this.mode === "inpainting" ? "infill" : this.mode === "img2img" ? "img2img" : "generate";
+    return {
+      ...this.novelaiSettings,
+      characters,
+      model: this.checkpoint,
+      action,
+      local_positive_prompt: null,
+      local_negative_prompt: null,
+    };
+  }
+
+  /**
+   * Inline chunk resolution for the NovelAI per-character prompt boxes.
+   *
+   * They are prompt fields like any other, so `@[Chunk]` has to mean there
+   * what it means in the main box. Without this the token travels to NovelAI
+   * as literal text and silently becomes part of the character's prompt.
+   *
+   * Returns the rewritten characters plus the chunk ids consumed, so a chunk
+   * spliced in inline is not appended a second time by the active-chunk pass.
+   */
+  private resolveNovelAiCharacters(fixedChoices?: ReadonlyMap<string, string>): {
+    characters: NovelAiCharacter[];
+    inlineIds: Set<string>;
+  } {
+    const inlineIds = new Set<string>();
+    const characters = (this.novelaiSettings.characters ?? []).map((character) => {
+      for (const id of promptPresets.inlinePresetIds(character.prompt)) inlineIds.add(id);
+      for (const id of promptPresets.inlinePresetIds(character.negative_prompt)) {
+        inlineIds.add(id);
+      }
+      return {
+        ...character,
+        prompt: promptPresets.resolveInline(character.prompt, { fixedChoices }),
+        negative_prompt: promptPresets.resolveInline(character.negative_prompt, { fixedChoices }),
+      };
+    });
+    return { characters, inlineIds };
   }
 
   toParams(options: GenerationToParamsOptions = {}) {
@@ -2425,7 +2969,12 @@ class GenerationStore {
     // occurrence rolls independently.
     const inlinePositiveIds = promptPresets.inlinePresetIds(effectivePositive);
     const inlineNegativeIds = promptPresets.inlinePresetIds(effectiveNegative);
-    const inlinePresetIds = new Set([...inlinePositiveIds, ...inlineNegativeIds]);
+    const novelAiCharacters = this.resolveNovelAiCharacters(options.fixedPresetChoices);
+    const inlinePresetIds = new Set([
+      ...inlinePositiveIds,
+      ...inlineNegativeIds,
+      ...novelAiCharacters.inlineIds,
+    ]);
     const inlinePositive = promptPresets.resolveInline(effectivePositive, {
       fixedChoices: options.fixedPresetChoices,
     });
@@ -2444,7 +2993,10 @@ class GenerationStore {
     // Inject tags contributed by any currently-active Artist Styles. These are
     // not visible in the prompt textbox — they flow straight into the payload
     // so the user sees badges in the UI instead.
-    const styleFragment = styles.buildPromptFragment();
+    // NovelAI mode strips the `@` a style may have stored: a style built
+    // while an Anima checkpoint was selected holds `@artist`, and `@` is
+    // the prompt-chunk sigil on NovelAI, not an artist marker.
+    const styleFragment = styles.buildPromptFragment(this.isNovelAi);
     if (styleFragment) {
       positivePrompt = this.mergeTagPrompts(positivePrompt, styleFragment);
     }
@@ -2753,6 +3305,9 @@ class GenerationStore {
       // Node widgets rather than `timeline_data` keys, so they travel beside it.
       video_timeline_custom_motion: timeline?.useCustomMotion ?? false,
       video_timeline_custom_audio: timeline?.useCustomAudio ?? false,
+      // Null for every local generation, so the backend's NovelAI branch is
+      // never reachable from one.
+      novelai: this.novelAiParams(novelAiCharacters.characters),
     };
 
     if (options.overrides) {

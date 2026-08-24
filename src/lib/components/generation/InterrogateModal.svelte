@@ -32,7 +32,9 @@
 <script lang="ts">
   import type { InterrogationResult, TagResult } from "../../types/index.js";
   import { generation } from "../../stores/generation.svelte.js";
+  import { gallery } from "../../stores/gallery.svelte.js";
   import { locale } from "../../stores/locale.svelte.js";
+  import { escapeArtistParens, isArtistTagToken } from "../../utils/artistTag.js";
 
   interface Props {
     result: InterrogationResult | null;
@@ -124,16 +126,17 @@
     );
   });
 
-  /** Format an artist tag for Anima models with @ prefix */
+  /** Format an artist tag for Anima models with the `@` prefix. */
   function formatArtistTagForAnima(tagName: string, lookup?: Record<string, string>): string {
     const normalized = normalizeArtistTagForLookup(tagName);
     const animaMatch = lookup?.[normalized];
     if (animaMatch) {
       return animaMatch;
     }
-    // Not in anima list — format with @ prefix and escape parens
-    const escaped = normalized.replace(/\(/g, "\\(").replace(/\)/g, "\\)");
-    return `@${escaped}`;
+    // Not in the anima list, so build the tag here: the sigil comes from
+    // the store rather than a literal, and parens are escaped so the
+    // prompt round-trips through the scheduler.
+    return generation.animaArtistTagPrefix + escapeArtistParens(normalized);
   }
 
   async function handleApply() {
@@ -191,12 +194,17 @@
       const parts: string[] = [];
 
       if (preserveArtistTags) {
-        // Extract artist tags from the current prompt (@ prefixed but not @_@)
+        // Extract artist tags from the current prompt. The sigil is
+        // mode-dependent, so NovelAI mode falls back to the artist index to
+        // tell a bare artist tag apart from any other danbooru tag. `@_@` is
+        // an emoticon tag, never an artist, so it is excluded either way.
         const existing = generation.positivePrompt.trim();
         if (existing) {
+          const prefix = generation.artistTagPrefix;
+          const index = gallery.artistIndexReady ? gallery.artistTagIndex : null;
           const existingTags = existing.split(",").map((t) => t.trim()).filter(Boolean);
           const preserved = existingTags.filter(
-            (t) => t.startsWith("@") && !t.startsWith("@_@")
+            (t) => isArtistTagToken(t, prefix, index) && !t.startsWith("@_@"),
           );
           if (preserved.length > 0) parts.push(preserved.join(", "));
         }

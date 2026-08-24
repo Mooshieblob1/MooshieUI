@@ -8,6 +8,8 @@
   import { promptPresets } from "../../stores/promptPresets.svelte.js";
   import PromptTextarea from "./PromptTextarea.svelte";
   import ExtraPromptBoxList from "./ExtraPromptBoxList.svelte";
+  import PromptChunkPicker from "./PromptChunkPicker.svelte";
+  import NovelAiTokenBar from "./NovelAiTokenBar.svelte";
   import InfoTip from "../ui/InfoTip.svelte";
   import { parseScheduledPrompt, hasRegionalTags, hasSchedulingTags } from "../../utils/promptSchedule.js";
   import { joinPromptBoxes } from "../../utils/promptSanitize.js";
@@ -18,6 +20,9 @@
   import PromptComposeModal from "./PromptComposeModal.svelte";
   import H3PromptGuide from "../video/H3PromptGuide.svelte";
   import { buildH3Context } from "../../utils/h3Prompt.js";
+  import { naiV5Variant } from "../../utils/novelaiModels.js";
+  import { naiEnhance } from "../../stores/naiEnhance.svelte.js";
+  import { mapLlmError } from "../../utils/llmError.js";
 
   interface Props {
     showHistory?: boolean;
@@ -101,7 +106,7 @@
   let undoSnapshot = $state<string | null>(null);
   let showUndo = $state(false);
   let undoTimer: ReturnType<typeof setTimeout> | null = null;
-  let _pendingAction = $state<"enhance" | "enhance_h3" | "compose" | null>(null);
+  let _pendingAction = $state<"enhance" | "enhance_h3" | "enhance_nai" | "compose" | null>(null);
 
   async function onEnhanceClick() {
     if (!promptAssistant.isAvailable) {
@@ -187,6 +192,23 @@
     }
   }
 
+  // V5 wants a natural language scene body and structured character boxes, which
+  // is the opposite of what the danbooru enhance produces. V4.5 and V4 keep the
+  // existing path, so this is a variant check and not an isNovelAi check.
+  const naiVariant = $derived(naiV5Variant(generation.checkpoint));
+  const isNaiV5 = $derived(!isVideoMode && generation.isNovelAi && naiVariant !== null);
+
+  // The V5 rewrite takes its own instructions rather than the prompt box, so the
+  // button only opens the modal; the modal owns the call and the review.
+  function onEnhanceNaiClick() {
+    if (!promptAssistant.isAvailable) {
+      _pendingAction = "enhance_nai";
+      promptAssistant.setupModalOpen = true;
+      return;
+    }
+    naiEnhance.openInput();
+  }
+
   function onComposeClick() {
     if (!promptAssistant.isAvailable) {
       _pendingAction = "compose";
@@ -211,24 +233,12 @@
     showUndo = false;
   }
 
-  function mapLlmError(msg: string): string {
-    if (msg.includes("busy_generation")) return locale.t("prompt_assistant.busy_generation");
-    if (msg.includes("no_model")) return locale.t("prompt_assistant.no_model");
-    // Surface the real backend reason (llama-server crash tail, missing shared
-    // library, health timeout, etc.) instead of a generic message — the detailed
-    // string is what makes a failed enhance diagnosable, especially on headless
-    // server deployments where the only signal the user sees is this toast.
-    const detail = msg.replace(/^Error:\s*/, "").trim();
-    return detail
-      ? `${locale.t("prompt_assistant.error_generic")}: ${detail}`
-      : locale.t("prompt_assistant.error_generic");
-  }
-
   function onSetupInstalled() {
     const action = _pendingAction;
     _pendingAction = null;
     if (action === "enhance") runEnhance();
     else if (action === "enhance_h3") runEnhanceH3();
+    else if (action === "enhance_nai") naiEnhance.openInput();
     else if (action === "compose") promptAssistant.composeModalOpen = true;
   }
 
@@ -350,11 +360,18 @@
              out rather than offering both. -->
         <button
           class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-          disabled={promptAssistant.isGenerating || !generation.positivePrompt?.trim()}
+          disabled={promptAssistant.isGenerating ||
+            (!isNaiV5 && !generation.positivePrompt?.trim())}
           title={isVideoMode
             ? locale.t("prompt_assistant.enhance_h3_tooltip")
-            : locale.t("prompt_assistant.enhance_tooltip")}
-          onclick={isVideoMode ? onEnhanceH3Click : onEnhanceClick}
+            : isNaiV5
+              ? locale.t("prompt_assistant.enhance_nai_tooltip")
+              : locale.t("prompt_assistant.enhance_tooltip")}
+          onclick={isVideoMode
+            ? onEnhanceH3Click
+            : isNaiV5
+              ? onEnhanceNaiClick
+              : onEnhanceClick}
         >
           {#if promptAssistant.isGenerating}
             <span class="inline-block animate-spin">⟳</span>
@@ -363,7 +380,9 @@
           {/if}
           {isVideoMode
             ? locale.t("prompt_assistant.enhance_h3")
-            : locale.t("prompt_assistant.enhance")}
+            : isNaiV5
+              ? locale.t("prompt_assistant.enhance_nai")
+              : locale.t("prompt_assistant.enhance")}
         </button>
         {#if !isVideoMode}
           <!-- Compose builds a tag list from a description. Nothing downstream of
@@ -385,12 +404,27 @@
             ↩ {locale.t("prompt_assistant.undo")}
           </button>
         {/if}
+        {#if naiEnhance.showUndo}
+          <!-- Its own pill, because the V5 undo restores the character boxes too
+               and the text-only one would silently leave them rewritten. -->
+          <button
+            class="rounded-lg border border-neutral-600 px-2 py-0.5 text-[10px] text-indigo-400 hover:bg-neutral-800"
+            onclick={() => naiEnhance.undo()}
+          >
+            ↩ {locale.t("prompt_assistant.nai_undo")}
+          </button>
+        {/if}
         {#if promptAssistant.stage === "loading_model"}
           <span class="text-[10px] text-neutral-400">{locale.t("prompt_assistant.loading_model")}</span>
         {/if}
       </div>
       <div class="flex items-center gap-1.5">
         {#if !isVideoMode}
+          <PromptChunkPicker />
+        {/if}
+        <!-- NovelAI has no regional conditioning at all, so the button is gone
+             there rather than shown disabled with an "unsupported" toast. -->
+        {#if !isVideoMode && !generation.isNovelAi}
           <button
             type="button"
             disabled={!regionalPromptingSupported}
@@ -424,7 +458,10 @@
       tagAssist={!isVideoMode}
       highlightLoraWords={true}
     />
-    {#if !isVideoMode && hasRegionalPrompting && !regionalPromptingSupported}
+    {#if generation.isNovelAi}
+      <NovelAiTokenBar side="positive" />
+    {/if}
+    {#if !isVideoMode && !generation.isNovelAi && hasRegionalPrompting && !regionalPromptingSupported}
       <p class="mt-1 text-[10px] text-amber-300">
         {locale.t("generation.regional.unsupported")}
       </p>
@@ -461,6 +498,9 @@
       storageKey="mooshieui.promptHeight.negative"
       tagAssist={!isVideoMode}
     />
+    {#if generation.isNovelAi}
+      <NovelAiTokenBar side="negative" />
+    {/if}
     <ExtraPromptBoxList side="negative" />
   </div>
   {/snippet}

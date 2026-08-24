@@ -9,10 +9,12 @@ import type {
   GenerationParams,
   GpuStats,
   InterrogationResult,
+  InterrogatorModelStatus,
   LlmCatalogEntry,
   LlmHardware,
   LlmProviderState,
   LlmStatus,
+  NovelAiSubscription,
   OutputImage,
   PromptAssistantOpts,
   QueueInfo,
@@ -42,6 +44,87 @@ export interface GenerateResponse {
 
 export async function generate(params: GenerationParams): Promise<GenerateResponse> {
   return ipcInvoke("generate", { params });
+}
+
+/**
+ * NovelAI's answer to `generate`. There is no queue position: NovelAI requests
+ * use no local GPU and so never enter the fair queue.
+ */
+export interface NovelAiGenerateResponse {
+  prompt_id: string;
+  /** Decimal string, matching `GenerateResponse.seed`. */
+  seed: string;
+}
+
+/**
+ * Start a NovelAI generation. Returns as soon as the request is accepted; the
+ * work is reported through the same `comfyui:*` events a local generation uses.
+ */
+export async function novelaiGenerate(
+  params: GenerationParams,
+): Promise<NovelAiGenerateResponse> {
+  return ipcInvoke("novelai_generate", { params });
+}
+
+/**
+ * The six Director Tools, named by the `req_type` the endpoint expects.
+ *
+ * The wire names are used directly rather than mapped through friendlier
+ * aliases, so there is exactly one spelling of each tool across the frontend,
+ * the Rust command and the API.
+ */
+export type DirectorTool =
+  | "bg-removal"
+  | "lineart"
+  | "sketch"
+  | "colorize"
+  | "emotion"
+  | "declutter";
+
+export interface NovelAiAugmentParams {
+  tool: DirectorTool;
+  /** Base64 PNG. A `data:` URI prefix is accepted and stripped in Rust. */
+  image: string;
+  /** Colorize and Emotion only, 0-5. Ignored by the other four. */
+  defry?: number;
+  /** Colorize and Emotion only: extra guidance for the result. */
+  prompt?: string;
+  /** Emotion only: the mood to apply, joined to `prompt` in Rust. */
+  mood?: string;
+}
+
+export interface NovelAiAugmentResponse {
+  prompt_id: string;
+}
+
+/**
+ * Run a Director Tool over an image.
+ *
+ * Returns as soon as the request is accepted. The results arrive as
+ * `comfyui:output_image` events under the returned prompt id, the same way a
+ * generation's do, so they land in the session grid and the gallery without any
+ * handling here. Background removal delivers more than one image.
+ */
+export async function novelaiAugment(
+  params: NovelAiAugmentParams,
+): Promise<NovelAiAugmentResponse> {
+  return ipcInvoke("novelai_augment", { params });
+}
+
+/** Anlas balance and subscription tier. Throws when no API key is configured. */
+export async function novelaiSubscription(): Promise<NovelAiSubscription> {
+  return ipcInvoke("novelai_subscription", {});
+}
+
+/**
+ * Store the NovelAI API key, or clear it with an empty string. Returns whether
+ * a key is now configured.
+ *
+ * Deliberately not part of `updateConfig`: a config write that omits the key
+ * preserves the stored one, so there would be no way to clear it.
+ */
+export async function setNovelaiApiKey(apiKey: string): Promise<boolean> {
+  return ipcInvoke("set_novelai_api_key", { apiKey });
 }
 
 export interface ControlNetPreprocessorPreviewResponse {
@@ -1030,6 +1113,14 @@ export async function interrogateGalleryImage(filename: string): Promise<Interro
 
 export async function interrogateClipboard(): Promise<InterrogationResult> {
   return ipcInvoke("interrogate_clipboard");
+}
+
+export async function listInterrogatorModels(): Promise<InterrogatorModelStatus[]> {
+  return ipcInvoke("list_interrogator_models");
+}
+
+export async function deleteInterrogatorModel(modelId: string): Promise<void> {
+  return ipcInvoke("delete_interrogator_model", { modelId });
 }
 
 export async function detectLlmHardware(): Promise<LlmHardware> {

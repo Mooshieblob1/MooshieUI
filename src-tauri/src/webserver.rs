@@ -248,6 +248,13 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "set_llm_model",
     "set_llm_base_url",
     "list_external_llm_models",
+    // NovelAI: the key is the instance owner's and every generation spends
+    // their Anlas, so all four follow `update_config` rather than `generate`.
+    // A LAN guest must not be able to bill the host.
+    "novelai_augment",
+    "novelai_generate",
+    "novelai_subscription",
+    "set_novelai_api_key",
     // previously admin-only: mode switching, filesystem, node install
     "switch_to_app_mode",
     "set_gallery_path",
@@ -1854,6 +1861,18 @@ async fn embed_temp_metadata_handler(
     let embed_mode = crate::metadata::MetadataMode::from_str(metadata_mode);
     let detected_format = crate::metadata::detect_format(&bytes);
 
+    // A NovelAI PNG is handed back as-is. This endpoint exists so a browser
+    // right-click "Copy Image" carries our metadata, but NovelAI's own chunks
+    // and stealth alpha are worth more here: they are what its site reads, and
+    // the app reads them back too. Re-encoding would lose both.
+    if matches!(detected_format, crate::metadata::ImageFormat::Png)
+        && crate::metadata::png_carries_novelai_metadata(&bytes)
+    {
+        log::info!("embed_temp_metadata: preserving NovelAI PNG bytes verbatim");
+        let json = serde_json::json!({ "tempFilename": temp_filename });
+        return axum::Json(json).into_response();
+    }
+
     let (embedded, out_ext) = match detected_format {
         crate::metadata::ImageFormat::Jxl => {
             match crate::metadata::embed_jxl_metadata(&bytes, &metadata) {
@@ -3003,6 +3022,130 @@ async fn dispatch_command(
                 "queue_position": queue_pos,
                 "queue_total": queue_total,
             }))
+        }
+        "novelai_generate" => {
+            crate::temp_images::cleanup(300);
+
+            let mut params: crate::comfyui::types::GenerationParams =
+                serde_json::from_value(args["params"].clone())
+                    .map_err(|e| format!("Invalid params: {}", e))?;
+            params.seed = crate::novelai::resolve_seed(params.seed);
+
+            // Built before the id is minted so a bad request fails this HTTP
+            // call instead of arriving later as an execution_error.
+            crate::novelai::build_request(&params).map_err(|e| e.to_string())?;
+
+            let prompt_id = crate::novelai::new_prompt_id();
+            let seed = params.seed;
+            let user = username.map(|s| s.to_string());
+
+            log::info!(
+                "[nai] user={} seed={} steps={} model={}",
+                user.as_deref().unwrap_or("admin"),
+                seed,
+                params.steps,
+                params.checkpoint,
+            );
+
+            // NovelAI runs off-box and takes no local GPU slot, so it skips the
+            // fair-queue hold entirely; it is still tracked so cancellation and
+            // the queue readout see it.
+            state.prompt_queue.insert(&prompt_id, user);
+            state.broadcast_queue_positions();
+
+            let bg_state = Arc::clone(&state);
+            let bg_prompt_id = prompt_id.clone();
+            tokio::spawn(async move {
+                let sink = crate::novelai::EventSink::new(
+                    Arc::clone(&bg_state),
+                    #[cfg(feature = "desktop")]
+                    None,
+                );
+                let result =
+                    crate::novelai::run(Arc::clone(&bg_state), sink, bg_prompt_id.clone(), params)
+                        .await;
+                if let Err(err) = &result {
+                    log::error!("[nai] generation {bg_prompt_id} failed: {err}");
+                }
+                // A handed-off generation is still running as a local ComfyUI
+                // prompt under this same id; the websocket finishes and
+                // removes it.
+                if !matches!(result, Ok(crate::novelai::RunOutcome::HandedOff)) {
+                    bg_state.prompt_queue.cancel_and_remove(&bg_prompt_id);
+                    bg_state.broadcast_queue_positions();
+                }
+            });
+
+            // Seed as a string: 63-bit values exceed JS's 2^53 safe-integer range.
+            Ok(serde_json::json!({
+                "prompt_id": prompt_id,
+                "seed": seed.to_string(),
+            }))
+        }
+        "novelai_augment" => {
+            crate::temp_images::cleanup(300);
+
+            let params: crate::novelai::augment::AugmentParams =
+                serde_json::from_value(args["params"].clone())
+                    .map_err(|e| format!("Invalid params: {}", e))?;
+            let tool = params.tool.clone();
+            // Validated before the id is minted so a bad tool name or an
+            // unreadable image fails this HTTP call rather than arriving later
+            // as an execution_error.
+            let prepared = crate::novelai::augment::PreparedAugment::prepare(params)
+                .map_err(|e| e.to_string())?;
+
+            let prompt_id = crate::novelai::new_prompt_id();
+            let user = username.map(|s| s.to_string());
+            log::info!(
+                "[nai] director tools user={} tool={}",
+                user.as_deref().unwrap_or("admin"),
+                tool,
+            );
+
+            state.prompt_queue.insert(&prompt_id, user);
+            state.broadcast_queue_positions();
+
+            let bg_state = Arc::clone(&state);
+            let bg_prompt_id = prompt_id.clone();
+            tokio::spawn(async move {
+                let sink = crate::novelai::EventSink::new(
+                    Arc::clone(&bg_state),
+                    #[cfg(feature = "desktop")]
+                    None,
+                );
+                let result = crate::novelai::augment::run(
+                    Arc::clone(&bg_state),
+                    sink,
+                    bg_prompt_id.clone(),
+                    prepared,
+                )
+                .await;
+                if let Err(err) = &result {
+                    log::error!("[nai] director tools {bg_prompt_id} failed: {err}");
+                }
+                bg_state.prompt_queue.cancel_and_remove(&bg_prompt_id);
+                bg_state.broadcast_queue_positions();
+            });
+
+            Ok(serde_json::json!({ "prompt_id": prompt_id }))
+        }
+        "novelai_subscription" => {
+            let sub = crate::novelai::fetch_subscription(&state)
+                .await
+                .map_err(|e| e.to_string())?;
+            serde_json::to_value(sub).map_err(|e| e.to_string())
+        }
+        "set_novelai_api_key" => {
+            let api_key = args["apiKey"].as_str().unwrap_or("").trim().to_string();
+            let configured = !api_key.is_empty();
+            let snapshot = {
+                let mut config = state.config.write().await;
+                config.novelai_api_key = if configured { Some(api_key) } else { None };
+                config.clone()
+            };
+            crate::config::save_config(&snapshot)?;
+            Ok(serde_json::json!(configured))
         }
         "generate_controlnet_preprocessor_preview" => {
             crate::temp_images::cleanup(300);
@@ -4730,6 +4873,25 @@ async fn dispatch_command(
         "interrogate_clipboard" => Err(
             "interrogate_clipboard not available in browser mode (no clipboard access)".to_string(),
         ),
+        "list_interrogator_models" => {
+            let root_dir = { state.interrogator.read().await.root_dir() };
+            serde_json::to_value(crate::interrogator::model_statuses_at(&root_dir))
+                .map_err(|e| e.to_string())
+        }
+        "delete_interrogator_model" => {
+            let model_id = args["modelId"]
+                .as_str()
+                .ok_or("Missing modelId")?
+                .to_string();
+            let root_dir = { state.interrogator.read().await.root_dir() };
+            crate::interrogator::delete_model_files_at(&root_dir, &model_id)
+                .map_err(|e| e.to_string())?;
+            let mut guard = state.interrogator.write().await;
+            if guard.model_id() == crate::interrogator::find_model(&model_id).id {
+                guard.unload_session();
+            }
+            Ok(serde_json::Value::Null)
+        }
 
         // --- Prompt assistant ---
         #[cfg(any(feature = "desktop", feature = "server"))]
@@ -5195,32 +5357,43 @@ async fn run_interrogation_headless(
     state: &Arc<AppState>,
     image_bytes: Vec<u8>,
 ) -> Result<crate::interrogator::InterrogationResult, String> {
-    // Resolve the model directory under a brief read lock, then run the
-    // (multi-second, network) downloads WITHOUT holding the guard across await.
-    let model_dir = { state.interrogator.read().await.model_dir() };
-    if !crate::interrogator::is_model_downloaded_at(&model_dir) {
-        crate::interrogator::ensure_model_downloaded_headless_at(&state.http_client, &model_dir)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-    if !crate::interrogator::is_ort_library_present_at(&model_dir) {
-        crate::interrogator::ensure_ort_library_headless_at(&state.http_client, &model_dir)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-
-    let (general_threshold, character_threshold) = {
+    let (model_id, general_threshold, character_threshold) = {
         let config = state.config.read().await;
         (
+            crate::interrogator::find_model(&config.interrogator_model)
+                .id
+                .to_string(),
             config.interrogator_general_threshold,
             config.interrogator_character_threshold,
         )
     };
 
+    // Resolve the model root under a brief read lock, then run the
+    // (multi-second, network) downloads WITHOUT holding the guard across await.
+    let root_dir = { state.interrogator.read().await.root_dir() };
+    let model_dir = root_dir.join(&model_id);
+    if !crate::interrogator::is_model_downloaded_at(&model_dir) {
+        crate::interrogator::ensure_model_downloaded_headless_at(
+            &state.http_client,
+            &model_dir,
+            &model_id,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    if !crate::interrogator::is_ort_library_present_at(&root_dir) {
+        crate::interrogator::ensure_ort_library_headless_at(&state.http_client, &root_dir)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
     let event_tx = state.event_tx.clone();
     let interrogator = state.interrogator.clone();
     tokio::task::spawn_blocking(move || {
         let mut guard = interrogator.blocking_write();
+        // Switching models drops any cached session, so this must precede the
+        // load check or a stale session would be reported as already loaded.
+        guard.set_model(&model_id);
         let is_first_load = guard.session_not_loaded();
         if is_first_load {
             let _ = event_tx.send(crate::state::BroadcastEvent {
@@ -6170,6 +6343,18 @@ fn save_to_gallery_in_dir(
 
     let final_bytes = if let Some(meta) = metadata {
         match detected_format {
+            // Byte-for-byte counterpart of the guard in `save_to_gallery_inner`:
+            // a PNG that still carries NovelAI's own metadata goes to disk
+            // untouched, because re-encoding to embed our copy would strip its
+            // chunks and overwrite the alpha bits its stealth payload lives in.
+            crate::metadata::ImageFormat::Png
+                if crate::metadata::png_carries_novelai_metadata(bytes) =>
+            {
+                log::info!(
+                    "save_to_gallery_in_dir: preserving NovelAI PNG bytes verbatim (no metadata embed)"
+                );
+                bytes.to_vec()
+            }
             crate::metadata::ImageFormat::Png => {
                 crate::metadata::embed_png_metadata(bytes, meta, embed_mode)
                     .unwrap_or_else(|_| bytes.to_vec())
@@ -6484,37 +6669,146 @@ fn cleanup_expired_images(auth: &AuthState) {
     }
 }
 
+/// What a single watchdog tick concluded. Split out from the loop so the
+/// decision is pure and unit-testable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WatchdogTick {
+    /// App mode took over; the watchdog should stop.
+    Stop,
+    /// The opt-out is active; keep looping but never shut down.
+    OptedOut,
+    /// Restart the heartbeat clock (host resumed from suspend, or the opt-out
+    /// was just switched back on) and re-check on the next tick.
+    ResetClock,
+    /// Heartbeats are current; nothing to do.
+    Idle,
+    /// The tab has been silent past the timeout; shut down.
+    Shutdown,
+}
+
+/// Decide what a watchdog tick should do.
+///
+/// `tick_gap` is how long the tick actually took: a value far above
+/// `WATCHDOG_TICK` means the host was suspended rather than the tab going
+/// quiet, so the heartbeat clock is restarted instead of held against the tab.
+fn watchdog_decision(
+    app_mode_active: bool,
+    auto_shutdown: bool,
+    was_opted_out: bool,
+    tick_gap: Duration,
+    since_heartbeat: Duration,
+    timeout: Duration,
+) -> WatchdogTick {
+    if app_mode_active {
+        return WatchdogTick::Stop;
+    }
+    if !auto_shutdown {
+        return WatchdogTick::OptedOut;
+    }
+    // Coming back from the opt-out, the stored timestamp is arbitrarily old and
+    // would fire immediately.
+    if was_opted_out {
+        return WatchdogTick::ResetClock;
+    }
+    if tick_gap > WATCHDOG_TICK + WATCHDOG_RESUME_JUMP {
+        return WatchdogTick::ResetClock;
+    }
+    if since_heartbeat > timeout {
+        return WatchdogTick::Shutdown;
+    }
+    WatchdogTick::Idle
+}
+
+/// How long one watchdog tick is meant to take.
+const WATCHDOG_TICK: Duration = Duration::from_secs(2);
+
+/// A tick that overshoots `WATCHDOG_TICK` by more than this is read as a resume
+/// from host suspend rather than a quiet browser tab. 20s is far above any
+/// scheduler jitter and far below the shutdown timeout.
+const WATCHDOG_RESUME_JUMP: Duration = Duration::from_secs(20);
+
 /// Start the heartbeat watchdog that shuts down the app when the browser
 /// tab closes (no heartbeat for N seconds).
+///
+/// Two things keep this from firing on a host that was merely asleep:
+///
+/// * Suspend detection. If a single tick took far longer than it should have,
+///   the host was suspended (lid closed, display sleep, VM paused) and the tab
+///   had no chance to ping, so the heartbeat clock is reset rather than counted
+///   against the tab.
+/// * The `browser_auto_shutdown` opt-out, re-read every tick so the Settings
+///   toggle takes effect without a restart.
 pub fn start_heartbeat_watchdog(state: Arc<AppState>, timeout_secs: u64) {
     tokio::spawn(async move {
         let timeout = Duration::from_secs(timeout_secs);
         // Wait a bit before starting to check (let the browser load)
         tokio::time::sleep(Duration::from_secs(10)).await;
 
+        let mut prev_mono = std::time::Instant::now();
+        let mut prev_wall = std::time::SystemTime::now();
+        let mut was_opted_out = false;
+
         loop {
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(WATCHDOG_TICK).await;
+
+            // Both clocks are sampled because `Instant` is suspend-aware on
+            // some platforms and suspend-blind on others (on macOS it does not
+            // advance while the machine sleeps, on Linux it does). Whichever
+            // one jumped tells us the host was away.
+            let now_mono = std::time::Instant::now();
+            let now_wall = std::time::SystemTime::now();
+            let tick_gap = now_mono
+                .duration_since(prev_mono)
+                .max(now_wall.duration_since(prev_wall).unwrap_or_default());
+            prev_mono = now_mono;
+            prev_wall = now_wall;
+
+            let app_mode = state
+                .app_mode_active
+                .load(std::sync::atomic::Ordering::SeqCst);
+            let auto_shutdown = { state.config.read().await.browser_auto_shutdown };
             let elapsed = {
                 let hb = state.last_heartbeat.lock().await;
                 hb.elapsed()
             };
-            if elapsed > timeout {
-                // If we've switched to app mode, the watchdog should stop.
-                if state
-                    .app_mode_active
-                    .load(std::sync::atomic::Ordering::SeqCst)
-                {
+
+            match watchdog_decision(
+                app_mode,
+                auto_shutdown,
+                was_opted_out,
+                tick_gap,
+                elapsed,
+                timeout,
+            ) {
+                WatchdogTick::Stop => {
                     log::info!("Heartbeat watchdog stopping — app mode is active");
                     break;
                 }
-                log::info!(
-                    "No heartbeat for {:?}, shutting down (browser tab likely closed)",
-                    elapsed
-                );
-                // Cancel any in-progress generation before exiting so the
-                // ComfyUI queue doesn't keep running after the tab closes.
-                let _ = state.gpu_manager.interrupt(None).await;
-                std::process::exit(0);
+                WatchdogTick::OptedOut => {
+                    was_opted_out = true;
+                }
+                WatchdogTick::ResetClock => {
+                    if was_opted_out {
+                        was_opted_out = false;
+                    } else {
+                        log::info!(
+                            "Heartbeat watchdog: {}s gap between ticks, treating as resume from suspend",
+                            tick_gap.as_secs()
+                        );
+                    }
+                    *state.last_heartbeat.lock().await = std::time::Instant::now();
+                }
+                WatchdogTick::Idle => {}
+                WatchdogTick::Shutdown => {
+                    log::info!(
+                        "No heartbeat for {:?}, shutting down (browser tab likely closed)",
+                        elapsed
+                    );
+                    // Cancel any in-progress generation before exiting so the
+                    // ComfyUI queue doesn't keep running after the tab closes.
+                    let _ = state.gpu_manager.interrupt(None).await;
+                    std::process::exit(0);
+                }
             }
         }
     });
@@ -6955,4 +7249,118 @@ async fn notifications_clear_handler(
 
     state.app.notifications.clear_all(&username);
     (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
+}
+
+#[cfg(test)]
+mod watchdog_tests {
+    use super::{watchdog_decision, WatchdogTick, WATCHDOG_RESUME_JUMP, WATCHDOG_TICK};
+    use std::time::Duration;
+
+    const TIMEOUT: Duration = Duration::from_secs(120);
+    /// A tick that ran on schedule.
+    const ON_TIME: Duration = WATCHDOG_TICK;
+
+    #[test]
+    fn shuts_down_when_the_tab_goes_silent() {
+        assert_eq!(
+            watchdog_decision(
+                false,
+                true,
+                false,
+                ON_TIME,
+                Duration::from_secs(121),
+                TIMEOUT
+            ),
+            WatchdogTick::Shutdown
+        );
+    }
+
+    #[test]
+    fn stays_idle_while_heartbeats_arrive() {
+        assert_eq!(
+            watchdog_decision(false, true, false, ON_TIME, Duration::from_secs(3), TIMEOUT),
+            WatchdogTick::Idle
+        );
+    }
+
+    #[test]
+    fn resume_from_suspend_resets_instead_of_shutting_down() {
+        // Host slept for an hour: the tick overshot massively and the heartbeat
+        // is long stale, but the tab never had a chance to ping.
+        assert_eq!(
+            watchdog_decision(
+                false,
+                true,
+                false,
+                Duration::from_secs(3600),
+                Duration::from_secs(3600),
+                TIMEOUT
+            ),
+            WatchdogTick::ResetClock
+        );
+    }
+
+    #[test]
+    fn ordinary_scheduler_jitter_is_not_mistaken_for_suspend() {
+        // Just under the resume threshold, with a stale heartbeat: still a shutdown.
+        let jitter = WATCHDOG_TICK + WATCHDOG_RESUME_JUMP - Duration::from_secs(1);
+        assert_eq!(
+            watchdog_decision(
+                false,
+                true,
+                false,
+                jitter,
+                Duration::from_secs(121),
+                TIMEOUT
+            ),
+            WatchdogTick::Shutdown
+        );
+    }
+
+    #[test]
+    fn opt_out_never_shuts_down() {
+        assert_eq!(
+            watchdog_decision(
+                false,
+                false,
+                false,
+                ON_TIME,
+                Duration::from_secs(86_400),
+                TIMEOUT
+            ),
+            WatchdogTick::OptedOut
+        );
+    }
+
+    #[test]
+    fn re_enabling_the_opt_out_resets_the_clock_first() {
+        // The stored timestamp is stale from the opt-out window, so the first
+        // tick back must restart the clock rather than fire.
+        assert_eq!(
+            watchdog_decision(
+                false,
+                true,
+                true,
+                ON_TIME,
+                Duration::from_secs(86_400),
+                TIMEOUT
+            ),
+            WatchdogTick::ResetClock
+        );
+    }
+
+    #[test]
+    fn app_mode_stops_the_watchdog_before_anything_else() {
+        assert_eq!(
+            watchdog_decision(
+                true,
+                true,
+                false,
+                ON_TIME,
+                Duration::from_secs(999),
+                TIMEOUT
+            ),
+            WatchdogTick::Stop
+        );
+    }
 }
