@@ -335,6 +335,57 @@ fn apply_highvram_flag(cmd: &mut tokio::process::Command, config: &AppConfig) {
     }
 }
 
+/// The ComfyUI launch flag an `attention_backend` config value asks for, and the
+/// venv package that has to be present for it to work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AttentionBackend {
+    flag: &'static str,
+    package: &'static str,
+}
+
+/// Map an `attention_backend` config value to the flag it asks for, or `None` for
+/// PyTorch SDPA (the default, which takes no flag). An unrecognized value falls
+/// through to `None` rather than being passed to ComfyUI verbatim.
+fn attention_backend_flag(backend: &str) -> Option<AttentionBackend> {
+    match backend {
+        "sage_v1" | "sage_v2" => Some(AttentionBackend {
+            flag: "--use-sage-attention",
+            package: "sageattention",
+        }),
+        "flash_v1" | "flash_v2" => Some(AttentionBackend {
+            flag: "--use-flash-attention",
+            package: "flash-attn",
+        }),
+        // "default" → PyTorch SDPA, no flag needed
+        _ => None,
+    }
+}
+
+/// Add the attention-backend flag (ComfyUI treats these as mutually exclusive).
+/// Self-heal in the same shape as `apply_highvram_flag` above: only pass the flag
+/// if the backing package is actually installed, else fall back to default SDPA so
+/// a stale or broken config can't crash ComfyUI at startup.
+///
+/// Shared by the single-process and per-worker spawn paths. The worker path used to
+/// omit this entirely, so multi-GPU users rendered at SDPA speed while the settings
+/// UI reported sage or flash was on.
+fn apply_attention_flag(cmd: &mut tokio::process::Command, config: &AppConfig) {
+    let Some(backend) = attention_backend_flag(config.attention_backend.as_str()) else {
+        return;
+    };
+    if attention_package_present(&config.venv_path, &config.attention_backend) {
+        cmd.arg(backend.flag);
+    } else {
+        log::warn!(
+            "attention_backend='{}' but {} is not installed in the venv; launching ComfyUI \
+             without {} (default SDPA).",
+            config.attention_backend,
+            backend.package,
+            backend.flag
+        );
+    }
+}
+
 /// Returns true if the directory has at least one known model-category subdirectory.
 /// If false, the directory is flat and needs per-category classification instead.
 fn is_structured_model_dir(path: &std::path::Path) -> bool {
@@ -873,35 +924,7 @@ pub async fn start_comfyui_process(state: &AppState) -> Result<StartResult, AppE
         }
     }
 
-    // Attention backend flag (mutually exclusive in ComfyUI). Self-heal: only pass
-    // the flag if the backing package is actually installed, else fall back to
-    // default SDPA so a stale/broken config can't crash ComfyUI at startup.
-    match config.attention_backend.as_str() {
-        backend @ ("sage_v1" | "sage_v2") => {
-            if attention_package_present(&config.venv_path, backend) {
-                cmd.arg("--use-sage-attention");
-            } else {
-                log::warn!(
-                    "attention_backend='{}' but sageattention is not installed in the venv; \
-                     launching ComfyUI without --use-sage-attention (default SDPA).",
-                    backend
-                );
-            }
-        }
-        backend @ ("flash_v1" | "flash_v2") => {
-            if attention_package_present(&config.venv_path, backend) {
-                cmd.arg("--use-flash-attention");
-            } else {
-                log::warn!(
-                    "attention_backend='{}' but flash-attn is not installed in the venv; \
-                     launching ComfyUI without --use-flash-attention (default SDPA).",
-                    backend
-                );
-            }
-        }
-        // "default" → PyTorch SDPA, no flag needed
-        _ => {}
-    }
+    apply_attention_flag(&mut cmd, &config);
 
     // Auto-apply --bf16-vae for Blackwell GPUs to prevent NaN/black images
     // from fp16 VAE overflow, unless the user has already set a VAE precision flag.
@@ -1646,6 +1669,8 @@ pub async fn start_worker_process(
         }
     }
 
+    apply_attention_flag(&mut cmd, &config);
+
     // bf16 VAE for Blackwell
     let has_vae_flag = config.extra_args.iter().any(|a| {
         matches!(
@@ -2039,8 +2064,35 @@ pub fn stop_all_workers_blocking(state: &AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::{kernel_cache_targets, uses_configured_gpu_workers};
+    use super::{attention_backend_flag, kernel_cache_targets, uses_configured_gpu_workers};
     use crate::config::{AppConfig, GpuWorkerConfig};
+
+    #[test]
+    fn sage_backends_ask_for_the_sage_flag() {
+        for backend in ["sage_v1", "sage_v2"] {
+            let resolved = attention_backend_flag(backend).expect("sage should map to a flag");
+            assert_eq!(resolved.flag, "--use-sage-attention");
+            assert_eq!(resolved.package, "sageattention");
+        }
+    }
+
+    #[test]
+    fn flash_backends_ask_for_the_flash_flag() {
+        for backend in ["flash_v1", "flash_v2"] {
+            let resolved = attention_backend_flag(backend).expect("flash should map to a flag");
+            assert_eq!(resolved.flag, "--use-flash-attention");
+            assert_eq!(resolved.package, "flash-attn");
+        }
+    }
+
+    #[test]
+    fn default_and_unknown_backends_ask_for_no_flag() {
+        // "default" is PyTorch SDPA, which takes no CLI flag. An unrecognized
+        // value must behave like "default" rather than reach ComfyUI verbatim.
+        assert!(attention_backend_flag("default").is_none());
+        assert!(attention_backend_flag("").is_none());
+        assert!(attention_backend_flag("xformers").is_none());
+    }
 
     #[test]
     fn configured_gpu_worker_mode_requires_explicit_config_entries() {
