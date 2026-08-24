@@ -28,6 +28,8 @@
   import { prefsSync } from "./lib/stores/prefsSync.svelte.js";
   import type { GenerationMode, GenerationParams, OutputImage, InterrogationResult } from "./lib/types/index.js";
   import UpdateNotification from "./lib/components/updater/UpdateNotification.svelte";
+  import ComfyUiVersionBadge from "./lib/components/updater/ComfyUiVersionBadge.svelte";
+  import { comfyuiUpdate } from "./lib/stores/comfyuiUpdate.svelte.js";
   import DownloadBanner from "./lib/components/downloads/DownloadBanner.svelte";
   import { downloads } from "./lib/stores/downloads.svelte.js";
   import { compare } from "./lib/stores/compare.svelte.js";
@@ -95,34 +97,36 @@
   } from "./lib/utils/comfyStartup.js";
 
   const appVersion = __APP_VERSION__ ?? "dev";
-  let comfyuiVersionInfo = $state<ComfyUiVersionInfo | null>(null);
   const COMFYUI_OUTDATED_NOTIF_TITLE = "notifications.comfyui_outdated.title";
 
+  /**
+   * Refresh the installed-vs-pinned ComfyUI version and, if it is still behind,
+   * leave a notification behind. Reached after the startup auto-update has had
+   * its turn, so this only fires for the cases that pass cannot cover: manual
+   * start, a failed update, or browser mode.
+   *
+   * `comfyuiUpdate.updateAvailable` is already false in browser mode — hosted
+   * deployments ship ComfyUI baked into the Docker image and update by pulling
+   * a newer one, so an "outdated" notification there would be a dead end with
+   * no update button. The sidebar badge still shows the fetched version.
+   */
   async function checkComfyuiVersion() {
-    try {
-      const info = await getComfyuiVersion();
-      comfyuiVersionInfo = info;
-      // The in-app updater is desktop-only. Hosted/browser deployments ship
-      // ComfyUI baked into the Docker image and update by pulling a newer
-      // image, so an "outdated" notification there would be a dead end with no
-      // update button. Still keep the fetched version for the sidebar badge.
-      if (info.update_available && !isBrowserMode) {
-        const alreadyNotified = notifications.notifications.some(
-          (n) => n.local && n.i18n && n.title === COMFYUI_OUTDATED_NOTIF_TITLE && !n.read,
-        );
-        if (!alreadyNotified) {
-          notifications.addLocalNotification({
-            i18n: true,
-            title: COMFYUI_OUTDATED_NOTIF_TITLE,
-            body: "notifications.comfyui_outdated.body",
-            params: { installed: info.installed ?? locale.t("settings.performance.comfyui_unknown"), target: info.target },
-            kind: "warning",
-          });
-        }
-      }
-    } catch {
-      // Non-critical — Settings panel will surface it when opened
-    }
+    await comfyuiUpdate.refresh();
+    if (!comfyuiUpdate.updateAvailable) return;
+    const alreadyNotified = notifications.notifications.some(
+      (n) => n.local && n.i18n && n.title === COMFYUI_OUTDATED_NOTIF_TITLE && !n.read,
+    );
+    if (alreadyNotified) return;
+    notifications.addLocalNotification({
+      i18n: true,
+      title: COMFYUI_OUTDATED_NOTIF_TITLE,
+      body: "notifications.comfyui_outdated.body",
+      params: {
+        installed: comfyuiUpdate.installed ?? locale.t("settings.performance.comfyui_unknown"),
+        target: comfyuiUpdate.target,
+      },
+      kind: "warning",
+    });
   }
 
   const visionSimClass = $derived(
@@ -3066,6 +3070,29 @@
     };
     window.addEventListener("mooshie:model-preview-action", modelPreviewActionHandler);
 
+    // Bring ComfyUI up to the pinned tag before starting it. MooshieUI ships
+    // against one exact ComfyUI release, so a MooshieUI update that bumps the
+    // pin would otherwise leave the user running a stale ComfyUI until they
+    // happened to find the button in Settings. The app is already
+    // interaction-locked here, so the update just extends the startup lock
+    // rather than interrupting anything.
+    if (autoStartEnabled) {
+      try {
+        await comfyuiUpdate.refresh();
+        if (comfyuiUpdate.shouldAutoUpdate) {
+          startupStatus = locale.t("app.status.updating_comfyui");
+          startupStatusKind = "starting";
+          await comfyuiUpdate.autoUpdateOnStartup((message) => {
+            startupStatus = message;
+          });
+        }
+      } catch (e) {
+        // A failed update must never block launch — ComfyUI still starts on
+        // whatever version is on disk, and the sidebar bubble reports it.
+        console.error("ComfyUI auto-update failed:", e);
+      }
+    }
+
     // Start ComfyUI server — returns immediately, background task handles readiness
     // The backend will auto-connect WebSocket and emit comfyui:server_ready when done
     if (autoStartEnabled) {
@@ -3117,6 +3144,8 @@
     // Verify the installed ComfyUI is on the pinned version even for users who
     // never open Settings — features like Krea 2 fail validation on older
     // ComfyUI builds, so surface a notification instead of a silent failure.
+    // Runs after the startup auto-update has had its turn, so this only fires
+    // for the cases that pass cannot cover.
     void checkComfyuiVersion();
   }
 
@@ -3549,22 +3578,7 @@
       >
     </button>
 
-    {#if comfyuiVersionInfo?.installed}
-      <span
-        class="flex items-center justify-center gap-1 text-[10px] text-center mb-1 select-none cursor-default {comfyuiVersionInfo.update_available
-          ? 'text-amber-500'
-          : 'text-neutral-500'}"
-        title={comfyuiVersionInfo.update_available
-          ? locale.t('settings.performance.comfyui_update_note')
-          : locale.t('settings.performance.comfyui_up_to_date')}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" class="w-2.5 h-2.5 shrink-0" aria-hidden="true">
-          <circle cx="8" cy="8" r="7.5" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-width="1" />
-          <text x="8" y="11.2" text-anchor="middle" font-size="9" font-weight="700" fill="currentColor">C</text>
-        </svg>
-        v{comfyuiVersionInfo.installed}
-      </span>
-    {/if}
+    <ComfyUiVersionBadge />
     <span
       class="mooshie-branding text-[10px] text-neutral-500 text-center mb-2 select-none cursor-default"
       role="button"

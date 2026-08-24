@@ -1,12 +1,13 @@
 <script lang="ts">
-  import type { AppConfig, LlmProviderState, QueueInfo } from "../../types/index.js";
-  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, getComfyuiVersion, updateComfyui } from "../../utils/api.js";
+  import type { AppConfig, InterrogatorModelStatus, LlmProviderState, QueueInfo } from "../../types/index.js";
+  import { getConfig, updateConfig, stopComfyui, startComfyui, fetchReleaseNotes, importImageDirectory, exportLogs, exportLogsContent, getGalleryPath, setGalleryPath, setStorageLimit, installAttentionBackend, checkAttentionBackend, clearAllQueues, getQueue, getGpuStats, updateComfyui, listInterrogatorModels, deleteInterrogatorModel } from "../../utils/api.js";
   import type { ReleaseNote, ImportResult, AttentionBackendStatus, BackendSupport, ComfyUiVersionInfo } from "../../utils/api.js";
   import { connection } from "../../stores/connection.svelte.js";
   import { autocomplete } from "../../stores/autocomplete.svelte.js";
   import { generation } from "../../stores/generation.svelte.js";
   import { accessibility } from "../../stores/accessibility.svelte.js";
   import { locale, LOCALE_OPTIONS } from "../../stores/locale.svelte.js";
+  import { comfyuiUpdate } from "../../stores/comfyuiUpdate.svelte.js";
   import { gallery } from "../../stores/gallery.svelte.js";
   import { promptAssistant } from "../../stores/promptAssistant.svelte.js";
   import { novelai } from "../../stores/novelai.svelte.js";
@@ -1223,14 +1224,16 @@
     }
   }
 
-  /** Load the installed ComfyUI version and whether the pinned target is newer. */
+  /**
+   * Load the installed ComfyUI version and whether the pinned target is newer.
+   * Goes through the shared store so the sidebar badge and this card cannot
+   * disagree after an update finishes on either side.
+   */
   async function refreshComfyuiVersion() {
-    try {
-      comfyuiVersion = await getComfyuiVersion();
-    } catch (e: any) {
-      // Non-fatal: leave the card hidden if the version can't be read.
-      comfyuiVersion = null;
-    }
+    // `refresh()` swallows its own errors and leaves `info` null, which hides
+    // the card the same way the old local try/catch did.
+    await comfyuiUpdate.refresh();
+    comfyuiVersion = comfyuiUpdate.info;
   }
 
   /**
