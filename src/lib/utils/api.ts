@@ -66,6 +66,51 @@ export async function novelaiGenerate(
   return ipcInvoke("novelai_generate", { params });
 }
 
+/**
+ * The six Director Tools, named by the `req_type` the endpoint expects.
+ *
+ * The wire names are used directly rather than mapped through friendlier
+ * aliases, so there is exactly one spelling of each tool across the frontend,
+ * the Rust command and the API.
+ */
+export type DirectorTool =
+  | "bg-removal"
+  | "lineart"
+  | "sketch"
+  | "colorize"
+  | "emotion"
+  | "declutter";
+
+export interface NovelAiAugmentParams {
+  tool: DirectorTool;
+  /** Base64 PNG. A `data:` URI prefix is accepted and stripped in Rust. */
+  image: string;
+  /** Colorize and Emotion only, 0-5. Ignored by the other four. */
+  defry?: number;
+  /** Colorize and Emotion only: extra guidance for the result. */
+  prompt?: string;
+  /** Emotion only: the mood to apply, joined to `prompt` in Rust. */
+  mood?: string;
+}
+
+export interface NovelAiAugmentResponse {
+  prompt_id: string;
+}
+
+/**
+ * Run a Director Tool over an image.
+ *
+ * Returns as soon as the request is accepted. The results arrive as
+ * `comfyui:output_image` events under the returned prompt id, the same way a
+ * generation's do, so they land in the session grid and the gallery without any
+ * handling here. Background removal delivers more than one image.
+ */
+export async function novelaiAugment(
+  params: NovelAiAugmentParams,
+): Promise<NovelAiAugmentResponse> {
+  return ipcInvoke("novelai_augment", { params });
+}
+
 /** Anlas balance and subscription tier. Throws when no API key is configured. */
 export async function novelaiSubscription(): Promise<NovelAiSubscription> {
   return ipcInvoke("novelai_subscription", {});

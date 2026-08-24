@@ -44,7 +44,7 @@
   let orderedRunToken = 0;
   let regionalChainToken = 0;
   const orderedWildcardRun = $derived(promptPresets.orderedWildcardRun);
-  const orderedWildcardRunCount = $derived(compare.enabled && compare.cellCount > 1 ? 0 : (orderedWildcardRun?.count ?? 0));
+  const orderedWildcardRunCount = $derived(compare.active && compare.cellCount > 1 ? 0 : (orderedWildcardRun?.count ?? 0));
   const pendingOrderedRunIds = $derived(orderedRunPromptIds.filter((id) => progress.pendingPrompts.some((prompt) => prompt.promptId === id)));
 
   const generateButtonTitle = $derived.by(() => {
@@ -114,7 +114,7 @@
   }
 
   function isSequentialGenerateRun(): boolean {
-    if (compare.enabled && compare.cellCount > 1) return true;
+    if (compare.active && compare.cellCount > 1) return true;
     if (orderedWildcardRunCount > 1) return true;
     const regionalPromptingSupported = generation.supportsRegionalPrompting;
     const useRegionalInpaintChain =
@@ -157,7 +157,7 @@
 
     try {
       // If compare grid has multiple cells, generate all cells
-      if (compare.enabled && compare.cellCount > 1) {
+      if (compare.active && compare.cellCount > 1) {
         await handleGridGenerate();
         return;
       }

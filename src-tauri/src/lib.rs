@@ -545,6 +545,7 @@ pub fn run() {
             commands::websocket::disconnect_ws,
             commands::workflow::generate,
             commands::workflow::generate_controlnet_preprocessor_preview,
+            commands::novelai::novelai_augment,
             commands::novelai::novelai_generate,
             commands::novelai::novelai_subscription,
             commands::novelai::set_novelai_api_key,

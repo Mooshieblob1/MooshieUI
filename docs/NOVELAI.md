@@ -326,6 +326,212 @@ Nothing in this backend is covered by an automated test that touches NovelAI's
 servers, so every phase that ships is followed by a hand-test pass recorded
 here, newest first. Each entry says plainly whether testing is needed at all.
 
+### 2026-08-24 - Director Tools (PR #618)
+
+**Requested by:** the user: "add in the directors tools to this", then "build all".
+
+**What changed.** NovelAI's `/ai/augment-image` endpoint, wired end to end. Six
+tools (Background Removal, Line Art, Sketch, Colorize, Change Emotion,
+Declutter) run over an image the user already has, from an app-wide modal
+reached from three places: the session output context menu, the live preview
+context menu, and the gallery hover actions. Results come back through the same
+synthetic `nai-` prompt id and `comfyui:*` events a generation uses, so they
+land in the session grid and the gallery without any new plumbing.
+
+Only Colorize and Change Emotion read the `defry` slider and the guidance
+prompt; the other four ignore both, so the modal hides them. Change Emotion
+additionally requires a mood, which the backend joins to the prompt as
+`mood;;prompt`. The mood is a free text box, not a dropdown: NovelAI does not
+document which mood strings it accepts.
+
+The entry points are hidden, not disabled, unless the NovelAI backend is
+selected and an API key is configured. There is nothing the user can do about
+either from an image context menu.
+
+**Testing needed:** yes. Every step below needs a NovelAI key and the NovelAI
+backend selected. No Anlas is needed: NovelAI does not charge for any Director
+Tool, and the modal says so.
+
+| # | Step | Expected |
+|---|------|----------|
+| 1 | Select the ComfyUI backend, right-click a session output | No Director Tools entry anywhere |
+| 2 | Select NovelAI with no API key set, right-click a session output | Still no Director Tools entry |
+| 3 | Set a NovelAI key, right-click a session output | "Director Tools" appears below Inpaint |
+| 4 | Click it | Modal opens, source thumbnail on the left, six tools, Background Removal preselected |
+| 5 | Run Background Removal | Toast "Director Tool started.", modal closes, result arrives in the session grid and the gallery |
+| 6 | Open the modal again, pick Colorize | Guidance textarea and Defry slider appear; no mood field |
+| 7 | Drag Defry to 5, run | Request is accepted; the backend clamps anything above 5 |
+| 8 | Pick Change Emotion with the mood box empty | Run Tool is disabled |
+| 9 | Type `happy`, run | Accepted; result shows the emotion change |
+| 10 | Switch from Change Emotion to Sketch | Mood, guidance and Defry all clear and hide |
+| 11 | Right-click the live preview after a generation finishes | "Director Tools" is in the menu |
+| 12 | Right-click the live preview mid-generation, before the output persists | No Director Tools entry (there are no bytes to send yet) |
+| 13 | Gallery, details view, hover a row | A yellow "Director Tools" button sits before Copy |
+| 14 | Gallery, grid view, hover a tile | A yellow `DT` button sits before the copy icon |
+| 15 | Run a tool on a JXL gallery entry | Works: the loader decodes to PNG before sending |
+| 16 | Run a tool with an invalid key | Error box inside the modal, modal stays open, nothing enqueued |
+| 17 | Press Ctrl+Enter in the guidance box | Submits |
+| 18 | Press Escape, or click the backdrop | Modal closes without sending |
+| 19 | Repeat 3-5 in browser mode (LAN URL) | Identical behaviour; the command is allowlisted in `webserver.rs` |
+| 20 | Switch UI language | Every label in the modal is translated |
+
+**Do not skip:** 2, 5, 8, 12, 19. Those cover the availability gate, the happy
+path, the only required field, the unpersisted-preview case and browser mode.
+**Low-risk, skip if short on time:** 17, 18, 20.
+
+### 2026-08-24 - V5 prompt enhance, and compare stays intact in NAI mode (PR #618)
+
+**Requested by:** the user: "now action
+docs/superpowers/specs/2026-08-24-novelai-v5-prompt-enhance-design.md
+entirely."
+
+**What changed.** A third enhance path, offered only when the selected
+checkpoint is a NovelAI Diffusion V5 model. It rewrites the prompt into the V5
+format (scene description, tags, character boxes, undesired content) rather
+than the tag soup the ComfyUI enhance produces, in one of six languages, and
+stages the result in a review modal instead of overwriting anything. Nothing
+reaches the generation store until a row is ticked and Apply is pressed.
+
+The button opens an app wide modal with two stages rather than running the
+rewrite against the prompt box. Stage one is a blank input box that takes either
+a prompt to rewrite or an instruction ("make it a rainy night scene"), with a
+"copy existing prompt" button under it for the tidy-up case and the language
+select beside that; stage two is the same review diff as before, with every row
+ticked by default. The empty-prompt guard on the button does not apply to the V5
+path, because the prompt box is no longer its input.
+
+Also in this pass: the compare grid no longer drives generation while a NovelAI
+checkpoint is selected. The compare tab is hidden in NAI mode, and before this
+change that trapped a user who had compare on, since the multi-cell generate
+path kept firing with no visible way to turn it off. `compare.enabled` is left
+alone and a `compare.active` getter (`enabled && !generation.isNovelAi`) feeds
+the readers that change behaviour, so switching back to a ComfyUI checkpoint
+restores the grid untouched.
+
+**Why it needs hand testing.** `naiParse.ts` and `naiLanguage.ts` are pure
+string logic with real edge cases, and there is no frontend test framework to
+cover them. Adding one is out of scope and contradicts a deliberate repo
+decision, so the mitigation is the fixture set below: it makes a regression
+reproducible without adding a dependency.
+
+#### Fixtures
+
+Pick a V5 checkpoint, press Enhance for V5, paste each into the modal's input
+box, press Enhance again, and check the stated expectation on the review stage. The model response fixtures
+under "malformed responses" cannot be typed in directly; they describe what the
+LLM may return, and the check is that the app salvages or flags it rather than
+breaking.
+
+**Known good responses.** These should parse cleanly, open the modal with no
+amber banner, and populate exactly the rows named.
+
+1. `BASE:` plus `UC:` only, no characters. Two rows, the character list empty.
+2. `BASE:`, `UC:`, `CHAR 1:`, `CHAR 2:` against an empty character list. Four
+   rows, both character rows carrying the "new" chip.
+3. `BASE:`, `UC:`, `CHAR 1:` against one existing character. Three rows, the
+   character row showing the existing text on the left and no "new" chip.
+4. A `NOTE:` line after the fields. Same rows, plus the note in the amber
+   banner at the top. A note is not a problem and must not be listed as one.
+
+**Malformed responses, one per validator rule.** Each should still open the
+modal, with the named rule in the amber problem list after the single retry
+fails to clear it.
+
+5. Empty `BASE:`. Problem names the empty base field.
+6. An em dash or en dash anywhere in any field. Problem names the dash.
+7. A markdown fence around the answer. The fence is stripped by the parser; if
+   one survives into a field, the problem names it.
+8. `CHAR 1:` starting with `1girl`. Problem says counts belong in BASE only.
+9. `CHAR 1:` starting with `Character 1`. Problem says start the box with girl,
+   boy or other.
+10. Quality filler (`masterpiece`, `best quality`) in BASE with the quality
+    toggle on. Problem names the filler found.
+11. Content after the `Text:` block in BASE. Problem says the Text block must be
+    last.
+12. Unbalanced `{` or `[` in BASE. Problem names the brackets.
+13. An odd number of `::` in a field. This one is repaired silently by the
+    normalizer, not reported: check the closing `::` was appended rather than
+    looking for a problem line.
+14. A chatty preamble before the first label ("Sure, here you go"). Dropped by
+    the parser, no problem line.
+15. No labels at all, just a bare prompt. Treated as BASE, no problem line.
+
+**Digit suffix artist names.** Prompt:
+
+`artist:as109, artist:92m, artist:k7, 1.4::artist:hito_(nito3), artist:2b_(pixiv)::`
+
+Every token in the weighted span ends in a digit or a digit-bearing
+disambiguator. The check: the span survives the rewrite with the names intact
+and the weight still attached to the same span, and language detection still
+returns English rather than tripping on the digits.
+
+**One prompt per supported language.** Leave the modal's select on Auto and
+confirm the review subtitle names the language listed here, then confirm the base prompt comes
+back written in it while the tags and the complexity keywords stay English.
+
+| Language | Prompt |
+|----------|--------|
+| English  | `a girl standing in the rain at night, neon signs` |
+| Japanese | `夜の雨の中に立つ少女、ネオンの看板` |
+| Chinese  | `雨夜中站立的少女，霓虹灯招牌` |
+| German   | `ein Mädchen steht nachts im Regen, über ihr Neonschilder` |
+| Spanish  | `una chica con el pelo negro y los ojos verdes bajo la lluvia` |
+| Portuguese | `uma menina com cabelo preto e olhos verdes, não sorrindo` |
+
+Japanese and Chinese are settled by script and must be exact. The three Latin
+languages are scored on diacritics and stopwords and are genuinely unreliable
+on a short prompt; a wrong guess there is a miss, not a bug, and the override
+select is the fix. English on a tie is the intended default.
+
+#### Manual checklist
+
+1. Pick a ComfyUI checkpoint. The enhance button reads the normal label, it is
+   disabled on an empty prompt box, and it rewrites in place with no modal.
+2. Pick a V5 Curated checkpoint. The button reads "Enhance for V5" and stays
+   enabled with the prompt box empty. Pressing it opens a modal that spans most
+   of the window rather than the bottom panel, on the input stage.
+3. On the input stage, the language select lists the four tester languages with
+   an asterisk, the Enhance button is disabled until something is typed, and
+   Ctrl+Enter in the box runs it.
+4. Press "copy existing prompt" with a prompt in the box. The text lands in the
+   input. With the prompt box empty, the button is disabled.
+5. Pick a V5 Full checkpoint. Same controls, and the review subtitle says V5
+   Full rather than V5 Curated. The per-row token bars use the higher budget.
+6. With no LLM backend configured, press Enhance for V5. The setup modal opens,
+   and finishing setup opens the input stage rather than dropping the action.
+7. Run a rewrite. Every row on the review stage arrives ticked, including the
+   undesired content row when the rewrite left it empty.
+8. Run a rewrite with characters already filled in. Untick every row, press
+   Apply. Apply is disabled with nothing ticked, so this cannot be pressed;
+   confirm that is what happens.
+9. Tick the base row only, Apply. The prompt changes, the undesired content and
+   every character box do not.
+10. Tick a character row that maps to an existing slot. That slot's prompt
+    changes and its position and other fields do not.
+11. Tick a character row with the "new" chip. A new slot appears, and at six
+    characters no seventh is created and nothing already written is lost.
+12. Press Undo V5 rewrite within ten seconds. The prompt, the undesired content
+    and every character slot return to what they were, including slots the
+    rewrite never touched.
+13. Reach the review stage, then switch to a non-V5 checkpoint. The modal closes
+    and nothing is applied. Do the same on the input stage: the modal stays open
+    and what was typed survives.
+14. Press Escape, click the backdrop, and press Cancel on each stage. Each
+    closes the modal with nothing applied.
+15. Press Enhance, then Cancel while it is still running. The modal stays shut
+    when the answer arrives rather than reopening on the review stage.
+16. Set the language select to a tester language, reload the app, reopen the
+    modal. The select still reads that language.
+17. Run a rewrite twice in a row with the same variant. The second is faster,
+    because the authored skill note is cached in localStorage rather than
+    re-authored.
+18. Switch to a NovelAI checkpoint with compare enabled. The compare tab is
+    gone, the panel glow is gone, and Generate produces one image rather than
+    walking the grid. Switch back to a ComfyUI checkpoint: the grid is still
+    there, with the same cells.
+
+**Result:** not yet run. This entry is the checklist, recorded with the change.
+
 ### 2026-08-23 - Style and chunk editors are app level modals (PR #618)
 
 **Requested by:** the user: "make the prompt chunk and artist style editors

@@ -62,13 +62,18 @@
   // stack, and artists / artist styles / scheduling / compare are all booru-tag
   // or image-grid features with no video equivalent.
   const videoTabs: TabId[] = ["images", "prompts", "timeline", "notes"];
-  const visibleTabs = $derived(
-    isVideoMode
-      ? videoTabs
-      : showCheckpointsTab
-        ? allTabs
-        : allTabs.filter((t) => t !== "checkpoints")
-  );
+  // NovelAI generates server-side: no LoRA support, and the compare grid and
+  // scheduled-batch runner are local-ComfyUI features, so all three tabs are
+  // hidden entirely while a NAI model is selected.
+  const visibleTabs = $derived.by(() => {
+    if (isVideoMode) return videoTabs;
+    let tabs = allTabs;
+    if (!showCheckpointsTab) tabs = tabs.filter((t) => t !== "checkpoints");
+    if (generation.isNovelAi) {
+      tabs = tabs.filter((t) => t !== "loras" && t !== "compare" && t !== "schedule");
+    }
+    return tabs;
+  });
 
   // Snap to a valid tab whenever the visible set shrinks out from under the
   // selection (mode switch, or the checkpoints count dropping below the

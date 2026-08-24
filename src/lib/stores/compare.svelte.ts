@@ -51,6 +51,18 @@ class CompareStore {
   activeIndex = $state(0);
   cols = $state(1);
 
+  /**
+   * Whether compare should actually drive generation and the panel chrome.
+   *
+   * NovelAI has no batch-of-variants path, so the compare grid is hidden in NAI
+   * mode. `enabled` is deliberately left alone rather than forced off: the user
+   * gets their grid back untouched when they switch to a ComfyUI checkpoint
+   * again. Every reader that changes behaviour reads this instead.
+   */
+  get active(): boolean {
+    return this.enabled && !generation.isNovelAi;
+  }
+
   get cellCount(): number {
     return this.cells.length;
   }

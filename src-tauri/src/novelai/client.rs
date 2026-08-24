@@ -155,6 +155,34 @@ impl<'a> NovelAiClient<'a> {
         Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
     }
 
+    /// Run one Director Tool over an image.
+    ///
+    /// Same host, same bearer and the same zip-of-PNGs response as `generate`.
+    /// The body is built by `super::augment`, which is where the per-tool
+    /// differences live.
+    ///
+    /// Background removal answers with more than one image, so the return type
+    /// is a list even though four of the six tools only ever fill one slot.
+    pub async fn augment_image(&self, body: &Value) -> Result<Vec<Vec<u8>>, AppError> {
+        let res = self
+            .http
+            .post(format!("{IMAGE_BASE}/ai/augment-image"))
+            .bearer_auth(self.api_key)
+            .json(body)
+            .send()
+            .await?;
+
+        let res = check_status(res).await?;
+        let bytes = res.bytes().await?;
+        let images = response::unpack_images(&bytes).map_err(AppError::Other)?;
+        if images.is_empty() {
+            return Err(AppError::Other(
+                "NovelAI returned no image for this Director Tool".into(),
+            ));
+        }
+        Ok(images)
+    }
+
     /// Fetch the subscription record backing the Anlas and Opus readouts.
     pub async fn subscription(&self) -> Result<Subscription, AppError> {
         let res = self

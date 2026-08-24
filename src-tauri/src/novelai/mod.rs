@@ -6,6 +6,7 @@
 //! `comfyui:executing` / `comfyui:execution_error` events, so `App.svelte` and
 //! the progress store need no NovelAI-specific handling.
 
+pub mod augment;
 pub mod client;
 pub mod metadata;
 pub mod models;

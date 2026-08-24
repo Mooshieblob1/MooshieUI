@@ -42,6 +42,7 @@ import {
   computeH3Dimensions,
   computeH3FrameLength,
 } from "../utils/videoParams.js";
+import type { NaiLanguageChoice } from "../utils/naiLanguage.js";
 import type { ModelFamily, TurboModelVariant } from "../utils/modelFamily.js";
 import type {
   ExtraPromptBox,
@@ -592,6 +593,15 @@ class GenerationStore {
    * default is also what keeps a fresh browser client matching the desktop app.
    */
   showNovelaiUsage = $state(true);
+  /**
+   * Target language for the V5 prompt enhance.
+   *
+   * `"auto"` reads it off the prompt, which is right almost always. The override
+   * exists for the case detection cannot cover: writing the idea in English and
+   * wanting the prompt out in Japanese. Display only, like the usage readout, so
+   * it stays out of `novelaiSettings`.
+   */
+  naiEnhanceLanguage = $state<NaiLanguageChoice>("auto");
   vae = $state("");
   loras = $state<LoraEntry[]>([]);
   samplerName = $state("euler_cfg_pp");
@@ -2460,6 +2470,8 @@ class GenerationStore {
           };
         if (saved.showNovelaiUsage !== undefined)
           this.showNovelaiUsage = saved.showNovelaiUsage;
+        if (saved.naiEnhanceLanguage !== undefined)
+          this.naiEnhanceLanguage = saved.naiEnhanceLanguage;
         if (saved.styleTransferLowScaleEnd !== undefined) this.styleTransferLowScaleEnd = saved.styleTransferLowScaleEnd;
         if (saved.styleTransferHighScaleStart !== undefined) this.styleTransferHighScaleStart = saved.styleTransferHighScaleStart;
         if (saved.styleTransferBeta !== undefined) this.styleTransferBeta = saved.styleTransferBeta;
@@ -2685,6 +2697,7 @@ class GenerationStore {
         videoAudioVaeModel: this.videoAudioVaeModel,
         novelaiSettings: this.novelaiSettings,
         showNovelaiUsage: this.showNovelaiUsage,
+        naiEnhanceLanguage: this.naiEnhanceLanguage,
       });
       triggerSync();
     } catch (e) {
@@ -2815,6 +2828,7 @@ class GenerationStore {
       videoAudioVaeModel: this.videoAudioVaeModel,
       novelaiSettings: this.novelaiSettings,
       showNovelaiUsage: this.showNovelaiUsage,
+      naiEnhanceLanguage: this.naiEnhanceLanguage,
     };
   }
 

@@ -34,6 +34,7 @@
     type NormalizedInputImage,
   } from "../../utils/editImagePreparation.js";
   import { gallery } from "../../stores/gallery.svelte.js";
+  import { directorTools, directorToolsAvailable } from "../../stores/directorTools.svelte.js";
   import { lazyThumbnail } from "../../utils/lazyThumbnail.js";
   import type { OutputImage, InterrogationResult } from "../../types/index.js";
   import { onMount, onDestroy, tick } from "svelte";
@@ -743,6 +744,11 @@
       { label: "", action: () => {}, separator: true },
       { label: locale.t('generation.ctx.upscale'), action: () => upscaleImage(image) },
       { label: locale.t('generation.ctx.inpaint'), action: () => inpaintImage(image) },
+      // NovelAI only, and only with a key: the entry is hidden rather than
+      // disabled, because there is nothing the user can do about it from here.
+      ...(directorToolsAvailable()
+        ? [{ label: locale.t('novelai.director.action'), action: () => directorTools.open(image, image.thumbnailUrl || image.url || null) }]
+        : []),
       { label: "", action: () => {}, separator: true },
       { label: comparePinLabel(image), action: () => gallery.toggleComparePin(image) },
       { label: "", action: () => {}, separator: true },
@@ -2204,10 +2210,10 @@
           use:wheelScrollLock
           class="{mobileFriendly
             ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
-            : 'overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] px-3 pt-2 flex flex-col gap-2 shrink-0 border-r'} {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
+            : 'overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable] px-3 pt-2 flex flex-col gap-2 shrink-0 border-r'} {draggingSection && pendingDrop?.side === 'left' ? 'border-indigo-500/50' : 'border-transparent'} {compare.active ? 'compare-cell-glow' : ''}"
           style={mobileFriendly
-            ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("left")}; transition: ${mobilePanelTransition("left")}; z-index: ${mobilePanelZIndex("left")};${compare.enabled ? ` --compare-color: ${compare.activeColor};` : ""}`
-            : `width: ${leftWidth}px${compare.enabled ? `; --compare-color: ${compare.activeColor}` : ""}`}
+            ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("left")}; transition: ${mobilePanelTransition("left")}; z-index: ${mobilePanelZIndex("left")};${compare.active ? ` --compare-color: ${compare.activeColor};` : ""}`
+            : `width: ${leftWidth}px${compare.active ? `; --compare-color: ${compare.activeColor}` : ""}`}
         >
         {#if mobileFriendly}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -2383,10 +2389,10 @@
         use:wheelScrollLock
         class="{mobileFriendly
           ? 'fixed left-0 right-0 top-0 bg-neutral-950 flex flex-col overflow-hidden will-change-transform'
-          : 'overflow-y-auto [scrollbar-gutter:stable] p-3 flex flex-col gap-2 shrink-0 border-l'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.enabled ? 'compare-cell-glow' : ''}"
+          : 'overflow-y-auto [scrollbar-gutter:stable] p-3 flex flex-col gap-2 shrink-0 border-l'} {draggingSection && pendingDrop?.side === 'right' ? 'border-indigo-500/50' : 'border-transparent'} {compare.active ? 'compare-cell-glow' : ''}"
         style={mobileFriendly
-          ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("right")}; transition: ${mobilePanelTransition("right")}; z-index: ${mobilePanelZIndex("right")};${compare.enabled ? ` --compare-color: ${compare.activeColor};` : ""}`
-          : `width: ${rightWidth}px${compare.enabled ? `; --compare-color: ${compare.activeColor}` : ""}`}
+          ? `bottom: calc(env(safe-area-inset-bottom) + 4rem); transform: ${mobilePanelTransform("right")}; transition: ${mobilePanelTransition("right")}; z-index: ${mobilePanelZIndex("right")};${compare.active ? ` --compare-color: ${compare.activeColor};` : ""}`
+          : `width: ${rightWidth}px${compare.active ? `; --compare-color: ${compare.activeColor}` : ""}`}
       >
         {#if mobileFriendly}
           <!-- svelte-ignore a11y_no_static_element_interactions -->

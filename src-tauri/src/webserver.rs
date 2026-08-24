@@ -249,8 +249,9 @@ const MODERATOR_COMMANDS: &[&str] = &[
     "set_llm_base_url",
     "list_external_llm_models",
     // NovelAI: the key is the instance owner's and every generation spends
-    // their Anlas, so all three follow `update_config` rather than `generate`.
+    // their Anlas, so all four follow `update_config` rather than `generate`.
     // A LAN guest must not be able to bill the host.
+    "novelai_augment",
     "novelai_generate",
     "novelai_subscription",
     "set_novelai_api_key",
@@ -3080,6 +3081,54 @@ async fn dispatch_command(
                 "prompt_id": prompt_id,
                 "seed": seed.to_string(),
             }))
+        }
+        "novelai_augment" => {
+            crate::temp_images::cleanup(300);
+
+            let params: crate::novelai::augment::AugmentParams =
+                serde_json::from_value(args["params"].clone())
+                    .map_err(|e| format!("Invalid params: {}", e))?;
+            let tool = params.tool.clone();
+            // Validated before the id is minted so a bad tool name or an
+            // unreadable image fails this HTTP call rather than arriving later
+            // as an execution_error.
+            let prepared = crate::novelai::augment::PreparedAugment::prepare(params)
+                .map_err(|e| e.to_string())?;
+
+            let prompt_id = crate::novelai::new_prompt_id();
+            let user = username.map(|s| s.to_string());
+            log::info!(
+                "[nai] director tools user={} tool={}",
+                user.as_deref().unwrap_or("admin"),
+                tool,
+            );
+
+            state.prompt_queue.insert(&prompt_id, user);
+            state.broadcast_queue_positions();
+
+            let bg_state = Arc::clone(&state);
+            let bg_prompt_id = prompt_id.clone();
+            tokio::spawn(async move {
+                let sink = crate::novelai::EventSink::new(
+                    Arc::clone(&bg_state),
+                    #[cfg(feature = "desktop")]
+                    None,
+                );
+                let result = crate::novelai::augment::run(
+                    Arc::clone(&bg_state),
+                    sink,
+                    bg_prompt_id.clone(),
+                    prepared,
+                )
+                .await;
+                if let Err(err) = &result {
+                    log::error!("[nai] director tools {bg_prompt_id} failed: {err}");
+                }
+                bg_state.prompt_queue.cancel_and_remove(&bg_prompt_id);
+                bg_state.broadcast_queue_positions();
+            });
+
+            Ok(serde_json::json!({ "prompt_id": prompt_id }))
         }
         "novelai_subscription" => {
             let sub = crate::novelai::fetch_subscription(&state)

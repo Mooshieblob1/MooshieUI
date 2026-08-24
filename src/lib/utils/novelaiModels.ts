@@ -85,6 +85,22 @@ export function isNovelAiModel(id: string | null | undefined): boolean {
 }
 
 /**
+ * Which V5 variant a checkpoint is, or null for anything else.
+ *
+ * The V5 prompt enhance is gated on this and nothing else. V4.5 and V4 take the
+ * danbooru tag enhance they always took: their prompt format is a different
+ * shape, and rewriting them to the V5 specification makes their output worse.
+ * Inpainting checkpoints are matched too, because the prompt does not change
+ * when the action does.
+ */
+export function naiV5Variant(id: string | null | undefined): "full" | "curated" | null {
+  if (!id) return null;
+  if (id.startsWith("nai-diffusion-5-full")) return "full";
+  if (id.startsWith("nai-diffusion-5-curated")) return "curated";
+  return null;
+}
+
+/**
  * NovelAI accepts only dimensions that are a multiple of 64, and its own UI
  * steps the side length on that grid (1024 -> 1088 -> 1152). Local backends are
  * happy on an 8px grid, so this applies to NovelAI mode only.

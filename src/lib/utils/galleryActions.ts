@@ -62,6 +62,22 @@ async function blobToPngBytes(blob: Blob): Promise<number[]> {
   }
 }
 
+/**
+ * Base64-encode raw image bytes for an API that takes them as a string.
+ *
+ * Chunked rather than one `String.fromCharCode(...bytes)` call: a full-size PNG
+ * runs to several million bytes, and spreading that many arguments overflows the
+ * call stack.
+ */
+export function imageBytesToBase64(bytes: number[]): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.slice(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 export async function imageUrlToPngBytes(url: string): Promise<number[]> {
   if (url.startsWith("blob:")) return blobUrlToPngBytes(url);
 

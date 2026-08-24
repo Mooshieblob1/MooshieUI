@@ -53,6 +53,8 @@
   import ExternalComfyModal from "./lib/components/ExternalComfyModal.svelte";
   import PhotopeaEditor from "./lib/components/PhotopeaEditor.svelte";
   import GlobalErrorModal from "./lib/components/errors/GlobalErrorModal.svelte";
+  import NaiEnhanceModal from "./lib/components/generation/NaiEnhanceModal.svelte";
+  import DirectorToolsModal from "./lib/components/generation/DirectorToolsModal.svelte";
   import StyleEditor from "./lib/components/generation/StyleEditor.svelte";
   import PresetEditor from "./lib/components/generation/PresetEditor.svelte";
   import { styleEditors } from "./lib/stores/styleEditors.svelte.js";
@@ -4124,6 +4126,12 @@
 <!-- Interrogate modal (from gallery/lightbox) -->
 
 <CharacterInsertModal onapplied={finishCharacterInsert} />
+
+<!-- NovelAI V5 rewrite, input and review both. Mounted at root because it is
+     app wide and outlives the prompt panel that opens it: switching to the
+     gallery mid-review must not discard a result not yet applied. -->
+<NaiEnhanceModal />
+<DirectorToolsModal />
 
 <!-- Global human-readable error surface -->
 <GlobalErrorModal />

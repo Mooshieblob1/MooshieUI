@@ -22,6 +22,13 @@ pub struct NovelAiGenerateResponse {
     pub seed: i64,
 }
 
+/// Director Tools have no seed to report, so the response carries only the id
+/// the events will arrive under.
+#[derive(serde::Serialize)]
+pub struct NovelAiAugmentResponse {
+    pub prompt_id: String,
+}
+
 /// Start a NovelAI generation and return its synthetic prompt id immediately.
 ///
 /// The request itself runs in a spawned task so the caller's
@@ -71,6 +78,43 @@ pub async fn novelai_generate(
     });
 
     Ok(NovelAiGenerateResponse { prompt_id, seed })
+}
+
+/// Run a Director Tool over an image and return its synthetic prompt id.
+///
+/// Structured exactly like `novelai_generate`: validate up front so a bad tool
+/// name or an unreadable image is a command error, then spawn so the caller has
+/// a prompt id before the first event arrives. The results come back as
+/// `comfyui:output_image` events, which is why nothing is returned here.
+#[tauri::command]
+pub async fn novelai_augment(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    params: novelai::augment::AugmentParams,
+) -> Result<NovelAiAugmentResponse, AppError> {
+    crate::temp_images::cleanup(300);
+
+    let prepared = novelai::augment::PreparedAugment::prepare(params)?;
+    let prompt_id = novelai::new_prompt_id();
+
+    state.prompt_queue.insert(&prompt_id, None);
+    state.broadcast_queue_positions();
+
+    let bg_state = Arc::clone(state.inner());
+    let bg_prompt_id = prompt_id.clone();
+    tokio::spawn(async move {
+        let sink = novelai::EventSink::new(Arc::clone(&bg_state), Some(app));
+        let result =
+            novelai::augment::run(Arc::clone(&bg_state), sink, bg_prompt_id.clone(), prepared)
+                .await;
+        if let Err(err) = &result {
+            log::error!("NovelAI Director Tools {bg_prompt_id} failed: {err}");
+        }
+        bg_state.prompt_queue.cancel_and_remove(&bg_prompt_id);
+        bg_state.broadcast_queue_positions();
+    });
+
+    Ok(NovelAiAugmentResponse { prompt_id })
 }
 
 /// Anlas balance and Opus status for the configured key.
