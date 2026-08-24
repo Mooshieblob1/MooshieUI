@@ -41,6 +41,7 @@
   import ContextMenu from "../ui/ContextMenu.svelte";
   import type { ContextMenuItem } from "../ui/ContextMenu.svelte";
   import InterrogateModal from "./InterrogateModal.svelte";
+  import NovelAiImportModal from "./NovelAiImportModal.svelte";
   import { interrogateGalleryImage, interrogateImage } from "../../utils/api.js";
   import { ipcListen, isTauri } from "../../utils/ipc.js";
   import { progress } from "../../stores/progress.svelte.js";
@@ -2582,3 +2583,6 @@
   {#if regionalPromptModalOpen}
     <RegionalPromptModal onclose={() => (regionalPromptModalOpen = false)} />
   {/if}
+
+  <!-- Staged by any drop or paste of a NovelAI image, wherever it landed. -->
+  <NovelAiImportModal onImage2Image={(file) => handleImagePaste(file)} />

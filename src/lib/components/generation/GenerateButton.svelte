@@ -554,7 +554,6 @@
       height: generation.height,
       steps: generation.steps,
       nSamples: generation.batchSize,
-      uncondScale: nai.uncond_scale,
       strength: generation.mode === "txt2img" ? 1 : nai.strength,
       isOpus: novelai.isOpus,
       vibeEncodes: nai.vibes.filter((v) => !v.encoding).length,

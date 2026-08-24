@@ -15,7 +15,7 @@
   import { progress } from "./lib/stores/progress.svelte.js";
   import { gallery, isVideoImage } from "./lib/stores/gallery.svelte.js";
   import { models } from "./lib/stores/models.svelte.js";
-  import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage, getComfyuiVersion, type ComfyUiVersionInfo } from "./lib/utils/api.js";
+  import { uploadImageBytes, getConfig, readImageMetadata, getQueue, recoverPromptOutputs, readTempImage } from "./lib/utils/api.js";
   import { loadOutputImageForGenerationInput, uploadOutputImageForGenerationInput, sendImageToVideoFrame, addImageToVideoReference, videoReferenceSlotsFree } from "./lib/utils/galleryActions.js";
   import { H3_MAX_REF_IMAGES } from "./lib/utils/videoParams.js";
   import { prepareOutputImageForEditMode } from "./lib/utils/editImagePreparation.js";

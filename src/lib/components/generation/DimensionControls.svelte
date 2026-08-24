@@ -196,17 +196,20 @@
   /**
    * Which presets Opus covers at the current side length and step count.
    *
-   * Only ever populated on an Opus account in NovelAI mode: on any other plan
-   * every generation costs Anlas, so marking them all would say nothing. The
-   * dimensions come from the same `dimsForAspect` the buttons apply, so a
-   * green border cannot disagree with what clicking one produces.
+   * Only ever populated on an Opus account in NovelAI mode, generating one
+   * image at a time: on any other plan, or in a batch, every generation costs
+   * Anlas and marking them all would say nothing. The dimensions come from the
+   * same `dimsForAspect` the buttons apply, so a green border cannot disagree
+   * with what clicking one produces.
    */
   const freePresets = $derived.by(() => {
     const free = new Set<string>();
-    if (!generation.isNovelAi || !novelai.isOpus) return free;
+    if (!generation.isNovelAi || !novelai.isOpus || generation.batchSize !== 1)
+      return free;
     for (const p of presets) {
       const dims = dimsForAspect(p.w, p.h, sideLength);
-      if (novelAiOpusCovers(dims.w, dims.h, generation.steps, true)) free.add(p.label);
+      if (novelAiOpusCovers(dims.w, dims.h, generation.steps, true))
+        free.add(p.label);
     }
     return free;
   });

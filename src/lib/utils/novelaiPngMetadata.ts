@@ -147,6 +147,10 @@ export function parseNovelAiChunks(chunks: Record<string, string>): Record<strin
       ["cfg_rescale", "mooshie_novelai_cfg_rescale"],
       ["uncond_scale", "mooshie_novelai_uncond_scale"],
       ["dynamic_thresholding", "mooshie_novelai_dynamic_thresholding"],
+      // Which endpoint made the image. An `Img2ImgRequest` was seeded by a
+      // source image nothing in the metadata carries, so the settings here
+      // cannot reproduce it and the import dialog says so.
+      ["request_type", "mooshie_novelai_request_type"],
     ];
     for (const [naiKey, internal] of direct) {
       const value = scalar(comment[naiKey]);

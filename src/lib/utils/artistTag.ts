@@ -12,6 +12,7 @@
  */
 
 import type { ArtistTagIndex } from "../artist-gallery/detection.js";
+import { escapeEmphasisMarks, unescapeEmphasisMarks } from "./promptSyntaxEscape.js";
 
 /**
  * Escape any unescaped `(` and `)` in a tag so it round-trips through the
@@ -29,12 +30,30 @@ export function stripArtistSigil(tag: string): string {
 
 /**
  * The comparable body of an artist tag: no sigil, underscores as spaces,
- * unescaped parens escaped, trimmed. This is the form both `@artist \(x\)`
- * and `artist_(x)` collapse to, so the two can be compared or removed
- * regardless of which mode wrote them.
+ * unescaped parens escaped, emphasis escapes dropped, trimmed. This is the
+ * form `@artist \(x\)`, `artist_(x)` and `neverland\+` all collapse to, so
+ * they can be compared or removed regardless of which mode wrote them.
+ *
+ * Parens are normalised by *adding* the escape and `+`/`-` by *removing* it,
+ * because that is the canonical form each one has on the way in: a tag name
+ * never carries its own backslash, and `escapeArtistParens()` is what the
+ * prompt-facing form already used.
  */
 export function artistTagBody(tag: string): string {
-  return escapeArtistParens(stripArtistSigil(tag).replace(/_/g, " ").trim());
+  return escapeArtistParens(
+    unescapeEmphasisMarks(stripArtistSigil(tag).replace(/_/g, " ").trim()),
+  );
+}
+
+/**
+ * The prompt-facing form of an artist tag: the comparable body with any
+ * trailing `+`/`-` run escaped, so an artist whose name ends in one (`k+`,
+ * `neverland+`, `grs-`) is not rewritten to `(k:1.10)` by the send-time
+ * emphasis translator. `formatArtistTag()` on the generation store adds the
+ * mode's sigil on top of this.
+ */
+export function artistTagPromptBody(tag: string): string {
+  return escapeEmphasisMarks(artistTagBody(tag));
 }
 
 /** Case-insensitive comparison of two artist tags, ignoring sigil and spacing. */
@@ -57,7 +76,7 @@ export function splitPromptTags(prompt: string): string[] {
 /** The key form `buildArtistTagIndex()` uses: lowercase, underscored, no sigil. */
 export function artistIndexKey(tag: string): string {
   return stripArtistSigil(tag)
-    .replace(/\\([()[\]])/g, "$1")
+    .replace(/\\([()[\]+-])/g, "$1")
     .toLowerCase()
     .trim()
     .replace(/\s+/g, "_");

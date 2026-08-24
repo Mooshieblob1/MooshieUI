@@ -122,6 +122,10 @@ pub fn parse_chunks(chunks: &HashMap<String, String>) -> Option<HashMap<String, 
                 "dynamic_thresholding",
                 "mooshie_novelai_dynamic_thresholding",
             ),
+            // Which endpoint made the image. An `Img2ImgRequest` was seeded by
+            // a source image nothing in the metadata carries, so the settings
+            // here cannot reproduce it and the import dialog says so.
+            ("request_type", "mooshie_novelai_request_type"),
         ];
         for &(nai_key, internal) in extras {
             if let Some(value) = comment.get(nai_key).and_then(string_of) {
@@ -387,6 +391,23 @@ mod tests {
             "false"
         );
         assert_eq!(params.get("mooshie_novelai_uc_preset").unwrap(), "0");
+    }
+
+    #[test]
+    fn the_request_type_marks_an_image_that_cannot_be_reproduced() {
+        let comment = serde_json::json!({ "request_type": "Img2ImgRequest" }).to_string();
+        let map = chunks(&[("Software", "NovelAI"), ("Comment", &comment)]);
+        let params = parse_chunks(&map).expect("novelai chunks");
+        assert_eq!(
+            params.get("mooshie_novelai_request_type").unwrap(),
+            "Img2ImgRequest"
+        );
+
+        // A plain text-to-image generation still records the field, and the
+        // dialog reads it as reproducible.
+        let map = chunks(&[("Software", "NovelAI"), ("Comment", &v4_comment())]);
+        let params = parse_chunks(&map).expect("novelai chunks");
+        assert!(!params.contains_key("mooshie_novelai_request_type"));
     }
 
     #[test]

@@ -6,6 +6,16 @@ import { locale } from "../stores/locale.svelte.js";
 import { readPngMetadataClientSide } from "./pngMetadata.js";
 import { isBrowserMode } from "./ipc.js";
 import { parseSegmentDetailPrompt } from "./promptSegmentDetail.js";
+import type { NovelAiCharacter } from "../types/index.js";
+import { NOVELAI_MAX_CHARACTERS, isNovelAiModel } from "./novelaiModels.js";
+import { novelaiImport } from "../stores/novelaiImport.svelte.js";
+import type {
+  NovelAiImportSelection,
+  NovelAiImportSource,
+} from "../stores/novelaiImport.svelte.js";
+
+/** The newest NovelAI model that still has vibe transfer and precise reference. */
+export const NOVELAI_REFERENCE_FALLBACK_MODEL = "nai-diffusion-4-5-full";
 
 /** Section IDs that accept metadata drops */
 export type DroppableSectionId =
@@ -110,19 +120,38 @@ function stripQualityTags(prompt: string): string {
   return filtered.join(", ");
 }
 
+/**
+ * The prompt text an import writes into the panel.
+ *
+ * `clean` is the import dialog's "Clean Imports" switch, and matches what every
+ * other import path has always done: drop the quality tags this app appends on
+ * its own so they are not baked in twice, and drop inline syntax no backend
+ * here understands. Turning it off imports the prompt exactly as the image
+ * carries it.
+ */
+function promptForImport(text: string, clean: boolean): string {
+  return clean ? stripQualityTags(text) : text.trim();
+}
+
+function applyPositivePrompt(meta: Record<string, string>, clean = true): boolean {
+  if (meta.positive_prompt === undefined) return false;
+  generation.positivePrompt = promptForImport(meta.positive_prompt, clean);
+  generation.extraPositiveBoxes = [];
+  return true;
+}
+
+function applyNegativePrompt(meta: Record<string, string>, clean = true): boolean {
+  if (meta.negative_prompt === undefined) return false;
+  generation.negativePrompt = promptForImport(meta.negative_prompt, clean);
+  generation.extraNegativeBoxes = [];
+  return true;
+}
+
 function applyPrompts(meta: Record<string, string>): boolean {
-  let applied = false;
-  if (meta.positive_prompt !== undefined) {
-    generation.positivePrompt = stripQualityTags(meta.positive_prompt);
-    generation.extraPositiveBoxes = [];
-    applied = true;
-  }
-  if (meta.negative_prompt !== undefined) {
-    generation.negativePrompt = stripQualityTags(meta.negative_prompt);
-    generation.extraNegativeBoxes = [];
-    applied = true;
-  }
-  return applied;
+  // Both sides are applied: `||` would short-circuit past the negative.
+  const positive = applyPositivePrompt(meta);
+  const negative = applyNegativePrompt(meta);
+  return positive || negative;
 }
 
 /**
@@ -132,8 +161,27 @@ function applyPrompts(meta: Record<string, string>): boolean {
  * and by the Rust reader for an image copied straight off novelai.net, so both
  * routes into the panel land here.
  */
-function isNovelAiMeta(meta: Record<string, string>): boolean {
+export function isNovelAiMetadata(meta: Record<string, string>): boolean {
   return meta.mooshie_backend === "novelai";
+}
+
+/** Local alias, so the call sites inside this module read as they did. */
+const isNovelAiMeta = isNovelAiMetadata;
+
+/** Does this image carry a character list the Characters box could import? */
+export function hasNovelAiCharacters(meta: Record<string, string>): boolean {
+  return parseNovelAiCharacters(meta).length > 0;
+}
+
+/**
+ * Was this image made by NovelAI's img2img endpoint?
+ *
+ * The metadata records the endpoint but not the source image, so nothing here
+ * can reproduce the result: importing the settings starts a fresh generation
+ * from whatever the panel is holding. The dialog warns about that.
+ */
+export function isNovelAiImg2ImgMetadata(meta: Record<string, string>): boolean {
+  return (meta.mooshie_novelai_request_type ?? "").toLowerCase().includes("img2img");
 }
 
 function metaBool(value: string | undefined): boolean | undefined {
@@ -156,7 +204,7 @@ function metaNumber(value: string | undefined): number | undefined {
  * for a sampler it does not have. Everything NovelAI-specific goes through the
  * one settings patch instead, which persists on write.
  */
-function applyNovelAiSettings(meta: Record<string, string>): void {
+function applyNovelAiSettings(meta: Record<string, string>, withCharacters = true): void {
   const patch: Partial<NovelAiSettings> = {};
   if (meta.sampler) patch.sampler = meta.sampler;
   if (meta.scheduler) patch.noise_schedule = meta.scheduler;
@@ -185,32 +233,88 @@ function applyNovelAiSettings(meta: Record<string, string>): void {
     if (value !== undefined) (patch as Record<string, unknown>)[field] = value;
   }
 
-  if (meta.mooshie_novelai_characters) {
-    try {
-      const parsed = JSON.parse(meta.mooshie_novelai_characters);
-      if (Array.isArray(parsed)) {
-        patch.characters = parsed.map((c: any) => ({
-          prompt: typeof c?.prompt === "string" ? c.prompt : "",
-          negative_prompt: typeof c?.negative_prompt === "string" ? c.negative_prompt : "",
-          center: {
-            x: typeof c?.center?.x === "number" ? c.center.x : 0.5,
-            y: typeof c?.center?.y === "number" ? c.center.y : 0.5,
-          },
-          enabled: c?.enabled !== false,
-        }));
-      }
-    } catch {
-      // A character list we cannot read is dropped; the rest still applies.
-    }
+  if (withCharacters) {
+    const characters = parseNovelAiCharacters(meta);
+    if (characters.length > 0) patch.characters = characters;
   }
 
   generation.updateNovelAiSettings(patch);
 }
 
-function applySampler(meta: Record<string, string>): boolean {
+/** Read the character list an image carries, or an empty list if it has none. */
+function parseNovelAiCharacters(meta: Record<string, string>): NovelAiCharacter[] {
+  if (!meta.mooshie_novelai_characters) return [];
+  try {
+    const parsed = JSON.parse(meta.mooshie_novelai_characters);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((c: any) => ({
+      prompt: typeof c?.prompt === "string" ? c.prompt : "",
+      negative_prompt: typeof c?.negative_prompt === "string" ? c.negative_prompt : "",
+      center: {
+        x: typeof c?.center?.x === "number" ? c.center.x : 0.5,
+        y: typeof c?.center?.y === "number" ? c.center.y : 0.5,
+      },
+      enabled: c?.enabled !== false,
+    }));
+  } catch {
+    // A character list we cannot read is dropped; the rest still applies.
+    return [];
+  }
+}
+
+/**
+ * Import an image's characters, either on top of the panel's own or in place of
+ * them.
+ *
+ * Appending is capped the same way the character panel caps itself, so a busy
+ * image dropped onto a busy panel cannot push the list past what the backend
+ * accepts.
+ */
+function applyNovelAiCharacters(meta: Record<string, string>, append: boolean): boolean {
+  const incoming = parseNovelAiCharacters(meta);
+  if (incoming.length === 0) return false;
+  const existing = append ? (generation.novelaiSettings.characters ?? []) : [];
+  generation.updateNovelAiSettings({
+    characters: [...existing, ...incoming].slice(0, NOVELAI_MAX_CHARACTERS),
+  });
+  return true;
+}
+
+/**
+ * Empty the character panel.
+ *
+ * An image with no characters of its own writes nothing, so the panel keeps
+ * whoever was already in it. This is how a drop says "this image has no
+ * characters, and neither should the panel".
+ */
+function clearNovelAiCharacters(): boolean {
+  if ((generation.novelaiSettings.characters ?? []).length === 0) return false;
+  generation.updateNovelAiSettings({ characters: [] });
+  return true;
+}
+
+/**
+ * Restore the seed.
+ *
+ * Kept as a string all the way through: `parseInt` rounds the 63-bit seeds
+ * NovelAI hands out past 2^53, which silently produces a different image.
+ */
+function applySeed(meta: Record<string, string>): boolean {
+  if (!meta.seed) return false;
+  const trimmed = meta.seed.trim();
+  if (!/^\d+$/.test(trimmed)) return false;
+  generation.seed = trimmed;
+  return true;
+}
+
+function applySampler(
+  meta: Record<string, string>,
+  options: { seed?: boolean; characters?: boolean } = {}
+): boolean {
+  const { seed = true, characters = true } = options;
   let applied = false;
   if (isNovelAiMeta(meta)) {
-    applyNovelAiSettings(meta);
+    applyNovelAiSettings(meta, characters);
     applied = true;
   } else {
     if (meta.sampler) { generation.samplerName = meta.sampler; applied = true; }
@@ -228,11 +332,7 @@ function applySampler(meta: Record<string, string>): boolean {
     const v = parseFloat(meta.denoise);
     if (!isNaN(v)) { generation.denoise = v; applied = true; }
   }
-  if (meta.seed) {
-    // Keep the seed as a string: parseInt would round 63-bit seeds past 2^53.
-    const trimmed = meta.seed.trim();
-    if (/^\d+$/.test(trimmed)) { generation.seed = trimmed; applied = true; }
-  }
+  if (seed && applySeed(meta)) applied = true;
   return applied;
 }
 
@@ -333,6 +433,89 @@ export function applyAllMetadata(meta: Record<string, string>): string[] {
   return applied;
 }
 
+/**
+ * Point the panel at the model that made the image.
+ *
+ * Coming from a local checkpoint this has to go through `selectNovelAiModel`,
+ * which clears the split-model and LoRA state a local checkpoint leaves behind.
+ * That also resets steps and CFG to NovelAI's defaults, so it runs before the
+ * rest of the import and the image's own values land on top.
+ */
+function applyNovelAiModel(meta: Record<string, string>): boolean {
+  const model = meta.model;
+  if (!model || !isNovelAiModel(model)) return false;
+  if (generation.checkpoint === model) return false;
+  if (isNovelAiModel(generation.checkpoint)) {
+    generation.checkpoint = model;
+  } else {
+    generation.selectNovelAiModel(model);
+  }
+  return true;
+}
+
+/**
+ * Apply exactly what the import dialog's checkboxes asked for.
+ *
+ * Returns the list of section names that changed, for the confirmation toast.
+ * The order matters: the model switch resets steps and CFG, so it goes first,
+ * and characters are written after the settings patch that would otherwise
+ * carry its own copy of them.
+ */
+export function applyNovelAiSelection(
+  meta: Record<string, string>,
+  selection: NovelAiImportSelection,
+): string[] {
+  const applied: string[] = [];
+
+  if (selection.settings) {
+    let settingsApplied = applyNovelAiModel(meta);
+    if (applyDimensions(meta)) settingsApplied = true;
+    // Characters and the seed are their own checkboxes, so they are held back
+    // from the settings pass whatever it would otherwise have written.
+    if (applySampler(meta, { seed: false, characters: false })) settingsApplied = true;
+    if (settingsApplied) applied.push("settings");
+  }
+
+  // Clearing runs first so ticking it alongside Append still ends up as a
+  // replace rather than an append onto stale characters.
+  let charactersChanged = false;
+  if (selection.clearCharacters && clearNovelAiCharacters()) charactersChanged = true;
+  if (selection.characters && applyNovelAiCharacters(meta, selection.appendCharacters)) {
+    charactersChanged = true;
+  }
+  if (charactersChanged) applied.push("characters");
+  if (selection.prompt && applyPositivePrompt(meta, selection.clean)) applied.push("prompt");
+  if (selection.undesired && applyNegativePrompt(meta, selection.clean)) {
+    applied.push("undesired");
+  }
+  if (selection.seed && applySeed(meta)) applied.push("seed");
+
+  if (applied.length > 0) generation.saveSettings();
+  return applied;
+}
+
+/**
+ * Switch to a model that supports vibe transfer and precise reference.
+ *
+ * V5 dropped both, so picking either from the dialog moves the panel to V4.5
+ * Full, which is the newest model that still has them. A model that already
+ * supports the feature is left alone.
+ */
+export function ensureNovelAiReferenceModel(kind: "vibe" | "precise"): boolean {
+  const supported =
+    kind === "vibe"
+      ? generation.supportsNovelAiVibeTransfer
+      : generation.supportsNovelAiPreciseReference;
+  if (supported) return false;
+  if (isNovelAiModel(generation.checkpoint)) {
+    generation.checkpoint = NOVELAI_REFERENCE_FALLBACK_MODEL;
+    generation.saveSettings();
+  } else {
+    generation.selectNovelAiModel(NOVELAI_REFERENCE_FALLBACK_MODEL);
+  }
+  return true;
+}
+
 /** Extract PNG bytes from a File or DataTransferItem. */
 async function fileToPngBytes(file: File): Promise<number[]> {
   const buffer = await file.arrayBuffer();
@@ -386,10 +569,10 @@ export async function handleMetadataImport(
       // Client-side: read metadata directly from the file without server round-trip
       const buf = await file.arrayBuffer();
       const meta = await readPngMetadataClientSide(buf);
-      applyParsedMetadata(meta, target);
+      applyParsedMetadata(meta, target, { kind: "file", file });
     } else {
       const bytes = await fileToPngBytes(file);
-      await handleMetadataImportBytes(bytes, target);
+      await handleMetadataImportBytes(bytes, target, { kind: "file", file });
     }
   } catch (err) {
     console.error("Metadata import failed:", err);
@@ -397,13 +580,26 @@ export async function handleMetadataImport(
   }
 }
 
-/** Apply parsed metadata to the appropriate section(s) and show toast feedback. */
+/**
+ * Apply parsed metadata to the appropriate section(s) and show toast feedback.
+ *
+ * A NovelAI image is the one exception: nothing is applied, and the import
+ * dialog opens instead so the user picks what to take. Section targeting is
+ * dropped along with it, because the dialog covers every section a drop could
+ * have aimed at.
+ */
 function applyParsedMetadata(
   meta: Record<string, string> | null,
-  target: DroppableSectionId | "all"
+  target: DroppableSectionId | "all",
+  source: NovelAiImportSource
 ): void {
   if (!meta || Object.keys(meta).length === 0) {
     gallery.showToast(locale.t("metadata.toast.no_metadata"), "info");
+    return;
+  }
+
+  if (isNovelAiMetadata(meta)) {
+    novelaiImport.open(meta, source);
     return;
   }
 
@@ -433,12 +629,13 @@ function applyParsedMetadata(
  */
 export async function handleMetadataImportBytes(
   bytes: number[],
-  target: DroppableSectionId | "all"
+  target: DroppableSectionId | "all",
+  source?: NovelAiImportSource
 ): Promise<void> {
   gallery.showToast(locale.t("metadata.toast.reading"), "info");
   try {
     const meta = await readImageMetadataBytes(bytes);
-    applyParsedMetadata(meta, target);
+    applyParsedMetadata(meta, target, source ?? { kind: "bytes", bytes, filename: "image.png" });
   } catch (err) {
     console.error("Metadata import failed:", err);
     gallery.showToast(locale.t("metadata.toast.read_failed"), "error");
@@ -456,7 +653,7 @@ export async function handleMetadataImportPath(
   gallery.showToast(locale.t("metadata.toast.reading"), "info");
   try {
     const meta = await readImageMetadataPath(filePath);
-    applyParsedMetadata(meta, target);
+    applyParsedMetadata(meta, target, { kind: "path", path: filePath });
   } catch (err) {
     console.error("Metadata import failed:", err);
     gallery.showToast(locale.t("metadata.toast.read_failed"), "error");

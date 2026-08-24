@@ -21,7 +21,7 @@ import {
 import { readModelSpec, type ModelSpec } from "../utils/api.js";
 import { GENERIC_SAMPLING, recommendedSamplingFor } from "../utils/samplingRecommendation.js";
 import { H3_TURBO_LORA } from "../utils/h3Models.js";
-import { artistTagBody } from "../utils/artistTag.js";
+import { artistTagPromptBody } from "../utils/artistTag.js";
 import {
   NOVELAI_DEFAULTS,
   findNovelAiModel,
@@ -1200,12 +1200,13 @@ class GenerationStore {
 
   /**
    * Normalise a raw tag and prefix it for the current mode: underscores
-   * become spaces (danbooru convention), unescaped parens are escaped so
-   * the prompt round-trips through the scheduler, and any sigil the caller
-   * already supplied is replaced rather than doubled.
+   * become spaces (danbooru convention), unescaped parens and any trailing
+   * `+`/`-` run are escaped so the prompt round-trips through the scheduler
+   * and the emphasis translator, and any sigil the caller already supplied is
+   * replaced rather than doubled.
    */
   formatArtistTag(tag: string): string {
-    return this.artistTagPrefix + artistTagBody(tag);
+    return this.artistTagPrefix + artistTagPromptBody(tag);
   }
 
   /** Character prompts that would actually be sent. */

@@ -44,7 +44,9 @@ function tokenize(prompt: string): Array<{ token: string; hadAtPrefix: boolean }
     if (t.startsWith("<") && t.endsWith(">")) continue;
     // Unescape backslash-escaped parens/brackets that SD/ComfyUI uses to
     // prevent attention-weight parsing: \( → (, \) → ), \[ → [, \] → ]
-    t = t.replace(/\\([()\[\]])/g, "$1");
+    // — plus \+ / \- , which guard a name whose own trailing character would
+    // otherwise read as InvokeAI emphasis (e.g. `neverland\+`).
+    t = t.replace(/\\([()\[\]+-])/g, "$1");
     // Strip surrounding weight parens/brackets (repeated)
     while (/^[\(\[]/.test(t) && /[\)\]]$/.test(t)) {
       t = t.slice(1, -1).trim();
