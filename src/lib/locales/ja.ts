@@ -3129,6 +3129,8 @@ const ja: Record<string, string> = {
   "generation.novelai.advanced.legacy_uc_desc": "ネガティブの旧処理を使います。以前の画像を再現する場合を除き、オフのままにしてください。",
   "generation.novelai.advanced.variety_plus": "Variety+",
   "generation.novelai.advanced.variety_plus_desc": "最初のステップに変化を加え、構図が生き生きとします。",
+  "generation.novelai.advanced.transparent_background": "透過背景",
+  "generation.novelai.advanced.transparent_background_desc": "NovelAI V5 に透過背景の切り抜きを依頼します。V5 の VAE は初めて本物のアルファチャンネルを持つため、PNG は透過を保ったまま保存されます。",
   "generation.novelai.advanced.dynamic_thresholding": "ダイナミックしきい値",
   "generation.novelai.advanced.dynamic_thresholding_desc": "ガイダンスが高いときの色の飽和を抑えます。",
   "generation.novelai.advanced.cfg_rescale": "ガイダンス再スケール",
@@ -3150,6 +3152,7 @@ const ja: Record<string, string> = {
   "generation.novelai.local.sampling": "サンプリング: {sampler} / {scheduler}、CFG {cfg}。",
   "generation.novelai.local.checkpoint_required": "ローカル処理を実行するチェックポイントを選んでください。",
   "generation.novelai.local.nothing_to_do": "ローカル処理を動かすには、アップスケールか顔補正を有効にしてください。",
+  "generation.novelai.local.transparency_conflict": "透過背景がオンの間はローカル処理をスキップします。透過が不透明な背景に統合されてしまうためです。",
   "generation.novelai.cost_badge": "~{anlas} Anlas",
   "generation.novelai.cost_tip": "Anlas の概算コストです。最終的な判断は NovelAI 側になります。上の残高をご確認ください。",
 

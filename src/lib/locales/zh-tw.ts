@@ -3104,6 +3104,8 @@ const zhTw: Record<string, string> = {
   "generation.novelai.advanced.legacy_uc_desc": "使用舊的負面內容處理方式。除非要重現舊圖，否則請保持關閉。",
   "generation.novelai.advanced.variety_plus": "Variety+",
   "generation.novelai.advanced.variety_plus_desc": "在最初幾步加入變化，讓構圖更生動。",
+  "generation.novelai.advanced.transparent_background": "透明背景",
+  "generation.novelai.advanced.transparent_background_desc": "讓 NovelAI V5 產生透明背景的去背圖。V5 的 VAE 首次帶有真正的 Alpha 通道，因此 PNG 會保留透明度儲存。",
   "generation.novelai.advanced.dynamic_thresholding": "動態閾值",
   "generation.novelai.advanced.dynamic_thresholding_desc": "在高引導值下抑制過飽和的顏色。",
   "generation.novelai.advanced.cfg_rescale": "引導值重新縮放",
@@ -3125,6 +3127,7 @@ const zhTw: Record<string, string> = {
   "generation.novelai.local.sampling": "取樣：{sampler} / {scheduler}，CFG {cfg}。",
   "generation.novelai.local.checkpoint_required": "選擇一個模型檔，本機處理才能執行。",
   "generation.novelai.local.nothing_to_do": "啟用放大或臉部修復，本機處理才會有作用。",
+  "generation.novelai.local.transparency_conflict": "開啟透明背景時會略過本機處理，否則透明度會被合併到不透明背景上。",
   "generation.novelai.cost_badge": "~{anlas} Anlas",
   "generation.novelai.cost_tip": "預估 Anlas 消耗。以 NovelAI 為準，請查看上方餘額。",
 

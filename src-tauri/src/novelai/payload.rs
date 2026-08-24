@@ -35,6 +35,7 @@ pub fn build(
     model: &NovelAiModel,
 ) -> Result<Value, String> {
     let action = normalise_action(&nai.action, input);
+    let positive_prompt = with_transparency(&input.positive_prompt, nai, model);
     let mut parameters = Map::new();
 
     parameters.insert("params_version".into(), json!(3));
@@ -80,7 +81,7 @@ pub fn build(
             "v4_prompt".into(),
             json!({
                 "caption": {
-                    "base_caption": input.positive_prompt,
+                    "base_caption": positive_prompt,
                     "char_captions": characters
                         .iter()
                         .map(|c| json!({
@@ -129,7 +130,7 @@ pub fn build(
     apply_image_action(&mut parameters, input, nai, &action)?;
 
     Ok(json!({
-        "input": input.positive_prompt,
+        "input": positive_prompt,
         "model": models::resolve_id(model, &action),
         "action": action,
         "parameters": Value::Object(parameters),
@@ -144,6 +145,34 @@ fn normalise_action(action: &str, input: &PayloadInput) -> String {
         "img2img" | "infill" if input.input_image.is_some() => "img2img".into(),
         _ => "generate".into(),
     }
+}
+
+/// The tag NovelAI's own "Transparent BG" button inserts, at the weight their
+/// release notes recommend for a clean cut-out.
+const TRANSPARENCY_TAG: &str = "2.1::transparent background::";
+
+/// Append the transparency tag when the toggle is on and the model can honour
+/// it.
+///
+/// NovelAI ships transparency as a prompt tag rather than a request field, and
+/// only the V5 VAE emits an alpha channel, so an older model would just spend
+/// Anlas on a picture of a checkerboard. The tag is kept out of the user's
+/// prompt box on purpose: the toggle owns it, so turning the toggle off takes
+/// it away again cleanly.
+fn with_transparency(prompt: &str, nai: &NovelAiParams, model: &NovelAiModel) -> String {
+    if !nai.transparent_background || !model.alpha {
+        return prompt.to_string();
+    }
+    // A user who typed the tag themselves already has what the toggle adds,
+    // and a second copy would only fight the first one's weight.
+    if prompt.to_lowercase().contains("transparent background") {
+        return prompt.to_string();
+    }
+    let trimmed = prompt.trim_end().trim_end_matches(',').trim_end();
+    if trimmed.is_empty() {
+        return TRANSPARENCY_TAG.to_string();
+    }
+    format!("{trimmed}, {TRANSPARENCY_TAG}")
 }
 
 /// NovelAI scales the Variety+ cutoff with the diagonal of the latent, so a
@@ -623,5 +652,68 @@ mod tests {
         n.variety_plus = true;
         let body = build(&input(), &n, v45()).unwrap();
         assert!(body["parameters"]["skip_cfg_above_sigma"].as_f64().unwrap() > 0.0);
+    }
+
+    fn v5() -> &'static NovelAiModel {
+        models::find("nai-diffusion-5-full").unwrap()
+    }
+
+    #[test]
+    fn transparency_appends_the_tag_to_both_prompt_copies() {
+        let mut n = nai();
+        n.transparent_background = true;
+        let body = build(&input(), &n, v5()).unwrap();
+        let expected = "1girl, solo, 2.1::transparent background::";
+        assert_eq!(body["input"], expected);
+        assert_eq!(
+            body["parameters"]["v4_prompt"]["caption"]["base_caption"],
+            expected
+        );
+        // The negative prompt is left alone.
+        assert_eq!(body["parameters"]["negative_prompt"], "lowres");
+    }
+
+    #[test]
+    fn transparency_is_off_by_default() {
+        let body = build(&input(), &nai(), v5()).unwrap();
+        assert_eq!(body["input"], "1girl, solo");
+    }
+
+    #[test]
+    fn transparency_is_ignored_by_models_without_an_alpha_channel() {
+        // V4.5's VAE has no alpha channel, so the tag would only cost Anlas
+        // for a picture of a checkerboard.
+        let mut n = nai();
+        n.transparent_background = true;
+        let body = build(&input(), &n, v45()).unwrap();
+        assert_eq!(body["input"], "1girl, solo");
+    }
+
+    #[test]
+    fn transparency_does_not_double_up_a_tag_the_user_typed() {
+        let mut n = nai();
+        n.transparent_background = true;
+        let mut i = input();
+        i.positive_prompt = "1girl, Transparent Background".into();
+        let body = build(&i, &n, v5()).unwrap();
+        assert_eq!(body["input"], "1girl, Transparent Background");
+    }
+
+    #[test]
+    fn transparency_tidies_the_join_and_survives_an_empty_prompt() {
+        let mut n = nai();
+        n.transparent_background = true;
+        let mut i = input();
+        i.positive_prompt = "1girl,  ".into();
+        assert_eq!(
+            build(&i, &n, v5()).unwrap()["input"],
+            "1girl, 2.1::transparent background::"
+        );
+
+        i.positive_prompt = String::new();
+        assert_eq!(
+            build(&i, &n, v5()).unwrap()["input"],
+            "2.1::transparent background::"
+        );
     }
 }

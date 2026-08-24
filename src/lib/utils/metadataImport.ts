@@ -224,6 +224,7 @@ function applyNovelAiSettings(meta: Record<string, string>, withCharacters = tru
   const booleans: [string, keyof NovelAiSettings][] = [
     ["mooshie_novelai_dynamic_thresholding", "dynamic_thresholding"],
     ["mooshie_novelai_variety_plus", "variety_plus"],
+    ["mooshie_novelai_transparent_background", "transparent_background"],
     ["mooshie_novelai_use_coords", "use_coords"],
     ["mooshie_novelai_quality_toggle", "quality_toggle"],
     ["mooshie_novelai_legacy_uc", "legacy_uc"],

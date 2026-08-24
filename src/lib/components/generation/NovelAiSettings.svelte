@@ -21,6 +21,16 @@
   const postProcessArmed = $derived(generation.upscaleEnabled || generation.facefixEnabled);
 
   /**
+   * The local pass loads the image through ComfyUI's `LoadImage`, whose IMAGE
+   * output is RGB, so it would flatten the alpha the user paid V5 for. The
+   * backend skips the pass rather than destroy the transparency; this says so
+   * before the Anlas is spent.
+   */
+  const transparencyActive = $derived(
+    nai.transparent_background && generation.supportsNovelAiTransparency,
+  );
+
+  /**
    * The local model picker spans two folders, so the option value carries the
    * folder with it. A colon is safe as the separator: no filesystem this runs
    * on allows one in a file name, and only the first is split on so a
@@ -119,6 +129,20 @@
       {locale.t("generation.novelai.advanced.variety_plus")}
       <InfoTip text={locale.t("generation.novelai.advanced.variety_plus_desc")} />
     </label>
+
+    {#if generation.supportsNovelAiTransparency}
+      <label class="flex items-center gap-2 text-xs text-neutral-300">
+        <input
+          type="checkbox"
+          class="accent-indigo-500"
+          checked={nai.transparent_background}
+          onchange={(e) =>
+            generation.updateNovelAiSettings({ transparent_background: e.currentTarget.checked })}
+        />
+        {locale.t("generation.novelai.advanced.transparent_background")}
+        <InfoTip text={locale.t("generation.novelai.advanced.transparent_background_desc")} />
+      </label>
+    {/if}
 
     <label class="flex items-center gap-2 text-xs text-neutral-300">
       <input
@@ -288,6 +312,10 @@
       {:else if !postProcessArmed}
         <p class="text-[11px] text-amber-400/90">
           {locale.t("generation.novelai.local.nothing_to_do")}
+        </p>
+      {:else if transparencyActive}
+        <p class="text-[11px] text-amber-400/90">
+          {locale.t("generation.novelai.local.transparency_conflict")}
         </p>
       {/if}
     {/if}

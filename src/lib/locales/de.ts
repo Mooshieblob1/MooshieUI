@@ -3106,6 +3106,8 @@ const de: Record<string, string> = {
   "generation.novelai.advanced.legacy_uc_desc": "Verwendet die ältere Behandlung unerwünschter Inhalte. Lassen Sie dies aus, außer Sie bilden ein älteres Bild nach.",
   "generation.novelai.advanced.variety_plus": "Variety+",
   "generation.novelai.advanced.variety_plus_desc": "Fügt den ersten Schritten Variation hinzu, was lebendigere Kompositionen ergibt.",
+  "generation.novelai.advanced.transparent_background": "Transparenter HG",
+  "generation.novelai.advanced.transparent_background_desc": "Fordert von NovelAI V5 ein Freisteller-Bild auf transparentem Hintergrund an. Der VAE von V5 hat als erster einen echten Alphakanal, daher wird das PNG mit Transparenz gespeichert.",
   "generation.novelai.advanced.dynamic_thresholding": "Dynamisches Thresholding",
   "generation.novelai.advanced.dynamic_thresholding_desc": "Bändigt übersättigte Farben bei hoher Guidance.",
   "generation.novelai.advanced.cfg_rescale": "Guidance-Reskalierung",
@@ -3127,6 +3129,7 @@ const de: Record<string, string> = {
   "generation.novelai.local.sampling": "Sampling: {sampler} / {scheduler}, CFG {cfg}.",
   "generation.novelai.local.checkpoint_required": "Wählen Sie einen Checkpoint, damit der lokale Durchlauf startet.",
   "generation.novelai.local.nothing_to_do": "Aktivieren Sie Hochskalieren oder Gesichtskorrektur, damit der lokale Durchlauf etwas bewirkt.",
+  "generation.novelai.local.transparency_conflict": "Der lokale Durchlauf wird übersprungen, solange Transparenter HG aktiv ist: Er würde die Transparenz auf einen deckenden Hintergrund reduzieren.",
   "generation.novelai.cost_badge": "~{anlas} Anlas",
   "generation.novelai.cost_tip": "Geschätzte Anlas-Kosten. NovelAI ist maßgeblich; prüfen Sie das Guthaben oben.",
 
